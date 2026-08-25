@@ -94,11 +94,7 @@ extension PeekabooBridgeBrowserConnectionReceipt {
               processIdentifier > 0,
               let processStartIdentity = self.processStartIdentity,
               processStartIdentity > 0,
-              self.processStartIdentityDecimal == String(processStartIdentity),
-              self.browserURL == nil,
-              self.webSocketDebuggerURL == nil,
-              self.devToolsBrowserID == nil,
-              self.protocolVersion == nil
+              self.processStartIdentityDecimal == String(processStartIdentity)
         else {
             return nil
         }
@@ -112,7 +108,33 @@ extension PeekabooBridgeBrowserConnectionReceipt {
               self.processStartIdentity == nil,
               self.processStartIdentityDecimal == nil,
               self.bundleIdentifier == nil,
-              let browserURL = self.browserURL,
+              self.hasCanonicalDevToolsIdentity
+        else {
+            return false
+        }
+        return true
+    }
+
+    var isCanonicalProcessBoundTarget: Bool {
+        guard self.localProcessIdentity != nil,
+              Self.isNonEmpty(self.bundleIdentifier),
+              self.hasCanonicalDevToolsIdentity
+        else {
+            return false
+        }
+        return true
+    }
+
+    var isCanonicalLocalProcessTarget: Bool {
+        self.localProcessIdentity != nil &&
+            self.browserURL == nil &&
+            self.webSocketDebuggerURL == nil &&
+            self.devToolsBrowserID == nil &&
+            self.protocolVersion == nil
+    }
+
+    private var hasCanonicalDevToolsIdentity: Bool {
+        guard let browserURL = self.browserURL,
               Self.isNonEmpty(self.webSocketDebuggerURL),
               let webSocketDebuggerURL = self.webSocketDebuggerURL,
               let devToolsBrowserID = self.devToolsBrowserID,
@@ -130,7 +152,8 @@ extension PeekabooBridgeBrowserConnectionReceipt {
     }
 
     var isCanonicalTarget: Bool {
-        self.localProcessIdentity != nil || self.isCanonicalExternalTarget
+        self.isCanonicalProcessBoundTarget || self.isCanonicalExternalTarget ||
+            self.isCanonicalLocalProcessTarget
     }
 
     func matchesConnectRequest(_ request: PeekabooBridgeBrowserChannelRequest) -> Bool {

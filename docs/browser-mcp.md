@@ -20,14 +20,17 @@ Use Peekaboo native tools for macOS UI, browser chrome, menus, dialogs, permissi
 
 ## Permission flow
 
-Chrome DevTools MCP `--auto-connect` attaches to an already-running Chrome profile. It requires:
+Peekaboo attaches to an already-running Chrome profile. It requires:
 
 1. Chrome 144 or newer.
 2. Chrome running locally.
 3. Remote debugging enabled at `chrome://inspect/#remote-debugging`.
 4. User approval in Chrome's remote debugging permission prompt.
 
-Peekaboo does not approve that prompt automatically. The browser tool reports instructions when it is disconnected or when connection fails.
+Peekaboo does not approve that prompt automatically. Once Chrome publishes `DevToolsActivePort`, channel connect reads
+that owner-controlled file without following symlinks, proves that its one exact loopback listener belongs to the
+detected Chrome PID and process generation before and after `/json/version`, and passes the returned exact
+`--wsEndpoint` to Chrome DevTools MCP. It never asks the MCP child to rediscover an ambient browser.
 
 ## Privacy defaults
 
@@ -35,8 +38,7 @@ Peekaboo starts Chrome DevTools MCP with:
 
 ```bash
 npx -y chrome-devtools-mcp@1.6.0 \
-  --auto-connect \
-  --channel=<stable|beta|dev|canary> \
+  --wsEndpoint=ws://127.0.0.1:<port>/devtools/browser/<id> \
   --experimentalPageIdRouting \
   --no-usage-statistics \
   --no-performance-crux
@@ -60,6 +62,8 @@ peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground --json
 Only loopback HTTP endpoints are accepted. Peekaboo resolves `/json/version`, pins the returned browser WebSocket
 identity, probes `list_pages` before reporting connected, and revalidates that identity before every later tool call.
 When multiple Chrome processes share one channel, channel-only connection refuses and requires this exact endpoint.
+Channel discovery reads only the standard current-user profile for the chosen Chrome channel; a headless or custom
+profile cannot substitute an arbitrary authority file for a detected GUI browser.
 
 The tool can expose page content, cookies/session-backed data visible to the page, console messages, network requests, screenshots, and traces to the active agent/MCP client. Do not enable it for browser profiles containing sensitive data unless that exposure is acceptable.
 
@@ -82,14 +86,15 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 - The daemon owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
 - Separate CLI invocations require the same current-build reusable daemon. Peekaboo.app and older Bridge hosts are not
   eligible for browser session routing because they cannot attest the exact persistent connection receipt.
-- Channel `--auto-connect` and isolated-profile children remain available for unbound and protocol 1.28 browser calls,
-  but they are not eligible for protocol 1.29 receipt-bound execution because the MCP child cannot yet attest which
-  browser it actually selected.
+- Native channel connections and explicit loopback URLs both resolve to an exact WebSocket and are eligible for
+  receipt-bound execution. Isolated-profile children remain unbound because the child does not report a pinnable
+  browser identity.
 - Child-process loss, PID reuse, endpoint restart, or an attempted retarget fails closed with reconnect guidance. Peekaboo
   never silently rediscovers another same-channel profile.
-- Receipt-bound execution requires an explicit CLI or environment DevTools URL, resolves it to a complete WebSocket
-  browser identity, and compares that identity inside the browser execution gate before the first call. Protocol 1.29
-  signs the full explicit endpoint receipt; it never infers the MCP child's attachment from ambient Chrome processes.
+- Receipt-bound execution resolves a complete WebSocket browser identity and compares that identity inside the browser
+  execution gate before the first call. Channel receipts additionally carry the owning PID, process generation, and
+  bundle identity. Protocol 1.29 already carries all of these fields, so the stronger combined receipt needs no wire
+  version or capability bump.
   Multi-call responses retain exact completed and dispatched-or-accepted counts;
   a later failure returns a typed retry-unsafe outcome so callers resume only after observation, never by replaying the
   whole batch.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Bind Chrome channel connections to the exact native process-owned DevTools listener and WebSocket, failing closed on file, socket, generation, or endpoint drift.
+
 ## [4.2.3] - 2026-08-23
 
 ### Highlights

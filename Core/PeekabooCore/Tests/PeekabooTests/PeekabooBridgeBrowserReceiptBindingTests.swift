@@ -7,6 +7,25 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeBrowserReceiptBindingTests {
     @Test
+    func `process bound DevTools receipt is canonical without a wire capability bump`() {
+        let receipt = PeekabooBridgeBrowserConnectionReceipt(
+            channel: "stable",
+            processIdentifier: 42,
+            processStartIdentity: 10042,
+            bundleIdentifier: "com.google.Chrome",
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            devToolsBrowserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+
+        #expect(receipt.isCanonicalProcessBoundTarget)
+        #expect(receipt.isCanonicalTarget)
+        #expect(receipt.matchesConnectRequest(.init(channel: "stable")))
+        #expect(!receipt.isCanonicalExternalTarget)
+    }
+
+    @Test
     func `binding a result aware mutation to status forbids reconnect and retarget`() {
         let requests = [
             PeekabooBridgeBrowserExecuteRequest(

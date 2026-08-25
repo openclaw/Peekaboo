@@ -11,8 +11,9 @@ struct BrowserMCPDevToolsEndpoint: Sendable, Equatable {
 
 struct BrowserMCPDevToolsEndpointResolver: Sendable {
     typealias Fetch = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+    typealias Resolve = @Sendable (String) async throws -> BrowserMCPDevToolsEndpoint
 
-    let resolve: @Sendable (String) async throws -> BrowserMCPDevToolsEndpoint
+    let resolve: Resolve
 
     static let live = BrowserMCPDevToolsEndpointResolver { rawBrowserURL in
         try await Self.resolveEndpoint(rawBrowserURL) { request in

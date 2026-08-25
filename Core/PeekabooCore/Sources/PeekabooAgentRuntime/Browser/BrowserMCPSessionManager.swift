@@ -76,6 +76,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private let detectedBrowsers: BrowserDetector
     private let processStartIdentity: ProcessIdentityProvider
     private let endpointResolver: BrowserMCPDevToolsEndpointResolver
+    private let channelEndpointResolver: BrowserMCPChannelEndpointResolver
     private let uploadStager: BrowserMCPUploadStager
     private let environmentOptions: BrowserMCPEnvironmentOptions
     private let executionGate = MCPToolSnapshotExecutionGate()
@@ -96,6 +97,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             SystemIdentityResolver.processStartIdentity(processIdentifier)
         },
         endpointResolver: BrowserMCPDevToolsEndpointResolver = .live,
+        channelEndpointResolver: BrowserMCPChannelEndpointResolver = .live,
         uploadStager: BrowserMCPUploadStager = .live,
         environment: [String: String] = ProcessInfo.processInfo.environment)
     {
@@ -104,6 +106,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.detectedBrowsers = detectedBrowsers
         self.processStartIdentity = processStartIdentity
         self.endpointResolver = endpointResolver
+        self.channelEndpointResolver = channelEndpointResolver
         self.uploadStager = uploadStager
         self.environmentOptions = BrowserMCPEnvironmentOptions(environment: environment)
     }
@@ -745,8 +748,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         if self.environmentOptions.isolated {
             return BrowserMCPResolvedTarget(
                 receipt: BrowserMCPConnectionReceipt(channel: resolvedChannel),
-                config: BrowserMCPService.chromeDevToolsConfig(
-                    target: .isolated(resolvedChannel),
+                config: BrowserMCPService.isolatedChromeDevToolsConfig(
+                    channel: resolvedChannel,
                     headless: self.environmentOptions.headless),
                 // The spawned process has no child-reported identity to bind into a signed receipt.
                 supportsReceiptBoundExecution: false)
@@ -765,19 +768,27 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         else {
             throw BrowserMCPConnectionError.processIdentityUnavailable(browser.processIdentifier)
         }
+        let processTarget = BrowserMCPChannelProcessTarget(
+            channel: resolvedChannel,
+            processIdentifier: browser.processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: browser.bundleIdentifier)
+        let endpoint = try await self.channelEndpointResolver.resolve(processTarget)
         let receipt = BrowserMCPConnectionReceipt(
             channel: resolvedChannel,
             processIdentifier: browser.processIdentifier,
             processStartIdentity: processStartIdentity,
             bundleIdentifier: browser.bundleIdentifier,
-            browserVersion: browser.version)
+            browserURL: endpoint.browserURL,
+            webSocketDebuggerURL: endpoint.webSocketDebuggerURL,
+            devToolsBrowserID: endpoint.browserID,
+            browserVersion: endpoint.browserVersion,
+            protocolVersion: endpoint.protocolVersion)
         return BrowserMCPResolvedTarget(
             receipt: receipt,
             config: BrowserMCPService.chromeDevToolsConfig(
-                target: .autoConnect(resolvedChannel),
-                headless: self.environmentOptions.headless),
-            // Ambient process inventory cannot prove which browser the MCP child attached to.
-            supportsReceiptBoundExecution: false)
+                webSocketEndpoint: endpoint.webSocketDebuggerURL),
+            supportsReceiptBoundExecution: true)
     }
 
     private func resolveExactEndpointTarget(
@@ -795,12 +806,41 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return BrowserMCPResolvedTarget(
             receipt: receipt,
             config: BrowserMCPService.chromeDevToolsConfig(
-                target: .exactWebSocket(endpoint.webSocketDebuggerURL),
-                headless: self.environmentOptions.headless),
+                webSocketEndpoint: endpoint.webSocketDebuggerURL),
             supportsReceiptBoundExecution: true)
     }
 
     private func validate(_ receipt: BrowserMCPConnectionReceipt) async throws {
+        if let processIdentifier = receipt.processIdentifier,
+           let expectedGeneration = receipt.processStartIdentity,
+           self.processStartIdentity(processIdentifier) != expectedGeneration
+        {
+            throw BrowserMCPConnectionError.connectionLost(
+                "Chrome PID \(processIdentifier) changed process generation")
+        }
+        if let channel = receipt.channel,
+           let processIdentifier = receipt.processIdentifier,
+           let processStartIdentity = receipt.processStartIdentity,
+           let bundleIdentifier = receipt.bundleIdentifier,
+           receipt.browserURL != nil
+        {
+            let endpoint = try await self.channelEndpointResolver.resolve(
+                BrowserMCPChannelProcessTarget(
+                    channel: channel,
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: processStartIdentity,
+                    bundleIdentifier: bundleIdentifier))
+            guard endpoint.browserURL == receipt.browserURL,
+                  endpoint.webSocketDebuggerURL == receipt.webSocketDebuggerURL,
+                  endpoint.browserID == receipt.devToolsBrowserID,
+                  endpoint.browserVersion == receipt.browserVersion,
+                  endpoint.protocolVersion == receipt.protocolVersion
+            else {
+                throw BrowserMCPConnectionError.connectionLost(
+                    "the process-bound DevTools browser endpoint changed identity")
+            }
+            return
+        }
         if let browserURL = receipt.browserURL {
             let endpoint = try await self.endpointResolver.resolve(browserURL)
             guard endpoint.webSocketDebuggerURL == receipt.webSocketDebuggerURL,
@@ -809,14 +849,6 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   endpoint.protocolVersion == receipt.protocolVersion
             else {
                 throw BrowserMCPConnectionError.connectionLost("the DevTools browser endpoint changed identity")
-            }
-        }
-        if let processIdentifier = receipt.processIdentifier,
-           let expectedGeneration = receipt.processStartIdentity
-        {
-            guard self.processStartIdentity(processIdentifier) == expectedGeneration else {
-                throw BrowserMCPConnectionError.connectionLost(
-                    "Chrome PID \(processIdentifier) changed process generation")
             }
         }
     }

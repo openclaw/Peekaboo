@@ -25,7 +25,7 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `connect probes list pages and publishes exact process receipt`() async throws {
+    func `channel connect probes list pages and publishes process bound endpoint receipt`() async throws {
         let manager = MockBrowserMCPManager()
         let browser = Self.browser(pid: 51, generation: 2051)
         let session = Self.session(manager: manager, browsers: [browser])
@@ -37,9 +37,14 @@ struct BrowserMCPSessionManagerTests {
         #expect(status.toolCount == 29)
         #expect(status.connectionReceipt?.processIdentifier == 51)
         #expect(status.connectionReceipt?.processStartIdentity == 2051)
+        #expect(status.connectionReceipt?.browserURL == "http://127.0.0.1:9222/")
+        #expect(status.connectionReceipt?.devToolsBrowserID == "browser-a")
         #expect(manager.executedTools == ["list_pages"])
         #expect(manager.addedConfigs.count == 1)
         #expect(manager.addedConfigs[0].autoReconnect == false)
+        #expect(manager.addedConfigs[0].args.contains(
+            "--wsEndpoint=ws://127.0.0.1:9222/devtools/browser/browser-a"))
+        #expect(!manager.addedConfigs[0].args.contains("--auto-connect"))
         #expect(result.outcome?.state == .dispatchedUnverified)
         #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
         #expect(result.outcome?.dispatchState.unitCount == .one)
@@ -148,7 +153,8 @@ struct BrowserMCPSessionManagerTests {
             manager: manager,
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in currentGeneration.get() },
-            endpointResolver: Self.endpointResolver())
+            endpointResolver: Self.endpointResolver(),
+            channelEndpointResolver: Self.channelEndpointResolver())
         _ = try await session.connect(channel: .stable)
         manager.executedTools.removeAll()
         currentGeneration.set(5082)
@@ -222,7 +228,7 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `Browser tool projects receipt binding incompatibility as canonical refusal`() async throws {
+    func `Browser tool executes against a native channel receipt`() async throws {
         let manager = MockBrowserMCPManager()
         let session = Self.session(manager: manager, browsers: [Self.browser(pid: 822, generation: 5822)])
         _ = try await session.connect(channel: .stable)
@@ -237,14 +243,13 @@ struct BrowserMCPSessionManagerTests {
                 "uid": "7_1",
             ]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         let meta = try #require(response.meta?.objectValue)
-        #expect(meta["state"] == .string("refused"))
-        #expect(meta["refusal_reason"] == .string("operation_unsupported"))
-        #expect(meta["dispatch_state"] == .string("none"))
-        #expect(meta["mutation_dispatched"] == .bool(false))
-        #expect(meta["retry_safe"] == .bool(true))
-        #expect(manager.executedTools.isEmpty)
+        #expect(meta["state"] == .string("dispatched_unverified"))
+        #expect(meta["dispatch_state"] == .string("dispatched"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(manager.executedTools == ["click"])
     }
 
     @Test
@@ -593,7 +598,7 @@ extension BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `auto connected unbound session refuses a repeated mutation`() async throws {
+    func `native channel session keeps repeated mutations receipt bound`() async throws {
         let manager = MockBrowserMCPManager()
         let session = Self.session(
             manager: manager,
@@ -607,19 +612,12 @@ extension BrowserMCPSessionManagerTests {
         #expect(first.outcome?.state == .dispatchedUnverified)
         #expect(manager.executedTools == ["list_pages", "click"])
 
-        do {
-            _ = try await service.executeSequenceWithOutcome(
-                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_2"])],
-                channel: .stable,
-                connectionPolicy: .allowAutoConnect)
-            Issue.record("Expected the repeated unbound mutation to be refused")
-        } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .refused)
-            #expect(failure.outcome.refusalReason == .operationUnsupported)
-            #expect(failure.outcome.dispatchState == .none)
-            #expect(failure.outcome.retrySafety == .safe)
-        }
-        #expect(manager.executedTools == ["list_pages", "click"])
+        let second = try await service.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "7_2"])],
+            channel: .stable,
+            connectionPolicy: .allowAutoConnect)
+        #expect(second.outcome?.state == .dispatchedUnverified)
+        #expect(manager.executedTools == ["list_pages", "click", "click"])
     }
 
     @Test
@@ -907,25 +905,19 @@ extension BrowserMCPSessionManagerTests {
 
 extension BrowserMCPSessionManagerTests {
     @Test
-    func `channel auto connect refuses receipt bound execution before dispatch`() async throws {
+    func `native channel connection supports receipt bound execution`() async throws {
         let manager = MockBrowserMCPManager()
         let session = Self.session(manager: manager, browsers: [Self.browser(pid: 821, generation: 5821)])
         let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
         manager.executedTools.removeAll()
 
-        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
-            _ = try await session.executeSequence(
-                [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "821_1"])],
-                channel: .stable,
-                expectedConnectionReceipt: receipt)
-        }
+        let result = try await session.executeSequence(
+            [BrowserMCPMappedCall(toolName: "click", arguments: ["uid": "821_1"])],
+            channel: .stable,
+            expectedConnectionReceipt: receipt)
 
-        #expect(manager.executedTools.isEmpty)
-        let legacy = try await session.execute(
-            toolName: "click",
-            arguments: ["uid": "821_1"],
-            channel: .stable)
-        #expect(!legacy.isError)
+        #expect(!result.response.isError)
+        #expect(result.connectionReceipt == receipt)
         #expect(manager.executedTools == ["click"])
     }
 
@@ -1001,7 +993,8 @@ extension BrowserMCPSessionManagerTests {
                 browsers.get(channel: channel)
             },
             processStartIdentity: { generations[$0] },
-            endpointResolver: Self.endpointResolver())
+            endpointResolver: Self.endpointResolver(),
+            channelEndpointResolver: Self.channelEndpointResolver())
         let connected = try await session.connect(channel: .stable)
         let original = try #require(connected.connectionReceipt)
         await session.disconnect()
@@ -1461,6 +1454,7 @@ extension BrowserMCPSessionManagerTests {
             },
             processStartIdentity: { generations[$0] },
             endpointResolver: self.endpointResolver(),
+            channelEndpointResolver: self.channelEndpointResolver(),
             uploadStager: uploadStager,
             environment: [:])
     }

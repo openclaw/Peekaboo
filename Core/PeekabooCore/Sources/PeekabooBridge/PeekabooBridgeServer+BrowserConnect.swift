@@ -61,6 +61,12 @@ extension PeekabooBridgeServer {
         -> PeekabooBridgeHandledResponse.Mutation.TargetDisposition
     {
         if let processIdentity = receipt.localProcessIdentity {
+            guard receipt.isCanonicalLocalProcessTarget || receipt.isCanonicalProcessBoundTarget else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The browser connection has an incomplete process-bound DevTools identity.",
+                    hint: "Reconnect the intended browser and retry with its full connection receipt.")
+            }
             guard
                 self.processStartIdentityProvider(processIdentity.processIdentifier)
                 == processIdentity.processStartIdentity

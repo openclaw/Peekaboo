@@ -487,6 +487,15 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             expectedConnectionReceipt: expectedConnectionReceipt)
     }
 
+    /// Legacy low-level configuration factory retained for source compatibility.
+    ///
+    /// Passing neither an exact WebSocket nor an explicit isolated/URL environment option selects
+    /// upstream ambient auto-connect. Peekaboo product sessions never call this path: standard
+    /// channels resolve and attest `DevToolsActivePort`, then use an exact WebSocket configuration.
+    @available(
+        *,
+        deprecated,
+        message: "Use chromeDevToolsConfig(webSocketEndpoint:) or isolatedChromeDevToolsConfig(channel:headless:)")
     public static func chromeDevToolsConfig(
         channel: BrowserMCPChannel?,
         webSocketEndpoint: String? = nil,
@@ -508,6 +517,23 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         return self.chromeDevToolsConfig(
             target: target,
             headless: self.environmentFlag("PEEKABOO_BROWSER_MCP_HEADLESS", environment: environment))
+    }
+
+    /// Creates a Chrome DevTools MCP configuration that can attach only to one pre-resolved WebSocket.
+    public static func chromeDevToolsConfig(webSocketEndpoint: String) -> MCPServerConfig {
+        self.chromeDevToolsConfig(
+            target: .exactWebSocket(webSocketEndpoint),
+            headless: false)
+    }
+
+    /// Creates an explicitly isolated Chrome profile for deterministic tests and opt-in standalone use.
+    public static func isolatedChromeDevToolsConfig(
+        channel: BrowserMCPChannel,
+        headless: Bool = false) -> MCPServerConfig
+    {
+        self.chromeDevToolsConfig(
+            target: .isolated(channel),
+            headless: headless)
     }
 
     private static func successOutcome(dispatchedCallCount: Int) -> DesktopActionOutcome {
@@ -583,7 +609,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             description = "Chrome DevTools automation for the running \(channel.rawValue) Chrome profile"
         }
 
-        if headless {
+        if headless, case .isolated = target {
             args.append("--headless")
         }
 
@@ -600,16 +626,13 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             description: description)
     }
 
-    private static func chromeDevToolsConfig(browserURL: String, headless: Bool) -> MCPServerConfig {
+    private static func chromeDevToolsConfig(browserURL: String, headless _: Bool) -> MCPServerConfig {
         var args = [
             "-y",
             "chrome-devtools-mcp@1.6.0",
             "--experimentalPageIdRouting",
             "--browserUrl=\(browserURL)",
         ]
-        if headless {
-            args.append("--headless")
-        }
         args.append("--no-usage-statistics")
         args.append("--no-performance-crux")
         return MCPServerConfig(
