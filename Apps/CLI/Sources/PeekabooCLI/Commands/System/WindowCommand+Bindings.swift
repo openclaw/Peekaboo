@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 
 struct WindowActionResult: Codable {
     let action: String
@@ -12,6 +13,17 @@ struct WindowActionResult: Codable {
     let requested_bounds: WindowBounds?
     /// Set when the achieved geometry differs from the requested one or could not be verified.
     let warning: String?
+}
+
+@MainActor
+private protocol WindowMutationPreRuntimeValidatingCommand: PreRuntimeValidatingCommand {
+    var windowOptions: WindowIdentificationOptions { get }
+}
+
+extension WindowMutationPreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        try self.windowOptions.validateMutation()
+    }
 }
 
 // MARK: - Subcommand Conformances
@@ -27,6 +39,8 @@ extension WindowCommand.MoveSubcommand: ParsableCommand {
 
 extension WindowCommand.MoveSubcommand: AsyncRuntimeCommand {}
 
+extension WindowCommand.MoveSubcommand: WindowMutationPreRuntimeValidatingCommand {}
+
 @MainActor
 extension WindowCommand.ResizeSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
@@ -38,6 +52,8 @@ extension WindowCommand.ResizeSubcommand: ParsableCommand {
 
 extension WindowCommand.ResizeSubcommand: AsyncRuntimeCommand {}
 
+extension WindowCommand.ResizeSubcommand: WindowMutationPreRuntimeValidatingCommand {}
+
 @MainActor
 extension WindowCommand.SetBoundsSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
@@ -48,6 +64,8 @@ extension WindowCommand.SetBoundsSubcommand: ParsableCommand {
 }
 
 extension WindowCommand.SetBoundsSubcommand: AsyncRuntimeCommand {}
+
+extension WindowCommand.SetBoundsSubcommand: WindowMutationPreRuntimeValidatingCommand {}
 
 @MainActor
 extension WindowCommand.WindowListSubcommand: ParsableCommand {
@@ -69,6 +87,16 @@ extension WindowCommand.WindowListSubcommand: ParsableCommand {
 
 extension WindowCommand.WindowListSubcommand: AsyncRuntimeCommand {}
 
+extension WindowCommand.WindowListSubcommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        let selector = InteractionTargetSelector(
+            applicationIdentifier: self.app,
+            processIdentifier: self.pid.map(Int.init)
+        )
+        _ = try validatedMutationSelector(selector)
+    }
+}
+
 @MainActor
 extension WindowCommand.CloseSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
@@ -80,6 +108,8 @@ extension WindowCommand.CloseSubcommand: ParsableCommand {
 
 extension WindowCommand.CloseSubcommand: AsyncRuntimeCommand {}
 
+extension WindowCommand.CloseSubcommand: WindowMutationPreRuntimeValidatingCommand {}
+
 @MainActor
 extension WindowCommand.MinimizeSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
@@ -90,6 +120,8 @@ extension WindowCommand.MinimizeSubcommand: ParsableCommand {
 }
 
 extension WindowCommand.MinimizeSubcommand: AsyncRuntimeCommand {}
+
+extension WindowCommand.MinimizeSubcommand: WindowMutationPreRuntimeValidatingCommand {}
 
 @MainActor
 extension WindowCommand.RestoreSubcommand: ParsableCommand {
@@ -105,6 +137,8 @@ extension WindowCommand.RestoreSubcommand: ParsableCommand {
 
 extension WindowCommand.RestoreSubcommand: AsyncRuntimeCommand {}
 
+extension WindowCommand.RestoreSubcommand: WindowMutationPreRuntimeValidatingCommand {}
+
 @MainActor
 extension WindowCommand.MaximizeSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
@@ -118,6 +152,8 @@ extension WindowCommand.MaximizeSubcommand: ParsableCommand {
 }
 
 extension WindowCommand.MaximizeSubcommand: AsyncRuntimeCommand {}
+
+extension WindowCommand.MaximizeSubcommand: WindowMutationPreRuntimeValidatingCommand {}
 
 @MainActor
 extension WindowCommand.FocusSubcommand: ParsableCommand {
@@ -145,6 +181,12 @@ extension WindowCommand.FocusSubcommand: ParsableCommand {
 }
 
 extension WindowCommand.FocusSubcommand: AsyncRuntimeCommand {}
+
+extension WindowCommand.FocusSubcommand: PreRuntimeValidatingCommand {
+    func validateBeforeRuntime() throws {
+        try self.windowOptions.validateMutation(allowMissingTarget: self.snapshot?.isEmpty == false)
+    }
+}
 
 // MARK: - Commander Binding
 

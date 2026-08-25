@@ -287,7 +287,7 @@ func validatedMutationSelector(
         case .invalidApplicationProcessIdentifier:
             throw Commander.ValidationError("Invalid PID format in --app")
         case .applicationAndProcessIdentifier:
-            throw Commander.ValidationError("Provide the application either with --app or --pid, not both")
+            throw InteractionTargetOptions.validationError(for: error)
         case .multipleWindowSelectors:
             throw Commander.ValidationError(multipleWindowSelectorsMessage)
         case .windowSelectorRequiresApplication:

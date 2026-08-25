@@ -22,6 +22,71 @@ struct PreRuntimeInvalidInputOrderingTests {
             "Invalid --browser-url. Expected http://127.0.0.1:<port>, " +
                 "http://[::1]:<port>, or http://localhost:<port>."
         ),
+        (
+            ["peekaboo", "window", "list", "--app", "TextEdit", "--pid", "123", "--json"],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            ["peekaboo", "window", "close", "--app", "TextEdit", "--pid", "123", "--json"],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            ["peekaboo", "window", "minimize", "--app", "TextEdit", "--pid", "123", "--json"],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            ["peekaboo", "window", "restore", "--app", "TextEdit", "--pid", "123", "--json"],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            ["peekaboo", "window", "maximize", "--app", "TextEdit", "--pid", "123", "--json"],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            [
+                "peekaboo", "window", "move", "--app", "TextEdit", "--pid", "123", "--x", "10", "--y", "20",
+                "--json",
+            ],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            [
+                "peekaboo", "window", "resize", "--app", "TextEdit", "--pid", "123", "--width", "100",
+                "--height", "100", "--json",
+            ],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            [
+                "peekaboo", "window", "set-bounds", "--app", "TextEdit", "--pid", "123", "--x", "10", "--y",
+                "20", "--width", "100", "--height", "100", "--json",
+            ],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            ["peekaboo", "window", "focus", "--app", "TextEdit", "--pid", "123", "--json"],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            [
+                "peekaboo", "space", "move-window", "--app", "TextEdit", "--pid", "123", "--to", "2", "--json",
+            ],
+            "Use either --app or --pid, not both."
+        ),
+        (
+            [
+                "peekaboo", "window", "restore", "--app", "TextEdit", "--window-id", "42", "--window-title",
+                "Document", "--json",
+            ],
+            "Provide only one of --window-id, --window-title, or --window-index"
+        ),
+        (
+            [
+                "peekaboo", "space", "move-window", "--app", "TextEdit", "--window-id", "42", "--window-index",
+                "0", "--to", "2", "--json",
+            ],
+            "Provide only one of --window-id, --window-title, or --window-index"
+        ),
     ])
     func `semantic-invalid commands refuse before runtime construction`(
         arguments: [String],

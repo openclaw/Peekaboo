@@ -1,6 +1,8 @@
 import Foundation
+import MCP
 import PeekabooAgentRuntime
 import PeekabooCore
+import TachikomaMCP
 import Testing
 @testable import PeekabooCLI
 
@@ -78,6 +80,36 @@ struct ToolsCommandTests {
         #expect(json.contains("\"input_schema\""))
         #expect(json.contains("\"properties\""))
         #expect(ToolsCommand.DescribeSubcommand.payload(named: "nonexistent", tools: tools) == nil)
+    }
+
+    @Test
+    @MainActor
+    func `Default tools catalog exposes only background-safe authority`() throws {
+        let services = PeekabooServices()
+        let context = MCPToolContext(services: services)
+        let tools = MCPToolCatalog.tools(
+            context: context,
+            inputPolicy: services.configuration.getUIInputPolicy(),
+            filters: ToolFilters(allow: [], deny: [], allowSource: .none, denySources: [:])
+        )
+        let names = Set(tools.map(\.name))
+
+        #expect(names.isSuperset(of: ["click", "type", "press", "paste", "clipboard", "app", "window"]))
+        #expect(names.isDisjoint(with: ["move", "drag"]))
+
+        let clipboard = try #require(tools.first { $0.name == "clipboard" })
+        guard case let .object(schema) = clipboard.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(action)? = properties["action"],
+              case let .array(actions)? = action["enum"]
+        else {
+            Issue.record("Expected the policy-filtered clipboard action schema")
+            return
+        }
+        #expect(actions == ["get", "save"].map(Value.string))
+        #expect(properties["text"] == nil)
+        #expect(properties["file_path"] == nil)
+        #expect(properties["data_base64"] == nil)
     }
 }
 

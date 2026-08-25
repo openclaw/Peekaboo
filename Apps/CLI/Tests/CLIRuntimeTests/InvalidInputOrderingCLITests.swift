@@ -21,6 +21,18 @@ struct InvalidInputOrderingCLITests {
         let hint: String?
     }
 
+    struct SystemSelectorCase: Sendable {
+        let arguments: [String]
+    }
+
+    private struct ErrorEnvelope {
+        let code: String
+        let message: String
+        let hint: String?
+        let debugLogs: [String]
+        let mutationDispatched: Bool?
+    }
+
     @Test(arguments: [
         MissingSemanticInputCase(command: "type"),
         MissingSemanticInputCase(command: "press"),
@@ -130,6 +142,33 @@ struct InvalidInputOrderingCLITests {
         #expect(envelope.hint == testCase.hint)
         #expect(envelope.debugLogs.isEmpty)
         #expect(elapsed < .seconds(2))
+    }
+
+    @Test(arguments: [
+        SystemSelectorCase(arguments: [
+            "window", "restore", "--app", "TextEdit", "--pid", "123",
+        ]),
+        SystemSelectorCase(arguments: [
+            "space", "move-window", "--app", "TextEdit", "--pid", "123", "--to", "2",
+        ]),
+    ])
+    func `invalid system selectors refuse before runtime-host discovery`(
+        _ testCase: SystemSelectorCase
+    ) async throws {
+        let result = try await TestChildProcess.runPeekaboo(
+            testCase.arguments + [
+                "--bridge-socket", "/tmp/peekaboo-system-selector-preflight-missing.sock", "--json",
+            ],
+            isolateFromRemoteHosts: false
+        )
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardError.isEmpty)
+        let envelope = try Self.errorEnvelope(from: result.standardOutput)
+        #expect(envelope.code == "VALIDATION_ERROR")
+        #expect(envelope.message == "Use either --app or --pid, not both.")
+        #expect(envelope.debugLogs.isEmpty)
+        #expect(envelope.mutationDispatched == false)
     }
 
     @Test
@@ -270,22 +309,18 @@ struct InvalidInputOrderingCLITests {
         }
     }
 
-    private static func errorEnvelope(from output: String) throws -> (
-        code: String,
-        message: String,
-        hint: String?,
-        debugLogs: [String]
-    ) {
+    private static func errorEnvelope(from output: String) throws -> ErrorEnvelope {
         let object = try #require(
             JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
         )
         #expect(object["success"] as? Bool == false)
         let error = try #require(object["error"] as? [String: Any])
-        return try (
+        return try ErrorEnvelope(
             code: #require(error["code"] as? String),
             message: #require(error["message"] as? String),
             hint: error["hint"] as? String,
-            debugLogs: #require(object["debug_logs"] as? [String])
+            debugLogs: #require(object["debug_logs"] as? [String]),
+            mutationDispatched: error["mutation_dispatched"] as? Bool
         )
     }
 }

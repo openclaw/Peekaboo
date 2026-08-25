@@ -71,7 +71,7 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
             case .invalidApplicationProcessIdentifier:
                 throw PeekabooError.invalidInput("Invalid PID format in --app: '\(self.app ?? "")'")
             case .applicationAndProcessIdentifier:
-                throw PeekabooError.invalidInput("Provide the application either with --app or --pid, not both")
+                throw InteractionTargetOptions.validationError(for: error)
             case .multipleWindowSelectors,
                  .windowSelectorRequiresApplication,
                  .invalidProcessIdentifier,

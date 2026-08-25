@@ -40,6 +40,7 @@
 - Explain why locked macOS sessions cannot be captured even when `screen list` still reports connected displays.
 - Restore terminal echo when credential prompts receive signals and reject background prompts or insecure credential files.
 - Deduplicate runtime flags and improve unknown-command, browser reconnect, help, `learn`, schema, and background-automation guidance.
+- Validate contradictory window and Space selectors before runtime-host discovery so malformed requests cannot start support services or mask the actionable error.
 
 ## [4.2.2] - 2026-08-20
 

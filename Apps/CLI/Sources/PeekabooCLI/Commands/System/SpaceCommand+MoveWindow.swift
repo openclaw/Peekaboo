@@ -40,7 +40,7 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
     var foreground = false
     @RuntimeStorage var runtime: CommandRuntime?
 
-    mutating func validate() throws {
+    func validateBeforeRuntime() throws {
         try self.makeWindowOptions().validateMutation()
 
         guard self.to != nil || self.toCurrent else {
@@ -49,6 +49,21 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
         guard !(self.to != nil && self.toCurrent) else {
             throw ValidationError("Cannot specify both --to and --to-current")
         }
+
+        if self.follow, !self.foreground {
+            throw PreDispatchActionError(
+                message: "Space move-window --follow changes the visible desktop and requires explicit " +
+                    "--foreground consent.",
+                code: .VALIDATION_ERROR,
+                hint: "Omit --follow for background window placement, or add --foreground when following is " +
+                    "intentional.",
+                reason: .foregroundConsentRequired
+            )
+        }
+    }
+
+    mutating func validate() throws {
+        try self.validateBeforeRuntime()
     }
 
     @MainActor
@@ -57,21 +72,11 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         do {
-            if self.follow, !self.foreground {
-                throw PreDispatchActionError(
-                    message: "Space move-window --follow changes the visible desktop and requires explicit " +
-                        "--foreground consent.",
-                    code: .VALIDATION_ERROR,
-                    hint: "Omit --follow for background window placement, or add --foreground when following is " +
-                        "intentional.",
-                    reason: .foregroundConsentRequired
-                )
-            }
+            try self.validateBeforeRuntime()
             try SpaceCommandHostOwnership.requireLocalMutation(
                 services: self.services,
                 operation: "move a window between Spaces"
             )
-            try self.validate()
             let windowOptions = self.makeWindowOptions()
             let appInfo = try await windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
@@ -313,6 +318,7 @@ extension MoveWindowSubcommand: ParsableCommand {
 }
 
 extension MoveWindowSubcommand: AsyncRuntimeCommand {}
+extension MoveWindowSubcommand: PreRuntimeValidatingCommand {}
 
 @MainActor
 extension MoveWindowSubcommand: CommanderBindableCommand {
