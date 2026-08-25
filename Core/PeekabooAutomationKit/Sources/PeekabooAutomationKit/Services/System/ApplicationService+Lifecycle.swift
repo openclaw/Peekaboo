@@ -1076,6 +1076,7 @@ extension ApplicationService {
 
     static func dispatchApplicationAccessibilityHide(
         isSupported: () -> Bool,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() },
         submit: () throws -> Void) throws
     {
         guard isSupported() else {
@@ -1083,6 +1084,9 @@ extension ApplicationService {
                 reason: .operationUnsupported,
                 message: "The application does not expose an AXHide action.")
         }
+        try self.checkApplicationDispatchCancellation(
+            operation: "Hide application",
+            checkCancellation)
         try submit()
     }
 

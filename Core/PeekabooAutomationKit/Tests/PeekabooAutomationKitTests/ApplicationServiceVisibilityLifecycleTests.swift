@@ -28,6 +28,35 @@ struct ApplicationServiceVisibilityLifecycleTests {
 
     @Test
     @MainActor
+    func `AX hide cancellation after support preflight refuses before submission`() {
+        var events: [String] = []
+
+        do {
+            try ApplicationService.dispatchApplicationAccessibilityHide(
+                isSupported: {
+                    events.append("support")
+                    return true
+                },
+                checkCancellation: {
+                    events.append("cancellation")
+                    throw CancellationError()
+                },
+                submit: { events.append("submission") })
+            Issue.record("Expected typed AXHide cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(events == ["support", "cancellation"])
+    }
+
+    @Test
+    @MainActor
     func `native visibility invocation is dispatched when AppKit returns false`() {
         var submissionCount = 0
 
