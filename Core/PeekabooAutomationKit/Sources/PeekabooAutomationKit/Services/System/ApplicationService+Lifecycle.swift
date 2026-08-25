@@ -1074,6 +1074,26 @@ extension ApplicationService {
         _ = try await self.unhideApplicationResult(identifier: identifier)
     }
 
+    static func dispatchApplicationAccessibilityHide(
+        isSupported: () -> Bool,
+        submit: () throws -> Void) throws
+    {
+        guard isSupported() else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The application does not expose an AXHide action.")
+        }
+        try submit()
+    }
+
+    static func submitNativeApplicationVisibility(_ submit: () -> Bool) -> Bool {
+        // NSRunningApplication can return false even though the asynchronous visibility request
+        // takes effect. The invocation is therefore a dispatched unit; exact state polling owns
+        // the terminal outcome instead of the immediate advisory Boolean.
+        _ = submit()
+        return true
+    }
+
     func requestApplicationVisibility(
         _ application: NSRunningApplication,
         hidden: Bool) throws -> ApplicationVisibilityAttempt

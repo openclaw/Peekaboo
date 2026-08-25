@@ -7,6 +7,41 @@ import Testing
 struct ApplicationServiceVisibilityLifecycleTests {
     @Test
     @MainActor
+    func `AX hide preflight refuses unsupported action before submission`() {
+        var submissionCount = 0
+
+        do {
+            try ApplicationService.dispatchApplicationAccessibilityHide(
+                isSupported: { false },
+                submit: { submissionCount += 1 })
+            Issue.record("Expected unsupported AXHide refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .operationUnsupported)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(submissionCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `native visibility invocation is dispatched when AppKit returns false`() {
+        var submissionCount = 0
+
+        let dispatched = ApplicationService.submitNativeApplicationVisibility {
+            submissionCount += 1
+            return false
+        }
+
+        #expect(dispatched)
+        #expect(submissionCount == 1)
+    }
+
+    @Test
+    @MainActor
     func `show all cancellation immediately before AX submission is typed and dispatches nothing`() {
         var submissionCount = 0
 

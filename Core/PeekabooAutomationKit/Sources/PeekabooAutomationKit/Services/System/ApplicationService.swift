@@ -261,10 +261,15 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         },
         applicationHiddenProvider: @escaping ApplicationHiddenProvider = { $0.isHidden },
         applicationAccessibilityHideHandler: @escaping ApplicationAccessibilityHideHandler = { application in
-            try AXApp(application).element.performAction(Attribute<String>("AXHide"))
+            let element = AXApp(application).element
+            try ApplicationService.dispatchApplicationAccessibilityHide(
+                isSupported: { element.isActionSupported("AXHide") },
+                submit: { try element.performAction(Attribute<String>("AXHide")) })
         },
         applicationNativeVisibilityHandler: @escaping ApplicationNativeVisibilityHandler = { application, hidden in
-            hidden ? application.hide() : application.unhide()
+            ApplicationService.submitNativeApplicationVisibility {
+                hidden ? application.hide() : application.unhide()
+            }
         },
         applicationVisibilityHandler: ApplicationVisibilityHandler? = nil,
         applicationVisibilitySleepHandler: @escaping ApplicationVisibilitySleepHandler = { duration in
