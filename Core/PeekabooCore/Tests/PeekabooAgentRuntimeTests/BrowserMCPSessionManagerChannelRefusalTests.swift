@@ -85,6 +85,7 @@ struct BrowserMCPSessionManagerChannelRefusalTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
+            processCodeSignatureValidator: { _, _, _ in true },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in
                 throw BrowserMCPConnectionError.invalidEndpoint("unexpected HTTP resolution")
             },

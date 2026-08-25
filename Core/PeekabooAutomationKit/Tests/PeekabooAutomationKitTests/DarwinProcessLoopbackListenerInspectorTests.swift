@@ -41,7 +41,7 @@ struct DarwinProcessLoopbackListenerInspectorTests {
     func `full inventory at the descriptor ceiling is treated as truncated`() {
         let source = DarwinProcessLoopbackListenerInspector.InspectionSource(
             processStartIdentity: { _ in 9073 },
-            descriptorCapacityLimit: { 64 },
+            descriptorCapacityBounds: { _ in .init(initial: 64, limit: 64) },
             listDescriptors: { _, capacity in
                 .init(descriptors: [], filledBuffer: capacity == 64, hasPartialRecord: false)
             },
@@ -54,6 +54,36 @@ struct DarwinProcessLoopbackListenerInspectorTests {
                 port: 9222,
                 source: source)
         }
+    }
+
+    @Test
+    func `descriptor inventory grows beyond the inspector file descriptor limit`() throws {
+        let capacities = CapacityBox()
+        let source = DarwinProcessLoopbackListenerInspector.InspectionSource(
+            processStartIdentity: { _ in 9076 },
+            descriptorCapacityBounds: { _ in .init(initial: 64, limit: 512) },
+            listDescriptors: { _, capacity in
+                capacities.append(capacity)
+                if capacity < 512 {
+                    return .init(descriptors: [], filledBuffer: true, hasPartialRecord: false)
+                }
+                return .init(
+                    descriptors: [.init(fileDescriptor: 10, isSocket: true)],
+                    filledBuffer: false,
+                    hasPartialRecord: false)
+            },
+            socketObservation: { _, descriptor in
+                descriptor == 10 ? Self.socket() : nil
+            })
+
+        let identity = try DarwinProcessLoopbackListenerInspector.inspect(
+            processIdentifier: 76,
+            processStartIdentity: 9076,
+            port: 9222,
+            source: source)
+
+        #expect(identity.processIdentifier == 76)
+        #expect(capacities.values == [64, 128, 256, 512])
     }
 
     @Test
@@ -116,7 +146,7 @@ struct DarwinProcessLoopbackListenerInspectorTests {
         })
         return .init(
             processStartIdentity: processStartIdentity ?? { _ in generation },
-            descriptorCapacityLimit: { 256 },
+            descriptorCapacityBounds: { _ in .init(initial: 64, limit: 256) },
             listDescriptors: { _, _ in
                 .init(
                     descriptors: socketMap.keys.sorted().map {
@@ -143,6 +173,21 @@ struct DarwinProcessLoopbackListenerInspectorTests {
             kernelSocketAddress: kernelSocketAddress,
             kernelProtocolControlBlock: kernelSocketAddress + 1,
             kernelGeneration: kernelSocketAddress + 2)
+    }
+}
+
+private final class CapacityBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [Int] = []
+
+    var values: [Int] {
+        self.lock.withLock { self.storedValues }
+    }
+
+    func append(_ value: Int) {
+        self.lock.withLock {
+            self.storedValues.append(value)
+        }
     }
 }
 

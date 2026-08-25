@@ -114,9 +114,13 @@ public struct DarwinProcessLoopbackListenerInspector: Sendable {
             throw DarwinProcessLoopbackListenerInspectionError.processGenerationChanged(processIdentifier)
         }
 
+        guard let capacityBounds = source.descriptorCapacityBounds(processIdentifier) else {
+            throw DarwinProcessLoopbackListenerInspectionError
+                .descriptorInventoryUnavailable(processIdentifier)
+        }
         let initialCapacity = 64
-        let capacityLimit = max(initialCapacity, source.descriptorCapacityLimit())
-        var capacity = min(initialCapacity, capacityLimit)
+        let capacityLimit = max(initialCapacity, capacityBounds.limit)
+        var capacity = min(max(initialCapacity, capacityBounds.initial), capacityLimit)
         let descriptors: [Descriptor]
         while true {
             guard let batch = source.listDescriptors(processIdentifier, capacity) else {
@@ -197,6 +201,11 @@ extension DarwinProcessLoopbackListenerInspector {
         let hasPartialRecord: Bool
     }
 
+    struct DescriptorCapacityBounds: Sendable {
+        let initial: Int
+        let limit: Int
+    }
+
     struct SocketObservation: Sendable, Hashable {
         let isTCPListener: Bool
         let port: UInt16
@@ -209,21 +218,39 @@ extension DarwinProcessLoopbackListenerInspector {
 
     struct InspectionSource: Sendable {
         let processStartIdentity: @Sendable (pid_t) -> UInt64?
-        let descriptorCapacityLimit: @Sendable () -> Int
+        let descriptorCapacityBounds: @Sendable (pid_t) -> DescriptorCapacityBounds?
         let listDescriptors: @Sendable (pid_t, Int) -> DescriptorBatch?
         let socketObservation: @Sendable (pid_t, Int32) -> SocketObservation?
 
         static let live = InspectionSource(
             processStartIdentity: SystemIdentityResolver.processStartIdentity,
-            descriptorCapacityLimit: {
+            descriptorCapacityBounds: { processIdentifier in
+                let stride = MemoryLayout<proc_fdinfo>.stride
                 let bufferLimit = Int(Int32.max) / MemoryLayout<proc_fdinfo>.stride
-                var descriptorLimit = rlimit()
-                guard getrlimit(RLIMIT_NOFILE, &descriptorLimit) == 0,
-                      descriptorLimit.rlim_cur != rlim_t(Int64.max)
+                var systemLimit: Int32 = 0
+                var systemLimitSize = MemoryLayout.size(ofValue: systemLimit)
+                guard sysctlbyname(
+                    "kern.maxfilesperproc",
+                    &systemLimit,
+                    &systemLimitSize,
+                    nil,
+                    0) == 0,
+                    systemLimit > 0
                 else {
-                    return bufferLimit
+                    return nil
                 }
-                return min(Int(clamping: descriptorLimit.rlim_cur), bufferLimit)
+                let reportedByteCount = proc_pidinfo(
+                    processIdentifier,
+                    PROC_PIDLISTFDS,
+                    0,
+                    nil,
+                    0)
+                guard reportedByteCount > 0 else { return nil }
+                let reportedCapacity = (Int(reportedByteCount) + stride - 1) / stride
+                let hardLimit = min(Int(systemLimit) + 1, bufferLimit)
+                return DescriptorCapacityBounds(
+                    initial: min(max(reportedCapacity + 1, 64), hardLimit),
+                    limit: hardLimit)
             },
             listDescriptors: { processIdentifier, capacity in
                 var descriptors = [proc_fdinfo](repeating: proc_fdinfo(), count: capacity)

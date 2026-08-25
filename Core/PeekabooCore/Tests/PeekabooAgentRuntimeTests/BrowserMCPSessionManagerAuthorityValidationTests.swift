@@ -18,6 +18,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
+            processCodeSignatureValidator: { _, _, _ in true },
             connectionAttempt: { .standalone(timeout: .milliseconds(40)) },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
@@ -129,6 +130,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in browser.bundleIdentifier },
+            processCodeSignatureValidator: { _, _, _ in true },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(resolve, revalidate: revalidate),
             environment: [:])
@@ -163,6 +165,63 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         let receipt = try #require(try await session.connect(channel: .stable).connectionReceipt)
         manager.executedTools.removeAll()
         bundle.value = "com.apple.SafariPlatformSupport.Helper"
+
+        await #expect(throws: BrowserMCPConnectionError.self) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+        }
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeServerCount == 1)
+        #expect(await (session.status(channel: .stable)).connectionReceipt == nil)
+    }
+
+    @Test
+    func `exact bundle with untrusted signer refuses before endpoint or MCP dispatch`() async {
+        let manager = AuthorityBrowserMCPManager()
+        let initialResolutions = AuthorityCounter()
+        let browser = Self.browser(bundleIdentifier: "com.google.Chrome")
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [browser] },
+            processStartIdentity: { _ in 2050 },
+            processBundleIdentifier: { _ in "com.google.Chrome" },
+            processCodeSignatureValidator: { _, _, _ in false },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            channelEndpointResolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, _ in
+                    initialResolutions.increment()
+                    return Self.endpoint()
+                },
+                revalidate: { _, _ in }),
+            environment: [:])
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await session.connect(channel: .stable)
+        }
+        #expect(initialResolutions.value == 0)
+        #expect(manager.addServerCount == 0)
+        #expect(manager.executedTools.isEmpty)
+    }
+
+    @Test
+    func `signer drift clears receipt and refuses leaf dispatch`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        let signer = AuthorityBoolBox(true)
+        let session = Self.session(
+            manager: manager,
+            resolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, attempt in
+                    attempt.state.markPermissionDispatchStarted()
+                    return Self.endpoint()
+                },
+                revalidate: { _, _ in }),
+            signer: { _, _, _ in signer.value })
+        let receipt = try #require(try await session.connect(channel: .stable).connectionReceipt)
+        manager.executedTools.removeAll()
+        signer.value = false
 
         await #expect(throws: BrowserMCPConnectionError.self) {
             _ = try await session.executeSequence(
@@ -245,6 +304,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
+            processCodeSignatureValidator: { _, _, _ in true },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
                 resolveInitial: { _, _ in
@@ -301,6 +361,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [Self.browser(bundleIdentifier: "com.google.Chrome")] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
+            processCodeSignatureValidator: { _, _, _ in true },
             isolatedConnectionRequested: { isolated.value },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
@@ -334,6 +395,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [Self.browser(bundleIdentifier: "com.google.Chrome")] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
+            processCodeSignatureValidator: { _, _, _ in true },
             preferredChannel: { .canary },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
@@ -399,7 +461,9 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         resolver: BrowserMCPChannelEndpointResolver,
         liveBundle: @escaping BrowserMCPSessionManager.ProcessBundleIdentifierProvider = { _ in
             "com.google.Chrome"
-        }) -> BrowserMCPSessionManager
+        },
+        signer: @escaping BrowserMCPSessionManager.ProcessCodeSignatureValidator = { _, _, _ in true })
+        -> BrowserMCPSessionManager
     {
         let browser = Self.browser(bundleIdentifier: "com.google.Chrome")
         return BrowserMCPSessionManager(
@@ -408,6 +472,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: liveBundle,
+            processCodeSignatureValidator: signer,
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: resolver,
             environment: [:])

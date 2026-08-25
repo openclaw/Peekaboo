@@ -85,6 +85,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     typealias BrowserDetector = @MainActor (BrowserMCPChannel?) -> [DetectedBrowser]
     typealias ProcessIdentityProvider = @Sendable (Int32) -> UInt64?
     typealias ProcessBundleIdentifierProvider = @MainActor @Sendable (Int32) -> String?
+    typealias ProcessCodeSignatureValidator = @Sendable (Int32, UInt64, ChromeChannelIdentity) -> Bool
     typealias ConnectionAttemptProvider = @MainActor @Sendable () -> BrowserMCPConnectionAttempt
     typealias PreferredChannelProvider = @MainActor @Sendable () -> BrowserMCPChannel
     typealias IsolatedConnectionProvider = @MainActor @Sendable () -> Bool
@@ -94,6 +95,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private let detectedBrowsers: BrowserDetector
     private let processStartIdentity: ProcessIdentityProvider
     private let processBundleIdentifier: ProcessBundleIdentifierProvider
+    private let processCodeSignatureValidator: ProcessCodeSignatureValidator
     private let connectionAttempt: ConnectionAttemptProvider
     private let preferredChannel: PreferredChannelProvider
     private let isolatedConnectionRequested: IsolatedConnectionProvider
@@ -127,6 +129,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         processBundleIdentifier: @escaping ProcessBundleIdentifierProvider = { processIdentifier in
             NSRunningApplication(processIdentifier: processIdentifier)?.bundleIdentifier
         },
+        processCodeSignatureValidator: @escaping ProcessCodeSignatureValidator =
+            BrowserMCPSessionManager.validateChromeProcessCodeSignature,
         connectionAttempt: @escaping ConnectionAttemptProvider = BrowserMCPConnectionAttempt.live,
         preferredChannel: @escaping PreferredChannelProvider = BrowserMCPService.preferredChannel,
         isolatedConnectionRequested: IsolatedConnectionProvider? = nil,
@@ -141,6 +145,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.detectedBrowsers = detectedBrowsers
         self.processStartIdentity = processStartIdentity
         self.processBundleIdentifier = processBundleIdentifier
+        self.processCodeSignatureValidator = processCodeSignatureValidator
         self.connectionAttempt = connectionAttempt
         self.preferredChannel = preferredChannel
         self.isolatedConnectionRequested = isolatedConnectionRequested ?? { environmentOptions.isolated }
@@ -148,6 +153,17 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.channelEndpointResolver = channelEndpointResolver
         self.uploadStager = uploadStager
         self.environmentOptions = environmentOptions
+    }
+
+    private nonisolated static func validateChromeProcessCodeSignature(
+        _ processIdentifier: Int32,
+        _ processStartIdentity: UInt64,
+        _ channel: ChromeChannelIdentity) -> Bool
+    {
+        ChromeProcessCodeSignatureValidator.live.validate(
+            processIdentifier,
+            processStartIdentity,
+            channel)
     }
 
     func status(channel: BrowserMCPChannel?) async -> BrowserMCPStatus {
@@ -889,15 +905,29 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         else {
             throw BrowserMCPConnectionError.processIdentityUnavailable(browser.processIdentifier)
         }
+        guard self.processCodeSignatureValidator(
+            browser.processIdentifier,
+            processStartIdentity,
+            channelIdentity)
+        else {
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                resolvedChannel,
+                "the native Chrome process does not have the official Google signing identity")
+        }
         let processTarget = BrowserMCPChannelProcessTarget(
             channel: resolvedChannel,
             processIdentifier: browser.processIdentifier,
             processStartIdentity: processStartIdentity,
             bundleIdentifier: channelIdentity.bundleIdentifier)
         let endpoint = try await self.channelEndpointResolver.resolve(processTarget, attempt: attempt)
-        guard channelIdentity.matches(bundleIdentifier: self.processBundleIdentifier(browser.processIdentifier)) else {
+        guard channelIdentity.matches(bundleIdentifier: self.processBundleIdentifier(browser.processIdentifier)),
+              self.processCodeSignatureValidator(
+                  browser.processIdentifier,
+                  processStartIdentity,
+                  channelIdentity)
+        else {
             throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
-                "the live Chrome bundle identity changed during Browser.getVersion")
+                "the live Chrome bundle or signing identity changed during Browser.getVersion")
         }
         let receipt = BrowserMCPConnectionReceipt(
             channel: resolvedChannel,
@@ -970,6 +1000,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     "Chrome PID \(processIdentifier) changed process generation")
             }
             guard channelIdentity.matches(bundleIdentifier: self.processBundleIdentifier(processIdentifier)),
+                  self.processCodeSignatureValidator(
+                      processIdentifier,
+                      processStartIdentity,
+                      channelIdentity),
                   self.detectedBrowsers(channel).contains(where: { browser in
                       browser.processIdentifier == processIdentifier &&
                           browser.processStartIdentity == processStartIdentity &&
@@ -977,7 +1011,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   })
             else {
                 throw BrowserMCPConnectionError.connectionLost(
-                    "Chrome PID \(processIdentifier) changed bundle or channel identity")
+                    "Chrome PID \(processIdentifier) changed bundle, channel, or signing identity")
             }
             try await self.channelEndpointResolver.revalidate(
                 BrowserMCPChannelProcessTarget(
