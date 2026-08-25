@@ -158,19 +158,22 @@ public enum BrowserMCPChannel: String, Sendable, CaseIterable, Codable {
         let bundle = bundleIdentifier.lowercased()
         let name = applicationName.lowercased()
 
-        if bundle == "com.google.chrome" || name == "google chrome" {
-            return .stable
+        if !bundle.isEmpty {
+            return switch bundle {
+            case "com.google.chrome": .stable
+            case "com.google.chrome.beta": .beta
+            case "com.google.chrome.dev": .dev
+            case "com.google.chrome.canary": .canary
+            default: nil
+            }
         }
-        if bundle.contains("chrome.beta") || name.contains("chrome beta") {
-            return .beta
+        return switch name {
+        case "google chrome": .stable
+        case "google chrome beta": .beta
+        case "google chrome dev": .dev
+        case "google chrome canary": .canary
+        default: nil
         }
-        if bundle.contains("chrome.dev") || name.contains("chrome dev") {
-            return .dev
-        }
-        if bundle.contains("chrome.canary") || name.contains("canary") {
-            return .canary
-        }
-        return nil
     }
 }
 

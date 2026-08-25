@@ -27,9 +27,11 @@ Peekaboo attaches to an already-running Chrome profile. It requires:
 3. Remote debugging enabled at `chrome://inspect/#remote-debugging`.
 4. User approval in Chrome's remote debugging permission prompt.
 
-Peekaboo does not approve that prompt automatically. Once Chrome publishes `DevToolsActivePort`, channel connect reads
-that owner-controlled file without following symlinks, proves that its one exact loopback listener belongs to the
-detected Chrome PID and process generation, and opens the exact published WebSocket. That native connection remains
+Peekaboo recognizes running channels by exact Chrome bundle identifier, so app-owned helper or XPC service names cannot
+be mistaken for another browser process. Peekaboo does not approve the prompt automatically. Once Chrome publishes
+`DevToolsActivePort`, channel connect reads that owner-controlled file without following symlinks, proves that its one
+exact loopback listener belongs to the detected Chrome PID and process generation, and opens the exact published
+WebSocket. That native connection remains
 pending while Chrome shows its approval prompt, has a bounded 60-second wait, sends CDP `Browser.getVersion`, and then
 revalidates the process-owned listener before passing that same WebSocket identity as `--wsEndpoint` to Chrome DevTools
 MCP. It never uses legacy HTTP discovery for channel mode or asks the MCP child to rediscover an ambient browser.
