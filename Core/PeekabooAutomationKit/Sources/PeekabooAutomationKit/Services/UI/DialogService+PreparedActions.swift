@@ -473,7 +473,9 @@ extension DialogService {
             stack.append(contentsOf: traversal.elements.reversed())
         }
         return FreshDialogElements(
-            structural: structuralDialogs,
+            structural: DialogTraversal.preferredStructuralDialogs(
+                in: window,
+                candidates: structuralDialogs),
             legacy: legacyDialogs,
             readable: readable)
     }
@@ -708,17 +710,31 @@ extension DialogService {
     }
 
     func dialogCandidateRefusal(
-        target _: DialogTargetSelector,
+        target: DialogTargetSelector,
         candidates: [TargetedDialogCandidate]) -> DesktopActionFailure
     {
         let candidateIDs = Self.candidateWindowIDs(candidates.map(\.target))
         let message = candidates.isEmpty
             ? "No dialog matched the selected target."
             : "Dialog target is ambiguous across \(candidates.count) eligible dialogs."
+        let hint: String
+        if let windowID = target.windowID {
+            if candidates.isEmpty {
+                let owner = target.processIdentifier.map { " for PID \($0)" } ?? ""
+                hint = "Window ID \(windowID) did not retain a structural dialog. " +
+                    "If it is a blank-title transient sheet CGWindow, use the titled parent AX window ID\(owner) " +
+                    "from window list."
+            } else {
+                hint = "Window ID \(windowID) contains \(candidates.count) simultaneous structural dialogs or " +
+                    "sheets. Wait for or dismiss the extra dialog, then list the retained parent window again."
+            }
+        } else {
+            hint = "Candidate window IDs: \(candidateIDs). Add --window-id or a more exact selector."
+        }
         return .preDispatchRefusal(
             reason: .targetUnavailable,
             message: message,
-            hint: "Candidate window IDs: \(candidateIDs). Add --window-id or a more exact selector.")
+            hint: hint)
     }
 
     func targetUnavailable(_ message: String) -> DesktopActionFailure {

@@ -235,6 +235,82 @@ struct DialogExactInputContractTests {
     }
 
     @Test
+    func `blank sheet CGWindow refusal points to the retained parent instead of repeating its selector`() throws {
+        let service = DialogService()
+        let refusal = try service.dialogCandidateRefusal(
+            target: DialogTargetSelector(processIdentifier: 42, windowID: 21723),
+            candidates: [])
+
+        #expect(refusal.outcome.state == .refused)
+        #expect(refusal.outcome.dispatchState == .none)
+        #expect(refusal.hint?.contains("blank-title transient sheet CGWindow") == true)
+        #expect(refusal.hint?.contains("parent AX window ID") == true)
+        #expect(refusal.hint?.contains("Add --window-id") == false)
+    }
+
+    @Test
+    func `multiple sheets under an exact parent produce a resolvable state hint`() throws {
+        let service = DialogService()
+        let target = try self.target()
+        let application = ServiceApplicationInfo(
+            processIdentifier: target.identity.ownerProcessIdentifier,
+            processStartIdentity: target.identity.ownerProcessStartIdentity,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            name: "Fixture")
+        let window = self.window(
+            id: target.identity.windowID,
+            title: "Dialog Fixture",
+            generation: target.identity.ownerProcessStartIdentity)
+        let evidence = try ResolvedDialogTargetEvidence(
+            target: target,
+            application: application,
+            window: window)
+        let candidates = [0, 1].map { _ in
+            DialogService.TargetedDialogCandidate(
+                target: target,
+                resolvedTarget: evidence,
+                window: Element.systemWide(),
+                dialog: Element.systemWide())
+        }
+
+        let refusal = try service.dialogCandidateRefusal(
+            target: DialogTargetSelector(processIdentifier: 42, windowID: target.identity.windowID),
+            candidates: candidates)
+
+        #expect(refusal.message.contains("ambiguous across 2"))
+        #expect(refusal.hint?.contains("simultaneous structural dialogs or sheets") == true)
+        #expect(refusal.hint?.contains("Add --window-id") == false)
+    }
+
+    @Test
+    func `parent sheet selection does not relax generation or retained parent checks`() throws {
+        let target = try self.target()
+        let staleGeneration = DialogService.DialogTargetRevalidationObservation(
+            applicationIdentity: ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 9999),
+            windowIdentity: target.identity,
+            windowBounds: target.bounds,
+            retainedWindowMatches: true,
+            hierarchyReadable: true,
+            structuralDialogCount: 1,
+            retainedDialogMatches: true)
+        let staleParent = DialogService.DialogTargetRevalidationObservation(
+            applicationIdentity: target.identity.processIdentity,
+            windowIdentity: target.identity,
+            windowBounds: target.bounds,
+            retainedWindowMatches: false,
+            hierarchyReadable: true,
+            structuralDialogCount: 1,
+            retainedDialogMatches: true)
+
+        #expect(!DialogService.isValidDialogTargetRevalidation(
+            expected: target,
+            observation: staleGeneration))
+        #expect(!DialogService.isValidDialogTargetRevalidation(
+            expected: target,
+            observation: staleParent))
+    }
+
+    @Test
     func `resolved dialog proof preserves prohibited helper fuzzy eligibility`() throws {
         let window = self.window(id: 700, title: "Helper Dialog", generation: 1234)
         let target = try UIAutomationTarget.ExactWindow(window: window)

@@ -75,6 +75,55 @@ struct DialogElementTraversalTests {
     }
 
     @Test
+    func `one active sheet supersedes its structural dialog parent`() {
+        let parent = TraversalNode(name: "Dialog Fixture", isMatch: true)
+        let sheet = TraversalNode(name: "Alert", isMatch: true, isSheet: true)
+
+        let preferred = DialogTraversal.preferredStructuralDialogs(
+            in: parent,
+            candidates: [parent, sheet])
+
+        #expect(preferred == [sheet])
+    }
+
+    @Test
+    func `simultaneous sheets and nested alerts remain ambiguous under one parent`() {
+        let parent = TraversalNode(name: "Dialog Fixture", isMatch: true)
+        let firstSheet = TraversalNode(name: "First sheet", isMatch: true, isSheet: true)
+        let secondAlert = TraversalNode(name: "Nested alert", isMatch: true)
+
+        let preferred = DialogTraversal.preferredStructuralDialogs(
+            in: parent,
+            candidates: [parent, firstSheet, secondAlert])
+
+        #expect(preferred == [firstSheet, secondAlert])
+    }
+
+    @Test
+    func `ordinary AXDialog fixture window remains eligible without a sheet`() {
+        let fixture = TraversalNode(name: "Dialog Fixture", isMatch: true)
+
+        let preferred = DialogTraversal.preferredStructuralDialogs(
+            in: fixture,
+            candidates: [fixture])
+
+        #expect(preferred == [fixture])
+    }
+
+    @Test
+    func `multiple ordinary AXDialog fixture windows remain distinct candidates`() {
+        let first = TraversalNode(name: "Dialog Fixture 1", isMatch: true)
+        let second = TraversalNode(name: "Dialog Fixture 2", isMatch: true)
+
+        let candidates = [
+            DialogTraversal.preferredStructuralDialogs(in: first, candidates: [first]),
+            DialogTraversal.preferredStructuralDialogs(in: second, candidates: [second]),
+        ].flatMap(\.self)
+
+        #expect(candidates == [first, second])
+    }
+
+    @Test
     func `deep hierarchies do not consume the call stack`() {
         let root = TraversalNode(name: "0")
         var nodes = [root]
