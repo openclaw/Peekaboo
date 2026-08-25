@@ -222,6 +222,7 @@ UIAutomationGlobalPointerActionResultProviding {
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
     {
         try self.requireExactWindowKeyboard()
+        try self.requireCompositeTypeDeliveryIfNeeded(actions)
         return try await self.remoteAction(snapshotId: snapshotId) {
             try await self.client.typeActionsWithOutcome(
                 actions,
@@ -239,6 +240,7 @@ UIAutomationGlobalPointerActionResultProviding {
         target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
     {
         try self.requireExactWindowKeyboard()
+        try self.requireCompositeTypeDeliveryIfNeeded(actions)
         return try await self.remoteAction(snapshotId: snapshotId) {
             try await self.client.typeActionsWithOutcome(
                 actions,

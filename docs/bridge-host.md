@@ -182,6 +182,12 @@ host, then dispatches type or hotkey input while the Bridge mutation gate remain
 every character or key boundary. Exact clicks likewise retain the capture-time receipt through final native dispatch
 and completion validation. New clients reject older hosts for these exact-input operations.
 
+Protocol `1.36` adds `compositeTypeDelivery` for background type requests containing `clear`. Native clear may be one
+AXValue write with zero key presses; clear plus literal input then reports composite delivery and counts that write in
+dispatch units without calling it a key press. Plain targeted/exact/pixel typing remains compatible with earlier hosts.
+Clear-bearing clients require the raw capability before transport, and current hosts reject older negotiated sessions
+before handler entry; signed results correlate the request's clear actions, key count, dispatch count, and delivery.
+
 Protocol `1.18` also carries the initially selected application process-generation receipt through atomic relaunch.
 The daemon re-resolves the selector only to verify that exact receipt, then uses the same receipt for quit and fails
 closed if the PID was recycled. Current clients therefore require a 1.18 on-demand host for relaunch.

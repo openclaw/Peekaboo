@@ -969,6 +969,48 @@ extension CommandRuntimeInjectionTests {
     }
 }
 
+extension CommandRuntimeInjectionTests {
+    @Test
+    func `composite type delivery support requires protocol and raw capability`() {
+        let operations: [PeekabooBridgeOperation] = [
+            .targetedTypeActions,
+            .exactWindowTargetedTypeActions,
+            .exactWindowPixelFocusType,
+        ]
+        let current = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.compositeTypeDeliveryVersion,
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.compositeTypeDelivery,
+            ]
+        )
+        let receiptless = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.compositeTypeDeliveryVersion,
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [PeekabooBridgeHostCapability.compositeTypeDelivery]
+        )
+        let missingCapability = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.compositeTypeDeliveryVersion,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+        let previous = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 35),
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [PeekabooBridgeHostCapability.compositeTypeDelivery]
+        )
+
+        #expect(BridgeCapabilityPolicy.supportsCompositeTypeDelivery(for: current))
+        #expect(!BridgeCapabilityPolicy.supportsCompositeTypeDelivery(for: receiptless))
+        #expect(!BridgeCapabilityPolicy.supportsCompositeTypeDelivery(for: missingCapability))
+        #expect(!BridgeCapabilityPolicy.supportsCompositeTypeDelivery(for: previous))
+    }
+}
+
 @MainActor
 final class RecordingPeekabooServices: PeekabooServiceProviding {
     private let base = PeekabooServices()

@@ -315,7 +315,9 @@ private final class ExactKeyboardAutomationService: MockAutomationService,
     }
 
     let supportsExactWindowTargetedKeyboard = true
+    let supportsExactWindowCompositeTypeDelivery = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
+    let exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
     var focusedElementsByPID: [pid_t: UIFocusInfo] = [:]
     private(set) var exactTypeCalls: [TypeCall] = []

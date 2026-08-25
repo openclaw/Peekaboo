@@ -154,7 +154,7 @@ struct TypeCommandTests {
     }
 
     @Test
-    func `Type JSON output separates requested text from executed actions`() async throws {
+    func `Type JSON output separates requested text from nonliteral executed actions`() async throws {
         let automation = await confirmedTypeAutomation(mode: .foreground)
         let context = await self.makeContext(automation: automation)
         let result = try await self.runType(
@@ -169,7 +169,7 @@ struct TypeCommandTests {
         )
 
         #expect(payload.data.requestedText == "Line 1\\nLine 2")
-        #expect(payload.data.typedText == "Line 1\\nLine 2")
+        #expect(payload.data.typedText == nil)
         #expect(payload.data.literalCharactersTyped == 12)
         #expect(payload.data.specialKeyPresses == 1)
         #expect(payload.data.actions.map(\.kind) == ["text", "key", "text"])

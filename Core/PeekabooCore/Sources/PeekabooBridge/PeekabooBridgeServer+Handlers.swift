@@ -898,6 +898,16 @@ extension PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Atomic exact-window background typing is not supported by this bridge host")
         }
+        if payload.actions.contains(where: \.isClear) {
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+                  self.hostCapabilities.contains(PeekabooBridgeHostCapability.compositeTypeDelivery),
+                  service.supportsExactWindowCompositeTypeDelivery
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Truthful composite background typing receipts are not supported by this bridge host")
+            }
+        }
         self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
         if let outcomeService = try self.automationOutcomeService() {
             let result =
@@ -954,6 +964,17 @@ extension PeekabooBridgeServer {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
                 message: "Atomic exact-window pixel-focus typing is not supported by this bridge host")
+        }
+        if payload.request.actions.contains(where: \.isClear) {
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+                  self.hostCapabilities.contains(PeekabooBridgeHostCapability.compositeTypeDelivery),
+                  (self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+                      .supportsExactWindowCompositeTypeDelivery == true
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Truthful composite background typing receipts are not supported by this bridge host")
+            }
         }
         self.automationActivityObserver?(pid_t(payload.request.windowIdentity.ownerProcessIdentifier))
         let result = try await service.typeActionsByFocusingPixelWithOutcome(payload.request)
@@ -1139,6 +1160,17 @@ extension PeekabooBridgeServer {
         _ payload: PeekabooBridgeTargetedTypeActionsRequest,
         service: any TargetedTypeServiceProtocol) async throws -> PeekabooBridgeHandledResponse
     {
+        if payload.actions.contains(where: \.isClear) {
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+                  self.hostCapabilities.contains(PeekabooBridgeHostCapability.compositeTypeDelivery),
+                  (self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+                      .supportsExactWindowCompositeTypeDelivery == true
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Truthful composite background typing receipts are not supported by this bridge host")
+            }
+        }
         self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
         guard let expectedIdentity = payload.expectedProcessIdentity else {
             if let outcomeService = try self.automationOutcomeService() {

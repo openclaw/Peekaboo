@@ -221,6 +221,15 @@ extension PeekabooBridgeClient {
                     hint: "Update and relaunch Peekaboo before retrying background scroll.")
             }
         }
+        if request.requiresCompositeTypeDeliverySupport,
+           !self.compositeTypeDeliveryEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot return truthful composite background typing receipts.",
+                hint: "Update and relaunch Peekaboo before retrying background typing.")
+        }
         if request.unwrappedOperationRequest.operation == .foregroundModifierClick,
            !self.foregroundModifierClickSnapshotLeaseEnabled
         {

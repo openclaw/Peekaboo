@@ -39,6 +39,14 @@ public final class TypeService {
     private struct TypeActionPayloadSummary {
         let result: TypeResult
         let typedIntoSecureField: Bool
+        let dispatchedUnitCount: Int
+        let delivery: DesktopActionOutcome.Delivery?
+    }
+
+    private struct ClearDispatchSummary {
+        let dispatchedUnitCount: Int
+        let keyPressCount: Int
+        let delivery: DesktopActionOutcome.Delivery
     }
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "TypeService")
@@ -408,11 +416,23 @@ public final class TypeService {
                     actions,
                     cadence: cadence,
                     snapshotId: snapshotId,
-                    targetProcessIdentifier: targetProcessIdentifier,
+                    automationTarget: automationTarget,
                     deliveryValidator: deliveryValidator)
+                guard let payloadSummary else {
+                    throw PeekabooError.operationError(message: "Type action execution produced no payload")
+                }
+                guard payloadSummary.dispatchedUnitCount > 0 else {
+                    return .confirmedNoChange()
+                }
+                guard let delivery = payloadSummary.delivery,
+                      let unitCount = DesktopActionOutcome.DispatchUnitCount(payloadSummary.dispatchedUnitCount)
+                else {
+                    throw PeekabooError.operationError(message: "Type action execution lost dispatch evidence")
+                }
                 return .dispatchedUnverified(
-                    delivery: automationTarget.keyboardDelivery,
-                    evidence: .deliveryAccepted)
+                    delivery: delivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: unitCount)
             },
             success: { executionResult in
                 guard let payloadSummary else {
@@ -481,16 +501,38 @@ public final class TypeService {
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId _: String?,
-        targetProcessIdentifier: pid_t?,
+        automationTarget: UIAutomationTarget,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)?) async throws
         -> TypeActionPayloadSummary
     {
+        let targetProcessIdentifier = automationTarget.processIdentifier
+        let keyboardDelivery = automationTarget.keyboardDelivery
         var totalChars = 0
         var keyPresses = 0
         var emittedUnitCount = 0
         var typedIntoSecureField = false
+        var payloadDelivery: DesktopActionOutcome.Delivery?
+        var usesMultipleDeliveryMechanisms = false
         var humanContext: HumanTypingContext?
         let fixedDelay = self.fixedDelaySeconds(for: cadence)
+
+        func recordDelivery(_ delivery: DesktopActionOutcome.Delivery) {
+            guard let existing = payloadDelivery else {
+                payloadDelivery = delivery
+                return
+            }
+            if existing != delivery {
+                usesMultipleDeliveryMechanisms = true
+            }
+        }
+
+        func accumulatedDelivery() -> DesktopActionOutcome.Delivery? {
+            payloadDelivery.map {
+                usesMultipleDeliveryMechanisms
+                    ? DesktopActionOutcome.Delivery(mechanism: .composite, mode: keyboardDelivery.mode)
+                    : $0
+            }
+        }
 
         self.logger.debug("Processing \(actions.count) type actions with cadence: \(cadence.logDescription)")
 
@@ -520,6 +562,7 @@ public final class TypeService {
                         totalChars += 1
                         keyPresses += 1
                         emittedUnitCount += 1
+                        recordDelivery(keyboardDelivery)
                         try await self.sleepAfterKeystroke(
                             typedCharacter: character,
                             cadence: cadence,
@@ -542,6 +585,7 @@ public final class TypeService {
                     }
                     keyPresses += 1
                     emittedUnitCount += 1
+                    recordDelivery(keyboardDelivery)
                     try await self.sleepAfterKeystroke(
                         typedCharacter: nil,
                         cadence: cadence,
@@ -549,11 +593,14 @@ public final class TypeService {
                         humanContext: &humanContext)
 
                 case .clear:
-                    emittedUnitCount += try await self.clearCurrentField(
+                    let clearSummary = try await self.clearCurrentField(
                         targetProcessIdentifier: targetProcessIdentifier,
+                        keyboardDelivery: keyboardDelivery,
                         deliveryValidator: deliveryValidator,
                         priorEmittedUnitCount: emittedUnitCount)
-                    keyPresses += 2 // Cmd+A and Delete
+                    emittedUnitCount += clearSummary.dispatchedUnitCount
+                    keyPresses += clearSummary.keyPressCount
+                    recordDelivery(clearSummary.delivery)
                     try await self.sleepAfterKeystroke(
                         typedCharacter: nil,
                         cadence: cadence,
@@ -566,19 +613,30 @@ public final class TypeService {
                 deliveryValidator,
                 emittedUnitCount: emittedUnitCount)
         } catch let error as InputDeliveryIndeterminateError {
-            throw error
+            throw InputDeliveryIndeterminateError(
+                operation: error.operation,
+                emittedUnitCount: error.emittedUnitCount,
+                causeDescription: error.causeDescription,
+                delivery: Self.combinedDelivery(
+                    accumulatedDelivery(),
+                    error.delivery,
+                    mode: keyboardDelivery.mode))
         } catch {
             guard emittedUnitCount > 0 else { throw error }
             throw Self.indeterminateDeliveryError(
                 from: error,
-                emittedUnitCount: emittedUnitCount)
+                emittedUnitCount: emittedUnitCount,
+                delivery: accumulatedDelivery())
         }
 
+        let finalDelivery = accumulatedDelivery()
         return TypeActionPayloadSummary(
             result: TypeResult(
                 totalCharacters: totalChars,
                 keyPresses: keyPresses),
-            typedIntoSecureField: typedIntoSecureField)
+            typedIntoSecureField: typedIntoSecureField,
+            dispatchedUnitCount: emittedUnitCount,
+            delivery: finalDelivery)
     }
 
     /// Sample the actual delivery scope immediately before each text segment.
@@ -673,13 +731,17 @@ public final class TypeService {
 
     private func clearCurrentField(
         targetProcessIdentifier: pid_t? = nil,
+        keyboardDelivery: DesktopActionOutcome.Delivery? = nil,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
-        priorEmittedUnitCount: Int = 0) async throws -> Int
+        priorEmittedUnitCount: Int = 0) async throws -> ClearDispatchSummary
     {
         self.logger.debug("Clearing current field")
         try await self.validateDelivery(
             deliveryValidator,
             emittedUnitCount: priorEmittedUnitCount)
+        let fallbackDelivery = keyboardDelivery ?? (targetProcessIdentifier == nil
+            ? DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground)
+            : DesktopActionOutcome.Delivery(mechanism: .processTargetedEvents, mode: .background))
 
         if let targetProcessIdentifier {
             do {
@@ -689,9 +751,13 @@ public final class TypeService {
                     } catch {
                         throw Self.indeterminateDeliveryError(
                             from: error,
-                            emittedUnitCount: priorEmittedUnitCount + 1)
+                            emittedUnitCount: priorEmittedUnitCount + 1,
+                            delivery: .init(mechanism: .accessibilityValue, mode: .background))
                     }
-                    return 1
+                    return ClearDispatchSummary(
+                        dispatchedUnitCount: 1,
+                        keyPressCount: 0,
+                        delivery: .init(mechanism: .accessibilityValue, mode: .background))
                 }
             } catch let error as InputDeliveryIndeterminateError {
                 throw error
@@ -725,12 +791,20 @@ public final class TypeService {
         } catch {
             throw Self.indeterminateDeliveryError(
                 from: error,
-                emittedUnitCount: priorEmittedUnitCount + 1)
+                emittedUnitCount: priorEmittedUnitCount + 1,
+                delivery: fallbackDelivery)
         }
 
-        try await self.validateDelivery(
-            deliveryValidator,
-            emittedUnitCount: priorEmittedUnitCount + 1)
+        do {
+            try await self.validateDelivery(
+                deliveryValidator,
+                emittedUnitCount: priorEmittedUnitCount + 1)
+        } catch {
+            throw Self.indeterminateDeliveryError(
+                from: error,
+                emittedUnitCount: priorEmittedUnitCount + 1,
+                delivery: fallbackDelivery)
+        }
         if let targetProcessIdentifier {
             do {
                 try BackgroundInputDriver.tapKey(
@@ -739,7 +813,8 @@ public final class TypeService {
             } catch {
                 throw Self.indeterminateDeliveryError(
                     from: error,
-                    emittedUnitCount: priorEmittedUnitCount + 1)
+                    emittedUnitCount: priorEmittedUnitCount + 1,
+                    delivery: fallbackDelivery)
             }
         } else {
             do {
@@ -747,7 +822,8 @@ public final class TypeService {
             } catch {
                 throw Self.indeterminateDeliveryError(
                     from: error,
-                    emittedUnitCount: priorEmittedUnitCount + 1)
+                    emittedUnitCount: priorEmittedUnitCount + 1,
+                    delivery: fallbackDelivery)
             }
         }
         do {
@@ -755,9 +831,13 @@ public final class TypeService {
         } catch {
             throw Self.indeterminateDeliveryError(
                 from: error,
-                emittedUnitCount: priorEmittedUnitCount + 2)
+                emittedUnitCount: priorEmittedUnitCount + 2,
+                delivery: fallbackDelivery)
         }
-        return 2
+        return ClearDispatchSummary(
+            dispatchedUnitCount: 2,
+            keyPressCount: 2,
+            delivery: fallbackDelivery)
     }
 
     private func validateDelivery(
@@ -777,19 +857,6 @@ public final class TypeService {
                 emittedUnitCount: emittedUnitCount,
                 causeDescription: error.localizedDescription)
         }
-    }
-
-    private static func indeterminateDeliveryError(
-        from error: any Error,
-        emittedUnitCount: Int?) -> InputDeliveryIndeterminateError
-    {
-        if let error = error as? InputDeliveryIndeterminateError {
-            return error
-        }
-        return InputDeliveryIndeterminateError(
-            operation: .type,
-            emittedUnitCount: emittedUnitCount,
-            causeDescription: error.localizedDescription)
     }
 
     private func typeTextWithDelay(_ text: String, delay: TimeInterval) async throws {
@@ -822,6 +889,37 @@ public final class TypeService {
 }
 
 extension TypeService {
+    private static func indeterminateDeliveryError(
+        from error: any Error,
+        emittedUnitCount: Int?,
+        delivery: DesktopActionOutcome.Delivery? = nil) -> InputDeliveryIndeterminateError
+    {
+        if let error = error as? InputDeliveryIndeterminateError {
+            return InputDeliveryIndeterminateError(
+                operation: error.operation,
+                emittedUnitCount: error.emittedUnitCount,
+                causeDescription: error.causeDescription,
+                delivery: self.combinedDelivery(delivery, error.delivery, mode: delivery?.mode ?? error.delivery?.mode))
+        }
+        return InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: emittedUnitCount,
+            causeDescription: error.localizedDescription,
+            delivery: delivery)
+    }
+
+    private static func combinedDelivery(
+        _ first: DesktopActionOutcome.Delivery?,
+        _ second: DesktopActionOutcome.Delivery?,
+        mode: DesktopActionOutcome.Delivery.Mode?) -> DesktopActionOutcome.Delivery?
+    {
+        guard let first else { return second }
+        guard let second else { return first }
+        guard first != second else { return first }
+        guard let mode, first.mode == mode, second.mode == mode else { return nil }
+        return .init(mechanism: .composite, mode: mode)
+    }
+
     func typeActionsByFocusingPixel(
         _ request: ExactWindowPixelFocusTypeRequest,
         deliveryValidator: @escaping @MainActor @Sendable (
@@ -993,15 +1091,17 @@ extension TypeService {
                         request.actions,
                         cadence: request.cadence,
                         snapshotId: request.snapshotID,
-                        targetProcessIdentifier: request.windowIdentity.ownerProcessIdentifier,
+                        automationTarget: automationTarget,
                         deliveryValidator: validateFocusedElement)
-                    guard let typingUnits = DesktopActionOutcome.DispatchUnitCount(typed.result.keyPresses) else {
+                    guard let typingDelivery = typed.delivery,
+                          let typingUnits = DesktopActionOutcome.DispatchUnitCount(typed.dispatchedUnitCount)
+                    else {
                         throw PeekabooError.invalidInput("Pixel-focus typing produced no keyboard input")
                     }
                     payloadSummary = typed
                     sequence.record(.dispatched(
                         route: .local,
-                        delivery: automationTarget.keyboardDelivery,
+                        delivery: typingDelivery,
                         unitCount: typingUnits))
                     let resolution = sequence.successResolution()
                     sequenceResolution = resolution

@@ -8,6 +8,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let producerBoundSnapshotReferences: Bool
     let targetedClickAccessibilityValueDelivery: Bool
     let requestPinnedExactWindowScrollReceipt: Bool
+    let compositeTypeDelivery: Bool
 
     static let current = Self(
         protocolVersion: PeekabooBridgeConstants.protocolVersion,
@@ -16,7 +17,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         nativeBrowserConnectionBinding: true,
         producerBoundSnapshotReferences: true,
         targetedClickAccessibilityValueDelivery: true,
-        requestPinnedExactWindowScrollReceipt: true)
+        requestPinnedExactWindowScrollReceipt: true,
+        compositeTypeDelivery: true)
 
     init(
         protocolVersion: PeekabooBridgeProtocolVersion,
@@ -25,7 +27,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         nativeBrowserConnectionBinding: Bool = false,
         producerBoundSnapshotReferences: Bool = false,
         targetedClickAccessibilityValueDelivery: Bool = false,
-        requestPinnedExactWindowScrollReceipt: Bool = false)
+        requestPinnedExactWindowScrollReceipt: Bool = false,
+        compositeTypeDelivery: Bool = false)
     {
         self.protocolVersion = protocolVersion
         self.statelessClickVariants = statelessClickVariants
@@ -34,6 +37,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.producerBoundSnapshotReferences = producerBoundSnapshotReferences
         self.targetedClickAccessibilityValueDelivery = targetedClickAccessibilityValueDelivery
         self.requestPinnedExactWindowScrollReceipt = requestPinnedExactWindowScrollReceipt
+        self.compositeTypeDelivery = compositeTypeDelivery
     }
 }
 

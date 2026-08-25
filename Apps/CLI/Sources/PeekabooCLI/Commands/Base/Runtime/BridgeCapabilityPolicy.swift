@@ -581,6 +581,12 @@ enum BridgeCapabilityPolicy {
             self.supportsOperation(.exactWindowTargetedHotkey, for: handshake)
     }
 
+    static func supportsCompositeTypeDelivery(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.compositeTypeDeliveryVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.compositeTypeDelivery) == true
+    }
+
     static func supportsPinnedWindowMutations(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 18)
     }

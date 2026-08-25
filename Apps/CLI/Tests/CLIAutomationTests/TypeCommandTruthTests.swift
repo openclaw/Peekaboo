@@ -82,6 +82,29 @@ struct TypeCommandTruthTests {
     }
 
     @Test
+    func `Confirmed escaped backslash reports the planned receiver literal`() async throws {
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(delivery: .init(
+            mechanism: .globalEvents,
+            mode: .foreground
+        ))
+        let services = TestServicesFactory.makePeekabooServices(automation: automation)
+
+        let result = try await InProcessCommandRunner.run(
+            ["type", "\\\\", "--foreground", "--json"],
+            services: services
+        )
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<TypeCommandResult>.self
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(payload.data.requestedText == "\\\\")
+        #expect(payload.data.typedText == "\\")
+    }
+
+    @Test
     func `Type revalidates matching snapshot focus before exact-window dispatch`() async throws {
         let focused = self.textFocus()
         let automation = self.automation(focused: focused)

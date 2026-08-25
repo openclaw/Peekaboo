@@ -207,6 +207,11 @@ extension PeekabooBridgeServer {
         claim: PeekabooBridgeOperationSessionClaim,
         peer: PeekabooBridgePeer) async -> PeekabooBridgeHandledResponse
     {
+        if plan.request.requiresCompositeTypeDeliverySupport,
+           !claim.negotiatedCapabilities.compositeTypeDelivery
+        {
+            return Self.compositeTypeDeliveryRefusal(plan: plan)
+        }
         let handled = await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(
             claim.negotiatedCapabilities)
         {
@@ -217,6 +222,24 @@ extension PeekabooBridgeServer {
         // This is the single enrichment boundary for attested read-only errors. Existing precise
         // envelopes pass through unchanged; only metadata-less targetless failures are normalized.
         return Self.normalizingTargetlessReadOnlyFailure(handled, plan: plan)
+    }
+
+    private static func compositeTypeDeliveryRefusal(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) -> PeekabooBridgeHandledResponse
+    {
+        let failure = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .runtimeIncompatible,
+            message: "This Bridge session cannot return truthful composite background typing receipts.",
+            hint: "Update and relaunch Peekaboo before retrying background clear-and-type input.")
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            actionFailure: failure,
+            details: "Bridge protocol 1.36 composite type delivery was not negotiated.")
+        if case .projectedAction = plan.carriageRequest {
+            return self.projectedFailure(envelope, mayMutateDesktop: true)
+        }
+        return .init(response: .error(envelope))
     }
 
     static func operationReceiptClaimErrorCode(

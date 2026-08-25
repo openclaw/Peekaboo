@@ -14,15 +14,18 @@ public struct InputDeliveryIndeterminateError: LocalizedError, Sendable {
     public let operation: Operation
     public let emittedUnitCount: Int?
     public let causeDescription: String?
+    public let delivery: DesktopActionOutcome.Delivery?
 
     public init(
         operation: Operation,
         emittedUnitCount: Int? = nil,
-        causeDescription: String? = nil)
+        causeDescription: String? = nil,
+        delivery: DesktopActionOutcome.Delivery? = nil)
     {
         self.operation = operation
         self.emittedUnitCount = emittedUnitCount
         self.causeDescription = causeDescription
+        self.delivery = delivery
     }
 
     public var operationMayHaveCompleted: Bool {
@@ -47,7 +50,7 @@ public struct InputDeliveryIndeterminateError: LocalizedError, Sendable {
     {
         DesktopActionFailure.indeterminate(
             route: route,
-            delivery: delivery,
+            delivery: self.delivery ?? delivery,
             evidence: .completionUnknown,
             unitCount: self.emittedUnitCount.flatMap { DesktopActionOutcome.DispatchUnitCount($0) },
             message: self.localizedDescription)

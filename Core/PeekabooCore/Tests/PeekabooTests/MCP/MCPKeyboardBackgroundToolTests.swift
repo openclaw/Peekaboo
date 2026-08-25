@@ -476,6 +476,63 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
+    func `Process clear refuses missing composite capability before element focus`() async throws {
+        await Self.uiSnapshots.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [AutomationTestFixtures.application(
+                processIdentifier: 112,
+                processStartIdentity: 12,
+                bundleIdentifier: "com.example.legacy",
+                name: "LegacyApp")])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/legacy-type.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: AutomationTestFixtures.application(
+                    processIdentifier: 112,
+                    processStartIdentity: 12,
+                    bundleIdentifier: "com.example.legacy",
+                    name: "LegacyApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "T1",
+                elementId: "T1",
+                role: "textField",
+                title: nil,
+                label: "Name",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "text field",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 160, height: 30),
+                isActionable: true),
+        ])
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "clear": true,
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string("runtime_incompatible"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+    }
+
+    @Test
     func `Type tool reports failure after background focus click as retry unsafe`() async throws {
         await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run {

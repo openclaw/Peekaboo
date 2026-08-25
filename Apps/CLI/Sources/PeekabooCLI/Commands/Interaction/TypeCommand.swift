@@ -314,6 +314,12 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 "This automation host cannot run atomic exact-window pixel-focus typing"
             )
         }
+        if actions.contains(where: \.isClear) {
+            try ExactWindowKeyboardRuntime.requireCompositeTypeDelivery(
+                automation: self.services.automation,
+                operation: "Pixel-focus background typing"
+            )
+        }
         let receipt = try await Self.planPixelFocusReceipt(
             snapshotID: snapshotID,
             snapshots: self.services.snapshots
@@ -468,9 +474,12 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         let confirmedCharacters = effectConfirmed ? typeResult.totalCharacters : 0
         let confirmedKeyPresses = effectConfirmed ? typeResult.keyPresses : 0
         let specialKeys = max(confirmedKeyPresses - confirmedCharacters, 0)
+        let confirmedTypedText = effectConfirmed
+            ? Self.literalTypedText(from: actions, requestedText: self.resolvedText)
+            : nil
         let result = TypeCommandResult(
             requestedText: self.resolvedText,
-            typedText: effectConfirmed ? self.resolvedText : nil,
+            typedText: confirmedTypedText,
             keyPresses: confirmedKeyPresses,
             totalCharacters: confirmedCharacters,
             literalCharactersTyped: confirmedCharacters,
@@ -491,7 +500,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             } else {
                 print("✅ Typing completed")
             }
-            if effectConfirmed, let typed = self.resolvedText {
+            if let typed = confirmedTypedText {
                 print("⌨️  Typed: \"\(typed)\"")
             }
             if specialKeys > 0 {
@@ -523,6 +532,22 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         case .clear:
             TypeCommandActionSummary(kind: "clear", value: nil)
         }
+    }
+
+    private static func literalTypedText(from actions: [TypeAction], requestedText: String?) -> String? {
+        guard requestedText != nil else { return nil }
+        var literal = ""
+        for action in actions {
+            switch action {
+            case let .text(text):
+                literal.append(text)
+            case .clear:
+                continue
+            case .key:
+                return nil
+            }
+        }
+        return literal
     }
 
     private static func delivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {

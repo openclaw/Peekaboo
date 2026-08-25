@@ -236,6 +236,21 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)
         }
+        let compositeTypeOperations: Set<PeekabooBridgeOperation> = [
+            .targetedTypeActions,
+            .exactWindowTargetedTypeActions,
+            .exactWindowPixelFocusType,
+        ]
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion,
+           !self.allowedOperations.isDisjoint(with: compositeTypeOperations),
+           (services.automation as? any UIAutomationActionOutcomeProviding) != nil,
+           (services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+               .supportsExactWindowCompositeTypeDelivery == true
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.compositeTypeDelivery)
+        }
         if self.allowedOperations.contains(.launchApplicationWithOptions),
            services.applications.supportsSafeBackgroundApplicationLaunchNoOp
         {
@@ -467,6 +482,7 @@ public final class PeekabooBridgeServer {
         let unitCount = error.emittedUnitCount.flatMap { DesktopActionOutcome.DispatchUnitCount($0) }
         let failure = DesktopActionFailure.indeterminate(
             route: .bridge,
+            delivery: error.delivery,
             evidence: .completionUnknown,
             unitCount: unitCount,
             message: error.localizedDescription,
@@ -1088,6 +1104,9 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.certificationProducerAttestationVersion {
         capabilities.insert(PeekabooBridgeHostCapability.certificationProducerAttestation)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
     }
     return capabilities
 }

@@ -281,6 +281,7 @@ extension TypeTool {
         try self.preflightBackgroundType(
             target: plannedTarget,
             requiresElementFocus: targetContext != nil,
+            requiresCompositeTypeDelivery: Self.requiresCompositeTypeDelivery(actions),
             automation: automation)
 
         let focusResult: TypeFocusResult
@@ -506,6 +507,17 @@ extension TypeTool {
                 "This automation host does not support atomic exact-window pixel-focus typing.",
                 refusalReason: .runtimeIncompatible)
         }
+        if Self.requiresCompositeTypeDelivery(actions) {
+            do {
+                try ExactWindowKeyboardRuntime.requireCompositeTypeDelivery(
+                    automation: self.context.automation,
+                    operation: "Pixel-focus background typing")
+            } catch {
+                throw TypeToolValidationError(
+                    error.localizedDescription,
+                    refusalReason: .runtimeIncompatible)
+            }
+        }
         let actionResult = try await service.typeActionsByFocusingPixelWithOutcome(
             ExactWindowPixelFocusTypeRequest(
                 point: target.point,
@@ -610,8 +622,20 @@ extension TypeTool {
     private func preflightBackgroundType(
         target: UIAutomationTarget?,
         requiresElementFocus: Bool,
+        requiresCompositeTypeDelivery: Bool,
         automation: any UIAutomationServiceProtocol) throws
     {
+        if target != nil, requiresCompositeTypeDelivery {
+            do {
+                try ExactWindowKeyboardRuntime.requireCompositeTypeDelivery(
+                    automation: automation,
+                    operation: "Background typing")
+            } catch {
+                throw TypeToolValidationError(
+                    error.localizedDescription,
+                    refusalReason: .runtimeIncompatible)
+            }
+        }
         guard target?.exactWindow != nil else { return }
         do {
             _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
@@ -857,11 +881,18 @@ extension TypeTool {
         mutationTracker: TypeMutationTracker) async throws -> UIAutomationActionResult<TypeResult>
     {
         if let exactWindow = request.target.exactWindow {
+            let requiresCompositeTypeDelivery = Self.requiresCompositeTypeDelivery(request.actions)
             let outcomeAutomation: any UIAutomationActionOutcomeProviding
             do {
-                outcomeAutomation = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
-                    automation: automation,
-                    operation: "Background typing")
+                outcomeAutomation = if requiresCompositeTypeDelivery {
+                    try ExactWindowKeyboardRuntime.requireTypeOutcomeProvider(
+                        automation: automation,
+                        operation: "Background typing")
+                } else {
+                    try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                        automation: automation,
+                        operation: "Background typing")
+                }
             } catch {
                 throw TypeToolValidationError(
                     error.localizedDescription,
@@ -882,7 +913,8 @@ extension TypeTool {
                         windowIdentity: exactWindow.identity,
                         windowBounds: exactWindow.bounds,
                         focusedElement: focusedElement)),
-                operation: "Background typing")
+                operation: "Background typing",
+                allowsCompositeTypeDelivery: requiresCompositeTypeDelivery)
         }
         guard let automation = automation as? any TargetedTypeServiceProtocol,
               automation.supportsTargetedTypeActions,
@@ -908,6 +940,10 @@ extension TypeTool {
                 snapshotId: request.snapshotId,
                 expectedProcessIdentity: processIdentity),
             outcome: nil)
+    }
+
+    private static func requiresCompositeTypeDelivery(_ actions: [TypeAction]) -> Bool {
+        actions.contains(where: \.isClear)
     }
 
     private func snapshotExactWindow(_ snapshot: UISnapshot?) throws -> UIAutomationTarget.ExactWindow? {

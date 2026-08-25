@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Report direct background type clears as one AXValue dispatch and zero key presses, preserve the planned receiver literal after escape processing, and require protocol 1.36 before clear-bearing remote type requests.
 - Revalidate exact-window focused elements and the application's internal key window before typing, confirm clear-plus-literal text only from a generation-bound value change, and stop reporting no-change, missing, or dispatched-but-unverified outcomes as typed characters.
 - Bind Bridge 1.34 Chrome channel connections to an exact live Chrome bundle, native process-owned DevTools listener, and approval-gated WebSocket under one 90-second deadline, verifying `Browser.getVersion` once without legacy HTTP discovery or repeated permission probes and failing closed on helper-service names, file, socket, generation, or endpoint drift.
 - Authenticate native Chrome channels against Google Team ID `EQHXZ8M8AV`, pin the exact signed identifier and CDHash for the process generation, and enumerate the target process's complete listener inventory independently of Peekaboo's file-descriptor limit.

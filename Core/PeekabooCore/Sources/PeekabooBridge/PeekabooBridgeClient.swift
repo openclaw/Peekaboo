@@ -64,6 +64,7 @@ public actor PeekabooBridgeClient {
     var producerBoundSnapshotReferencesEnabled = false
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
+    var compositeTypeDeliveryEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -459,6 +460,7 @@ public actor PeekabooBridgeClient {
         self.producerBoundSnapshotReferencesEnabled = false
         self.targetedClickAccessibilityValueDeliveryEnabled = false
         self.requestPinnedExactWindowScrollReceiptEnabled = false
+        self.compositeTypeDeliveryEnabled = false
     }
 
     /// Creates or joins one successor-session handshake using the most recent successful public inputs.
@@ -908,6 +910,7 @@ public actor PeekabooBridgeClient {
             Self.supportsTargetedClickAccessibilityValueDelivery(handshake),
             requestPinnedExactWindowScrollReceiptEnabled:
             Self.supportsRequestPinnedExactWindowScrollReceipt(handshake),
+            compositeTypeDeliveryEnabled: Self.supportsCompositeTypeDelivery(handshake),
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
@@ -942,6 +945,21 @@ public actor PeekabooBridgeClient {
                 PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery) == true &&
             handshake.supportedOperations.contains(.targetedClick) &&
             (handshake.enabledOperations?.contains(.targetedClick) ?? true)
+    }
+
+    private static func supportsCompositeTypeDelivery(_ handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        let operations: Set<PeekabooBridgeOperation> = [
+            .targetedTypeActions,
+            .exactWindowTargetedTypeActions,
+            .exactWindowPixelFocusType,
+        ]
+        let supported = Set(handshake.supportedOperations)
+        let enabled = Set(handshake.enabledOperations ?? handshake.supportedOperations)
+        return handshake.negotiatedVersion >= PeekabooBridgeConstants.compositeTypeDeliveryVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.compositeTypeDelivery) == true &&
+            !supported.isDisjoint(with: operations) &&
+            !enabled.isDisjoint(with: operations)
     }
 
     private static func supportsAgentExecutionTrace(_ handshake: PeekabooBridgeHandshakeResponse) -> Bool {
@@ -1066,6 +1084,7 @@ public actor PeekabooBridgeClient {
             candidate.targetedClickAccessibilityValueDeliveryEnabled
         self.requestPinnedExactWindowScrollReceiptEnabled =
             candidate.requestPinnedExactWindowScrollReceiptEnabled
+        self.compositeTypeDeliveryEnabled = candidate.compositeTypeDeliveryEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1359,6 +1378,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let producerBoundSnapshotReferencesEnabled: Bool
     let targetedClickAccessibilityValueDeliveryEnabled: Bool
     let requestPinnedExactWindowScrollReceiptEnabled: Bool
+    let compositeTypeDeliveryEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

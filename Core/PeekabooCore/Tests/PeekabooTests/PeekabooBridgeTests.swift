@@ -2253,7 +2253,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 }
 
 @MainActor
-final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
+class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
     ExactWindowTargetedClickServiceProtocol,
     ElementActionAutomationServiceProtocol, TargetedFocusedElementServiceProtocol,
     ExactWindowTargetedKeyboardServiceProtocol
@@ -2265,6 +2265,10 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     let supportsProcessGenerationPinnedClicks = true
     let supportsStatelessClickVariants = true
     let supportsExactWindowTargetedKeyboard = true
+    var supportsExactWindowCompositeTypeDelivery: Bool {
+        false
+    }
+
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     struct Click { let target: ClickTarget; let type: ClickType }
     struct TargetedHotkey {

@@ -3,6 +3,7 @@ import Foundation
 import PeekabooAutomationKit
 import PeekabooBridgeTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooBridge
 
@@ -546,6 +547,67 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
             try bundle.validate()
         }
     }
+}
+
+extension PeekabooBridgeTypedResultReceiptBindingTests {
+    @Test
+    func `signed exact type correlates multiple AX clears key counts units and delivery`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let actions: [TypeAction] = [.clear, .clear, .text("x")]
+        let bounds = try #require(fixture.windowIdentity.capturedBounds)
+        let rawRequest = PeekabooBridgeRequest.exactWindowTargetedTypeActions(.init(
+            actions: actions,
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: SnapshotReferenceFixtures.first.rawValue,
+            expectedWindowIdentity: fixture.windowIdentity,
+            expectedWindowBounds: bounds,
+            expectedFocusedElement: nil))
+        let request = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
+        let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
+        #expect(plan.typedResponseRule.typeActionDispatchUnits == .oneOf([3, 4, 5]))
+
+        let valid: [(TypeResult, Int, DesktopActionOutcome.Delivery.Mechanism)] = [
+            (.init(totalCharacters: 1, keyPresses: 5), 5, .windowTargetedEvents),
+            (.init(totalCharacters: 1, keyPresses: 3), 4, .composite),
+            (.init(totalCharacters: 1, keyPresses: 1), 3, .composite),
+        ]
+        for (offset, shape) in valid.enumerated() {
+            let response = Self.typeResponse(
+                result: shape.0,
+                dispatchedUnits: shape.1,
+                delivery: .init(mechanism: shape.2, mode: .background))
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(offset),
+                request: request,
+                response: response,
+                target: .window(fixture.windowIdentity))
+            try bundle.validate()
+        }
+
+        let forged: [(TypeResult, Int, DesktopActionOutcome.Delivery.Mechanism)] = [
+            (.init(totalCharacters: 1, keyPresses: 1), 3, .accessibilityValue),
+            (.init(totalCharacters: 1, keyPresses: 3), 3, .composite),
+            (.init(totalCharacters: 1, keyPresses: 5), 5, .composite),
+            (.init(totalCharacters: 1, keyPresses: 1), 4, .composite),
+        ]
+        for (offset, shape) in forged.enumerated() {
+            let response = Self.typeResponse(
+                result: shape.0,
+                dispatchedUnits: shape.1,
+                delivery: .init(mechanism: shape.2, mode: .background))
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(valid.count + offset),
+                request: request,
+                response: response,
+                target: .window(fixture.windowIdentity))
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                try bundle.validate()
+            }
+        }
+    }
 
     @Test
     func `signed perform action result is bound to target action and value semantics`() async throws {
@@ -760,13 +822,16 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
 
     private static func typeResponse(
         result: TypeResult,
-        dispatchedUnits: Int) -> PeekabooBridgeResponse
+        dispatchedUnits: Int,
+        delivery: DesktopActionOutcome.Delivery = .init(
+            mechanism: .globalEvents,
+            mode: .foreground)) -> PeekabooBridgeResponse
     {
         .projectedAction(.init(
             response: .typeResult(result),
             outcome: DesktopActionOutcome.dispatchedUnverified(
                 route: .bridge,
-                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                delivery: delivery,
                 evidence: .deliveryAccepted,
                 unitCount: DesktopActionOutcome.DispatchUnitCount(dispatchedUnits)).projection))
     }

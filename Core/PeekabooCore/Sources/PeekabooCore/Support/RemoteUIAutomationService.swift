@@ -37,6 +37,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let inspectAccessibilityTreeUnavailableReason: String?
     public let supportsExactWindowTargetedKeyboard: Bool
     public let exactWindowTargetedKeyboardUnavailableReason: String?
+    public let supportsExactWindowCompositeTypeDelivery: Bool
+    public let exactWindowCompositeTypeDeliveryUnavailableReason: String?
     public let supportsExactWindowPixelFocusTyping: Bool
     public let exactWindowPixelFocusTypingUnavailableReason: String?
     public let supportsForegroundModifierClick: Bool
@@ -67,6 +69,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
         exactWindowTargetedKeyboardUnavailableReason: String? = nil,
+        supportsExactWindowCompositeTypeDelivery: Bool = false,
+        exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil,
         supportsExactWindowPixelFocusTyping: Bool = false,
         exactWindowPixelFocusTypingUnavailableReason: String? = nil,
         supportsForegroundModifierClick: Bool = false,
@@ -95,6 +99,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
         self.supportsExactWindowTargetedKeyboard = supportsExactWindowTargetedKeyboard
         self.exactWindowTargetedKeyboardUnavailableReason = exactWindowTargetedKeyboardUnavailableReason
+        self.supportsExactWindowCompositeTypeDelivery = supportsExactWindowCompositeTypeDelivery
+        self.exactWindowCompositeTypeDeliveryUnavailableReason = exactWindowCompositeTypeDeliveryUnavailableReason
         self.supportsExactWindowPixelFocusTyping = supportsExactWindowPixelFocusTyping
         self.exactWindowPixelFocusTypingUnavailableReason = exactWindowPixelFocusTypingUnavailableReason
         self.supportsForegroundModifierClick = supportsForegroundModifierClick
@@ -622,6 +628,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 self.exactWindowTargetedKeyboardUnavailableReason ??
                     "Atomic exact-window background typing is unavailable")
         }
+        try self.requireCompositeTypeDeliveryIfNeeded(actions)
         return try await self.client.typeActions(
             actions,
             cadence: cadence,
@@ -659,6 +666,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 self.exactWindowTargetedKeyboardUnavailableReason ??
                     "Atomic exact-window background typing is unavailable")
         }
+        try self.requireCompositeTypeDeliveryIfNeeded(actions)
         return try await self.client.typeActions(
             actions,
             cadence: cadence,
@@ -680,6 +688,15 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
             keys: keys,
             holdDuration: holdDuration,
             target: target)
+    }
+
+    func requireCompositeTypeDeliveryIfNeeded(_ actions: [TypeAction]) throws {
+        guard actions.contains(where: \.isClear) else { return }
+        guard self.supportsExactWindowCompositeTypeDelivery else {
+            throw PeekabooError.serviceUnavailable(
+                self.exactWindowCompositeTypeDeliveryUnavailableReason ??
+                    "Remote bridge host cannot return truthful composite exact-window typing receipts")
+        }
     }
 
     public func findElement(matching criteria: UIElementSearchCriteria, in appName: String?) async throws

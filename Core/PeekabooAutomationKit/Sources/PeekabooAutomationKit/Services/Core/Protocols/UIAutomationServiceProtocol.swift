@@ -516,6 +516,8 @@ extension ForegroundModifierClickServiceProtocol {
 public protocol ExactWindowTargetedKeyboardServiceProtocol: UIAutomationServiceProtocol {
     var supportsExactWindowTargetedKeyboard: Bool { get }
     var exactWindowTargetedKeyboardUnavailableReason: String? { get }
+    var supportsExactWindowCompositeTypeDelivery: Bool { get }
+    var exactWindowCompositeTypeDeliveryUnavailableReason: String? { get }
 
     func typeActions(
         _ actions: [TypeAction],
@@ -543,6 +545,14 @@ public protocol ExactWindowTargetedKeyboardServiceProtocol: UIAutomationServiceP
 }
 
 extension ExactWindowTargetedKeyboardServiceProtocol {
+    public var supportsExactWindowCompositeTypeDelivery: Bool {
+        false
+    }
+
+    public var exactWindowCompositeTypeDeliveryUnavailableReason: String? {
+        nil
+    }
+
     public func typeActions(
         _: [TypeAction],
         cadence _: TypingCadence,

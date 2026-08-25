@@ -237,6 +237,17 @@ extension PeekabooBridgeServer {
             advertisedOperations: advertisedOps,
             enabledOperations: enabledOps,
             advertisedCapabilities: &advertisedCapabilities)
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.compositeTypeDeliveryVersion ||
+            (self.services.automation as? any UIAutomationActionOutcomeProviding) == nil ||
+            (self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+            .supportsExactWindowCompositeTypeDelivery != true ||
+            !advertisedOps.contains(where: {
+                [.targetedTypeActions, .exactWindowTargetedTypeActions, .exactWindowPixelFocusType].contains($0)
+            })
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.compositeTypeDelivery)
+        }
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
         }
@@ -266,7 +277,9 @@ extension PeekabooBridgeServer {
                         targetedClickAccessibilityValueDelivery: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery),
                         requestPinnedExactWindowScrollReceipt: advertisedCapabilities.contains(
-                            PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)),
+                            PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt),
+                        compositeTypeDelivery: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.compositeTypeDelivery)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {

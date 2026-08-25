@@ -20,7 +20,9 @@ final class OutcomeStubAutomationService: StubAutomationService, ScriptedUIAutom
 
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
     let supportsExactWindowTargetedKeyboard = true
+    let supportsExactWindowCompositeTypeDelivery = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
+    let exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil
     var exactTypeActionsCalls: [ExactTypeActionsCall] = []
     var exactHotkeyCalls: [ExactHotkeyCall] = []
     var targetedFocusedElement: UIFocusInfo?

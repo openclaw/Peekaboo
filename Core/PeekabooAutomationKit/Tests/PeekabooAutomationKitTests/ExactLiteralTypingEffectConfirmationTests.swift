@@ -259,7 +259,114 @@ struct ExactLiteralTypingEffectConfirmationTests {
 
         #expect(value.get() == "safe")
         #expect(summary.executionResult.outcome.state == .confirmedChange)
+        #expect(summary.executionResult.outcome.delivery == .init(mechanism: .composite, mode: .background))
+        #expect(summary.executionResult.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(5))
         #expect(summary.result.totalCharacters == 4)
+        #expect(summary.result.keyPresses == 4)
+    }
+
+    @Test
+    @MainActor
+    func `direct clear reports one accessibility write and zero key presses`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("occupied")
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedTextReplacer: { text, _ in
+                value.set(text)
+                return true
+            },
+            exactFocusedElementValueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            },
+            processStartIdentityProvider: { _ in 33 })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {})
+
+        #expect(value.get().isEmpty)
+        #expect(summary.executionResult.outcome.state == .confirmedChange)
+        #expect(summary.executionResult.outcome.delivery == .init(
+            mechanism: .accessibilityValue,
+            mode: .background))
+        #expect(summary.executionResult.outcome.dispatchState.unitCount == .one)
+        #expect(summary.result.totalCharacters == 0)
+        #expect(summary.result.keyPresses == 0)
+    }
+
+    @Test
+    @MainActor
+    func `failure after direct clear preserves its accumulated delivery prefix`() async throws {
+        let target = try self.target()
+        let cases: [(failOnCharacter: Int, units: Int, mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
+            (1, 1, .accessibilityValue),
+            (2, 2, .composite),
+        ]
+
+        for testCase in cases {
+            var characterCalls = 0
+            let service = TypeService(
+                randomSource: SystemTypingCadenceRandomSource(),
+                focusedElementSecurityProbe: { _ in false },
+                targetedCharacterTyper: { _, _ in
+                    characterCalls += 1
+                    if characterCalls == testCase.failOnCharacter {
+                        throw TypingEffectFixtureError.characterDispatchFailed
+                    }
+                },
+                targetedTextReplacer: { _, _ in true },
+                processStartIdentityProvider: { _ in 33 })
+
+            do {
+                _ = try await service.typeActionsTrackingSecureInput(
+                    [.clear, .text("xy")],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotId: nil,
+                    automationTarget: .exactWindow(target),
+                    deliveryValidator: {})
+                Issue.record("Expected the configured character failure")
+            } catch let error as InputDeliveryIndeterminateError {
+                #expect(error.emittedUnitCount == testCase.units)
+                #expect(error.delivery == .init(mechanism: testCase.mechanism, mode: .background))
+                let fallback = DesktopActionOutcome.Delivery(
+                    mechanism: .windowTargetedEvents,
+                    mode: .background)
+                #expect(error.desktopActionFailure(delivery: fallback).outcome.delivery == error.delivery)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `fallback clear validation failure retains the accepted select-all delivery`() async throws {
+        var validationCalls = 0
+        let service = TypeService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: ClickRecordingSyntheticInputDriver(),
+            randomSource: SystemTypingCadenceRandomSource())
+
+        do {
+            _ = try await service.typeActionsTrackingSecureInput(
+                [.clear],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: nil,
+                automationTarget: .foreground,
+                deliveryValidator: {
+                    validationCalls += 1
+                    if validationCalls == 2 {
+                        throw TypingEffectFixtureError.deliveryValidationFailed
+                    }
+                })
+            Issue.record("Expected validation failure after Cmd+A")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 1)
+            #expect(error.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        }
     }
 
     @Test
@@ -287,6 +394,9 @@ struct ExactLiteralTypingEffectConfirmationTests {
 
         #expect(value.get() == "safe")
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(summary.executionResult.outcome.delivery == .init(mechanism: .composite, mode: .background))
+        #expect(summary.executionResult.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(5))
+        #expect(summary.result.keyPresses == 4)
     }
 
     private func target(role: String = "AXTextField") throws -> UIAutomationTarget.ExactWindow {
@@ -319,6 +429,11 @@ struct ExactLiteralTypingEffectConfirmationTests {
             identifier: focusedElement.identifier,
             value: value)
     }
+}
+
+private enum TypingEffectFixtureError: Error {
+    case characterDispatchFailed
+    case deliveryValidationFailed
 }
 
 private final class TypingGenerationSequence: @unchecked Sendable {

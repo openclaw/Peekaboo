@@ -136,6 +136,14 @@ public enum TypeAction: Sendable, Codable {
     case key(SpecialKey)
     case clear
 
+    public var isClear: Bool {
+        if case .clear = self {
+            true
+        } else {
+            false
+        }
+    }
+
     private enum CodingKeys: String, CodingKey { case kind, text, key }
 
     public init(from decoder: any Decoder) throws {

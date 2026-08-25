@@ -46,16 +46,25 @@ struct ExactLiteralTypingEffectConfirmation {
         previousValue: String,
         observedValue: String) -> DesktopActionOutcome
     {
-        guard outcome.state == .dispatchedUnverified,
-              outcome.delivery?.mode == .background,
-              outcome.delivery?.mechanism == .windowTargetedEvents,
+        guard let delivery = outcome.delivery,
+              outcome.state == .dispatchedUnverified,
+              Self.supportsExactBackgroundDelivery(delivery),
               !previousValue.utf8.elementsEqual(self.expectedValue.utf8),
-              observedValue.utf8.elementsEqual(self.expectedValue.utf8),
-              let delivery = outcome.delivery
+              observedValue.utf8.elementsEqual(self.expectedValue.utf8)
         else { return outcome }
         return .confirmedChange(
             route: outcome.route,
             delivery: delivery,
             unitCount: outcome.dispatchState.unitCount)
+    }
+
+    private static func supportsExactBackgroundDelivery(_ delivery: DesktopActionOutcome.Delivery) -> Bool {
+        guard delivery.mode == .background else { return false }
+        switch delivery.mechanism {
+        case .windowTargetedEvents, .accessibilityValue, .composite:
+            return true
+        default:
+            return false
+        }
     }
 }

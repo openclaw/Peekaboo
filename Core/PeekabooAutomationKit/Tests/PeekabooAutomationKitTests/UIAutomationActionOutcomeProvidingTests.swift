@@ -58,6 +58,15 @@ struct UIAutomationActionOutcomeProvidingTests {
         #expect(failure.outcome.retrySafety == .unsafe)
         #expect(failure.outcome.escalation == .observeBeforeRetry)
         #expect(failure.message == error.localizedDescription)
+
+        let ownedDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityValue,
+            mode: .background)
+        let owned = InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: 1,
+            delivery: ownedDelivery)
+        #expect(owned.desktopActionFailure(delivery: delivery).outcome.delivery == ownedDelivery)
     }
 
     @Test
@@ -116,7 +125,10 @@ struct UIAutomationActionOutcomeProvidingTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil)
 
-        #expect(result.outcome == Self.foregroundOutcome)
+        #expect(result.outcome == .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(3)))
         #expect(result.payload.totalCharacters == 2)
         #expect(result.payload.keyPresses == 3)
         #expect(legacy.totalCharacters == result.payload.totalCharacters)
@@ -134,7 +146,7 @@ struct UIAutomationActionOutcomeProvidingTests {
             targetProcessIdentifier: nil,
             laneCompletion: { completionOutcome = $0.executionResult.outcome })
 
-        #expect(summary.executionResult.outcome == Self.foregroundOutcome)
+        #expect(summary.executionResult.outcome == .confirmedNoChange())
         #expect(completionOutcome == summary.executionResult.outcome)
     }
 
@@ -327,12 +339,12 @@ struct UIAutomationActionOutcomeProvidingTests {
             target: exactTarget)
 
         for result in [pidType, processType] {
-            #expect(result.outcome == Self.backgroundOutcome)
+            #expect(result.outcome == .confirmedNoChange())
             #expect(result.payload.totalCharacters == 0)
             #expect(result.payload.keyPresses == 0)
         }
         for result in [windowType, focusedType] {
-            #expect(result.outcome == Self.windowBackgroundOutcome)
+            #expect(result.outcome == .confirmedNoChange())
             #expect(result.payload.totalCharacters == 0)
             #expect(result.payload.keyPresses == 0)
         }

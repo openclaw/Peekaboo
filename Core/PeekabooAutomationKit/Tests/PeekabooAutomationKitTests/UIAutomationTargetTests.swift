@@ -267,6 +267,29 @@ struct UIAutomationTargetTests {
                         mode: .background))),
                 operation: "Fixture")
         }
+
+        let composite = UIAutomationActionResult(
+            payload: 1,
+            outcome: DesktopActionOutcome.confirmedChange(delivery: .init(
+                mechanism: .composite,
+                mode: .background)))
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try ExactWindowKeyboardRuntime.validateRouteReceipt(composite, operation: "Fixture")
+        }
+        #expect(try ExactWindowKeyboardRuntime.validateRouteReceipt(
+            composite,
+            operation: "Fixture",
+            allowsCompositeTypeDelivery: true).outcome == composite.outcome)
+
+        let directClear = UIAutomationActionResult(
+            payload: 1,
+            outcome: DesktopActionOutcome.confirmedChange(delivery: .init(
+                mechanism: .accessibilityValue,
+                mode: .background)))
+        #expect(try ExactWindowKeyboardRuntime.validateRouteReceipt(
+            directClear,
+            operation: "Fixture",
+            allowsCompositeTypeDelivery: true).outcome == directClear.outcome)
     }
 
     @Test

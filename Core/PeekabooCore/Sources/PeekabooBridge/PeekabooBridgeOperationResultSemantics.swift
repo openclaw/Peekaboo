@@ -180,36 +180,71 @@ enum PeekabooBridgeOperationResultSemantics {
     }
 
     struct TypeActionResultRule: Equatable, Sendable {
+        struct DispatchShape: Equatable, Sendable {
+            let keyPresses: Int
+            let dispatchUnits: Int
+            let usesAccessibilityValue: Bool
+        }
+
         let totalCharacters: Int
-        let keyPresses: Int
+        let dispatchShapes: [DispatchShape]
 
-        let additionalDispatchUnits: Int
-
-        init(actions: [TypeAction], additionalDispatchUnits: Int = 0) {
+        init(
+            actions: [TypeAction],
+            allowsDirectClear: Bool = false,
+            additionalDispatchUnits: Int = 0,
+            additionalUsesAccessibilityValue: Bool = false)
+        {
             var totalCharacters = 0
-            var keyPresses = 0
+            var nonClearKeyPresses = 0
+            var clearCount = 0
             for action in actions {
                 switch action {
                 case let .text(text):
                     totalCharacters += text.count
-                    keyPresses += text.count
+                    nonClearKeyPresses += text.count
                 case .key:
-                    keyPresses += 1
+                    nonClearKeyPresses += 1
                 case .clear:
-                    keyPresses += 2
+                    clearCount += 1
                 }
             }
             self.totalCharacters = totalCharacters
-            self.keyPresses = keyPresses
-            self.additionalDispatchUnits = additionalDispatchUnits
+            let directClearCounts = allowsDirectClear ? Array(0...clearCount) : [0]
+            self.dispatchShapes = directClearCounts.map { directClearCount in
+                let fallbackClearCount = clearCount - directClearCount
+                return DispatchShape(
+                    keyPresses: nonClearKeyPresses + fallbackClearCount * 2,
+                    dispatchUnits: nonClearKeyPresses + directClearCount + fallbackClearCount * 2 +
+                        additionalDispatchUnits,
+                    usesAccessibilityValue: directClearCount > 0 || additionalUsesAccessibilityValue)
+            }
         }
 
         var dispatchUnits: UnitPolicy {
-            .exact(self.keyPresses + self.additionalDispatchUnits)
+            let units = Array(Set(self.dispatchShapes.map(\.dispatchUnits))).sorted()
+            return units.count == 1 ? .exact(units[0]) : .oneOf(units)
         }
 
-        var expectedDispatchUnitCount: DesktopActionOutcome.DispatchUnitCount? {
-            DesktopActionOutcome.DispatchUnitCount(self.keyPresses + self.additionalDispatchUnits)
+        var hasPositiveDispatch: Bool {
+            self.dispatchShapes.contains { $0.dispatchUnits > 0 }
+        }
+
+        func accepts(
+            keyPresses: Int,
+            dispatchUnitCount: DesktopActionOutcome.DispatchUnitCount?,
+            delivery: DesktopActionOutcome.Delivery?) -> Bool
+        {
+            guard let dispatchUnitCount, let delivery else { return false }
+            return self.dispatchShapes.contains {
+                guard $0.keyPresses == keyPresses,
+                      $0.dispatchUnits == dispatchUnitCount.rawValue
+                else { return false }
+                if $0.usesAccessibilityValue {
+                    return delivery.mechanism == ($0.keyPresses == 0 ? .accessibilityValue : .composite)
+                }
+                return delivery.mechanism != .accessibilityValue && delivery.mechanism != .composite
+            }
         }
     }
 
@@ -533,23 +568,24 @@ enum PeekabooBridgeOperationResultSemantics {
                 // and dispatch count are validated by the failure and receipt contracts instead.
                 return
             case let (.typeActions(expected), .typeResult(result)):
-                guard expected.keyPresses > 0 else {
+                guard expected.hasPositiveDispatch else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "type response zero-emission success")
                 }
-                guard result.totalCharacters == expected.totalCharacters,
-                      result.keyPresses == expected.keyPresses
+                guard result.totalCharacters == expected.totalCharacters
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "type response request counts")
                 }
-                guard let expectedUnits = expected.expectedDispatchUnitCount,
-                      let outcome,
+                guard let outcome,
                       case let .dispatched(actualUnits) = outcome.dispatchState,
-                      actualUnits == expectedUnits
+                      expected.accepts(
+                          keyPresses: result.keyPresses,
+                          dispatchUnitCount: actualUnits,
+                          delivery: outcome.delivery)
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                        "type response dispatch units")
+                        "type response key and dispatch units")
                 }
             case let (.setValue(expectedTarget, expectedValue), .elementActionResult(result)):
                 guard result.target == expectedTarget,
@@ -1049,13 +1085,15 @@ extension PeekabooBridgeOperationResultSemantics {
         case let .typeActions(payload):
             .typeActions(.init(actions: payload.actions))
         case let .targetedTypeActions(payload):
-            .typeActions(.init(actions: payload.actions))
+            .typeActions(.init(actions: payload.actions, allowsDirectClear: true))
         case let .exactWindowTargetedTypeActions(payload):
-            .typeActions(.init(actions: payload.actions))
+            .typeActions(.init(actions: payload.actions, allowsDirectClear: true))
         case let .exactWindowPixelFocusType(payload):
             .typeActions(.init(
                 actions: payload.request.actions,
-                additionalDispatchUnits: 1))
+                allowsDirectClear: true,
+                additionalDispatchUnits: 1,
+                additionalUsesAccessibilityValue: true))
         case let .setValue(payload):
             .setValue(
                 target: payload.target,
@@ -1405,18 +1443,32 @@ extension PeekabooBridgeOperationResultSemantics {
         case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
              .disconnectExactWindowHeldPointerOwner:
             return [rule(windowBackground, .exact(1), failureUnits: .exact(2))]
-        case .targetedTypeActions:
-            return [rule(processBackground, .variable), rule(axBackground, .variable)]
-        case .exactWindowTargetedTypeActions:
-            return [rule(windowBackground, .variable), rule(axBackground, .variable)]
-        case .exactWindowPixelFocusType:
-            return [
-                rule(compositeBackground, .positive),
-                DeliveryRule(
-                    delivery: valueBackground,
-                    units: .positive,
-                    allowsSuccessfulOutcome: false),
+        case let .targetedTypeActions(payload):
+            var rules = [
+                rule(processBackground, .variable),
+                rule(axBackground, .variable),
             ]
+            if payload.actions.contains(where: \.isClear) {
+                rules.append(rule(valueBackground, .variable))
+                rules.append(rule(compositeBackground, .variable))
+            }
+            return rules
+        case let .exactWindowTargetedTypeActions(payload):
+            var rules = [
+                rule(windowBackground, .variable),
+                rule(axBackground, .variable),
+            ]
+            if payload.actions.contains(where: \.isClear) {
+                rules.append(rule(valueBackground, .variable))
+                rules.append(rule(compositeBackground, .variable))
+            }
+            return rules
+        case let .exactWindowPixelFocusType(payload):
+            let valueRule = DeliveryRule(
+                delivery: valueBackground,
+                units: .positive,
+                allowsSuccessfulOutcome: payload.request.actions.contains(where: \.isClear))
+            return [rule(compositeBackground, .positive), valueRule]
         case .foregroundModifierClick:
             return [
                 rule(globalForeground, .positive),

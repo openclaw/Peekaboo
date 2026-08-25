@@ -257,6 +257,8 @@ foreground-capable runtimes retain their documented process-targeted typing rout
 
 `type.coords` adds atomic pixel-focus typing for exact screenshot snapshots. Supply `snapshot`, optional matching `coordinate_reference`, and `coordinate_space` (`global_display_points`, `image_pixels`, or `normalized`). It cannot be combined with `on`, app/PID/window selectors, or foreground delivery. Bridge protocol 1.33 retains the focus-only Accessibility write and every keyboard unit under one process lane and exact target receipt; successful dispatch units equal keyboard units plus the focus write, and any completed prefix is reported retry-unsafe. The focus prelude never presses a button or selects a row.
 
+Clear-bearing process, exact-window, and pixel-focus type requests additionally require Bridge protocol 1.36 and `compositeTypeDelivery`. A direct AXValue clear counts as one dispatch and zero key presses; later literal input makes the delivery composite. Plain typing keeps its earlier protocol compatibility, while older or capability-missing sessions refuse clear before focus or text dispatch.
+
 Background-only raw `press` likewise requires an explicit fresh exact non-dialog snapshot. App/PID-only,
 window-selector-only, targetless, and foreground forms are refused by policy before dispatch. The exact target and
 focused element are revalidated for every chord, but macOS does not acknowledge semantic effect; observe that target

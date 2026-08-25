@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooAutomationKit
+import PeekabooFoundation
 
 extension PeekabooBridgeRequest {
     /// The one canonical request-unwrapping path used by semantic planning and receipt validation.
@@ -30,6 +31,9 @@ extension PeekabooBridgeRequest {
     var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
         if self.requiresNativeBrowserConnectionBinding {
             return PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion
+        }
+        if self.requiresCompositeTypeDeliverySupport {
+            return PeekabooBridgeConstants.compositeTypeDeliveryVersion
         }
         if self.requiresStatelessClickVariantSupport {
             return PeekabooBridgeConstants.statelessClickVariantVersion
@@ -104,6 +108,21 @@ extension PeekabooBridgeRequest {
 
     var requiresRequestPinnedExactWindowScrollReceipt: Bool {
         self.unwrappedOperationRequest.operation == .targetedScroll
+    }
+
+    var requiresCompositeTypeDeliverySupport: Bool {
+        let actions: [TypeAction]
+        switch self.unwrappedOperationRequest {
+        case let .targetedTypeActions(payload):
+            actions = payload.actions
+        case let .exactWindowTargetedTypeActions(payload):
+            actions = payload.actions
+        case let .exactWindowPixelFocusType(payload):
+            actions = payload.request.actions
+        default:
+            return false
+        }
+        return actions.contains(where: \.isClear)
     }
 
     var requiresExactWindowHeldPointerLifecycleSupport: Bool {

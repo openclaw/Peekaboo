@@ -396,6 +396,7 @@ public enum PeekabooBridgeHostCapability {
     public static let setValueResultTargetBinding = "setValueResultTargetBinding"
     public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
     public static let requestPinnedExactWindowScrollReceipt = "requestPinnedExactWindowScrollReceipt"
+    public static let compositeTypeDelivery = "compositeTypeDelivery"
 }
 
 /// Stable raw capabilities a client may offer during handshake. Raw strings keep additions

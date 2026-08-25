@@ -76,7 +76,8 @@ struct PeekabooBridgeCapabilityTests {
         let error = InputDeliveryIndeterminateError(
             operation: .type,
             emittedUnitCount: 1,
-            causeDescription: "window focus drifted")
+            causeDescription: "window focus drifted",
+            delivery: .init(mechanism: .accessibilityValue, mode: .background))
 
         let envelope = PeekabooBridgeServer.bridgeErrorEnvelope(for: error, operation: .targetedTypeActions)
 
@@ -88,6 +89,7 @@ struct PeekabooBridgeCapabilityTests {
         #expect(failure.outcome.route == .bridge)
         #expect(failure.outcome.state == .indeterminate)
         #expect(failure.outcome.evidence == .completionUnknown)
+        #expect(failure.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
         #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
         #expect(failure.outcome.projection.requiresFreshObservation)
         #expect(failure.causeDescription == "window focus drifted")
