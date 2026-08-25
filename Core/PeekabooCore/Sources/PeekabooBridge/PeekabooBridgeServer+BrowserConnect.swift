@@ -7,15 +7,7 @@ extension PeekabooBridgeServer {
     func handleBrowserConnect(
         _ payload: PeekabooBridgeBrowserChannelRequest) async throws -> PeekabooBridgeHandledResponse
     {
-        guard let provider = self.services as? any PeekabooBridgeBrowserConnectionResultProviding else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .operationUnsupported,
-                message: "The Bridge browser provider cannot report canonical connection outcomes.",
-                hint: "Update the runtime host before retrying browser connect.")
-        }
-        let result = try await provider.browserConnectResult(
-            channel: payload.channel,
-            browserURL: payload.browserURL)
+        let result = try await self.browserConnectionResult(payload)
         guard result.payload.isConnected,
               let receipt = result.payload.connectionReceipt,
               let outcome = result.outcome
@@ -54,6 +46,32 @@ extension PeekabooBridgeServer {
             mutation: .init(
                 outcome: outcome.routed(to: .bridge),
                 target: self.browserTargetDisposition(receipt)))
+    }
+
+    func browserConnectionResult(
+        _ payload: PeekabooBridgeBrowserChannelRequest) async throws
+        -> DesktopActionResult<PeekabooBridgeBrowserStatus>
+    {
+        guard let provider = self.services as? any PeekabooBridgeBrowserConnectionResultProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The Bridge browser provider cannot report canonical connection outcomes.",
+                hint: "Update the runtime host before retrying browser connect.")
+        }
+        return try await provider.browserConnectResult(
+            channel: payload.channel,
+            browserURL: payload.browserURL)
+    }
+
+    func legacyBrowserConnectionStatus(
+        _ payload: PeekabooBridgeBrowserChannelRequest) async throws -> PeekabooBridgeBrowserStatus
+    {
+        if self.services is any PeekabooBridgeBrowserConnectionResultProviding {
+            return try await self.browserConnectionResult(payload).payload
+        }
+        return try await self.services.browserConnect(
+            channel: payload.channel,
+            browserURL: payload.browserURL)
     }
 
     func browserTargetDisposition(

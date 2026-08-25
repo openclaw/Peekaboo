@@ -1989,6 +1989,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserRawIsError = false
     var browserStatusError: (any Error)?
     var browserConnectFailure: DesktopActionFailure?
+    var browserConnectError: (any Error)?
     var browserExecutionError: (any Error)?
     var browserExecutionErrorAfterDispatch: (any Error)?
     var browserCompletedCallCount: Int?

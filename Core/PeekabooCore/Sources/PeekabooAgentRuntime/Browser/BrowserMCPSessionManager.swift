@@ -243,7 +243,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                             browserURL: browserURL,
                             attempt: attempt)
                     } catch is CancellationError where !attempt.state.didStartAnyDispatch {
-                        throw CancellationError()
+                        throw Self.preDispatchConnectionFailure(CancellationError())
                     } catch BrowserMCPConnectionError.targetLocked {
                         throw BrowserMCPConnectionError.targetLocked
                     } catch let failure as DesktopActionFailure {
@@ -261,7 +261,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch is CancellationError where !attempt.state.didStartAnyDispatch {
-            throw CancellationError()
+            throw Self.preDispatchConnectionFailure(CancellationError())
         } catch {
             if attempt.state.didStartAnyDispatch {
                 throw Self.indeterminateConnectionFailure(error)
@@ -305,6 +305,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             var config = target.config
             config.env["TMPDIR"] = uploadWorkspace.rootPath
             self.uploadWorkspace = uploadWorkspace
+            // Native channel setup has one owner-controlled identity probe, then this separately
+            // owned MCP child opens the session's execution WebSocket. Later validation never probes.
             attempt.state.markConnectionDispatchStarted()
             connectionAttemptDispatched = true
             try await self.manager.addServer(name: self.serverName, config: config)
@@ -350,7 +352,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         } catch {
             await self.clearConnection()
             if error is CancellationError, !attempt.state.didStartAnyDispatch {
-                throw CancellationError()
+                throw Self.preDispatchConnectionFailure(CancellationError())
             }
             if attempt.state.didStartPermissionDispatch || connectionAttemptDispatched {
                 throw Self.indeterminateConnectionFailure(error)
@@ -585,7 +587,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 throw failure
             } catch {
                 await self.clearConnection()
-                if attempt.state.didStartPermissionDispatch {
+                if attempt.state.didStartAnyDispatch {
                     throw Self.indeterminateConnectionFailure(error)
                 }
                 throw Self.preDispatchConnectionFailure(error)

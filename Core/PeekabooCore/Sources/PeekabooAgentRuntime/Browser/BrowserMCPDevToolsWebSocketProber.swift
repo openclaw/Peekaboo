@@ -167,6 +167,9 @@ struct BrowserMCPDevToolsWebSocketProber: Sendable {
     {
         let task = BrowserMCPNoRedirectURLSession.shared.webSocketTask(with: request)
         return try await withTaskCancellationHandler {
+            // This owner-controlled probe is intentionally not the MCP transport. It proves the exact
+            // browser identity, closes, and lets the separately owned MCP child open the second and final
+            // WebSocket for the session. A URL identity is not a transferable URLSession socket.
             defer { task.cancel(with: .normalClosure, reason: nil) }
             try Task.checkCancellation()
             onDispatch()

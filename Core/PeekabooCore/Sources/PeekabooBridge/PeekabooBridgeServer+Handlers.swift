@@ -111,10 +111,8 @@ extension PeekabooBridgeServer {
         case let .browserStatus(payload):
             return try await .browserStatus(self.services.browserStatus(channel: payload.channel))
         case let .browserConnect(payload):
-            return try await .browserStatus(
-                self.services.browserConnect(
-                    channel: payload.channel,
-                    browserURL: payload.browserURL))
+            let status = try await self.legacyBrowserConnectionStatus(payload)
+            return .browserStatus(status)
         case .browserDisconnect:
             try await self.services.browserDisconnect()
             return .ok

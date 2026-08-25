@@ -48,7 +48,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
     }
 
     @Test
-    func `one permission probe connects while every later check is authority only`() async throws {
+    func `one native approval probe and one MCP child connect while later checks are authority only`() async throws {
         let manager = AuthorityBrowserMCPManager()
         let initialResolutions = AuthorityCounter()
         let revalidations = AuthorityCounter()
@@ -80,6 +80,37 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         #expect(revalidations.value >= 5)
         #expect(manager.addServerCount == 1)
         #expect(manager.executedTools == ["list_pages", "take_snapshot"])
+    }
+
+    @Test
+    func `implicit isolated auto connect timeout remains post dispatch indeterminate`() async {
+        let manager = DeadlineBrowserMCPManager()
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: { _ in [] },
+            processStartIdentity: { _ in nil },
+            connectionAttempt: { .standalone(timeout: .milliseconds(40)) },
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
+        let service = BrowserMCPService(sessionManager: session)
+
+        do {
+            _ = try await service.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable,
+                connectionPolicy: .allowAutoConnect)
+            Issue.record("Expected implicit MCP startup timeout")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+        } catch {
+            Issue.record("Expected canonical post-dispatch failure, got \(error)")
+        }
+
+        #expect(manager.addServerCancellationCount == 1)
+        #expect(manager.removeServerCount == 1)
     }
 
     @Test

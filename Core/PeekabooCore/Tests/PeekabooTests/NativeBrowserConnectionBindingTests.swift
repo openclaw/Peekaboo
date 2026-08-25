@@ -21,6 +21,9 @@ struct NativeBrowserConnectionBindingTests {
     func `current Bridge signs pre and post approval connect failures canonically`() async throws {
         let failures = [
             DesktopActionFailure.preDispatchRefusal(
+                reason: .requestCancelled,
+                message: "connect cancelled before dispatch"),
+            DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
                 message: "authority unavailable"),
             DesktopActionFailure.indeterminate(
@@ -64,6 +67,104 @@ struct NativeBrowserConnectionBindingTests {
             #expect(receipt.payload.outcome == failure.outcome.routed(to: .bridge).projection)
             await host.stop()
         }
+    }
+
+    @Test
+    @MainActor
+    func `arbitrary raw provider cancellation is signed as indeterminate`() async throws {
+        let socketPath = "/tmp/peekaboo-browser-connect-cancel-\(UUID().uuidString).sock"
+        let services = StubServices()
+        services.browserConnectError = CancellationError()
+        let server = Self.server(services: services)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.browser-connect-cancel",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+
+        do {
+            _ = try await client.browserConnectResult(channel: "stable")
+            Issue.record("Expected conservative raw-provider cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: nil))
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+        let receipt = try #require(await client.lastOperationReceipt())
+        #expect(receipt.payload.operation == .browserConnect)
+        #expect(receipt.payload.outcome?.state == .indeterminate)
+        #expect(receipt.payload.outcome?.dispatchState == .mayHaveDispatched(unitCount: nil))
+        await host.stop()
+    }
+
+    @Test
+    @MainActor
+    func `legacy explicit URL keeps arbitrary raw provider cancellation indeterminate`() async throws {
+        let socketPath = "/tmp/peekaboo-browser-legacy-connect-cancel-\(UUID().uuidString).sock"
+        let services = StubServices()
+        services.browserConnectError = CancellationError()
+        let server = Self.server(services: services)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(
+            client: .init(
+                bundleIdentifier: "dev.peekaboo.browser-legacy-connect-cancel",
+                teamIdentifier: nil,
+                processIdentifier: getpid()),
+            protocolVersion: .init(major: 1, minor: 33))
+        let request = PeekabooBridgeRequest.browserConnect(.init(
+            channel: "stable",
+            browserURL: "http://127.0.0.1:9333"))
+
+        do {
+            _ = try await client.send(request)
+            Issue.record("Expected conservative legacy raw-provider cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: nil))
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+        #expect(services.lastBrowserConnectTarget == nil)
+    }
+
+    @Test
+    @MainActor
+    func `legacy explicit URL preserves typed predispatch cancellation refusal`() async throws {
+        let expected = DesktopActionFailure.preDispatchRefusal(
+            reason: .requestCancelled,
+            message: "connect cancelled before dispatch")
+        let services = StubServices()
+        services.browserConnectFailure = expected
+        let server = Self.server(services: services)
+        let request = PeekabooBridgeRequest.browserConnect(.init(
+            channel: "stable",
+            browserURL: "http://127.0.0.1:9333"))
+
+        do {
+            _ = try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(false) {
+                try await server.handleAuthorized(
+                    request,
+                    peer: nil,
+                    permissions: Self.permissions)
+            }
+            Issue.record("Expected typed legacy connect cancellation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure == expected)
+        }
+        #expect(services.lastBrowserConnectTarget == nil)
     }
 
     @Test

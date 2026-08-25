@@ -817,6 +817,9 @@ extension StubServices: PeekabooBridgeBrowserConnectionResultProviding {
         channel: String?,
         browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
     {
+        if let browserConnectError {
+            throw browserConnectError
+        }
         if let browserConnectFailure {
             throw browserConnectFailure
         }

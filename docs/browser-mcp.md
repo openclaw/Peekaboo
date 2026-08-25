@@ -33,8 +33,13 @@ be mistaken for another browser process. Peekaboo does not approve the prompt au
 exact loopback listener belongs to the detected Chrome PID and process generation, and opens the exact published
 WebSocket. That native connection remains
 pending while Chrome shows its approval prompt, has a bounded 60-second wait, sends CDP `Browser.getVersion`, and then
-revalidates the process-owned listener before passing that same WebSocket identity as `--wsEndpoint` to Chrome DevTools
-MCP. It never uses legacy HTTP discovery for channel mode or asks the MCP child to rediscover an ambient browser.
+revalidates the process-owned listener. Peekaboo then closes the native probe and passes its exact WebSocket URL identity
+as `--wsEndpoint` to Chrome DevTools MCP; the separately owned MCP child opens the second and final WebSocket used for
+execution. A new explicit foreground channel connect therefore creates exactly two legitimate WebSocket connections,
+and Chrome may show one approval dialog for each. Once the child is connected, status, repeated connect, and browser
+execution revalidate the active-port file, kernel listener, PID generation, and bundle without opening another native
+WebSocket or prompting again. Peekaboo never uses legacy HTTP discovery for channel mode or asks the MCP child to
+rediscover an ambient browser.
 
 ## Privacy defaults
 

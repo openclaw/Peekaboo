@@ -175,6 +175,33 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
 
     @Test
     @MainActor
+    func `unattested explicit endpoint connect retains the base provider path`() async throws {
+        let services = NonReceiptBrowserExecutionServices()
+        let server = PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            permissionStatusEvaluator: { _ in Self.permissions })
+
+        let handled = try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(false) {
+            try await server.handleAuthorized(
+                .browserConnect(.init(
+                    channel: "stable",
+                    browserURL: "http://127.0.0.1:9333")),
+                peer: nil,
+                permissions: Self.permissions)
+        }
+
+        guard case .browserStatus = handled.response else {
+            Issue.record("Expected legacy browser status")
+            return
+        }
+        #expect(handled.mutation == nil)
+        #expect(services.legacyConnectCount == 1)
+    }
+
+    @Test
+    @MainActor
     func `attested browser execution refuses a provider without receipt binding`() async throws {
         let services = NonReceiptBrowserExecutionServices()
         let server = PeekabooBridgeServer(
@@ -1306,6 +1333,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
 private final class NonReceiptBrowserExecutionServices: PeekabooBridgeServiceProviding {
     private let base = StubServices()
     private(set) var legacyExecutionCount = 0
+    private(set) var legacyConnectCount = 0
 
     var permissions: PermissionsService {
         self.base.permissions
@@ -1349,6 +1377,11 @@ private final class NonReceiptBrowserExecutionServices: PeekabooBridgeServicePro
 
     func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
         try await self.base.browserStatus(channel: channel)
+    }
+
+    func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus {
+        self.legacyConnectCount += 1
+        return try await self.base.browserConnect(channel: channel, browserURL: browserURL)
     }
 
     func browserExecute(_ request: PeekabooBridgeBrowserExecuteRequest) async throws

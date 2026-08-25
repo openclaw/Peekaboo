@@ -199,6 +199,14 @@ public struct BrowserTool: MCPTool {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as BrowserMCPUploadStagingError {
             return ToolResponse.error(error.localizedDescription)
+        } catch let failure as DesktopActionFailure
+            where failure.outcome.state == .refused &&
+            failure.outcome.refusalReason == .requestCancelled &&
+            failure.outcome.dispatchState == .none &&
+            failure.outcome.retrySafety == .safe &&
+            failure.outcome.escalation == .none
+        {
+            throw CancellationError()
         } catch let failure as DesktopActionFailure {
             return try MCPToolResponseMetadataProjector.errorResponse(
                 for: failure,
