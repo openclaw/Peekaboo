@@ -124,7 +124,17 @@ enum ExactWindowSelectorResolver {
         operation: String) -> ExactWindowSelectorResolutionError
     {
         let candidateIDs = Set(windowIDs)
-        let candidates = windows.lazy.filter { candidateIDs.contains($0.windowID) }.prefix(5)
+        let candidates = windows.lazy.filter { candidateIDs.contains($0.windowID) }
+            .sorted { lhs, rhs in
+                if lhs.windowID != rhs.windowID {
+                    return lhs.windowID < rhs.windowID
+                }
+                if lhs.index != rhs.index {
+                    return lhs.index < rhs.index
+                }
+                return lhs.title < rhs.title
+            }
+            .prefix(5)
             .map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
             .joined(separator: "; ")
         return ExactWindowSelectorResolutionError(

@@ -23,6 +23,25 @@ struct WindowCandidateSelectorTests {
     }
 
     @Test
+    func `unrelated conflicting duplicate poisons explicit compatibility selection`() {
+        let selected = AutomationTestFixtures.window(windowID: 201, title: "Selected", index: 0)
+        let unrelated = AutomationTestFixtures.window(windowID: 202, title: "Other", index: 1)
+        let conflicting = AutomationTestFixtures.window(windowID: 202, title: "Conflict", index: 2)
+        let expected = DesktopTargetPlanningError.conflictingWindowEntries(windowID: 202)
+
+        for candidates in [
+            [selected, unrelated, conflicting],
+            [conflicting, unrelated, selected],
+        ] {
+            #expect(throws: expected) {
+                _ = try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
+                    candidates: candidates,
+                    selector: .id(selected.windowID))
+            }
+        }
+    }
+
+    @Test
     func `unique exact title wins before partial while duplicate exact refuses deterministically`() throws {
         let windows = AutomationTestFixtures.duplicateTitleWindows()
         let selected = try DesktopTargetPlanning.WindowCandidateSelector.select(

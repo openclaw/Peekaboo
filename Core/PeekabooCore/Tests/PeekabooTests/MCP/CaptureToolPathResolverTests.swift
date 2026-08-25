@@ -263,26 +263,58 @@ struct CaptureToolPathResolverTests {
 
     @Test
     func `window resolver refuses ambiguous partial titles instead of pinning the first result`() async {
-        let windows = CaptureWindowResolverWindowService(windows: [
-            Self.window(id: 41, title: "Project Notes", index: 0),
-            Self.window(id: 42, title: "Project Plan", index: 1),
-        ])
+        let first = Self.window(id: 41, title: "Project Notes", index: 0)
+        let second = Self.window(id: 42, title: "Project Plan", index: 1)
+        let expectedMessage =
+            "window title 'Project' is ambiguous " +
+            "(id=41 index=0 'Project Notes'; id=42 index=1 'Project Plan'). " +
+            "Select one window_id or index explicitly."
 
-        do {
-            _ = try await CaptureToolWindowResolver.scope(
-                app: "Preview",
-                pid: nil,
-                windowTitle: "Project",
-                windowIndex: nil,
-                windows: windows)
-            Issue.record("Expected ambiguous partial title selection to fail")
-        } catch let error as PeekabooError {
-            #expect(error.localizedDescription.contains(
-                "Select one window_id or index explicitly."))
-        } catch {
-            Issue.record("Expected PeekabooError, received \(error)")
+        for inventory in [[first, second], [second, first]] {
+            let windows = CaptureWindowResolverWindowService(windows: inventory)
+            do {
+                _ = try await CaptureToolWindowResolver.scope(
+                    app: "Preview",
+                    pid: nil,
+                    windowTitle: "Project",
+                    windowIndex: nil,
+                    windows: windows)
+                Issue.record("Expected ambiguous partial title selection to fail")
+            } catch let error as PeekabooError {
+                #expect(error.localizedDescription.contains(expectedMessage))
+            } catch {
+                Issue.record("Expected PeekabooError, received \(error)")
+            }
+            #expect(windows.requestedTargets.map(\.description) == ["application(Preview)"])
         }
-        #expect(windows.requestedTargets.map(\.description) == ["application(Preview)"])
+    }
+
+    @Test
+    func `window resolver deterministically reports unrelated conflicting duplicates`() {
+        let selected = Self.window(id: 41, title: "Project", index: 0)
+        let firstConflict = Self.window(id: 50, title: "Other A", index: 1)
+        let secondConflict = Self.window(id: 50, title: "Other B", index: 2)
+        let expectedMessage =
+            "window title 'Project' is ambiguous " +
+            "(id=50 index=1 'Other A'; id=50 index=2 'Other B'). " +
+            "Select one window_id or index explicitly."
+
+        for inventory in [
+            [selected, firstConflict, secondConflict],
+            [secondConflict, firstConflict, selected],
+        ] {
+            do {
+                _ = try ExactWindowSelectorResolver.select(
+                    from: inventory,
+                    selection: .title("Project"),
+                    operation: "Capture window selection")
+                Issue.record("Expected conflicting inventory selection to fail")
+            } catch let error as ExactWindowSelectorResolutionError {
+                #expect(error.message == "Capture window selection \(expectedMessage)")
+            } catch {
+                Issue.record("Expected ExactWindowSelectorResolutionError, received \(error)")
+            }
+        }
     }
 
     @Test
