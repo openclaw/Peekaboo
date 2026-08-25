@@ -2006,7 +2006,11 @@ final class StubServices: PeekabooBridgeServiceProviding {
         processIdentifier: 42,
         processStartIdentity: 10042,
         bundleIdentifier: "com.google.Chrome",
-        browserVersion: "144.0")
+        browserURL: "http://127.0.0.1:9222/",
+        webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+        devToolsBrowserID: "browser-a",
+        browserVersion: "Chrome/144.0",
+        protocolVersion: "1.3")
 
     init(
         applications: any ApplicationServiceProtocol = StubApplicationService(),

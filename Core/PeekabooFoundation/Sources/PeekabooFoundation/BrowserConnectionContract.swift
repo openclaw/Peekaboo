@@ -7,11 +7,11 @@ public enum ChromeChannelIdentity: String, Sendable, CaseIterable, Codable {
     case canary
 
     public init?(exactBundleIdentifier: String?) {
-        switch exactBundleIdentifier?.lowercased() {
-        case "com.google.chrome": self = .stable
-        case "com.google.chrome.beta": self = .beta
-        case "com.google.chrome.dev": self = .dev
-        case "com.google.chrome.canary": self = .canary
+        switch exactBundleIdentifier {
+        case "com.google.Chrome": self = .stable
+        case "com.google.Chrome.beta": self = .beta
+        case "com.google.Chrome.dev": self = .dev
+        case "com.google.Chrome.canary": self = .canary
         default: return nil
         }
     }

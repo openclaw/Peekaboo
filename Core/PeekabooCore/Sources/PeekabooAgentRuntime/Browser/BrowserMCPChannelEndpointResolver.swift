@@ -134,7 +134,8 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
             webSocketDebuggerURL: before.webSocketDebuggerURL,
             browserID: before.browserID,
             browserVersion: version.browserVersion,
-            protocolVersion: version.protocolVersion)
+            protocolVersion: version.protocolVersion,
+            listenerIdentity: before.listener)
     }
 
     static func revalidateEndpoint(
@@ -151,7 +152,8 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
             inspectListener: inspectListener)
         guard authority.browserURL == expected.browserURL,
               authority.webSocketDebuggerURL == expected.webSocketDebuggerURL,
-              authority.browserID == expected.browserID
+              authority.browserID == expected.browserID,
+              authority.listener == expected.listenerIdentity
         else {
             throw BrowserMCPConnectionError.connectionLost(
                 "the process-bound DevTools browser endpoint changed identity")

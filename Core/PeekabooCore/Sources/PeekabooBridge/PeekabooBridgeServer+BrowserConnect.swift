@@ -103,6 +103,7 @@ extension PeekabooBridgeServer {
             receipt: PeekabooBridgeBrowserConnectionReceipt,
             disposition: PeekabooBridgeHandledResponse.Mutation.TargetDisposition)
     {
+        let expectedReceipt = try Self.validatedBrowserExecutionReceipt(payload)
         let status: PeekabooBridgeBrowserStatus
         do {
             status = try await self.services.browserStatus(channel: payload.channel)
@@ -145,12 +146,6 @@ extension PeekabooBridgeServer {
                 message: "The connected browser channel changed before execution.",
                 hint: "Refresh browser status and retry against its exact channel.")
         }
-        guard let expectedReceipt = payload.expectedConnectionReceipt else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .invalidRequest,
-                message: "Attested browser execution requires an expected connection receipt.",
-                hint: "Refresh browser status and bind the request to its complete connection receipt.")
-        }
         guard expectedReceipt == receipt else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -158,6 +153,23 @@ extension PeekabooBridgeServer {
                 hint: "Refresh browser status and retry against its complete connection receipt.")
         }
         return try (receipt, self.browserTargetDisposition(receipt))
+    }
+
+    static func validatedBrowserExecutionReceipt(
+        _ payload: PeekabooBridgeBrowserExecuteRequest) throws
+        -> PeekabooBridgeBrowserConnectionReceipt
+    {
+        guard let receipt = payload.expectedConnectionReceipt,
+              receipt.isCanonicalExecutionTarget,
+              payload.channel == nil || payload.channel == receipt.channel,
+              payload.connectionPolicy == .requireExistingLiveReceipt
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Browser execution requires one complete existing-connection-only receipt.",
+                hint: "Refresh browser status and bind the request to its exact connection before retrying.")
+        }
+        return receipt
     }
 
     private static func invalidBrowserConnectOutcome(_ outcome: DesktopActionOutcome) -> DesktopActionFailure {

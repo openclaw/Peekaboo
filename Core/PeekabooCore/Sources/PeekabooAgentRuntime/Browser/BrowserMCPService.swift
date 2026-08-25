@@ -172,6 +172,8 @@ enum BrowserMCPLaunchTarget: Sendable, Equatable {
 }
 
 public protocol BrowserMCPClientProviding: AnyObject, Sendable {
+    var supportsNativeBrowserConnectionBinding: Bool { get }
+
     @MainActor
     func status(channel: BrowserMCPChannel?) async -> BrowserMCPStatus
     @MainActor
@@ -189,6 +191,12 @@ public protocol BrowserMCPClientProviding: AnyObject, Sendable {
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt) async throws -> BrowserMCPExecutionResult
+}
+
+extension BrowserMCPClientProviding {
+    public var supportsNativeBrowserConnectionBinding: Bool {
+        false
+    }
 }
 
 /// Additive browser client surface for callers that need canonical desktop-action semantics.
@@ -274,6 +282,10 @@ extension BrowserMCPClientProviding {
 public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
     BrowserMCPConnectionResultProviding, @unchecked Sendable
 {
+    public var supportsNativeBrowserConnectionBinding: Bool {
+        true
+    }
+
     private static let serverName = "chrome-devtools"
 
     @MainActor private var sessionManager: BrowserMCPSessionManager?

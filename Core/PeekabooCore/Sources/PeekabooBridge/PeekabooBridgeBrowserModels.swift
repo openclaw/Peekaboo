@@ -160,6 +160,10 @@ extension PeekabooBridgeBrowserConnectionReceipt {
             self.isCanonicalLocalProcessTarget
     }
 
+    var isCanonicalExecutionTarget: Bool {
+        self.isCanonicalProcessBoundTarget || self.isCanonicalExternalTarget
+    }
+
     func matchesConnectRequest(_ request: PeekabooBridgeBrowserChannelRequest) -> Bool {
         guard request.channel.map({ $0 == self.channel }) ?? true else { return false }
         guard let requestedBrowserURL = request.browserURL else {

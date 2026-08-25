@@ -136,7 +136,8 @@ extension PeekabooBridgeClient {
                 hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
         }
         if self.operationAttestation == nil {
-            return try await self.directBrowserExecute(request)
+            let boundRequest = try await self.receiptBoundBrowserRequest(request)
+            return try await self.directBrowserExecute(boundRequest)
         }
         let result = try await self.browserExecuteResult(request)
         if let failure = result.payload.actionFailure {
@@ -161,10 +162,17 @@ extension PeekabooBridgeClient {
                 message: "Process-bound browser execution requires native browser connection binding.",
                 hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
         }
-        if request.isReadOnly {
-            return try await DesktopActionResult(payload: self.directBrowserExecute(request), outcome: nil)
-        }
         let boundRequest = try await self.receiptBoundBrowserRequest(request)
+        if request.isReadOnly {
+            return try await DesktopActionResult(payload: self.directBrowserExecute(boundRequest), outcome: nil)
+        }
+        guard self.operationAttestation != nil else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .operationUnsupported,
+                message: "Result-aware browser mutation requires receipt-bound Bridge execution.",
+                hint: "Use a protocol 1.29 runtime with operation receipts, or use the legacy browser API.")
+        }
         return try await self.actionResult(
             for: .browserExecute(boundRequest),
             expectedResponse: "browser tool",
@@ -178,15 +186,8 @@ extension PeekabooBridgeClient {
     private func receiptBoundBrowserRequest(
         _ request: PeekabooBridgeBrowserExecuteRequest) async throws -> PeekabooBridgeBrowserExecuteRequest
     {
-        guard self.operationAttestation != nil else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                route: .bridge,
-                reason: .operationUnsupported,
-                message: "Result-aware browser mutation requires receipt-bound Bridge execution.",
-                hint: "Use a protocol 1.29 runtime with operation receipts, or use the legacy browser API.")
-        }
         if let expectedReceipt = request.expectedConnectionReceipt {
-            guard expectedReceipt.isCanonicalTarget,
+            guard expectedReceipt.isCanonicalExecutionTarget,
                   request.channel == nil || request.channel == expectedReceipt.channel
             else {
                 throw DesktopActionFailure.preDispatchRefusal(
@@ -204,12 +205,12 @@ extension PeekabooBridgeClient {
                     message: "Process-bound browser execution requires native browser connection binding.",
                     hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
             }
-            return request
+            return request.binding(to: expectedReceipt)
         }
         let status = try await self.browserStatus(channel: request.channel)
         guard status.isConnected,
               let receipt = status.connectionReceipt,
-              receipt.isCanonicalTarget,
+              receipt.isCanonicalExecutionTarget,
               request.channel == nil || receipt.channel == request.channel
         else {
             throw DesktopActionFailure.preDispatchRefusal(

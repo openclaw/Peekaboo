@@ -9,7 +9,7 @@ import TachikomaMCP
 @MainActor
 extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
     public var supportsNativeBrowserConnectionBinding: Bool {
-        true
+        self.browser.supportsNativeBrowserConnectionBinding
     }
 
     public func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {

@@ -6,7 +6,7 @@ struct BrowserConnectionContractTests {
     func `Chrome channels map only exact bundle identifiers`() {
         for channel in ChromeChannelIdentity.allCases {
             #expect(ChromeChannelIdentity(exactBundleIdentifier: channel.bundleIdentifier) == channel)
-            #expect(channel.matches(bundleIdentifier: channel.bundleIdentifier.uppercased()))
+            #expect(!channel.matches(bundleIdentifier: channel.bundleIdentifier.uppercased()))
             #expect(!channel.matches(bundleIdentifier: "\(channel.bundleIdentifier).helper"))
         }
 

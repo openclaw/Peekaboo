@@ -1,3 +1,4 @@
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAgentRuntime
 
@@ -48,6 +49,16 @@ struct BrowserMCPChannelInferenceTests {
             #expect(BrowserMCPChannel.infer(
                 bundleIdentifier: bundleIdentifier,
                 applicationName: "Google Chrome Canary") == nil)
+        }
+    }
+
+    @Test
+    func `bundle identifier case variants are not Chrome channels`() {
+        for channel in BrowserMCPChannel.allCases {
+            let bundleIdentifier = ChromeChannelIdentity(rawValue: channel.rawValue)?.bundleIdentifier
+            #expect(BrowserMCPChannel.infer(
+                bundleIdentifier: bundleIdentifier?.uppercased(),
+                applicationName: "Google Chrome") == nil)
         }
     }
 

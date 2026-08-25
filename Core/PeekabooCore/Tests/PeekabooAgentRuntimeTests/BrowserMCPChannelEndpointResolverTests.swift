@@ -26,7 +26,34 @@ struct BrowserMCPChannelEndpointResolverTests {
             })
 
         #expect(endpoint.webSocketDebuggerURL == "ws://127.0.0.1:9222/devtools/browser/browser-a")
+        #expect(endpoint.listenerIdentity == Self.listener(socket: 100))
         #expect(inspections.remaining == 0)
+    }
+
+    @Test
+    func `same port listener reopen is refused during later revalidation`() async throws {
+        let initialInspections = ListenerInspections([
+            Self.listener(socket: 100),
+            Self.listener(socket: 100),
+        ])
+        let endpoint = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
+            target: Self.target(),
+            activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
+            readActivePort: { _ in Self.activePortData() },
+            inspectListener: { _, _, _ in try initialInspections.next() },
+            probeWebSocket: { _, _, _, onDispatch in
+                onDispatch()
+                return Self.version()
+            })
+
+        #expect(throws: BrowserMCPConnectionError.self) {
+            try BrowserMCPChannelEndpointResolver.revalidateEndpoint(
+                target: Self.target(),
+                expected: endpoint,
+                activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
+                readActivePort: { _ in Self.activePortData() },
+                inspectListener: { _, _, _ in Self.listener(socket: 200) })
+        }
     }
 
     @Test

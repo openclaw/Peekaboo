@@ -33,6 +33,7 @@ struct PeekabooBridgeBrowserReceiptBindingTests {
             ("stable", nil),
             ("stable", ""),
             ("stable", "com.google.Chrome.helper"),
+            ("stable", "COM.GOOGLE.CHROME"),
             ("stable", "com.google.Chrome.canary"),
             ("canary", "com.google.Chrome"),
             ("unknown", "com.google.Chrome"),
@@ -411,13 +412,16 @@ struct PeekabooBridgeBrowserReceiptBindingTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             permissionStatusEvaluator: { _ in Self.permissions })
-        let request = PeekabooBridgeRequest.browserExecute(.init(
+        let payload = PeekabooBridgeBrowserExecuteRequest(
             toolName: "click",
             arguments: [:],
             channel: "stable",
-            expectedConnectionReceipt: Self.localReceipt))
-        return try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
-            try await server.handleAuthorized(request, peer: nil, permissions: Self.permissions)
+            expectedConnectionReceipt: Self.localReceipt)
+        let request = PeekabooBridgeRequest.browserExecute(payload.binding(to: Self.localReceipt))
+        return try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(.current) {
+            try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                try await server.handleAuthorized(request, peer: nil, permissions: Self.permissions)
+            }
         }
     }
 
@@ -426,7 +430,11 @@ struct PeekabooBridgeBrowserReceiptBindingTests {
         processIdentifier: 42,
         processStartIdentity: 10042,
         bundleIdentifier: "com.google.Chrome",
-        browserVersion: "Chrome/151.0")
+        browserURL: "http://127.0.0.1:9222/",
+        webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+        devToolsBrowserID: "browser-a",
+        browserVersion: "Chrome/151.0",
+        protocolVersion: "1.3")
 
     private static let permissions = PermissionsStatus(
         screenRecording: true,

@@ -86,7 +86,7 @@ struct PeekabooBridgeBrowserClientTests {
         PeekabooBridgeProtocolVersion(major: 1, minor: 23),
         PeekabooBridgeProtocolVersion(major: 1, minor: 28),
     ])
-    func `receiptless legacy browser mutation keeps direct response behavior`(
+    func `receipt bound legacy browser mutation keeps direct response behavior`(
         version: PeekabooBridgeProtocolVersion) async throws
     {
         let expected = PeekabooBridgeBrowserToolResponse(
@@ -114,7 +114,8 @@ struct PeekabooBridgeBrowserClientTests {
         let response = try await client.browserExecute(.init(
             toolName: "click",
             arguments: ["uid": PeekabooBridgeJSONValue.string("7_1")],
-            channel: "stable"))
+            channel: "stable",
+            expectedConnectionReceipt: Self.browserReceipt))
 
         #expect(response == expected)
         await peer.waitUntilFinished()
@@ -128,7 +129,8 @@ struct PeekabooBridgeBrowserClientTests {
             Issue.record("Expected a direct legacy browser request")
             return
         }
-        #expect(browserRequest.expectedConnectionReceipt == nil)
+        #expect(browserRequest.expectedConnectionReceipt == Self.browserReceipt)
+        #expect(browserRequest.connectionPolicy == .requireExistingLiveReceipt)
     }
 
     @Test
@@ -160,7 +162,8 @@ struct PeekabooBridgeBrowserClientTests {
         let response = try await client.browserExecute(.init(
             toolName: "click",
             arguments: [:],
-            channel: "stable"))
+            channel: "stable",
+            expectedConnectionReceipt: Self.browserReceipt))
 
         #expect(response == expected)
         await peer.waitUntilFinished()
@@ -203,7 +206,8 @@ struct PeekabooBridgeBrowserClientTests {
             _ = try await client.browserExecute(.init(
                 toolName: "click",
                 arguments: [:],
-                channel: "stable"))
+                channel: "stable",
+                expectedConnectionReceipt: Self.browserReceipt))
             Issue.record("Expected the typed browser batch failure")
         } catch let failure as DesktopActionFailure {
             #expect(failure == expected)
@@ -254,22 +258,18 @@ struct PeekabooBridgeBrowserClientTests {
         PeekabooBridgeProtocolVersion(major: 1, minor: 23),
         PeekabooBridgeProtocolVersion(major: 1, minor: 28),
     ])
-    func `receiptless result aware browser read remains allowed`(
+    func `receiptless result aware browser read refuses without live status receipt`(
         version: PeekabooBridgeProtocolVersion) async throws
     {
-        let expected = PeekabooBridgeBrowserToolResponse(
-            content: [.object([
-                "type": .string("text"),
-                "text": .string("pages"),
-            ])],
-            isError: false,
-            meta: nil)
         let peer = try ScriptedBridgePeer(responses: [
             .handshake(BridgeTestFixtures.handshake(
                 negotiatedVersion: version,
-                supportedOperations: [.browserExecute],
+                supportedOperations: [.browserStatus, .browserExecute],
                 hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])),
-            .browserToolResponse(expected),
+            .browserStatus(.init(
+                isConnected: false,
+                toolCount: 0,
+                detectedBrowsers: [])),
         ])
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
         _ = try await client.handshake(
@@ -279,13 +279,17 @@ struct PeekabooBridgeBrowserClientTests {
                 processIdentifier: getpid()),
             protocolVersion: version)
 
-        let result = try await client.browserExecuteResult(.init(
-            toolName: "list_pages",
-            arguments: [:],
-            channel: "stable"))
-
-        #expect(result.outcome == nil)
-        #expect(result.payload == expected)
+        do {
+            _ = try await client.browserExecuteResult(.init(
+                toolName: "list_pages",
+                arguments: [:],
+                channel: "stable"))
+            Issue.record("Expected missing live receipt refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+        }
         await peer.waitUntilFinished()
         let requests = await peer.requests
         #expect(requests.count == 2)
@@ -293,15 +297,15 @@ struct PeekabooBridgeBrowserClientTests {
         let wireRequest = try JSONDecoder.peekabooBridgeDecoder().decode(
             PeekabooBridgeRequest.self,
             from: requests[1])
-        guard case .browserExecute = wireRequest else {
-            Issue.record("Expected a direct read-only browser request")
+        guard case .browserStatus = wireRequest else {
+            Issue.record("Expected only a browser status request")
             return
         }
     }
 
     @Test
     @MainActor
-    func `current client keeps result reads receiptless and binds legacy mutation`() async throws {
+    func `current client binds result reads and legacy mutations to exact receipts`() async throws {
         let socketPath = "/tmp/peekaboo-current-browser-routing-\(UUID().uuidString).sock"
         let services = StubServices()
         services.browserConnectionReceipt = Self.browserReceipt
@@ -332,6 +336,8 @@ struct PeekabooBridgeBrowserClientTests {
         #expect(read.outcome == nil)
         #expect(!read.payload.isError)
         #expect(services.lastExpectedBrowserConnectionReceipt == nil)
+        #expect(services.lastBrowserExecute?.expectedConnectionReceipt == Self.browserReceipt)
+        #expect(services.lastBrowserExecute?.connectionPolicy == .requireExistingLiveReceipt)
 
         let mutation = try await client.browserExecute(.init(
             toolName: "click",

@@ -5,6 +5,7 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooBridge
 
+// swiftlint:disable:next type_body_length
 struct PeekabooBridgeHandlerMutationSemanticsTests {
     @Test
     @MainActor
@@ -90,7 +91,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
             return
         }
         #expect(response.connectionReceipt == services.lastExpectedBrowserConnectionReceipt)
-        #expect(services.lastBrowserExecute == request)
+        #expect(services.lastBrowserExecute == request.binding(to: Self.localBrowserReceipt))
     }
 
     @Test
@@ -143,7 +144,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
 
     @Test
     @MainActor
-    func `unattested browser execution retains the legacy provider path`() async throws {
+    func `unattested explicit endpoint execution retains the legacy provider path`() async throws {
         let services = NonReceiptBrowserExecutionServices()
         let server = PeekabooBridgeServer(
             services: services,
@@ -155,7 +156,11 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
             })
 
         let handled = try await server.handleAuthorized(
-            .browserExecute(.init(toolName: "click", arguments: [:], channel: "stable")),
+            .browserExecute(.init(
+                toolName: "click",
+                arguments: [:],
+                channel: "stable",
+                expectedConnectionReceipt: Self.externalBrowserReceipt)),
             peer: nil,
             permissions: Self.permissions)
 
@@ -736,7 +741,11 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
         let services = StubServices()
         services.browserRawIsError = true
         let handled = try await Self.server(services: services).handleAuthorized(
-            .browserExecute(.init(toolName: "click", arguments: [:], channel: "stable")),
+            .browserExecute(.init(
+                toolName: "click",
+                arguments: [:],
+                channel: "stable",
+                expectedConnectionReceipt: Self.externalBrowserReceipt)),
             peer: nil,
             permissions: Self.permissions)
 
@@ -1208,8 +1217,17 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
         _ request: PeekabooBridgeRequest,
         with server: PeekabooBridgeServer) async throws -> PeekabooBridgeHandledResponse
     {
-        try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
-            try await server.handleAuthorized(request, peer: nil, permissions: Self.permissions)
+        let request = if case let .browserExecute(payload) = request,
+                         let receipt = payload.expectedConnectionReceipt
+        {
+            PeekabooBridgeRequest.browserExecute(payload.binding(to: receipt))
+        } else {
+            request
+        }
+        return try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(.current) {
+            try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                try await server.handleAuthorized(request, peer: nil, permissions: Self.permissions)
+            }
         }
     }
 
@@ -1253,7 +1271,18 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
         processIdentifier: 42,
         processStartIdentity: 10042,
         bundleIdentifier: "com.google.Chrome",
-        browserVersion: "144.0")
+        browserURL: "http://127.0.0.1:9222/",
+        webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+        devToolsBrowserID: "browser-a",
+        browserVersion: "Chrome/144.0",
+        protocolVersion: "1.3")
+    private static let externalBrowserReceipt = PeekabooBridgeBrowserConnectionReceipt(
+        channel: "stable",
+        browserURL: "http://127.0.0.1:9333/",
+        webSocketDebuggerURL: "ws://127.0.0.1:9333/devtools/browser/browser-b",
+        devToolsBrowserID: "browser-b",
+        browserVersion: "Chrome/144.0",
+        protocolVersion: "1.3")
     private static let windowIdentity = WindowMutationIdentity(
         windowID: 77,
         ownerProcessIdentifier: 123,

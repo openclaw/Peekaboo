@@ -888,6 +888,9 @@ public final class PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Operation \(op.rawValue) is not supported by this host")
         }
+        if case let .browserExecute(payload) = request {
+            _ = try Self.validatedBrowserExecutionReceipt(payload)
+        }
         if op == .observeProcessGeneration || op == .certificationProducerAttestation {
             try self.requireCertificationCaller(peer)
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {

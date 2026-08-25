@@ -94,6 +94,14 @@ struct BrowserMCPDevToolsEndpointResolverTests {
         #expect(redirectedRequest == nil)
     }
 
+    @Test
+    func `loopback HTTP and WebSocket session explicitly disables system proxies`() {
+        let configured = BrowserMCPNoRedirectURLSession.makeConfiguration()
+
+        #expect(configured.connectionProxyDictionary?.isEmpty == true)
+        #expect(BrowserMCPNoRedirectURLSession.shared.configuration.connectionProxyDictionary?.isEmpty == true)
+    }
+
     private static func response(
         url: URL,
         webSocketDebuggerURL: String) throws -> (Data, URLResponse)

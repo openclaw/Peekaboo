@@ -11,6 +11,57 @@ import Testing
 struct PeekabooServicesBrowserBridgeTests {
     @Test
     @MainActor
+    func `legacy injected browser omits native binding capability and refuses channel connect`() async throws {
+        let browser = AdapterBrowserMCPClient(result: .init(
+            response: .text("ok"),
+            connectionReceipt: Self.runtimeReceipt,
+            completedCallCount: 0,
+            dispatchedCallCount: 0))
+        let services = Self.services(browser: browser)
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [])
+        let handshakeRequest = PeekabooBridgeRequest.handshake(.init(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            client: .init(
+                bundleIdentifier: "dev.peekaboo.legacy-browser-capability",
+                teamIdentifier: nil,
+                processIdentifier: getpid()),
+            requestedHostKind: .onDemand))
+        let responseData = try await server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(handshakeRequest),
+            peer: nil)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: responseData)
+        guard case let .handshake(handshake) = response else {
+            Issue.record("Expected handshake response")
+            return
+        }
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.nativeBrowserConnectionBinding) != true)
+
+        let request = PeekabooBridgeRequest.browserConnect(.init(channel: "stable"))
+        let capabilities = PeekabooBridgeNegotiatedSessionCapabilities(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            statelessClickVariants: true,
+            exactWindowHeldPointerLifecycle: true,
+            nativeBrowserConnectionBinding: false)
+        #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(capabilities) {
+                try server.validateOperationAccess(
+                    for: request,
+                    permissions: Self.permissions,
+                    effectiveOps: [.browserConnect])
+            }
+        }
+        #expect(browser.connectCount == 0)
+    }
+
+    @Test
+    @MainActor
     func `browser status preserves a lossless detected process generation`() async throws {
         let generation: UInt64 = 9_007_199_254_740_993
         let browser = AdapterBrowserMCPClient(
