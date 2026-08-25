@@ -77,6 +77,9 @@ extension PeekabooBridgeServer {
             startedAt: startedAt)
         let plan = encodingContext.plan
         let requestEvidence = plan.target.requestEvidence
+        if let compatibilityRefusal = try await self.exactScrollCompatibilityRefusal(request, claim, encodingContext) {
+            return compatibilityRefusal
+        }
         let requestTarget: DesktopTargetIdentity?
         do {
             requestTarget = try PeekabooBridgeOperationTargetAttribution.resolveRequest(plan)
@@ -179,6 +182,24 @@ extension PeekabooBridgeServer {
                 failureEvidence: targetFailureEvidence),
             selectedLeafEvidence: targetFailure == nil ? handled.selectedLeafEvidence : nil,
             context: encodingContext)
+    }
+
+    private func exactScrollCompatibilityRefusal(
+        _ request: PeekabooBridgeRequest,
+        _ claim: PeekabooBridgeOperationSessionClaim,
+        _ context: OperationReceiptEncodingContext) async throws -> Data?
+    {
+        guard request.requiresRequestPinnedExactWindowScrollReceipt,
+              !claim.negotiatedCapabilities.requestPinnedExactWindowScrollReceipt
+        else { return nil }
+        return try await self.encodeAttestedResponse(
+            Self.requestPinnedExactWindowScrollRuntimeRefusal(plan: context.plan),
+            targetState: .init(
+                target: nil,
+                focusedElement: nil,
+                failure: nil,
+                failureEvidence: nil),
+            context: context)
     }
 
     private func executeAttestedOperation(
@@ -314,6 +335,34 @@ extension PeekabooBridgeServer {
             response: .error(envelope),
             outcome: failure.outcome.projection,
             usesCurrentVocabulary: true)
+    }
+
+    private static func requestPinnedExactWindowScrollRuntimeRefusal(
+        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) -> PeekabooBridgeResponse
+    {
+        let envelope = self.requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope()
+        guard let failure = envelope.desktopActionFailure else {
+            preconditionFailure("Exact-window scroll runtime refusal must carry a canonical action failure")
+        }
+        if case .projectedAction = plan.carriageRequest {
+            return .projectedActionForCurrentRequestVocabulary(
+                response: .error(envelope),
+                outcome: failure.outcome.projection,
+                usesCurrentVocabulary: true)
+        }
+        return .error(envelope)
+    }
+
+    static func requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope() -> PeekabooBridgeErrorEnvelope {
+        let failure = DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .runtimeIncompatible,
+            message: "This Bridge session cannot preserve an exact-window scroll receipt.",
+            hint: "Update and relaunch Peekaboo before retrying background scroll.")
+        return PeekabooBridgeErrorEnvelope(
+            code: .versionMismatch,
+            actionFailure: failure,
+            context: "bridge_exact_scroll_receipt:runtime_incompatible")
     }
 
     private func terminalResponse(

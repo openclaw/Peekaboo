@@ -21,6 +21,31 @@ struct ScrollServiceTargetResolutionTests {
 
         #expect(!request.foreground)
         #expect(request.delay == 0)
+        #expect(request.expectedWindow == nil)
+    }
+
+    @Test
+    func `scroll payload round trip preserves exact capture target`() throws {
+        let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
+        let expectedWindow = try UIAutomationTarget.ExactWindow(
+            identity: .init(
+                windowID: 73,
+                ownerProcessIdentifier: 123,
+                ownerProcessStartIdentity: 456,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let request = ScrollRequest(
+            direction: .down,
+            amount: 3,
+            target: "S1",
+            snapshotId: "snapshot",
+            expectedWindow: expectedWindow)
+
+        let decoded = try JSONDecoder().decode(
+            ScrollRequest.self,
+            from: JSONEncoder().encode(request))
+
+        #expect(decoded.expectedWindow == expectedWindow)
     }
 
     @Test
@@ -509,6 +534,40 @@ struct ScrollServiceTargetResolutionTests {
         }
         #expect(error?.receiptError == .contradictoryWindowBounds)
         #expect(action.scrollCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `background scroll refuses request and snapshot target mismatch before dispatch`() async throws {
+        let detectionResult = Self.exactDetectionResult(element: Self.scrollElement())
+        let bounds = try #require(detectionResult.metadata.windowContext?.windowBounds)
+        let mismatchedWindow = try UIAutomationTarget.ExactWindow(
+            identity: .init(
+                windowID: 43,
+                ownerProcessIdentifier: getpid(),
+                ownerProcessStartIdentity: 11,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let action = ScrollRecordingActionInputDriver()
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
+            actionInputDriver: action,
+            syntheticInputDriver: synthetic,
+            automationElementResolver: ScrollFixedAutomationElementResolver(),
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 })
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await service.scroll(ScrollRequest(
+                direction: .down,
+                amount: 1,
+                target: "S1",
+                snapshotId: Self.snapshotID,
+                expectedWindow: mismatchedWindow))
+        }
+        #expect(action.scrollCalls.isEmpty)
+        #expect(synthetic.events.isEmpty)
     }
 
     @Test

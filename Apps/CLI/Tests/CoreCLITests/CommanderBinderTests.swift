@@ -951,7 +951,8 @@ extension CommanderBinderTests {
                 accessibility: true,
                 postEvent: true
             ),
-            enabledOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot]
+            enabledOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
+            hostCapabilities: [PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt]
         ).withProducerBoundSnapshotFixture()
 
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: background))

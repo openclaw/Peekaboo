@@ -282,6 +282,10 @@ extension UIAutomationServiceProtocol {
 /// without requiring older or transport-backed automation services to fabricate outcome evidence.
 @MainActor
 public protocol UIAutomationActionOutcomeProviding: UIAutomationServiceProtocol {
+    /// The service binds an exact-window scroll request to the same complete snapshot receipt in
+    /// both successful and retry-unsafe results.
+    var supportsRequestPinnedExactWindowScrollReceipt: Bool { get }
+
     func clickWithOutcome(
         target: ClickTarget,
         clickType: ClickType,
@@ -433,6 +437,10 @@ extension UIAutomationActionOutcomeProviding {
             snapshotId: snapshotId,
             expectedWindowIdentity: expectedWindowIdentity,
             expectedWindowBounds: expectedWindowBounds)
+    }
+
+    public var supportsRequestPinnedExactWindowScrollReceipt: Bool {
+        false
     }
 }
 

@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Emit one lossless target identity and process-generation receipt across CLI envelopes and App MCP responses, preventing extra metadata from overriding the canonical target.
 - Let exact `dialog` targeting prefer one active child sheet or alert beneath its structural parent, retain ambiguity for multiple children, and preserve actionable parent-window recovery hints through Bridge routing.
 - Bind snapshots to strict producer-owned `ps1_` references, route concrete IDs to their unique authenticated local or Bridge host before normal preference, and fail closed on malformed, stale, duplicate, incapable, or explicitly misrouted hosts while keeping legacy timestamp directories cleanup-only.
+- Pin background scrolls to negotiated protocol 1.34 exact-window receipts so legacy hosts refuse before dispatch and retry-unsafe failures retain their exact target.
 - Downscale straight-alpha legacy screenshots to logical 1x instead of silently returning Retina-sized pixels.
 - Bound modern capture transaction-lock waits inside the Bridge request envelope so a wedged peer fails clearly instead of hanging indefinitely. Thanks @SebTardif for #599.
 - Send Gemini API keys in request headers, require HTTPS OAuth endpoints, and redact OAuth state. Thanks Vincent Koc for #575 and Tachikoma #73.

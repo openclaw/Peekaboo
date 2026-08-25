@@ -68,6 +68,8 @@ RuntimeBackedCommand {
                 try await observation.validateIfExplicit(using: self.services.snapshots)
             }
 
+            let expectedWindow = try await self.expectedBackgroundWindow(observation: observation)
+
             self.resolvedRuntime.beginInteractionMutation()
             try await self.recordSetupFocus(
                 observation: observation,
@@ -82,6 +84,7 @@ RuntimeBackedCommand {
                 smooth: self.smooth,
                 delay: self.delay.roundedMilliseconds,
                 snapshotId: observation.snapshotId,
+                expectedWindow: expectedWindow,
                 foreground: self.focusOptions.foreground
             )
             let actionResult = try await SnapshotMutationCoordinator.perform(
@@ -233,6 +236,31 @@ RuntimeBackedCommand {
             operation: "Scroll setup focus"
         ) else { return }
         try sequence.record(focusResult, operation: "Scroll setup focus")
+    }
+
+    private func expectedBackgroundWindow(
+        observation: InteractionObservationContext
+    ) async throws -> UIAutomationTarget.ExactWindow? {
+        guard !self.focusOptions.foreground, self.on != nil else { return nil }
+        let snapshotID = try observation.requireSnapshot()
+        do {
+            guard let exactWindow = try await SnapshotTargetReceiptPlanner(snapshots: self.services.snapshots)
+                .plan(snapshotID: snapshotID)
+                .receipt
+                .requireIdentity()
+                .exactWindow
+            else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            return exactWindow
+        } catch {
+            throw PreDispatchActionError(
+                message: "Background scroll requires a complete capture-owned exact-window receipt.",
+                code: .SNAPSHOT_STALE,
+                hint: "Run see for the exact window and retry with its fresh snapshot.",
+                reason: .targetUnavailable
+            )
+        }
     }
 
     private func validateDeliveryMode() throws {

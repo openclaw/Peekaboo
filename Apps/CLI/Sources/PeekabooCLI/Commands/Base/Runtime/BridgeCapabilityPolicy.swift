@@ -232,7 +232,9 @@ enum BridgeCapabilityPolicy {
            !self.supportsExactWindowPixelFocusTyping(for: handshake) {
             return false
         }
-        if options.requiresTargetedScroll, !self.supportsTargetedScroll(for: handshake) {
+        if options.requiresTargetedScroll,
+           !self.supportsTargetedScroll(for: handshake) ||
+           !self.supportsRequestPinnedExactWindowScrollReceipt(for: handshake) {
             return false
         }
         if options.requiresPostEventPermission, handshake.permissions?.postEvent != true {
@@ -743,6 +745,16 @@ enum BridgeCapabilityPolicy {
             return false
         }
         return (handshake.enabledOperations ?? handshake.supportedOperations).contains(.targetedScroll)
+    }
+
+    static func supportsRequestPinnedExactWindowScrollReceipt(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt
+            ) == true &&
+            self.supportsTargetedScroll(for: handshake)
     }
 
     static func targetedTypeAvailability(for handshake: PeekabooBridgeHandshakeResponse)

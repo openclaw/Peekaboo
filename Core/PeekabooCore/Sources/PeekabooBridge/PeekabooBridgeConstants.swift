@@ -80,6 +80,11 @@ public enum PeekabooBridgeConstants {
     public static let targetedClickAccessibilityValueDeliveryVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 34)
 
+    /// First protocol whose background scroll request carries a complete exact-window receipt that
+    /// is pinned through execution and every signed result, including retry-unsafe failures.
+    public static let requestPinnedExactWindowScrollReceiptVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 34)
+
     /// First protocol with host-atomic exact-window pixel-focus typing and modifier-click payloads.
     public static let composedInputParityVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
 

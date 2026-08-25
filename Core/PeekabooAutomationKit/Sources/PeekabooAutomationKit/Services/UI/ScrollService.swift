@@ -129,6 +129,7 @@ public final class ScrollService {
                 requireExactWindow: true,
                 processStartIdentityProvider: self.processStartIdentityProvider,
                 exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+            try Self.validateExpectedWindow(request.expectedWindow, captureReceipt: captureReceipt)
         }
 
         do {
@@ -267,6 +268,20 @@ public final class ScrollService {
         let reason = error?.localizedDescription ?? "the requested scroll has no Accessibility scroll action"
         return "Background scroll is Accessibility-only, but \(reason). " +
             "Retry with foreground enabled to allow synthetic wheel events."
+    }
+
+    private nonisolated static func validateExpectedWindow(
+        _ expectedWindow: UIAutomationTarget.ExactWindow?,
+        captureReceipt: DesktopOperationPlan.CaptureReceipt) throws
+    {
+        guard let expectedWindow else { return }
+        guard let resolvedWindow = captureReceipt.exactWindow,
+              resolvedWindow.identity.hasSameStableReceipt(as: expectedWindow.identity),
+              resolvedWindow.bounds == expectedWindow.bounds
+        else {
+            throw PeekabooError.snapshotStale(
+                "background scroll snapshot does not match its capture-owned exact-window receipt")
+        }
     }
 
     nonisolated static func supportsWindowRoutedWheelTarget(

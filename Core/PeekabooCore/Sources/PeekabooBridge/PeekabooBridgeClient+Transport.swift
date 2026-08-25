@@ -205,6 +205,22 @@ extension PeekabooBridgeClient {
                 message: "This Bridge host cannot honor an explicit accessibility-value click policy.",
                 hint: "Update and relaunch Peekaboo before retrying the snapshot-backed click.")
         }
+        if case let .targetedScroll(payload) = request.unwrappedOperationRequest {
+            guard payload.request.expectedWindow != nil else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    route: .bridge,
+                    reason: .targetUnavailable,
+                    message: "Background scroll has no complete capture-owned exact-window receipt.",
+                    hint: "Capture the exact window again and retry with its fresh snapshot.")
+            }
+            guard self.requestPinnedExactWindowScrollReceiptEnabled else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    route: .bridge,
+                    reason: .runtimeIncompatible,
+                    message: "This Bridge host cannot preserve an exact-window scroll receipt.",
+                    hint: "Update and relaunch Peekaboo before retrying background scroll.")
+            }
+        }
         if request.unwrappedOperationRequest.operation == .foregroundModifierClick,
            !self.foregroundModifierClickSnapshotLeaseEnabled
         {

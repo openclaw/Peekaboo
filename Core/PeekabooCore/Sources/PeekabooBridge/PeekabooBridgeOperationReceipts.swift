@@ -2022,6 +2022,10 @@ extension PeekabooBridgeRequest {
                 windowID: payload.targetWindowID,
                 windowIdentity: payload.expectedWindowIdentity,
                 windowBounds: payload.expectedWindowBounds)]
+        case let .targetedScroll(payload):
+            payload.request.expectedWindow.map {
+                [.init(target: DesktopTargetIdentity(exactWindow: $0))]
+            } ?? []
         case let .moveWindow(payload):
             [DesktopTargetEvidenceAdapter.evidence(
                 windowTarget: payload.target,

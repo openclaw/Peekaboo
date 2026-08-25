@@ -329,6 +329,13 @@ client never sees an unknown operation. Conversely, a current client refuses sna
 old or restricted 1.34 host that does not return `producerBoundSnapshotReferences`. It does not silently downgrade to
 timestamp references, publish locally after remote observation, or replay an action through another host.
 
+Protocol `1.34` also adds the service-derived `requestPinnedExactWindowScrollReceipt` capability. A background scroll
+carries the fresh snapshot's PID, process generation, WindowServer ID, and immutable bounds in the request; the native
+service independently resolves the snapshot and refuses any mismatch before dispatch. Successful results and
+retry-unsafe failures retain that same target in the signed receipt. Current clients do not send background scroll to
+older hosts, and current hosts negotiating protocol 1.33 or earlier return an explicit runtime-incompatible no-dispatch
+refusal instead of silently accepting the older receipt-less request shape.
+
 Browser execution is bound atomically to the connection receipt observed before dispatch. Protocol 1.29 carries the
 complete normalized browser URL, WebSocket debugger URL, DevTools browser ID, browser version, protocol version, and
 channel. Protocol 1.34 plus `nativeBrowserConnectionBinding` is required for native channel resolution, which carries

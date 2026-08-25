@@ -227,6 +227,15 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.foregroundModifierClickSnapshotLease)
         }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion,
+           self.allowedOperations.contains(.targetedScroll),
+           (services.automation as? any UIAutomationActionOutcomeProviding)?
+               .supportsRequestPinnedExactWindowScrollReceipt == true
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)
+        }
         if self.allowedOperations.contains(.launchApplicationWithOptions),
            services.applications.supportsSafeBackgroundApplicationLaunchNoOp
         {
@@ -910,6 +919,16 @@ public final class PeekabooBridgeServer {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
                     message: "Certification operations require a signed Bridge operation receipt")
+            }
+        }
+        if request.requiresRequestPinnedExactWindowScrollReceipt {
+            let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
+            let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
+            guard negotiatedVersion ?? .init(major: 0, minor: 0) >=
+                PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion,
+                session?.requestPinnedExactWindowScrollReceipt == true
+            else {
+                throw Self.requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope()
             }
         }
         if let minimumVersion = request.minimumNegotiatedProtocolVersion {

@@ -32,6 +32,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let targetedClickRequiresEventSynthesizingPermission: Bool
     public let supportsExactWindowTargetedClicks: Bool
     public let supportsTargetedScroll: Bool
+    public let supportsRequestPinnedExactWindowScrollReceipt: Bool
     public let supportsInspectAccessibilityTree: Bool
     public let inspectAccessibilityTreeUnavailableReason: String?
     public let supportsExactWindowTargetedKeyboard: Bool
@@ -61,6 +62,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
         supportsTargetedScroll: Bool = false,
+        supportsRequestPinnedExactWindowScrollReceipt: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
@@ -88,6 +90,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.targetedClickRequiresEventSynthesizingPermission = targetedClickRequiresEventSynthesizingPermission
         self.supportsExactWindowTargetedClicks = supportsExactWindowTargetedClicks
         self.supportsTargetedScroll = supportsTargetedScroll
+        self.supportsRequestPinnedExactWindowScrollReceipt = supportsRequestPinnedExactWindowScrollReceipt
         self.supportsInspectAccessibilityTree = supportsInspectAccessibilityTree
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
         self.supportsExactWindowTargetedKeyboard = supportsExactWindowTargetedKeyboard
@@ -397,9 +400,12 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     }
 
     public func scroll(_ request: ScrollRequest) async throws {
-        if !request.foreground, !self.supportsTargetedScroll {
+        if !request.foreground,
+           !self.supportsTargetedScroll || !self.supportsRequestPinnedExactWindowScrollReceipt
+        {
             throw PeekabooError.serviceUnavailable(
-                "Remote bridge host does not support background-safe targeted scroll; relaunch or update Peekaboo.")
+                "Remote bridge host cannot preserve exact-window background scroll receipts; relaunch or update " +
+                    "Peekaboo.")
         }
         do {
             try await self.client.scroll(request)

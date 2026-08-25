@@ -2328,6 +2328,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript(
         defaultResponse: .outcome(StubAutomationService.defaultActionOutcome))
     var uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
+    var supportsRequestPinnedExactWindowScrollReceipt = true
     var allowsContradictoryOutcomeTargetIdentityForTesting = false
     var actionOutcome = StubAutomationService.defaultActionOutcome {
         didSet {

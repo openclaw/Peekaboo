@@ -231,6 +231,12 @@ extension PeekabooBridgeServer {
         {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.foregroundModifierClickSnapshotLease)
         }
+        self.applyRequestPinnedExactWindowScrollCapability(
+            supportsAttestedOperationReceipts: supportsAttestedOperationReceipts,
+            negotiated: negotiated,
+            advertisedOperations: advertisedOps,
+            enabledOperations: enabledOps,
+            advertisedCapabilities: &advertisedCapabilities)
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
         }
@@ -258,7 +264,9 @@ extension PeekabooBridgeServer {
                         producerBoundSnapshotReferences: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.producerBoundSnapshotReferences),
                         targetedClickAccessibilityValueDelivery: advertisedCapabilities.contains(
-                            PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)),
+                            PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery),
+                        requestPinnedExactWindowScrollReceipt: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {
@@ -318,6 +326,25 @@ extension PeekabooBridgeServer {
             enabledOperations.insert(.exactDialogEnterText)
         } else {
             enabledOperations.remove(.exactDialogEnterText)
+        }
+    }
+
+    private func applyRequestPinnedExactWindowScrollCapability(
+        supportsAttestedOperationReceipts: Bool,
+        negotiated: PeekabooBridgeProtocolVersion,
+        advertisedOperations: [PeekabooBridgeOperation],
+        enabledOperations: Set<PeekabooBridgeOperation>,
+        advertisedCapabilities: inout Set<String>)
+    {
+        guard supportsAttestedOperationReceipts,
+              negotiated >= PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion,
+              (self.services.automation as? any UIAutomationActionOutcomeProviding)?
+                  .supportsRequestPinnedExactWindowScrollReceipt == true,
+                  advertisedOperations.contains(.targetedScroll),
+                  enabledOperations.contains(.targetedScroll)
+        else {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)
+            return
         }
     }
 

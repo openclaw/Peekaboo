@@ -41,6 +41,8 @@ extension PeekabooBridgeRequest {
             return PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion
         }
         switch self.unwrappedOperationRequest.operation {
+        case .targetedScroll:
+            return PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion
         case .exactWindowPixelFocusType, .foregroundModifierClick:
             return PeekabooBridgeConstants.composedInputParityVersion
         case .agentExecutionTrace:
@@ -98,6 +100,10 @@ extension PeekabooBridgeRequest {
         default:
             false
         }
+    }
+
+    var requiresRequestPinnedExactWindowScrollReceipt: Bool {
+        self.unwrappedOperationRequest.operation == .targetedScroll
     }
 
     var requiresExactWindowHeldPointerLifecycleSupport: Bool {

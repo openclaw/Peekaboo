@@ -233,7 +233,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 ownership: .service,
                 requiredPermissions: [.accessibility],
                 completion: .dispatchedUnverified(axBackground),
-                targetPolicy: .handlerRequired,
+                targetPolicy: .requestPinned,
                 responseFamilies: [.ok])
         case .hotkey:
             descriptor(

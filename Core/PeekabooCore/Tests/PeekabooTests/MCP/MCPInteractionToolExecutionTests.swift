@@ -1140,6 +1140,63 @@ extension MCPToolExecutionTests {
     }
 
     @Test
+    func `background scroll forwards the snapshot exact window receipt`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotID = await snapshot.id
+        let bounds = CGRect(x: 100, y: 50, width: 600, height: 400)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 111,
+            ownerProcessStartIdentity: 11,
+            capturedBounds: bounds)
+        await snapshot.setScreenshot(
+            path: "/tmp/background-scroll.png",
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    processStartIdentity: 11,
+                    bundleIdentifier: "com.example.scroll",
+                    name: "ScrollApp"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: 42,
+                    title: "Scroll",
+                    bounds: bounds,
+                    mutationIdentity: identity)))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "S1",
+                elementId: "S1",
+                role: "scrollArea",
+                title: nil,
+                label: "Items",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "scroll area",
+                identifier: "scroll-fixture",
+                frame: CGRect(x: 120, y: 80, width: 300, height: 250),
+                isActionable: true),
+        ])
+
+        let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+            "on": "S1",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(!response.isError)
+        let request = try #require(await MainActor.run { automation.scrollRequests.first })
+        #expect(request.snapshotId == snapshotID)
+        #expect(request.expectedWindow?.identity == identity)
+        #expect(request.expectedWindow?.bounds == bounds)
+    }
+
+    @Test
     func `Scroll tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }

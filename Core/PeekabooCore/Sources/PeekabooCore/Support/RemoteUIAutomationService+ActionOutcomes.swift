@@ -249,9 +249,12 @@ UIAutomationGlobalPointerActionResultProviding {
     }
 
     public func scrollWithOutcome(_ request: ScrollRequest) async throws -> UIAutomationActionResult<Void> {
-        if !request.foreground, !self.supportsTargetedScroll {
+        if !request.foreground,
+           !self.supportsTargetedScroll || !self.supportsRequestPinnedExactWindowScrollReceipt
+        {
             throw PeekabooError.serviceUnavailable(
-                "Remote bridge host does not support background-safe targeted scroll; relaunch or update Peekaboo.")
+                "Remote bridge host cannot preserve exact-window background scroll receipts; relaunch or update " +
+                    "Peekaboo.")
         }
         return try await self.remoteAction(snapshotId: request.snapshotId) {
             try await self.client.scrollWithOutcome(request)

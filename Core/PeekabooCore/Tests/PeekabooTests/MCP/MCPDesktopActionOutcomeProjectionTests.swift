@@ -282,7 +282,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
                 message: "One of three page units was accepted"),
             for: .scroll)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = await Self.makeExactScrollSnapshot(uiSnapshots: context.uiSnapshots)
 
         let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
             "direction": "down",
@@ -1144,6 +1144,48 @@ extension MCPDesktopActionOutcomeProjectionTests {
         return await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications)
+    }
+
+    @MainActor
+    private static func makeExactScrollSnapshot(uiSnapshots: MCPToolUISnapshotStore) async -> String {
+        let snapshot = await uiSnapshots.createSnapshot()
+        let snapshotID = await snapshot.id
+        let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
+        await snapshot.setScreenshot(
+            path: "/tmp/scroll-outcome.png",
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 778,
+                    processStartIdentity: 78,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: 42,
+                    title: "Editor",
+                    bounds: bounds,
+                    mutationIdentity: WindowMutationIdentity(
+                        windowID: 42,
+                        ownerProcessIdentifier: 778,
+                        ownerProcessStartIdentity: 78,
+                        capturedBounds: bounds))))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "T1",
+                elementId: "T1",
+                role: "scrollArea",
+                title: nil,
+                label: "Editor",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "scroll area",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 10, width: 100, height: 30),
+                isActionable: true),
+        ])
+        return snapshotID
     }
 
     @MainActor

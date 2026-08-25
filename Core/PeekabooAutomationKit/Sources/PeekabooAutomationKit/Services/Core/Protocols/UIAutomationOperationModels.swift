@@ -67,6 +67,13 @@ public struct ScrollRequest: Sendable, Codable {
     public var smooth: Bool
     public var delay: Int
     public var snapshotId: String?
+    /// Capture-owned exact window expected to contain the background scroll target.
+    ///
+    /// Remote callers include this receipt so Bridge can bind even a post-dispatch failure to the
+    /// same immutable process generation, WindowServer ID, and bounds that selected the element.
+    /// The execution owner still resolves the snapshot independently and rejects any mismatch
+    /// before dispatch.
+    public var expectedWindow: UIAutomationTarget.ExactWindow?
     /// Explicit consent to use global synthetic pointer events.
     ///
     /// Background scrolls are accessibility-action-only and never move or otherwise reuse the
@@ -80,6 +87,7 @@ public struct ScrollRequest: Sendable, Codable {
         smooth: Bool = false,
         delay: Int = 0,
         snapshotId: String? = nil,
+        expectedWindow: UIAutomationTarget.ExactWindow? = nil,
         foreground: Bool = false)
     {
         self.direction = direction
@@ -88,6 +96,7 @@ public struct ScrollRequest: Sendable, Codable {
         self.smooth = smooth
         self.delay = delay
         self.snapshotId = snapshotId
+        self.expectedWindow = expectedWindow
         self.foreground = foreground
     }
 
@@ -98,6 +107,7 @@ public struct ScrollRequest: Sendable, Codable {
         case smooth
         case delay
         case snapshotId
+        case expectedWindow
         case foreground
     }
 
@@ -109,6 +119,9 @@ public struct ScrollRequest: Sendable, Codable {
         self.smooth = try container.decodeIfPresent(Bool.self, forKey: .smooth) ?? false
         self.delay = try container.decodeIfPresent(Int.self, forKey: .delay) ?? 0
         self.snapshotId = try container.decodeIfPresent(String.self, forKey: .snapshotId)
+        self.expectedWindow = try container.decodeIfPresent(
+            UIAutomationTarget.ExactWindow.self,
+            forKey: .expectedWindow)
         self.foreground = try container.decodeIfPresent(Bool.self, forKey: .foreground) ?? false
     }
 }

@@ -155,6 +155,7 @@ public struct ScrollTool: MCPTool {
             smooth: request.smooth,
             delay: request.delay,
             snapshotId: target.snapshotId,
+            expectedWindow: target.expectedWindow,
             foreground: request.foreground)
         let actionResult: UIAutomationActionResult<Void>
         do {
@@ -235,7 +236,8 @@ public struct ScrollTool: MCPTool {
                 appName: nil,
                 snapshotId: request.snapshotId,
                 windowTitle: nil,
-                windowID: nil)
+                windowID: nil,
+                expectedWindow: nil)
         }
 
         guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
@@ -256,13 +258,34 @@ public struct ScrollTool: MCPTool {
         let label = element.title ?? element.label ?? "untitled"
         let description = "on \(element.role): \(label)"
         let screenshotMetadata = await snapshot.screenshotMetadata
+        let expectedWindow = try self.expectedBackgroundWindow(
+            snapshot: snapshot,
+            foreground: request.foreground)
         return ScrollTargetDescription(
             elementId: elementId,
             description: description,
             appName: snapshot.applicationName,
             snapshotId: snapshot.id,
             windowTitle: snapshot.windowTitle,
-            windowID: screenshotMetadata?.windowInfo?.windowID)
+            windowID: screenshotMetadata?.windowInfo?.windowID,
+            expectedWindow: expectedWindow)
+    }
+
+    private func expectedBackgroundWindow(
+        snapshot: UISnapshot,
+        foreground: Bool) throws -> UIAutomationTarget.ExactWindow?
+    {
+        guard !foreground else { return nil }
+        do {
+            guard let exactWindow = try snapshot.targetReceipt().requireIdentity().exactWindow else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            return exactWindow
+        } catch {
+            throw ScrollToolValidationError(
+                "Background scroll requires a complete capture-owned exact-window receipt. Run see and retry.",
+                refusalReason: .targetUnavailable)
+        }
     }
 
     @MainActor
@@ -308,6 +331,7 @@ private struct ScrollTargetDescription {
     let snapshotId: String?
     let windowTitle: String?
     let windowID: Int?
+    let expectedWindow: UIAutomationTarget.ExactWindow?
 }
 
 private struct ScrollToolValidationError: Error {

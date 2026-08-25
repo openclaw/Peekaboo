@@ -123,6 +123,8 @@ struct ScrollCommandTests {
         let storedResult = try #require(try await snapshots.getDetectionResult(snapshotId: refreshedSnapshotID))
         #expect(storedResult.snapshotId == refreshedSnapshotID)
         #expect(storedResult.elements.findById("B1") != nil)
+        #expect(call.request.expectedWindow?.identity.windowID == 4242)
+        #expect(call.request.expectedWindow?.bounds == CGRect(x: 0, y: 0, width: 600, height: 400))
         #expect(call.request.delay == 0)
         #expect(!call.request.foreground)
         let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
@@ -255,6 +257,38 @@ struct ScrollCommandTests {
 
         #expect(result.exitStatus != 0)
         #expect(self.output(from: result).contains("require --foreground"))
+        #expect(await self.automationState(context) { $0.scrollCalls }.isEmpty)
+    }
+
+    @Test
+    func `background element scroll refuses snapshot without exact window before automation`() async throws {
+        let snapshotID = "incomplete-scroll-snapshot"
+        let context = await self.makeContext()
+        try await context.snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/incomplete-scroll.png",
+                elements: DetectedElements(buttons: [Self.buttonElement(id: "B1")]),
+                metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "stub")
+            )
+        )
+
+        let result = try await self.runScroll(
+            arguments: [
+                "--direction", "down",
+                "--on", "B1",
+                "--snapshot", snapshotID,
+                "--json",
+            ],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(payload.outcome?.state == .refused)
+        #expect(payload.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(payload.outcome?.retrySafety == .safe)
         #expect(await self.automationState(context) { $0.scrollCalls }.isEmpty)
     }
 
@@ -410,11 +444,28 @@ struct ScrollCommandTests {
     }
 
     private static func detectionResult(snapshotId: String, element: DetectedElement) -> ElementDetectionResult {
-        ElementDetectionResult(
+        let windowBounds = CGRect(x: 0, y: 0, width: 600, height: 400)
+        return ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "/tmp/\(snapshotId).png",
             elements: DetectedElements(buttons: [element]),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "stub")
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "stub",
+                windowContext: WindowContext(
+                    applicationBundleId: "com.example.ScrollApp",
+                    applicationProcessId: 42,
+                    windowID: 4242,
+                    windowBounds: windowBounds,
+                    windowMutationIdentity: WindowMutationIdentity(
+                        windowID: 4242,
+                        ownerProcessIdentifier: 42,
+                        ownerProcessStartIdentity: 11,
+                        capturedBounds: windowBounds
+                    )
+                )
+            )
         )
     }
 }

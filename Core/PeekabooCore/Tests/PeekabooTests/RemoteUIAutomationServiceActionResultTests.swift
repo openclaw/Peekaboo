@@ -215,7 +215,10 @@ struct RemoteUIAutomationServiceActionResultTests {
             direction: .down,
             amount: 3,
             target: "T1",
-            snapshotId: "S1"))
+            snapshotId: "S1",
+            expectedWindow: UIAutomationTarget.ExactWindow(
+                identity: fixture.windowIdentity,
+                bounds: fixture.windowBounds)))
         try await Self.expect(
             scroll,
             outcome: fixture.services.automationStub.actionOutcome,
@@ -391,6 +394,7 @@ struct RemoteUIAutomationServiceActionResultTests {
             supportsProcessGenerationPinnedClicks: true,
             supportsExactWindowTargetedClicks: true,
             supportsTargetedScroll: true,
+            supportsRequestPinnedExactWindowScrollReceipt: true,
             supportsExactWindowTargetedKeyboard: true)
         return Fixture(
             services: services,

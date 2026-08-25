@@ -549,7 +549,8 @@ struct PeekabooBridgeOperationReceiptTests {
                 direction: .down,
                 amount: 1,
                 target: "S1",
-                snapshotId: "snapshot"))
+                snapshotId: "snapshot",
+                expectedWindow: exactWindow))
             #expect(result.targetIdentity?.exactWindow?.identity == identity)
             let receipt = try #require(await client.lastOperationReceipt())
             #expect(receipt.payload.operation == .targetedScroll)

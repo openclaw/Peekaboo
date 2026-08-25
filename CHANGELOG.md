@@ -34,6 +34,7 @@
 - Prefer a sole live child sheet or alert beneath its exact structural parent window, preserve multi-child ambiguity, and keep parent-window recovery guidance intact across remote dialog reads.
 - Bind snapshots to cryptographically random `ps1_` references owned by their creating local or Bridge host, route concrete references to one authenticated producer before normal host preference, and refuse malformed, stale, duplicated, incapable, or explicitly misrouted hosts before publication or input.
 - Keep Bridge 1.34 snapshot ownership and Accessibility-value click policy independently capability-gated, preserve omitted-policy behavior for old clients, enforce explicit opt-outs before dispatch, and retain cleanup-only removal of legacy timestamp snapshot directories without making their IDs actionable.
+- Pin background scrolls to negotiated protocol 1.34 exact-window receipts so legacy hosts refuse before dispatch and retry-unsafe failures retain their exact target.
 - Resolve repeated stable window inventory rows consistently across CLI and MCP instead of falsely reporting ambiguity.
 - Downscale straight-alpha legacy screenshots to logical 1x instead of silently returning Retina-sized pixels.
 - Bound exclusive ScreenCaptureKit transaction-lock waits inside the Bridge request envelope so a wedged peer fails clearly instead of hanging capture indefinitely. Thanks @SebTardif for #599.
