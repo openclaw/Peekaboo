@@ -59,6 +59,7 @@ struct DarwinProcessLoopbackListenerInspectorTests {
     @Test
     func `descriptor inventory grows beyond the inspector file descriptor limit`() throws {
         let capacities = CapacityBox()
+        let observedDescriptor = DescriptorBox()
         let source = DarwinProcessLoopbackListenerInspector.InspectionSource(
             processStartIdentity: { _ in 9076 },
             descriptorCapacityBounds: { _ in .init(initial: 64, limit: 512) },
@@ -68,12 +69,13 @@ struct DarwinProcessLoopbackListenerInspectorTests {
                     return .init(descriptors: [], filledBuffer: true, hasPartialRecord: false)
                 }
                 return .init(
-                    descriptors: [.init(fileDescriptor: 10, isSocket: true)],
+                    descriptors: [.init(fileDescriptor: 4096, isSocket: true)],
                     filledBuffer: false,
                     hasPartialRecord: false)
             },
             socketObservation: { _, descriptor in
-                descriptor == 10 ? Self.socket() : nil
+                observedDescriptor.value = descriptor
+                return descriptor == 4096 ? Self.socket() : nil
             })
 
         let identity = try DarwinProcessLoopbackListenerInspector.inspect(
@@ -84,6 +86,7 @@ struct DarwinProcessLoopbackListenerInspectorTests {
 
         #expect(identity.processIdentifier == 76)
         #expect(capacities.values == [64, 128, 256, 512])
+        #expect(observedDescriptor.value == 4096)
     }
 
     @Test
@@ -188,6 +191,16 @@ private final class CapacityBox: @unchecked Sendable {
         self.lock.withLock {
             self.storedValues.append(value)
         }
+    }
+}
+
+private final class DescriptorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Int32?
+
+    var value: Int32? {
+        get { self.lock.withLock { self.storedValue } }
+        set { self.lock.withLock { self.storedValue = newValue } }
     }
 }
 

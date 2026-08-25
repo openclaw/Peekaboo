@@ -157,7 +157,7 @@ struct BrowserMCPSessionManagerTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in currentGeneration.get() },
             processBundleIdentifier: { _ in "com.google.Chrome" },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in .browserTestIdentity(channel: channel) },
             endpointResolver: Self.endpointResolver(),
             channelEndpointResolver: Self.channelEndpointResolver())
         _ = try await session.connect(channel: .stable)
@@ -1005,7 +1005,7 @@ extension BrowserMCPSessionManagerTests {
             processBundleIdentifier: { processIdentifier in
                 processIdentifier == 84 ? "com.google.Chrome.canary" : "com.google.Chrome"
             },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in .browserTestIdentity(channel: channel) },
             endpointResolver: Self.endpointResolver(),
             channelEndpointResolver: Self.channelEndpointResolver())
         let connected = try await session.connect(channel: .stable)
@@ -1475,7 +1475,7 @@ extension BrowserMCPSessionManagerTests {
             },
             processStartIdentity: { generations[$0] },
             processBundleIdentifier: { bundles[$0] },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in .browserTestIdentity(channel: channel) },
             endpointResolver: self.endpointResolver(),
             channelEndpointResolver: self.channelEndpointResolver(),
             uploadStager: uploadStager,

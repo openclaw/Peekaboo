@@ -310,11 +310,13 @@ target or a window ID that contradicts the request is rejected. Screen and area 
 Browser execution is bound atomically to the connection receipt observed before dispatch. Protocol 1.29 carries the
 complete normalized browser URL, WebSocket debugger URL, DevTools browser ID, browser version, protocol version, and
 channel. Protocol 1.34 plus `nativeBrowserConnectionBinding` is required for native channel resolution, which carries
-the owning PID, process generation, and exact Chrome bundle identity after
-binding Chrome's stable authority file to one exact loopback listening socket, opening its approval-gated WebSocket,
-verifying CDP `Browser.getVersion`, and rechecking listener ownership before publication. Protocol 1.33 and older hosts
-retain explicit loopback URL compatibility but cannot authorize this combined receipt. Isolated-profile children remain
-unbound. The response carries the same endpoint receipt, and any process, listener, endpoint, or channel drift refuses
+the owning PID, process generation, and exact Chrome bundle identity after authenticating the signed channel identifier,
+Google Team ID `EQHXZ8M8AV`, and CDHash for that PID generation, binding Chrome's stable authority file to one exact
+loopback listening socket, opening its approval-gated WebSocket, verifying CDP `Browser.getVersion`, and rechecking both
+signer and listener ownership before publication and later execution. Protocol 1.33 and older hosts retain explicit
+loopback URL compatibility but cannot authorize this combined receipt. Isolated-profile children remain unbound.
+Explicit loopback `browser_url` remains the custom/non-Google compatibility path and does not claim native channel
+signer authority. The response carries the same endpoint receipt, and any process, signer, listener, endpoint, or channel drift refuses
 before the first tool call. Browser batches also sign separate completed and dispatched-or-accepted call
 counts. If a later call fails, the typed partial or indeterminate outcome preserves that exact prefix and is
 retry-unsafe, so a client cannot safely replay the whole batch.

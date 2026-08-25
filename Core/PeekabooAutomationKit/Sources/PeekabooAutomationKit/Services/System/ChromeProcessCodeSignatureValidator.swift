@@ -8,7 +8,19 @@ public struct ChromeProcessCodeSignatureValidator: Sendable {
     public typealias Validate = @Sendable (
         _ processIdentifier: pid_t,
         _ processStartIdentity: UInt64,
-        _ channel: ChromeChannelIdentity) -> Bool
+        _ channel: ChromeChannelIdentity) -> Identity?
+
+    public struct Identity: Equatable, Sendable {
+        public let identifier: String
+        public let teamIdentifier: String
+        public let codeDirectoryHash: Data
+
+        public init(identifier: String, teamIdentifier: String, codeDirectoryHash: Data) {
+            self.identifier = identifier
+            self.teamIdentifier = teamIdentifier
+            self.codeDirectoryHash = codeDirectoryHash
+        }
+    }
 
     public let validate: Validate
 
@@ -26,13 +38,7 @@ public struct ChromeProcessCodeSignatureValidator: Sendable {
 }
 
 extension ChromeProcessCodeSignatureValidator {
-    static let googleChromeTeamIdentifier = "EQHXZ8M8AV"
-
-    struct Identity: Equatable, Sendable {
-        let identifier: String
-        let teamIdentifier: String
-        let codeDirectoryHash: Data
-    }
+    public static let googleChromeTeamIdentifier = "EQHXZ8M8AV"
 
     struct ValidationSource: Sendable {
         let processStartIdentity: @Sendable (pid_t) -> UInt64?
@@ -52,7 +58,7 @@ extension ChromeProcessCodeSignatureValidator {
         processIdentifier: pid_t,
         processStartIdentity: UInt64,
         channel: ChromeChannelIdentity,
-        source: ValidationSource) -> Bool
+        source: ValidationSource) -> Identity?
     {
         guard processIdentifier > 0,
               processStartIdentity > 0,
@@ -66,9 +72,9 @@ extension ChromeProcessCodeSignatureValidator {
               !identity.codeDirectoryHash.isEmpty,
               source.processStartIdentity(processIdentifier) == processStartIdentity
         else {
-            return false
+            return nil
         }
-        return true
+        return identity
     }
 
     private static func liveIdentity(

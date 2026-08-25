@@ -71,6 +71,7 @@ private struct BrowserMCPResolvedTarget {
     let config: MCPServerConfig
     let supportsReceiptBoundExecution: Bool
     let channelEndpoint: BrowserMCPDevToolsEndpoint?
+    let codeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity?
     let targetKind: BrowserMCPConnectionTargetKind
 }
 
@@ -85,7 +86,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     typealias BrowserDetector = @MainActor (BrowserMCPChannel?) -> [DetectedBrowser]
     typealias ProcessIdentityProvider = @Sendable (Int32) -> UInt64?
     typealias ProcessBundleIdentifierProvider = @MainActor @Sendable (Int32) -> String?
-    typealias ProcessCodeSignatureValidator = @Sendable (Int32, UInt64, ChromeChannelIdentity) -> Bool
+    typealias ProcessCodeSignatureValidator = @Sendable (
+        Int32,
+        UInt64,
+        ChromeChannelIdentity) -> ChromeProcessCodeSignatureValidator.Identity?
     typealias ConnectionAttemptProvider = @MainActor @Sendable () -> BrowserMCPConnectionAttempt
     typealias PreferredChannelProvider = @MainActor @Sendable () -> BrowserMCPChannel
     typealias IsolatedConnectionProvider = @MainActor @Sendable () -> Bool
@@ -107,6 +111,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private var connectionReceipt: BrowserMCPConnectionReceipt?
     private var connectionSupportsReceiptBoundExecution = false
     private var connectionChannelEndpoint: BrowserMCPDevToolsEndpoint?
+    private var connectionCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity?
     private var connectionTargetKind: BrowserMCPConnectionTargetKind?
     private var uploadWorkspace: BrowserMCPUploadWorkspace?
     private var activeUploadID: UUID?
@@ -158,7 +163,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private nonisolated static func validateChromeProcessCodeSignature(
         _ processIdentifier: Int32,
         _ processStartIdentity: UInt64,
-        _ channel: ChromeChannelIdentity) -> Bool
+        _ channel: ChromeChannelIdentity) -> ChromeProcessCodeSignatureValidator.Identity?
     {
         ChromeProcessCodeSignatureValidator.live.validate(
             processIdentifier,
@@ -336,11 +341,15 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 throw BrowserMCPConnectionError.connectionProbeFailed(
                     "Chrome DevTools MCP rejected list_pages")
             }
-            try await self.validate(target.receipt, channelEndpoint: target.channelEndpoint)
+            try await self.validate(
+                target.receipt,
+                channelEndpoint: target.channelEndpoint,
+                codeSignatureIdentity: target.codeSignatureIdentity)
             try Task.checkCancellation()
             self.connectionReceipt = target.receipt
             self.connectionSupportsReceiptBoundExecution = target.supportsReceiptBoundExecution
             self.connectionChannelEndpoint = target.channelEndpoint
+            self.connectionCodeSignatureIdentity = target.codeSignatureIdentity
             self.connectionTargetKind = target.targetKind
             let status = await self.inspectStatusUnlocked(channel: channel).status
             guard status.isConnected else {
@@ -878,6 +887,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 // The spawned process has no child-reported identity to bind into a signed receipt.
                 supportsReceiptBoundExecution: false,
                 channelEndpoint: nil,
+                codeSignatureIdentity: nil,
                 targetKind: .isolated)
         }
         let candidates = self.detectedBrowsers(resolvedChannel)
@@ -905,7 +915,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         else {
             throw BrowserMCPConnectionError.processIdentityUnavailable(browser.processIdentifier)
         }
-        guard self.processCodeSignatureValidator(
+        guard let codeSignatureIdentity = self.processCodeSignatureValidator(
             browser.processIdentifier,
             processStartIdentity,
             channelIdentity)
@@ -924,7 +934,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
               self.processCodeSignatureValidator(
                   browser.processIdentifier,
                   processStartIdentity,
-                  channelIdentity)
+                  channelIdentity) == codeSignatureIdentity
         else {
             throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
                 "the live Chrome bundle or signing identity changed during Browser.getVersion")
@@ -945,6 +955,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 webSocketEndpoint: endpoint.webSocketDebuggerURL),
             supportsReceiptBoundExecution: true,
             channelEndpoint: endpoint,
+            codeSignatureIdentity: codeSignatureIdentity,
             targetKind: .nativeChannel)
     }
 
@@ -966,12 +977,15 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 webSocketEndpoint: endpoint.webSocketDebuggerURL),
             supportsReceiptBoundExecution: true,
             channelEndpoint: nil,
+            codeSignatureIdentity: nil,
             targetKind: .external)
     }
 
     private func validate(
         _ receipt: BrowserMCPConnectionReceipt,
-        channelEndpoint suppliedChannelEndpoint: BrowserMCPDevToolsEndpoint? = nil) async throws
+        channelEndpoint suppliedChannelEndpoint: BrowserMCPDevToolsEndpoint? = nil,
+        codeSignatureIdentity suppliedCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity? = nil)
+        async throws
     {
         if receipt.processIdentifier != nil || receipt.processStartIdentity != nil || receipt.bundleIdentifier != nil {
             guard let channel = receipt.channel,
@@ -986,6 +1000,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   let browserVersion = receipt.browserVersion,
                   let protocolVersion = receipt.protocolVersion,
                   let channelEndpoint = suppliedChannelEndpoint ?? self.connectionChannelEndpoint,
+                  let codeSignatureIdentity = suppliedCodeSignatureIdentity ?? self.connectionCodeSignatureIdentity,
                   channelEndpoint.browserURL == browserURL,
                   channelEndpoint.webSocketDebuggerURL == webSocketDebuggerURL,
                   channelEndpoint.browserID == browserID,
@@ -1003,7 +1018,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   self.processCodeSignatureValidator(
                       processIdentifier,
                       processStartIdentity,
-                      channelIdentity),
+                      channelIdentity) == codeSignatureIdentity,
                   self.detectedBrowsers(channel).contains(where: { browser in
                       browser.processIdentifier == processIdentifier &&
                           browser.processStartIdentity == processStartIdentity &&
@@ -1020,6 +1035,14 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     processStartIdentity: processStartIdentity,
                     bundleIdentifier: bundleIdentifier),
                 expected: channelEndpoint)
+            guard self.processCodeSignatureValidator(
+                processIdentifier,
+                processStartIdentity,
+                channelIdentity) == codeSignatureIdentity
+            else {
+                throw BrowserMCPConnectionError.connectionLost(
+                    "Chrome PID \(processIdentifier) changed signing identity during listener validation")
+            }
             return
         }
         if let channel = receipt.channel,
@@ -1099,6 +1122,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.connectionReceipt = nil
         self.connectionSupportsReceiptBoundExecution = false
         self.connectionChannelEndpoint = nil
+        self.connectionCodeSignatureIdentity = nil
         self.connectionTargetKind = nil
         self.activeUploadID = nil
         let uploadWorkspace = self.uploadWorkspace

@@ -151,7 +151,7 @@ struct BrowserToolConnectOutcomeTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in .browserTestIdentity(channel: channel) },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
                 resolveInitial: { _, _ in throw CancellationError() },
                 revalidate: { _, _ in }),

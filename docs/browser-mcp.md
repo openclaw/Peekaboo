@@ -28,7 +28,11 @@ Peekaboo attaches to an already-running Chrome profile. It requires:
 4. User approval in Chrome's remote debugging permission prompt.
 
 Peekaboo recognizes running channels by exact Chrome bundle identifier, so app-owned helper or XPC service names cannot
-be mistaken for another browser process. Peekaboo does not approve the prompt automatically. Once Chrome publishes
+be mistaken for another browser process. Native channel mode also requires the live process to satisfy Google's
+Apple-anchored code-signing requirement for Team ID `EQHXZ8M8AV`. Peekaboo pins its exact signed channel identifier,
+Team ID, and CDHash to the PID generation before opening the approval-gated WebSocket, then requires the same identity
+after `Browser.getVersion` and around every later listener revalidation. Peekaboo does not approve the prompt
+automatically. Once Chrome publishes
 `DevToolsActivePort`, channel connect reads that owner-controlled file without following symlinks, proves that its one
 exact loopback listener belongs to the detected Chrome PID and process generation, and opens the exact published
 WebSocket. That native connection remains
@@ -70,6 +74,8 @@ peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground --json
 
 Only loopback HTTP endpoints are accepted. This explicit-URL mode resolves `/json/version`, pins the returned browser WebSocket
 identity, probes `list_pages` before reporting connected, and revalidates that identity before every later tool call.
+It is the compatibility path for custom or non-Google-signed debuggable browsers; unlike native channel discovery, it
+does not claim a Google code-signing identity or process-bound channel receipt.
 When multiple Chrome processes share one channel, channel-only connection refuses and requires this exact endpoint.
 Channel discovery reads only the standard current-user profile for the chosen Chrome channel; a headless or custom
 profile cannot substitute an arbitrary authority file for a detected GUI browser.

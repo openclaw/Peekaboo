@@ -30,12 +30,15 @@ metadata are projected into the standard root CLI envelope. The original MCP met
 tool-specific consumers.
 
 Browser state is owned by one current-build reusable daemon across CLI invocations. Channel connection requires exactly
-one running browser process. Peekaboo safely reads that channel's standard `DevToolsActivePort`, proves its unique
+one running official Google-signed Chrome process (Team ID `EQHXZ8M8AV`). Peekaboo pins the signed channel identifier,
+Team ID, and CDHash to its PID generation, safely reads that channel's standard `DevToolsActivePort`, proves its unique
 loopback listener belongs to the detected PID/process generation, keeps the exact WebSocket pending through Chrome's
-approval prompt, verifies it with CDP `Browser.getVersion`, rechecks listener ownership, and gives Chrome DevTools MCP
+approval prompt, verifies it with CDP `Browser.getVersion`, rechecks signer and listener ownership, and gives Chrome DevTools MCP
 only that same WebSocket identity. When more than one process shares a channel, use `--browser-url` with one loopback
-DevTools HTTP endpoint. Connection output includes the combined process and DevTools identity receipt. If the daemon,
-Chrome generation, listening socket, or endpoint changes, later calls fail and require an explicit reconnect.
+DevTools HTTP endpoint. That explicit URL is also the compatibility path for custom or non-Google-signed debuggable
+browsers and does not claim native channel signer authority. Connection output includes the combined process and
+DevTools identity receipt. If the daemon, Chrome generation, signer, listening socket, or endpoint changes, later calls
+fail and require an explicit reconnect.
 
 Browser `type` and `press-key` require `--uid` from a fresh snapshot. Peekaboo focuses that exact page element and sends
 the keyboard operation as one daemon-owned sequence rather than inheriting whichever control another caller focused.

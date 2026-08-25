@@ -13,7 +13,7 @@ struct ChromeProcessCodeSignatureValidatorTests {
             processIdentifier: 71,
             processStartIdentity: 9071,
             channel: .stable,
-            source: source))
+            source: source) == Self.identity())
     }
 
     @Test(arguments: [
@@ -33,30 +33,30 @@ struct ChromeProcessCodeSignatureValidatorTests {
     func `wrong team identifier or empty code hash refuses`(
         identity: ChromeProcessCodeSignatureValidator.Identity)
     {
-        #expect(!ChromeProcessCodeSignatureValidator.validate(
+        #expect(ChromeProcessCodeSignatureValidator.validate(
             processIdentifier: 71,
             processStartIdentity: 9071,
             channel: .stable,
-            source: Self.source(identity: identity)))
+            source: Self.source(identity: identity)) == nil)
     }
 
     @Test
     func `unsigned or generation changing process refuses`() {
-        #expect(!ChromeProcessCodeSignatureValidator.validate(
+        #expect(ChromeProcessCodeSignatureValidator.validate(
             processIdentifier: 71,
             processStartIdentity: 9071,
             channel: .stable,
-            source: Self.source(identity: nil)))
+            source: Self.source(identity: nil)) == nil)
 
         let generations = SignatureGenerationBox([9071, 9072])
         let source = ChromeProcessCodeSignatureValidator.ValidationSource(
             processStartIdentity: { _ in generations.next() },
             identity: { _, _, _ in Self.identity() })
-        #expect(!ChromeProcessCodeSignatureValidator.validate(
+        #expect(ChromeProcessCodeSignatureValidator.validate(
             processIdentifier: 71,
             processStartIdentity: 9071,
             channel: .stable,
-            source: source))
+            source: source) == nil)
     }
 
     private static func source(identity: ChromeProcessCodeSignatureValidator.Identity?)

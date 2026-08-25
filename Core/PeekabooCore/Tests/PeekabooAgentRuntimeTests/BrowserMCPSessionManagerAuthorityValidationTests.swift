@@ -18,7 +18,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in Self.signatureIdentity(channel) },
             connectionAttempt: { .standalone(timeout: .milliseconds(40)) },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
@@ -130,7 +130,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in browser.bundleIdentifier },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in Self.signatureIdentity(channel) },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(resolve, revalidate: revalidate),
             environment: [:])
@@ -188,7 +188,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
-            processCodeSignatureValidator: { _, _, _ in false },
+            processCodeSignatureValidator: { _, _, _ in nil },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
                 resolveInitial: { _, _ in
@@ -209,7 +209,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
     @Test
     func `signer drift clears receipt and refuses leaf dispatch`() async throws {
         let manager = AuthorityBrowserMCPManager()
-        let signer = AuthorityBoolBox(true)
+        let signer = AuthoritySignatureBox(Self.signatureIdentity(.stable))
         let session = Self.session(
             manager: manager,
             resolver: BrowserMCPChannelEndpointResolver(
@@ -221,7 +221,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             signer: { _, _, _ in signer.value })
         let receipt = try #require(try await session.connect(channel: .stable).connectionReceipt)
         manager.executedTools.removeAll()
-        signer.value = false
+        signer.value = Self.signatureIdentity(.stable, codeDirectoryHash: Data([2]))
 
         await #expect(throws: BrowserMCPConnectionError.self) {
             _ = try await session.executeSequence(
@@ -232,6 +232,38 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         #expect(manager.executedTools.isEmpty)
         #expect(manager.removeServerCount == 1)
         #expect(await (session.status(channel: .stable)).connectionReceipt == nil)
+    }
+
+    @Test
+    func `signer exec drift during listener validation refuses before leaf dispatch`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        let signer = AuthoritySignatureBox(Self.signatureIdentity(.stable))
+        let driftArmed = AuthorityBoolBox(false)
+        let session = Self.session(
+            manager: manager,
+            resolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, attempt in
+                    attempt.state.markPermissionDispatchStarted()
+                    return Self.endpoint()
+                },
+                revalidate: { _, _ in
+                    if driftArmed.value {
+                        signer.value = Self.signatureIdentity(.stable, codeDirectoryHash: Data([2]))
+                    }
+                }),
+            signer: { _, _, _ in signer.value })
+        let receipt = try #require(try await session.connect(channel: .stable).connectionReceipt)
+        manager.executedTools.removeAll()
+        driftArmed.value = true
+
+        await #expect(throws: BrowserMCPConnectionError.self) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+        }
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeServerCount == 1)
     }
 
     @Test
@@ -304,7 +336,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [browser] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in Self.signatureIdentity(channel) },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
                 resolveInitial: { _, _ in
@@ -361,7 +393,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [Self.browser(bundleIdentifier: "com.google.Chrome")] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in Self.signatureIdentity(channel) },
             isolatedConnectionRequested: { isolated.value },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
@@ -395,7 +427,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             detectedBrowsers: { _ in [Self.browser(bundleIdentifier: "com.google.Chrome")] },
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
-            processCodeSignatureValidator: { _, _, _ in true },
+            processCodeSignatureValidator: { _, _, channel in Self.signatureIdentity(channel) },
             preferredChannel: { .canary },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
@@ -462,7 +494,9 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         liveBundle: @escaping BrowserMCPSessionManager.ProcessBundleIdentifierProvider = { _ in
             "com.google.Chrome"
         },
-        signer: @escaping BrowserMCPSessionManager.ProcessCodeSignatureValidator = { _, _, _ in true })
+        signer: @escaping BrowserMCPSessionManager.ProcessCodeSignatureValidator = { _, _, channel in
+            Self.signatureIdentity(channel)
+        })
         -> BrowserMCPSessionManager
     {
         let browser = Self.browser(bundleIdentifier: "com.google.Chrome")
@@ -518,6 +552,16 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             devToolsBrowserID: "browser-a",
             browserVersion: "Chrome/151.0",
             protocolVersion: "1.3")
+    }
+
+    private nonisolated static func signatureIdentity(
+        _ channel: ChromeChannelIdentity,
+        codeDirectoryHash: Data = Data([1])) -> ChromeProcessCodeSignatureValidator.Identity
+    {
+        .init(
+            identifier: channel.bundleIdentifier,
+            teamIdentifier: ChromeProcessCodeSignatureValidator.googleChromeTeamIdentifier,
+            codeDirectoryHash: codeDirectoryHash)
     }
 }
 
@@ -637,6 +681,20 @@ private final class AuthorityListenerBox: @unchecked Sendable {
     }
 
     var value: DarwinProcessLoopbackListenerIdentity {
+        get { self.lock.withLock { self.storedValue } }
+        set { self.lock.withLock { self.storedValue = newValue } }
+    }
+}
+
+private final class AuthoritySignatureBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: ChromeProcessCodeSignatureValidator.Identity?
+
+    init(_ value: ChromeProcessCodeSignatureValidator.Identity?) {
+        self.storedValue = value
+    }
+
+    var value: ChromeProcessCodeSignatureValidator.Identity? {
         get { self.lock.withLock { self.storedValue } }
         set { self.lock.withLock { self.storedValue = newValue } }
     }
