@@ -170,6 +170,24 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
         XCTAssertTrue(message.contains("increase the timeout only when the app is slow"))
     }
 
+    func testIncompleteApplicationScopedFallbackDoesNotRecommendRepeatingTheAppTreeRead() {
+        let info = DetectionTruncationInfo(incompleteAccessibilityRead: true)
+
+        let commandLine = info.remediationMessage(budget: nil, applicationScopedFallback: true)
+        let automation = info.automationToolRemediationMessage(
+            budget: nil,
+            applicationScopedFallback: true)
+
+        XCTAssertTrue(commandLine.contains("already inspected the owning process or app tree"))
+        XCTAssertTrue(commandLine.contains("Do not repeat that fallback"))
+        XCTAssertTrue(commandLine.contains("screenshot/OCR evidence instead"))
+        XCTAssertFalse(commandLine.contains("inspect its owning process or app tree"))
+        XCTAssertTrue(automation.contains("already inspected the owning app_target without window_id"))
+        XCTAssertTrue(automation.contains("Do not repeat that fallback"))
+        XCTAssertTrue(automation.contains("screenshot/OCR evidence instead"))
+        XCTAssertFalse(automation.contains("inspect the owning app_target without window_id"))
+    }
+
     func testMaxDepthOneStopsAtRoot() throws {
         guard let window = self.frontmostWindowElement() else {
             throw XCTSkip("No frontmost window available for AX testing")

@@ -194,7 +194,8 @@ public struct InspectUITool: MCPTool {
         else { return }
 
         let message = truncationInfo.automationToolRemediationMessage(
-            budget: result.metadata.windowContext?.traversalBudget)
+            budget: result.metadata.windowContext?.traversalBudget,
+            applicationScopedFallback: result.metadata.isApplicationScopedAccessibilityFallback)
         if truncationInfo.deadlineReached {
             throw PeekabooError.timeout(message)
         }

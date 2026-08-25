@@ -199,9 +199,11 @@ extension SeeCommand {
             : 0
         print("⚙️  Interactable elements: \(interactableCount)")
         if let truncationInfo = context.metadata.truncationInfo, truncationInfo.isTruncated {
-            print(
-                "⚠️  \(truncationInfo.remediationMessage(budget: context.metadata.windowContext?.traversalBudget))"
+            let remediation = truncationInfo.remediationMessage(
+                budget: context.metadata.windowContext?.traversalBudget,
+                applicationScopedFallback: context.metadata.isApplicationScopedAccessibilityFallback
             )
+            print("⚠️  \(remediation)")
         }
         let formattedDuration = String(format: "%.2f", context.executionTime)
         print("⏱️  Execution time: \(formattedDuration)s")

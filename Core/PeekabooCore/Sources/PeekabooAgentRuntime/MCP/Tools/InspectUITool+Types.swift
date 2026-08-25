@@ -102,7 +102,8 @@ struct InspectUISummaryBuilder {
             return []
         }
         return [truncationInfo.automationToolRemediationMessage(
-            budget: self.result.metadata.windowContext?.traversalBudget)]
+            budget: self.result.metadata.windowContext?.traversalBudget,
+            applicationScopedFallback: self.result.metadata.isApplicationScopedAccessibilityFallback)]
     }
 
     private func roleHeader(role: String, elements: [DetectedElement]) -> String {

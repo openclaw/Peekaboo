@@ -40,7 +40,8 @@ public enum DesktopObservationEvidencePolicy {
 
         if let truncationInfo = elements.metadata.truncationInfo, truncationInfo.isTruncated {
             let message = truncationInfo.remediationMessage(
-                budget: elements.metadata.windowContext?.traversalBudget ?? request.detection.traversalBudget)
+                budget: elements.metadata.windowContext?.traversalBudget ?? request.detection.traversalBudget,
+                applicationScopedFallback: elements.metadata.isApplicationScopedAccessibilityFallback)
             if truncationInfo.deadlineReached {
                 return PeekabooError.timeout(message)
             }

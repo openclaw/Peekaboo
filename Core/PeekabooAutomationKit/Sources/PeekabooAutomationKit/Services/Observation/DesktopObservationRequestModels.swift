@@ -162,17 +162,30 @@ extension DetectionTruncationInfo {
             self.deadlineReached || self.incompleteAccessibilityRead
     }
 
-    public func remediationMessage(budget: AXTraversalBudget?) -> String {
-        self.remediationMessage(budget: budget, style: .commandLine)
+    public func remediationMessage(
+        budget: AXTraversalBudget?,
+        applicationScopedFallback: Bool = false) -> String
+    {
+        self.remediationMessage(
+            budget: budget,
+            style: .commandLine,
+            applicationScopedFallback: applicationScopedFallback)
     }
 
-    public func automationToolRemediationMessage(budget: AXTraversalBudget?) -> String {
-        self.remediationMessage(budget: budget, style: .automationTool)
+    public func automationToolRemediationMessage(
+        budget: AXTraversalBudget?,
+        applicationScopedFallback: Bool = false) -> String
+    {
+        self.remediationMessage(
+            budget: budget,
+            style: .automationTool,
+            applicationScopedFallback: applicationScopedFallback)
     }
 
     private func remediationMessage(
         budget: AXTraversalBudget?,
-        style: DetectionRemediationStyle) -> String
+        style: DetectionRemediationStyle,
+        applicationScopedFallback: Bool) -> String
     {
         let budget = budget ?? AXTraversalBudget()
         var limits: [String] = []
@@ -194,6 +207,20 @@ extension DetectionTruncationInfo {
 
         let limitSummary = limits.isEmpty ? "the AX traversal budget" : limits.joined(separator: ", ")
         if self.incompleteAccessibilityRead {
+            if applicationScopedFallback {
+                return switch style {
+                case .commandLine:
+                    "Warning: AX tree incomplete at \(limitSummary). The exact-window fallback already " +
+                        "inspected the owning process or app tree. Do not repeat that fallback. Partial app-tree " +
+                        "evidence does not provide a reusable snapshot or mutation authority; use screenshot/OCR " +
+                        "evidence instead."
+                case .automationTool:
+                    "Warning: AX tree incomplete at \(limitSummary). The exact-window fallback already " +
+                        "inspected the owning app_target without window_id. Do not repeat that fallback. Partial " +
+                        "app-tree evidence does not provide a reusable snapshot or mutation authority; use " +
+                        "screenshot/OCR evidence instead."
+                }
+            }
             return switch style {
             case .commandLine:
                 "Warning: AX tree incomplete at \(limitSummary). Retry once to obtain a fresh observation. " +

@@ -182,7 +182,8 @@ extension SeeCommand {
             throw CaptureError.detectionTimedOut(self.overallTimeoutSeconds)
         }
         let message = truncationInfo.remediationMessage(
-            budget: result.metadata.windowContext?.traversalBudget
+            budget: result.metadata.windowContext?.traversalBudget,
+            applicationScopedFallback: result.metadata.isApplicationScopedAccessibilityFallback
         )
         if truncationInfo.incompleteAccessibilityRead,
            result.metadata.windowContext?.windowID != nil ||

@@ -70,6 +70,11 @@ extension SeeCommandRuntimeTests {
             #expect(data["snapshot_reusable"] as? Bool == false)
             #expect(data["semantic_scope"] as? String == "application_partial")
             #expect(data["mutation_targeting_available"] as? Bool == false)
+            let truncation = try #require(data["truncation"] as? [String: Any])
+            let warning = try #require(truncation["warning"] as? String)
+            #expect(warning.contains("already inspected the owning process or app tree"))
+            #expect(warning.contains("Do not repeat that fallback"))
+            #expect(!warning.contains("inspect its owning process or app tree"))
             let elements = try #require(data["ui_elements"] as? [[String: Any]])
             #expect(elements.count == 1)
             #expect(elements.first?["is_actionable"] as? Bool == false)
@@ -92,6 +97,9 @@ extension SeeCommandRuntimeTests {
             #expect(human.exitStatus == 0)
             #expect(human.stdout.contains("Interactable elements: 0"))
             #expect(human.stdout.contains("no reusable snapshot or mutation authority"))
+            #expect(human.stdout.contains("already inspected the owning process or app tree"))
+            #expect(human.stdout.contains("Do not repeat that fallback"))
+            #expect(!human.stdout.contains("inspect its owning process or app tree"))
 
             automation.inspectAccessibilityTreeHandler = { _ in fallbackResult(DetectedElements()) }
             let empty = try await InProcessCommandRunner.run(
@@ -111,6 +119,10 @@ extension SeeCommandRuntimeTests {
             let emptyError = try #require(emptyEnvelope["error"] as? [String: Any])
             #expect(empty.exitStatus == 1)
             #expect(emptyError["code"] as? String == "ACCESSIBILITY_INCOMPLETE")
+            #expect((emptyError["message"] as? String)?.contains(
+                "already inspected the owning process or app tree"
+            ) == true)
+            #expect((emptyError["message"] as? String)?.contains("Do not repeat that fallback") == true)
         }
     }
 }

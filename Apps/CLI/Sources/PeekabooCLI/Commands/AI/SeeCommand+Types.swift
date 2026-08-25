@@ -407,7 +407,8 @@ struct SeeTruncationSummary: Codable {
         self.deadline_reached = truncationInfo.deadlineReached
         self.incomplete_accessibility_read = truncationInfo.incompleteAccessibilityRead
         self.warning = truncationInfo.remediationMessage(
-            budget: metadata.windowContext?.traversalBudget
+            budget: metadata.windowContext?.traversalBudget,
+            applicationScopedFallback: metadata.isApplicationScopedAccessibilityFallback
         )
     }
 }
