@@ -7,6 +7,37 @@ import Testing
 @MainActor
 struct WindowMutationPlannerTests {
     @Test
+    func `explicit mutation proof ignores unrelated conflicting duplicate rows`() async throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let unrelated = AutomationTestFixtures.window(windowID: 202, title: "Other", index: 1)
+        let conflicting = AutomationTestFixtures.window(windowID: 202, title: "Conflict", index: 2)
+        let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .complete([fixture.application]) })
+        let planner = DesktopTargetPlanning.WindowMutationPlanner(
+            applicationPlanner: applications,
+            windowInventoryProvider: { _ in
+                .complete([fixture.window, unrelated, conflicting])
+            })
+        let selectors = [
+            InteractionTargetSelector(windowID: fixture.window.windowID),
+            InteractionTargetSelector(
+                applicationIdentifier: fixture.application.name,
+                windowTitle: fixture.window.title),
+            InteractionTargetSelector(
+                applicationIdentifier: fixture.application.name,
+                windowIndex: fixture.window.index),
+        ]
+
+        for selector in selectors {
+            let plan = try await planner.plan(selector: selector)
+            let proof = try #require(plan.selectorProof)
+
+            #expect(plan.selectionWindow == fixture.window)
+            #expect(proof.selectedWindowIdentity == fixture.windowIdentity)
+        }
+    }
+
+    @Test
     func `partial window inventory refuses title and index uniqueness`() async {
         let fixture = AutomationTestFixtures.linkedDesktopTarget()
         let application = fixture.application
@@ -219,7 +250,7 @@ struct WindowMutationPlannerTests {
     }
 
     @Test
-    func `nonfinite unrelated candidate evidence becomes a canonical invalid inventory`() async {
+    func `nonfinite unrelated candidate evidence does not poison explicit mutation proof`() async throws {
         let application = AutomationTestFixtures.application()
         let selected = AutomationTestFixtures.window(title: "Target")
         let invalid = ServiceWindowInfo(
@@ -230,14 +261,12 @@ struct WindowMutationPlannerTests {
             applicationInventories: [[application], [application]],
             windows: [.application("PID:101"): [selected, invalid]])
 
-        await #expect(throws: DesktopTargetPlanningError.invalidWindowInventory(
-            selector: "window title 'Target'",
-            reason: "candidate evidence could not be encoded"))
-        {
-            _ = try await spy.planner().plan(selector: InteractionTargetSelector(
-                applicationIdentifier: "Test App",
-                windowTitle: "Target"))
-        }
+        let plan = try await spy.planner().plan(selector: InteractionTargetSelector(
+            applicationIdentifier: "Test App",
+            windowTitle: "Target"))
+
+        #expect(plan.selectionWindow == selected)
+        #expect(plan.selectorProof?.selectedWindowIdentity == selected.mutationIdentity)
     }
 
     @Test

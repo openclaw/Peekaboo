@@ -23,7 +23,6 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
-- Resolve repeated stable window inventory rows consistently across CLI and MCP instead of falsely reporting ambiguity.
 - Downscale straight-alpha legacy screenshots to logical 1x instead of silently returning Retina-sized pixels.
 - Bound exclusive ScreenCaptureKit transaction-lock waits inside the Bridge request envelope so a wedged peer fails clearly instead of hanging capture indefinitely. Thanks @SebTardif for #599.
 - Send Gemini API keys in request headers, require HTTPS OAuth endpoints, and redact OAuth state. Thanks Vincent Koc for #575 and Tachikoma #73.

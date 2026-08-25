@@ -613,20 +613,25 @@ extension DesktopTargetPlanning {
             processIdentity: ApplicationProcessIdentity) throws -> SelectorResolutionProof?
         {
             let proofSelection: WindowSelection
+            let explicitSelector: InteractionTargetSelector.WindowSelector
             switch selection {
             case .automatic:
                 return nil
             case let .id(windowID):
                 proofSelection = .id(CGWindowID(windowID))
+                explicitSelector = .id(windowID)
             case let .title(title):
                 proofSelection = .title(title)
+                explicitSelector = .title(title)
             case let .index(index):
                 proofSelection = .index(index)
+                explicitSelector = .index(index)
             }
             do {
                 return try WindowSelectorResolutionProof.make(
                     selection: proofSelection,
-                    candidates: WindowCandidateSelector.canonicalizedCandidates(candidates),
+                    candidates: WindowCandidateSelector.canonicalizedCandidates(
+                        WindowCandidateSelector.candidates(relevantTo: explicitSelector, in: candidates)),
                     selected: selected,
                     processIdentity: processIdentity)
             } catch let error as WindowSelectorResolutionProof.ResolutionError {

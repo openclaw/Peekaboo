@@ -333,7 +333,7 @@ extension DesktopTargetPlanning {
             return selected
         }
 
-        private static func candidates(
+        static func candidates(
             relevantTo selector: InteractionTargetSelector.WindowSelector,
             in candidates: [ServiceWindowInfo]) -> [ServiceWindowInfo]
         {
