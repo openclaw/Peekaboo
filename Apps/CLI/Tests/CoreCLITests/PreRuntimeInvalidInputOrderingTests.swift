@@ -178,6 +178,7 @@ struct PreRuntimeInvalidInputOrderingTests {
     @Test(arguments: [
         ["peekaboo", "type", "alpha", "--foreground", "--json"],
         ["peekaboo", "browser", "status", "--json"],
+        ["peekaboo", "window", "list", "--json"],
     ])
     func `valid request shapes continue to runtime construction`(arguments: [String]) async throws {
         let resolved = try CommanderRuntimeRouter.resolve(argv: arguments)

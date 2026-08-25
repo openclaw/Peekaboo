@@ -93,7 +93,7 @@ extension WindowCommand.WindowListSubcommand: PreRuntimeValidatingCommand {
             applicationIdentifier: self.app,
             processIdentifier: self.pid.map(Int.init)
         )
-        _ = try validatedMutationSelector(selector)
+        _ = try validatedMutationSelector(selector, allowMissingTarget: true)
     }
 }
 
