@@ -345,10 +345,14 @@ public struct PasteTool: MCPTool {
         destination: UIAutomationTarget) async throws -> ToolResponse
     {
         self.logger.error("Direct text paste outcome was indeterminate")
-        let identity = try Self.desktopTargetIdentity(destination)
-        let failure = Self.attributing(
-            error.desktopActionFailure(delivery: Self.backgroundDelivery(for: destination)),
-            to: identity)
+        guard let identity = try UIAutomationActionResultSemantics.targetIdentity(for: destination) else {
+            throw PasteToolError(
+                "Background text paste requires a process-generation target.",
+                refusalReason: .targetUnavailable)
+        }
+        let failure = error
+            .desktopActionFailure(delivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination))
+            .attributed(to: identity.actionTargetReceipt)
         return try await MCPDesktopActionFailureHandler.response(
             for: failure,
             uiSnapshots: self.context.uiSnapshots,
@@ -780,106 +784,48 @@ public struct PasteTool: MCPTool {
             return result
         }
 
-        let destinationIdentity = try Self.desktopTargetIdentity(destination)
+        guard let destinationIdentity = try UIAutomationActionResultSemantics.targetIdentity(for: destination) else {
+            throw PasteToolError(
+                "Background text paste requires a process-generation target.",
+                refusalReason: .targetUnavailable)
+        }
         let authorizedIdentity: DesktopTargetIdentity
         do {
             authorizedIdentity = try authorizedPlan.coalescing(
                 destinationIdentity,
                 operation: "Background text paste")
         } catch let failure as DesktopActionFailure {
-            throw Self.attributing(failure, to: authorizedPlan.targetIdentity)
+            throw failure.attributed(to: authorizedPlan.targetIdentity.actionTargetReceipt)
         }
 
-        guard let returnedIdentity = result.targetIdentity else {
-            throw Self.attributing(
-                .indeterminate(
-                    route: result.outcome?.route ?? .local,
-                    delivery: result.outcome?.delivery ?? Self.backgroundDelivery(for: destination),
-                    evidence: .completionUnknown,
-                    unitCount: result.outcome?.dispatchState.unitCount ?? .one,
-                    message: "Background text paste returned without its exact target identity.",
-                    hint: "Observe the exact target before retrying and update the runtime host."),
-                to: authorizedIdentity)
+        guard let resultIdentity = try UIAutomationActionResultSemantics.validateTarget(
+            result.targetIdentity,
+            outcome: result.outcome,
+            requirement: .compatible(authorizedIdentity),
+            operation: "Background text paste",
+            message: "Background text paste returned without its exact target identity.",
+            hint: "Observe the exact target before retrying and update the runtime host.",
+            contradictoryMessage: "Background text paste returned a target different from its authorization.",
+            fallbackDelivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination))
+        else {
+            preconditionFailure("Compatible target validation must return one coalesced identity")
         }
-        let resultIdentity: DesktopTargetIdentity
-        do {
-            resultIdentity = try authorizedIdentity.coalescing(returnedIdentity)
-        } catch {
-            // A contradictory provider target is not safely attributable to either claimed identity.
-            throw DesktopActionFailure.indeterminate(
-                route: result.outcome?.route ?? .local,
-                delivery: result.outcome?.delivery ?? Self.backgroundDelivery(for: destination),
-                evidence: .completionUnknown,
-                unitCount: result.outcome?.dispatchState.unitCount ?? .one,
-                message: "Background text paste returned a target different from its authorization.",
-                hint: "Observe both targets before retrying and update the runtime host.",
-                causeDescription: error.localizedDescription)
-        }
-        guard let outcome = result.outcome else {
-            throw Self.attributing(
-                .indeterminate(
-                    delivery: Self.backgroundDelivery(for: destination),
-                    evidence: .completionUnknown,
-                    unitCount: .one,
-                    message: "Background text paste returned without a canonical outcome.",
-                    hint: "Observe the exact target before retrying and update the runtime host."),
-                to: resultIdentity)
-        }
-        do {
-            try DesktopActionFailure.requireConfirmedIfReported(
-                outcome,
-                operation: "Background text paste")
-        } catch let failure as DesktopActionFailure {
-            throw Self.attributing(failure, to: resultIdentity)
-        }
-        if let delivery = outcome.delivery, delivery.mode != .background {
-            throw Self.attributing(
-                .indeterminate(
-                    route: outcome.route,
-                    delivery: delivery,
-                    evidence: .completionUnknown,
-                    unitCount: outcome.dispatchState.unitCount,
-                    message: "Background text paste reported foreground delivery.",
-                    hint: "Observe the exact target before retrying and update the runtime host."),
-                to: resultIdentity)
-        }
+        let outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result.outcome,
+            policy: .confirmed(requiring: .background),
+            operation: "Background text paste",
+            targetReceipt: resultIdentity.actionTargetReceipt,
+            missingOutcomeMessage: "Background text paste returned without a canonical outcome.",
+            rejectedOutcomeMessage: "Background text paste did not return a confirmed outcome.",
+            missingOutcomeHint: "Observe the exact target before retrying and update the runtime host.",
+            disallowedDeliveryMessage: "Background text paste reported foreground delivery.",
+            disallowedDeliveryHint: "Observe the exact target before retrying and update the runtime host.",
+            missingOutcomeDelivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination),
+            missingOutcomeUnitCount: .one)
         return UIAutomationActionResult(
             payload: result.payload,
             outcome: outcome,
             targetIdentity: resultIdentity)
-    }
-
-    private static func desktopTargetIdentity(_ target: UIAutomationTarget) throws -> DesktopTargetIdentity {
-        if let exactWindow = target.exactWindow {
-            return DesktopTargetIdentity(exactWindow: exactWindow)
-        }
-        guard let processIdentity = target.processIdentity else {
-            throw PasteToolError(
-                "Background text paste requires a process-generation target.",
-                refusalReason: .targetUnavailable)
-        }
-        return try DesktopTargetIdentity(processIdentity: processIdentity)
-    }
-
-    private static func backgroundDelivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {
-        .init(
-            mechanism: target.exactWindow == nil ? .processTargetedEvents : .windowTargetedEvents,
-            mode: .background)
-    }
-
-    private static func attributing(
-        _ failure: DesktopActionFailure,
-        to identity: DesktopTargetIdentity) -> DesktopActionFailure
-    {
-        if let exactWindow = identity.exactWindow {
-            return failure.attributed(to: DesktopActionTargetReceipt(
-                processIdentifier: exactWindow.identity.ownerProcessIdentifier,
-                processStartIdentity: exactWindow.identity.ownerProcessStartIdentity,
-                windowID: exactWindow.identity.windowID))
-        }
-        return failure.attributed(to: DesktopActionTargetReceipt(
-            processIdentifier: identity.processIdentity.processIdentifier,
-            processStartIdentity: identity.processIdentity.processStartIdentity))
     }
 
     @MainActor
@@ -954,17 +900,7 @@ public struct PasteTool: MCPTool {
         _ identity: DesktopTargetIdentity?) throws -> [String: Value]
     {
         guard let identity else { return [:] }
-        let receipt = if let exactWindow = identity.exactWindow {
-            DesktopActionTargetReceipt(
-                processIdentifier: exactWindow.identity.ownerProcessIdentifier,
-                processStartIdentity: exactWindow.identity.ownerProcessStartIdentity,
-                windowID: exactWindow.identity.windowID)
-        } else {
-            DesktopActionTargetReceipt(
-                processIdentifier: identity.processIdentity.processIdentifier,
-                processStartIdentity: identity.processIdentity.processStartIdentity)
-        }
-        return try ["target_receipt": Value(receipt)]
+        return try ["target_receipt": Value(identity.actionTargetReceipt)]
     }
 
     @MainActor
@@ -1131,7 +1067,11 @@ public struct PasteTool: MCPTool {
 
     private func authorizedBackgroundDestination(_ candidate: UIAutomationTarget) throws -> UIAutomationTarget {
         guard AuthorizedDesktopTargetPlan.current != nil else { return candidate }
-        let identity = try Self.desktopTargetIdentity(candidate)
+        guard let identity = try UIAutomationActionResultSemantics.targetIdentity(for: candidate) else {
+            throw PasteToolError(
+                "Background text paste requires a process-generation target.",
+                refusalReason: .targetUnavailable)
+        }
         return try self.context.coalesceAuthorizedDesktopTarget(
             identity,
             operation: "Background text paste").target

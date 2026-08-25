@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
@@ -30,6 +31,70 @@ extension PasteCommandTests {
         #expect(payload.target_identity?.kind == .window)
         #expect(payload.target_identity?.window_id == ExactBackgroundTextPasteFixture.windowID)
         #expect(payload.target_receipt?.windowID == ExactBackgroundTextPasteFixture.windowID)
+    }
+
+    @Test
+    func `Exact-window background text paste missing outcome keeps delivery and receipt`() throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(
+                processIdentifier: ExactBackgroundTextPasteFixture.processIdentifier,
+                processStartIdentity: ExactBackgroundTextPasteFixture.processStartIdentity
+            ),
+            windowID: ExactBackgroundTextPasteFixture.windowID,
+            bounds: ExactBackgroundTextPasteFixture.bounds
+        )
+        let result = UIAutomationActionResult(
+            payload: TypeResult(totalCharacters: 15, keyPresses: 0),
+            outcome: nil,
+            targetIdentity: fixture.windowTargetIdentity
+        )
+
+        do {
+            _ = try PasteCommand.validateBackgroundTextResult(
+                result,
+                authorizedTarget: fixture.windowTargetIdentity.target
+            )
+            Issue.record("Expected missing canonical outcome to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.message.contains("without a canonical outcome"))
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == .init(
+                mechanism: .windowTargetedEvents,
+                mode: .background
+            ))
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.dispatchState.mutationDispatched)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.targetReceipt == fixture.windowTargetReceipt)
+        }
+    }
+
+    @Test
+    func `Background text paste accepts compatible exact-window provider evidence`() throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(
+                processIdentifier: ExactBackgroundTextPasteFixture.processIdentifier,
+                processStartIdentity: ExactBackgroundTextPasteFixture.processStartIdentity
+            ),
+            windowID: ExactBackgroundTextPasteFixture.windowID,
+            bounds: ExactBackgroundTextPasteFixture.bounds
+        )
+        let result = UIAutomationActionResult(
+            payload: TypeResult(totalCharacters: 4, keyPresses: 0),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                unitCount: .one
+            ),
+            targetIdentity: fixture.windowTargetIdentity
+        )
+
+        let resolved = try PasteCommand.validateBackgroundTextResult(
+            result,
+            authorizedTarget: fixture.processTargetIdentity.target
+        )
+
+        #expect(resolved == fixture.windowTargetIdentity)
+        #expect(resolved.actionTargetReceipt.windowID == ExactBackgroundTextPasteFixture.windowID)
     }
 
     @Test

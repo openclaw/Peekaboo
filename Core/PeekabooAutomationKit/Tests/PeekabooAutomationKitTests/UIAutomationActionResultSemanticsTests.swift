@@ -12,6 +12,34 @@ struct UIAutomationActionResultSemanticsTests {
         mode: .background)
 
     @Test
+    func `target projection preserves foreground process and exact window delivery`() throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+
+        #expect(try UIAutomationActionResultSemantics.targetIdentity(for: .foreground) == nil)
+        #expect(try UIAutomationActionResultSemantics.actionTargetReceipt(for: .foreground) == nil)
+        #expect(UIAutomationActionResultSemantics.keyboardDelivery(for: .foreground) == .init(
+            mechanism: .globalEvents,
+            mode: .foreground))
+
+        let process = fixture.processTargetIdentity.target
+        #expect(try UIAutomationActionResultSemantics.targetIdentity(for: process) == fixture.processTargetIdentity)
+        #expect(try UIAutomationActionResultSemantics.actionTargetReceipt(for: process) == fixture.processTargetReceipt)
+        #expect(UIAutomationActionResultSemantics.keyboardDelivery(for: process) == .init(
+            mechanism: .processTargetedEvents,
+            mode: .background))
+
+        let window = fixture.windowTargetIdentity.target
+        #expect(try UIAutomationActionResultSemantics.targetIdentity(for: window) == fixture.windowTargetIdentity)
+        #expect(try UIAutomationActionResultSemantics.actionTargetReceipt(for: window) == fixture.windowTargetReceipt)
+        #expect(UIAutomationActionResultSemantics.keyboardDelivery(for: window) == .init(
+            mechanism: .windowTargetedEvents,
+            mode: .background))
+    }
+
+    @Test
     func `receipt projection preserves process and exact window generations`() {
         let process = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 1001)
         let fixture = AutomationTestFixtures.linkedDesktopTarget(
@@ -108,6 +136,48 @@ struct UIAutomationActionResultSemanticsTests {
     }
 
     @Test
+    func `compatible target validation retains exact provider evidence`() throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let outcome = DesktopActionOutcome.confirmedChange(delivery: self.backgroundDelivery)
+
+        let resolved = try UIAutomationActionResultSemantics.validateTarget(
+            fixture.windowTargetIdentity,
+            outcome: outcome,
+            requirement: .compatible(fixture.processTargetIdentity),
+            operation: "Fixture action")
+
+        #expect(resolved == fixture.windowTargetIdentity)
+        #expect(resolved?.actionTargetReceipt == fixture.windowTargetReceipt)
+    }
+
+    @Test
+    func `compatible target contradiction remains unattributed`() throws {
+        let expected = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let contradictory = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 43, processStartIdentity: 1002),
+            windowID: 72,
+            bounds: Self.windowBounds)
+
+        do {
+            _ = try UIAutomationActionResultSemantics.validateTarget(
+                contradictory.windowTargetIdentity,
+                outcome: .confirmedChange(delivery: self.backgroundDelivery),
+                requirement: .compatible(expected.processTargetIdentity),
+                operation: "Fixture action")
+            Issue.record("Expected contradictory compatible targets to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.targetReceipt == nil)
+        }
+    }
+
+    @Test
     func `pre-dispatch refusal does not invent a missing target`() throws {
         let result = UIAutomationActionResult<Void>(
             payload: (),
@@ -133,17 +203,26 @@ struct UIAutomationActionResultSemanticsTests {
             processIdentifier: 42,
             processStartIdentity: 1001,
             windowID: 71)
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .windowTargetedEvents,
+            mode: .background)
 
         do {
             _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
                 nil,
                 policy: .confirmedOrDispatched,
                 operation: "Fixture action",
-                targetReceipt: receipt)
+                targetReceipt: receipt,
+                missingOutcomeRoute: .bridge,
+                missingOutcomeDelivery: delivery,
+                missingOutcomeUnitCount: .one)
             Issue.record("Expected missing outcome validation to fail")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.delivery == delivery)
             #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
             #expect(failure.message == "Fixture action returned without a canonical outcome.")
             #expect(failure.targetReceipt == receipt)
         }

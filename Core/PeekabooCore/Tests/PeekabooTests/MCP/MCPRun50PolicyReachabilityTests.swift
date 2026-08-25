@@ -64,6 +64,78 @@ struct MCPRun50PolicyReachabilityTests {
 
     @Test
     @MainActor
+    func `background text paste missing outcome preserves canonical delivery and receipt`() async throws {
+        let automation = Run50PasteAutomationService()
+        automation.uiAutomationOutcomeScript.setDefaultOutcome(nil)
+        let applications = MockApplicationService(applications: [Self.application])
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: PasteTool(context: context),
+            arguments: ToolArguments(raw: [
+                "app": "TextEdit",
+                "text": "missing outcome",
+            ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string(DesktopActionOutcome.State.indeterminate.rawValue))
+        #expect(meta["delivery_mechanism"] == .string(
+            DesktopActionOutcome.Delivery.Mechanism.processTargetedEvents.rawValue))
+        #expect(meta["delivery_mode"] == .string(DesktopActionOutcome.Delivery.Mode.background.rawValue))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["target_receipt"]?.objectValue?["pid"] == .int(Int(Self.application.processIdentifier)))
+        #expect(meta["target_receipt"]?.objectValue?["process_start_identity_decimal"] == .string("890"))
+        guard case let .text(message, _, _)? = response.content.first else {
+            Issue.record("Expected missing outcome failure")
+            return
+        }
+        #expect(message.contains("without a canonical outcome"))
+    }
+
+    @Test
+    @MainActor
+    func `background text paste rejects foreground delivery with canonical receipt`() async throws {
+        let automation = Run50PasteAutomationService()
+        automation.uiAutomationOutcomeScript.setDefaultOutcome(.confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: .one))
+        let applications = MockApplicationService(applications: [Self.application])
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: PasteTool(context: context),
+            arguments: ToolArguments(raw: [
+                "app": "TextEdit",
+                "text": "wrong delivery",
+            ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string(DesktopActionOutcome.State.indeterminate.rawValue))
+        #expect(meta["delivery_mechanism"] == .string(DesktopActionOutcome.Delivery.Mechanism.globalEvents.rawValue))
+        #expect(meta["delivery_mode"] == .string(DesktopActionOutcome.Delivery.Mode.foreground.rawValue))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["target_receipt"]?.objectValue?["pid"] == .int(Int(Self.application.processIdentifier)))
+        guard case let .text(message, _, _)? = response.content.first else {
+            Issue.record("Expected delivery rejection failure")
+            return
+        }
+        #expect(message.contains("reported foreground delivery"))
+    }
+
+    @Test
+    @MainActor
     func `background final gate rejects foreground-delivered confirmed no change`() async throws {
         let counter = Run50InvocationCounter()
         let automation = Run50PasteAutomationService()

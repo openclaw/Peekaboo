@@ -10,11 +10,37 @@ public enum UIAutomationActionResultSemantics {
         case optional
         case required
         case exact(DesktopTargetIdentity)
+        /// The provider target may add compatible evidence, such as refining a process to an exact window.
+        case compatible(DesktopTargetIdentity)
 
         fileprivate var expectedIdentity: DesktopTargetIdentity? {
-            guard case let .exact(identity) = self else { return nil }
-            return identity
+            switch self {
+            case .optional, .required:
+                nil
+            case let .exact(identity), let .compatible(identity):
+                identity
+            }
         }
+    }
+
+    /// Projects a native input destination to its stable process/window identity when one exists.
+    public static func targetIdentity(for target: UIAutomationTarget) throws -> DesktopTargetIdentity? {
+        switch target {
+        case .foreground:
+            nil
+        case let .process(process):
+            try process.identity.map { try DesktopTargetIdentity(processIdentity: $0) }
+        case let .exactWindow(window):
+            DesktopTargetIdentity(exactWindow: window)
+        }
+    }
+
+    public static func actionTargetReceipt(for target: UIAutomationTarget) throws -> DesktopActionTargetReceipt? {
+        try self.targetIdentity(for: target)?.actionTargetReceipt
+    }
+
+    public static func keyboardDelivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {
+        target.keyboardDelivery
     }
 
     public static func requireAcceptedOutcome(
@@ -27,8 +53,15 @@ public enum UIAutomationActionResultSemantics {
         rejectedOutcomeMessage: String? = nil,
         missingOutcomeHint: String = "Observe the target before retrying and update the runtime host.",
         missingTargetHint: String = "Observe the target before retrying and update the runtime host.",
+        contradictoryTargetMessage: String? = nil,
+        contradictoryTargetHint: String = "Observe both targets before retrying and update the runtime host.",
         rejectedOutcomeHint: String =
-            "Follow the canonical escalation metadata before deciding whether to retry.") throws
+            "Follow the canonical escalation metadata before deciding whether to retry.",
+        disallowedDeliveryMessage: String? = nil,
+        disallowedDeliveryHint: String? = nil,
+        missingOutcomeRoute: DesktopActionOutcome.Route = .local,
+        missingOutcomeDelivery: DesktopActionOutcome.Delivery? = nil,
+        missingOutcomeUnitCount: DesktopActionOutcome.DispatchUnitCount? = nil) throws
         -> DesktopActionOutcome
     {
         guard let outcome = result.outcome else {
@@ -40,7 +73,12 @@ public enum UIAutomationActionResultSemantics {
                 missingOutcomeMessage: missingOutcomeMessage,
                 rejectedOutcomeMessage: rejectedOutcomeMessage,
                 missingOutcomeHint: missingOutcomeHint,
-                rejectedOutcomeHint: rejectedOutcomeHint)
+                rejectedOutcomeHint: rejectedOutcomeHint,
+                disallowedDeliveryMessage: disallowedDeliveryMessage,
+                disallowedDeliveryHint: disallowedDeliveryHint,
+                missingOutcomeRoute: missingOutcomeRoute,
+                missingOutcomeDelivery: missingOutcomeDelivery,
+                missingOutcomeUnitCount: missingOutcomeUnitCount)
         }
 
         try self.validateTarget(
@@ -49,7 +87,10 @@ public enum UIAutomationActionResultSemantics {
             requirement: targetRequirement,
             operation: operation,
             message: missingTargetMessage,
-            hint: missingTargetHint)
+            hint: missingTargetHint,
+            contradictoryMessage: contradictoryTargetMessage,
+            contradictoryHint: contradictoryTargetHint,
+            fallbackDelivery: missingOutcomeDelivery)
 
         return try self.requireAcceptedOutcome(
             outcome,
@@ -59,7 +100,12 @@ public enum UIAutomationActionResultSemantics {
             missingOutcomeMessage: missingOutcomeMessage,
             rejectedOutcomeMessage: rejectedOutcomeMessage,
             missingOutcomeHint: missingOutcomeHint,
-            rejectedOutcomeHint: rejectedOutcomeHint)
+            rejectedOutcomeHint: rejectedOutcomeHint,
+            disallowedDeliveryMessage: disallowedDeliveryMessage,
+            disallowedDeliveryHint: disallowedDeliveryHint,
+            missingOutcomeRoute: missingOutcomeRoute,
+            missingOutcomeDelivery: missingOutcomeDelivery,
+            missingOutcomeUnitCount: missingOutcomeUnitCount)
     }
 
     public static func requireAcceptedOutcome(
@@ -71,12 +117,20 @@ public enum UIAutomationActionResultSemantics {
         rejectedOutcomeMessage: String? = nil,
         missingOutcomeHint: String = "Observe the target before retrying and update the runtime host.",
         rejectedOutcomeHint: String =
-            "Follow the canonical escalation metadata before deciding whether to retry.") throws
+            "Follow the canonical escalation metadata before deciding whether to retry.",
+        disallowedDeliveryMessage: String? = nil,
+        disallowedDeliveryHint: String? = nil,
+        missingOutcomeRoute: DesktopActionOutcome.Route = .local,
+        missingOutcomeDelivery: DesktopActionOutcome.Delivery? = nil,
+        missingOutcomeUnitCount: DesktopActionOutcome.DispatchUnitCount? = nil) throws
         -> DesktopActionOutcome
     {
         guard let outcome else {
             throw DesktopActionFailure.indeterminate(
+                route: missingOutcomeRoute,
+                delivery: missingOutcomeDelivery,
                 evidence: .completionUnknown,
+                unitCount: missingOutcomeUnitCount,
                 message: missingOutcomeMessage ?? "\(operation) returned without a canonical outcome.",
                 hint: missingOutcomeHint)
                 .attributed(to: targetReceipt)
@@ -88,9 +142,9 @@ public enum UIAutomationActionResultSemantics {
                     delivery: outcome.delivery,
                     evidence: .completionUnknown,
                     unitCount: outcome.dispatchState.unitCount,
-                    message: rejectedOutcomeMessage ??
+                    message: disallowedDeliveryMessage ?? rejectedOutcomeMessage ??
                         "\(operation) returned a confirmed outcome with disallowed delivery semantics.",
-                    hint: rejectedOutcomeHint)
+                    hint: disallowedDeliveryHint ?? rejectedOutcomeHint)
                     .attributed(to: targetReceipt)
             }
             guard let failure = DesktopActionFailure(
@@ -106,14 +160,43 @@ public enum UIAutomationActionResultSemantics {
         return outcome
     }
 
+    @discardableResult
     public static func validateTarget(
         _ identity: DesktopTargetIdentity?,
         outcome: DesktopActionOutcome?,
         requirement: TargetRequirement,
         operation: String,
         message: String? = nil,
-        hint: String = "Observe the target before retrying and update the runtime host.") throws
+        hint: String = "Observe the target before retrying and update the runtime host.",
+        contradictoryMessage: String? = nil,
+        contradictoryHint: String = "Observe both targets before retrying and update the runtime host.",
+        fallbackDelivery: DesktopActionOutcome.Delivery? = nil) throws -> DesktopTargetIdentity?
     {
+        if case let .compatible(expected) = requirement {
+            guard let identity else {
+                throw DesktopActionFailure.indeterminate(
+                    route: outcome?.route ?? .local,
+                    delivery: outcome?.delivery ?? fallbackDelivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome?.dispatchState.unitCount ?? .one,
+                    message: message ?? "\(operation) returned without its required target identity.",
+                    hint: hint)
+                    .attributed(to: expected.actionTargetReceipt)
+            }
+            do {
+                return try expected.coalescing(identity)
+            } catch {
+                throw DesktopActionFailure.indeterminate(
+                    route: outcome?.route ?? .local,
+                    delivery: outcome?.delivery ?? fallbackDelivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome?.dispatchState.unitCount ?? .one,
+                    message: contradictoryMessage ?? "\(operation) returned a contradictory target identity.",
+                    hint: contradictoryHint,
+                    causeDescription: error.localizedDescription)
+            }
+        }
+
         let targetMatches: Bool = switch requirement {
         case .optional:
             true
@@ -121,18 +204,20 @@ public enum UIAutomationActionResultSemantics {
             identity != nil
         case let .exact(expected):
             identity == expected
+        case .compatible:
+            preconditionFailure("Compatible targets are resolved before exact target matching")
         }
-        guard !targetMatches else { return }
+        guard !targetMatches else { return identity }
         if outcome?.state == .refused,
            outcome?.dispatchState == DesktopActionOutcome.DispatchState.none
         {
-            return
+            return identity
         }
 
         let expectedReceipt = requirement.expectedIdentity?.actionTargetReceipt
         throw DesktopActionFailure.indeterminate(
             route: outcome?.route ?? .local,
-            delivery: outcome?.delivery,
+            delivery: outcome?.delivery ?? fallbackDelivery,
             evidence: .completionUnknown,
             unitCount: outcome?.dispatchState.unitCount,
             message: message ?? "\(operation) returned without its required target identity.",
