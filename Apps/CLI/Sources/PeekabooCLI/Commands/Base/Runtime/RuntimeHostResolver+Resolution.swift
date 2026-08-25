@@ -82,7 +82,6 @@ extension RuntimeHostResolver {
         let daemonSocketPath: String
         let runtimeBuildIdentity: String
         let buildScopedDaemonSocketPath: String?
-        let historicalBuildScopedDaemonTargets: [DaemonControlTarget]
         let historicalBuildScopedDaemonSocketPaths: [String]
         let candidates: [ImplicitRemoteCandidate]
     }

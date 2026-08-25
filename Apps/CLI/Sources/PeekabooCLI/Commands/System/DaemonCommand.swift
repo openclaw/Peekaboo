@@ -534,7 +534,7 @@ enum DaemonControlResolver {
         }
     }
 
-    private static func discoveredHistoricalBuildScopedSocketPaths(
+    static func discoveredHistoricalBuildScopedSocketPaths(
         daemonSocketPath: String,
         currentBuildScopedSocketPath: String?
     ) -> [String] {

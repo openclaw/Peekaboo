@@ -764,7 +764,6 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                         daemonSocketPath: "/tmp/peekaboo-dynamic-daemon.sock",
                         runtimeBuildIdentity: "current-build",
                         buildScopedDaemonSocketPath: "/tmp/peekaboo-dynamic-current-build.sock",
-                        historicalBuildScopedDaemonTargets: [],
                         historicalBuildScopedDaemonSocketPaths: [],
                         candidates: [.init(
                             socketPath: ownerSocket,

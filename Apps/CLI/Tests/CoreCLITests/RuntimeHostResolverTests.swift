@@ -9,6 +9,25 @@ import Testing
 @MainActor
 struct RuntimeHostResolverTests {
     @Test
+    func `only mutation barriers prevalidate historical daemon inventory`() {
+        #expect(!RuntimeHostResolver.requiresValidatedHistoricalDaemonInventory(
+            options: CommandRuntimeOptions()
+        ))
+
+        var implicitInvalidation = CommandRuntimeOptions()
+        implicitInvalidation.requiresImplicitSnapshotInvalidation = true
+        #expect(RuntimeHostResolver.requiresValidatedHistoricalDaemonInventory(
+            options: implicitInvalidation
+        ))
+
+        var perToolInvalidation = CommandRuntimeOptions()
+        perToolInvalidation.usesPerToolSnapshotInvalidation = true
+        #expect(RuntimeHostResolver.requiresValidatedHistoricalDaemonInventory(
+            options: perToolInvalidation
+        ))
+    }
+
+    @Test
     func `Policy-local click retains known snapshot invalidation endpoints`() throws {
         let parsed = ParsedValues(
             positional: [],

@@ -121,7 +121,6 @@ struct CaptureVideoLocalIngestTests {
                         daemonSocketPath: "/tmp/peekaboo-video-ingest-daemon.sock",
                         runtimeBuildIdentity: "video-ingest-test",
                         buildScopedDaemonSocketPath: "/tmp/peekaboo-video-ingest-current.sock",
-                        historicalBuildScopedDaemonTargets: [],
                         historicalBuildScopedDaemonSocketPaths: [],
                         candidates: []
                     )

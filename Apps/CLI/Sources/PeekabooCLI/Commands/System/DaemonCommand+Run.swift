@@ -43,13 +43,44 @@ extension DaemonCommand {
             )
 
             let daemon = PeekabooDaemon(configuration: config)
+            let historicalCleanupTask: Task<Void, Never>? = if Self.shouldScheduleHistoricalCleanup(config) {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled else { return }
+                    let targets = await DaemonControlResolver.validatedHistoricalTargets(
+                        daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+                        currentBuildScopedSocketPath: config.bridgeSocketPath
+                    )
+                    guard !Task.isCancelled else { return }
+                    await DaemonControlResolver.stopIdleHistoricalAutoDaemons(
+                        targets,
+                        daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+                        currentBuildScopedSocketPath: config.bridgeSocketPath
+                    )
+                }
+            } else {
+                nil
+            }
             let terminationSignalSource = ProcessTerminationSignalSource { [weak daemon] _ in
                 Task { @MainActor in
                     _ = await daemon?.requestStop()
                 }
             }
-            defer { terminationSignalSource.cancel() }
+            defer {
+                historicalCleanupTask?.cancel()
+                terminationSignalSource.cancel()
+            }
             try await daemon.runUntilStopChecked()
+        }
+
+        static func shouldScheduleHistoricalCleanup(_ configuration: PeekabooDaemon.Configuration) -> Bool {
+            let socketURL = URL(fileURLWithPath: configuration.bridgeSocketPath).standardizedFileURL
+            let defaultSocketURL = URL(
+                fileURLWithPath: PeekabooBridgeConstants.daemonSocketPath
+            ).standardizedFileURL
+            return configuration.mode == .auto &&
+                socketURL.deletingLastPathComponent() == defaultSocketURL.deletingLastPathComponent() &&
+                DaemonControlResolver.isBuildScopedSocketName(socketURL.lastPathComponent)
         }
 
         static func configuration(

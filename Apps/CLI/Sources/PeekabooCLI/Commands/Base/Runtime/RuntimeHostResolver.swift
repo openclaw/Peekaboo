@@ -232,7 +232,7 @@ enum RuntimeHostResolver {
                 requiredOwner: preferredScreenCaptureKitOwner,
                 permissionRejections: &permissionRejections
             ) {
-                return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
+                return resolved
             }
             if prefersExactBuildScopedHost, let buildScopedDaemonSocketPath {
                 throw self.ownerExactBuildConflict(
@@ -264,7 +264,7 @@ enum RuntimeHostResolver {
                 requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
                 permissionRejections: &permissionRejections
             ) {
-                return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
+                return resolved
             }
 
             let exactHostExists = await DaemonControlClient(socketPath: buildScopedDaemonSocketPath)
@@ -285,7 +285,7 @@ enum RuntimeHostResolver {
                    requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
                    permissionRejections: &permissionRejections
                ) {
-                return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
+                return resolved
             }
         }
 
@@ -293,7 +293,7 @@ enum RuntimeHostResolver {
             candidates: candidatePlan.candidates,
             permissionRejections: &permissionRejections
         ) {
-            return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
+            return resolved
         }
 
         if let explicitSocket,
@@ -329,7 +329,7 @@ enum RuntimeHostResolver {
                     )],
                     permissionRejections: &permissionRejections
                 ) {
-                return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
+                return resolved
             }
         }
 
@@ -430,20 +430,29 @@ enum RuntimeHostResolver {
             daemonSocketPath: daemonSocketPath,
             runtimeBuildIdentity: runtimeBuildIdentity
         )
-        let historicalBuildScopedDaemonTargets: [DaemonControlTarget] = if self.shouldDiscoverHistoricalDaemons(
+        // Read-only routing needs only same-owner socket candidates from the canonical daemon directory;
+        // candidate admission authenticates their status and identity if fallback reaches them. Mutation
+        // barriers keep the stricter prevalidated inventory because they must invalidate sibling snapshots.
+        let historicalBuildScopedDaemonSocketPaths: [String] = if self.shouldDiscoverHistoricalDaemons(
             explicitSocket: explicitSocket,
             daemonSocketPath: daemonSocketPath
         ) {
-            await DaemonControlResolver.validatedHistoricalTargets(
-                daemonSocketPath: daemonSocketPath,
-                currentBuildScopedSocketPath: buildScopedDaemonSocketPath
-            )
+            if self.requiresValidatedHistoricalDaemonInventory(options: options) {
+                await DaemonControlResolver.validatedHistoricalTargets(
+                    daemonSocketPath: daemonSocketPath,
+                    currentBuildScopedSocketPath: buildScopedDaemonSocketPath
+                )
+                .filter { DaemonControlPlanner.supportsCurrentDaemon($0.status) }
+                .map(\.client.socketPath)
+            } else {
+                DaemonControlResolver.discoveredHistoricalBuildScopedSocketPaths(
+                    daemonSocketPath: daemonSocketPath,
+                    currentBuildScopedSocketPath: buildScopedDaemonSocketPath
+                )
+            }
         } else {
             []
         }
-        let historicalBuildScopedDaemonSocketPaths = historicalBuildScopedDaemonTargets
-            .filter { DaemonControlPlanner.supportsCurrentDaemon($0.status) }
-            .map(\.client.socketPath)
 
         let candidates: [ImplicitRemoteCandidate] = if let explicitSocket, !explicitSocket.isEmpty {
             [ImplicitRemoteCandidate(
@@ -466,32 +475,9 @@ enum RuntimeHostResolver {
             daemonSocketPath: daemonSocketPath,
             runtimeBuildIdentity: runtimeBuildIdentity,
             buildScopedDaemonSocketPath: buildScopedDaemonSocketPath,
-            historicalBuildScopedDaemonTargets: historicalBuildScopedDaemonTargets,
             historicalBuildScopedDaemonSocketPaths: historicalBuildScopedDaemonSocketPaths,
             candidates: candidates
         )
-    }
-
-    private static func finalizeExactBuildScopedResolution(
-        _ resolution: Resolution,
-        candidatePlan: RemoteCandidatePlan
-    ) async -> Resolution {
-        guard candidatePlan.explicitSocket == nil,
-              let currentSocketPath = candidatePlan.buildScopedDaemonSocketPath,
-              resolution.selectedRemoteSocketPath == NSString(string: currentSocketPath).standardizingPath
-        else {
-            return resolution
-        }
-
-        // Debug builds get generation-specific hosts. Once the current generation is usable,
-        // retire only safely identified auto hosts already past their idle deadline so
-        // ScreenCaptureKit state cannot pile up without interrupting long-lived clients.
-        await DaemonControlResolver.stopIdleHistoricalAutoDaemons(
-            candidatePlan.historicalBuildScopedDaemonTargets,
-            daemonSocketPath: candidatePlan.daemonSocketPath,
-            currentBuildScopedSocketPath: currentSocketPath
-        )
-        return resolution
     }
 
     static func initialRoutingDecision(
@@ -579,6 +565,10 @@ enum RuntimeHostResolver {
         daemonSocketPath: String
     ) -> Bool {
         explicitSocket == nil && DaemonLaunchPolicy.shouldMigrateLegacyDaemon(targetSocketPath: daemonSocketPath)
+    }
+
+    static func requiresValidatedHistoricalDaemonInventory(options: CommandRuntimeOptions) -> Bool {
+        options.requiresImplicitSnapshotInvalidation || options.usesPerToolSnapshotInvalidation
     }
 
     static func prefersExactBuildScopedHost(

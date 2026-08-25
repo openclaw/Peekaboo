@@ -16,7 +16,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             daemonSocketPath: "/tmp/unrelated-daemon.sock",
             runtimeBuildIdentity: "fixture-build",
             buildScopedDaemonSocketPath: "/tmp/unrelated-build-daemon.sock",
-            historicalBuildScopedDaemonTargets: [],
             historicalBuildScopedDaemonSocketPaths: ["/tmp/unrelated-historical.sock"],
             candidates: [.init(
                 socketPath: selectedSocket,
@@ -48,7 +47,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             daemonSocketPath: daemonSocket,
             runtimeBuildIdentity: "fixture-build",
             buildScopedDaemonSocketPath: buildSocket,
-            historicalBuildScopedDaemonTargets: [],
             historicalBuildScopedDaemonSocketPaths: [historicalSocket],
             candidates: [.init(
                 socketPath: selectedSocket,
@@ -147,7 +145,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         daemonSocketPath: "/tmp/peekaboo-unused-daemon.sock",
                         runtimeBuildIdentity: "current-build",
                         buildScopedDaemonSocketPath: nil,
-                        historicalBuildScopedDaemonTargets: [],
                         historicalBuildScopedDaemonSocketPaths: [],
                         candidates: [.init(
                             socketPath: selectedSocket,
@@ -215,7 +212,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                             daemonSocketPath: "/tmp/peekaboo-unused-daemon.sock",
                             runtimeBuildIdentity: "current-build",
                             buildScopedDaemonSocketPath: nil,
-                            historicalBuildScopedDaemonTargets: [],
                             historicalBuildScopedDaemonSocketPaths: [],
                             candidates: [.init(
                                 socketPath: selectedSocket,
@@ -280,7 +276,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         daemonSocketPath: "/tmp/peekaboo-unused-daemon.sock",
                         runtimeBuildIdentity: "current-build",
                         buildScopedDaemonSocketPath: nil,
-                        historicalBuildScopedDaemonTargets: [],
                         historicalBuildScopedDaemonSocketPaths: [],
                         candidates: [.init(
                             socketPath: selectedSocket,
