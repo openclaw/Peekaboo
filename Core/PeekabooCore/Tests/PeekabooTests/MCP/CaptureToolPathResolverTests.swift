@@ -2,6 +2,7 @@ import Foundation
 import MCP
 import PeekabooAutomation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -164,8 +165,12 @@ struct CaptureToolPathResolverTests {
     @Test
     func `window resolver maps app title selection to stable window id`() async throws {
         let windows = CaptureWindowResolverWindowService(windows: [
-            Self.window(id: 7, title: "", index: 0, bounds: CGRect(x: 0, y: 0, width: 500, height: 30)),
-            Self.window(id: 42, title: "Main Document", index: 1),
+            AutomationTestFixtures.window(
+                windowID: 7,
+                title: "",
+                bounds: CGRect(x: 0, y: 0, width: 500, height: 30),
+                index: 0),
+            AutomationTestFixtures.window(windowID: 42, title: "Main Document", index: 1),
         ])
 
         let scope = try await CaptureToolWindowResolver.scope(
@@ -185,9 +190,18 @@ struct CaptureToolPathResolverTests {
     @Test
     func `window resolver freezes automatic app selection to exact identity`() async throws {
         let selectedBounds = CGRect(x: 20, y: 30, width: 800, height: 600)
+        let selected = AutomationTestFixtures.window(
+            windowID: 42,
+            title: "Main Document",
+            bounds: selectedBounds,
+            index: 1)
         let windows = CaptureWindowResolverWindowService(windows: [
-            Self.window(id: 7, title: "", index: 0, bounds: CGRect(x: 0, y: 0, width: 500, height: 30)),
-            Self.window(id: 42, title: "Main Document", index: 1, bounds: selectedBounds),
+            AutomationTestFixtures.window(
+                windowID: 7,
+                title: "",
+                bounds: CGRect(x: 0, y: 0, width: 500, height: 30),
+                index: 0),
+            selected,
         ])
 
         let scope = try await CaptureToolWindowResolver.scope(
@@ -198,11 +212,7 @@ struct CaptureToolPathResolverTests {
             windows: windows)
 
         #expect(scope.windowId == 42)
-        #expect(scope.windowMutationIdentity == WindowMutationIdentity(
-            windowID: 42,
-            ownerProcessIdentifier: 42,
-            ownerProcessStartIdentity: 7,
-            capturedBounds: selectedBounds))
+        #expect(scope.windowMutationIdentity == selected.mutationIdentity)
         #expect(scope.applicationIdentifier == "Preview")
         #expect(windows.requestedTargets.map(\.description) == ["application(Preview)"])
     }
@@ -211,7 +221,7 @@ struct CaptureToolPathResolverTests {
     func `window resolver freezes untargeted automatic selection to exact frontmost candidate`() async throws {
         let bounds = CGRect(x: 40, y: 50, width: 700, height: 500)
         let windows = CaptureWindowResolverWindowService(windows: [
-            Self.window(id: 77, title: "Frontmost", index: 0, bounds: bounds),
+            AutomationTestFixtures.window(windowID: 77, title: "Frontmost", bounds: bounds, index: 0),
         ])
 
         let scope = try await CaptureToolWindowResolver.scope(
@@ -230,7 +240,7 @@ struct CaptureToolPathResolverTests {
     @Test
     func `window resolver maps title-only selection to stable window id`() async throws {
         let windows = CaptureWindowResolverWindowService(windows: [
-            Self.window(id: 99, title: "Inspector", index: 4),
+            AutomationTestFixtures.window(windowID: 99, title: "Inspector", index: 4),
         ])
 
         let scope = try await CaptureToolWindowResolver.scope(
@@ -246,25 +256,9 @@ struct CaptureToolPathResolverTests {
     }
 
     @Test
-    func `window resolver canonicalizes repeated stable inventory rows`() async throws {
-        let window = Self.window(id: 99, title: "Inspector", index: 4)
-        let windows = CaptureWindowResolverWindowService(windows: [window, window])
-
-        let scope = try await CaptureToolWindowResolver.scope(
-            app: "Preview",
-            pid: nil,
-            windowTitle: "Inspector",
-            windowIndex: nil,
-            windows: windows)
-
-        #expect(scope.windowId == 99)
-        #expect(scope.windowMutationIdentity == window.mutationIdentity)
-    }
-
-    @Test
     func `window resolver refuses ambiguous partial titles instead of pinning the first result`() async {
-        let first = Self.window(id: 41, title: "Project Notes", index: 0)
-        let second = Self.window(id: 42, title: "Project Plan", index: 1)
+        let first = AutomationTestFixtures.window(windowID: 41, title: "Project Notes", index: 0)
+        let second = AutomationTestFixtures.window(windowID: 42, title: "Project Plan", index: 1)
         let expectedMessage =
             "window title 'Project' is ambiguous " +
             "(id=41 index=0 'Project Notes'; id=42 index=1 'Project Plan'). " +
@@ -290,51 +284,9 @@ struct CaptureToolPathResolverTests {
     }
 
     @Test
-    func `window resolver ignores unrelated conflicting duplicates`() throws {
-        let selected = Self.window(id: 41, title: "Project", index: 0)
-        let firstConflict = Self.window(id: 50, title: "Other A", index: 1)
-        let secondConflict = Self.window(id: 50, title: "Other B", index: 2)
-
-        for inventory in [
-            [selected, firstConflict, secondConflict],
-            [secondConflict, firstConflict, selected],
-        ] {
-            for selection: ExactWindowSelectorResolver.Selection in [
-                .id(selected.windowID),
-                .title(selected.title),
-                .index(selected.index),
-            ] {
-                let result = try ExactWindowSelectorResolver.select(
-                    from: inventory,
-                    selection: selection,
-                    operation: "Capture window selection")
-                #expect(result == selected)
-            }
-        }
-    }
-
-    @Test
-    func `window resolver exact title remains stable when inventory order differs`() async throws {
-        let windows = CaptureWindowResolverWindowService(windows: [
-            Self.window(id: 42, title: "Project Plan", index: 1),
-            Self.window(id: 41, title: "Project", index: 0),
-        ])
-
-        let scope = try await CaptureToolWindowResolver.scope(
-            app: "Preview",
-            pid: nil,
-            windowTitle: "Project",
-            windowIndex: nil,
-            windows: windows)
-
-        #expect(scope.windowId == 41)
-        #expect(scope.windowIndex == 0)
-    }
-
-    @Test
     func `window resolver rejects index without app or pid`() async {
         let windows = CaptureWindowResolverWindowService(windows: [
-            Self.window(id: 99, title: "Inspector", index: 4),
+            AutomationTestFixtures.window(windowID: 99, title: "Inspector", index: 4),
         ])
 
         await #expect(throws: PeekabooError.self) {
@@ -415,7 +367,7 @@ struct CaptureToolPathResolverTests {
             unitCount: .one,
             message: "focus verification failed after dispatch")
         let windows = CaptureWindowResolverWindowService(
-            windows: [Self.window(id: 42, title: "Main Document", index: 0)],
+            windows: [AutomationTestFixtures.window(windowID: 42, title: "Main Document", index: 0)],
             focusError: focusError)
         let services = PeekabooServices()
         let context = MCPToolContext(
@@ -603,24 +555,6 @@ struct CaptureToolPathResolverTests {
     private static func meta(from response: ToolResponse) -> [String: Value]? {
         guard case let .object(meta) = response.meta else { return nil }
         return meta
-    }
-
-    private static func window(
-        id: Int,
-        title: String,
-        index: Int,
-        bounds: CGRect = CGRect(x: 0, y: 0, width: 500, height: 400)) -> ServiceWindowInfo
-    {
-        ServiceWindowInfo(
-            windowID: id,
-            title: title,
-            bounds: bounds,
-            index: index,
-            mutationIdentity: WindowMutationIdentity(
-                windowID: id,
-                ownerProcessIdentifier: 42,
-                ownerProcessStartIdentity: 7,
-                capturedBounds: bounds))
     }
 }
 

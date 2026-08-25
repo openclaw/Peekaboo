@@ -91,7 +91,8 @@ enum CaptureToolWindowResolver {
             return try ExactWindowSelectorResolver.select(
                 from: windows,
                 selection: selection,
-                operation: operation)
+                operation: operation,
+                vocabulary: .mcp)
         } catch {
             throw PeekabooError.windowNotFound(criteria: error.localizedDescription)
         }

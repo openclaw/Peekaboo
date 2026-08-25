@@ -163,7 +163,8 @@ extension SpaceTool {
                 windowInfo = try ExactWindowSelectorResolver.select(
                     from: windows,
                     selection: ExactWindowSelectorResolver.selection(for: windowTarget),
-                    operation: operation)
+                    operation: operation,
+                    vocabulary: .mcp)
             } catch {
                 throw DesktopActionFailure.preDispatchRefusal(
                     reason: .targetUnavailable,

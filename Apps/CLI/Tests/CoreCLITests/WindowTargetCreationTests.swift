@@ -56,62 +56,6 @@ struct WindowTargetCreationTests {
     }
 
     @Test
-    @MainActor
-    func `exact window resolver rejects duplicate exact titles`() throws {
-        var options = WindowIdentificationOptions()
-        options.app = "Fixture"
-        options.windowTitle = "Draft"
-        try options.validateMutation()
-
-        #expect(throws: ExactWindowSelectorResolutionError.self) {
-            _ = try options.selectMutationWindow(
-                from: [
-                    Self.window(id: 101, title: "Draft", index: 0),
-                    Self.window(id: 102, title: "Draft", index: 1),
-                ],
-                operation: "Window test"
-            )
-        }
-    }
-
-    @Test
-    @MainActor
-    func `exact window resolver rejects duplicate partial titles`() throws {
-        var options = WindowIdentificationOptions()
-        options.app = "Fixture"
-        options.windowTitle = "Draft"
-        try options.validateMutation()
-
-        #expect(throws: ExactWindowSelectorResolutionError.self) {
-            _ = try options.selectMutationWindow(
-                from: [
-                    Self.window(id: 101, title: "Draft One", index: 0),
-                    Self.window(id: 102, title: "Draft Two", index: 1),
-                ],
-                operation: "Window test"
-            )
-        }
-    }
-
-    @Test
-    @MainActor
-    func `exact window resolver returns one unique partial title match`() throws {
-        var options = WindowIdentificationOptions()
-        options.app = "Fixture"
-        options.windowTitle = "Notes"
-        try options.validateMutation()
-
-        let selected = try options.selectMutationWindow(
-            from: [
-                Self.window(id: 101, title: "Draft One", index: 0),
-                Self.window(id: 102, title: "Release Notes", index: 1),
-            ],
-            operation: "Window test"
-        )
-        #expect(selected.windowID == 102)
-    }
-
-    @Test
     func `app + windowTitle creates .applicationAndTitle`() throws {
         var options = WindowIdentificationOptions()
         options.app = "Safari"
@@ -436,15 +380,5 @@ struct WindowTargetCreationTests {
         )
 
         #expect(windowDisplayName(from: snapshot, snapshotId: "snapshot-1") == "Example")
-    }
-
-    private static func window(id: Int, title: String, index: Int) -> ServiceWindowInfo {
-        let position = CGFloat(index * 20)
-        return ServiceWindowInfo(
-            windowID: id,
-            title: title,
-            bounds: CGRect(x: position, y: position, width: 640, height: 480),
-            index: index
-        )
     }
 }

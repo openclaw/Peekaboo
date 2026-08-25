@@ -48,7 +48,8 @@ func resolveExactCaptureWindowReference(
         selectedWindow = try ExactWindowSelectorResolver.select(
             from: renderable,
             selector: selector,
-            operation: operation
+            operation: operation,
+            vocabulary: .commandLine
         )
     } catch {
         throw ValidationError(error.localizedDescription)

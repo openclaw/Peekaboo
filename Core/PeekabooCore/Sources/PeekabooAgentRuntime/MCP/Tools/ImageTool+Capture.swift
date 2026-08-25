@@ -146,7 +146,8 @@ extension ImageTool {
         let window = try ExactWindowSelectorResolver.select(
             from: windows,
             selection: .id(windowID),
-            operation: "Image foreground capture")
+            operation: "Image foreground capture",
+            vocabulary: .mcp)
         guard let identity = window.mutationIdentity,
               identity.windowID == window.windowID,
               identity.capturedBounds == window.bounds,

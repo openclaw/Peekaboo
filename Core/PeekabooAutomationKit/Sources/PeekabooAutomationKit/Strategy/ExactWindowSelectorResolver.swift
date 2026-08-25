@@ -1,24 +1,51 @@
 import Foundation
-import PeekabooAutomationKit
 import PeekabooFoundation
 
-struct ExactWindowSelectorResolutionError: Error, LocalizedError, Sendable, Equatable {
-    let message: String
+public struct ExactWindowSelectorResolutionError: Error, LocalizedError, Sendable, Equatable {
+    public let message: String
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         self.message
     }
 }
 
 /// Resolves compatibility window selectors without silently choosing among ambiguous matches.
-enum ExactWindowSelectorResolver {
-    enum Selection: Sendable, Equatable {
+public enum ExactWindowSelectorResolver {
+    /// Surface-specific names used in selector errors.
+    public struct Vocabulary: Sendable, Equatable {
+        public static let commandLine = Self(
+            windowIDSelector: "--window-id",
+            windowIndexSelector: "--window-index",
+            windowIndexAlternative: "--window-index")
+
+        public static let mcp = Self(
+            windowIDSelector: "window_id",
+            windowIndexSelector: "window index",
+            windowIndexAlternative: "index")
+
+        let windowIDSelector: String
+        let windowIndexSelector: String
+        let windowIndexAlternative: String
+    }
+
+    public enum Selection: Sendable, Equatable {
         case automatic
         case id(Int)
         case title(String)
         case index(Int)
 
-        var explicitSelector: InteractionTargetSelector.WindowSelector? {
+        fileprivate init(_ selector: InteractionTargetSelector.WindowSelector) {
+            switch selector {
+            case let .id(windowID):
+                self = .id(windowID)
+            case let .title(title):
+                self = .title(title)
+            case let .index(index):
+                self = .index(index)
+            }
+        }
+
+        fileprivate var explicitSelector: InteractionTargetSelector.WindowSelector? {
             switch self {
             case .automatic: nil
             case let .id(windowID): .id(windowID)
@@ -28,23 +55,40 @@ enum ExactWindowSelectorResolver {
         }
     }
 
-    static func select(
+    public static func select(
+        from windows: [ServiceWindowInfo],
+        selector: InteractionTargetSelector,
+        operation: String,
+        vocabulary: Vocabulary) throws -> ServiceWindowInfo
+    {
+        let selector = try selector.normalizedWindowSelector(policy: .mutationSafe)
+        return try self.select(
+            from: windows,
+            selection: selector.map(Selection.init) ?? .automatic,
+            operation: operation,
+            vocabulary: vocabulary)
+    }
+
+    public static func select(
         from windows: [ServiceWindowInfo],
         selection: Selection,
-        operation: String) throws -> ServiceWindowInfo
+        operation: String,
+        vocabulary: Vocabulary) throws -> ServiceWindowInfo
     {
         guard let explicitSelector = selection.explicitSelector else {
             guard let window = ObservationTargetResolver.bestWindow(from: windows) else {
                 throw ExactWindowSelectorResolutionError(
-                    message: "\(operation) found no eligible window. Refresh the window inventory before retrying.")
+                    message: "\(operation) found no eligible window. " +
+                        "Refresh the window inventory before retrying.")
             }
             return window
         }
         if case let .index(index) = explicitSelector, index < 0 {
             throw ExactWindowSelectorResolutionError(
-                message: "\(operation) window index must be zero or greater.")
+                message: "\(operation) \(vocabulary.windowIndexSelector) must be zero or greater.")
         }
         do {
+            // Compatibility and read-only capture paths intentionally select without requiring a mutation receipt.
             return try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
                 candidates: windows,
                 selector: explicitSelector)
@@ -53,11 +97,12 @@ enum ExactWindowSelectorResolver {
                 error,
                 selector: explicitSelector,
                 windows: windows,
-                operation: operation)
+                operation: operation,
+                vocabulary: vocabulary)
         }
     }
 
-    static func selection(for target: WindowTarget) -> Selection {
+    public static func selection(for target: WindowTarget) -> Selection {
         switch target {
         case .application, .frontmost:
             .automatic
@@ -74,7 +119,8 @@ enum ExactWindowSelectorResolver {
         _ error: DesktopTargetPlanningError,
         selector: InteractionTargetSelector.WindowSelector,
         windows: [ServiceWindowInfo],
-        operation: String) -> ExactWindowSelectorResolutionError
+        operation: String,
+        vocabulary: Vocabulary) -> ExactWindowSelectorResolutionError
     {
         if case let .conflictingWindowEntries(windowID) = error {
             return self.inventoryConflictError(
@@ -85,30 +131,32 @@ enum ExactWindowSelectorResolver {
         return switch (selector, error) {
         case let (.id(windowID), .windowNotFound):
             ExactWindowSelectorResolutionError(
-                message: "\(operation) window_id \(windowID) does not identify a window. " +
+                message: "\(operation) \(vocabulary.windowIDSelector) \(windowID) does not identify a window. " +
                     "Refresh the window inventory before retrying.")
         case let (.id(windowID), .ambiguousWindow):
             ExactWindowSelectorResolutionError(
-                message: "\(operation) window_id \(windowID) identifies multiple windows. " +
+                message: "\(operation) \(vocabulary.windowIDSelector) \(windowID) identifies multiple windows. " +
                     "Refresh the window inventory before retrying.")
         case let (.title(title), .windowNotFound):
             ExactWindowSelectorResolutionError(
                 message: "\(operation) found no window whose title matches '\(title)'. " +
-                    "Refresh the inventory and select a window_id or valid index.")
+                    "Refresh the inventory and select a \(vocabulary.windowIDSelector) or valid " +
+                    "\(vocabulary.windowIndexAlternative).")
         case let (.title(title), .ambiguousWindow(_, windowIDs)):
             self.titleAmbiguityError(
                 title: title,
                 windowIDs: windowIDs,
                 windows: windows,
-                operation: operation)
+                operation: operation,
+                vocabulary: vocabulary)
         case let (.index(index), .windowNotFound):
             ExactWindowSelectorResolutionError(
-                message: "\(operation) window index \(index) is not present. " +
-                    "Refresh the inventory and select a window_id.")
+                message: "\(operation) \(vocabulary.windowIndexSelector) \(index) is not present. " +
+                    "Refresh the inventory and select a \(vocabulary.windowIDSelector).")
         case let (.index(index), .ambiguousWindow):
             ExactWindowSelectorResolutionError(
-                message: "\(operation) window index \(index) is ambiguous. " +
-                    "Refresh the inventory and select a window_id.")
+                message: "\(operation) \(vocabulary.windowIndexSelector) \(index) is ambiguous. " +
+                    "Refresh the inventory and select a \(vocabulary.windowIDSelector).")
         default:
             ExactWindowSelectorResolutionError(
                 message: "\(operation) could not resolve one exact window. \(error.localizedDescription)")
@@ -119,12 +167,13 @@ enum ExactWindowSelectorResolver {
         title: String,
         windowIDs: [Int],
         windows: [ServiceWindowInfo],
-        operation: String) -> ExactWindowSelectorResolutionError
+        operation: String,
+        vocabulary: Vocabulary) -> ExactWindowSelectorResolutionError
     {
         let candidates = self.candidateSummary(windowIDs: windowIDs, windows: windows)
         return ExactWindowSelectorResolutionError(
             message: "\(operation) window title '\(title)' is ambiguous (\(candidates)). " +
-                "Select one window_id or index explicitly.")
+                "Select one \(vocabulary.windowIDSelector) or \(vocabulary.windowIndexAlternative) explicitly.")
     }
 
     private static func inventoryConflictError(

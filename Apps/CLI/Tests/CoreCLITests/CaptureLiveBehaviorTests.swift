@@ -1,6 +1,7 @@
 import Commander
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -91,8 +92,8 @@ struct CaptureLiveBehaviorTests {
     @MainActor
     func `capture live and action reject duplicate exact title matches`() throws {
         let windows = [
-            Self.window(id: 101, title: "Draft", index: 0),
-            Self.window(id: 102, title: "Draft", index: 1),
+            AutomationTestFixtures.window(windowID: 101, title: "Draft", index: 0),
+            AutomationTestFixtures.window(windowID: 102, title: "Draft", index: 1),
         ]
         let expectedMessage =
             "Capture selector test window title 'Draft' is ambiguous " +
@@ -106,100 +107,14 @@ struct CaptureLiveBehaviorTests {
                     _ = try ExactWindowSelectorResolver.select(
                         from: inventory,
                         selector: selector,
-                        operation: "Capture selector test"
+                        operation: "Capture selector test",
+                        vocabulary: .commandLine
                     )
                     Issue.record("Expected duplicate exact title selection to fail")
                 } catch let error as ExactWindowSelectorResolutionError {
                     #expect(error.message == expectedMessage)
                 }
             }
-        }
-    }
-
-    @Test
-    @MainActor
-    func `capture live and action reject duplicate partial title matches`() throws {
-        let windows = [
-            Self.window(id: 101, title: "Draft One", index: 0),
-            Self.window(id: 102, title: "Draft Two", index: 1),
-        ]
-        let expectedMessage =
-            "Capture selector test window title 'Draft' is ambiguous " +
-            "(id=101 index=0 'Draft One'; id=102 index=1 'Draft Two'). " +
-            "Select one --window-id or --window-index explicitly."
-
-        for surface in SelectorSurface.allCases {
-            let selector = try Self.selector(for: surface, title: "Draft")
-            for inventory in [windows, Array(windows.reversed())] {
-                do {
-                    _ = try ExactWindowSelectorResolver.select(
-                        from: inventory,
-                        selector: selector,
-                        operation: "Capture selector test"
-                    )
-                    Issue.record("Expected duplicate partial title selection to fail")
-                } catch let error as ExactWindowSelectorResolutionError {
-                    #expect(error.message == expectedMessage)
-                }
-            }
-        }
-    }
-
-    @Test
-    @MainActor
-    func `capture selectors ignore unrelated conflicting duplicates`() throws {
-        let selected = Self.window(id: 101, title: "Draft", index: 0)
-        let firstConflict = Self.window(id: 202, title: "Other A", index: 1)
-        let secondConflict = Self.window(id: 202, title: "Other B", index: 2)
-        let inventories = [
-            [selected, firstConflict, secondConflict],
-            [secondConflict, firstConflict, selected],
-        ]
-        for surface in SelectorSurface.allCases {
-            let selector = try Self.selector(for: surface, title: "Draft")
-            for inventory in inventories {
-                let result = try ExactWindowSelectorResolver.select(
-                    from: inventory,
-                    selector: selector,
-                    operation: "Capture selector test"
-                )
-                #expect(result == selected)
-            }
-        }
-    }
-
-    @Test
-    @MainActor
-    func `capture selectors canonicalize repeated stable inventory rows`() throws {
-        let window = Self.window(id: 101, title: "Draft", index: 0)
-
-        for surface in SelectorSurface.allCases {
-            let selector = try Self.selector(for: surface, title: "Draft")
-            let selected = try ExactWindowSelectorResolver.select(
-                from: [window, window],
-                selector: selector,
-                operation: "Capture selector test"
-            )
-            #expect(selected == window)
-        }
-    }
-
-    @Test
-    @MainActor
-    func `capture live and action resolve one unique partial title match`() throws {
-        let windows = [
-            Self.window(id: 101, title: "Draft One", index: 0),
-            Self.window(id: 102, title: "Release Notes", index: 1),
-        ]
-
-        for surface in SelectorSurface.allCases {
-            let selector = try Self.selector(for: surface, title: "Notes")
-            let selected = try ExactWindowSelectorResolver.select(
-                from: windows,
-                selector: selector,
-                operation: "Capture selector test"
-            )
-            #expect(selected.windowID == 102)
         }
     }
 
@@ -299,22 +214,5 @@ struct CaptureLiveBehaviorTests {
             command.windowIndex = index
             return try command.validatedCaptureWindowSelector()
         }
-    }
-
-    private static func window(id: Int, title: String, index: Int) -> ServiceWindowInfo {
-        let position = CGFloat(index * 20)
-        let bounds = CGRect(x: position, y: position, width: 640, height: 480)
-        return ServiceWindowInfo(
-            windowID: id,
-            title: title,
-            bounds: bounds,
-            index: index,
-            mutationIdentity: WindowMutationIdentity(
-                windowID: id,
-                ownerProcessIdentifier: 42,
-                ownerProcessStartIdentity: 7,
-                capturedBounds: bounds
-            )
-        )
     }
 }

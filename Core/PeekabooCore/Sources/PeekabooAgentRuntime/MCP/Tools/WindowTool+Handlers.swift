@@ -393,7 +393,8 @@ extension WindowTool {
             return try ExactWindowSelectorResolver.select(
                 from: windows,
                 selection: ExactWindowSelectorResolver.selection(for: target.target),
-                operation: operation)
+                operation: operation,
+                vocabulary: .mcp)
         } catch {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -457,7 +458,8 @@ extension WindowTool {
             let windowInfo = try ExactWindowSelectorResolver.select(
                 from: windows,
                 selection: ExactWindowSelectorResolver.selection(for: target),
-                operation: "\(action) post-action readback")
+                operation: "\(action) post-action readback",
+                vocabulary: .mcp)
             let targetIdentity = try Self.coalescedPostMutationWindowTargetIdentity(
                 windowInfo: windowInfo,
                 actionResultTarget: actionResult.targetIdentity)

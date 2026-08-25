@@ -319,7 +319,8 @@ extension WindowIdentificationOptions {
         try ExactWindowSelectorResolver.select(
             from: windows,
             selector: self.selector,
-            operation: operation
+            operation: operation,
+            vocabulary: .commandLine
         )
     }
 
@@ -348,147 +349,6 @@ extension WindowIdentificationOptions {
             logger.warn("Failed to refetch window info (\(context)): \(error.localizedDescription)")
             return nil
         }
-    }
-}
-
-/// Shared strict selector used by CLI surfaces that must freeze one exact window before work starts.
-enum ExactWindowSelectorResolver {
-    @MainActor
-    static func select(
-        from windows: [ServiceWindowInfo],
-        selector: InteractionTargetSelector,
-        operation: String
-    ) throws -> ServiceWindowInfo {
-        let selection = try selector.normalizedWindowSelector(policy: .mutationSafe)
-        switch selection {
-        case nil:
-            guard let window = ObservationTargetResolver.bestWindow(from: windows) else {
-                throw ExactWindowSelectorResolutionError(
-                    message: "\(operation) found no eligible window. Refresh the window inventory before retrying."
-                )
-            }
-            return window
-        case let selection?:
-            do {
-                return try DesktopTargetPlanning.WindowCandidateSelector.selectExplicitCandidate(
-                    candidates: windows,
-                    selector: selection
-                )
-            } catch let error as DesktopTargetPlanningError {
-                throw Self.presentationError(
-                    error,
-                    selection: selection,
-                    windows: windows,
-                    operation: operation
-                )
-            }
-        }
-    }
-
-    private static func presentationError(
-        _ error: DesktopTargetPlanningError,
-        selection: InteractionTargetSelector.WindowSelector,
-        windows: [ServiceWindowInfo],
-        operation: String
-    ) -> ExactWindowSelectorResolutionError {
-        if case let .conflictingWindowEntries(windowID) = error {
-            return self.inventoryConflictError(
-                windowID: windowID,
-                windows: windows,
-                operation: operation
-            )
-        }
-        return switch (selection, error) {
-        case let (.id(windowID), .windowNotFound):
-            ExactWindowSelectorResolutionError(
-                message: "\(operation) --window-id \(windowID) does not identify a window. " +
-                    "Refresh the window inventory before retrying."
-            )
-        case let (.id(windowID), .ambiguousWindow):
-            ExactWindowSelectorResolutionError(
-                message: "\(operation) --window-id \(windowID) identifies multiple windows. " +
-                    "Refresh the window inventory before retrying."
-            )
-        case let (.title(title), .windowNotFound):
-            ExactWindowSelectorResolutionError(
-                message: "\(operation) found no window whose title matches '\(title)'. " +
-                    "Refresh the inventory and select a --window-id or valid --window-index."
-            )
-        case let (.title(title), .ambiguousWindow(_, windowIDs)):
-            self.titleAmbiguityError(
-                title: title,
-                windowIDs: windowIDs,
-                windows: windows,
-                operation: operation
-            )
-        case let (.index(index), .windowNotFound):
-            ExactWindowSelectorResolutionError(
-                message: "\(operation) --window-index \(index) is not present. " +
-                    "Refresh the inventory and select a --window-id."
-            )
-        case let (.index(index), .ambiguousWindow):
-            ExactWindowSelectorResolutionError(
-                message: "\(operation) --window-index \(index) is ambiguous. " +
-                    "Refresh the inventory and select a --window-id."
-            )
-        default:
-            ExactWindowSelectorResolutionError(
-                message: "\(operation) could not resolve one exact window. \(error.localizedDescription)"
-            )
-        }
-    }
-
-    private static func titleAmbiguityError(
-        title: String,
-        windowIDs: [Int],
-        windows: [ServiceWindowInfo],
-        operation: String
-    ) -> ExactWindowSelectorResolutionError {
-        let candidates = self.candidateSummary(windowIDs: windowIDs, windows: windows)
-        return ExactWindowSelectorResolutionError(
-            message: "\(operation) window title '\(title)' is ambiguous (\(candidates)). " +
-                "Select one --window-id or --window-index explicitly."
-        )
-    }
-
-    private static func inventoryConflictError(
-        windowID: Int,
-        windows: [ServiceWindowInfo],
-        operation: String
-    ) -> ExactWindowSelectorResolutionError {
-        let candidates = self.candidateSummary(windowIDs: [windowID], windows: windows)
-        return ExactWindowSelectorResolutionError(
-            message: "\(operation) found conflicting inventory rows for window ID \(windowID) (\(candidates)). " +
-                "Refresh the window inventory before retrying."
-        )
-    }
-
-    private static func candidateSummary(
-        windowIDs: [Int],
-        windows: [ServiceWindowInfo]
-    ) -> String {
-        let candidateIDs = Set(windowIDs)
-        return windows.lazy.filter { candidateIDs.contains($0.windowID) }
-            .sorted { lhs, rhs in
-                if lhs.windowID != rhs.windowID {
-                    return lhs.windowID < rhs.windowID
-                }
-                if lhs.index != rhs.index {
-                    return lhs.index < rhs.index
-                }
-                return lhs.title < rhs.title
-            }
-            .prefix(5)
-            .map { "id=\($0.windowID) index=\($0.index) '\($0.title)'" }
-            .joined(separator: "; ")
-    }
-}
-
-struct ExactWindowSelectorResolutionError: Error, LocalizedError, Sendable, Equatable {
-    let message: String
-
-    var errorDescription: String? {
-        self.message
     }
 }
 
