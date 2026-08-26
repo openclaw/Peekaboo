@@ -10,6 +10,7 @@
 - **CLI and MCP workflows start faster and recover more clearly.** Deferred Agent startup, Bridge-bound capture, and precise browser, help, locked-session, and window-close guidance keep routine automation moving.
 
 ### Added
+- Add opt-in native installed-application inventory to CLI and MCP as a PID-free sidecar, with declared UI/background classification and no Spotlight, AppleScript, or private APIs.
 - Let trusted MCP hosts explicitly authorize foreground UI for one server process while keeping background-only as the default. Thanks @Austin1serb for #612.
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility in CLI and MCP, including screenshot-only recovery.
 - Add an embedding-only Bridge protocol 1.32 API for signed, process-generation-bound observation.

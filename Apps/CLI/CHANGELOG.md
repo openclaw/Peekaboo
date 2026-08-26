@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Everyday commands start faster and recover more clearly.** Deferred Agent startup, Bridge-bound capture, and actionable browser, help, locked-session, and window-close guidance reduce surprises.
 
 ### Added
+- Add `app list --include-installed` and MCP `includeInstalled` as native PID-free installed-application sidecars with declared UI/background classification.
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility, including screenshot-only recovery.
 - Add `type --at` for atomic exact-window background focus-only Accessibility input plus typing from one fresh screenshot snapshot.
 - Add `click --modifiers ... --foreground` with exact snapshot preflight and truthful cursor/focus restoration reporting.

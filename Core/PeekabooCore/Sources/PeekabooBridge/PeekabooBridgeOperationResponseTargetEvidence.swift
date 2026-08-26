@@ -143,6 +143,7 @@ extension PeekabooBridgeResponse {
              .window,
              .applications,
              .applicationMutationInventory,
+             .installedApplications,
              .application,
              .bool,
              .typeResult,

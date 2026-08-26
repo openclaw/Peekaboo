@@ -376,6 +376,27 @@ extension PeekabooBridgeClient {
         }
     }
 
+    public func listInstalledApplications() async throws
+        -> UnifiedToolOutput<ServiceInstalledApplicationListData>
+    {
+        guard self.installedApplicationCatalogEnabled else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host does not support installed application discovery")
+        }
+        let response = try await self.send(.listInstalledApplications)
+        switch response {
+        case let .installedApplications(output):
+            return output
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected listInstalledApplications response")
+        }
+    }
+
     public func listApplicationMutationInventory() async throws
         -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
     {

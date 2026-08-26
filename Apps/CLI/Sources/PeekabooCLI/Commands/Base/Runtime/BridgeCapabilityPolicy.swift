@@ -112,7 +112,7 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresHostApplicationInventory, !self.supportsHostApplicationInventory(for: handshake) {
+        if !self.supportsApplicationInventoryRequirements(for: handshake, options: options) {
             return false
         }
 
@@ -458,6 +458,26 @@ enum BridgeCapabilityPolicy {
 
         let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
         return enabledOperations.contains(.listApplications)
+    }
+
+    static func supportsInstalledApplicationCatalog(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.installedApplicationCatalogVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            self.supportsHostApplicationInventory(for: handshake) &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.installedApplicationCatalog) == true
+    }
+
+    private static func supportsApplicationInventoryRequirements(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        if options.requiresHostApplicationInventory, !self.supportsHostApplicationInventory(for: handshake) {
+            return false
+        }
+        if options.requiresInstalledApplicationCatalog, !self.supportsInstalledApplicationCatalog(for: handshake) {
+            return false
+        }
+        return true
     }
 
     static func supportsImplicitSnapshotInvalidation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

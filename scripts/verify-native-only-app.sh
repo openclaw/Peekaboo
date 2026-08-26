@@ -105,6 +105,15 @@ if [[ -n "${SOURCE_ROOT}" ]]; then
     [[ -z "${forbidden_resource}" ]] || \
       fail "Production source contains an AppleScript resource: ${forbidden_resource#"${SOURCE_ROOT}/"}"
   done
+
+  installed_catalog_source="${SOURCE_ROOT}/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/InstalledApplicationCatalog.swift"
+  [[ -f "${installed_catalog_source}" ]] || \
+    fail 'Installed application catalog native-policy owner is missing'
+  if grep -Eq \
+    'NSMetadataQuery|CSSearchQuery|MDQuery|(^|[^[:alnum:]_])(_LS|LS(Copy|Find|Register|Open|Launch|ApplicationWorkspace))[[:alnum:]_]*|NSWorkspace|(^|[^[:alnum:]_])Process[.(]|(^|[^[:alnum:]_])(mdfind|mdls|plutil|osascript)([^[:alnum:]_]|$)' \
+    "${installed_catalog_source}"; then
+    fail 'Installed application catalog must use only FileManager and Bundle metadata'
+  fi
 fi
 
 if [[ -n "${APP_BUNDLE}" ]]; then

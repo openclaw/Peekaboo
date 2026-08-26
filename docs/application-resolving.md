@@ -87,6 +87,17 @@ peekaboo window focus --app "PID:67890"
 peekaboo app list --include-hidden --include-background  # Shows all PIDs
 ```
 
+Installed-but-not-running bundles deliberately have no PID. Query them through the opt-in sidecar instead of treating
+a filesystem path as process identity:
+
+```bash
+peekaboo app list --include-installed --json \
+  | jq '.data.installed_apps[] | select(.bundle_id == "com.apple.Safari")'
+```
+
+The returned `launch_path` is discovery metadata. Observe the resulting process after an explicitly authorized launch
+before using it for generation-pinned automation.
+
 **Features:**
 - Most precise targeting method
 - Works even if app name is unknown

@@ -58,6 +58,7 @@ enum PeekabooBridgeOperationResultSemantics {
         case application
         case applicationMutationInventory
         case applications
+        case installedApplications
         case bool
         case browserStatus
         case browserToolResponse
@@ -1325,6 +1326,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .getFocusedWindow,
              .listApplications,
              .listApplicationMutationInventory,
+             .listInstalledApplications,
              .findApplication,
              .getFrontmostApplication,
              .isApplicationRunning,
@@ -1519,6 +1521,8 @@ extension PeekabooBridgeOperationResultSemantics {
         switch request.unwrappedOperationRequest {
         case .listApplicationMutationInventory:
             [.applicationMutationInventory]
+        case .listInstalledApplications:
+            [.installedApplications]
         case .listWindowMutationInventory:
             [.windowMutationInventory]
         default:

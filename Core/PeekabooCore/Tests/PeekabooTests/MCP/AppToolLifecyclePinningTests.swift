@@ -506,6 +506,7 @@ struct AppToolLifecyclePinningTests {
             except: nil,
             switchTarget: nil,
             cycle: false,
+            includeInstalled: false,
             startTime: Date())
     }
 }

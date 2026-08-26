@@ -4,7 +4,8 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 @MainActor
-final class OutcomeStubApplicationService: StubApplicationService, ApplicationServiceActionResultProviding {
+final class OutcomeStubApplicationService: StubApplicationService, ApplicationServiceActionResultProviding,
+InstalledApplicationCatalogProviding {
     enum QuitActionStep {
         case result(payload: Bool, outcome: DesktopActionOutcome?)
         case failure(any Error)
@@ -18,6 +19,9 @@ final class OutcomeStubApplicationService: StubApplicationService, ApplicationSe
     var quitError: (any Error)?
     var quitActionSteps: [QuitActionStep] = []
     private(set) var quitActionResultCallCount = 0
+    nonisolated let supportsInstalledApplicationCatalog = true
+    var installedApplications: [ServiceInstalledApplicationInfo] = []
+    var installedApplicationWarnings: [String] = []
 
     func launchApplicationActionResult(
         request: ApplicationLaunchRequest
@@ -71,6 +75,17 @@ final class OutcomeStubApplicationService: StubApplicationService, ApplicationSe
     func unhideApplicationActionResult(identifier: String) async throws -> DesktopActionResult<Void> {
         try await self.unhideApplication(identifier: identifier)
         return DesktopActionResult(outcome: self.actionOutcome)
+    }
+
+    func listInstalledApplications() async throws -> UnifiedToolOutput<ServiceInstalledApplicationListData> {
+        UnifiedToolOutput(
+            data: ServiceInstalledApplicationListData(applications: self.installedApplications),
+            summary: .init(
+                brief: "Fixture installed applications",
+                status: self.installedApplicationWarnings.isEmpty ? .success : .partial
+            ),
+            metadata: .init(duration: 0, warnings: self.installedApplicationWarnings)
+        )
     }
 }
 

@@ -84,6 +84,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsProcessGenerationPinnedApplicationQuit: Bool = false,
         supportsProcessGenerationPinnedApplicationActivation: Bool = false,
         supportsProcessGenerationPinnedApplicationHide: Bool = false,
+        supportsInstalledApplicationCatalog: Bool = false,
         allowLocalApplicationFallback: Bool = false,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
@@ -105,7 +106,8 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             supportsRelaunch: supportsApplicationRelaunch,
             supportsPinnedQuit: supportsProcessGenerationPinnedApplicationQuit,
             supportsPinnedActivation: supportsProcessGenerationPinnedApplicationActivation,
-            supportsPinnedHide: supportsProcessGenerationPinnedApplicationHide)
+            supportsPinnedHide: supportsProcessGenerationPinnedApplicationHide,
+            supportsInstalledApplicationCatalog: supportsInstalledApplicationCatalog)
         self.automation = if supportsElementActions {
             RemoteElementActionUIAutomationService(
                 client: client,

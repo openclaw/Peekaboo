@@ -44,6 +44,17 @@ struct PeekabooBridgePlannerInventoryTransportTests {
         #expect(!PeekabooBridgeOperationResultSemantics.responseMatchesContract(
             .applicationMutationInventory(applicationInventory),
             request: .listApplications))
+        let installedOutput = UnifiedToolOutput(
+            data: ServiceInstalledApplicationListData(applications: []),
+            summary: .init(brief: "No installed applications", status: .success),
+            metadata: .init(duration: 0))
+        #expect(PeekabooBridgeRequest.listInstalledApplications.operation == .listApplications)
+        #expect(PeekabooBridgeOperationResultSemantics.responseMatchesContract(
+            .installedApplications(installedOutput),
+            request: .listInstalledApplications))
+        #expect(!PeekabooBridgeOperationResultSemantics.responseMatchesContract(
+            .applications([]),
+            request: .listInstalledApplications))
 
         let legacyWindowData = try PeekabooBridgeOperationReceiptCoding.canonicalData(
             PeekabooBridgeRequest.listWindows(PeekabooBridgeWindowTargetRequest(
@@ -54,6 +65,95 @@ struct PeekabooBridgePlannerInventoryTransportTests {
         #expect(legacyWindowJSON.contains("\"listWindows\""))
         #expect(!legacyWindowJSON.contains("MutationInventory"))
         #expect(!legacyWindowJSON.contains("includeInventoryMetadata"))
+    }
+
+    @Test
+    func `installed catalog requires a bidirectional offer and retains list authorization`() async throws {
+        let socketPath = "/tmp/peekaboo-installed-catalog-\(UUID().uuidString).sock"
+        let applications = InstalledCatalogBridgeApplicationService(applications: [])
+        applications.installedApplications = [ServiceInstalledApplicationInfo(
+            name: "Fixture",
+            bundleIdentifier: "com.example.fixture",
+            launchPath: "/Applications/Fixture.app",
+            declaredPresentation: .regular)]
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applications),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.listApplications])
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let currentClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        let currentHandshake = try await currentClient.handshake(client: Self.clientIdentity)
+        #expect(currentHandshake.supportedOperations == [.listApplications])
+        #expect(currentHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.installedApplicationCatalog) == true)
+        let remote = RemoteApplicationService(
+            client: currentClient,
+            supportsInstalledApplicationCatalog: true)
+        let output = try await remote.listInstalledApplications()
+        #expect(output.data.applications == applications.installedApplications)
+        #expect(applications.installedListCallCount == 1)
+        let receipt = try #require(await currentClient.lastOperationReceipt())
+        #expect(receipt.payload.operation == .listApplications)
+        #expect(receipt.payload.outcome == nil)
+
+        let legacyClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        let legacyResponse = try await legacyClient.send(.handshake(.init(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            client: Self.clientIdentity,
+            operationClientInstanceID: legacyClient.operationClientInstanceID,
+            clientCapabilities: nil)))
+        guard case let .handshake(legacyHandshake) = legacyResponse else {
+            Issue.record("Expected legacy handshake")
+            return
+        }
+        #expect(legacyHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.installedApplicationCatalog) != true)
+        let legacyRemote = RemoteApplicationService(
+            client: legacyClient,
+            supportsInstalledApplicationCatalog: false)
+        await #expect(throws: (any Error).self) {
+            _ = try await legacyRemote.listInstalledApplications()
+        }
+        #expect(applications.installedListCallCount == 1)
+
+        let permissions = PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
+        let enabledOperations = server.effectiveAllowedOperations(permissions: permissions)
+        let legacySession = PeekabooBridgeNegotiatedSessionCapabilities(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            statelessClickVariants: false,
+            exactWindowHeldPointerLifecycle: false,
+            installedApplicationCatalog: false)
+        #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(legacySession) {
+                try server.validateOperationAccess(
+                    for: .listInstalledApplications,
+                    permissions: permissions,
+                    effectiveOps: enabledOperations)
+            }
+        }
+        #expect(applications.installedListCallCount == 1)
+
+        let preRawClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        let preRawResponse = try await preRawClient.send(.handshake(.init(
+            protocolVersion: .init(major: 1, minor: 33),
+            client: Self.clientIdentity,
+            operationClientInstanceID: preRawClient.operationClientInstanceID,
+            clientCapabilities: [PeekabooBridgeClientCapability.installedApplicationCatalog])))
+        guard case let .handshake(preRawHandshake) = preRawResponse else {
+            Issue.record("Expected pre-raw-capability handshake")
+            return
+        }
+        #expect(preRawHandshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.installedApplicationCatalog) != true)
+        await host.stop()
     }
 
     @Test
@@ -230,5 +330,22 @@ struct PeekabooBridgePlannerInventoryTransportTests {
         }
 
         await host.stop()
+    }
+}
+
+@MainActor
+private final class InstalledCatalogBridgeApplicationService: ScriptedApplicationInventoryService,
+    InstalledApplicationCatalogProviding
+{
+    nonisolated let supportsInstalledApplicationCatalog = true
+    var installedApplications: [ServiceInstalledApplicationInfo] = []
+    private(set) var installedListCallCount = 0
+
+    func listInstalledApplications() async throws -> UnifiedToolOutput<ServiceInstalledApplicationListData> {
+        self.installedListCallCount += 1
+        return UnifiedToolOutput(
+            data: ServiceInstalledApplicationListData(applications: self.installedApplications),
+            summary: .init(brief: "Fixture catalog", status: .success),
+            metadata: .init(duration: 0))
     }
 }

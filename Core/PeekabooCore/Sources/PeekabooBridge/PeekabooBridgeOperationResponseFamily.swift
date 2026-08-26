@@ -7,6 +7,7 @@ extension PeekabooBridgeOperationResultSemantics.ResponseFamily {
              (.application, .application),
              (.applicationMutationInventory, .applicationMutationInventory),
              (.applications, .applications),
+             (.installedApplications, .installedApplications),
              (.bool, .bool),
              (.browserStatus, .browserStatus),
              (.browserToolResponse, .browserToolResponse),

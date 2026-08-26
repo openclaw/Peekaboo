@@ -79,6 +79,13 @@ public struct AppTool: MCPTool {
             "except": SchemaBuilder.string(
                 description: "Comma-separated list of apps to exclude when quitting all"),
         ]
+        if (self.context.applications as? any InstalledApplicationCatalogProviding)?
+            .supportsInstalledApplicationCatalog == true
+        {
+            properties["includeInstalled"] = SchemaBuilder.boolean(
+                description: "For list only, include installed-but-not-running apps in a separate sidecar",
+                default: false)
+        }
         if foregroundCapable {
             properties["openTargets"] = SchemaBuilder.array(
                 items: SchemaBuilder.string(),
@@ -127,7 +134,12 @@ public struct AppTool: MCPTool {
             except: arguments.getString("except"),
             switchTarget: arguments.getString("to"),
             cycle: arguments.getBool("cycle") ?? false,
+            includeInstalled: arguments.getBool("includeInstalled") ?? false,
             startTime: Date())
+
+        if request.includeInstalled, action != "list" {
+            return ToolResponse.error("includeInstalled is only valid when action is list")
+        }
 
         do {
             let actions = AppToolActions(
@@ -190,5 +202,6 @@ struct AppToolRequest {
     let except: String?
     let switchTarget: String?
     let cycle: Bool
+    let includeInstalled: Bool
     let startTime: Date
 }

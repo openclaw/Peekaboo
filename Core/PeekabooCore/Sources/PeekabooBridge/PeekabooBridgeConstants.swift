@@ -80,6 +80,10 @@ public enum PeekabooBridgeConstants {
     public static let targetedClickAccessibilityValueDeliveryVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 34)
 
+    /// First protocol with bidirectional raw capability offers, reused here without a protocol bump.
+    public static let installedApplicationCatalogVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 34)
+
     /// First protocol whose background scroll request carries a complete exact-window receipt that
     /// is pinned through execution and every signed result, including retry-unsafe failures.
     public static let requestPinnedExactWindowScrollReceiptVersion =

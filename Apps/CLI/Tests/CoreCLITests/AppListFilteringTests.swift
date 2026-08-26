@@ -4,6 +4,24 @@ import Testing
 
 struct AppListFilteringTests {
     @Test
+    func `installed filtering requires the explicit background flag for helpers`() {
+        let applications = [
+            Self.installed(name: "Regular", presentation: .regular),
+            Self.installed(name: "Menu", presentation: .uiElement),
+            Self.installed(name: "Daemon", presentation: .backgroundOnly),
+        ]
+
+        #expect(AppCommand.ListSubcommand.filteredInstalledApplications(
+            applications,
+            includeBackground: false
+        ).map(\.name) == ["Regular"])
+        #expect(AppCommand.ListSubcommand.filteredInstalledApplications(
+            applications,
+            includeBackground: true
+        ).map(\.name) == ["Regular", "Menu", "Daemon"])
+    }
+
+    @Test
     func `default filtering excludes hidden and background apps`() {
         let applications = [
             Self.application(name: "Regular", activationPolicy: .regular),
@@ -96,6 +114,18 @@ struct AppListFilteringTests {
             isHidden: isHidden,
             isHiddenKnown: isHiddenKnown,
             activationPolicy: activationPolicy
+        )
+    }
+
+    private static func installed(
+        name: String,
+        presentation: ServiceInstalledApplicationPresentation
+    ) -> ServiceInstalledApplicationInfo {
+        ServiceInstalledApplicationInfo(
+            name: name,
+            bundleIdentifier: "example.\(name)",
+            launchPath: "/Applications/\(name).app",
+            declaredPresentation: presentation
         )
     }
 }

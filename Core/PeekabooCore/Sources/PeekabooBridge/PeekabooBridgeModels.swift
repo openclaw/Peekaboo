@@ -398,6 +398,7 @@ public enum PeekabooBridgeHostCapability {
     public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
     public static let requestPinnedExactWindowScrollReceipt = "requestPinnedExactWindowScrollReceipt"
     public static let compositeTypeDelivery = "compositeTypeDelivery"
+    public static let installedApplicationCatalog = "installedApplicationCatalog"
 }
 
 /// Stable raw capabilities a client may offer during handshake. Raw strings keep additions
@@ -406,6 +407,7 @@ public enum PeekabooBridgeHostCapability {
 public enum PeekabooBridgeClientCapability {
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
+    public static let installedApplicationCatalog = "installedApplicationCatalog"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

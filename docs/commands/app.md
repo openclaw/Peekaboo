@@ -18,7 +18,7 @@ read_when:
 | `hide` / `unhide` | Hide an app, or unhide and activate it with explicit consent. | Positional `<app>` or `--app`, or `--pid`; unhide requires `--activate`. |
 | `switch` | Activate a specific app or cycle Cmd+Tab style with explicit foreground consent. | Exactly one positional `<app>`/`--to` or `--cycle`; `--verify` only with an app target; `--foreground` required. |
 | `focus` | Activate and focus an app through the same service path as the MCP app tool. | Positional `<app>` or `--app`, or `--pid`; `--foreground` required. |
-| `list` | App-management view of running apps, filtering hidden/background apps by default. | `--include-hidden`, `--include-background`. |
+| `list` | App-management view of running apps, with an opt-in installed-but-not-running sidecar. | `--include-hidden`, `--include-background`, `--include-installed`. |
 
 ## Implementation notes
 - App mutations accept only an exact case-insensitive application name, exact bundle ID, or explicit `PID:<n>`/`--pid`. Partial-name matching remains available to read-only discovery, but a mutation such as `--app Saf` is refused before any lifecycle action is dispatched.
@@ -40,6 +40,7 @@ read_when:
 - Supply one selector shape. Launch rejects a positional app combined with `--bundle-id`; app lifecycle commands reject a textual `--app` combined with `--pid`. A redundant `--app PID:123 --pid 123` pair is accepted only when both PIDs match.
 - With `--foreground`, `relaunch` sends the initially selected PID/process-generation receipt, quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. The host rejects PID reuse before quit, refuses to relaunch its own daemon, launches via bundle ID or bundle path, can wait for `isFinishedLaunching`, and returns authoritative `previous_process_start_identity_decimal` and `new_process_start_identity_decimal` generations for race-free follow-up cleanup.
 - `app list` filters hidden/background apps unless `--include-hidden` or `--include-background` is passed and emits its established `data.apps` payload. Inventory snapshots WindowServer once, then reads LaunchServices metadata on at most eight generation-scoped per-process lanes with a 250 ms per-process and one-second overall bound, so one wedged hidden app or a broader stall cannot hold the whole Bridge request. Repeated reads coalesce behind a still-blocked process generation instead of growing an expired queue. A timed-out or deadline-skipped row retains its exact PID/window IDs, carries `metadata_warnings`, and omits `is_hidden` rather than guessing; use both inclusive flags to retain rows whose hidden state and activation policy are unknown. Top-level `warnings` makes a partial result visible in JSON and text output. Each current native process generation is available as `process_start_identity` plus the lossless canonical string `process_start_identity_decimal`; shell/JSON-number consumers must use the decimal string for exact comparison and treat missing values from older hosts as unknown. The result's `schema_capabilities` array advertises `processStartIdentityDecimal` even when `apps` is empty, so installers can require the lossless receipt contract without inferring CLI capability from ambient processes.
+- `app list --include-installed` leaves `data.count` and `data.apps` as the running-process contract and adds `installed_count` plus `installed_apps`. Each installed row contains only `name`, `bundle_id`, `launch_path`, and `declared_presentation` (`regular`, `ui_element`, or `background_only`); it never invents PID 0, process state, or a mutation receipt. The selected runtime host recursively reads standard user, local, system, CoreServices, and Cryptex application roots with native `FileManager` and `Bundle` metadata. It does not use Spotlight, private LaunchServices, subprocesses, AppleScript, Accessibility, TCC, or UI. Default output includes regular installed apps; pair `--include-installed` with `--include-background` to include declared UI elements and background-only helpers. Paths are discovery metadata, not proof that a later launch targets the same bytes.
 
 ## Examples
 ```bash
@@ -75,6 +76,9 @@ peekaboo app switch Safari --verify --foreground
 
 # Focus an app without a separate launch
 peekaboo app focus Safari --foreground
+
+# Check whether a regular UI app is installed without mixing it into live PIDs
+peekaboo app list --include-installed --json | jq '.data.installed_apps[] | select(.bundle_id == "com.apple.Safari")'
 ```
 
 ## Troubleshooting

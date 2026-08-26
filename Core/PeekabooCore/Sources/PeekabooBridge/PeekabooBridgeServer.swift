@@ -193,6 +193,10 @@ public final class PeekabooBridgeServer {
             hostCapabilities,
             supportedVersions: supportedVersions,
             supportsExplicitSnapshotPublication: services.snapshots.supportsExplicitSnapshotPublication)
+        resolvedHostCapabilities.formUnion(installedApplicationCatalogHostCapabilities(
+            services: services,
+            supportedVersions: supportedVersions,
+            allowedOperations: self.allowedOperations))
         if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionReceiptVersion,
            self.allowedOperations.isSuperset(of: [
                .browserStatus,
@@ -1098,6 +1102,15 @@ public final class PeekabooBridgeServer {
                 throw Self.requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope()
             }
         }
+        if request.requiresInstalledApplicationCatalog {
+            guard PeekabooBridgeRequestContext.negotiatedSessionCapabilities?
+                .installedApplicationCatalog == true
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Installed application catalog requires its negotiated Bridge capability")
+            }
+        }
         if let minimumVersion = request.minimumNegotiatedProtocolVersion {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
             let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
@@ -1249,6 +1262,22 @@ public final class PeekabooBridgeServer {
                     "1.37 process-generation-bound element mutation session")
         }
     }
+}
+
+@MainActor
+private func installedApplicationCatalogHostCapabilities(
+    services: any PeekabooBridgeServiceProviding,
+    supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
+    allowedOperations: Set<PeekabooBridgeOperation>) -> Set<String>
+{
+    guard supportedVersions.upperBound >= PeekabooBridgeConstants.installedApplicationCatalogVersion,
+          allowedOperations.contains(.listApplications),
+          (services.applications as? any InstalledApplicationCatalogProviding)?
+              .supportsInstalledApplicationCatalog == true
+    else {
+        return []
+    }
+    return [PeekabooBridgeHostCapability.installedApplicationCatalog]
 }
 
 private func protocolHostCapabilities(

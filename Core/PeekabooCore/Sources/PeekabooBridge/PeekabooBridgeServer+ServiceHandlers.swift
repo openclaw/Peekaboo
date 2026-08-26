@@ -13,6 +13,16 @@ extension PeekabooBridgeServer {
         case .listApplicationMutationInventory:
             let inventory = try await self.services.applications.mutationApplicationInventory()
             return .init(response: .applicationMutationInventory(inventory))
+        case .listInstalledApplications:
+            guard let provider = self.services.applications as? any InstalledApplicationCatalogProviding,
+                  provider.supportsInstalledApplicationCatalog
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Installed application catalog is not supported by this host")
+            }
+            let catalog = try await provider.listInstalledApplications()
+            return .init(response: .installedApplications(catalog))
         case let .findApplication(payload):
             let app = try await self.services.applications.findApplication(identifier: payload.identifier)
             return .init(response: .application(app))

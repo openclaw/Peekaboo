@@ -177,6 +177,16 @@ extension PeekabooBridgeServer {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)
         }
         if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.installedApplicationCatalogVersion ||
+            !clientCapabilities.contains(PeekabooBridgeClientCapability.installedApplicationCatalog) ||
+            (self.services.applications as? any InstalledApplicationCatalogProviding)?
+            .supportsInstalledApplicationCatalog != true ||
+            !advertisedOps.contains(.listApplications) ||
+            !enabledOps.contains(.listApplications)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.installedApplicationCatalog)
+        }
+        if !supportsAttestedOperationReceipts ||
             negotiated < PeekabooBridgeConstants.statelessClickVariantVersion ||
             (self.services.automation as? any TargetedClickServiceProtocol)?.supportsStatelessClickVariants != true ||
             !advertisedOps.contains(.targetedClick) ||
@@ -292,7 +302,9 @@ extension PeekabooBridgeServer {
                         compositeTypeDelivery: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.compositeTypeDelivery),
                         processGenerationBoundElementMutations: advertisedCapabilities.contains(
-                            PeekabooBridgeHostCapability.processGenerationBoundElementMutations)),
+                            PeekabooBridgeHostCapability.processGenerationBoundElementMutations),
+                        installedApplicationCatalog: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.installedApplicationCatalog)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {

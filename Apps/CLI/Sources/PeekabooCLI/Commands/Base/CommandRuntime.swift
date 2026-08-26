@@ -67,6 +67,7 @@ struct CommandRuntimeOptions {
     /// Current background clicks must carry an explicit AX-value allow/deny policy to the selected host.
     var requiresTargetedClickAccessibilityValueDelivery = false
     var requiresHostApplicationInventory = false
+    var requiresInstalledApplicationCatalog = false
     /// A concrete snapshot reference is host-local state. Runtime selection must authenticate
     /// the live host that owns it instead of replaying the ID against the ordinary preferred host.
     var explicitSnapshotID: String?

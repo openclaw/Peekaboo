@@ -73,6 +73,8 @@ enum CommanderCLIBinder {
             options.requiresProcessGenerationPinnedHotkeys = true
         }
         options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
+        options.requiresInstalledApplicationCatalog = commandType == AppCommand.ListSubcommand.self &&
+            commandValues.flag("includeInstalled")
         let seeSkipsPixels = Self.applySeeRuntimeOptions(&options, commandType, values: commandValues)
         options.transportsCaptureEnginePreference = options.requiresDesktopObservation
         options.requiresScreenCaptureKitOwnerCapability = options.transportsCaptureEnginePreference

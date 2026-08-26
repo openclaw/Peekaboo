@@ -557,5 +557,6 @@ extension AppCommand.ListSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.includeHidden = values.flag("includeHidden")
         self.includeBackground = values.flag("includeBackground")
+        self.includeInstalled = values.flag("includeInstalled")
     }
 }

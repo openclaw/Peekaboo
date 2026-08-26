@@ -114,6 +114,63 @@ struct AppCommandTests {
         #expect((app["process_start_identity"] as? NSNumber)?.uint64Value == generation)
         #expect(app["process_start_identity_decimal"] as? String == String(generation))
         #expect(schemaCapabilities.contains("processStartIdentityDecimal"))
+        #expect(data["installed_apps"] == nil)
+        #expect(data["installed_count"] == nil)
+        #expect(!schemaCapabilities.contains("installedApplicationSidecar"))
+    }
+
+    @Test
+    func `App list keeps installed apps in a separate PID-free sidecar`() async throws {
+        let (output, _) = try await runAppCommandWithService(
+            ["app", "list", "--include-installed", "--json"]
+        ) { service in
+            service.applications = [ServiceApplicationInfo(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: "com.example.running",
+                name: "Running",
+                bundlePath: "/Applications/Running.app",
+                activationPolicy: .regular,
+            )]
+            service.installedApplications = [
+                ServiceInstalledApplicationInfo(
+                    name: "Running",
+                    bundleIdentifier: "COM.EXAMPLE.RUNNING",
+                    launchPath: "/Applications/Running.app",
+                    declaredPresentation: .regular
+                ),
+                ServiceInstalledApplicationInfo(
+                    name: "Available",
+                    bundleIdentifier: "com.example.available",
+                    launchPath: "/Applications/Available.app",
+                    declaredPresentation: .regular
+                ),
+                ServiceInstalledApplicationInfo(
+                    name: "Helper",
+                    bundleIdentifier: "com.example.helper",
+                    launchPath: "/Applications/Helper.app",
+                    declaredPresentation: .uiElement
+                ),
+            ]
+            service.installedApplicationWarnings = ["catalog partial"]
+        }
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+        let running = try #require(data["apps"] as? [[String: Any]])
+        let installed = try #require(data["installed_apps"] as? [[String: Any]])
+        let installedApp = try #require(installed.first)
+        let capabilities = try #require(data["schema_capabilities"] as? [String])
+
+        #expect((data["count"] as? NSNumber)?.intValue == 1)
+        #expect(running.map { $0["name"] as? String } == ["Running"])
+        #expect((data["installed_count"] as? NSNumber)?.intValue == 1)
+        #expect(installed.map { $0["name"] as? String } == ["Available"])
+        #expect(installedApp["bundle_id"] as? String == "com.example.available")
+        #expect(installedApp["launch_path"] as? String == "/Applications/Available.app")
+        #expect(installedApp["declared_presentation"] as? String == "regular")
+        #expect(installedApp["pid"] == nil)
+        #expect(data["warnings"] as? [String] == ["catalog partial"])
+        #expect(capabilities == ["processStartIdentityDecimal", "installedApplicationSidecar"])
     }
 
     @Test
@@ -415,7 +472,7 @@ private struct CommandFailure: Error {
 
 private func runAppCommand(
     _ args: [String],
-    configure: (@MainActor (StubApplicationService) -> Void)? = nil
+    configure: (@MainActor (OutcomeStubApplicationService) -> Void)? = nil
 ) async throws -> String {
     let (output, _) = try await runAppCommandWithService(args, configure: configure)
     return output
@@ -423,8 +480,8 @@ private func runAppCommand(
 
 private func runAppCommandWithService(
     _ args: [String],
-    configure: (@MainActor (StubApplicationService) -> Void)? = nil
-) async throws -> (String, StubApplicationService) {
+    configure: (@MainActor (OutcomeStubApplicationService) -> Void)? = nil
+) async throws -> (String, OutcomeStubApplicationService) {
     let context = await MainActor.run { makeAppCommandContext() }
     if let configure {
         await MainActor.run {
@@ -465,7 +522,7 @@ private func appServiceState<T: Sendable>(
 
 private struct AppCommandContext {
     let services: PeekabooServices
-    let applicationService: StubApplicationService
+    let applicationService: OutcomeStubApplicationService
 }
 
 @MainActor

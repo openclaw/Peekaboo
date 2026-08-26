@@ -205,6 +205,11 @@ extension AppCommand.ListSubcommand: CommanderSignatureProviding {
                     help: "Include background apps",
                     long: "include-background"
                 ),
+                .commandFlag(
+                    "includeInstalled",
+                    help: "Include installed but not running apps",
+                    long: "include-installed"
+                ),
             ]
         )
     }

@@ -3,6 +3,13 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeRequest {
+    var requiresInstalledApplicationCatalog: Bool {
+        if case .listInstalledApplications = self.unwrappedOperationRequest {
+            return true
+        }
+        return false
+    }
+
     /// The one canonical request-unwrapping path used by semantic planning and receipt validation.
     /// Invalid projected carriage remains wrapped so its validation failure cannot be reinterpreted
     /// as an authorized inner request.

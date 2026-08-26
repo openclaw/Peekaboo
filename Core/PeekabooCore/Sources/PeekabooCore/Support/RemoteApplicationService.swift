@@ -9,6 +9,7 @@ import PeekabooFoundation
 @MainActor
 public final class RemoteApplicationService: ApplicationServiceProtocol,
     ApplicationMutationInventoryProviding,
+    InstalledApplicationCatalogProviding,
     ApplicationServiceActionResultProviding,
     ApplicationServiceTargetedActionResultProviding
 {
@@ -22,6 +23,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol,
     private let supportsPinnedQuit: Bool
     private let supportsPinnedActivation: Bool
     private let supportsPinnedHide: Bool
+    public nonisolated let supportsInstalledApplicationCatalog: Bool
 
     public var supportsApplicationLaunchOptions: Bool {
         self.supportsLaunchOptions
@@ -65,7 +67,8 @@ public final class RemoteApplicationService: ApplicationServiceProtocol,
         supportsRelaunch: Bool = false,
         supportsPinnedQuit: Bool = false,
         supportsPinnedActivation: Bool = false,
-        supportsPinnedHide: Bool = false)
+        supportsPinnedHide: Bool = false,
+        supportsInstalledApplicationCatalog: Bool = false)
     {
         self.client = client
         self.localFallback = localFallback
@@ -77,6 +80,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol,
         self.supportsPinnedQuit = supportsPinnedQuit
         self.supportsPinnedActivation = supportsPinnedActivation
         self.supportsPinnedHide = supportsPinnedHide
+        self.supportsInstalledApplicationCatalog = supportsInstalledApplicationCatalog
     }
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
@@ -96,6 +100,16 @@ public final class RemoteApplicationService: ApplicationServiceProtocol,
                     "incompleteApplications": apps.count(where: { !($0.metadataWarnings ?? []).isEmpty }),
                 ]),
             metadata: .init(duration: 0, warnings: warnings))
+    }
+
+    public func listInstalledApplications() async throws
+        -> UnifiedToolOutput<ServiceInstalledApplicationListData>
+    {
+        guard self.supportsInstalledApplicationCatalog else {
+            throw PeekabooError.serviceUnavailable(
+                "The selected Bridge host does not support installed application discovery")
+        }
+        return try await self.client.listInstalledApplications()
     }
 
     public func applicationMutationInventory() async throws

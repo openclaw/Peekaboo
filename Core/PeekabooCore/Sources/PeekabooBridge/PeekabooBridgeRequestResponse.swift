@@ -64,6 +64,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case getFocusedWindow
     case listApplications
     case listApplicationMutationInventory
+    case listInstalledApplications
     case findApplication(PeekabooBridgeAppIdentifierRequest)
     case getFrontmostApplication
     case isApplicationRunning(PeekabooBridgeAppIdentifierRequest)
@@ -186,7 +187,9 @@ extension PeekabooBridgeRequest {
         case .restoreWindow: .restoreWindow
         case .maximizeWindow: .maximizeWindow
         case .getFocusedWindow: .getFocusedWindow
-        case .listApplications, .listApplicationMutationInventory: .listApplications
+        // Installed inventory is an opt-in read-only shape under the existing application-list
+        // authorization. The bidirectional raw capability prevents old peers from decoding it.
+        case .listApplications, .listApplicationMutationInventory, .listInstalledApplications: .listApplications
         case .findApplication: .findApplication
         case .getFrontmostApplication: .getFrontmostApplication
         case .isApplicationRunning: .isApplicationRunning
@@ -272,6 +275,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case window(ServiceWindowInfo?)
     case applications([ServiceApplicationInfo])
     case applicationMutationInventory(DesktopTargetPlanning.Inventory<ServiceApplicationInfo>)
+    case installedApplications(UnifiedToolOutput<ServiceInstalledApplicationListData>)
     case application(ServiceApplicationInfo)
     case bool(Bool)
     case typeResult(TypeResult)

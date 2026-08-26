@@ -35,7 +35,11 @@ Action-oriented UI tools include:
 - `set_value` for direct accessibility value mutation on settable fields and controls.
 - `action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
 
-Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and `window` with
+Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and optionally pass
+`includeInstalled: true` for a separate `_meta.installed_apps` sidecar. Installed rows contain a name, bundle ID,
+launch path, and declared presentation only; they never contain PID 0 or mutation authority. Discovery runs on the
+selected host through native `FileManager` and `Bundle` reads without Spotlight, private APIs, AppleScript, AX, TCC,
+or UI activity. Use `window` with
 `action: "list"` plus `app` for window IDs, bounds, off-screen state, and combined-observation eligibility. Each
 window line and the response `_meta.windows` row reports `observation_capability`: `combined_eligible` means the exact
 combined raster plus AX route is eligible, not guaranteed to return usable AX elements. `pixels_only` includes the stable

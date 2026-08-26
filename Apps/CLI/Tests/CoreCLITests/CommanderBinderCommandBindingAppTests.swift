@@ -297,7 +297,7 @@ struct CommanderBinderAppConfigTests {
         let parsed = ParsedValues(
             positional: [],
             options: [:],
-            flags: ["includeHidden", "includeBackground"]
+            flags: ["includeHidden", "includeBackground", "includeInstalled"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.ListSubcommand.self,
@@ -305,6 +305,7 @@ struct CommanderBinderAppConfigTests {
         )
         #expect(command.includeHidden == true)
         #expect(command.includeBackground == true)
+        #expect(command.includeInstalled == true)
         #expect(AppCommand.ListSubcommand.schemaCapabilities == ["processStartIdentityDecimal"])
     }
 

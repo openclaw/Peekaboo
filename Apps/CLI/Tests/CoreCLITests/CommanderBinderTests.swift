@@ -1469,8 +1469,42 @@ extension CommanderBinderTests {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(options.preferRemote == true)
             #expect(options.requiresHostApplicationInventory)
+            #expect(!options.requiresInstalledApplicationCatalog)
             #expect(!options.requiresApplicationLaunchOptions)
         }
+    }
+
+    @Test
+    func `Installed application list requires only the additive catalog capability`() throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: ["includeInstalled"]),
+            commandType: AppCommand.ListSubcommand.self
+        )
+        #expect(options.requiresHostApplicationInventory)
+        #expect(options.requiresInstalledApplicationCatalog)
+
+        let operations: [PeekabooBridgeOperation] = [.listApplications]
+        let capable = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.installedApplicationCatalog,
+            ]
+        )
+        let legacy = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: options))
     }
 
     @Test
