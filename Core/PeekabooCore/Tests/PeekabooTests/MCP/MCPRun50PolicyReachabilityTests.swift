@@ -41,19 +41,19 @@ struct MCPRun50PolicyReachabilityTests {
         #expect(meta["target_pid"] == .int(Int(Self.application.processIdentifier)))
         #expect(meta["target_receipt"] != nil)
 
-        let refusedArguments: [[String: Any]] = [
-            ["text": "targetless"],
-            ["app": "TextEdit"],
-            ["app": "TextEdit", "dataBase64": "eA==", "uti": "public.data"],
-            ["app": "TextEdit", "text": "foreground", "foreground": true],
+        let refusedCases: [(arguments: [String: Any], errorCode: String)] = [
+            (["text": "targetless"], MCPToolExecutionPolicy.refusalErrorCode),
+            (["app": "TextEdit"], MCPToolExecutionPolicy.refusalErrorCode),
+            (["app": "TextEdit", "dataBase64": "eA==", "uti": "public.data"], "VALIDATION_ERROR"),
+            (["app": "TextEdit", "text": "foreground", "foreground": true], "VALIDATION_ERROR"),
         ]
-        for arguments in refusedArguments {
+        for refusedCase in refusedCases {
             let refused = try await context.execute(
                 tool: PasteTool(context: context),
-                arguments: ToolArguments(raw: arguments))
+                arguments: ToolArguments(raw: refusedCase.arguments))
             #expect(refused.isError)
             let refusalMeta = try #require(refused.meta?.objectValue)
-            #expect(refusalMeta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
+            #expect(refusalMeta["error_code"] == .string(refusedCase.errorCode))
             #expect(refusalMeta["mutation_dispatched"] == .bool(false))
             #expect(refusalMeta["retry_safe"] == .bool(true))
         }

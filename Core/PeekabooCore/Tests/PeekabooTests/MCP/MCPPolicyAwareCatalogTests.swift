@@ -17,18 +17,34 @@ struct MCPPolicyAwareCatalogTests {
             return
         }
         #expect(required == [Value.string("text")])
-        let requiredTargets = targetAlternatives.compactMap { alternative -> String? in
+        let requiredTargets = targetAlternatives.compactMap { alternative -> Set<String>? in
             guard case let .object(fields) = alternative,
-                  case let .array(required)? = fields["required"],
-                  case let .string(target)? = required.first
+                  case let .array(required)? = fields["required"]
             else { return nil }
-            return target
+            return Set(required.compactMap(\.stringValue))
         }
-        #expect(Set(requiredTargets) == Set(["app", "pid", "window_id", "window_title", "window_index"]))
+        #expect(Set(requiredTargets) == Set([
+            Set(["app"]),
+            Set(["pid"]),
+            Set(["app", "window_id"]),
+            Set(["pid", "window_id"]),
+            Set(["app", "window_title"]),
+            Set(["pid", "window_title"]),
+            Set(["app", "window_index"]),
+            Set(["pid", "window_index"]),
+        ]))
+        for alternative in targetAlternatives {
+            let required = try #require(Self.requiredFields(alternative))
+            #expect(Self.excludedTargetFields(alternative) ==
+                Set(["app", "pid", "window_id", "window_title", "window_index"]).subtracting(required))
+        }
         #expect(properties["text"] != nil)
         #expect(properties["app"] != nil)
         #expect(properties["pid"] != nil)
         #expect(properties["window_id"] != nil)
+        #expect(properties["window_id"]?.objectValue?["description"]?.stringValue?.contains("requires app/pid") == true)
+        #expect(properties["window_title"]?.objectValue?["description"]?.stringValue?
+            .contains("requires app/pid") == true)
         #expect(properties["filePath"] == nil)
         #expect(properties["imagePath"] == nil)
         #expect(properties["dataBase64"] == nil)
@@ -37,7 +53,9 @@ struct MCPPolicyAwareCatalogTests {
         #expect(properties["allowLarge"] == nil)
         #expect(properties["restore_delay_ms"] == nil)
         #expect(properties["foreground"] == nil)
-        #expect(tool.description.contains("explicit app, PID, or exact-window UI target"))
+        let normalizedDescription = tool.description.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        #expect(normalizedDescription.contains("explicit app or PID UI target"))
+        #expect(normalizedDescription.contains("optionally pinned to one exact window"))
         #expect(tool.description.contains("does not touch the shared clipboard"))
         let targetless = try await backgroundContext.execute(
             tool: tool,
@@ -45,6 +63,20 @@ struct MCPPolicyAwareCatalogTests {
         #expect(targetless.isError)
         #expect(targetless.meta?.objectValue?["refusal_reason"] == .string("foreground_consent_required"))
         #expect(targetless.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+
+        for selector in ["window_title", "window_index"] {
+            let value: Value = selector == "window_title" ? .string("Document") : .int(0)
+            let invalidStandaloneWindow = try await backgroundContext.execute(
+                tool: tool,
+                arguments: ToolArguments(value: .object([
+                    "text": .string("must not dispatch"),
+                    selector: value,
+                ])))
+            #expect(invalidStandaloneWindow.isError)
+            #expect(invalidStandaloneWindow.meta?.objectValue?["refusal_reason"] == .string("invalid_request"))
+            #expect(invalidStandaloneWindow.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+            #expect(invalidStandaloneWindow.meta?.objectValue?["error_code"] == .string("VALIDATION_ERROR"))
+        }
 
         let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
         let foregroundTool = PasteTool(context: foregroundContext)
@@ -55,6 +87,7 @@ struct MCPPolicyAwareCatalogTests {
             return
         }
         #expect(foregroundSchema["required"] == nil)
+        #expect(foregroundSchema["anyOf"] == nil)
         #expect(foregroundProperties["filePath"] != nil)
         #expect(foregroundProperties["imagePath"] != nil)
         #expect(foregroundProperties["dataBase64"] != nil)
@@ -63,7 +96,29 @@ struct MCPPolicyAwareCatalogTests {
         #expect(foregroundProperties["allowLarge"] != nil)
         #expect(foregroundProperties["restore_delay_ms"] != nil)
         #expect(foregroundProperties["foreground"] != nil)
+        #expect(foregroundProperties["window_id"]?.objectValue?["description"]?.stringValue?
+            .contains("foreground focus") == true)
         #expect(foregroundTool.description.contains("Paste the current clipboard"))
+    }
+
+    private static func requiredFields(_ schema: Value) -> Set<String>? {
+        guard case let .object(fields) = schema,
+              case let .array(required)? = fields["required"]
+        else { return nil }
+        return Set(required.compactMap(\.stringValue))
+    }
+
+    private static func excludedTargetFields(_ schema: Value) -> Set<String> {
+        guard case let .object(fields) = schema,
+              case let .object(notSchema)? = fields["not"],
+              case let .array(alternatives)? = notSchema["anyOf"]
+        else { return [] }
+        return Set(alternatives.compactMap { alternative in
+            guard case let .object(fields) = alternative,
+                  case let .array(required)? = fields["required"]
+            else { return nil }
+            return required.compactMap(\.stringValue).first
+        })
     }
 
     @Test

@@ -18,10 +18,11 @@ public struct PasteTool: MCPTool {
     public var description: String {
         if self.context.executionPolicy == .backgroundOnly {
             return """
-            Deliver one direct text payload to an explicit app, PID, or exact-window UI target under immutable
-            background-only authority. This route does not touch the shared clipboard. Current-clipboard,
-            binary/file/image payloads, targetless input, and foreground delivery are unavailable. If delivery fails
-            after it begins, a prefix may already be present; observe the exact target before retrying.
+            Deliver one direct text payload to an explicit app or PID UI target, optionally pinned to one exact
+            window, under immutable background-only authority. This route does not touch the shared clipboard.
+            Current-clipboard, binary/file/image payloads, targetless input, and foreground delivery are unavailable.
+            If delivery fails after it begins, a prefix may already be present; observe the exact target before
+            retrying.
             """
         }
 
@@ -59,9 +60,13 @@ public struct PasteTool: MCPTool {
             "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
             "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
             "window_id": SchemaBuilder.integer(
-                description: "Exact window ID for atomic background delivery, or foreground focus when requested."),
-            "window_title": SchemaBuilder
-                .string(description: "Window title substring for atomic exact-window background delivery."),
+                description: foregroundCapable
+                    ? "Exact window ID for atomic background delivery, or foreground focus when requested."
+                    : "Exact window ID; requires app/pid and pins atomic background delivery to that exact window."),
+            "window_title": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "Window title substring for atomic exact-window background delivery."
+                    : "Window title substring; requires app/pid and pins atomic exact-window background delivery."),
             "window_index": SchemaBuilder
                 .integer(description: "Window index (0-based); requires app/pid and pins that exact window."),
             "text": SchemaBuilder.string(
@@ -94,10 +99,34 @@ public struct PasteTool: MCPTool {
             required: foregroundCapable ? [] : ["text"])
         guard !foregroundCapable, case let .object(fields) = base else { return base }
         var backgroundSchema = fields
-        backgroundSchema["anyOf"] = .array(["app", "pid", "window_id", "window_title", "window_index"].map {
-            .object(["required": .array([.string($0)])])
-        })
+        backgroundSchema["anyOf"] = .array(Self.backgroundTargetRouteSchemas)
         return .object(backgroundSchema)
+    }
+
+    private static var backgroundTargetRouteSchemas: [Value] {
+        ["app", "pid"].flatMap { owner in
+            [self.backgroundTargetRoute(owner: owner)] +
+                ["window_id", "window_title", "window_index"].map { window in
+                    self.backgroundTargetRoute(owner: owner, window: window)
+                }
+        }
+    }
+
+    private static func backgroundTargetRoute(owner: String, window: String? = nil) -> Value {
+        let owners: [String] = ["app", "pid"]
+        let windows: [String] = ["window_id", "window_title", "window_index"]
+        let otherOwners = owners.filter { $0 != owner }
+        let otherWindows = windows.filter { $0 != window }
+        let excludedTargets = otherOwners + otherWindows
+        let requiredTargets = [owner] + (window.map { [$0] } ?? [])
+        return .object([
+            "required": .array(requiredTargets.map(Value.string)),
+            "not": .object([
+                "anyOf": .array(excludedTargets.map { target in
+                    .object(["required": .array([.string(target)])])
+                }),
+            ]),
+        ])
     }
 
     public init(context: MCPToolContext = .shared) {
