@@ -350,7 +350,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             browserURL: "http://127.0.0.1:9222").connectionReceipt)
         manager.executedTools.removeAll()
 
-        await #expect(throws: DesktopActionFailure.self) {
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await session.connect(channel: .stable)
         }
 
@@ -407,7 +407,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         manager.executedTools.removeAll()
         isolated.value = false
 
-        await #expect(throws: DesktopActionFailure.self) {
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await session.connect(channel: .stable)
         }
 

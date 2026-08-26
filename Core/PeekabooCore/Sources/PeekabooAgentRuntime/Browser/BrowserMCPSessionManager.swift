@@ -283,6 +283,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             throw failure
         } catch is CancellationError where !attempt.state.didStartAnyDispatch {
             throw Self.preDispatchConnectionFailure(CancellationError())
+        } catch BrowserMCPConnectionError.targetLocked {
+            throw BrowserMCPConnectionError.targetLocked
         } catch {
             if attempt.state.didStartAnyDispatch {
                 throw Self.indeterminateConnectionFailure(error)

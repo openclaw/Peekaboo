@@ -7,6 +7,7 @@
 - Bind Bridge 1.34 Chrome channel connections to an exact live Chrome bundle, native process-owned DevTools listener, and approval-gated WebSocket under one 90-second deadline, verifying `Browser.getVersion` once without legacy HTTP discovery or repeated permission probes and failing closed on helper-service names, file, socket, generation, or endpoint drift.
 - Authenticate native Chrome channels against Google Team ID `EQHXZ8M8AV`, pin the exact signed identifier and CDHash for the process generation, and enumerate the target process's complete listener inventory independently of Peekaboo's file-descriptor limit.
 - Honor the configured default save directory for pathless pixel-only `see` captures and add collision-resistant generated filenames for concurrent callers, while preserving explicit paths and stdout streaming. Thanks @PollyBot13 for #607.
+- Preserve the exact browser target-lock refusal so reconnecting to a different live Chrome channel or endpoint tells callers to disconnect first instead of reporting a generic unavailable target.
 - Emit one lossless target identity and process-generation receipt across CLI envelopes and App MCP responses, preventing extra metadata from overriding the canonical target.
 - Prefer a sole live child sheet or alert beneath its exact structural parent window, preserve multi-child ambiguity, and keep parent-window recovery guidance intact across remote dialog reads.
 

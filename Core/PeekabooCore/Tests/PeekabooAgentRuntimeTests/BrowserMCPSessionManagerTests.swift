@@ -1044,7 +1044,7 @@ extension BrowserMCPSessionManagerTests {
         #expect(manager.addedConfigs[0].args.contains(
             "--wsEndpoint=ws://127.0.0.1:9222/devtools/browser/browser-a"))
 
-        await #expect(throws: DesktopActionFailure.self) {
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await session.connect(
                 channel: .stable,
                 browserURL: "http://127.0.0.1:9333")
