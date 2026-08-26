@@ -811,6 +811,17 @@ struct BrowserToolTests {
         #expect(effect([
             "action": "call",
             "mcp_tool": "future_tool",
+        ]) == .mutation)
+        #expect(effect([
+            "action": "call",
+            "mcp_tool": "navigate_page",
+            "page_id": "bp1_opaque",
+            "mcp_args_json": #"{"type":"reload"}"#,
+        ]) == .mutation)
+        #expect(effect([
+            "action": "call",
+            "mcp_tool": "take_snapshot",
+            "page_id": "bp1_opaque",
         ]) == .none)
     }
 

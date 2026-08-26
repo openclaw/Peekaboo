@@ -106,6 +106,26 @@ const textSnapshotSource = readFileSync(
   new URL("../node_modules/chrome-devtools-mcp/build/src/TextSnapshot.js", import.meta.url),
   "utf8",
 );
+const mcpResponseSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/McpResponse.js", import.meta.url),
+  "utf8",
+);
+const inputToolSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/input.js", import.meta.url),
+  "utf8",
+);
+const snapshotFormatterSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/formatters/SnapshotFormatter.js", import.meta.url),
+  "utf8",
+);
+const screenshotToolSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/screenshot.js", import.meta.url),
+  "utf8",
+);
+const issueFormatterSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/formatters/IssueFormatter.js", import.meta.url),
+  "utf8",
+);
 assert.match(mcpPageSource, /Object\.values\(params\)/, "third-party parameter traversal changed");
 assert.match(mcpPageSource, /Object\.keys\(value\)\.length === 1/, "third-party singleton UID rule changed");
 assert.match(
@@ -127,6 +147,65 @@ assert.match(
   textSnapshotSource,
   /`\$\{snapshotId\}_\$\{idCounter\+\+\}`/,
   "new snapshot UID allocation changed",
+);
+assert.match(
+  mcpPageSource,
+  /Element uid "\$\{uid\}" not found on page \$\{this\.id\}/,
+  "provider element-error identifier shape changed",
+);
+assert.match(
+  mcpPageSource,
+  /Element with uid \$\{uid\} no longer exists on the page/,
+  "provider detached-element identifier shape changed",
+);
+assert.match(
+  snapshotFormatterSource,
+  /const attributes = \[`uid=\$\{serializedAXNodeRoot\.id\}`\]/,
+  "snapshot rows no longer start with their structural uid",
+);
+assert.match(
+  snapshotFormatterSource,
+  /attributes\.join\(' '\)/,
+  "snapshot row construction changed",
+);
+assert.match(
+  mcpResponseSource,
+  /structuredContent\.message = this\.#textResponseLines\.join\('\\n'\)/,
+  "provider structured result-message projection changed",
+);
+const messageProjectionIndex = mcpResponseSource.indexOf("structuredContent.message =");
+const viewportStatusIndex = mcpResponseSource.indexOf("Emulating viewport:");
+const snapshotMarkerIndex = mcpResponseSource.indexOf("## Latest page snapshot");
+assert.ok(
+  messageProjectionIndex >= 0 &&
+    messageProjectionIndex < viewportStatusIndex &&
+    viewportStatusIndex < snapshotMarkerIndex,
+  "third-party result/status/snapshot ordering changed",
+);
+assert.match(
+  mcpResponseSource,
+  /Page \$\{selectedPageId\} is now selected/,
+  "provider selected-page fallback note changed",
+);
+assert.match(
+  inputToolSource,
+  /File uploaded from \$\{filePath\}/,
+  "provider upload-path response changed",
+);
+assert.match(
+  screenshotToolSource,
+  /Took a screenshot of node with uid "\$\{request\.params\.uid\}"/,
+  "provider screenshot identifier echo changed",
+);
+assert.match(
+  issueFormatterSource,
+  /bodyParts\.push\('### Affected resources'\)/,
+  "provider issue affected-resource section changed",
+);
+assert.match(
+  issueFormatterSource,
+  /details\.push\(`uid=\$\{item\.uid\}`\)/,
+  "provider issue resource identifier shape changed",
 );
 schemaElementReferencePaths.push("execute_3p_developer_tool.params{*}.uid");
 schemaElementReferencePaths.sort();

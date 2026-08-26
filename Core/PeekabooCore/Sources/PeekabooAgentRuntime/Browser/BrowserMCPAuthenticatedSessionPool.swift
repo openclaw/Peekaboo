@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 /// Version-neutral local owner for independently authenticated browser sessions.
 ///
@@ -9,6 +10,7 @@ import Foundation
 final class BrowserMCPAuthenticatedSessionPool {
     private enum TargetKey: Hashable {
         case process(processIdentifier: Int32, processStartIdentity: UInt64)
+        case browserURL(String)
         case devToolsBrowser(String)
         case receipt(BrowserMCPConnectionReceipt)
     }
@@ -21,6 +23,7 @@ final class BrowserMCPAuthenticatedSessionPool {
     private struct SessionState {
         let manager: BrowserMCPSessionManager
         let capabilities: BrowserToolCapabilitySession
+        let mutationGate: MCPToolSnapshotExecutionGate
     }
 
     struct SessionID: Hashable, Sendable {
@@ -58,12 +61,17 @@ final class BrowserMCPAuthenticatedSessionPool {
         let manager = self.factory(name)
         self.sessions[sessionID] = SessionState(
             manager: manager,
-            capabilities: BrowserToolCapabilitySession())
+            capabilities: BrowserToolCapabilitySession(),
+            mutationGate: MCPToolSnapshotExecutionGate())
         return manager
     }
 
     func capabilities(for sessionID: SessionID) -> BrowserToolCapabilitySession? {
         self.sessions[sessionID]?.capabilities
+    }
+
+    func mutationGate(for sessionID: SessionID) -> MCPToolSnapshotExecutionGate? {
+        self.sessions[sessionID]?.mutationGate
     }
 
     func sessionID(named name: String) -> SessionID? {
@@ -88,8 +96,16 @@ final class BrowserMCPAuthenticatedSessionPool {
             return
         }
         let ending = Task { @MainActor in
+            do {
+                try await state.mutationGate.acquire()
+            } catch {
+                return
+            }
+            // Capability end drains its operation gate, which covers reads through response projection; the mutation
+            // gate separately keeps outer snapshot completion and teardown ordered.
             await state.capabilities.end()
             await state.manager.endSession()
+            await state.mutationGate.release()
         }
         self.endingSessions[sessionID] = ending
         await ending.value
@@ -114,6 +130,7 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func unbind(_ sessionID: SessionID) {
+        guard self.endingSessions[sessionID] == nil else { return }
         self.targetOwners = self.targetOwners.filter { $0.value != .session(sessionID) }
     }
 
@@ -161,9 +178,29 @@ final class BrowserMCPAuthenticatedSessionPool {
         {
             keys.insert(.devToolsBrowser(devToolsBrowserID))
         }
+        if let browserURL = receipt.browserURL,
+           let endpoint = BrowserLoopbackEndpoint(browserURL: browserURL)
+        {
+            keys.insert(.browserURL(endpoint.canonicalBrowserURL))
+        }
+        if keys.isEmpty, Self.isIsolatedSessionReceipt(receipt) {
+            return []
+        }
         if keys.isEmpty {
             keys.insert(.receipt(receipt))
         }
         return keys
+    }
+
+    private static func isIsolatedSessionReceipt(_ receipt: BrowserMCPConnectionReceipt) -> Bool {
+        receipt.channel != nil &&
+            receipt.processIdentifier == nil &&
+            receipt.processStartIdentity == nil &&
+            receipt.bundleIdentifier == nil &&
+            receipt.browserURL == nil &&
+            receipt.webSocketDebuggerURL == nil &&
+            receipt.devToolsBrowserID == nil &&
+            receipt.browserVersion == nil &&
+            receipt.protocolVersion == nil
     }
 }

@@ -345,6 +345,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @MainActor private var sessionManager: BrowserMCPSessionManager?
     @MainActor private var authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool?
     private let sessionCapabilities: BrowserToolCapabilitySession?
+    private let sessionMutationGate: MCPToolSnapshotExecutionGate?
     @MainActor private var ownedSession: (
         pool: BrowserMCPAuthenticatedSessionPool,
         id: BrowserMCPAuthenticatedSessionPool.SessionID)?
@@ -355,6 +356,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.sessionManager = nil
         self.ownedSession = nil
         self.sessionCapabilities = nil
+        self.sessionMutationGate = nil
         self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
             BrowserMCPSessionManager(serverName: serverName)
         }
@@ -366,6 +368,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.sessionManager = nil
         self.ownedSession = nil
         self.sessionCapabilities = nil
+        self.sessionMutationGate = nil
         self.authenticatedSessionPool = authenticatedSessionPool
     }
 
@@ -376,6 +379,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.sessionManager = sessionManager
         self.ownedSession = nil
         self.sessionCapabilities = nil
+        self.sessionMutationGate = nil
         self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
             BrowserMCPSessionManager(serverName: serverName, manager: manager)
         }
@@ -387,13 +391,15 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         ownedSession: (
             pool: BrowserMCPAuthenticatedSessionPool,
             id: BrowserMCPAuthenticatedSessionPool.SessionID)? = nil,
-        sessionCapabilities: BrowserToolCapabilitySession? = nil)
+        sessionCapabilities: BrowserToolCapabilitySession? = nil,
+        sessionMutationGate: MCPToolSnapshotExecutionGate? = nil)
     {
         self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
         self.authenticatedSessionPool = nil
         self.ownedSession = ownedSession
         self.sessionCapabilities = sessionCapabilities
+        self.sessionMutationGate = sessionMutationGate
     }
 
     /// Creates a version-neutral process-local browser service for one explicitly authenticated caller session.
@@ -404,12 +410,14 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     {
         guard let pool = self.authenticatedSessionPool,
               let manager = pool.manager(for: sessionID),
-              let capabilities = pool.capabilities(for: sessionID)
+              let capabilities = pool.capabilities(for: sessionID),
+              let mutationGate = pool.mutationGate(for: sessionID)
         else { return nil }
         return BrowserMCPService(
             sessionManager: manager,
             ownedSession: (pool: pool, id: sessionID),
-            sessionCapabilities: capabilities)
+            sessionCapabilities: capabilities,
+            sessionMutationGate: mutationGate)
     }
 
     @MainActor
@@ -417,12 +425,14 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         guard let pool = self.authenticatedSessionPool,
               let sessionID = pool.sessionID(named: name),
               let manager = pool.manager(for: sessionID),
-              let capabilities = pool.capabilities(for: sessionID)
+              let capabilities = pool.capabilities(for: sessionID),
+              let mutationGate = pool.mutationGate(for: sessionID)
         else { return nil }
         return BrowserMCPService(
             sessionManager: manager,
             ownedSession: (pool: pool, id: sessionID),
-            sessionCapabilities: capabilities)
+            sessionCapabilities: capabilities,
+            sessionMutationGate: mutationGate)
     }
 
     @MainActor
@@ -438,12 +448,18 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @MainActor
     func endAuthenticatedBrowserSession() async {
         guard let ownedSession else { return }
-        self.ownedSession = nil
         await ownedSession.pool.end(ownedSession.id)
+        if self.ownedSession?.id == ownedSession.id {
+            self.ownedSession = nil
+        }
     }
 
     var browserCapabilitySession: BrowserToolCapabilitySession? {
         self.sessionCapabilities
+    }
+
+    var browserMutationExecutionGate: MCPToolSnapshotExecutionGate? {
+        self.sessionMutationGate
     }
 
     @MainActor
@@ -474,9 +490,17 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         let manager = self.resolvedSessionManager()
         let result: DesktopActionResult<BrowserMCPStatus>
         do {
+            let reservation: BrowserMCPSessionManager.TargetReservation? = if let ownedSession = self.ownedSession {
+                { receipt in try ownedSession.pool.bind(ownedSession.id, to: receipt) }
+            } else if let pool = self.authenticatedSessionPool {
+                { receipt in try pool.bindRoot(to: receipt) }
+            } else {
+                nil
+            }
             result = try await manager.connectWithOutcome(
                 channel: channel,
-                browserURL: browserURL)
+                browserURL: browserURL,
+                reserveTarget: reservation)
         } catch {
             await self.reconcileTargetOwnership(with: manager.status(channel: nil))
             throw error

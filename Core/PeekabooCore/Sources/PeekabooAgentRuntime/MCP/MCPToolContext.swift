@@ -23,6 +23,18 @@ public struct MCPToolCapturePreflightRefusal: Sendable, Equatable {
 /// global singletons directly. Each tool can receive the subset of
 /// services it needs, which keeps tests deterministic and unlocks DI.
 public struct MCPToolContext: @unchecked Sendable {
+    private struct MutationLane {
+        let gate: MCPToolSnapshotExecutionGate
+        let additionalLifecycleGate: MCPToolSnapshotExecutionGate?
+        let usesCoordinatorBarrier: Bool
+        let holdsSharedSnapshotRead: Bool
+    }
+
+    private struct MutationTargetPreflight {
+        let authorization: BackgroundTargetAuthorization
+        let rejection: ToolResponse?
+    }
+
     public let executionHost: PeekabooServiceExecutionHost
     public let automation: any UIAutomationServiceProtocol
     public let menu: any MenuServiceProtocol
@@ -42,6 +54,7 @@ public struct MCPToolContext: @unchecked Sendable {
     let browserCapabilities: BrowserToolCapabilitySession
     public let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
+    let browserMutationExecutionGate: MCPToolSnapshotExecutionGate
     public let executionPolicy: MCPToolExecutionPolicy
     let capturePreflightRefusal: MCPToolCapturePreflightRefusal?
     let uiSnapshots: MCPToolUISnapshotStore
@@ -157,6 +170,7 @@ public struct MCPToolContext: @unchecked Sendable {
         permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        browserMutationExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
         executionHost: PeekabooServiceExecutionHost = .local,
@@ -184,6 +198,9 @@ public struct MCPToolContext: @unchecked Sendable {
         self.snapshotExecutionGate = snapshotExecutionGate
             ?? (agent as? PeekabooAgentService)?.snapshotExecutionGate
             ?? MCPToolSnapshotExecutionGate()
+        self.browserMutationExecutionGate = browserMutationExecutionGate
+            ?? (browser as? BrowserMCPService)?.browserMutationExecutionGate
+            ?? self.snapshotExecutionGate
         self.uiSnapshots = MCPToolUISnapshotStore(owner: snapshotOwner)
         self.executionPolicy = executionPolicy
         self.capturePreflightRefusal = capturePreflightRefusal
@@ -195,6 +212,7 @@ public struct MCPToolContext: @unchecked Sendable {
         browser: (any BrowserMCPClientProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        browserMutationExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
         capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
@@ -220,6 +238,7 @@ public struct MCPToolContext: @unchecked Sendable {
             permissionsStatusProvider: services,
             snapshotMutationCoordinator: snapshotMutationCoordinator,
             snapshotExecutionGate: resolvedSnapshotExecutionGate,
+            browserMutationExecutionGate: browserMutationExecutionGate,
             snapshotOwner: snapshotOwner,
             executionPolicy: executionPolicy,
             executionHost: services.executionHost,
@@ -232,6 +251,9 @@ public struct MCPToolContext: @unchecked Sendable {
         arguments: ToolArguments) async throws -> ToolResponse
     {
         let effect = MCPToolSnapshotMutationPolicy.effect(toolName: tool.name, arguments: arguments)
+        let mutationLane = self.mutationLane(for: tool.name, arguments: arguments)
+        let mutationExecutionGate = mutationLane.gate
+        let usesCoordinatorBarrier = mutationLane.usesCoordinatorBarrier
         if let rejection = MCPToolArgumentValidator.rejection(
             tool: tool,
             arguments: arguments,
@@ -251,57 +273,49 @@ public struct MCPToolContext: @unchecked Sendable {
             return try await self.executeReadOnlyTool(tool, arguments: arguments)
         }
 
-        try await self.snapshotExecutionGate.acquire()
+        let sharedInvalidationGate = self.snapshotExecutionGate
+        let usesSeparateMutationGate = mutationExecutionGate !== sharedInvalidationGate
+        try await self.acquireMutationLane(mutationLane)
         do {
-            try Task.checkCancellation()
-            if let pending = await self.snapshotExecutionGate.pendingInvalidation() {
-                let retrySucceeded = await self.completeMutation(
-                    pending.scope,
-                    succeeded: false,
-                    uiSnapshots: MCPToolUISnapshotStore(owner: pending.owner))
-                try Task.checkCancellation()
-                guard retrySucceeded else {
-                    await self.snapshotExecutionGate.release()
-                    return Self.pendingInvalidationResponse(
-                        pendingScope: pending.scope,
-                        blockedToolName: tool.name)
+            if let blocked = try await self.prepareMutationLaneForExecution(
+                mutationLane,
+                sharedGate: sharedInvalidationGate,
+                usesSeparateMutationGate: usesSeparateMutationGate,
+                blockedToolName: tool.name)
+            {
+                if mutationLane.holdsSharedSnapshotRead {
+                    await self.releaseMutationLaneWithoutSharedRead(mutationLane)
+                } else {
+                    await self.releaseMutationLane(mutationLane)
                 }
-                await self.snapshotExecutionGate.clearPendingInvalidation(id: pending.scope.id)
+                return blocked
             }
         } catch {
-            await self.snapshotExecutionGate.release()
+            if mutationLane.holdsSharedSnapshotRead {
+                await self.releaseMutationLaneWithoutSharedRead(mutationLane)
+            } else {
+                await self.releaseMutationLane(mutationLane)
+            }
             throw error
         }
 
-        // Target authorization and leaf dispatch stay inside the same shared gate. Observation tools therefore cannot
-        // replace either snapshot store between the identity check and the exact pinned tool invocation.
+        // Target authorization and leaf dispatch stay inside the selected mutation lane. Desktop tools retain the
+        // shared gate; caller-scoped browser sessions use their own gate and invalidate desktop snapshots on
+        // completion.
         let targetAuthorization: BackgroundTargetAuthorization
-        let targetRevalidation: ToolResponse?
         do {
-            targetAuthorization = try await self.backgroundTargetAuthorization(
+            let preflight = try await self.mutationTargetPreflight(
                 toolName: tool.name,
-                arguments: arguments)
-            targetRevalidation = try await self.backgroundTargetRevalidation(
-                targetAuthorization,
-                toolName: tool.name)
+                arguments: arguments,
+                effect: effect)
+            if let rejection = preflight.rejection {
+                await self.releaseMutationLane(mutationLane)
+                return rejection
+            }
+            targetAuthorization = preflight.authorization
         } catch {
-            await self.snapshotExecutionGate.release()
+            await self.releaseMutationLane(mutationLane)
             throw error
-        }
-        if let rejection = targetAuthorization.rejection {
-            await self.snapshotExecutionGate.release()
-            return rejection
-        }
-        if let rejection = targetRevalidation {
-            await self.snapshotExecutionGate.release()
-            return rejection
-        }
-        if let rejection = self.backgroundMutationCapabilityRejection(
-            toolName: tool.name,
-            effect: effect)
-        {
-            await self.snapshotExecutionGate.release()
-            return rejection
         }
         let executionArguments = targetAuthorization.arguments
 
@@ -318,7 +332,7 @@ public struct MCPToolContext: @unchecked Sendable {
         var toolStarted = false
         do {
             try Task.checkCancellation()
-            try self.snapshotMutationCoordinator?.prepareMutation(scope)
+            try self.prepareMutation(scope, usesCoordinatorBarrier: usesCoordinatorBarrier)
             toolStarted = true
             var response = try await AuthorizedDesktopTargetPlan.$current.withValue(
                 targetAuthorization.targetPlan)
@@ -334,7 +348,7 @@ public struct MCPToolContext: @unchecked Sendable {
                 requiresCanonicalOutcome: self.executionPolicy == .backgroundOnly)
             {
                 let cancelled = await self.snapshotMutationCoordinator?.cancelMutation(scope) ?? true
-                await self.snapshotExecutionGate.release()
+                await self.releaseMutationLane(mutationLane)
                 guard cancelled else {
                     return ToolResponse.error(
                         "The tool was refused before dispatch, but its mutation reservation could not be cancelled",
@@ -354,50 +368,218 @@ public struct MCPToolContext: @unchecked Sendable {
                 preserving: response.isError ? nil : Self.refreshedSnapshotID(scope: scope, response: response),
                 confirmedMutationCompletedAt: completionCertificate.completedAt,
                 observationPreservationAllowed: completionCertificate.preservationAllowed)
-            let completionSucceeded = await self.completeMutation(completedScope, succeeded: !response.isError)
+            let completionSucceeded = await self.completeMutation(
+                completedScope,
+                succeeded: !response.isError,
+                usesCoordinatorBarrier: usesCoordinatorBarrier)
             try Self.checkCancellationUnlessResponseIsCanonical(response)
             if !completionSucceeded {
                 if !response.isError,
                    effect == .freshObservation || effect == .mutationProducingFreshObservation
                 {
-                    let rollbackSucceeded = await self.completeMutation(completedScope, succeeded: false)
+                    let rollbackSucceeded = await self.completeMutation(
+                        completedScope,
+                        succeeded: false,
+                        usesCoordinatorBarrier: usesCoordinatorBarrier)
                     try Self.checkCancellationUnlessResponseIsCanonical(response)
                     if !rollbackSucceeded {
-                        await self.snapshotExecutionGate.recordPendingInvalidation(
+                        await sharedInvalidationGate.recordPendingInvalidation(
                             completedScope,
-                            owner: self.uiSnapshots.owner)
+                            owner: self.uiSnapshots.owner,
+                            usesCoordinatorBarrier: usesCoordinatorBarrier)
                     }
-                    await self.snapshotExecutionGate.release()
+                    await self.releaseMutationLane(mutationLane)
                     return ToolResponse.error("Failed to publish the refreshed UI snapshot")
                 }
 
-                await self.snapshotExecutionGate.recordPendingInvalidation(
+                await sharedInvalidationGate.recordPendingInvalidation(
                     completedScope,
-                    owner: self.uiSnapshots.owner)
+                    owner: self.uiSnapshots.owner,
+                    usesCoordinatorBarrier: usesCoordinatorBarrier)
                 if response.isError {
-                    await self.snapshotExecutionGate.release()
+                    await self.releaseMutationLane(mutationLane)
                     return response
                 }
 
-                await self.snapshotExecutionGate.release()
+                await self.releaseMutationLane(mutationLane)
                 return Self.mutationCompletionWarningResponse(
                     response,
                     toolName: tool.name)
             }
-            await self.snapshotExecutionGate.release()
+            await self.releaseMutationLane(mutationLane)
             return response
         } catch {
             if toolStarted {
                 let failedScope = scope.completed(at: Date(), preserving: nil)
-                let cleanupSucceeded = await self.completeMutation(failedScope, succeeded: false)
+                let cleanupSucceeded = await self.completeMutation(
+                    failedScope,
+                    succeeded: false,
+                    usesCoordinatorBarrier: usesCoordinatorBarrier)
                 if !cleanupSucceeded {
-                    await self.snapshotExecutionGate.recordPendingInvalidation(
+                    await sharedInvalidationGate.recordPendingInvalidation(
                         failedScope,
-                        owner: self.uiSnapshots.owner)
+                        owner: self.uiSnapshots.owner,
+                        usesCoordinatorBarrier: usesCoordinatorBarrier)
                 }
             }
-            await self.snapshotExecutionGate.release()
+            await self.releaseMutationLane(mutationLane)
             throw error
+        }
+    }
+
+    private func mutationLane(
+        for toolName: String,
+        arguments: ToolArguments) -> MutationLane
+    {
+        guard toolName == "browser" else {
+            return MutationLane(
+                gate: self.snapshotExecutionGate,
+                additionalLifecycleGate: nil,
+                usesCoordinatorBarrier: true,
+                holdsSharedSnapshotRead: false)
+        }
+        let hasCallerLocalGate = self.browserMutationExecutionGate !== self.snapshotExecutionGate
+        if MCPToolExecutionPolicy.browserRequiresForegroundAuthority(arguments) {
+            return MutationLane(
+                gate: self.snapshotExecutionGate,
+                additionalLifecycleGate: hasCallerLocalGate ? self.browserMutationExecutionGate : nil,
+                usesCoordinatorBarrier: true,
+                holdsSharedSnapshotRead: false)
+        }
+        return MutationLane(
+            gate: hasCallerLocalGate ? self.browserMutationExecutionGate : self.snapshotExecutionGate,
+            additionalLifecycleGate: nil,
+            usesCoordinatorBarrier: !hasCallerLocalGate,
+            holdsSharedSnapshotRead: hasCallerLocalGate)
+    }
+
+    private func releaseMutationLane(_ lane: MutationLane) async {
+        if lane.holdsSharedSnapshotRead {
+            await self.snapshotExecutionGate.releaseShared()
+        }
+        await self.releaseMutationLaneWithoutSharedRead(lane)
+    }
+
+    private func releaseMutationLaneWithoutSharedRead(_ lane: MutationLane) async {
+        await lane.gate.release()
+        if let lifecycleGate = lane.additionalLifecycleGate {
+            await lifecycleGate.release()
+        }
+    }
+
+    private func acquireMutationLane(_ lane: MutationLane) async throws {
+        if let lifecycleGate = lane.additionalLifecycleGate {
+            try await lifecycleGate.acquire()
+        }
+        do {
+            try await lane.gate.acquire()
+        } catch {
+            if let lifecycleGate = lane.additionalLifecycleGate {
+                await lifecycleGate.release()
+            }
+            throw error
+        }
+    }
+
+    private func mutationTargetPreflight(
+        toolName: String,
+        arguments: ToolArguments,
+        effect: MCPToolSnapshotEffect) async throws -> MutationTargetPreflight
+    {
+        let authorization = try await self.backgroundTargetAuthorization(
+            toolName: toolName,
+            arguments: arguments)
+        if let rejection = authorization.rejection {
+            return MutationTargetPreflight(authorization: authorization, rejection: rejection)
+        }
+        if let rejection = try await self.backgroundTargetRevalidation(
+            authorization,
+            toolName: toolName)
+        {
+            return MutationTargetPreflight(authorization: authorization, rejection: rejection)
+        }
+        let rejection = self.backgroundMutationCapabilityRejection(
+            toolName: toolName,
+            effect: effect)
+        return MutationTargetPreflight(authorization: authorization, rejection: rejection)
+    }
+
+    @MainActor
+    private func recoverPendingInvalidations(
+        on sharedGate: MCPToolSnapshotExecutionGate,
+        acquireGate: Bool,
+        blockedToolName: String) async throws -> ToolResponse?
+    {
+        var acquired = false
+        do {
+            if acquireGate {
+                try await sharedGate.acquire()
+                acquired = true
+            }
+            try Task.checkCancellation()
+            while let pending = await sharedGate.pendingInvalidation() {
+                let retrySucceeded = await self.completeMutation(
+                    pending.scope,
+                    succeeded: false,
+                    uiSnapshots: MCPToolUISnapshotStore(owner: pending.owner),
+                    usesCoordinatorBarrier: pending.usesCoordinatorBarrier,
+                    recreateSnapshotOwnerIfNeeded: false)
+                try Task.checkCancellation()
+                guard retrySucceeded else {
+                    if acquired {
+                        await sharedGate.release()
+                    }
+                    return Self.pendingInvalidationResponse(
+                        pendingScope: pending.scope,
+                        blockedToolName: blockedToolName)
+                }
+                await sharedGate.clearPendingInvalidation(id: pending.scope.id)
+            }
+            if acquired {
+                await sharedGate.release()
+            }
+            return nil
+        } catch {
+            if acquired {
+                await sharedGate.release()
+            }
+            throw error
+        }
+    }
+
+    private func prepareMutationLaneForExecution(
+        _ lane: MutationLane,
+        sharedGate: MCPToolSnapshotExecutionGate,
+        usesSeparateMutationGate: Bool,
+        blockedToolName: String) async throws -> ToolResponse?
+    {
+        guard lane.holdsSharedSnapshotRead else {
+            return try await self.recoverPendingInvalidations(
+                on: sharedGate,
+                acquireGate: usesSeparateMutationGate,
+                blockedToolName: blockedToolName)
+        }
+        while try await !(sharedGate.acquireSharedIfNoPendingInvalidation()) {
+            if let blocked = try await self.recoverPendingInvalidations(
+                on: sharedGate,
+                acquireGate: true,
+                blockedToolName: blockedToolName)
+            {
+                return blocked
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func prepareMutation(
+        _ scope: MCPToolSnapshotMutationScope,
+        usesCoordinatorBarrier: Bool) throws
+    {
+        if usesCoordinatorBarrier {
+            try self.snapshotMutationCoordinator?.prepareMutation(scope)
+        } else {
+            try self.snapshotMutationCoordinator?.prepareConcurrentMutation(scope)
         }
     }
 
@@ -462,11 +644,34 @@ public struct MCPToolContext: @unchecked Sendable {
     }
 
     func releaseSnapshotOwner() async {
-        await self.uiSnapshots.removeOwner()
-        await self.browserCapabilities.end()
         if let ownedBrowser = self.browser as? any BrowserMCPAuthenticatedSessionEnding {
             await ownedBrowser.endAuthenticatedBrowserSession()
         }
+        let capabilitySession = self.browserCapabilities
+        let lifecycleGate = self.browserMutationExecutionGate
+        let snapshotGate = self.snapshotExecutionGate
+        let usesSeparateSnapshotGate = lifecycleGate !== snapshotGate
+        await Task {
+            do {
+                try await lifecycleGate.acquire()
+            } catch {
+                return
+            }
+            if usesSeparateSnapshotGate {
+                do {
+                    try await snapshotGate.acquire()
+                } catch {
+                    await lifecycleGate.release()
+                    return
+                }
+            }
+            await capabilitySession.end()
+            await self.uiSnapshots.removeOwner()
+            if usesSeparateSnapshotGate {
+                await snapshotGate.release()
+            }
+            await lifecycleGate.release()
+        }.value
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {
@@ -488,6 +693,7 @@ public struct MCPToolContext: @unchecked Sendable {
             permissionsStatusProvider: self.permissionsStatusProvider,
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
+            browserMutationExecutionGate: self.browserMutationExecutionGate,
             snapshotOwner: owner,
             executionPolicy: self.executionPolicy,
             executionHost: self.executionHost,
@@ -760,7 +966,9 @@ public struct MCPToolContext: @unchecked Sendable {
     private func completeMutation(
         _ scope: MCPToolSnapshotMutationScope,
         succeeded: Bool,
-        uiSnapshots: MCPToolUISnapshotStore? = nil) async -> Bool
+        uiSnapshots: MCPToolUISnapshotStore? = nil,
+        usesCoordinatorBarrier: Bool = true,
+        recreateSnapshotOwnerIfNeeded: Bool = true) async -> Bool
     {
         guard scope.effect != .freshObservation else { return true }
         let resolvedScope: MCPToolSnapshotMutationScope
@@ -794,10 +1002,18 @@ public struct MCPToolContext: @unchecked Sendable {
             requestedCutoff,
             sharedWatermark ?? requestedCutoff)
         let preservedSnapshotID = effectiveSucceeded ? resolvedScope.preservedSnapshotID : nil
-        await (uiSnapshots ?? self.uiSnapshots).invalidateImplicitLatestSnapshot(
-            through: cutoff,
-            preserving: preservedSnapshotID,
-            preservedAt: preservedSnapshotID == nil ? nil : resolvedScope.completedAt)
+        let resolvedUISnapshots = uiSnapshots ?? self.uiSnapshots
+        if recreateSnapshotOwnerIfNeeded {
+            await resolvedUISnapshots.invalidateImplicitLatestSnapshot(
+                through: cutoff,
+                preserving: preservedSnapshotID,
+                preservedAt: preservedSnapshotID == nil ? nil : resolvedScope.completedAt)
+        } else {
+            await resolvedUISnapshots.invalidateImplicitLatestSnapshotIfOwnerExists(
+                through: cutoff,
+                preserving: preservedSnapshotID,
+                preservedAt: preservedSnapshotID == nil ? nil : resolvedScope.completedAt)
+        }
 
         let coordinatorScope = effectiveSucceeded ? resolvedScope : MCPToolSnapshotMutationScope(
             id: resolvedScope.id,

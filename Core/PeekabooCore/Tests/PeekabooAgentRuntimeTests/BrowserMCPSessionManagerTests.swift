@@ -10,6 +10,7 @@ import Testing
 // swiftlint:disable file_length
 
 @MainActor
+// swiftlint:disable:next type_body_length
 struct BrowserMCPSessionManagerTests {
     @Test
     func `channel connect refuses ambiguous same-channel processes before spawning MCP`() async {
@@ -316,6 +317,463 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `unowned browser service context ends its capability namespace on release`() async throws {
+        let provider = MockBrowserMCPManager()
+        let manager = Self.exactSession(manager: provider)
+        let service = BrowserMCPService(sessionManager: manager)
+        let context = MCPToolContext(
+            services: Self.services(browser: service),
+            executionPolicy: .foregroundAllowed)
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        provider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+        _ = try await service.connect(channel: nil, browserURL: nil)
+        let listed = try await context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        _ = try Self.opaquePageReference(from: listed)
+        let dispatchCount = provider.executedTools.count
+
+        await context.releaseSnapshotOwner()
+        let afterRelease = try await context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+
+        #expect(afterRelease.isError)
+        #expect(provider.executedTools.count == dispatchCount)
+    }
+
+    @Test
+    func `unowned browser release drains outer mutation completion before owner removal`() async throws {
+        let provider = MockBrowserMCPManager()
+        let manager = Self.exactSession(manager: provider)
+        let service = BrowserMCPService(sessionManager: manager)
+        let completionBarrier = SequenceBarrier()
+        let context = MCPToolContext(
+            services: Self.services(browser: service),
+            snapshotMutationCoordinator: BlockingBrowserCompletionCoordinator(barrier: completionBarrier),
+            executionPolicy: .foregroundAllowed)
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let ownerSnapshot = await context.uiSnapshots.createSnapshot(id: "unowned-completion")
+        provider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+
+        let connect = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserTool(context: context),
+                arguments: ToolArguments(raw: ["action": "connect"]))
+        }
+        await completionBarrier.waitUntilBlocked()
+        let release = Task { await context.releaseSnapshotOwner() }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await context.uiSnapshots.getSnapshot(id: ownerSnapshot.id) === ownerSnapshot)
+
+        await completionBarrier.release()
+        _ = try await connect.value
+        await release.value
+        #expect(await context.uiSnapshots.getSnapshot(id: ownerSnapshot.id) == nil)
+    }
+
+    @Test
+    func `production MCP contexts overlap browser mutations on distinct session gates`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        var nextPort = 9421
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            let port = nextPort
+            nextPort += 1
+            return Self.exactSession(
+                manager: providers.removeFirst(),
+                browserURL: "http://127.0.0.1:\(port)",
+                browserID: "browser-\(port)")
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let coordinator = BrowserLaneMutationCoordinator()
+        let base = MCPToolContext(
+            services: Self.services(browser: root),
+            snapshotMutationCoordinator: coordinator,
+            executionPolicy: .foregroundAllowed)
+        let firstContext = base
+            .scopingBrowserSession(named: "mcp:first")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let secondContext = base
+            .scopingBrowserSession(named: "mcp:second")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let firstClient = try #require(firstContext.browser as? BrowserMCPService)
+        let secondClient = try #require(secondContext.browser as? BrowserMCPService)
+        firstProvider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+        secondProvider.executeHandler = { _, _ in Self.providerPageResponse(id: 8) }
+        _ = try await firstClient.connect(channel: nil, browserURL: nil)
+        _ = try await secondClient.connect(channel: nil, browserURL: nil)
+        let firstList = try await firstContext.execute(
+            tool: BrowserTool(context: firstContext),
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let secondList = try await secondContext.execute(
+            tool: BrowserTool(context: secondContext),
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let firstPage = try Self.opaquePageReference(from: firstList)
+        let secondPage = try Self.opaquePageReference(from: secondList)
+        firstProvider.executedTools.removeAll()
+        secondProvider.executedTools.removeAll()
+        let firstBarrier = SequenceBarrier()
+        let secondBarrier = SequenceBarrier()
+        firstProvider.executeHandler = { toolName, _ in
+            if toolName == "navigate_page" {
+                await firstBarrier.block()
+            }
+            return Self.providerPageResponse(id: 7)
+        }
+        secondProvider.executeHandler = { toolName, _ in
+            if toolName == "navigate_page" {
+                await secondBarrier.block()
+            }
+            return Self.providerPageResponse(id: 8)
+        }
+
+        let firstMutation = Task { @MainActor in
+            try await firstContext.execute(
+                tool: BrowserTool(context: firstContext),
+                arguments: ToolArguments(raw: [
+                    "action": "navigate",
+                    "page_id": firstPage,
+                    "url": "https://first.example/",
+                ]))
+        }
+        await firstBarrier.waitUntilBlocked()
+        let secondMutation = Task { @MainActor in
+            try await secondContext.execute(
+                tool: BrowserTool(context: secondContext),
+                arguments: ToolArguments(raw: [
+                    "action": "navigate",
+                    "page_id": secondPage,
+                    "url": "https://second.example/",
+                ]))
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(secondProvider.executedTools == ["navigate_page"])
+        #expect(coordinator.sharedPrepareCount == 0)
+        #expect(coordinator.maximumConcurrentCount == 2)
+
+        await secondBarrier.release()
+        await firstBarrier.release()
+        _ = try await firstMutation.value
+        _ = try await secondMutation.value
+        await firstContext.releaseSnapshotOwner()
+        await secondContext.releaseSnapshotOwner()
+    }
+
+    @Test
+    func `browser mutation read lease excludes desktop mutation after authorization`() async throws {
+        let provider = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in Self.exactSession(manager: provider) }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .unrestricted)
+            .scopingBrowserSession(named: "mcp:desktop-exclusion")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let client = try #require(context.browser as? BrowserMCPService)
+        provider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+        _ = try await client.connect(channel: nil, browserURL: nil)
+        let page = try await Self.opaquePageReference(from: context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let browserBarrier = SequenceBarrier()
+        provider.executeHandler = { toolName, _ in
+            if toolName == "navigate_page" {
+                await browserBarrier.block()
+            }
+            return Self.providerPageResponse(id: 7)
+        }
+
+        let browserMutation = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserTool(context: context),
+                arguments: ToolArguments(raw: [
+                    "action": "navigate",
+                    "page_id": page,
+                    "url": "https://reader.example/",
+                ]))
+        }
+        await browserBarrier.waitUntilBlocked()
+        let desktopBarrier = SequenceBarrier()
+        let desktopEntries = ResolutionCounter()
+        let desktopMutation = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserLaneDesktopMutationTool(
+                    entries: desktopEntries,
+                    barrier: desktopBarrier),
+                arguments: ToolArguments(raw: [:]))
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await desktopEntries.value == 0)
+
+        await browserBarrier.release()
+        _ = try await browserMutation.value
+        await desktopBarrier.waitUntilBlocked()
+        #expect(await desktopEntries.value == 1)
+        await desktopBarrier.release()
+        _ = try await desktopMutation.value
+        await context.releaseSnapshotOwner()
+    }
+
+    @Test
+    func `production MCP context keeps same session browser mutations FIFO`() async throws {
+        let provider = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: provider)
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let base = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .foregroundAllowed)
+        let context = base
+            .scopingBrowserSession(named: "mcp:one")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let client = try #require(context.browser as? BrowserMCPService)
+        provider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+        _ = try await client.connect(channel: nil, browserURL: nil)
+        let listed = try await context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let page = try Self.opaquePageReference(from: listed)
+        provider.executedTools.removeAll()
+        let firstBarrier = SequenceBarrier()
+        var invocation = 0
+        provider.executeHandler = { toolName, _ in
+            if toolName == "navigate_page" {
+                invocation += 1
+                if invocation == 1 {
+                    await firstBarrier.block()
+                }
+            }
+            return Self.providerPageResponse(id: 7)
+        }
+
+        let first = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserTool(context: context),
+                arguments: ToolArguments(raw: [
+                    "action": "navigate",
+                    "page_id": page,
+                    "url": "https://first.example/",
+                ]))
+        }
+        await firstBarrier.waitUntilBlocked()
+        let second = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserTool(context: context),
+                arguments: ToolArguments(raw: [
+                    "action": "navigate",
+                    "page_id": page,
+                    "url": "https://second.example/",
+                ]))
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(provider.executedTools == ["navigate_page"])
+
+        await firstBarrier.release()
+        _ = try await first.value
+        _ = try await second.value
+        #expect(provider.executedTools == ["navigate_page", "navigate_page"])
+        await context.releaseSnapshotOwner()
+    }
+
+    @Test
+    func `failed browser invalidation debt blocks another session until shared recovery succeeds`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        var nextPort = 9521
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            let port = nextPort
+            nextPort += 1
+            return Self.exactSession(
+                manager: providers.removeFirst(),
+                browserURL: "http://127.0.0.1:\(port)",
+                browserID: "browser-\(port)")
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let coordinator = BrowserInvalidationDebtCoordinator()
+        let base = MCPToolContext(
+            services: Self.services(browser: root),
+            snapshotMutationCoordinator: coordinator,
+            executionPolicy: .foregroundAllowed)
+        let firstContext = base
+            .scopingBrowserSession(named: "mcp:debt-first")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let secondContext = base
+            .scopingBrowserSession(named: "mcp:debt-second")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let firstClient = try #require(firstContext.browser as? BrowserMCPService)
+        let secondClient = try #require(secondContext.browser as? BrowserMCPService)
+        firstProvider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+        secondProvider.executeHandler = { _, _ in Self.providerPageResponse(id: 8) }
+        _ = try await firstClient.connect(channel: nil, browserURL: nil)
+        _ = try await secondClient.connect(channel: nil, browserURL: nil)
+        let firstPage = try await Self.opaquePageReference(from: firstContext.execute(
+            tool: BrowserTool(context: firstContext),
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let secondPage = try await Self.opaquePageReference(from: secondContext.execute(
+            tool: BrowserTool(context: secondContext),
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        firstProvider.executedTools.removeAll()
+        secondProvider.executedTools.removeAll()
+        coordinator.completionAllowed = false
+
+        let firstResult = try await firstContext.execute(
+            tool: BrowserTool(context: firstContext),
+            arguments: ToolArguments(raw: [
+                "action": "navigate",
+                "page_id": firstPage,
+                "url": "https://first.example/",
+            ]))
+        #expect(!firstResult.isError)
+        #expect(firstProvider.executedTools == ["navigate_page"])
+
+        let blocked = try await secondContext.execute(
+            tool: BrowserTool(context: secondContext),
+            arguments: ToolArguments(raw: [
+                "action": "navigate",
+                "page_id": secondPage,
+                "url": "https://second.example/",
+            ]))
+        #expect(blocked.isError)
+        #expect(secondProvider.executedTools.isEmpty)
+        #expect(coordinator.completionAttempts == 2)
+
+        coordinator.completionAllowed = true
+        let recovered = try await secondContext.execute(
+            tool: BrowserTool(context: secondContext),
+            arguments: ToolArguments(raw: [
+                "action": "navigate",
+                "page_id": secondPage,
+                "url": "https://second.example/",
+            ]))
+        #expect(!recovered.isError)
+        #expect(secondProvider.executedTools == ["navigate_page"])
+        #expect(coordinator.completionAttempts == 4)
+
+        await firstContext.releaseSnapshotOwner()
+        await secondContext.releaseSnapshotOwner()
+    }
+
+    @Test
+    func `duplicate session teardown callers join mutation completion before removing owner`() async throws {
+        let provider = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: provider)
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let completionBarrier = SequenceBarrier()
+        let coordinator = BlockingBrowserCompletionCoordinator(barrier: completionBarrier)
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            snapshotMutationCoordinator: coordinator,
+            executionPolicy: .foregroundAllowed)
+            .scopingBrowserSession(named: "mcp:teardown")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let client = try #require(context.browser as? BrowserMCPService)
+        provider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+        _ = try await client.connect(channel: nil, browserURL: nil)
+        let page = try await Self.opaquePageReference(from: context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let ownerSnapshot = await context.uiSnapshots.createSnapshot(id: "teardown-owner")
+        provider.executedTools.removeAll()
+
+        let mutation = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserTool(context: context),
+                arguments: ToolArguments(raw: [
+                    "action": "navigate",
+                    "page_id": page,
+                    "url": "https://teardown.example/",
+                ]))
+        }
+        await completionBarrier.waitUntilBlocked()
+        let firstRelease = Task { @MainActor in await context.releaseSnapshotOwner() }
+        let secondRelease = Task { @MainActor in await context.releaseSnapshotOwner() }
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(provider.removeCount == 0)
+        #expect(await context.uiSnapshots.getSnapshot(id: ownerSnapshot.id) === ownerSnapshot)
+
+        await completionBarrier.release()
+        _ = try await mutation.value
+        await firstRelease.value
+        await secondRelease.value
+        #expect(provider.removeCount == 1)
+        #expect(await context.uiSnapshots.getSnapshot(id: ownerSnapshot.id) == nil)
+    }
+
+    @Test
+    func `session teardown drains desktop mutation before removing owner`() async throws {
+        let root = BrowserMCPService(authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        })
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .unrestricted)
+            .scopingBrowserSession(named: "mcp:desktop-teardown")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let ownerSnapshot = await context.uiSnapshots.createSnapshot(id: "desktop-teardown-owner")
+        let mutationBarrier = SequenceBarrier()
+        let entries = ResolutionCounter()
+        let mutation = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserLaneDesktopMutationTool(entries: entries, barrier: mutationBarrier),
+                arguments: ToolArguments(raw: [:]))
+        }
+        await mutationBarrier.waitUntilBlocked()
+        let releaseFinished = CompletionFlag()
+        let release = Task { @MainActor in
+            await context.releaseSnapshotOwner()
+            await releaseFinished.markFinished()
+        }
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(await !releaseFinished.finished)
+        #expect(await context.uiSnapshots.getSnapshot(id: ownerSnapshot.id) === ownerSnapshot)
+
+        await mutationBarrier.release()
+        _ = try await mutation.value
+        await release.value
+        #expect(await !context.uiSnapshots.hasOwnerState())
+    }
+
+    @Test
+    func `foreground browser completion retains session lifecycle gate through teardown`() async throws {
+        let provider = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: provider)
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let completionBarrier = SequenceBarrier()
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            snapshotMutationCoordinator: BlockingBrowserCompletionCoordinator(barrier: completionBarrier),
+            executionPolicy: .foregroundAllowed)
+            .scopingBrowserSession(named: "mcp:foreground-teardown")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        provider.executeHandler = { _, _ in Self.providerPageResponse(id: 7) }
+
+        let connect = Task { @MainActor in
+            try await context.execute(
+                tool: BrowserTool(context: context),
+                arguments: ToolArguments(raw: ["action": "connect"]))
+        }
+        await completionBarrier.waitUntilBlocked()
+        let release = Task { @MainActor in await context.releaseSnapshotOwner() }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(provider.removeCount == 0)
+
+        await completionBarrier.release()
+        _ = try await connect.value
+        await release.value
+        #expect(provider.removeCount == 1)
+    }
+
+    @Test
     func `authenticated sessions cannot concurrently own the same exact browser target`() async throws {
         let firstProvider = MockBrowserMCPManager()
         let secondProvider = MockBrowserMCPManager()
@@ -332,9 +790,221 @@ struct BrowserMCPSessionManagerTests {
             _ = try await second.connect(channel: nil, browserURL: nil)
         }
         #expect(firstProvider.removeCount == 0)
-        #expect(secondProvider.removeCount == 1)
+        #expect(secondProvider.addedConfigs.isEmpty)
+        #expect(secondProvider.executedTools.isEmpty)
+        #expect(secondProvider.removeCount == 0)
         await root.endAuthenticatedSession(named: "agent:first")
         await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `same target reservation precedes concurrent provider connection and probe`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        let firstProbe = SequenceBarrier()
+        firstProvider.executeHandler = { toolName, _ in
+            if toolName == "list_pages" {
+                await firstProbe.block()
+            }
+            return .text("ok")
+        }
+
+        let firstConnection = Task { @MainActor in
+            try await first.connect(channel: nil, browserURL: nil)
+        }
+        await firstProbe.waitUntilBlocked()
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: nil)
+        }
+        #expect(secondProvider.addedConfigs.isEmpty)
+        #expect(secondProvider.executedTools.isEmpty)
+        #expect(secondProvider.removeCount == 0)
+
+        await firstProbe.release()
+        _ = try await firstConnection.value
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `explicit URL reservation precedes endpoint discovery and provider setup`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let firstResolution = ResolutionCounter()
+        let secondResolution = ResolutionCounter()
+        let discoveryBarrier = SequenceBarrier()
+        let endpoint = BrowserMCPDevToolsEndpoint(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            browserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        let firstResolver = BrowserMCPDevToolsEndpointResolver { _ in
+            await firstResolution.record()
+            await discoveryBarrier.block()
+            return endpoint
+        }
+        let secondResolver = BrowserMCPDevToolsEndpointResolver { _ in
+            await secondResolution.record()
+            return BrowserMCPDevToolsEndpoint(
+                browserURL: endpoint.browserURL,
+                webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-b",
+                browserID: "browser-b",
+                browserVersion: endpoint.browserVersion,
+                protocolVersion: endpoint.protocolVersion)
+        }
+        var managers = [
+            Self.exactSession(manager: firstProvider, endpointResolver: firstResolver),
+            Self.exactSession(manager: secondProvider, endpointResolver: secondResolver),
+        ]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in managers.removeFirst() }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:url-first"))
+        let second = try #require(root.authenticatedSession(named: "agent:url-second"))
+
+        let firstConnection = Task { @MainActor in
+            try await first.connect(channel: nil, browserURL: nil)
+        }
+        await discoveryBarrier.waitUntilBlocked()
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: .stable, browserURL: nil)
+        }
+        #expect(await firstResolution.value == 1)
+        #expect(await secondResolution.value == 0)
+        #expect(secondProvider.addedConfigs.isEmpty)
+
+        await discoveryBarrier.release()
+        _ = try await firstConnection.value
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: .stable, browserURL: nil)
+        }
+        #expect(await secondResolution.value == 0)
+        await root.endAuthenticatedSession(named: "agent:url-first")
+        await root.endAuthenticatedSession(named: "agent:url-second")
+    }
+
+    @Test
+    func `native process reservation precedes permission bearing endpoint resolution`() async throws {
+        let browser = Self.browser(pid: 211, generation: 10211)
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let firstResolution = ResolutionCounter()
+        let secondResolution = ResolutionCounter()
+        let permissionBarrier = SequenceBarrier()
+        let endpoint = BrowserMCPDevToolsEndpoint(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            browserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        let firstResolver = BrowserMCPChannelEndpointResolver(
+            resolveInitial: { _, attempt in
+                await firstResolution.record()
+                await permissionBarrier.block()
+                attempt.state.markPermissionDispatchStarted()
+                return endpoint
+            },
+            revalidate: { _, _ in })
+        let secondResolver = BrowserMCPChannelEndpointResolver(
+            resolveInitial: { _, attempt in
+                await secondResolution.record()
+                attempt.state.markPermissionDispatchStarted()
+                return endpoint
+            },
+            revalidate: { _, _ in })
+        var providers = [firstProvider, secondProvider]
+        var resolvers = [firstResolver, secondResolver]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.session(
+                manager: providers.removeFirst(),
+                browsers: [browser],
+                channelEndpointResolver: resolvers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+
+        let firstConnection = Task { @MainActor in
+            try await first.connect(channel: .stable, browserURL: nil)
+        }
+        await permissionBarrier.waitUntilBlocked()
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: .stable, browserURL: nil)
+        }
+        #expect(await firstResolution.value == 1)
+        #expect(await secondResolution.value == 0)
+        #expect(secondProvider.addedConfigs.isEmpty)
+
+        await permissionBarrier.release()
+        _ = try await firstConnection.value
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `native identity collision refuses before probe and releases process reservation`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let thirdProvider = MockBrowserMCPManager()
+        let reservationAttempts = ResolutionCounter()
+        let permissionProbes = ResolutionCounter()
+        let endpoint = BrowserMCPDevToolsEndpoint(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            browserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        let secondResolver = BrowserMCPChannelEndpointResolver(
+            resolveInitialWithReservation: { _, attempt, reserveAuthority in
+                await reservationAttempts.record()
+                try await reserveAuthority?(BrowserMCPChannelEndpointReservation(
+                    browserURL: endpoint.browserURL,
+                    webSocketDebuggerURL: endpoint.webSocketDebuggerURL,
+                    browserID: endpoint.browserID))
+                await permissionProbes.record()
+                attempt.state.markPermissionDispatchStarted()
+                return endpoint
+            },
+            revalidate: { _, _ in })
+        var managers = [
+            Self.exactSession(manager: firstProvider, browserID: "browser-a"),
+            Self.session(
+                manager: secondProvider,
+                browsers: [Self.browser(pid: 222, generation: 10222)],
+                channelEndpointResolver: secondResolver),
+            Self.exactSession(manager: thirdProvider, browserID: "browser-c"),
+        ]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in managers.removeFirst() }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:devtools-first"))
+        let second = try #require(root.authenticatedSession(named: "agent:devtools-second"))
+        _ = try await first.connect(channel: nil, browserURL: nil)
+
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: .stable, browserURL: nil)
+        }
+        #expect(await reservationAttempts.value == 1)
+        #expect(await permissionProbes.value == 0)
+        #expect(secondProvider.addedConfigs.isEmpty)
+
+        let thirdID = try #require(pool.sessionID(named: "agent:devtools-third"))
+        _ = pool.manager(for: thirdID)
+        try pool.bind(thirdID, to: BrowserMCPConnectionReceipt(
+            channel: .stable,
+            processIdentifier: 222,
+            processStartIdentity: 10222,
+            bundleIdentifier: ChromeChannelIdentity.stable.bundleIdentifier))
+
+        await root.endAuthenticatedSession(named: "agent:devtools-first")
+        await root.endAuthenticatedSession(named: "agent:devtools-second")
+        await pool.end(thirdID)
     }
 
     @Test
@@ -391,6 +1061,46 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `root and scoped sessions cannot claim the same exact target in either order`() throws {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let sessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        _ = pool.manager(for: sessionID)
+        let receipt = BrowserMCPConnectionReceipt(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            devToolsBrowserID: "browser-a")
+
+        try pool.bindRoot(to: receipt)
+        #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            try pool.bind(sessionID, to: receipt)
+        }
+        pool.unbindRoot()
+        try pool.bind(sessionID, to: receipt)
+        #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            try pool.bindRoot(to: receipt)
+        }
+        pool.unbind(sessionID)
+        try pool.bindRoot(to: receipt)
+    }
+
+    @Test
+    func `isolated child receipts do not overlock independently owned browser instances`() throws {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let first = BrowserMCPAuthenticatedSessionPool.SessionID()
+        let second = BrowserMCPAuthenticatedSessionPool.SessionID()
+        _ = pool.manager(for: first)
+        _ = pool.manager(for: second)
+        let isolatedReceipt = BrowserMCPConnectionReceipt(channel: .stable)
+
+        try pool.bind(first, to: isolatedReceipt)
+        try pool.bind(second, to: isolatedReceipt)
+    }
+
+    @Test
     func `authenticated target ownership remains reserved until provider teardown completes`() async throws {
         let firstProvider = MockBrowserMCPManager()
         firstProvider.hasConfiguredServer = true
@@ -405,8 +1115,11 @@ struct BrowserMCPSessionManagerTests {
         }
         let firstSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
         let secondSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
-        _ = pool.manager(for: firstSessionID)
+        let firstManager = try #require(pool.manager(for: firstSessionID))
         _ = pool.manager(for: secondSessionID)
+        let firstService = BrowserMCPService(
+            sessionManager: firstManager,
+            ownedSession: (pool: pool, id: firstSessionID))
         let receipt = BrowserMCPConnectionReceipt(
             browserURL: "http://127.0.0.1:9222/",
             webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
@@ -424,6 +1137,8 @@ struct BrowserMCPSessionManagerTests {
         }
         try await Task.sleep(for: .milliseconds(20))
         #expect(await !(duplicateCompletion.finished))
+        _ = await firstService.status(channel: nil)
+        await firstService.disconnect()
         #expect(throws: BrowserMCPConnectionError.targetLocked) {
             try pool.bind(secondSessionID, to: receipt)
         }
@@ -1800,7 +2515,35 @@ extension BrowserMCPSessionManagerTests {
             stagedPath = path
             #expect(URL(fileURLWithPath: path).lastPathComponent == "browser receipt.txt")
             #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data("receipt-value".utf8))
-            return ToolResponse.text("uploaded")
+            let message = "File uploaded from \(path)."
+            let malformedResourceData = try JSONSerialization.data(withJSONObject: [
+                "uri": path,
+                "blob": "%%%",
+                "_meta": ["provider_path": path],
+            ])
+            let malformedResource = try JSONDecoder().decode(Resource.Content.self, from: malformedResourceData)
+            return ToolResponse(
+                content: [
+                    .text(
+                        text: message,
+                        annotations: nil,
+                        _meta: Metadata(additionalFields: ["provider_message": .string(message)])),
+                    .resource(
+                        resource: .text(
+                            message,
+                            uri: path,
+                            _meta: Metadata(additionalFields: ["provider_path": .string(path)])),
+                        annotations: nil,
+                        _meta: Metadata(additionalFields: ["provider_path": .string(path)])),
+                    .resourceLink(
+                        uri: path,
+                        name: path,
+                        title: path,
+                        description: path),
+                    .resource(resource: malformedResource, annotations: nil, _meta: nil),
+                ],
+                meta: .object(["provider_message": .string(message)]),
+                structuredContent: .object(["message": .string(message)]))
         }
 
         _ = try await session.connect(channel: .stable)
@@ -1819,6 +2562,39 @@ extension BrowserMCPSessionManagerTests {
         #expect(!response.isError)
         #expect(manager.executedTools == ["upload_file"])
         let actualStagedPath = try #require(stagedPath)
+        guard case let .text(responseText, _, contentMetadata)? = response.content.first else {
+            Issue.record("Expected projected upload response text")
+            return
+        }
+        #expect(responseText.contains(source.path))
+        #expect(!responseText.contains(actualStagedPath))
+        #expect(contentMetadata?.fields["provider_message"]?.stringValue?.contains(source.path) == true)
+        #expect(contentMetadata?.fields["provider_message"]?.stringValue?.contains(actualStagedPath) == false)
+        guard case let .resource(resource, _, resourceMetadata) = response.content[1] else {
+            Issue.record("Expected projected upload resource")
+            return
+        }
+        #expect(resource.uri == source.path)
+        #expect(resource.text?.contains(source.path) == true)
+        #expect(resource._meta?.fields["provider_path"] == .string(source.path))
+        #expect(resourceMetadata?.fields["provider_path"] == .string(source.path))
+        guard case let .resourceLink(uri, name, title, description, _, _) = response.content[2] else {
+            Issue.record("Expected projected upload resource link")
+            return
+        }
+        #expect(uri == source.path)
+        #expect(name == source.path)
+        #expect(title == source.path)
+        #expect(description == source.path)
+        guard case let .resource(projectedMalformed, _, _) = response.content[3] else {
+            Issue.record("Expected projected malformed upload resource")
+            return
+        }
+        #expect(projectedMalformed.uri == source.path)
+        #expect(projectedMalformed.blob?.isEmpty == true)
+        #expect(projectedMalformed._meta?.fields["provider_path"] == .string(source.path))
+        #expect(response.structuredContent?.objectValue?["message"]?.stringValue?.contains(source.path) == true)
+        #expect(response.meta?.objectValue?["provider_message"]?.stringValue?.contains(actualStagedPath) == false)
         #expect(actualStagedPath.hasPrefix(advertisedRoot + "/upload."))
         #expect(FileManager.default.fileExists(atPath: actualStagedPath))
         #expect(FileManager.default.fileExists(atPath: advertisedRoot))
@@ -1885,6 +2661,38 @@ extension BrowserMCPSessionManagerTests {
         #expect(try FileManager.default.fileExists(atPath: #require(stagedPath)))
         #expect(FileManager.default.fileExists(atPath: advertisedRoot))
         #expect(manager.connected)
+    }
+
+    @Test
+    func `thrown upload provider error projects private staged path back to caller path`() async throws {
+        let fixture = try UploadStagingFixture()
+        defer { fixture.cleanup() }
+        let source = try fixture.write(name: "thrown.txt", contents: Data("failure".utf8))
+        let manager = MockBrowserMCPManager()
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 126, generation: 9126)],
+            uploadStager: fixture.stager())
+        var stagedPath: String?
+        manager.executeHandler = { toolName, arguments in
+            guard toolName == "upload_file" else { return ToolResponse.text("ok") }
+            let path = try #require(arguments["filePath"] as? String)
+            stagedPath = path
+            throw UploadProviderFixtureError(message: "Provider rejected staged path \(path)")
+        }
+        _ = try await session.connect(channel: .stable)
+
+        do {
+            _ = try await session.execute(
+                toolName: "upload_file",
+                arguments: ["uid": "126_1", "filePath": source.path],
+                channel: .stable)
+            Issue.record("Expected an indeterminate upload provider failure")
+        } catch let failure as DesktopActionFailure {
+            let cause = try #require(failure.causeDescription)
+            #expect(cause.contains(source.path))
+            #expect(try !cause.contains(#require(stagedPath)))
+        }
     }
 
     @Test
@@ -1962,7 +2770,8 @@ extension BrowserMCPSessionManagerTests {
     private static func session(
         manager: MockBrowserMCPManager,
         browsers: [DetectedBrowser],
-        uploadStager: BrowserMCPUploadStager = .live) -> BrowserMCPSessionManager
+        uploadStager: BrowserMCPUploadStager = .live,
+        channelEndpointResolver: BrowserMCPChannelEndpointResolver? = nil) -> BrowserMCPSessionManager
     {
         let generations = Dictionary(uniqueKeysWithValues: browsers.compactMap { browser in
             browser.processStartIdentity.map { (browser.processIdentifier, $0) }
@@ -1980,7 +2789,7 @@ extension BrowserMCPSessionManagerTests {
             processBundleIdentifier: { bundles[$0] },
             processCodeSignatureValidator: { _, _, channel in .browserTestIdentity(channel: channel) },
             endpointResolver: self.endpointResolver(),
-            channelEndpointResolver: self.channelEndpointResolver(),
+            channelEndpointResolver: channelEndpointResolver ?? self.channelEndpointResolver(),
             uploadStager: uploadStager,
             environment: [:])
     }
@@ -1989,14 +2798,15 @@ extension BrowserMCPSessionManagerTests {
         manager: MockBrowserMCPManager,
         uploadStager: BrowserMCPUploadStager = .live,
         browserURL: String = "http://127.0.0.1:9222",
-        browserID: String? = "browser-a") -> BrowserMCPSessionManager
+        browserID: String? = "browser-a",
+        endpointResolver: BrowserMCPDevToolsEndpointResolver? = nil) -> BrowserMCPSessionManager
     {
         BrowserMCPSessionManager(
             serverName: "test-browser",
             manager: manager,
             detectedBrowsers: { _ in [] },
             processStartIdentity: { _ in nil },
-            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+            endpointResolver: endpointResolver ?? BrowserMCPDevToolsEndpointResolver { url in
                 guard let port = URL(string: url)?.port else {
                     throw BrowserMCPConnectionError.invalidEndpoint("missing port")
                 }
@@ -2032,6 +2842,27 @@ extension BrowserMCPSessionManagerTests {
             agent: nil,
             configuration: base.configuration,
             screens: base.screens)
+    }
+
+    private static func providerPageResponse(id: Int) -> ToolResponse {
+        ToolResponse(
+            content: [.text(
+                text: "## Pages\n\(id): Example (https://example.test/) [selected]",
+                annotations: nil,
+                _meta: nil)],
+            structuredContent: .object([
+                "pages": .array([.object([
+                    "id": .int(id),
+                    "url": .string("https://example.test/"),
+                    "title": .string("Example"),
+                    "selected": .bool(true),
+                ])]),
+            ]))
+    }
+
+    private static func opaquePageReference(from response: ToolResponse) throws -> String {
+        let pages = try #require(response.structuredContent?.objectValue?["pages"]?.arrayValue)
+        return try #require(pages.first?.objectValue?["id"]?.stringValue)
     }
 
     private static func browser(pid: Int32, generation: UInt64) -> DetectedBrowser {
@@ -2137,6 +2968,14 @@ private enum MockBrowserError: Error {
     case probe
 }
 
+private struct UploadProviderFixtureError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? {
+        self.message
+    }
+}
+
 private final class GenerationBox: @unchecked Sendable {
     private let lock = NSLock()
     private var value: UInt64?
@@ -2240,5 +3079,83 @@ private actor CompletionFlag {
 
     func markFinished() {
         self.finished = true
+    }
+}
+
+private actor ResolutionCounter {
+    private(set) var value = 0
+
+    func record() {
+        self.value += 1
+    }
+}
+
+@MainActor
+private final class BrowserLaneMutationCoordinator: MCPToolSnapshotMutationCoordinating, @unchecked Sendable {
+    private(set) var sharedPrepareCount = 0
+    private(set) var maximumConcurrentCount = 0
+    private var activeIDs = Set<UUID>()
+
+    func prepareMutation(_: MCPToolSnapshotMutationScope) throws {
+        self.sharedPrepareCount += 1
+    }
+
+    func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) throws {
+        self.activeIDs.insert(scope.id)
+        self.maximumConcurrentCount = max(self.maximumConcurrentCount, self.activeIDs.count)
+    }
+
+    func completeMutation(_ scope: MCPToolSnapshotMutationScope, succeeded _: Bool) async -> Bool {
+        self.activeIDs.remove(scope.id)
+        return true
+    }
+
+    func cancelMutation(_ scope: MCPToolSnapshotMutationScope) async -> Bool {
+        self.activeIDs.remove(scope.id)
+        return true
+    }
+}
+
+@MainActor
+private final class BrowserInvalidationDebtCoordinator: MCPToolSnapshotMutationCoordinating, @unchecked Sendable {
+    var completionAllowed = true
+    private(set) var completionAttempts = 0
+
+    func prepareConcurrentMutation(_: MCPToolSnapshotMutationScope) throws {}
+
+    func completeMutation(_: MCPToolSnapshotMutationScope, succeeded _: Bool) async -> Bool {
+        self.completionAttempts += 1
+        return self.completionAllowed
+    }
+}
+
+private struct BrowserLaneDesktopMutationTool: MCPTool {
+    let name = "shell"
+    let description = "Desktop mutation exclusion fixture"
+    let inputSchema = SchemaBuilder.object(properties: [:])
+    let entries: ResolutionCounter
+    let barrier: SequenceBarrier
+
+    @MainActor
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        await self.entries.record()
+        await self.barrier.block()
+        return .text("ok")
+    }
+}
+
+@MainActor
+private final class BlockingBrowserCompletionCoordinator: MCPToolSnapshotMutationCoordinating, @unchecked Sendable {
+    let barrier: SequenceBarrier
+
+    init(barrier: SequenceBarrier) {
+        self.barrier = barrier
+    }
+
+    func prepareConcurrentMutation(_: MCPToolSnapshotMutationScope) throws {}
+
+    func completeMutation(_: MCPToolSnapshotMutationScope, succeeded _: Bool) async -> Bool {
+        await self.barrier.block()
+        return true
     }
 }
