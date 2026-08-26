@@ -36,7 +36,7 @@ struct AXOnlySeeRuntimeRoutingTests {
                 permissionTags: [
                     PeekabooBridgeOperation.inspectAccessibilityTree.rawValue: [.accessibility],
                 ]
-            )
+            ).withProducerBoundSnapshotFixture()
         }
 
         #expect(!options.requiresDesktopObservation)

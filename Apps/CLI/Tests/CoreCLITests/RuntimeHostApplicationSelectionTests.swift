@@ -23,7 +23,7 @@ struct RuntimeHostApplicationSelectionTests {
                 PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
                 PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
             ]
-        )
+        ).withProducerBoundSnapshotFixture()
         let captureOnly = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,

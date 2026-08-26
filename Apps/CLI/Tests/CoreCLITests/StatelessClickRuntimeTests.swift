@@ -2,6 +2,7 @@ import Commander
 import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooBridgeTestSupport
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -105,7 +106,7 @@ struct StatelessClickRuntimeTests {
         let runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["modifiers": ["cmd"], "snapshot": ["snapshot"]],
+                options: ["modifiers": ["cmd"], "snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: ["foreground"]
             ),
             commandType: ClickCommand.self
@@ -159,7 +160,7 @@ struct StatelessClickRuntimeTests {
         let runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: ["hello"],
-                options: ["at": ["10,20"], "snapshot": ["snapshot"]],
+                options: ["at": ["10,20"], "snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: []
             ),
             commandType: TypeCommand.self

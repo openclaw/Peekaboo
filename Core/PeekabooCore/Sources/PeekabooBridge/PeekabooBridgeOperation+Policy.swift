@@ -129,6 +129,7 @@ extension PeekabooBridgeOperation {
         .createSnapshot,
         .storeDetectionResult,
         .getDetectionResult,
+        .ownsSnapshot,
         .storeScreenshot,
         .storeObservationSnapshot,
         .storeAnnotatedScreenshot,

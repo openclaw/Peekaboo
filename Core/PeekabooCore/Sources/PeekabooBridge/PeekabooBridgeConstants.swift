@@ -71,6 +71,15 @@ public enum PeekabooBridgeConstants {
     public static let nativeBrowserConnectionBindingVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 34)
 
+    /// First protocol that can negotiate producer-bound snapshot references without exposing a
+    /// new operation to already-shipped 1.34 clients that did not offer the raw capability.
+    public static let producerBoundSnapshotReferencesVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 34)
+
+    /// First protocol that can explicitly negotiate and enforce the AXFocused value-delivery policy for clicks.
+    public static let targetedClickAccessibilityValueDeliveryVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 34)
+
     /// First protocol with host-atomic exact-window pixel-focus typing and modifier-click payloads.
     public static let composedInputParityVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 33)
 

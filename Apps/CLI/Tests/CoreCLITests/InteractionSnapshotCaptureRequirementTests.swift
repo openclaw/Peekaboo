@@ -1,4 +1,5 @@
 import Commander
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -8,55 +9,61 @@ struct InteractionSnapshotCaptureRequirementTests {
         let concreteCases: [(any ParsableCommand.Type, ParsedValues)] = [
             (ClickCommand.self, ParsedValues(
                 positional: [],
-                options: ["on": ["B1"], "snapshot": ["receipt-1"]],
+                options: ["on": ["B1"], "snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: ["foreground"]
             )),
             (ScrollCommand.self, ParsedValues(
                 positional: [],
-                options: ["on": ["S1"], "snapshot": ["receipt-1"]],
+                options: ["on": ["S1"], "snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: []
             )),
             (MoveCommand.self, ParsedValues(
                 positional: [],
-                options: ["on": ["B1"], "snapshot": ["receipt-1"]],
+                options: ["on": ["B1"], "snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: ["foreground"]
             )),
             (DragCommand.self, ParsedValues(
                 positional: [],
-                options: ["from": ["B1"], "to": ["B2"], "snapshot": ["receipt-1"]],
+                options: ["from": ["B1"], "to": ["B2"], "snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: ["foreground"]
             )),
             (ActionCommand.self, ParsedValues(
                 positional: ["AXPress"],
-                options: ["on": ["B1"], "snapshot": ["receipt-1"], "app": ["TextEdit"]],
+                options: ["on": ["B1"], "snapshot": [SnapshotReferenceFixtures.first.rawValue], "app": ["TextEdit"]],
                 flags: []
             )),
             (SetValueCommand.self, ParsedValues(
                 positional: ["value"],
-                options: ["on": ["B1"], "snapshot": ["receipt-1"], "pid": ["123"]],
+                options: ["on": ["B1"], "snapshot": [SnapshotReferenceFixtures.first.rawValue], "pid": ["123"]],
                 flags: []
             )),
             (TypeCommand.self, ParsedValues(
                 positional: ["text"],
-                options: ["snapshot": ["receipt-1"]],
+                options: ["snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: []
             )),
             (PressCommand.self, ParsedValues(
                 positional: ["return"],
-                options: ["snapshot": ["receipt-1"]],
+                options: ["snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: []
             )),
             (PasteCommand.self, ParsedValues(
                 positional: ["text"],
-                options: ["snapshot": ["receipt-1"]],
+                options: ["snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: []
             )),
         ]
 
         for (commandType, values) in concreteCases {
-            let options = try CommanderCLIBinder.makeRuntimeOptions(from: values, commandType: commandType)
+            let options: CommandRuntimeOptions
+            do {
+                options = try CommanderCLIBinder.makeRuntimeOptions(from: values, commandType: commandType)
+            } catch {
+                Issue.record("\(commandType) rejected canonical snapshot: \(error)")
+                continue
+            }
             #expect(!options.requiresSilentCapture, "Concrete snapshot unexpectedly captured for \(commandType)")
-            #expect(options.explicitSnapshotID == "receipt-1")
+            #expect(options.explicitSnapshotID == SnapshotReferenceFixtures.first.rawValue)
         }
 
         let refreshableCases: [(any ParsableCommand.Type, ParsedValues)] = [
@@ -92,7 +99,7 @@ struct InteractionSnapshotCaptureRequirementTests {
             )),
         ]
 
-        for snapshot in [nil, "", " ", "latest", "most-recent", "most_recent"] {
+        for snapshot in [nil, "latest", "most-recent", "most_recent"] {
             let snapshotOptions = snapshot.map { ["snapshot": [$0]] } ?? [:]
             for (commandType, values) in refreshableCases {
                 let options = try CommanderCLIBinder.makeRuntimeOptions(
@@ -117,7 +124,7 @@ struct InteractionSnapshotCaptureRequirementTests {
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["snapshot": ["receipt-1"]],
+                options: ["snapshot": [SnapshotReferenceFixtures.first.rawValue]],
                 flags: []
             ),
             commandType: CleanCommand.self
@@ -133,6 +140,33 @@ struct InteractionSnapshotCaptureRequirementTests {
         #expect(InteractionSnapshotReference.isConcrete(" receipt-1 "))
         #expect(!InteractionSnapshotReference.isConcrete("latest"))
         #expect(!InteractionSnapshotReference.isConcrete(nil))
+    }
+
+    @Test
+    func `Mutating commands reject malformed concrete snapshot references before runtime`() {
+        for snapshotID in ["", " ", "1787675983803-1514", "PS1_00000000000000000000000000000000"] {
+            #expect(throws: ValidationError.self) {
+                _ = try CommanderCLIBinder.makeRuntimeOptions(
+                    from: ParsedValues(
+                        positional: [],
+                        options: ["snapshot": [snapshotID], "on": ["B1"]],
+                        flags: []
+                    ),
+                    commandType: ClickCommand.self
+                )
+            }
+        }
+
+        let canonical = SnapshotReferenceFixtures.first.rawValue
+        let options = try? CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["snapshot": [canonical], "on": ["B1"]],
+                flags: []
+            ),
+            commandType: ClickCommand.self
+        )
+        #expect(options?.explicitSnapshotID == canonical)
     }
 
     @Test
@@ -215,7 +249,9 @@ struct InteractionSnapshotCaptureRequirementTests {
 
                 let concreteValues = ParsedValues(
                     positional: positional,
-                    options: values.options.merging(["snapshot": ["receipt-1"]]) { _, latest in latest },
+                    options: values.options.merging(
+                        ["snapshot": [SnapshotReferenceFixtures.first.rawValue]]
+                    ) { _, latest in latest },
                     flags: []
                 )
                 let concreteOptions = try CommanderCLIBinder.makeRuntimeOptions(

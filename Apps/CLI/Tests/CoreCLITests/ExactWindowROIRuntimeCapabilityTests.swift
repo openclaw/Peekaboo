@@ -55,7 +55,7 @@ struct ExactWindowROIRuntimeCapabilityTests {
     }
 
     @Test
-    func `See ROI requires protocol 1_21 while ordinary see remains compatible`() throws {
+    func `See ROI and ordinary observation require a producer capable current host`() throws {
         let roi = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -74,7 +74,12 @@ struct ExactWindowROIRuntimeCapabilityTests {
         )
         let operations = [PeekabooBridgeOperation.captureScreen] + Self.roiOperations
         let older = Self.handshake(minor: 20, hostKind: .onDemand, operations: operations)
-        let current = Self.handshake(minor: 21, hostKind: .onDemand, operations: operations)
+        let roiOnly = Self.handshake(minor: 21, hostKind: .onDemand, operations: operations)
+        let current = Self.handshake(
+            minor: PeekabooBridgeConstants.protocolVersion.minor,
+            hostKind: .onDemand,
+            operations: operations
+        ).withProducerBoundSnapshotFixture()
         let disabledOperations = operations.filter { $0 != .desktopObservation }
         let disabled = Self.handshake(
             minor: 21,
@@ -86,9 +91,11 @@ struct ExactWindowROIRuntimeCapabilityTests {
         #expect(roi.requiresExactWindowROIObservation)
         #expect(!ordinary.requiresExactWindowROIObservation)
         #expect(!CommandRuntime.supportsRemoteRequirements(for: older, options: roi))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: roiOnly, options: roi))
         #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: roi))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: disabled, options: roi))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: older, options: ordinary))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: older, options: ordinary))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: ordinary))
     }
 
     @Test

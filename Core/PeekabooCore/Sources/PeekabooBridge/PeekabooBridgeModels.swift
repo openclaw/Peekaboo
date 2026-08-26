@@ -147,6 +147,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case createSnapshot
     case storeDetectionResult
     case getDetectionResult
+    case ownsSnapshot
     case storeScreenshot
     case storeObservationSnapshot
     case storeAnnotatedScreenshot
@@ -272,6 +273,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         if version < PeekabooBridgeConstants.certificationProducerAttestationVersion {
             compatible.remove(.certificationProducerAttestation)
         }
+        if version < PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion {
+            compatible.remove(.ownsSnapshot)
+        }
         return compatible
     }
     // swiftlint:enable cyclomatic_complexity
@@ -302,19 +306,23 @@ public struct PeekabooBridgeHandshake: Codable, Sendable {
     public let requestedHostKind: PeekabooBridgeHostKind?
     public let operationClientInstanceID: UUID?
     public let replacingOperationSessionID: UUID?
+    /// Additive raw capability offer. Old hosts ignore the field; old clients omit it.
+    public let clientCapabilities: [String]?
 
     public init(
         protocolVersion: PeekabooBridgeProtocolVersion,
         client: PeekabooBridgeClientIdentity,
         requestedHostKind: PeekabooBridgeHostKind? = nil,
         operationClientInstanceID: UUID? = nil,
-        replacingOperationSessionID: UUID? = nil)
+        replacingOperationSessionID: UUID? = nil,
+        clientCapabilities: [String]? = nil)
     {
         self.protocolVersion = protocolVersion
         self.client = client
         self.requestedHostKind = requestedHostKind
         self.operationClientInstanceID = operationClientInstanceID
         self.replacingOperationSessionID = replacingOperationSessionID
+        self.clientCapabilities = clientCapabilities
     }
 }
 
@@ -373,6 +381,8 @@ public enum PeekabooBridgeHostCapability {
     public static let explicitSnapshotPublication = "explicitSnapshotPublication"
     public static let browserConnectionReceipts = "browserConnectionReceipts"
     public static let nativeBrowserConnectionBinding = "nativeBrowserConnectionBinding"
+    public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
+    public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
     public static let exactDialogInputExecution = "exactDialogInputExecution"
     public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"
@@ -385,6 +395,14 @@ public enum PeekabooBridgeHostCapability {
     public static let certificationProducerAttestation = "certificationProducerAttestation"
     public static let setValueResultTargetBinding = "setValueResultTargetBinding"
     public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
+}
+
+/// Stable raw capabilities a client may offer during handshake. Raw strings keep additions
+/// decodable by already-shipped hosts while the offer prevents new 1.34 operations or semantics
+/// from being advertised to already-shipped 1.34 clients.
+public enum PeekabooBridgeClientCapability {
+    public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
+    public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

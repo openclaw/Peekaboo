@@ -6,6 +6,7 @@ import PeekabooAutomationKitTestSupport
 import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooBridge
 
@@ -1803,7 +1804,10 @@ extension PeekabooBridgeTests {
             RemoteElementActionUIAutomationService(
                 client: client)
         }
-        let result = try await remote.setValue(target: "T1", value: .string("hello"), snapshotId: "S1")
+        let result = try await remote.setValue(
+            target: "T1",
+            value: .string("hello"),
+            snapshotId: SnapshotReferenceFixtures.first.rawValue)
 
         #expect(result.target == "T1")
         let call = await MainActor.run { services.automationStub.lastSetValue }
@@ -1848,7 +1852,10 @@ extension PeekabooBridgeTests {
             RemoteElementActionUIAutomationService(
                 client: client)
         }
-        let result = try await remote.performAction(target: "B1", actionName: "AXPress", snapshotId: "S1")
+        let result = try await remote.performAction(
+            target: "B1",
+            actionName: "AXPress",
+            snapshotId: SnapshotReferenceFixtures.first.rawValue)
 
         #expect(result.actionName == "AXPress")
         let call = await MainActor.run { services.automationStub.lastPerformAction }
@@ -1892,7 +1899,10 @@ extension PeekabooBridgeTests {
             services.automationStub.clickError = PeekabooError.snapshotStale("window moved")
         }
         do {
-            try await remote.click(target: .elementId("B1"), clickType: .single, snapshotId: "S1")
+            try await remote.click(
+                target: .elementId("B1"),
+                clickType: .single,
+                snapshotId: SnapshotReferenceFixtures.first.rawValue)
             Issue.record("Expected stale snapshot error")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -1906,20 +1916,28 @@ extension PeekabooBridgeTests {
             services.automationStub.elementActionError = PeekabooError.snapshotNotFound("expired")
         }
         do {
-            _ = try await elementActions.setValue(target: "T1", value: .string("hello"), snapshotId: "S1")
+            _ = try await elementActions.setValue(
+                target: "T1",
+                value: .string("hello"),
+                snapshotId: SnapshotReferenceFixtures.first.rawValue)
             Issue.record("Expected missing snapshot error")
         } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .indeterminate)
-            #expect(failure.outcome.retrySafety == .unsafe)
-            #expect(failure.message.contains("expired"))
-            #expect(failure.causeDescription?.contains("snapshotNotFound") == true)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.message.contains("verifiable set-value result"))
+            #expect(failure.causeDescription == nil)
         }
 
         await MainActor.run {
             services.automationStub.elementActionError = PeekabooError.elementNotFound("B404")
         }
         do {
-            _ = try await elementActions.performAction(target: "B404", actionName: "AXPress", snapshotId: "S1")
+            _ = try await elementActions.performAction(
+                target: "B404",
+                actionName: "AXPress",
+                snapshotId: SnapshotReferenceFixtures.first.rawValue)
             Issue.record("Expected missing element error")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -2291,6 +2309,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     private(set) var lastClick: Click?
     private(set) var lastProcessTargetedHotkey: TargetedHotkey?
     private(set) var lastProcessTargetedClick: TargetedClick?
+    private(set) var lastAllowsAccessibilityValueDelivery: Bool?
     private(set) var lastProcessTargetedTypeIdentity: ApplicationProcessIdentity?
     private(set) var lastTypeActions: [TypeAction]?
     private(set) var lastSetValue: SetValue?
@@ -2302,6 +2321,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     var exactTypeError: (any Error)?
     var exactHotkeyError: (any Error)?
     var targetedClickError: (any Error)?
+    var supportsTargetedClickAccessibilityValueDelivery = false
     private static let defaultActionOutcome = DesktopActionOutcome.dispatchedUnverified(
         delivery: .init(mechanism: .accessibilityAction, mode: .background),
         evidence: .deliveryAccepted)
@@ -2379,6 +2399,21 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     func click(
         target: ClickTarget,
         clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        self.lastAllowsAccessibilityValueDelivery = allowsAccessibilityValueDelivery
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity)
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
         snapshotId _: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds _: CGRect) async throws
@@ -2397,6 +2432,23 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         if self.recordsExactKeyboardEvents {
             self.exactKeyboardEvents.append("retarget")
         }
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        self.lastAllowsAccessibilityValueDelivery = allowsAccessibilityValueDelivery
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
     }
 
     func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?) async

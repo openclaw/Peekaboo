@@ -1,4 +1,5 @@
 import Commander
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -175,7 +176,7 @@ struct CommanderBinderCommandBindingTests {
             positional: [],
             options: [
                 "app": ["Safari"],
-                "snapshot": ["snapshot-123"],
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue],
             ],
             flags: ["verify"]
         )
@@ -184,7 +185,7 @@ struct CommanderBinderCommandBindingTests {
             parsedValues: parsed
         )
         #expect(command.verify == true)
-        #expect(command.snapshot == "snapshot-123")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
     }
 
     @Test
@@ -350,7 +351,7 @@ struct CommanderBinderCommandBindingTests {
         let parsed = ParsedValues(
             positional: ["Submit"],
             options: [
-                "snapshot": ["abc"],
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue],
                 "on": ["B1"],
                 "app": ["Safari"],
                 "waitFor": ["2500"],
@@ -360,7 +361,7 @@ struct CommanderBinderCommandBindingTests {
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: ClickCommand.self, parsedValues: parsed)
         #expect(command.query == "Submit")
-        #expect(command.snapshot == "abc")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
         #expect(command.on == "B1")
         #expect(command.target.app == "Safari")
         #expect(command.waitFor.roundedMilliseconds == 2500)
@@ -374,7 +375,7 @@ struct CommanderBinderCommandBindingTests {
         let parsed = ParsedValues(
             positional: ["Hello"],
             options: [
-                "snapshot": ["xyz"],
+                "snapshot": [SnapshotReferenceFixtures.second.rawValue],
                 "delay": ["10"],
                 "wpm": ["150"],
                 "app": ["Notes"],
@@ -385,7 +386,7 @@ struct CommanderBinderCommandBindingTests {
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: TypeCommand.self, parsedValues: parsed)
         #expect(command.text == "Hello")
-        #expect(command.snapshot == "xyz")
+        #expect(command.snapshot == SnapshotReferenceFixtures.second.rawValue)
         #expect(command.delay.roundedMilliseconds == 10)
         #expect(command.profileOption == nil)
         #expect(command.wordsPerMinute == 150)
@@ -402,14 +403,14 @@ struct CommanderBinderCommandBindingTests {
             positional: [],
             options: [
                 "text": ["OptionText"],
-                "snapshot": ["abc"]
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue]
             ],
             flags: []
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: TypeCommand.self, parsedValues: parsed)
         #expect(command.text == nil)
         #expect(command.textOption == "OptionText")
-        #expect(command.snapshot == "abc")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
     }
 
     @Test
@@ -418,14 +419,14 @@ struct CommanderBinderCommandBindingTests {
             positional: ["Hello"],
             options: [
                 "on": ["T1"],
-                "snapshot": ["abc"],
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue],
             ],
             flags: []
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: SetValueCommand.self, parsedValues: parsed)
         #expect(command.value == "Hello")
         #expect(command.on == "T1")
-        #expect(command.snapshot == "abc")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
     }
 
     @Test
@@ -435,7 +436,7 @@ struct CommanderBinderCommandBindingTests {
             options: [
                 "on": ["B1"],
                 "action": ["AXPress"],
-                "snapshot": ["abc"],
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue],
             ],
             flags: []
         )
@@ -443,7 +444,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.on == "B1")
         #expect(command.action == "AXPress")
         #expect(command.actionName == nil)
-        #expect(command.snapshot == "abc")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
     }
 
     @Test
@@ -454,7 +455,7 @@ struct CommanderBinderCommandBindingTests {
                 "count": ["3"],
                 "delay": ["25"],
                 "hold": ["75"],
-                "snapshot": ["sess-123"]
+                "snapshot": [SnapshotReferenceFixtures.third.rawValue]
             ],
             flags: ["noAutoFocus"]
         )
@@ -463,7 +464,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.count == 3)
         #expect(command.delay.roundedMilliseconds == 25)
         #expect(command.hold.roundedMilliseconds == 75)
-        #expect(command.snapshot == "sess-123")
+        #expect(command.snapshot == SnapshotReferenceFixtures.third.rawValue)
         #expect(command.focusOptions.noAutoFocus == true)
     }
 
@@ -648,7 +649,7 @@ struct CommanderBinderCommandBindingTests {
                 "duration": ["750"],
                 "steps": ["30"],
                 "profile": ["human"],
-                "snapshot": ["sess-1"]
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue]
             ],
             flags: ["smooth", "foreground"]
         )
@@ -657,7 +658,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.duration?.roundedMilliseconds == 750)
         #expect(command.steps == 30)
         #expect(command.profile == "human")
-        #expect(command.snapshot == "sess-1")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
         #expect(command.smooth == true)
         #expect(command.focusOptions.foreground)
     }
@@ -668,13 +669,13 @@ struct CommanderBinderCommandBindingTests {
             positional: [],
             options: [
                 "on": ["B1"],
-                "snapshot": ["sess-1"]
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue]
             ],
             flags: []
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
         #expect(command.on == "B1")
-        #expect(command.snapshot == "sess-1")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
     }
 
     @Test
@@ -710,7 +711,7 @@ struct CommanderBinderCommandBindingTests {
                 "steps": ["15"],
                 "modifiers": ["cmd,shift"],
                 "profile": ["human"],
-                "snapshot": ["sess-drag"]
+                "snapshot": [SnapshotReferenceFixtures.second.rawValue]
             ],
             flags: ["spaceSwitch", "foreground"]
         )
@@ -721,7 +722,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.steps == 15)
         #expect(command.modifiers?.description == "cmd,shift")
         #expect(command.profile == "human")
-        #expect(command.snapshot == "sess-drag")
+        #expect(command.snapshot == SnapshotReferenceFixtures.second.rawValue)
         #expect(command.focusOptions.spaceSwitch == true)
         #expect(command.focusOptions.foreground)
     }

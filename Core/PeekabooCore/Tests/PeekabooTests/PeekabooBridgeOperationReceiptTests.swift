@@ -27,6 +27,10 @@ struct PeekabooBridgeOperationReceiptTests {
             peer: legacy.peer,
             negotiatedCapabilities: .current)
         #expect(current.attestation.sessionID != legacy.attestation.sessionID)
+        #expect(!legacyCapabilities.producerBoundSnapshotReferences)
+        #expect(!legacyCapabilities.targetedClickAccessibilityValueDelivery)
+        #expect(PeekabooBridgeNegotiatedSessionCapabilities.current.producerBoundSnapshotReferences)
+        #expect(PeekabooBridgeNegotiatedSessionCapabilities.current.targetedClickAccessibilityValueDelivery)
 
         let legacyClaim = try await legacy.acceptedClaim(
             authority: authority,

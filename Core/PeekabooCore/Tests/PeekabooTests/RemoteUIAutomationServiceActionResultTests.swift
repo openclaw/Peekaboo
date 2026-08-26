@@ -11,6 +11,29 @@ import Testing
 @MainActor
 struct RemoteUIAutomationServiceActionResultTests {
     @Test
+    func `remote explicit value policy requires negotiated support for allow and deny`() async throws {
+        let client = PeekabooBridgeClient(
+            socketPath: "/tmp/peekaboo-unused-value-policy-\(UUID().uuidString).sock",
+            requestTimeoutSec: 1)
+        let remote = RemoteUIAutomationService(
+            client: client,
+            supportsTargetedClicks: true,
+            supportsProcessGenerationPinnedClicks: true)
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+
+        for allowsValueDelivery in [true, false] {
+            await #expect(throws: PeekabooError.self) {
+                try await remote.clickWithOutcome(
+                    target: .elementId("field"),
+                    clickType: .single,
+                    snapshotId: nil,
+                    expectedProcessIdentity: identity,
+                    allowsAccessibilityValueDelivery: allowsValueDelivery)
+            }
+        }
+    }
+
+    @Test
     func `remote held pointer capability defaults closed and accepts negotiated support`() {
         let client = PeekabooBridgeClient(
             socketPath: "/tmp/peekaboo-unused-held-capability-\(UUID().uuidString).sock",

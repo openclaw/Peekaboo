@@ -40,7 +40,7 @@ struct ExplicitSnapshotPublicationRuntimeTests {
             enabledOperations: operations,
             hostCapabilities: [PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership]
         )
-        let currentHost = BridgeTestFixtures.handshake(
+        let publicationOnlyHost = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.explicitSnapshotPublicationVersion,
             hostKind: .gui,
             build: "current",
@@ -51,12 +51,24 @@ struct ExplicitSnapshotPublicationRuntimeTests {
                 PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
             ]
         )
+        let currentHost = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: "current",
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.explicitSnapshotPublication,
+                PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+            ]
+        ).withProducerBoundSnapshotFixture()
 
         #expect(exact.requiresExplicitSnapshotPublication)
         #expect(!processOnly.requiresExplicitSnapshotPublication)
         #expect(!streamed.requiresExplicitSnapshotPublication)
         #expect(!CommandRuntime.supportsRemoteRequirements(for: oldHost, options: exact))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: oldHost, options: processOnly))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: oldHost, options: processOnly))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: publicationOnlyHost, options: exact))
         #expect(CommandRuntime.supportsRemoteRequirements(for: currentHost, options: exact))
         #expect(RuntimeHostResolver.requiredHostFailure(
             explicitSocket: "/tmp/old.sock",

@@ -88,7 +88,7 @@ extension PeekabooBridgeServer {
              .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText,
              .exactDialogForceDismiss:
             return try await self.handleDialogRequest(request)
-        case .createSnapshot, .storeDetectionResult, .getDetectionResult, .storeScreenshot,
+        case .createSnapshot, .storeDetectionResult, .getDetectionResult, .ownsSnapshot, .storeScreenshot,
              .storeObservationSnapshot, .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot,
              .cleanSnapshot,
              .invalidateImplicitLatestSnapshot, .beginSnapshotMutation, .finishSnapshotMutation,
@@ -1039,6 +1039,18 @@ extension PeekabooBridgeServer {
     private func handleTargetedClick(_ payload: PeekabooBridgeTargetedClickRequest) async throws
         -> PeekabooBridgeHandledResponse
     {
+        let usesProcessPinnedRoute = payload.targetWindowID == nil && payload.expectedProcessIdentity != nil
+        let usesExactWindowPinnedRoute = payload.targetWindowID != nil &&
+            payload.expectedWindowIdentity != nil &&
+            payload.expectedWindowBounds != nil
+        guard payload.allowsAccessibilityValueDelivery == nil ||
+            usesProcessPinnedRoute ||
+            usesExactWindowPinnedRoute
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "An explicit accessibility-value click policy requires a process- or exact-window identity")
+        }
         guard
             let targetedClickService = self.services.automation as? any TargetedClickServiceProtocol,
             targetedClickService.supportsTargetedClicks
@@ -1106,7 +1118,8 @@ extension PeekabooBridgeServer {
                 clickType: payload.clickType,
                 snapshotId: payload.snapshotId,
                 expectedWindowIdentity: expectedIdentity,
-                expectedWindowBounds: expectedBounds)
+                expectedWindowBounds: expectedBounds,
+                allowsAccessibilityValueDelivery: payload.allowsAccessibilityValueDelivery != false)
             return .init(response: .ok)
         }
         let result = try await outcomeService.clickWithOutcome(
@@ -1114,7 +1127,8 @@ extension PeekabooBridgeServer {
             clickType: payload.clickType,
             snapshotId: payload.snapshotId,
             expectedWindowIdentity: expectedIdentity,
-            expectedWindowBounds: expectedBounds)
+            expectedWindowBounds: expectedBounds,
+            allowsAccessibilityValueDelivery: payload.allowsAccessibilityValueDelivery != false)
         return try Self.handledActionResponse(
             response: .ok,
             result: result,
@@ -1213,7 +1227,8 @@ extension PeekabooBridgeServer {
                 target: payload.target,
                 clickType: payload.clickType,
                 snapshotId: payload.snapshotId,
-                expectedProcessIdentity: expectedIdentity)
+                expectedProcessIdentity: expectedIdentity,
+                allowsAccessibilityValueDelivery: payload.allowsAccessibilityValueDelivery != false)
             return try Self.handledActionResponse(
                 response: .ok,
                 result: result,
@@ -1223,7 +1238,8 @@ extension PeekabooBridgeServer {
             target: payload.target,
             clickType: payload.clickType,
             snapshotId: payload.snapshotId,
-            expectedProcessIdentity: expectedIdentity)
+            expectedProcessIdentity: expectedIdentity,
+            allowsAccessibilityValueDelivery: payload.allowsAccessibilityValueDelivery != false)
         return .init(response: .ok)
     }
 

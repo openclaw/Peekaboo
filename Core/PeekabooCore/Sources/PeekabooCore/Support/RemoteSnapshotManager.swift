@@ -11,6 +11,7 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation: Bool
     public let supportsSnapshotMutationLeases: Bool
     public let supportsExplicitSnapshotPublication: Bool
+    public let supportsProducerBoundSnapshotReferences: Bool
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         self.desktopMutationWatermarkStore?.effectiveWatermark()
@@ -24,21 +25,25 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsSnapshotMutationLeases: Bool = false,
         supportsExplicitSnapshotPublication: Bool = false,
+        supportsProducerBoundSnapshotReferences: Bool = false,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
         self.client = client
         self.supportsImplicitLatestSnapshotInvalidation = supportsImplicitLatestSnapshotInvalidation
         self.supportsSnapshotMutationLeases = supportsSnapshotMutationLeases
         self.supportsExplicitSnapshotPublication = supportsExplicitSnapshotPublication
+        self.supportsProducerBoundSnapshotReferences = supportsProducerBoundSnapshotReferences
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
     }
 
     public func createSnapshot() async throws -> String {
-        try await self.client.createSnapshot()
+        try self.requireProducerBoundSnapshotReferences()
+        return try await self.client.createSnapshot()
     }
 
     public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
-        try await self.client.createSnapshot(pendingAt: observationStartedAt)
+        try self.requireProducerBoundSnapshotReferences()
+        return try await self.client.createSnapshot(pendingAt: observationStartedAt)
     }
 
     public func createExplicitSnapshot() async throws -> String {
@@ -48,6 +53,7 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
                 message: "Bridge protocol 1.26 is required for explicit-reference-only snapshot publication. " +
                     "Update and relaunch the selected Peekaboo host.")
         }
+        try self.requireProducerBoundSnapshotReferences()
         return try await self.client.createExplicitSnapshot()
     }
 
@@ -60,6 +66,19 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
             return try await self.client.getDetectionResult(snapshotId: snapshotId)
         } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.code == .notFound {
             return nil
+        }
+    }
+
+    public func ownsSnapshot(snapshotId: String) async throws -> Bool {
+        try self.requireProducerBoundSnapshotReferences()
+        return try await self.client.ownsSnapshot(snapshotId: snapshotId)
+    }
+
+    private func requireProducerBoundSnapshotReferences() throws {
+        guard self.supportsProducerBoundSnapshotReferences else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host lacks producer-bound snapshot references")
         }
     }
 

@@ -43,6 +43,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         targetedTypeRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedClicks: Bool = false,
         supportsStatelessClickVariants: Bool = false,
+        supportsTargetedClickAccessibilityValueDelivery: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
@@ -70,6 +71,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsSnapshotMutationLeases: Bool = false,
         supportsExplicitSnapshotPublication: Bool = false,
+        supportsProducerBoundSnapshotReferences: Bool = false,
         supportsApplicationLaunchOptions: Bool = false,
         supportsSafeBackgroundApplicationLaunchNoOp: Bool = false,
         supportsNewApplicationInstanceLaunch: Bool = false,
@@ -116,6 +118,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsProcessGenerationPinnedClicks: supportsProcessGenerationPinnedInteractions &&
                     supportsTargetedClicks,
                 supportsStatelessClickVariants: supportsStatelessClickVariants,
+                supportsTargetedClickAccessibilityValueDelivery: supportsTargetedClickAccessibilityValueDelivery,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
@@ -145,6 +148,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsProcessGenerationPinnedClicks: supportsProcessGenerationPinnedInteractions &&
                     supportsTargetedClicks,
                 supportsStatelessClickVariants: supportsStatelessClickVariants,
+                supportsTargetedClickAccessibilityValueDelivery: supportsTargetedClickAccessibilityValueDelivery,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
@@ -169,6 +173,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             supportsImplicitLatestSnapshotInvalidation: supportsImplicitLatestSnapshotInvalidation,
             supportsSnapshotMutationLeases: supportsSnapshotMutationLeases,
             supportsExplicitSnapshotPublication: supportsExplicitSnapshotPublication,
+            supportsProducerBoundSnapshotReferences: supportsProducerBoundSnapshotReferences,
             desktopMutationWatermarkStore: desktopMutationWatermarkStore)
         let menuService = RemoteMenuService(client: client)
         let screenService = ScreenService()

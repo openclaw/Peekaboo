@@ -1,5 +1,6 @@
 import Commander
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -29,7 +30,8 @@ struct PreRuntimeSemanticValidationTests {
         ),
         Case(
             arguments: [
-                "peekaboo", "scroll", "--direction", "sideways", "--on", "elem_6", "--snapshot", "stale-valid",
+                "peekaboo", "scroll", "--direction", "sideways", "--on", "elem_6", "--snapshot",
+                SnapshotReferenceFixtures.first.rawValue,
                 "--no-remote", "--json",
             ],
             expectedMessage: "Invalid direction. Use: up, down, left, or right"
@@ -118,13 +120,18 @@ struct PreRuntimeSemanticValidationTests {
     @Test
     func `direct element actions reject concrete snapshots with explicit targets before runtime selection`() throws {
         let cases = [
-            ["action", "AXIncrement", "--on", "B1", "--snapshot", "receipt-1", "--window-id", "42"],
             [
-                "set-value", "hello", "--on", "T1", "--snapshot", "receipt-1", "--app", "TextEdit",
+                "action", "AXIncrement", "--on", "B1", "--snapshot",
+                SnapshotReferenceFixtures.first.rawValue, "--window-id", "42",
+            ],
+            [
+                "set-value", "hello", "--on", "T1", "--snapshot", SnapshotReferenceFixtures.first.rawValue,
+                "--app", "TextEdit",
                 "--window-title", "Document",
             ],
             [
-                "action", "AXIncrement", "--on", "B1", "--snapshot", "receipt-1", "--pid", "123",
+                "action", "AXIncrement", "--on", "B1", "--snapshot", SnapshotReferenceFixtures.first.rawValue,
+                "--pid", "123",
                 "--window-index", "0",
             ],
         ]

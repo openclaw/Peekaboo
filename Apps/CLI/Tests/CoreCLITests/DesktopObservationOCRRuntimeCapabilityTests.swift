@@ -131,12 +131,12 @@ struct DesktopObservationOCRRuntimeCapabilityTests {
         capabilities: [String]?
     ) -> PeekabooBridgeHandshakeResponse {
         BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 22),
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,
             supportedOperations: operations,
             enabledOperations: enabledOperations,
             hostCapabilities: capabilities
-        )
+        ).withProducerBoundSnapshotFixture()
     }
 }

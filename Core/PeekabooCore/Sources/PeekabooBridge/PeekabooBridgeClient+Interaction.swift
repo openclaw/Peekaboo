@@ -200,6 +200,21 @@ extension PeekabooBridgeClient {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {
@@ -209,6 +224,23 @@ extension PeekabooBridgeClient {
             snapshotId: snapshotId,
             expectedWindowIdentity: expectedWindowIdentity,
             expectedWindowBounds: expectedWindowBounds)
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
     }
 
     public func swipe(

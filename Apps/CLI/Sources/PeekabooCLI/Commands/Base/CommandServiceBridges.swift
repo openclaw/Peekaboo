@@ -65,6 +65,8 @@ enum AutomationServiceBridge {
             guard targetedClickService.supportsTargetedClicks else {
                 throw self.targetedClickUnavailableError(service: targetedClickService)
             }
+            let allowsAccessibilityValueDelivery =
+                targetedClickService.supportsTargetedClickAccessibilityValueDelivery
 
             if let targetWindowID {
                 guard let exactWindowService = targetedClickService as? any ExactWindowTargetedClickServiceProtocol
@@ -90,7 +92,8 @@ enum AutomationServiceBridge {
                         clickType: clickType,
                         snapshotId: snapshotId,
                         expectedWindowIdentity: expectedWindowIdentity,
-                        expectedWindowBounds: expectedWindowBounds
+                        expectedWindowBounds: expectedWindowBounds,
+                        allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
                     )
                 }
                 try await exactWindowService.click(
@@ -98,7 +101,8 @@ enum AutomationServiceBridge {
                     clickType: clickType,
                     snapshotId: snapshotId,
                     expectedWindowIdentity: expectedWindowIdentity,
-                    expectedWindowBounds: expectedWindowBounds
+                    expectedWindowBounds: expectedWindowBounds,
+                    allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
                 )
             } else {
                 guard targetedClickService.supportsProcessGenerationPinnedClicks else {
@@ -111,14 +115,16 @@ enum AutomationServiceBridge {
                         target: target,
                         clickType: clickType,
                         snapshotId: snapshotId,
-                        expectedProcessIdentity: expectedProcessIdentity
+                        expectedProcessIdentity: expectedProcessIdentity,
+                        allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
                     )
                 }
                 try await targetedClickService.click(
                     target: target,
                     clickType: clickType,
                     snapshotId: snapshotId,
-                    expectedProcessIdentity: expectedProcessIdentity
+                    expectedProcessIdentity: expectedProcessIdentity,
+                    allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
                 )
             }
             return UIAutomationActionResult(payload: (), outcome: nil)

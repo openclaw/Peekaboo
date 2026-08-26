@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import AXorcist
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -585,13 +586,14 @@ struct ActionInputDriverTests {
     @MainActor
     @Test
     func `element action facade normalizes stale action driver failures`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.first.rawValue
         let detected = DetectedElement(
             id: "B1",
             type: .button,
             label: "Save",
             bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [detected]),
             metadata: DetectionMetadata(
@@ -599,21 +601,21 @@ struct ActionInputDriverTests {
                 elementCount: 1,
                 method: "test",
                 windowContext: WindowContext(applicationProcessId: getpid())))
-        let service = UIAutomationService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: RecordingActionInputDriver(elementActionError: .staleElement),
             automationElementResolver: FixedActionAutomationElementResolver())
 
         do {
-            _ = try await service.setValue(target: "B1", value: .string("hello"), snapshotId: "snapshot")
+            _ = try await service.setValue(target: "B1", value: .string("hello"), snapshotId: snapshotID)
             Issue.record("Expected stale snapshot error from setValue")
         } catch let PeekabooError.snapshotStale(reason) {
             #expect(reason.contains("no longer available"))
         }
 
         do {
-            _ = try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: "snapshot")
+            _ = try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: snapshotID)
             Issue.record("Expected stale snapshot error from performAction")
         } catch let PeekabooError.snapshotStale(reason) {
             #expect(reason.contains("no longer available"))
@@ -623,6 +625,7 @@ struct ActionInputDriverTests {
     @MainActor
     @Test
     func `owner pinned element actions refuse OCR evidence before resolution or dispatch`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.second.rawValue
         let processIdentifier = getpid()
         let processStartIdentity: UInt64 = 99
         let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
@@ -641,7 +644,7 @@ struct ActionInputDriverTests {
                 "confidence": "0.93",
             ])
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: snapshotID,
             screenshotPath: "/tmp/calendar.png",
             elements: DetectedElements(other: [detected]),
             metadata: DetectionMetadata(
@@ -653,8 +656,8 @@ struct ActionInputDriverTests {
                     windowID: 42,
                     windowBounds: bounds,
                     windowMutationIdentity: identity)))
-        let service = UIAutomationService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: RecordingActionInputDriver(),
             automationElementResolver: FixedActionAutomationElementResolver {
@@ -666,8 +669,8 @@ struct ActionInputDriverTests {
             processStartIdentityProvider: { _ in processStartIdentity })
 
         for operation in [
-            { try await service.performAction(target: "ocr_1", actionName: "AXPress", snapshotId: "snapshot") },
-            { try await service.setValue(target: "ocr_1", value: .string("unsafe"), snapshotId: "snapshot") },
+            { try await service.performAction(target: "ocr_1", actionName: "AXPress", snapshotId: snapshotID) },
+            { try await service.setValue(target: "ocr_1", value: .string("unsafe"), snapshotId: snapshotID) },
         ] {
             do {
                 _ = try await operation()
@@ -693,10 +696,12 @@ struct ActionInputDriverTests {
         let frameRelease = ActionLaneLatch()
         let firstResolved = ActionLaneLatch()
         let secondResolved = ActionLaneLatch()
+        let firstSnapshotID = SnapshotReferenceFixtures.first.rawValue
+        let secondSnapshotID = SnapshotReferenceFixtures.second.rawValue
         let firstIdentity = self.windowIdentity(windowID: 301, process: firstProcess)
         let secondIdentity = self.windowIdentity(windowID: 302, process: secondProcess)
-        let firstService = self.makeScopedElementMutationService(
-            snapshotID: "first",
+        let firstService = try await self.makeScopedElementMutationService(
+            snapshotID: firstSnapshotID,
             identity: firstIdentity,
             coordinator: coordinator,
             currentGeneration: { pid in
@@ -705,8 +710,8 @@ struct ActionInputDriverTests {
                     : secondProcess.processStartIdentity
             },
             onResolve: { Task { await firstResolved.open() } })
-        let secondService = self.makeScopedElementMutationService(
-            snapshotID: "second",
+        let secondService = try await self.makeScopedElementMutationService(
+            snapshotID: secondSnapshotID,
             identity: secondIdentity,
             coordinator: coordinator,
             currentGeneration: { pid in
@@ -724,10 +729,10 @@ struct ActionInputDriverTests {
         }
         await frameStarted.wait()
         let firstMutation = Task {
-            try? await firstService.setValue(target: "B1", value: .string("one"), snapshotId: "first")
+            try? await firstService.setValue(target: "B1", value: .string("one"), snapshotId: firstSnapshotID)
         }
         let secondMutation = Task {
-            try? await secondService.performAction(target: "B1", actionName: "AXPress", snapshotId: "second")
+            try? await secondService.performAction(target: "B1", actionName: "AXPress", snapshotId: secondSnapshotID)
         }
 
         let secondOverlapped = await secondResolved.opensWithin(.seconds(1))
@@ -751,22 +756,23 @@ struct ActionInputDriverTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let process = ApplicationProcessIdentity(processIdentifier: 612, processStartIdentity: 13)
         let identity = self.windowIdentity(windowID: 303, process: process)
-        let service = self.makeScopedElementMutationService(
-            snapshotID: "reused",
+        let snapshotID = SnapshotReferenceFixtures.third.rawValue
+        let service = try await self.makeScopedElementMutationService(
+            snapshotID: snapshotID,
             identity: identity,
             coordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
             currentGeneration: { _ in process.processStartIdentity + 1 },
             onResolve: { Issue.record("Stale element mutation reached target resolution") })
 
         do {
-            _ = try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: "reused")
+            _ = try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: snapshotID)
             Issue.record("Expected reused process generation to refuse action")
         } catch let PeekabooError.snapshotStale(reason) {
             #expect(reason.contains("process generation"))
         }
 
         do {
-            _ = try await service.setValue(target: "B1", value: .string("new"), snapshotId: "reused")
+            _ = try await service.setValue(target: "B1", value: .string("new"), snapshotId: snapshotID)
             Issue.record("Expected reused process generation to refuse set-value")
         } catch let PeekabooError.snapshotStale(reason) {
             #expect(reason.contains("process generation"))
@@ -840,6 +846,36 @@ struct ActionInputDriverTests {
         #expect(result.elementRole == AXRoleNames.kAXTextFieldRole)
         #expect(result.outcome.state == .confirmedChange)
         #expect(result.focusedElement?.identifier == nil)
+    }
+
+    @MainActor
+    @Test
+    func `text field click without negotiated value delivery refuses before focus write`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXTextFieldRole,
+            frame: CGRect(x: 10, y: 20, width: 30, height: 40),
+            isValueSettable: true,
+            isFocusedSettable: true)
+
+        #expect(throws: ActionInputError.self) {
+            _ = try ActionInputDriver().tryClickForTesting(
+                element: element,
+                allowAccessibilityValueFallback: false)
+        }
+        #expect(element.performedActions.isEmpty)
+        #expect(element.setFocusedValues.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `legacy action driver opt out refuses before invoking an unknown click implementation`() throws {
+        let driver = RecordingActionInputDriver()
+        let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
+
+        #expect(throws: ActionInputError.self) {
+            _ = try driver.tryClick(element: element, allowAccessibilityValueFallback: false)
+        }
+        #expect(driver.clickCallCount == 0)
     }
 
     @MainActor
@@ -1085,7 +1121,7 @@ struct ActionInputDriverTests {
         identity: WindowMutationIdentity,
         coordinator: DesktopOperationLaneCoordinator,
         currentGeneration: @escaping @Sendable (pid_t) -> UInt64?,
-        onResolve: @escaping @MainActor () -> Void) -> UIAutomationService
+        onResolve: @escaping @MainActor () -> Void) async throws -> UIAutomationService
     {
         let detected = DetectedElement(
             id: "B1",
@@ -1106,8 +1142,8 @@ struct ActionInputDriverTests {
                 elementCount: 1,
                 method: "test",
                 windowContext: context))
-        return UIAutomationService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        return try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: RecordingActionInputDriver(elementActionError: .staleElement),
             automationElementResolver: FixedActionAutomationElementResolver(onResolve: onResolve),
@@ -1206,12 +1242,14 @@ private final class PhantomSuccessAutomationElement: AutomationElementRepresenti
 @MainActor
 private final class RecordingActionInputDriver: ActionInputDriving {
     private let elementActionError: ActionInputError?
+    private(set) var clickCallCount = 0
 
     init(elementActionError: ActionInputError? = nil) {
         self.elementActionError = elementActionError
     }
 
     func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
+        self.clickCallCount += 1
         Issue.record("Action driver should not be called")
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }

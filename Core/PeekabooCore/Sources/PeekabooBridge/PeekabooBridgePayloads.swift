@@ -280,6 +280,8 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
     public let targetWindowID: Int?
     public let expectedWindowIdentity: WindowMutationIdentity?
     public let expectedWindowBounds: CGRect?
+    /// Explicit same-version offer for a verified AXFocused value write when AXPress is absent.
+    public let allowsAccessibilityValueDelivery: Bool?
 
     public init(
         target: ClickTarget,
@@ -289,7 +291,8 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
         expectedProcessIdentity: ApplicationProcessIdentity? = nil,
         targetWindowID: Int? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil)
+        expectedWindowBounds: CGRect? = nil,
+        allowsAccessibilityValueDelivery: Bool? = nil)
     {
         self.target = target
         self.clickType = clickType
@@ -299,6 +302,7 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
         self.targetWindowID = targetWindowID
         self.expectedWindowIdentity = expectedWindowIdentity
         self.expectedWindowBounds = expectedWindowBounds
+        self.allowsAccessibilityValueDelivery = allowsAccessibilityValueDelivery
     }
 
     /// Whether this request's concrete click route needs native event synthesis.
@@ -672,6 +676,14 @@ public struct PeekabooBridgeStoreDetectionRequest: Codable, Sendable {
 
 public struct PeekabooBridgeGetDetectionRequest: Codable, Sendable {
     public let snapshotId: String
+}
+
+public struct PeekabooBridgeOwnsSnapshotRequest: Codable, Sendable {
+    public let snapshotId: String
+
+    public init(snapshotId: String) {
+        self.snapshotId = snapshotId
+    }
 }
 
 public struct PeekabooBridgeStoreScreenshotRequest: Codable, Sendable {

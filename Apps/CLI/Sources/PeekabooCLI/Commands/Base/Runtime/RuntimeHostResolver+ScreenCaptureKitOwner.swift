@@ -27,6 +27,7 @@ extension RuntimeHostResolver {
     ) async throws -> PeekabooBridgeHandshakeResponse
     typealias ScreenCaptureKitExternalHostInspector = @MainActor @Sendable (String) ->
         ScreenCaptureKitExternalHostPresence
+    typealias RemoteHandshakeCacheFactory = @MainActor () -> RemoteHandshakeCache
 
     struct Dependencies {
         let makeLocalServices: LocalServiceFactory
@@ -35,6 +36,8 @@ extension RuntimeHostResolver {
         let inspectScreenCaptureKitSafety: ScreenCaptureKitSafetyInspector
         let recordScreenCaptureKitSafetyBlocker: ScreenCaptureKitSafetyRecorder
         let remoteCandidatePlan: RemoteCandidatePlanner
+        let snapshotAffinityProbe: SnapshotAffinityProbe
+        let makeRemoteHandshakeCache: RemoteHandshakeCacheFactory
 
         init(
             makeLocalServices: @escaping LocalServiceFactory,
@@ -42,7 +45,9 @@ extension RuntimeHostResolver {
             inspectScreenCaptureKitOwner: @escaping ScreenCaptureKitOwnerInspector,
             inspectScreenCaptureKitSafety: @escaping ScreenCaptureKitSafetyInspector = { _, _, _, _ in nil },
             recordScreenCaptureKitSafetyBlocker: @escaping ScreenCaptureKitSafetyRecorder = { _ in },
-            remoteCandidatePlan: @escaping RemoteCandidatePlanner = RuntimeHostResolver.remoteCandidatePlan
+            remoteCandidatePlan: @escaping RemoteCandidatePlanner = RuntimeHostResolver.remoteCandidatePlan,
+            snapshotAffinityProbe: @escaping SnapshotAffinityProbe = RuntimeHostResolver.liveSnapshotAffinityProbe,
+            makeRemoteHandshakeCache: @escaping RemoteHandshakeCacheFactory = { RemoteHandshakeCache() }
         ) {
             self.makeLocalServices = makeLocalServices
             self.claimScreenCaptureKitOwner = claimScreenCaptureKitOwner
@@ -50,6 +55,8 @@ extension RuntimeHostResolver {
             self.inspectScreenCaptureKitSafety = inspectScreenCaptureKitSafety
             self.recordScreenCaptureKitSafetyBlocker = recordScreenCaptureKitSafetyBlocker
             self.remoteCandidatePlan = remoteCandidatePlan
+            self.snapshotAffinityProbe = snapshotAffinityProbe
+            self.makeRemoteHandshakeCache = makeRemoteHandshakeCache
         }
 
         static let live = Dependencies(

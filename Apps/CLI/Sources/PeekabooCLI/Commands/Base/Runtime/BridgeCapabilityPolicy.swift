@@ -105,12 +105,22 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresTargetedClickAccessibilityValueDelivery,
+           !self.supportsTargetedClickAccessibilityValueDelivery(for: handshake) {
+            return false
+        }
+
         if options.requiresHostApplicationInventory, !self.supportsHostApplicationInventory(for: handshake) {
             return false
         }
 
         if options.requiresImplicitSnapshotInvalidation || options.usesPerToolSnapshotInvalidation,
            !self.supportsImplicitSnapshotInvalidation(for: handshake) {
+            return false
+        }
+
+        if options.requiresProducerBoundSnapshotReferences,
+           !self.supportsProducerBoundSnapshotReferences(for: handshake) {
             return false
         }
 
@@ -475,6 +485,26 @@ enum BridgeCapabilityPolicy {
     static func supportsExplicitSnapshotPublication(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeConstants.explicitSnapshotPublicationVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.explicitSnapshotPublication) == true
+    }
+
+    static func supportsProducerBoundSnapshotReferences(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.producerBoundSnapshotReferences
+            ) == true &&
+            self.supportsOperation(.ownsSnapshot, for: handshake)
+    }
+
+    static func supportsTargetedClickAccessibilityValueDelivery(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery
+            ) == true &&
+            self.supportsOperation(.targetedClick, for: handshake)
     }
 
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

@@ -1,6 +1,7 @@
 import Commander
 import CoreGraphics
 import PeekabooAutomationKit
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -153,7 +154,7 @@ struct Phase3CommandParsingTests {
     func `Click parser delegates nested option groups to Commander`() throws {
         let command = try ClickCommand.parse([
             "Submit",
-            "--snapshot", "snapshot-1",
+            "--snapshot", SnapshotReferenceFixtures.first.rawValue,
             "--window-id", "42",
             "--foreground",
             "--focus-timeout", "750",
@@ -163,7 +164,7 @@ struct Phase3CommandParsingTests {
         ])
 
         #expect(command.query == "Submit")
-        #expect(command.snapshot == "snapshot-1")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
         #expect(command.target.windowId == 42)
         #expect(command.focusOptions.foreground)
         #expect(command.focusOptions.focusTimeoutDuration == .milliseconds(750))

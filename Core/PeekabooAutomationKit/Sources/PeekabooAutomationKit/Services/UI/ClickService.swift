@@ -26,7 +26,7 @@ import PeekabooFoundation
  * try await clickService.click(
  *     target: .elementId(detectedElement.id),
  *     clickType: .single,
- *     snapshotId: "snapshot_123"
+ *     snapshotId: "ps1_0123456789abcdef0123456789abcdef"
  * )
  *
  * // Click by coordinates
@@ -59,6 +59,7 @@ private struct ClickExecutionRequest: Sendable {
     let snapshotID: String?
     let automationTarget: UIAutomationTarget
     let validatesProcessIdentity: Bool
+    let allowsAccessibilityValueDelivery: Bool
     let acquireLane: Bool
     let lanePreparation: @MainActor @Sendable () async -> Void
     let laneCompletion: @MainActor @Sendable (UIInputExecutionResult) async -> Void
@@ -172,7 +173,8 @@ public final class ClickService {
         clickType: ClickType,
         snapshotId: String?,
         captureReceipt: DesktopOperationPlan.CaptureReceipt,
-        validatesProcessIdentity: Bool) async throws -> UIInputExecutionResult.Action
+        validatesProcessIdentity: Bool,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIInputExecutionResult.Action
     {
         let targetProcessIdentifier = captureReceipt.processIdentifier
         guard let element = try await self.resolveAutomationElement(
@@ -190,7 +192,9 @@ public final class ClickService {
         switch clickType {
         case .single:
             let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
-            let result = try self.actionInputDriver.tryClick(element: element)
+            let result = try self.actionInputDriver.tryClick(
+                element: element,
+                allowAccessibilityValueFallback: allowsAccessibilityValueDelivery)
             if let focusedElement = result.focusedElement,
                let exactWindow = captureReceipt.exactWindow
             {
@@ -1263,7 +1267,8 @@ extension ClickService {
         clickType: ClickType,
         snapshotId: String?,
         automationTarget: UIAutomationTarget,
-        validatesProcessIdentity: Bool = false) async throws -> UIInputExecutionResult
+        validatesProcessIdentity: Bool = false,
+        allowsAccessibilityValueDelivery: Bool = true) async throws -> UIInputExecutionResult
     {
         try await self.executeClick(ClickExecutionRequest(
             target: target,
@@ -1271,6 +1276,7 @@ extension ClickService {
             snapshotID: snapshotId,
             automationTarget: automationTarget,
             validatesProcessIdentity: validatesProcessIdentity,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
             acquireLane: true,
             lanePreparation: {},
             laneCompletion: { _ in }))
@@ -1290,6 +1296,7 @@ extension ClickService {
             snapshotID: snapshotId,
             automationTarget: .foreground,
             validatesProcessIdentity: false,
+            allowsAccessibilityValueDelivery: true,
             acquireLane: true,
             lanePreparation: lanePreparation,
             laneCompletion: laneCompletion))
@@ -1324,6 +1331,7 @@ extension ClickService {
             snapshotID: snapshotId,
             automationTarget: automationTarget,
             validatesProcessIdentity: validatesProcessIdentity,
+            allowsAccessibilityValueDelivery: true,
             acquireLane: false,
             lanePreparation: {},
             laneCompletion: { _ in }))
@@ -1415,7 +1423,8 @@ extension ClickService {
                             clickType: clickType,
                             snapshotId: snapshotID,
                             captureReceipt: mutationReceipt,
-                            validatesProcessIdentity: validatesProcessIdentity)
+                            validatesProcessIdentity: validatesProcessIdentity,
+                            allowsAccessibilityValueDelivery: request.allowsAccessibilityValueDelivery)
                     } catch let error as ActionInputError
                         where strategy == .actionFirst &&
                         targetProcessIdentifier != nil &&

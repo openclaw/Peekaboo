@@ -4,6 +4,7 @@ import PeekabooAutomation
 import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooCore
+import PeekabooFoundation
 
 @MainActor
 enum RuntimeHostResolver {
@@ -44,7 +45,7 @@ enum RuntimeHostResolver {
         if self.requiresCallerLocalScreenCaptureKitSafetyCheck(options: options, environment: environment) {
             let plan = await dependencies.remoteCandidatePlan(options, environment)
             safetyPlan = plan
-            let resolvedHandshakeCache = RemoteHandshakeCache()
+            let resolvedHandshakeCache = dependencies.makeRemoteHandshakeCache()
             handshakeCache = resolvedHandshakeCache
             if let oldHost = try await dependencies.inspectScreenCaptureKitSafety(
                 options,
@@ -88,14 +89,29 @@ enum RuntimeHostResolver {
             }
         }
 
+        let concreteSnapshotID = options.explicitSnapshotID
+        let localSnapshotServices = concreteSnapshotID.map { _ in dependencies.makeLocalServices(options) }
         guard self.shouldResolveKnownRemoteEndpoints(
             options: options,
             environment: environment,
             configurationInput: configurationInput
         )
         else {
+            if let concreteSnapshotID, let localSnapshotServices {
+                let resolvedHandshakeCache = dependencies.makeRemoteHandshakeCache()
+                let owner = try await self.resolveSnapshotAffinityOwner(
+                    snapshotID: concreteSnapshotID,
+                    localServices: localSnapshotServices,
+                    candidates: [],
+                    identity: resolvedHandshakeCache.identity,
+                    handshakeCache: resolvedHandshakeCache
+                )
+                guard owner == .local else {
+                    preconditionFailure("Local-only snapshot affinity selected a remote owner")
+                }
+            }
             return Resolution(
-                services: dependencies.makeLocalServices(options),
+                services: localSnapshotServices ?? dependencies.makeLocalServices(options),
                 hostDescription: "local (in-process)",
                 selectedRemoteSocketPath: nil,
                 selectedRemoteHostProcessIdentifier: nil,
@@ -122,6 +138,33 @@ enum RuntimeHostResolver {
             buildScopedDaemonSocketPath: buildScopedDaemonSocketPath,
             historicalBuildScopedDaemonSocketPaths: historicalBuildScopedDaemonSocketPaths
         )
+
+        if let concreteSnapshotID {
+            let resolvedHandshakeCache = handshakeCache ?? dependencies.makeRemoteHandshakeCache()
+            let context = RemoteResolutionContext(
+                options: options,
+                environment: environment,
+                candidatePlan: candidatePlan,
+                identity: resolvedHandshakeCache.identity,
+                handshakeCache: resolvedHandshakeCache,
+                snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+                preferredScreenCaptureKitOwner: nil,
+                makeLocalServices: dependencies.makeLocalServices,
+                inspectScreenCaptureKitSafety: dependencies.inspectScreenCaptureKitSafety,
+                recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker
+            )
+            var permissionRejections: [String] = []
+            var resolution = try await self.resolveSnapshotAffinityServices(
+                snapshotID: concreteSnapshotID,
+                localServices: explicitSocket == nil ? localSnapshotServices : nil,
+                context: context,
+                permissionRejections: &permissionRejections,
+                probe: dependencies.snapshotAffinityProbe
+            )
+            resolution.captureEngineSafetyOverride = captureEngineSafetyOverride
+            resolution.toolCapturePreflightRefusal = toolCapturePreflightRefusal
+            return resolution
+        }
 
         if deferredScreenCaptureKitSafetyBlocker {
             return Resolution(
@@ -169,7 +212,7 @@ enum RuntimeHostResolver {
             )
         }
 
-        let resolvedHandshakeCache = handshakeCache ?? RemoteHandshakeCache()
+        let resolvedHandshakeCache = handshakeCache ?? dependencies.makeRemoteHandshakeCache()
         var resolution = try await self.resolveRemoteRouting(context: RemoteResolutionContext(
             options: options,
             environment: environment,
@@ -249,14 +292,6 @@ enum RuntimeHostResolver {
             throw self.ownerRefusal(
                 owner: preferredScreenCaptureKitOwner,
                 callerLocal: false
-            )
-        }
-
-        if let snapshotID = options.explicitSnapshotID {
-            return try await self.resolveSnapshotAffinityServices(
-                snapshotID: snapshotID,
-                context: context,
-                permissionRejections: &permissionRejections
             )
         }
 
@@ -793,6 +828,8 @@ enum RuntimeHostResolver {
             targetedTypeRequiresEventSynthesizingPermission: targetedType.missingPermissions.contains(.postEvent),
             supportsTargetedClicks: targetedClick.isEnabled,
             supportsStatelessClickVariants: BridgeCapabilityPolicy.supportsStatelessClickVariants(for: handshake),
+            supportsTargetedClickAccessibilityValueDelivery:
+            BridgeCapabilityPolicy.supportsTargetedClickAccessibilityValueDelivery(for: handshake),
             targetedClickUnavailableReason: targetedClick.unavailableReason,
             targetedClickRequiresEventSynthesizingPermission: targetedClick.missingPermissions.contains(.postEvent),
             supportsExactWindowTargetedClicks: BridgeCapabilityPolicy.supportsExactWindowTargetedClicks(for: handshake),
@@ -834,6 +871,8 @@ enum RuntimeHostResolver {
             supportsExplicitSnapshotPublication: BridgeCapabilityPolicy.supportsExplicitSnapshotPublication(
                 for: handshake
             ),
+            supportsProducerBoundSnapshotReferences:
+            BridgeCapabilityPolicy.supportsProducerBoundSnapshotReferences(for: handshake),
             supportsApplicationLaunchOptions: BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake),
             supportsSafeBackgroundApplicationLaunchNoOp:
             BridgeCapabilityPolicy.supportsSafeBackgroundApplicationLaunchNoOp(for: handshake),

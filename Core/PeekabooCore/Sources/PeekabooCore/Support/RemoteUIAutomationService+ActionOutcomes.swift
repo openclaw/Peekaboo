@@ -50,6 +50,28 @@ UIAutomationGlobalPointerActionResultProviding {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        guard self.supportsProcessGenerationPinnedClicks else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support process-generation-pinned background clicks; update the host")
+        }
+        try self.requireAccessibilityValueDeliveryPolicySupport()
+        return try await self.remoteAction(snapshotId: snapshotId) {
+            try await self.client.clickWithOutcome(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                expectedProcessIdentity: expectedProcessIdentity,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+        }
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
     {
         try self.requireTargetedClicks()
@@ -59,6 +81,30 @@ UIAutomationGlobalPointerActionResultProviding {
                 clickType: clickType,
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
+        }
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        guard self.supportsExactWindowTargetedClicks else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support exact-window background clicks")
+        }
+        try self.requireAccessibilityValueDeliveryPolicySupport()
+        return try await self.remoteAction(snapshotId: snapshotId) {
+            try await self.client.clickWithOutcome(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
         }
     }
 

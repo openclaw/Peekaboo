@@ -1,4 +1,5 @@
 import Commander
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -11,7 +12,7 @@ struct CommanderBinderMenuDockTests {
                 "direction": ["down"],
                 "amount": ["7"],
                 "on": ["B4"],
-                "snapshot": ["sess-5"],
+                "snapshot": [SnapshotReferenceFixtures.first.rawValue],
                 "delay": ["5"],
                 "app": ["Mail"]
             ],
@@ -24,7 +25,7 @@ struct CommanderBinderMenuDockTests {
         #expect(command.direction == "down")
         #expect(command.amount == 7)
         #expect(command.on == "B4")
-        #expect(command.snapshot == "sess-5")
+        #expect(command.snapshot == SnapshotReferenceFixtures.first.rawValue)
         #expect(command.delay.roundedMilliseconds == 5)
         #expect(command.target.app == "Mail")
         #expect(command.smooth == true)

@@ -34,6 +34,12 @@ extension PeekabooBridgeRequest {
         if self.requiresStatelessClickVariantSupport {
             return PeekabooBridgeConstants.statelessClickVariantVersion
         }
+        if self.requiresProducerBoundSnapshotReferences {
+            return PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion
+        }
+        if self.requiresTargetedClickAccessibilityValueDelivery {
+            return PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion
+        }
         switch self.unwrappedOperationRequest.operation {
         case .exactWindowPixelFocusType, .foregroundModifierClick:
             return PeekabooBridgeConstants.composedInputParityVersion
@@ -52,6 +58,35 @@ extension PeekabooBridgeRequest {
         default:
             return nil
         }
+    }
+
+    /// Current clients must not create or publish snapshot state through a host that did not
+    /// negotiate producer-bound references. This client-side predicate intentionally stays
+    /// separate from the server's ownership-probe gate: an already-shipped 1.34 client treats the
+    /// canonical ID returned by a current host as opaque and must still be able to publish it.
+    var createsOrPublishesSnapshotState: Bool {
+        switch self.unwrappedOperationRequest.operation {
+        case .createSnapshot,
+             .storeDetectionResult,
+             .storeScreenshot,
+             .storeObservationSnapshot,
+             .storeAnnotatedScreenshot:
+            true
+        default:
+            false
+        }
+    }
+
+    var requiresProducerBoundSnapshotReferences: Bool {
+        self.unwrappedOperationRequest.operation == .ownsSnapshot
+    }
+
+    var requiresTargetedClickAccessibilityValueDelivery: Bool {
+        guard case let .targetedClick(payload) = self.unwrappedOperationRequest else { return false }
+        // This capability proves that the host understands the additive policy field, not merely
+        // that it can perform value delivery. An old host would ignore an explicit `false` and
+        // retain its legacy AX-value fallback, so both Boolean values require negotiation.
+        return payload.allowsAccessibilityValueDelivery != nil
     }
 
     var requiresNativeBrowserConnectionBinding: Bool {

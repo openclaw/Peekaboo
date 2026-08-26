@@ -205,13 +205,13 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         permissions: PermissionsStatus? = nil
     ) -> PeekabooBridgeHandshakeResponse {
         BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 22),
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
             permissions: permissions,
             enabledOperations: enabledOperations,
             hostCapabilities: capabilities
-        )
+        ).withProducerBoundSnapshotFixture()
     }
 }

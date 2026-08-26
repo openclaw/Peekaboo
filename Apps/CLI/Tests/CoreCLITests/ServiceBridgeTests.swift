@@ -1,5 +1,7 @@
 import CoreGraphics
 import Foundation
+import PeekabooBridge
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -141,6 +143,7 @@ struct ServiceBridgeTests {
         #expect(automation.targetedClickCalls.first?.snapshotId == "snapshot-123")
         #expect(automation.targetedClickCalls.first?.targetProcessIdentifier == 12345)
         #expect(automation.targetedClickCalls.first?.targetWindowID == nil)
+        #expect(automation.targetedClickCalls.first?.allowsAccessibilityValueDelivery == true)
     }
 
     @Test func `automation targeted click forwards exact window`() async throws {
@@ -166,6 +169,70 @@ struct ServiceBridgeTests {
 
         #expect(automation.targetedClickCalls.first?.targetProcessIdentifier == 12345)
         #expect(automation.targetedClickCalls.first?.targetWindowID == 42)
+        #expect(automation.targetedClickCalls.first?.allowsAccessibilityValueDelivery == true)
+    }
+
+    @Test func `automation targeted click refuses policy blind hosts before dispatch`() async throws {
+        let automation = MockTargetedAutomationService()
+        automation.supportsTargetedClickAccessibilityValueDelivery = false
+
+        await #expect(throws: PeekabooError.self) {
+            try await AutomationServiceBridge.click(
+                automation: automation,
+                target: .elementId("field"),
+                clickType: .single,
+                snapshotId: "snapshot-123",
+                expectedProcessIdentity: self.processIdentity
+            )
+        }
+        #expect(automation.targetedClickCalls.isEmpty)
+    }
+
+    @Test func `CLI click refuses old 1 34 value policy before remote provider entry`() async throws {
+        let services = PolicyBlindBridgeServices()
+        let socketPath = "/tmp/peekaboo-cli-old-value-policy-\(UUID().uuidString).sock"
+        let version = PeekabooBridgeProtocolVersion(major: 1, minor: 34)
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            supportedVersions: version...version
+        )
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = BridgeTestFixtures.authenticatedClient(socketPath: socketPath, requestTimeoutSec: 1)
+        let handshake = try await client.handshake(
+            client: .init(
+                bundleIdentifier: "boo.peekaboo.cli-policy-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()
+            ),
+            protocolVersion: version
+        )
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery
+        ) != true)
+        let remote = RemoteUIAutomationService(
+            client: client,
+            supportsTargetedClicks: true,
+            supportsProcessGenerationPinnedClicks: true
+        )
+
+        await #expect(throws: PeekabooError.self) {
+            try await AutomationServiceBridge.click(
+                automation: remote,
+                target: .elementId("field"),
+                clickType: .single,
+                snapshotId: "snapshot-123",
+                expectedProcessIdentity: self.processIdentity
+            )
+        }
+        #expect(services.automationService.policyAwareClickEntryCount == 0)
+        #expect(services.automationService.targetedClickCalls.isEmpty)
+        await host.stop()
     }
 
     @Test func `automation targeted click maps missing event synthesizing permission`() async throws {
@@ -348,6 +415,7 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
         let targetWindowID: Int?
+        let allowsAccessibilityValueDelivery: Bool?
     }
 
     struct TargetedTypeActionsCall {
@@ -360,6 +428,7 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
     var targetedHotkeyCalls: [TargetedHotkeyCall] = []
     var targetedTypeActionsCalls: [TargetedTypeActionsCall] = []
     var targetedClickCalls: [TargetedClickCall] = []
+    private(set) var policyAwareClickEntryCount = 0
     var supportsTargetedHotkeys = true
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
@@ -369,6 +438,7 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
     var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsTargetedClicks = true
     var supportsProcessGenerationPinnedClicks = true
+    var supportsTargetedClickAccessibilityValueDelivery = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
 
@@ -421,7 +491,8 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: nil
+            targetWindowID: nil,
+            allowsAccessibilityValueDelivery: nil
         ))
     }
 
@@ -436,7 +507,29 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
-            targetWindowID: nil
+            targetWindowID: nil,
+            allowsAccessibilityValueDelivery: nil
+        ))
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool
+    ) async throws {
+        self.policyAwareClickEntryCount += 1
+        guard self.supportsTargetedClickAccessibilityValueDelivery else {
+            throw PeekabooError.serviceUnavailable("Targeted click value-delivery policy is unavailable")
+        }
+        self.targetedClickCalls.append(.init(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+            targetWindowID: nil,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
         ))
     }
 
@@ -452,8 +545,81 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            targetWindowID: expectedWindowIdentity.windowID
+            targetWindowID: expectedWindowIdentity.windowID,
+            allowsAccessibilityValueDelivery: nil
         ))
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect,
+        allowsAccessibilityValueDelivery: Bool
+    ) async throws {
+        self.policyAwareClickEntryCount += 1
+        guard self.supportsTargetedClickAccessibilityValueDelivery else {
+            throw PeekabooError.serviceUnavailable("Targeted click value-delivery policy is unavailable")
+        }
+        self.targetedClickCalls.append(.init(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            targetWindowID: expectedWindowIdentity.windowID,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
+        ))
+    }
+}
+
+@MainActor
+private final class PolicyBlindBridgeServices: PeekabooBridgeServiceProviding {
+    let base = PeekabooServices()
+    let automationService = MockTargetedAutomationService()
+
+    var permissions: PermissionsService {
+        self.base.permissions
+    }
+
+    var screenCapture: any ScreenCaptureServiceProtocol {
+        self.base.screenCapture
+    }
+
+    var automation: any UIAutomationServiceProtocol {
+        self.automationService
+    }
+
+    var windows: any WindowManagementServiceProtocol {
+        self.base.windows
+    }
+
+    var applications: any ApplicationServiceProtocol {
+        self.base.applications
+    }
+
+    var menu: any MenuServiceProtocol {
+        self.base.menu
+    }
+
+    var dock: any DockServiceProtocol {
+        self.base.dock
+    }
+
+    var dialogs: any DialogServiceProtocol {
+        self.base.dialogs
+    }
+
+    var snapshots: any SnapshotManagerProtocol {
+        self.base.snapshots
+    }
+
+    var desktopObservation: any DesktopObservationServiceProtocol {
+        self.base.desktopObservation
+    }
+
+    init() {
+        self.automationService.supportsTargetedClickAccessibilityValueDelivery = false
     }
 }
 

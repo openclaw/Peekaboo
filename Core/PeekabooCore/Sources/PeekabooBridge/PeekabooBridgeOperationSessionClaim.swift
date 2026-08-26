@@ -5,23 +5,31 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let statelessClickVariants: Bool
     let exactWindowHeldPointerLifecycle: Bool
     let nativeBrowserConnectionBinding: Bool
+    let producerBoundSnapshotReferences: Bool
+    let targetedClickAccessibilityValueDelivery: Bool
 
     static let current = Self(
         protocolVersion: PeekabooBridgeConstants.protocolVersion,
         statelessClickVariants: true,
         exactWindowHeldPointerLifecycle: true,
-        nativeBrowserConnectionBinding: true)
+        nativeBrowserConnectionBinding: true,
+        producerBoundSnapshotReferences: true,
+        targetedClickAccessibilityValueDelivery: true)
 
     init(
         protocolVersion: PeekabooBridgeProtocolVersion,
         statelessClickVariants: Bool,
         exactWindowHeldPointerLifecycle: Bool,
-        nativeBrowserConnectionBinding: Bool = false)
+        nativeBrowserConnectionBinding: Bool = false,
+        producerBoundSnapshotReferences: Bool = false,
+        targetedClickAccessibilityValueDelivery: Bool = false)
     {
         self.protocolVersion = protocolVersion
         self.statelessClickVariants = statelessClickVariants
         self.exactWindowHeldPointerLifecycle = exactWindowHeldPointerLifecycle
         self.nativeBrowserConnectionBinding = nativeBrowserConnectionBinding
+        self.producerBoundSnapshotReferences = producerBoundSnapshotReferences
+        self.targetedClickAccessibilityValueDelivery = targetedClickAccessibilityValueDelivery
     }
 }
 

@@ -87,6 +87,7 @@ var targets: [Target] = [
             .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
             .product(name: "PeekabooAutomation", package: "PeekabooCore"),
             .product(name: "PeekabooAgentRuntime", package: "PeekabooCore"),
+            .product(name: "PeekabooBridge", package: "PeekabooCore"),
             .product(name: "PeekabooCore", package: "PeekabooCore"),
         ],
         path: "Tests/CoreCLITests",

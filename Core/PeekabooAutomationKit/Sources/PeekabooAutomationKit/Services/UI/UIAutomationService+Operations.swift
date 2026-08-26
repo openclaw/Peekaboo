@@ -50,7 +50,7 @@ extension UIAutomationService {
      *
      * let elements = try await automation.detectElements(
      *     in: captureResult.imageData,
-     *     snapshotId: "snapshot_123",
+     *     snapshotId: "ps1_0123456789abcdef0123456789abcdef",
      *     windowContext: windowContext
      * )
      *
@@ -143,14 +143,14 @@ extension UIAutomationService {
      * try await automation.click(
      *     target: .elementId(detectedElement.id),
      *     clickType: .single,
-     *     snapshotId: "snapshot_123"
+     *     snapshotId: "ps1_0123456789abcdef0123456789abcdef"
      * )
      *
      * // Click by searching for text
      * try await automation.click(
      *     target: .query("Submit"),
      *     clickType: .single,
-     *     snapshotId: "snapshot_123"
+     *     snapshotId: "ps1_0123456789abcdef0123456789abcdef"
      * )
      *
      * // Click at specific coordinates
@@ -255,11 +255,41 @@ extension UIAutomationService {
             expectedProcessIdentity: expectedProcessIdentity)
     }
 
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+    }
+
     public func clickWithOutcome(
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity,
+            allowsAccessibilityValueDelivery: true)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
     {
         self.logger.debug("Delegating generation-pinned background click to ClickService")
         let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
@@ -271,7 +301,8 @@ extension UIAutomationService {
                 clickType: clickType,
                 snapshotId: snapshotId,
                 automationTarget: automationTarget,
-                validatesProcessIdentity: true)
+                validatesProcessIdentity: true,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
         }
 
         await self.visualizeClick(
@@ -302,12 +333,46 @@ extension UIAutomationService {
             expectedWindowBounds: expectedWindowBounds)
     }
 
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+    }
+
     public func clickWithOutcome(
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            allowsAccessibilityValueDelivery: true)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
     {
         let exactWindow = try UIAutomationTarget.ExactWindow(
             identity: expectedWindowIdentity,
@@ -320,7 +385,8 @@ extension UIAutomationService {
                 clickType: clickType,
                 snapshotId: snapshotId,
                 automationTarget: automationTarget,
-                validatesProcessIdentity: true)
+                validatesProcessIdentity: true,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
         }
 
         await self.visualizeClick(

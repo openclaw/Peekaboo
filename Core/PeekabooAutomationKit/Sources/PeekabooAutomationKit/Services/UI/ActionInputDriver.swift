@@ -61,6 +61,9 @@ extension ActionInputError: LocalizedError {
 @MainActor
 protocol ActionInputDriving: Sendable {
     func tryClick(element: AutomationElement) throws -> UIInputExecutionResult.Action
+    func tryClick(
+        element: AutomationElement,
+        allowAccessibilityValueFallback: Bool) throws -> UIInputExecutionResult.Action
     func tryFocus(element: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action
     func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionResult.Action
     func tryScroll(
@@ -74,6 +77,16 @@ protocol ActionInputDriving: Sendable {
 }
 
 extension ActionInputDriving {
+    func tryClick(
+        element: AutomationElement,
+        allowAccessibilityValueFallback: Bool) throws -> UIInputExecutionResult.Action
+    {
+        guard allowAccessibilityValueFallback else {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
+        return try self.tryClick(element: element)
+    }
+
     func tryFocus(element _: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action {
         throw ActionInputError.unsupported(.attributeUnsupported)
     }
@@ -90,10 +103,18 @@ struct ActionInputDriver: ActionInputDriving {
         mode: .background)
 
     func tryClick(element: AutomationElement) throws -> UIInputExecutionResult.Action {
+        try self.tryClick(element: element, allowAccessibilityValueFallback: true)
+    }
+
+    func tryClick(
+        element: AutomationElement,
+        allowAccessibilityValueFallback: Bool) throws -> UIInputExecutionResult.Action
+    {
         do {
             return try self.performAction(AXActionNames.kAXPressAction, on: element)
         } catch let error as ActionInputError
             where error == .unsupported(.actionUnsupported) &&
+            allowAccessibilityValueFallback &&
             Self.canFocusForClick(
                 role: element.role,
                 subrole: element.subrole,
@@ -1097,11 +1118,15 @@ private struct MenuHotkeyChord: Equatable {
 
 #if DEBUG
 extension ActionInputDriver {
-    func tryClickForTesting(element: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action {
+    func tryClickForTesting(
+        element: any AutomationElementRepresenting,
+        allowAccessibilityValueFallback: Bool = true) throws -> UIInputExecutionResult.Action
+    {
         do {
             return try self.performAction(AXActionNames.kAXPressAction, on: element)
         } catch let error as ActionInputError
             where error == .unsupported(.actionUnsupported) &&
+            allowAccessibilityValueFallback &&
             Self.canFocusForClick(
                 role: element.role,
                 subrole: element.subrole,

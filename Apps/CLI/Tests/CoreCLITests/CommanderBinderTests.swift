@@ -488,7 +488,7 @@ struct CommanderBinderTests {
             build: nil,
             supportedOperations: [.captureScreen, .desktopObservation],
             hostCapabilities: [PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership]
-        )
+        ).withProducerBoundSnapshotFixture()
 
         let readOnlyCaptures: [(any ParsableCommand.Type, ParsedValues)] = [
             (SeeCommand.self, ParsedValues(positional: [], options: [:], flags: [])),
@@ -708,10 +708,24 @@ struct CommanderBinderTests {
             permissions: PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true),
             enabledOperations: operations
         )
+        let policyCapable = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations,
+            permissions: PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true),
+            enabledOperations: operations,
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery,
+            ]
+        )
 
         #expect(type.requiresProcessGenerationPinnedTypeActions)
         #expect(click.requiresProcessGenerationPinnedClicks)
+        #expect(click.requiresTargetedClickAccessibilityValueDelivery)
         #expect(!exactClick.requiresProcessGenerationPinnedClicks)
+        #expect(exactClick.requiresTargetedClickAccessibilityValueDelivery)
         #expect(paste.requiresProcessGenerationPinnedTypeActions)
         #expect(paste.requiresProcessGenerationPinnedHotkeys)
         #expect(!foreground.requiresProcessGenerationPinnedTypeActions)
@@ -719,9 +733,11 @@ struct CommanderBinderTests {
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: click))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: paste))
         #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: type))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: click))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: current, options: click))
         #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: paste))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: exactClick))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: exactClick))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: policyCapable, options: click))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: policyCapable, options: exactClick))
         #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: foreground))
     }
 
@@ -841,7 +857,7 @@ struct CommanderBinderTests {
             .targetedClick,
         ]
         let accessibilityOnly = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
+            negotiatedVersion: PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion,
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
@@ -851,10 +867,14 @@ struct CommanderBinderTests {
                 postEvent: false
             ),
             enabledOperations: operations,
-            permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []]
+            permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery,
+            ]
         )
         let fullyPermitted = BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
+            negotiatedVersion: PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion,
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
@@ -864,7 +884,11 @@ struct CommanderBinderTests {
                 postEvent: true
             ),
             enabledOperations: operations,
-            permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []]
+            permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery,
+            ]
         )
 
         #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: singleClick))
@@ -918,7 +942,7 @@ extension CommanderBinderTests {
             enabledOperations: [.captureScreen, .scroll, .invalidateImplicitLatestSnapshot]
         )
         let current = BridgeTestFixtures.handshake(
-            negotiatedVersion: .init(major: 1, minor: 12),
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
@@ -928,7 +952,7 @@ extension CommanderBinderTests {
                 postEvent: true
             ),
             enabledOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot]
-        )
+        ).withProducerBoundSnapshotFixture()
 
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: background))
         #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: background))

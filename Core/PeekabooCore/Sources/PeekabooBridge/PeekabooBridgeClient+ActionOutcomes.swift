@@ -73,13 +73,45 @@ extension PeekabooBridgeClient {
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
     {
+        try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity,
+            allowsAccessibilityValueDelivery:
+            self.targetedClickAccessibilityValueDeliveryEnabled ? true : nil)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity,
+            allowsAccessibilityValueDelivery: Optional(allowsAccessibilityValueDelivery))
+    }
+
+    private func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool?) async throws -> UIAutomationActionResult<Void>
+    {
         try await self.actionResult(
             for: .targetedClick(.init(
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
                 targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
-                expectedProcessIdentity: expectedProcessIdentity)),
+                expectedProcessIdentity: expectedProcessIdentity,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)),
             expectedResponse: "generation-pinned click")
         { response in
             guard case .ok = response else { return nil }
@@ -94,6 +126,41 @@ extension PeekabooBridgeClient {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
+        try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            allowsAccessibilityValueDelivery:
+            self.targetedClickAccessibilityValueDeliveryEnabled ? true : nil)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            allowsAccessibilityValueDelivery: Optional(allowsAccessibilityValueDelivery))
+    }
+
+    private func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool?) async throws -> UIAutomationActionResult<Void>
+    {
         try await self.actionResult(
             for: .targetedClick(.init(
                 target: target,
@@ -102,7 +169,8 @@ extension PeekabooBridgeClient {
                 targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
                 targetWindowID: expectedWindowIdentity.windowID,
                 expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)),
+                expectedWindowBounds: expectedWindowBounds,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)),
             expectedResponse: "exact-window click")
         { response in
             guard case .ok = response else { return nil }

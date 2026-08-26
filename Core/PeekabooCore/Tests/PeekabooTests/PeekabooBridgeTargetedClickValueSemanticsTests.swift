@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 @testable import PeekabooBridge
@@ -23,13 +24,29 @@ struct PeekabooBridgeTargetedClickValueSemanticsTests {
             PeekabooBridgeRequest.targetedClick(.init(
                 target: .elementId("field"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: SnapshotReferenceFixtures.first.rawValue,
+                targetProcessIdentifier: identity.ownerProcessIdentifier,
+                expectedProcessIdentity: identity.processIdentity,
+                allowsAccessibilityValueDelivery: true)),
+            PeekabooBridgeRequest.targetedClick(.init(
+                target: .elementId("field"),
+                clickType: .single,
+                snapshotId: SnapshotReferenceFixtures.first.rawValue,
+                targetProcessIdentifier: identity.ownerProcessIdentifier,
+                targetWindowID: identity.windowID,
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds,
+                allowsAccessibilityValueDelivery: true)),
+            PeekabooBridgeRequest.targetedClick(.init(
+                target: .elementId("field"),
+                clickType: .single,
+                snapshotId: SnapshotReferenceFixtures.first.rawValue,
                 targetProcessIdentifier: identity.ownerProcessIdentifier,
                 expectedProcessIdentity: identity.processIdentity)),
             PeekabooBridgeRequest.targetedClick(.init(
                 target: .elementId("field"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: SnapshotReferenceFixtures.first.rawValue,
                 targetProcessIdentifier: identity.ownerProcessIdentifier,
                 targetWindowID: identity.windowID,
                 expectedWindowIdentity: identity,
@@ -40,5 +57,17 @@ struct PeekabooBridgeTargetedClickValueSemanticsTests {
                 response: .ok,
                 request: request))
         }
+
+        let optedOut = PeekabooBridgeRequest.targetedClick(.init(
+            target: .elementId("field"),
+            clickType: .single,
+            snapshotId: SnapshotReferenceFixtures.first.rawValue,
+            targetProcessIdentifier: identity.ownerProcessIdentifier,
+            expectedProcessIdentity: identity.processIdentity,
+            allowsAccessibilityValueDelivery: false))
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            focus,
+            response: .ok,
+            request: optedOut))
     }
 }

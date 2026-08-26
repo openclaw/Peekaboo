@@ -27,6 +27,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsTargetedClicks: Bool
     public let supportsProcessGenerationPinnedClicks: Bool
     public let supportsStatelessClickVariants: Bool
+    public let supportsTargetedClickAccessibilityValueDelivery: Bool
     public let targetedClickUnavailableReason: String?
     public let targetedClickRequiresEventSynthesizingPermission: Bool
     public let supportsExactWindowTargetedClicks: Bool
@@ -55,6 +56,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         supportsTargetedClicks: Bool = false,
         supportsProcessGenerationPinnedClicks: Bool = false,
         supportsStatelessClickVariants: Bool = false,
+        supportsTargetedClickAccessibilityValueDelivery: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
@@ -81,6 +83,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsTargetedClicks = supportsTargetedClicks
         self.supportsProcessGenerationPinnedClicks = supportsProcessGenerationPinnedClicks
         self.supportsStatelessClickVariants = supportsStatelessClickVariants
+        self.supportsTargetedClickAccessibilityValueDelivery = supportsTargetedClickAccessibilityValueDelivery
         self.targetedClickUnavailableReason = targetedClickUnavailableReason
         self.targetedClickRequiresEventSynthesizingPermission = targetedClickRequiresEventSynthesizingPermission
         self.supportsExactWindowTargetedClicks = supportsExactWindowTargetedClicks
@@ -230,6 +233,30 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        guard self.supportsProcessGenerationPinnedClicks else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support process-generation-pinned background clicks; update the host")
+        }
+        try self.requireAccessibilityValueDeliveryPolicySupport()
+        do {
+            try await self.client.click(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                expectedProcessIdentity: expectedProcessIdentity,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {
@@ -253,6 +280,44 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 expectedWindowBounds: expectedWindowBounds)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        guard self.supportsExactWindowTargetedClicks else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support exact-window background clicks")
+        }
+        guard self.supportsTargetedClicks else {
+            throw Self.targetedClickUnavailableError(
+                reason: self.targetedClickUnavailableReason,
+                requiresEventSynthesizingPermission: self.targetedClickRequiresEventSynthesizingPermission)
+        }
+        try self.requireAccessibilityValueDeliveryPolicySupport()
+        do {
+            try await self.client.click(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds,
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
+    }
+
+    func requireAccessibilityValueDeliveryPolicySupport() throws {
+        guard self.supportsTargetedClickAccessibilityValueDelivery else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host cannot honor an explicit accessibility-value click policy")
         }
     }
 

@@ -285,6 +285,57 @@ struct RuntimeHostResolverTests {
     }
 
     @Test
+    func `snapshot-producing command skips old same-minor host for a capable peer`() async throws {
+        let oldCandidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/old-snapshot-host.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let currentCandidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/current-snapshot-host.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let oldHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 34),
+            supportedOperations: [.desktopObservation],
+            hostCapabilities: [PeekabooBridgeHostCapability.attestedOperationReceipts]
+        )
+        let currentHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 34),
+            supportedOperations: [.desktopObservation, .ownsSnapshot],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.producerBoundSnapshotReferences,
+            ]
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresDesktopObservation = true
+        options.requiresProducerBoundSnapshotReferences = true
+        var permissionRejections: [String] = []
+
+        let resolution = try await RuntimeHostResolver.resolveRemoteServices(
+            candidates: [oldCandidate, currentCandidate],
+            identity: PeekabooBridgeClientIdentity(
+                bundleIdentifier: "boo.peekaboo.snapshot-selection-tests",
+                teamIdentifier: nil,
+                processIdentifier: 42
+            ),
+            options: options,
+            snapshotInvalidationRemoteSocketPaths: [],
+            permissionRejections: &permissionRejections,
+            handshake: { candidate, _ in
+                candidate == oldCandidate ? oldHandshake : currentHandshake
+            }
+        )
+
+        #expect(resolution?.selectedRemoteSocketPath == currentCandidate.socketPath)
+        #expect(permissionRejections.isEmpty)
+    }
+
+    @Test
     func `Candidate validation rejects pre-long-press bridge hosts`() async {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/bridge.sock",

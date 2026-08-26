@@ -1056,6 +1056,20 @@ extension PeekabooBridgeServer {
             throw PeekabooBridgeErrorEnvelope(
                 code: .notFound,
                 message: "No detection result for snapshot \(payload.snapshotId)")
+        case let .ownsSnapshot(payload):
+            guard SnapshotReference(rawValue: payload.snapshotId) != nil else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "Invalid producer-bound snapshot reference")
+            }
+            guard PeekabooBridgeRequestContext.negotiatedSessionCapabilities?
+                .producerBoundSnapshotReferences == true
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Producer-bound snapshot ownership was not negotiated")
+            }
+            return try await .bool(self.services.snapshots.ownsSnapshot(snapshotId: payload.snapshotId))
         case let .storeScreenshot(payload):
             try await self.services.snapshots.storeScreenshot(payload.snapshotRequest)
             return .ok

@@ -303,8 +303,23 @@ public protocol UIAutomationActionOutcomeProviding: UIAutomationServiceProtocol 
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
 
     func typeWithOutcome(
         text: String,
@@ -379,6 +394,46 @@ public protocol UIAutomationActionOutcomeProviding: UIAutomationServiceProtocol 
         target: String,
         actionName: String,
         snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+}
+
+extension UIAutomationActionOutcomeProviding {
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        guard allowsAccessibilityValueDelivery else {
+            throw PeekabooError.serviceUnavailable(
+                "This automation service cannot enforce an accessibility-value click opt-out")
+        }
+        return try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        guard allowsAccessibilityValueDelivery else {
+            throw PeekabooError.serviceUnavailable(
+                "This automation service cannot enforce an accessibility-value click opt-out")
+        }
+        return try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+    }
 }
 
 /// Additive result capability for shared-pointer operations.
@@ -629,6 +684,7 @@ public protocol TargetedClickServiceProtocol: UIAutomationServiceProtocol {
     var supportsTargetedClicks: Bool { get }
     var supportsProcessGenerationPinnedClicks: Bool { get }
     var supportsStatelessClickVariants: Bool { get }
+    var supportsTargetedClickAccessibilityValueDelivery: Bool { get }
     var targetedClickUnavailableReason: String? { get }
     var targetedClickRequiresEventSynthesizingPermission: Bool { get }
 
@@ -643,6 +699,13 @@ public protocol TargetedClickServiceProtocol: UIAutomationServiceProtocol {
         clickType: ClickType,
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws
 }
 
 /// Optional capability for preserving an exact target window during a background click.
@@ -656,6 +719,14 @@ public protocol ExactWindowTargetedClickServiceProtocol: TargetedClickServicePro
         snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws
 }
 
 extension ExactWindowTargetedClickServiceProtocol {
@@ -673,6 +744,26 @@ extension ExactWindowTargetedClickServiceProtocol {
         throw PeekabooError.serviceUnavailable(
             "Exact-window clicks require process-generation identity support")
     }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        guard allowsAccessibilityValueDelivery else {
+            throw PeekabooError.serviceUnavailable(
+                "This automation service cannot enforce an accessibility-value click opt-out")
+        }
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+    }
 }
 
 extension TargetedClickServiceProtocol {
@@ -685,6 +776,10 @@ extension TargetedClickServiceProtocol {
     }
 
     public var supportsStatelessClickVariants: Bool {
+        false
+    }
+
+    public var supportsTargetedClickAccessibilityValueDelivery: Bool {
         false
     }
 
@@ -704,6 +799,24 @@ extension TargetedClickServiceProtocol {
     {
         throw PeekabooError.serviceUnavailable(
             "This automation service does not support process-generation-pinned clicks")
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws
+    {
+        guard allowsAccessibilityValueDelivery else {
+            throw PeekabooError.serviceUnavailable(
+                "This automation service cannot enforce an accessibility-value click opt-out")
+        }
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity)
     }
 }
 

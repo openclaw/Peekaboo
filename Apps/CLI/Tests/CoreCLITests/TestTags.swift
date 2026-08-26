@@ -1,5 +1,39 @@
 import Foundation
+import PeekabooBridge
 import Testing
+
+extension PeekabooBridgeHandshakeResponse {
+    func withProducerBoundSnapshotFixture() -> PeekabooBridgeHandshakeResponse {
+        var supportedOperations = self.supportedOperations
+        if !supportedOperations.contains(.ownsSnapshot) {
+            supportedOperations.append(.ownsSnapshot)
+        }
+        var enabledOperations = self.enabledOperations
+        if enabledOperations != nil, enabledOperations?.contains(.ownsSnapshot) != true {
+            enabledOperations?.append(.ownsSnapshot)
+        }
+        var hostCapabilities = self.hostCapabilities ?? []
+        for capability in [
+            PeekabooBridgeHostCapability.attestedOperationReceipts,
+            PeekabooBridgeHostCapability.producerBoundSnapshotReferences,
+        ] where !hostCapabilities.contains(capability) {
+            hostCapabilities.append(capability)
+        }
+        return PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: self.negotiatedVersion,
+            hostKind: self.hostKind,
+            build: self.build,
+            supportedOperations: supportedOperations,
+            permissions: self.permissions,
+            enabledOperations: enabledOperations,
+            permissionTags: self.permissionTags,
+            hostIdentity: self.hostIdentity,
+            hostCapabilities: hostCapabilities,
+            operationAttestation: self.operationAttestation,
+            operationSessionAttestation: self.operationSessionAttestation
+        )
+    }
+}
 
 extension Tag {
     // Test categories

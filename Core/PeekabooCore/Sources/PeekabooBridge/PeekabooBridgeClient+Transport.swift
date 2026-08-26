@@ -189,6 +189,22 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.createsOrPublishesSnapshotState || request.requiresProducerBoundSnapshotReferences,
+           !self.producerBoundSnapshotReferencesEnabled
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.34 producer-bound snapshot ownership is unavailable")
+        }
+        if request.requiresTargetedClickAccessibilityValueDelivery,
+           !self.targetedClickAccessibilityValueDeliveryEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot honor an explicit accessibility-value click policy.",
+                hint: "Update and relaunch Peekaboo before retrying the snapshot-backed click.")
+        }
         if request.unwrappedOperationRequest.operation == .foregroundModifierClick,
            !self.foregroundModifierClickSnapshotLeaseEnabled
         {

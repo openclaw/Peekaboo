@@ -16,11 +16,22 @@ extension PeekabooBridgeClient {
     }
 
     private func createSnapshot(pendingAt: Date?, explicitOnly: Bool?) async throws -> String {
+        guard self.producerBoundSnapshotReferencesEnabled else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host did not negotiate producer-bound snapshot references")
+        }
         let response = try await self.send(.createSnapshot(.init(
             pendingAt: pendingAt,
             explicitOnly: explicitOnly)))
         switch response {
-        case let .snapshotId(id): return id
+        case let .snapshotId(id):
+            guard SnapshotReference(rawValue: id) != nil else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "Bridge host returned a non-canonical snapshot reference")
+            }
+            return id
         case let .error(envelope): throw envelope
         default: throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected createSnapshot response")
         }
@@ -43,6 +54,26 @@ extension PeekabooBridgeClient {
         case let .error(envelope): throw envelope
         default:
             throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected getDetectionResult response")
+        }
+    }
+
+    public func ownsSnapshot(snapshotId: String) async throws -> Bool {
+        guard SnapshotReference(rawValue: snapshotId) != nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Invalid producer-bound snapshot reference")
+        }
+        guard self.producerBoundSnapshotReferencesEnabled else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host did not negotiate producer-bound snapshot references")
+        }
+        let response = try await self.send(.ownsSnapshot(.init(snapshotId: snapshotId)))
+        switch response {
+        case let .bool(owns): return owns
+        case let .error(envelope): throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected ownsSnapshot response")
         }
     }
 

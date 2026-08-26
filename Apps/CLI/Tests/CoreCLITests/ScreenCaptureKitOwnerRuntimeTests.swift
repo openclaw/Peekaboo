@@ -153,10 +153,13 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `caller-local explicit snapshot scroll skips capture ownership and old-host discovery`() async throws {
+        let snapshots = InMemorySnapshotManager()
+        let snapshotID = try await snapshots.createSnapshot()
+        let localServices = PeekabooServices(snapshotManager: snapshots)
         var options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["on": ["elem_3"], "snapshot": ["explicit-receipt"]],
+                options: ["on": ["elem_3"], "snapshot": [snapshotID]],
                 flags: ["no-remote"]
             ),
             commandType: ScrollCommand.self
@@ -175,7 +178,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             dependencies: .init(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return localServices
                 },
                 claimScreenCaptureKitOwner: {
                     claimCalls += 1
@@ -1435,6 +1438,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         codeSignatureHash: String,
         ownerAware: Bool = true,
         screenRecording: Bool = true,
+        maximumProtocolVersion: PeekabooBridgeProtocolVersion =
+            PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion,
+        usesCurrentHostIdentity: Bool = false,
         serviceOverride: (any PeekabooBridgeServiceProviding)? = nil,
         permissionEvaluationObserver: @escaping @MainActor @Sendable () -> Void = {}
     ) async throws -> PeekabooBridgeHost {
@@ -1452,7 +1458,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             allowlistedBundles: [],
             supportedVersions: ClosedRange(uncheckedBounds: (
                 lower: PeekabooBridgeConstants.supportedProtocolRange.lowerBound,
-                upper: PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion
+                upper: maximumProtocolVersion
             )),
             allowedOperations: [
                 .permissionsStatus,
@@ -1460,23 +1466,27 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 .desktopObservation,
                 .invalidateImplicitLatestSnapshot,
                 .launchApplicationWithOptions,
+                .findApplication,
                 .activateApplication,
                 .targetedHotkey,
                 .targetedTypeActions,
                 .targetedClick,
+                .ownsSnapshot,
                 .targetedDialogListElements,
                 .prepareDialogAction,
                 .exactDialogClickButton,
                 .exactDialogDismiss,
             ],
-            hostIdentity: PeekabooBridgeHostIdentity(
-                processIdentifier: processIdentifier,
-                processStartIdentity: processStartIdentity,
-                bundleIdentifier: "boo.peekaboo.test.host",
-                bundleShortVersion: nil,
-                bundleVersion: nil,
-                codeSignatureHash: codeSignatureHash
-            ),
+            hostIdentity: usesCurrentHostIdentity
+                ? .current()
+                : PeekabooBridgeHostIdentity(
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: processStartIdentity,
+                    bundleIdentifier: "boo.peekaboo.test.host",
+                    bundleShortVersion: nil,
+                    bundleVersion: nil,
+                    codeSignatureHash: codeSignatureHash
+                ),
             permissionStatusEvaluator: { _ in
                 permissionEvaluationObserver()
                 return PermissionsStatus(

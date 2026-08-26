@@ -2,6 +2,7 @@ import Commander
 import Foundation
 import MCP
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import TachikomaMCP
 import Testing
@@ -82,6 +83,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             processIdentifier: 4242,
             processStartIdentity: 9001,
             codeSignatureHash: "selected-build",
+            maximumProtocolVersion: PeekabooBridgeConstants.protocolVersion,
+            usesCurrentHostIdentity: true,
             permissionEvaluationObserver: { selectedHandshakeCount += 1 }
         )
         let unrelatedHost = try await Self.startHost(
@@ -153,7 +156,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                             requiresValidatedHistoricalDaemon: false
                         )]
                     )
-                }
+                },
+                makeRemoteHandshakeCache: { Self.authenticatedHandshakeCache() }
             )
         )
 
@@ -236,7 +240,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             socketPath: selectedSocket,
             processIdentifier: 4242,
             processStartIdentity: 9001,
-            codeSignatureHash: "selected-build"
+            codeSignatureHash: "selected-build",
+            maximumProtocolVersion: PeekabooBridgeConstants.protocolVersion,
+            usesCurrentHostIdentity: true
         )
         defer { Task { await selectedHost.stop() } }
 
@@ -254,6 +260,13 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         )
         #expect(options.bridgeSocketPath == selectedSocket)
         #expect(options.usesPerToolSnapshotInvalidation)
+        let handshakeCache = Self.authenticatedHandshakeCache()
+        let selectedCandidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: selectedSocket,
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
 
         let legacyOwner = RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
             socketPath: "/tmp/unrelated-legacy-owner.sock",
@@ -269,7 +282,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 makeLocalServices: { _ in PeekabooServices() },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: { nil },
-                inspectScreenCaptureKitSafety: { _, _, _, _ in legacyOwner },
+                inspectScreenCaptureKitSafety: { _, _, _, cache in
+                    _ = try await cache.handshake(selectedCandidate, identity: cache.identity)
+                    return legacyOwner
+                },
                 remoteCandidatePlan: { _, _ in
                     RuntimeHostResolver.RemoteCandidatePlan(
                         explicitSocket: selectedSocket,
@@ -277,14 +293,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         runtimeBuildIdentity: "current-build",
                         buildScopedDaemonSocketPath: nil,
                         historicalBuildScopedDaemonSocketPaths: [],
-                        candidates: [.init(
-                            socketPath: selectedSocket,
-                            requireReusableDaemon: false,
-                            requiredHostKind: nil,
-                            requiresValidatedHistoricalDaemon: false
-                        )]
+                        candidates: [selectedCandidate]
                     )
-                }
+                },
+                makeRemoteHandshakeCache: { handshakeCache }
             )
         )
         let refusal = try #require(resolution.toolCapturePreflightRefusal)
@@ -322,6 +334,17 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         #expect(!nonCapture.isError)
         #expect(await nonCaptureCounter.wasInvoked)
         await selectedHost.stop()
+    }
+
+    private static func authenticatedHandshakeCache() -> RuntimeHostResolver.RemoteHandshakeCache {
+        RuntimeHostResolver.RemoteHandshakeCache(
+            identity: PeekabooBridgeClientIdentity(
+                bundleIdentifier: "boo.peekaboo.dynamic-snapshot-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()
+            ),
+            clientFactory: { BridgeTestFixtures.authenticatedClient(socketPath: $0) }
+        )
     }
 }
 

@@ -1,12 +1,24 @@
 import Foundation
+import PeekabooAgentRuntime
 import PeekabooBridge
 import PeekabooFoundation
 
 extension RuntimeHostResolver {
+    private enum SnapshotAffinityRemoteOwnerKey: Hashable {
+        case attestedProcess(pid_t, UInt64, String)
+        case endpoint(String)
+    }
+
     enum SnapshotAffinityProbeResult: Equatable, Sendable {
         case owner
         case missing
+        case incompatible
         case unavailable
+    }
+
+    enum SnapshotAffinityOwner: Equatable, Sendable {
+        case local
+        case remote([ImplicitRemoteCandidate])
     }
 
     typealias SnapshotAffinityProbe = @MainActor @Sendable (
@@ -43,6 +55,18 @@ extension RuntimeHostResolver {
                 requiredHostKind: .gui,
                 requiresValidatedHistoricalDaemon: false
             ),
+            ImplicitRemoteCandidate(
+                socketPath: PeekabooBridgeConstants.claudeSocketPath,
+                requireReusableDaemon: false,
+                requiredHostKind: nil,
+                requiresValidatedHistoricalDaemon: false
+            ),
+            ImplicitRemoteCandidate(
+                socketPath: PeekabooBridgeConstants.clawdbotSocketPath,
+                requireReusableDaemon: false,
+                requiredHostKind: nil,
+                requiresValidatedHistoricalDaemon: false
+            ),
         ].compactMap(\.self))
         candidates.append(contentsOf: plan.historicalBuildScopedDaemonSocketPaths.map {
             ImplicitRemoteCandidate(
@@ -67,12 +91,32 @@ extension RuntimeHostResolver {
         probe: @escaping SnapshotAffinityProbe = RuntimeHostResolver
             .liveSnapshotAffinityProbe
     ) async throws -> ImplicitRemoteCandidate {
-        guard self.isSafeSnapshotReference(snapshotID) else {
-            throw self.snapshotAffinityRefusal(
-                snapshotID: snapshotID,
-                message: "Snapshot reference is not one safe opaque snapshot ID.",
-                reason: .invalidRequest
-            )
+        let owner = try await self.resolveSnapshotAffinityOwner(
+            snapshotID: snapshotID,
+            localServices: nil,
+            candidates: candidates,
+            identity: identity,
+            handshakeCache: handshakeCache,
+            probe: probe
+        )
+        guard case let .remote(candidates) = owner,
+              let candidate = candidates.first
+        else {
+            preconditionFailure("Remote-only snapshot affinity unexpectedly selected local services")
+        }
+        return candidate
+    }
+
+    static func resolveSnapshotAffinityOwner(
+        snapshotID: String,
+        localServices: (any PeekabooServiceProviding)?,
+        candidates: [ImplicitRemoteCandidate],
+        identity: PeekabooBridgeClientIdentity,
+        handshakeCache: RemoteHandshakeCache,
+        probe: @escaping SnapshotAffinityProbe = RuntimeHostResolver.liveSnapshotAffinityProbe
+    ) async throws -> SnapshotAffinityOwner {
+        guard SnapshotReference(rawValue: snapshotID) != nil else {
+            throw self.invalidSnapshotReferenceRefusal(snapshotID)
         }
 
         let tasks = candidates.enumerated().map { index, candidate in
@@ -98,24 +142,53 @@ extension RuntimeHostResolver {
         }
         try Task.checkCancellation()
 
-        var owners: [ImplicitRemoteCandidate] = []
+        let localOwnsSnapshot = if let localServices {
+            try await localServices.snapshots.ownsSnapshot(snapshotId: snapshotID)
+        } else {
+            false
+        }
         var unavailableCount = 0
+        var incompatibleCount = 0
+        var remoteOwnerOrder: [SnapshotAffinityRemoteOwnerKey] = []
+        var remoteOwnerCandidates: [SnapshotAffinityRemoteOwnerKey: [ImplicitRemoteCandidate]] = [:]
         for (_, candidate, result) in observations {
             switch result {
             case .owner:
-                owners.append(candidate)
+                let key = self.snapshotAffinityRemoteOwnerKey(
+                    candidate: candidate,
+                    identity: identity,
+                    handshakeCache: handshakeCache
+                )
+                if remoteOwnerCandidates[key] == nil {
+                    remoteOwnerOrder.append(key)
+                }
+                remoteOwnerCandidates[key, default: []].append(candidate)
             case .missing:
                 break
+            case .incompatible:
+                incompatibleCount += 1
             case .unavailable:
                 unavailableCount += 1
             }
         }
-        if owners.count == 1, let owner = owners.first {
-            return owner
+        let ownerCount = (localOwnsSnapshot ? 1 : 0) + remoteOwnerOrder.count
+        if ownerCount == 1 {
+            if localOwnsSnapshot {
+                return .local
+            }
+            if let key = remoteOwnerOrder.first,
+               let candidates = remoteOwnerCandidates[key] {
+                return .remote(candidates)
+            }
         }
-        if owners.count > 1 {
-            let paths = owners
-                .map { NSString(string: $0.socketPath).standardizingPath }
+        if ownerCount > 1 {
+            let localPaths = localOwnsSnapshot ? ["local"] : []
+            let remotePaths = remoteOwnerOrder.flatMap { key in
+                remoteOwnerCandidates[key, default: []].map {
+                    NSString(string: $0.socketPath).standardizingPath
+                }
+            }
+            let paths = (localPaths + remotePaths)
                 .sorted()
                 .joined(separator: ", ")
             throw self.snapshotAffinityRefusal(
@@ -125,9 +198,23 @@ extension RuntimeHostResolver {
             )
         }
 
-        let availability = unavailableCount == 0
-            ? "No authenticated live Peekaboo host owns it; it may be expired, cleaned, or unknown."
-            : "Its producing host may be stopped or unreachable, and no authenticated live host owns it."
+        let soleCandidatePath = candidates.count == 1
+            ? candidates.first.map { NSString(string: $0.socketPath).standardizingPath }
+            : nil
+        let availability = if let soleCandidatePath, incompatibleCount > 0 {
+            "The authenticated host at \(soleCandidatePath) cannot prove producer-bound snapshot ownership; update it."
+        } else if let soleCandidatePath, unavailableCount > 0 {
+            "The selected host at \(soleCandidatePath) is stopped or unreachable, and no other authenticated live " +
+                "host may claim this reference."
+        } else if let soleCandidatePath {
+            "The authenticated host at \(soleCandidatePath) does not own it; it may be expired, cleaned, or unknown."
+        } else if incompatibleCount > 0 {
+            "One or more live hosts cannot prove producer-bound snapshot ownership; update them."
+        } else if unavailableCount == 0 {
+            "No authenticated live Peekaboo host owns it; it may be expired, cleaned, or unknown."
+        } else {
+            "Its producing host may be stopped or unreachable, and no authenticated live host owns it."
+        }
         throw self.snapshotAffinityRefusal(
             snapshotID: snapshotID,
             message: availability,
@@ -135,27 +222,66 @@ extension RuntimeHostResolver {
         )
     }
 
-    static func resolveSnapshotAffinityServices(
-        snapshotID: String,
-        context: RemoteResolutionContext,
-        permissionRejections: inout [String]
-    ) async throws -> Resolution {
-        let owner = try await self.resolveSnapshotAffinity(
-            snapshotID: snapshotID,
-            candidates: self.snapshotAffinityCandidates(from: context.candidatePlan),
-            identity: context.identity,
-            handshakeCache: context.handshakeCache
-        )
-        if let resolved = try await context.resolveRemoteServices(
-            candidates: [owner],
-            permissionRejections: &permissionRejections
-        ) {
-            return resolved
+    private static func snapshotAffinityRemoteOwnerKey(
+        candidate: ImplicitRemoteCandidate,
+        identity: PeekabooBridgeClientIdentity,
+        handshakeCache: RemoteHandshakeCache
+    ) -> SnapshotAffinityRemoteOwnerKey {
+        if let host = handshakeCache.entry(for: candidate, identity: identity)?.response.operationAttestation?.host {
+            return .attestedProcess(
+                host.processIdentifier,
+                host.processStartIdentity,
+                host.codeSignatureHash
+            )
         }
-        throw self.snapshotOwnerIncompatibleRefusal(snapshotID: snapshotID, candidate: owner)
+        return .endpoint(NSString(string: candidate.socketPath).standardizingPath)
     }
 
-    private static func liveSnapshotAffinityProbe(
+    static func resolveSnapshotAffinityServices(
+        snapshotID: String,
+        localServices: (any PeekabooServiceProviding)?,
+        context: RemoteResolutionContext,
+        permissionRejections: inout [String],
+        probe: @escaping SnapshotAffinityProbe = RuntimeHostResolver.liveSnapshotAffinityProbe
+    ) async throws -> Resolution {
+        let owner = try await self.resolveSnapshotAffinityOwner(
+            snapshotID: snapshotID,
+            localServices: localServices,
+            candidates: self.snapshotAffinityCandidates(from: context.candidatePlan),
+            identity: context.identity,
+            handshakeCache: context.handshakeCache,
+            probe: probe
+        )
+        switch owner {
+        case .local:
+            guard let localServices else {
+                throw self.snapshotAffinityRefusal(
+                    snapshotID: snapshotID,
+                    message: "Local ownership was selected without local services.",
+                    reason: .runtimeIncompatible
+                )
+            }
+            return Resolution(
+                services: localServices,
+                hostDescription: "local (snapshot producer)",
+                selectedRemoteSocketPath: nil,
+                selectedRemoteHostProcessIdentifier: nil,
+                snapshotInvalidationRemoteSocketPaths: context.snapshotInvalidationRemoteSocketPaths,
+                applicationRelaunchAllowed: true,
+                requiredHostFailure: nil
+            )
+        case let .remote(candidates):
+            if let resolved = try await context.resolveRemoteServices(
+                candidates: candidates,
+                permissionRejections: &permissionRejections
+            ) {
+                return resolved
+            }
+            throw self.snapshotOwnerIncompatibleRefusal(snapshotID: snapshotID, candidates: candidates)
+        }
+    }
+
+    static func liveSnapshotAffinityProbe(
         _ candidate: ImplicitRemoteCandidate,
         _ snapshotID: String,
         _ identity: PeekabooBridgeClientIdentity,
@@ -163,26 +289,30 @@ extension RuntimeHostResolver {
     ) async throws -> SnapshotAffinityProbeResult {
         do {
             let entry = try await handshakeCache.handshake(candidate, identity: identity)
-            guard BridgeCapabilityPolicy.supportsOperation(.getDetectionResult, for: entry.response) else {
-                return .unavailable
+            guard BridgeCapabilityPolicy.supportsProducerBoundSnapshotReferences(for: entry.response) else {
+                return .incompatible
             }
-            let result = try await entry.client.getDetectionResult(snapshotId: snapshotID)
-            return result.snapshotId == snapshotID ? .owner : .unavailable
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.code == .notFound {
-            return .missing
+            return try await entry.client.ownsSnapshot(snapshotId: snapshotID) ? .owner : .missing
         } catch let error as CancellationError {
             throw error
+        } catch let envelope as PeekabooBridgeErrorEnvelope
+            where envelope.code == .operationNotSupported ||
+            envelope.code == .invalidRequest ||
+            envelope.code == .decodingFailed ||
+            envelope.code == .versionMismatch {
+            return .incompatible
         } catch {
             return .unavailable
         }
     }
 
-    private static func isSafeSnapshotReference(_ snapshotID: String) -> Bool {
-        !snapshotID.isEmpty &&
-            snapshotID != "." &&
-            snapshotID != ".." &&
-            !snapshotID.contains("/") &&
-            !snapshotID.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    private static func invalidSnapshotReferenceRefusal(_ snapshotID: String) -> PreDispatchActionError {
+        PreDispatchActionError(
+            message: "Snapshot reference '\(snapshotID)' is invalid. No action was dispatched.",
+            code: .VALIDATION_ERROR,
+            hint: "Use the exact ps1_ reference returned by a fresh 'peekaboo see'.",
+            reason: .invalidRequest
+        )
     }
 
     private static func snapshotAffinityRefusal(
@@ -200,12 +330,13 @@ extension RuntimeHostResolver {
 
     private static func snapshotOwnerIncompatibleRefusal(
         snapshotID: String,
-        candidate: ImplicitRemoteCandidate
+        candidates: [ImplicitRemoteCandidate]
     ) -> PreDispatchActionError {
-        let socketPath = NSString(string: candidate.socketPath).standardizingPath
+        let socketPaths = candidates.map { NSString(string: $0.socketPath).standardizingPath }
+            .joined(separator: ", ")
         return PreDispatchActionError(
-            message: "Snapshot '\(snapshotID)' is owned by the authenticated host at \(socketPath), but that " +
-                "host cannot satisfy this command. No action was dispatched.",
+            message: "Snapshot '\(snapshotID)' is owned by the authenticated host through \(socketPaths), but " +
+                "none of those endpoints can satisfy this command. No action was dispatched.",
             code: .BRIDGE_UNAVAILABLE,
             hint: "Update or relaunch that exact host, then run 'peekaboo see' again before retrying.",
             reason: .runtimeIncompatible

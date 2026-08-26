@@ -29,15 +29,20 @@ struct HotkeyServiceFactoryContext {
  * // Detect elements in screenshot
  * let elements = try await automation.detectElements(
  *     in: imageData,
- *     snapshotId: "snapshot_123",
+ *     snapshotId: "ps1_0123456789abcdef0123456789abcdef",
  *     windowContext: windowContext
  * )
  *
  * // Perform automation
  * try await automation.click(
- *     target: .elementId(button.id), clickType: .single, snapshotId: "snapshot_123")
+ *     target: .elementId(button.id),
+ *     clickType: .single,
+ *     snapshotId: "ps1_0123456789abcdef0123456789abcdef")
  * try await automation.type(
- *     text: "Hello World", target: textField.id, clearExisting: true, snapshotId: "snapshot_123")
+ *     text: "Hello World",
+ *     target: textField.id,
+ *     clearExisting: true,
+ *     snapshotId: "ps1_0123456789abcdef0123456789abcdef")
  * ```
  *
  * - Important: Requires Screen Recording and Accessibility permissions
@@ -56,6 +61,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     public let supportsProcessGenerationPinnedTypeActions = true
     public let supportsProcessGenerationPinnedClicks = true
     public let supportsStatelessClickVariants = true
+    public let supportsTargetedClickAccessibilityValueDelivery = true
     public let supportsExactWindowTargetedKeyboard = true
     public let supportsExactWindowFocusedElementFocus = true
     public let supportsExactWindowPixelFocusTyping = true

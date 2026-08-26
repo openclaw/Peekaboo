@@ -164,6 +164,19 @@ public final class PeekabooBridgeServer {
         {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
         }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion,
+           services.snapshots.supportsProducerBoundSnapshotReferences,
+           self.allowedOperations.contains(.ownsSnapshot)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.producerBoundSnapshotReferences)
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion,
+           (services.automation as? any TargetedClickServiceProtocol)?
+               .supportsTargetedClickAccessibilityValueDelivery == true,
+               self.allowedOperations.contains(.targetedClick)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)
+        }
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
             (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
         if hostIdentity?.processStartIdentity != nil {
@@ -905,6 +918,10 @@ public final class PeekabooBridgeServer {
             guard (negotiatedVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
                   !request.requiresNativeBrowserConnectionBinding ||
                   session?.nativeBrowserConnectionBinding == true,
+                  !request.requiresProducerBoundSnapshotReferences ||
+                  session?.producerBoundSnapshotReferences == true,
+                  !request.requiresTargetedClickAccessibilityValueDelivery ||
+                  session?.targetedClickAccessibilityValueDelivery == true,
                   !request.requiresBackgroundStatelessClickVariantSupport || session?.statelessClickVariants == true,
                   !request.requiresExactWindowHeldPointerLifecycleSupport ||
                   session?.exactWindowHeldPointerLifecycle == true

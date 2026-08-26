@@ -50,7 +50,7 @@ extension UIAutomationService {
      *     target: detectedElement.id,
      *     clearExisting: true,
      *     typingDelay: 50,
-     *     snapshotId: "snapshot_123"
+     *     snapshotId: "ps1_0123456789abcdef0123456789abcdef"
      * )
      *
      * // Type into currently focused element
@@ -68,7 +68,7 @@ extension UIAutomationService {
      *     target: "searchField",
      *     clearExisting: true,
      *     typingDelay: 100,
-     *     snapshotId: "snapshot_123"
+     *     snapshotId: "ps1_0123456789abcdef0123456789abcdef"
      * )
      * ```
      *

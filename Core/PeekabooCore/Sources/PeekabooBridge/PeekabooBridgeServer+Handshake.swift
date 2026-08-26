@@ -73,6 +73,11 @@ extension PeekabooBridgeServer {
             usesAttestedOperationReceipts: supportsAttestedOperationReceipts)
         var advertisedOps = compatibleOperations.advertised.sorted { $0.rawValue < $1.rawValue }
         var enabledOps = compatibleOperations.enabled
+        let clientCapabilities = Set(payload.clientCapabilities ?? [])
+        if !clientCapabilities.contains(PeekabooBridgeClientCapability.producerBoundSnapshotReferences) {
+            advertisedOps.removeAll { $0 == .ownsSnapshot }
+            enabledOps.remove(.ownsSnapshot)
+        }
         if (try? self.requireCertificationCaller(peer)) == nil {
             advertisedOps.removeAll {
                 $0 == .observeProcessGeneration || $0 == .certificationProducerAttestation
@@ -155,6 +160,23 @@ extension PeekabooBridgeServer {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
         }
         if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion ||
+            !clientCapabilities.contains(PeekabooBridgeClientCapability.producerBoundSnapshotReferences) ||
+            !self.services.snapshots.supportsProducerBoundSnapshotReferences ||
+            !advertisedOps.contains(.ownsSnapshot)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.producerBoundSnapshotReferences)
+        }
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion ||
+            !clientCapabilities.contains(PeekabooBridgeClientCapability.targetedClickAccessibilityValueDelivery) ||
+            (self.services.automation as? any TargetedClickServiceProtocol)?
+            .supportsTargetedClickAccessibilityValueDelivery != true ||
+            !advertisedOps.contains(.targetedClick)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)
+        }
+        if !supportsAttestedOperationReceipts ||
             negotiated < PeekabooBridgeConstants.statelessClickVariantVersion ||
             (self.services.automation as? any TargetedClickServiceProtocol)?.supportsStatelessClickVariants != true ||
             !advertisedOps.contains(.targetedClick) ||
@@ -232,7 +254,11 @@ extension PeekabooBridgeServer {
                         exactWindowHeldPointerLifecycle: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle),
                         nativeBrowserConnectionBinding: advertisedCapabilities.contains(
-                            PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)),
+                            PeekabooBridgeHostCapability.nativeBrowserConnectionBinding),
+                        producerBoundSnapshotReferences: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.producerBoundSnapshotReferences),
+                        targetedClickAccessibilityValueDelivery: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {
@@ -399,6 +425,9 @@ extension PeekabooBridgeServer {
         if !self.services.snapshots.supportsSnapshotMutationLeases {
             operations.remove(.beginSnapshotMutation)
             operations.remove(.finishSnapshotMutation)
+        }
+        if !self.services.snapshots.supportsProducerBoundSnapshotReferences {
+            operations.remove(.ownsSnapshot)
         }
         if !self.services.snapshots.supportsAtomicObservationSnapshotPublication {
             operations.remove(.storeObservationSnapshot)

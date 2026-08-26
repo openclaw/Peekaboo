@@ -663,6 +663,11 @@ extension PeekabooBridgeOperationResultSemantics {
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.detection])
+        case .ownsSnapshot:
+            descriptor(
+                completion: .readOnly,
+                targetPolicy: .notApplicable,
+                responseFamilies: [.bool])
         case .storeScreenshot, .storeObservationSnapshot, .storeAnnotatedScreenshot,
              .finishSnapshotMutation, .cleanSnapshot:
             descriptor(

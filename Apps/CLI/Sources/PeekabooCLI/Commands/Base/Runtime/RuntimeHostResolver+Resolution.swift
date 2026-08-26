@@ -16,6 +16,8 @@ extension RuntimeHostResolver {
         }
 
         let identity: PeekabooBridgeClientIdentity
+        let trustedHostTeamIDs: Set<String>?
+        let clientFactory: (@MainActor (String) -> PeekabooBridgeClient)?
         private var entriesBySocketPath: [String: Entry] = [:]
 
         convenience init() {
@@ -27,8 +29,14 @@ extension RuntimeHostResolver {
             ))
         }
 
-        init(identity: PeekabooBridgeClientIdentity) {
+        init(
+            identity: PeekabooBridgeClientIdentity,
+            trustedHostTeamIDs: Set<String>? = nil,
+            clientFactory: (@MainActor (String) -> PeekabooBridgeClient)? = nil
+        ) {
             self.identity = identity
+            self.trustedHostTeamIDs = trustedHostTeamIDs
+            self.clientFactory = clientFactory
         }
 
         func handshake(
@@ -43,7 +51,10 @@ extension RuntimeHostResolver {
                 return entry
             }
 
-            let client = PeekabooBridgeClient(socketPath: candidate.socketPath)
+            let client = self.clientFactory?(candidate.socketPath) ?? PeekabooBridgeClient(
+                socketPath: candidate.socketPath,
+                trustedHostTeamIDs: self.trustedHostTeamIDs
+            )
             let response = try await client.handshake(client: self.identity, requestedHost: nil)
             let entry = Entry(client: client, response: response)
             self.entriesBySocketPath[socketPath] = entry
