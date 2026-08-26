@@ -36,8 +36,19 @@ struct SnapshotReceiptPreDispatchCommandTests {
 
                 #expect(result.exitStatus == 1, "Expected receipt refusal for \(arguments[0])")
                 #expect(error["code"] as? String == ErrorCode.SNAPSHOT_STALE.rawValue)
-                #expect((error["message"] as? String)?.contains("incomplete") == true)
-                #expect((error["message"] as? String)?.contains("immutable captured bounds") == true)
+                if arguments[0] == "scroll" {
+                    #expect(
+                        error["message"] as? String ==
+                            "Background scroll requires a complete capture-owned exact-window receipt."
+                    )
+                    #expect(
+                        error["hint"] as? String ==
+                            "Run see for the exact window and retry with its fresh snapshot."
+                    )
+                } else {
+                    #expect((error["message"] as? String)?.contains("incomplete") == true)
+                    #expect((error["message"] as? String)?.contains("immutable captured bounds") == true)
+                }
                 #expect(error["retry_safe"] as? Bool == true)
                 #expect(error["mutation_dispatched"] as? Bool == false)
                 #expect(outcome["state"] as? String == "refused")
