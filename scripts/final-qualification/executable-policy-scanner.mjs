@@ -48,7 +48,7 @@ const APPLE_EVENT_CLASS_STRING = /^_?OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScrip
 const SCRIPTING_BRIDGE_IMPORT = /^_?OBJC_(?:CLASS|METACLASS)_\$_SB(?:Application|ElementArray|Object)$/;
 const SCRIPTING_BRIDGE_CLASS_STRING = /^(?:SBApplication|SBElementArray|SBObject)$/;
 const VIRTUALIZATION_IMPORT = /^_?(?:VZ[A-Z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+)$/;
-const VIRTUALIZATION_CLASS_STRING = /^(?:_?OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+|VZ[A-Z][a-z][A-Za-z0-9_]*)$/;
+const VIRTUALIZATION_CLASS_STRING = /^(?:_?OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+|VZ(?=[A-Z][A-Za-z0-9_]*[a-z])[A-Z][A-Za-z0-9_]*)$/;
 const APPLE_FRAMEWORK_PATH = /(?:^|\/)(?:OSAKit|ScriptingBridge)\.framework(?:\/|$)/i;
 const VIRTUALIZATION_FRAMEWORK_PATH = /(?:^|\/)(?:Virtualization|Hypervisor)\.framework(?:\/|$)/i;
 const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSAppleEventDescriptor|NSAppleEventManager|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|\/usr\/bin\/osascript)$/;
@@ -237,6 +237,10 @@ function chainedFixupPolicyImports(bytes, offset, size, endian) {
     return null;
   }
   if (importsCount > 0 && symbolBytes.length === 0) return null;
+  const decodeSymbolName = importsCount > 0
+    ? symbolNameDecoder(symbolBytes, 0, symbolBytes.length)
+    : null;
+  if (importsCount > 0 && !decodeSymbolName) return null;
 
   const imports = [];
   for (let index = 0; index < importsCount; index += 1) {
@@ -255,8 +259,9 @@ function chainedFixupPolicyImports(bytes, offset, size, endian) {
       if (value === null) return null;
       nameOffset = value >>> 9;
     }
-    const name = cString(symbolBytes, nameOffset, symbolBytes.length);
-    if (!name) return null;
+    const decoded = decodeSymbolName(nameOffset);
+    if (!decoded.ok || !decoded.value) return null;
+    const name = decoded.value;
     if (APPLE_EVENT_IMPORT.test(name)
       || SCRIPTING_BRIDGE_IMPORT.test(name)
       || VIRTUALIZATION_IMPORT.test(name)) imports.push(name);

@@ -1714,6 +1714,97 @@ test('policy scanner classifies every thin and fat Mach-O byte order as loadable
   );
 });
 
+test('policy scanner recognizes acronym-led VZ classes and bounds chained symbol decoding', () => {
+  const thinMachOWithRawString = (value) => {
+    const raw = Buffer.from(`${value}\0`);
+    const bytes = Buffer.alloc(129 + raw.length);
+    Buffer.from('cffaedfe', 'hex').copy(bytes);
+    bytes.writeUInt32LE(0x0100000c, 4);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(96, 20);
+    bytes.writeUInt32LE(0x19, 32);
+    bytes.writeUInt32LE(72, 36);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    bytes.writeUInt32LE(0x02, 104);
+    bytes.writeUInt32LE(24, 108);
+    bytes.writeUInt32LE(128, 112);
+    bytes.writeUInt32LE(0, 116);
+    bytes.writeUInt32LE(128, 120);
+    bytes.writeUInt32LE(1, 124);
+    raw.copy(bytes, 129);
+    return bytes;
+  };
+
+  for (const className of ['VZUSBController', 'VZEFIBootLoader', 'VZMACAddress']) {
+    assert.deepEqual(
+      policyFindingsForFile(`runtime/${className}`, 0o755, thinMachOWithRawString(className)),
+      [{ family: 'virtualization' }],
+      className,
+    );
+  }
+  for (const unrelatedValue of ['VZA', 'VZIP', 'VZ_TEST']) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/unrelated-${unrelatedValue}`,
+        0o755,
+        thinMachOWithRawString(unrelatedValue),
+      ),
+      [],
+      unrelatedValue,
+    );
+  }
+
+  const chainedMachO = (nameOffsets) => {
+    const symbolBytes = Buffer.concat([Buffer.alloc(1024, 0x41), Buffer.alloc(1)]);
+    const importsOffset = 32;
+    const symbolsOffset = importsOffset + nameOffsets.length * 4;
+    const payload = Buffer.alloc(symbolsOffset + symbolBytes.length);
+    payload.writeUInt32LE(28, 4);
+    payload.writeUInt32LE(importsOffset, 8);
+    payload.writeUInt32LE(symbolsOffset, 12);
+    payload.writeUInt32LE(nameOffsets.length, 16);
+    payload.writeUInt32LE(1, 20);
+    payload.writeUInt32LE(0, 24);
+    for (const [index, nameOffset] of nameOffsets.entries()) {
+      payload.writeUInt32LE(nameOffset << 9, importsOffset + index * 4);
+    }
+    symbolBytes.copy(payload, symbolsOffset);
+
+    const payloadOffset = 144;
+    const bytes = Buffer.alloc(payloadOffset + payload.length);
+    Buffer.from('cffaedfe', 'hex').copy(bytes);
+    bytes.writeUInt32LE(0x0100000c, 4);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(3, 16);
+    bytes.writeUInt32LE(112, 20);
+    bytes.writeUInt32LE(0x19, 32);
+    bytes.writeUInt32LE(72, 36);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    bytes.writeUInt32LE(0x02, 104);
+    bytes.writeUInt32LE(24, 108);
+    bytes.writeUInt32LE(payloadOffset, 112);
+    bytes.writeUInt32LE(0, 116);
+    bytes.writeUInt32LE(bytes.length - 1, 120);
+    bytes.writeUInt32LE(1, 124);
+    bytes.writeUInt32LE(0x80000034, 128);
+    bytes.writeUInt32LE(16, 132);
+    bytes.writeUInt32LE(payloadOffset, 136);
+    bytes.writeUInt32LE(payload.length, 140);
+    payload.copy(bytes, payloadOffset);
+    return bytes;
+  };
+
+  assert.deepEqual(
+    policyFindingsForFile('runtime/repeated-chained-name', 0o755, chainedMachO([0, 0, 0, 0, 0])),
+    [],
+  );
+  assert.deepEqual(
+    policyFindingsForFile('runtime/hostile-chained-names', 0o755, chainedMachO([0, 1, 2, 3, 4])),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+});
+
 test('policy scanner uses structural Mach-O evidence and broad markers only for text scripts', () => {
   const cleanMachO = fs.readFileSync('/usr/bin/true');
   const legacyProse = Buffer.concat([
