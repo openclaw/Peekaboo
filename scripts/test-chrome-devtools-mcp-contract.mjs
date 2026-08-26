@@ -37,6 +37,9 @@ const expectedBlockedSelectedPageNames = namesInContractSection("blocked-selecte
 const expectedReadOnlyNames = namesInContractSection("semantic-read-only", semanticsContract);
 const expectedMutatingNames = namesInContractSection("semantic-mutating", semanticsContract);
 const expectedArgumentDependentNames = namesInContractSection("semantic-argument-dependent", semanticsContract);
+const expectedElementReferencePaths = namesInContractSection("element-reference-path");
+const expectedPageResponseNames = namesInContractSection("page-response");
+const expectedSnapshotResponseNames = namesInContractSection("snapshot-response");
 
 assert.equal(declaredVersion, "1.6.0", "keep the audited browser routing contract pinned exactly");
 assert.equal(dependencyPackage.version, declaredVersion, "installed Chrome DevTools MCP must match the pin");
@@ -63,6 +66,70 @@ const tools = createTools(serverArgs);
 const handlers = new Map(
   tools.map((tool) => [tool.name, new ToolHandler(tool, serverArgs, async () => undefined, inertMutex)]),
 );
+
+function unwrapOptional(schema) {
+  let current = schema;
+  while (["ZodOptional", "ZodNullable", "ZodDefault"].includes(current?._def?.typeName)) {
+    current = current._def.innerType;
+  }
+  return current;
+}
+
+function uidPaths(schema, prefix = "") {
+  const current = unwrapOptional(schema);
+  if (!current) return [];
+  if (current._def?.typeName === "ZodString") {
+    const description = `${schema?._def?.description ?? ""} ${current._def.description ?? ""}`;
+    return /\buid\b/i.test(description) ? [prefix] : [];
+  }
+  if (current._def?.typeName === "ZodArray") {
+    return uidPaths(current._def.type, `${prefix}[]`);
+  }
+  if (current._def?.typeName === "ZodObject") {
+    return Object.entries(current.shape).flatMap(([key, child]) =>
+      uidPaths(child, prefix ? `${prefix}.${key}` : key),
+    );
+  }
+  return [];
+}
+
+const schemaElementReferencePaths = tools.flatMap((tool) =>
+  uidPaths(handlers.get(tool.name).registeredInputSchema).map((path) => `${tool.name}.${path}`),
+);
+// execute_3p_developer_tool.params is intentionally JSON text in the Zod schema. McpPage resolves only
+// top-level singleton {uid: String} parameter values, so keep that implementation-owned path explicit.
+const mcpPageSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/McpPage.js", import.meta.url),
+  "utf8",
+);
+const textSnapshotSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/TextSnapshot.js", import.meta.url),
+  "utf8",
+);
+assert.match(mcpPageSource, /Object\.values\(params\)/, "third-party parameter traversal changed");
+assert.match(mcpPageSource, /Object\.keys\(value\)\.length === 1/, "third-party singleton UID rule changed");
+assert.match(
+  textSnapshotSource,
+  /`\$\{node\.loaderId\}_\$\{backendNodeId\}`/,
+  "snapshot UID document/node identity changed",
+);
+assert.match(
+  textSnapshotSource,
+  /uniqueBackendNodeIdToMcpId\.get\(uniqueBackendId\)/,
+  "snapshot UID continuity lookup changed",
+);
+assert.match(
+  textSnapshotSource,
+  /uniqueBackendNodeIdToMcpId\.set\(uniqueBackendId, id\)/,
+  "snapshot UID continuity binding changed",
+);
+assert.match(
+  textSnapshotSource,
+  /`\$\{snapshotId\}_\$\{idCounter\+\+\}`/,
+  "new snapshot UID allocation changed",
+);
+schemaElementReferencePaths.push("execute_3p_developer_tool.params{*}.uid");
+schemaElementReferencePaths.sort();
 const pageScopedTools = tools.filter((tool) => tool.pageScoped === true);
 const pageTargetedNames = tools.filter((tool) => {
   const parsed = handlers.get(tool.name).registeredInputSchema.safeParse({});
@@ -109,6 +176,24 @@ assert.equal(
   new Set([...expectedReadOnlyNames, ...expectedMutatingNames, ...expectedArgumentDependentNames]).size,
   auditedNames.length,
   "audited browser action semantic categories must be disjoint",
+);
+assert.deepEqual(
+  schemaElementReferencePaths,
+  expectedElementReferencePaths,
+  "Swift raw element-reference paths drifted from the pinned provider schemas",
+);
+assert.deepEqual(
+  expectedPageResponseNames,
+  ["close_page", "handle_dialog", "list_pages", "navigate_page", "new_page", "resize_page", "select_page"],
+  "re-audit every provider tool that emits a page list",
+);
+assert.deepEqual(
+  expectedSnapshotResponseNames,
+  [
+    "click", "click_at", "drag", "execute_3p_developer_tool", "fill", "fill_form", "hover", "press_key",
+    "take_snapshot", "upload_file", "wait_for",
+  ],
+  "re-audit every provider tool that can emit a snapshot",
 );
 for (const tool of pageScopedTools) {
   const handler = handlers.get(tool.name);

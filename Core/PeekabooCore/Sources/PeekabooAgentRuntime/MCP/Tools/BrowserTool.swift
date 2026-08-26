@@ -187,41 +187,20 @@ public struct BrowserTool: MCPTool {
 
         try Task.checkCancellation()
         do {
-            switch action {
-            case .status:
-                return try await self.statusResponse(channel: channel)
-            case .connect:
-                guard let resultClient = self.client as? any BrowserMCPConnectionResultProviding else {
-                    throw DesktopActionFailure.preDispatchRefusal(
-                        reason: .operationUnsupported,
-                        message: "Browser connect requires a provider that reports canonical action outcomes.",
-                        hint: "Update the runtime host before retrying browser connect.")
+            if let capabilitySession = self.capabilitySession {
+                return try await capabilitySession.withExclusiveOperation {
+                    try await self.executeAction(
+                        action: action,
+                        arguments: arguments,
+                        channel: channel,
+                        browserURL: browserURL)
                 }
-                try Self.checkCancellationBeforeProviderEntry()
-                let result = try await resultClient.connectWithOutcome(
-                    channel: channel,
-                    browserURL: browserURL)
-                await self.capabilitySession?.observeStatus(result.payload)
-                let outcome = try Self.validatedConnectOutcome(result.outcome)
-                return try self.formatStatus(
-                    result.payload,
-                    headline: "Connected Chrome DevTools MCP",
-                    outcome: outcome)
-            case .disconnect:
-                await self.capabilitySession?.disconnect()
-                await self.client.disconnect()
-                return ToolResponse.text("Disconnected Chrome DevTools MCP.")
-            case .call:
-                return try await self.executeCapabilityBound(
-                    action: action,
-                    arguments: arguments,
-                    channel: channel)
-            default:
-                return try await self.executeCapabilityBound(
-                    action: action,
-                    arguments: arguments,
-                    channel: channel)
             }
+            return try await self.executeAction(
+                action: action,
+                arguments: arguments,
+                channel: channel,
+                browserURL: browserURL)
         } catch let error as BrowserToolCapabilityError {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as BrowserToolError {
@@ -260,6 +239,62 @@ public struct BrowserTool: MCPTool {
     }
 
     @MainActor
+    private func executeAction(
+        action: BrowserAction,
+        arguments: ToolArguments,
+        channel: BrowserMCPChannel?,
+        browserURL: String?) async throws -> ToolResponse
+    {
+        switch action {
+        case .status:
+            return try await self.statusResponse(channel: channel)
+        case .connect:
+            try self.requireAtomicCapabilityProvider(operation: "connecting")
+            guard let resultClient = self.client as? any BrowserMCPConnectionResultProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .operationUnsupported,
+                    message: "Browser connect requires a provider that reports canonical action outcomes.",
+                    hint: "Update the runtime host before retrying browser connect.")
+            }
+            try Self.checkCancellationBeforeProviderEntry()
+            let result = try await resultClient.connectWithOutcome(
+                channel: channel,
+                browserURL: browserURL)
+            await self.capabilitySession?.observeStatus(result.payload)
+            let outcome = try Self.validatedConnectOutcome(result.outcome)
+            return try self.formatStatus(
+                result.payload,
+                headline: "Connected Chrome DevTools MCP",
+                outcome: outcome)
+        case .disconnect:
+            try self.requireAtomicCapabilityProvider(operation: "disconnecting")
+            await self.capabilitySession?.disconnect()
+            await self.client.disconnect()
+            return ToolResponse.text("Disconnected Chrome DevTools MCP.")
+        case .call:
+            return try await self.executeCapabilityBound(
+                action: action,
+                arguments: arguments,
+                channel: channel)
+        default:
+            return try await self.executeCapabilityBound(
+                action: action,
+                arguments: arguments,
+                channel: channel)
+        }
+    }
+
+    private func requireAtomicCapabilityProvider(operation: String) throws {
+        guard self.capabilitySession != nil,
+              !(self.client is any BrowserMCPAtomicSessionActionProviding)
+        else { return }
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: "Browser capability sessions require a provider-child epoch before \(operation).",
+            hint: "Use a process-local browser session or update the runtime host.")
+    }
+
+    @MainActor
     private func statusResponse(channel: BrowserMCPChannel?) async throws -> ToolResponse {
         let status = await self.client.status(channel: channel)
         await self.capabilitySession?.observeStatus(status)
@@ -273,17 +308,28 @@ public struct BrowserTool: MCPTool {
         channel: BrowserMCPChannel?) async throws -> ToolResponse
     {
         let resolved: BrowserToolCapabilitySession.ResolvedArguments?
-        let connectionReceipt: BrowserMCPConnectionReceipt?
+        let sessionBinding: BrowserMCPExecutionSessionBinding?
         if let capabilitySession = self.capabilitySession {
             let status = await self.client.status(channel: channel)
             await capabilitySession.observeStatus(status)
-            connectionReceipt = status.connectionReceipt
+            sessionBinding = if let receipt = status.connectionReceipt,
+                                let providerSessionEpoch = status.providerSessionEpoch
+            {
+                BrowserMCPExecutionSessionBinding(
+                    connectionReceipt: receipt,
+                    providerSessionEpoch: providerSessionEpoch)
+            } else {
+                nil
+            }
+            guard sessionBinding != nil else {
+                throw BrowserToolCapabilityError.connectionUnavailable
+            }
             resolved = try await capabilitySession.resolve(
                 action: action,
                 arguments: arguments,
-                connectionReceipt: connectionReceipt)
+                sessionBinding: sessionBinding)
         } else {
-            connectionReceipt = nil
+            sessionBinding = nil
             resolved = nil
         }
         let providerArguments = resolved?.arguments ?? arguments
@@ -294,16 +340,37 @@ public struct BrowserTool: MCPTool {
                 action: action,
                 arguments: providerArguments)
         }
+        if sessionBinding != nil,
+           calls.contains(where: { call in
+               call.toolName == "take_snapshot" && call.arguments["filePath"] != nil
+           })
+        {
+            throw BrowserToolCapabilityError.snapshotArtifactUnsupported
+        }
         do {
-            let response = try await self.executeSequence(calls, channel: channel)
+            let providerUIDs = resolved?.providerUIDs ?? []
+            let elementPreflight: BrowserMCPElementPreflight? = if let providerPageID = resolved?.providerPageID,
+                                                                   !providerUIDs.isEmpty
+            {
+                BrowserMCPElementPreflight(
+                    providerPageID: providerPageID,
+                    providerUIDs: providerUIDs)
+            } else {
+                nil
+            }
+            let response = try await self.executeSequence(
+                calls,
+                channel: channel,
+                expectedSessionBinding: sessionBinding,
+                elementPreflight: elementPreflight)
             guard let capabilitySession = self.capabilitySession else { return response }
             return try await capabilitySession.project(
                 response,
-                action: action,
+                calls: calls,
                 resolved: resolved,
-                connectionReceipt: connectionReceipt)
+                sessionBinding: sessionBinding)
         } catch {
-            await self.capabilitySession?.invalidateAfterProviderEntry(action: action, resolved: resolved)
+            await self.capabilitySession?.invalidateAfterProviderEntry(calls: calls, resolved: resolved)
             throw error
         }
     }
@@ -311,7 +378,9 @@ public struct BrowserTool: MCPTool {
     @MainActor
     private func executeSequence(
         _ calls: [BrowserMCPMappedCall],
-        channel: BrowserMCPChannel?) async throws -> ToolResponse
+        channel: BrowserMCPChannel?,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding? = nil,
+        elementPreflight: BrowserMCPElementPreflight? = nil) async throws -> ToolResponse
     {
         let semantics = Self.sequenceSemantics(calls)
         guard let resultClient = self.client as? any BrowserMCPActionResultProviding else {
@@ -337,10 +406,24 @@ public struct BrowserTool: MCPTool {
         try Self.checkCancellationBeforeProviderEntry()
         let result: DesktopActionResult<ToolResponse>
         do {
-            result = try await resultClient.executeSequenceWithOutcome(
-                calls,
-                channel: channel,
-                connectionPolicy: self.connectionPolicy)
+            if let expectedSessionBinding {
+                guard let atomicClient = self.client as? any BrowserMCPAtomicSessionActionProviding else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .operationUnsupported,
+                        message: "Browser capability refs require an exact provider child session binding.",
+                        hint: "Use a process-local authenticated browser session or update the runtime host.")
+                }
+                result = try await atomicClient.executeSequenceWithOutcome(
+                    calls,
+                    channel: channel,
+                    expectedSessionBinding: expectedSessionBinding,
+                    elementPreflight: elementPreflight)
+            } else {
+                result = try await resultClient.executeSequenceWithOutcome(
+                    calls,
+                    channel: channel,
+                    connectionPolicy: self.connectionPolicy)
+            }
         } catch is CancellationError where semantics == .readOnly {
             return ToolResponse.error("Browser read was cancelled after provider entry.")
         }
@@ -502,6 +585,10 @@ public struct BrowserTool: MCPTool {
             "browser_count": .int(status.detectedBrowsers.count),
             "channels": .array(status.detectedBrowsers.map { .string($0.channel.rawValue) }),
         ]
+        if let providerSessionEpoch = status.providerSessionEpoch {
+            meta["provider_session_epoch"] = .string(
+                providerSessionEpoch.rawValue.uuidString.lowercased())
+        }
         if let receipt = status.connectionReceipt {
             var receiptMeta: [String: Value] = [:]
             if let channel = receipt.channel {
@@ -557,7 +644,9 @@ public struct BrowserTool: MCPTool {
         let endpointInstruction: String
         switch self.instructionAudience {
         case .mcp:
-            connectInstruction = "4. Run browser { \"action\": \"connect\" }."
+            connectInstruction = self.executionPolicy == .backgroundOnly
+                ? "4. Restart this MCP server with --allow-foreground, then run browser { \"action\": \"connect\" }."
+                : "4. Run browser { \"action\": \"connect\" }."
             endpointInstruction = "If multiple Chrome processes share a channel, pass browser_url for one exact " +
                 "loopback DevTools port."
         case .commandLine:
@@ -623,6 +712,7 @@ private enum BrowserToolError: LocalizedError {
     case invalidPageID
     case unsupportedRawTool(String)
     case selectedPageRoutingUnsupported(String)
+    case globalPageReferenceUnsupported(String)
 
     var errorDescription: String? {
         switch self {
@@ -640,6 +730,8 @@ private enum BrowserToolError: LocalizedError {
         case let .selectedPageRoutingUnsupported(toolName):
             "Raw Chrome DevTools MCP tool '\(toolName)' depends on shared selected-page state and is unsupported " +
                 "until upstream adds explicit pageId routing"
+        case let .globalPageReferenceUnsupported(toolName):
+            "Raw global Chrome DevTools MCP tool '\(toolName)' does not accept page_id"
         }
     }
 }
@@ -671,7 +763,7 @@ public enum BrowserAction: String, CaseIterable, Sendable {
     case call
 }
 
-public struct BrowserMCPMappedCall {
+public struct BrowserMCPMappedCall: @unchecked Sendable {
     public let toolName: String
     public let arguments: [String: Any]
 
@@ -741,8 +833,11 @@ public enum BrowserMCPCallMapper {
         if routing == .blockedSelectedPage {
             throw BrowserToolError.selectedPageRoutingUnsupported(toolName)
         }
+        if routing == .global, arguments.getValue(for: "page_id") != nil {
+            throw BrowserToolError.globalPageReferenceUnsupported(toolName)
+        }
         var rawArguments = try self.parseJSONObject(arguments.getString("mcp_args_json") ?? "{}")
-        if routing == .pageTargeted || arguments.getValue(for: "page_id") != nil {
+        if routing == .pageTargeted {
             rawArguments["pageId"] = try self.requiredPageID(arguments)
         }
         return BrowserMCPMappedCall(toolName: toolName, arguments: rawArguments)

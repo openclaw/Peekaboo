@@ -97,7 +97,9 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`. Public MCP and
   standalone Browser contexts default to background-only and require an existing live exact connection receipt;
   they never auto-connect implicitly.
-- In daemon-backed mode, `RemotePeekabooServices` forwards browser status/connect/execute calls over the Bridge socket.
+- In daemon-backed mode, `RemotePeekabooServices` can forward legacy CLI browser status/connect/execute calls over the
+  Bridge socket. Persistent opaque-reference Agent/MCP execution fails closed until Bridge can authenticate and carry
+  a caller-owned provider-child epoch.
 - The daemon owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
 - Separate CLI invocations require the same current-build reusable daemon. Peekaboo.app and older Bridge hosts are not
   eligible for browser session routing because they cannot attest the exact persistent connection receipt.
@@ -120,19 +122,23 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   routed directly to that page instead of relying on the process-global selected page. The upstream MCP server
   serializes calls with its FIFO tool mutex, so concurrent agents cannot redirect one another between selection
   and execution.
-- MCP and Agent sessions never receive Chrome's process-local page integers or snapshot-local UIDs as mutation
+- Process-local MCP and Agent sessions never receive Chrome's process-local page integers or snapshot-local UIDs as mutation
   authority. `list_pages` and `new_page` project opaque caller-owned page references, and browser snapshots project
-  opaque element references bound to the exact connection, backend page, navigation generation, and provider node,
+  opaque element references bound to the exact connection, MCP child epoch, backend page, navigation generation, and provider node,
   frame, loader, or navigation identity when Chrome supplies it. A newer snapshot invalidates prior element refs;
   navigation, disconnect, connection replacement, and MCP-session teardown invalidate their complete subordinate
-  namespace. References copied into another caller session fail before Chrome dispatch.
+  namespace. Before element dispatch, the same provider gate takes a fresh snapshot and proves every provider UID is
+  still present in the current document. References copied into another caller session fail before Chrome dispatch.
 - Independently authenticated process-local browser sessions own separate Chrome DevTools MCP children and FIFO
   execution gates, so one blocked session does not stall another while calls within each session remain ordered and
-  target-locked. Bridge currently retains its one authenticated browser connection because its status/connect/
+  target-locked, and two sessions cannot own the same exact browser target concurrently. Bridge currently retains its one authenticated browser connection because its status/connect/
   disconnect wire shape has no caller-session namespace; transport multiplexing is deferred without claiming a new
   Bridge protocol version.
-- Separate `peekaboo mcp serve` stdio sessions reuse one browser connection only when each server is explicitly routed
-  to the same reusable daemon Bridge socket. A process-local MCP server has its own browser state.
+- Each process-local `peekaboo mcp serve` session owns and tears down its own browser child. A daemon-backed MCP session
+  does not borrow the daemon's shared legacy browser connection or its raw page/element IDs. The background-only default
+  therefore starts disconnected and cannot bootstrap browser control. To authorize setup for that exact scoped child,
+  start `peekaboo mcp serve --allow-foreground` and invoke its `browser` `connect` action; subsequent page operations use
+  the resulting caller-owned connection.
 
 Use `peekaboo daemon status` to see browser connection state, tool count, and detected Chrome channels.
 
@@ -163,7 +169,11 @@ Advanced escape hatch:
 - `call` with `mcp_tool` and `mcp_args_json` forwards a raw tool from the audited, pinned Chrome DevTools MCP
   v1.6.0 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
   it as upstream `pageId`, overriding any nested value in `mcp_args_json`. Truly global tools such as `list_pages`
-  do not require `page_id`. `trigger_extension_action` is audited but blocked because upstream still resolves its
+  reject `page_id`. UID-bearing raw schemas are resolved only at their audited positions, including
+  `evaluate_script.args`, form elements, and third-party singleton `{ "uid": ... }` parameters; unrelated domain
+  fields named `uid` remain data. Raw page-list and snapshot responses receive the same opaque projection. Snapshot
+  file output is refused in capability sessions because the provider artifact would contain unprojected UIDs.
+  `trigger_extension_action` is audited but blocked because upstream still resolves its
   shared selected page internally; Peekaboo will not forward it until upstream supports explicit `pageId` routing.
   Unknown raw tool names fail closed until the routing contract is audited and updated.
 

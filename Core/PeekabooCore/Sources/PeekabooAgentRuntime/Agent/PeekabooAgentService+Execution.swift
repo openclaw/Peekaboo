@@ -310,12 +310,15 @@ extension PeekabooAgentService {
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
+        let browserClient = self.browserClient(forAgentSessionID: context.id)
         let tools = await self.buildToolset(
             for: model,
             snapshotOwner: snapshotOwner,
+            browserClient: browserClient,
             executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "Streaming ")
         guard let provider = context.provider else {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
         }
 
@@ -346,6 +349,7 @@ extension PeekabooAgentService {
                 model: model,
                 checkpoint: latestCheckpoint,
                 status: wasCancelled ? "cancelled" : "failed")
+            await self.endEphemeralBrowserClientIfNeeded(context)
             if wasCancelled {
                 throw CancellationError()
             }
@@ -356,23 +360,29 @@ extension PeekabooAgentService {
         let executionTime = endTime.timeIntervalSince(context.executionStart)
         let toolCallCount = outcome.toolCallCount
 
-        try self.saveExecutionSession(
-            context: context,
-            model: model,
-            finalMessages: outcome.messages,
-            endTime: endTime,
-            toolCallCount: toolCallCount,
-            usage: outcome.usage,
-            status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        do {
+            try self.saveExecutionSession(
+                context: context,
+                model: model,
+                finalMessages: outcome.messages,
+                endTime: endTime,
+                toolCallCount: toolCallCount,
+                usage: outcome.usage,
+                status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        } catch {
+            await self.endEphemeralBrowserClientIfNeeded(context)
+            throw error
+        }
 
         if outcome.reachedStepLimit {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw AgentStepLimitExceededError(
                 maxSteps: maxSteps,
                 sessionId: context.id,
                 sessionWasPersisted: context.isPersistent)
         }
 
-        return AgentExecutionResult(
+        let result = AgentExecutionResult(
             content: outcome.content,
             messages: outcome.messages,
             sessionId: context.isPersistent ? context.id : nil,
@@ -383,6 +393,8 @@ extension PeekabooAgentService {
                 toolCallCount: toolCallCount,
                 startTime: context.executionStart,
                 endTime: endTime))
+        await self.endEphemeralBrowserClientIfNeeded(context)
+        return result
     }
 
     /// Execute task using direct generateText calls without streaming
@@ -397,12 +409,15 @@ extension PeekabooAgentService {
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
+        let browserClient = self.browserClient(forAgentSessionID: context.id)
         let tools = await self.buildToolset(
             for: model,
             snapshotOwner: snapshotOwner,
+            browserClient: browserClient,
             executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "")
         guard let provider = context.provider else {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
         }
 
@@ -432,6 +447,7 @@ extension PeekabooAgentService {
                 model: model,
                 checkpoint: latestCheckpoint,
                 status: wasCancelled ? "cancelled" : "failed")
+            await self.endEphemeralBrowserClientIfNeeded(context)
             if wasCancelled {
                 throw CancellationError()
             }
@@ -441,23 +457,29 @@ extension PeekabooAgentService {
         let endTime = Date()
         let executionTime = endTime.timeIntervalSince(context.executionStart)
 
-        try self.saveExecutionSession(
-            context: context,
-            model: model,
-            finalMessages: outcome.messages,
-            endTime: endTime,
-            toolCallCount: outcome.toolCallCount,
-            usage: outcome.usage,
-            status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        do {
+            try self.saveExecutionSession(
+                context: context,
+                model: model,
+                finalMessages: outcome.messages,
+                endTime: endTime,
+                toolCallCount: outcome.toolCallCount,
+                usage: outcome.usage,
+                status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        } catch {
+            await self.endEphemeralBrowserClientIfNeeded(context)
+            throw error
+        }
 
         if outcome.reachedStepLimit {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw AgentStepLimitExceededError(
                 maxSteps: maxSteps,
                 sessionId: context.id,
                 sessionWasPersisted: context.isPersistent)
         }
 
-        return AgentExecutionResult(
+        let result = AgentExecutionResult(
             content: outcome.content,
             messages: outcome.messages,
             sessionId: context.isPersistent ? context.id : nil,
@@ -468,6 +490,8 @@ extension PeekabooAgentService {
                 toolCallCount: outcome.toolCallCount,
                 startTime: context.executionStart,
                 endTime: endTime))
+        await self.endEphemeralBrowserClientIfNeeded(context)
+        return result
     }
 
     func runGenerationLoop(

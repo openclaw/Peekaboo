@@ -65,11 +65,29 @@ extension PeekabooAgentService {
     func makeToolContext() -> MCPToolContext {
         MCPToolContext(
             services: self.services,
+            browser: Self.toolConstructionBrowserClient,
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
             snapshotOwner: Self.toolConstructionSnapshotOwner,
             executionPolicy: Self.toolConstructionExecutionPolicy,
             capturePreflightRefusal: self.capturePreflightRefusal)
+    }
+
+    func browserClient(forAgentSessionID sessionID: String) -> any BrowserMCPClientProviding {
+        guard let root = self.services.browser as? BrowserMCPService,
+              let scoped = root.authenticatedSession(named: "agent:\(sessionID)")
+        else { return self.services.browser }
+        return scoped
+    }
+
+    func endBrowserClient(forAgentSessionID sessionID: String) async {
+        guard let root = self.services.browser as? BrowserMCPService else { return }
+        await root.endAuthenticatedSession(named: "agent:\(sessionID)")
+    }
+
+    func endEphemeralBrowserClientIfNeeded(_ context: SessionContext) async {
+        guard !context.isPersistent else { return }
+        await self.endBrowserClient(forAgentSessionID: context.id)
     }
 
     func makeAgentTool(

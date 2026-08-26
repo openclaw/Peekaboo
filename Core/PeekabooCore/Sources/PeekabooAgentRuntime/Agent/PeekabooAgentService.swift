@@ -56,6 +56,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     /// so concurrent sessions cannot change one another's authority after construction.
     @TaskLocal static var toolConstructionExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly
     @TaskLocal static var toolConstructionSnapshotOwner = MCPToolSnapshotOwner.legacyProcess
+    @TaskLocal static var toolConstructionBrowserClient: (any BrowserMCPClientProviding)?
 
     /// The default model used by this agent service
     public var defaultModel: String {
@@ -269,7 +270,12 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         let sessions = self.sessionManager.listSessions()
 
         for session in sessions where session.lastAccessedAt < cutoff {
-            try? await self.sessionManager.deleteSession(id: session.id)
+            do {
+                try await self.sessionManager.deleteSession(id: session.id)
+                await self.endBrowserClient(forAgentSessionID: session.id)
+            } catch {
+                continue
+            }
         }
     }
 

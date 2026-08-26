@@ -1,6 +1,35 @@
 import Foundation
 import PeekabooFoundation
 
+struct BrowserMCPToolCapabilityContract: Sendable, Equatable {
+    enum ElementInput: Sendable, Equatable {
+        case direct(String)
+        case objectArray(arrayKey: String, elementKey: String)
+        case stringArray(String)
+        case decodedSingletonObjectValues(String)
+    }
+
+    enum ResponseProjection: Sendable, Equatable {
+        case none
+        case pages
+        case snapshotAlways
+        case snapshotWhen(Bool)
+        case thirdPartySnapshot
+    }
+
+    enum Effect: Sendable, Equatable {
+        case preserve
+        case invalidateSnapshot
+        case navigate
+        case removePage
+        case invalidateAllPages
+    }
+
+    let elementInputs: [ElementInput]
+    let responseProjection: ResponseProjection
+    let effect: Effect
+}
+
 /// Audited routing contract for the exactly pinned chrome-devtools-mcp dependency.
 ///
 /// Keep this catalog synchronized with `scripts/test-chrome-devtools-mcp-contract.mjs`. Unknown raw tools fail
@@ -15,6 +44,49 @@ enum BrowserMCPPageRoutingContract {
     typealias ActionSemantics = BrowserToolActionSemantics
 
     static let dependencyVersion = "1.6.0"
+
+    // chrome-devtools-mcp-contract:element-reference-path-begin
+    static let elementReferencePathMarkers: Set<String> = [
+        "click.uid",
+        "drag.from_uid",
+        "drag.to_uid",
+        "evaluate_script.args[]",
+        "execute_3p_developer_tool.params{*}.uid",
+        "fill.uid",
+        "fill_form.elements[].uid",
+        "hover.uid",
+        "take_screenshot.uid",
+        "upload_file.uid",
+    ]
+    // chrome-devtools-mcp-contract:element-reference-path-end
+
+    // chrome-devtools-mcp-contract:page-response-begin
+    static let pageResponseToolNames: Set<String> = [
+        "close_page",
+        "handle_dialog",
+        "list_pages",
+        "navigate_page",
+        "new_page",
+        "resize_page",
+        "select_page",
+    ]
+    // chrome-devtools-mcp-contract:page-response-end
+
+    // chrome-devtools-mcp-contract:snapshot-response-begin
+    static let snapshotResponseToolNames: Set<String> = [
+        "click",
+        "click_at",
+        "drag",
+        "execute_3p_developer_tool",
+        "fill",
+        "fill_form",
+        "hover",
+        "press_key",
+        "take_snapshot",
+        "upload_file",
+        "wait_for",
+    ]
+    // chrome-devtools-mcp-contract:snapshot-response-end
 
     // chrome-devtools-mcp-contract:page-scoped-begin
     static let pageScopedToolNames: Set<String> = [
@@ -119,5 +191,62 @@ enum BrowserMCPPageRoutingContract {
         BrowserToolActionSemantics.classify(toolName: toolName) { name in
             arguments[name] as? Bool
         }
+    }
+
+    static func capabilityContract(
+        for toolName: String,
+        arguments: [String: Any] = [:]) -> BrowserMCPToolCapabilityContract?
+    {
+        guard self.routing(for: toolName) != nil else { return nil }
+        let elementInputs: [BrowserMCPToolCapabilityContract.ElementInput] = switch toolName {
+        case "click", "fill", "hover", "take_screenshot", "upload_file":
+            [.direct("uid")]
+        case "drag":
+            [.direct("from_uid"), .direct("to_uid")]
+        case "fill_form":
+            [.objectArray(arrayKey: "elements", elementKey: "uid")]
+        case "evaluate_script":
+            [.stringArray("args")]
+        case "execute_3p_developer_tool":
+            [.decodedSingletonObjectValues("params")]
+        default:
+            []
+        }
+
+        let responseProjection: BrowserMCPToolCapabilityContract.ResponseProjection = switch toolName {
+        case "list_pages", "select_page", "close_page", "new_page", "navigate_page", "resize_page",
+             "handle_dialog":
+            .pages
+        case "take_snapshot", "wait_for":
+            .snapshotAlways
+        case "click", "click_at", "drag", "fill", "fill_form", "hover", "press_key", "upload_file":
+            .snapshotWhen(arguments["includeSnapshot"] as? Bool == true)
+        case "execute_3p_developer_tool":
+            .thirdPartySnapshot
+        default:
+            .none
+        }
+
+        let effect: BrowserMCPToolCapabilityContract.Effect = switch toolName {
+        case "close_page":
+            .removePage
+        case "navigate_page":
+            .navigate
+        case "performance_start_trace" where arguments["reload"] as? Bool != false:
+            .navigate
+        case "lighthouse_audit" where arguments["mode"] as? String != "snapshot":
+            .navigate
+        case "install_extension", "reload_extension", "uninstall_extension":
+            .invalidateAllPages
+        default:
+            self.actionSemantics(for: toolName, arguments: arguments) == .mutating &&
+                self.routing(for: toolName) == .pageTargeted
+                ? .invalidateSnapshot
+                : .preserve
+        }
+        return BrowserMCPToolCapabilityContract(
+            elementInputs: elementInputs,
+            responseProjection: responseProjection,
+            effect: effect)
     }
 }

@@ -12,15 +12,17 @@ read_when:
 ## Subcommands
 | Name | Purpose | Key options |
 | --- | --- | --- |
-| `serve` | Run Peekaboo’s MCP server over stdio. | `--transport stdio` (default); `--allow-foreground` explicitly authorizes foreground/global UI for this server process; global `--bridge-socket <path>` attaches to an existing Bridge host. HTTP/SSE names and `--port` are reserved for future support and currently fail with an actionable error. |
+| `serve` | Run Peekaboo’s MCP server over stdio. | `--transport stdio` (default); `--allow-foreground` explicitly authorizes foreground/global UI, including browser connection setup, for this server process; global `--bridge-socket <path>` attaches to an existing Bridge host. HTTP/SSE names and `--port` are reserved for future support and currently fail with an actionable error. |
 
 ## Implementation notes
 - `serve` instantiates `PeekabooMCPServer` and maps the transport string to `PeekabooCore.TransportType`. Stdio is the default for Claude Code integrations.
 - Public MCP servers are background-only by default. Foreground actions, shared desktop input, browser connection setup,
   and ambient browser auto-connect fail before dispatch unless a human starts that server process with
-  `--allow-foreground`. This explicit authority never exposes Shell, and a nested Agent remains background-only.
-  Without that authority, establish an exact browser connection separately with `peekaboo browser connect --foreground`;
-  MCP browser calls can then reuse its signed live receipt.
+  `--allow-foreground`. Each process-local server owns a fresh browser child and does not borrow another CLI, daemon,
+  or MCP caller's connection. To bootstrap that exact child, call its `browser` tool with `action: "connect"` and
+  accept Chrome's prompt; later page actions reuse the scoped connection and remain page-targeted/background-delivered.
+  This explicit authority never exposes Shell, and a nested Agent remains background-only. Bridge-backed opaque
+  browser sessions still fail closed because the wire protocol has no authenticated provider-child epoch.
 - Direct-text `paste` is admitted only with an exact generation-pinned app/PID/window authorization and a canonical
   background result. Targetless, foreground, current-clipboard, and binary paste are refused before dispatch. The
   nested `agent` tool likewise retains immutable background-only authority and never exposes Shell.
@@ -47,6 +49,9 @@ peekaboo mcp
 
 # Explicit transport selection
 peekaboo mcp serve --transport stdio
+
+# Explicitly authorize this server to connect its own scoped browser child
+peekaboo mcp serve --allow-foreground
 
 # Route MCP tools through an existing Bridge host
 peekaboo mcp serve --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock"

@@ -64,6 +64,7 @@ public actor PeekabooMCPServer {
         self.toolRegistry = await MCPToolRegistry()
         self.toolContext = try await MainActor.run {
             try MCPToolContext.makeDefaultIfConfigured()
+                .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
                 .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         }
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
@@ -75,7 +76,13 @@ public actor PeekabooMCPServer {
     public init(toolContext: MCPToolContext) async throws {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
-        self.toolContext = toolContext.replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        self.toolContext = await MainActor.run {
+            // A background-only server intentionally starts with a disconnected scoped child. An explicitly
+            // foreground-authorized server exposes BrowserTool.connect for this exact child; later calls reuse it.
+            toolContext
+                .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
+                .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        }
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
 
         await self.setupHandlers()
@@ -227,6 +234,10 @@ public actor PeekabooMCPServer {
 
     func snapshotOwnerForTesting() -> MCPToolSnapshotOwner {
         self.toolContext.uiSnapshots.owner
+    }
+
+    func browserClientForTesting() -> any BrowserMCPClientProviding {
+        self.toolContext.browser
     }
 
     func startForTesting(transport: any Transport) async throws {

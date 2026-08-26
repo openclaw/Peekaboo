@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import MCP
+import PeekabooCore
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -67,6 +68,57 @@ struct BrowserMCPSessionManagerTests {
         #expect(result.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(manager.addedConfigs.count == 1)
         #expect(manager.executedTools.isEmpty)
+    }
+
+    @Test
+    func `provider child restart on the same browser target rejects the old session epoch before dispatch`()
+        async throws
+    {
+        let provider = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: provider)
+        let first = try await session.connect(channel: .stable)
+        let firstBinding = try BrowserMCPExecutionSessionBinding(
+            connectionReceipt: #require(first.connectionReceipt),
+            providerSessionEpoch: #require(first.providerSessionEpoch))
+        await session.disconnect()
+        let second = try await session.connect(channel: .stable)
+        #expect(second.connectionReceipt == first.connectionReceipt)
+        #expect(second.providerSessionEpoch != first.providerSessionEpoch)
+        provider.executedTools.removeAll()
+
+        await #expect(throws: BrowserMCPConnectionError.expectedProviderSessionEpochMismatch) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+                channel: .stable,
+                expectedSessionBinding: firstBinding,
+                elementPreflight: nil)
+        }
+        #expect(provider.executedTools.isEmpty)
+    }
+
+    @Test
+    func `element preflight rejects stale document uid before mutation dispatch`() async throws {
+        let provider = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: provider)
+        let status = try await session.connect(channel: .stable)
+        let binding = try BrowserMCPExecutionSessionBinding(
+            connectionReceipt: #require(status.connectionReceipt),
+            providerSessionEpoch: #require(status.providerSessionEpoch))
+        provider.executedTools.removeAll()
+        provider.executeHandler = { toolName, _ in
+            toolName == "take_snapshot" ? .text("uid=22_1 button \"Current\"") : .text("clicked")
+        }
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "click", arguments: ["pageId": 7, "uid": "21_1"])],
+                channel: .stable,
+                expectedSessionBinding: binding,
+                elementPreflight: BrowserMCPElementPreflight(
+                    providerPageID: 7,
+                    providerUIDs: ["21_1"]))
+        }
+        #expect(provider.executedTools == ["take_snapshot"])
     }
 
     @Test
@@ -196,6 +248,363 @@ struct BrowserMCPSessionManagerTests {
         } catch {
             Issue.record("Expected canonical ended-session refusal, got \(error)")
         }
+    }
+
+    @Test
+    func `production MCP contexts use independent browser children and teardown only their owner`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        var nextPort = 9321
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            let port = nextPort
+            nextPort += 1
+            return Self.exactSession(
+                manager: providers.removeFirst(),
+                browserURL: "http://127.0.0.1:\(port)",
+                browserID: "browser-\(port)")
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let services = PeekabooServices()
+        let context = MCPToolContext(
+            services: services,
+            browser: root,
+            executionPolicy: .foregroundAllowed)
+        let firstServer = try await PeekabooMCPServer(toolContext: context)
+        let secondServer = try await PeekabooMCPServer(toolContext: context)
+        let firstBrowser = await firstServer.browserClientForTesting()
+        let secondBrowser = await secondServer.browserClientForTesting()
+        let firstClient = try #require(firstBrowser as? BrowserMCPService)
+        let secondClient = try #require(secondBrowser as? BrowserMCPService)
+        _ = try await firstClient.connect(channel: nil, browserURL: nil)
+        _ = try await secondClient.connect(channel: nil, browserURL: nil)
+        firstProvider.executedTools.removeAll()
+        secondProvider.executedTools.removeAll()
+        let firstBarrier = SequenceBarrier()
+        let secondBarrier = SequenceBarrier()
+        firstProvider.executeHandler = { _, _ in
+            await firstBarrier.block()
+            return .text("first")
+        }
+        secondProvider.executeHandler = { _, _ in
+            await secondBarrier.block()
+            return .text("second")
+        }
+
+        let first = Task { @MainActor in
+            try await firstClient.execute(toolName: "take_snapshot", arguments: [:], channel: nil)
+        }
+        await firstBarrier.waitUntilBlocked()
+        let second = Task { @MainActor in
+            try await secondClient.execute(toolName: "list_pages", arguments: [:], channel: nil)
+        }
+        await secondBarrier.waitUntilBlocked()
+        #expect(firstProvider.executedTools == ["take_snapshot"])
+        #expect(secondProvider.executedTools == ["list_pages"])
+        await firstBarrier.release()
+        await secondBarrier.release()
+        _ = try await first.value
+        _ = try await second.value
+
+        await firstServer.stopForTesting()
+        #expect(firstProvider.removeCount == 1)
+        #expect(secondProvider.removeCount == 0)
+        #expect(pool.count == 1)
+        await secondServer.stopForTesting()
+        #expect(secondProvider.removeCount == 1)
+        #expect(pool.isEmpty)
+    }
+
+    @Test
+    func `authenticated sessions cannot concurrently own the same exact browser target`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: nil)
+
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: nil)
+        }
+        #expect(firstProvider.removeCount == 0)
+        #expect(secondProvider.removeCount == 1)
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `pooled execution cannot implicitly connect around another target owner`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: nil)
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await second.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "click", arguments: [
+                    "uid": "1_0",
+                    "pageId": 7,
+                ])],
+                channel: nil,
+                connectionPolicy: .allowAutoConnect)
+        }
+        #expect(secondProvider.addedConfigs.isEmpty)
+        #expect(secondProvider.executedTools.isEmpty)
+
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `authenticated target lock canonicalizes endpoint aliases by browser identity`() throws {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let firstSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        let secondSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        _ = pool.manager(for: firstSessionID)
+        _ = pool.manager(for: secondSessionID)
+        try pool.bind(firstSessionID, to: BrowserMCPConnectionReceipt(
+            processIdentifier: 42,
+            processStartIdentity: 1001,
+            browserURL: "http://localhost:9222/",
+            webSocketDebuggerURL: "ws://localhost:9222/devtools/browser/browser-a",
+            devToolsBrowserID: "browser-a"))
+
+        #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            try pool.bind(secondSessionID, to: BrowserMCPConnectionReceipt(
+                browserURL: "http://127.0.0.1:9222/",
+                webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+                devToolsBrowserID: "browser-a"))
+        }
+    }
+
+    @Test
+    func `authenticated target ownership remains reserved until provider teardown completes`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        firstProvider.hasConfiguredServer = true
+        firstProvider.connected = true
+        let teardownBarrier = SequenceBarrier()
+        firstProvider.removeHandler = {
+            await teardownBarrier.block()
+        }
+        var providers = [firstProvider, MockBrowserMCPManager()]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let firstSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        let secondSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        _ = pool.manager(for: firstSessionID)
+        _ = pool.manager(for: secondSessionID)
+        let receipt = BrowserMCPConnectionReceipt(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            devToolsBrowserID: "browser-a")
+        try pool.bind(firstSessionID, to: receipt)
+
+        let teardown = Task { @MainActor in
+            await pool.end(firstSessionID)
+        }
+        await teardownBarrier.waitUntilBlocked()
+        let duplicateCompletion = CompletionFlag()
+        let duplicateTeardown = Task { @MainActor in
+            await pool.end(firstSessionID)
+            await duplicateCompletion.markFinished()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(await !(duplicateCompletion.finished))
+        #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            try pool.bind(secondSessionID, to: receipt)
+        }
+
+        await teardownBarrier.release()
+        await teardown.value
+        await duplicateTeardown.value
+        #expect(await duplicateCompletion.finished)
+        try pool.bind(secondSessionID, to: receipt)
+    }
+
+    @Test
+    func `authenticated target rebind replaces the prior ownership keys`() throws {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let firstSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        let secondSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        _ = pool.manager(for: firstSessionID)
+        _ = pool.manager(for: secondSessionID)
+        let firstReceipt = BrowserMCPConnectionReceipt(devToolsBrowserID: "browser-a")
+        let secondReceipt = BrowserMCPConnectionReceipt(devToolsBrowserID: "browser-b")
+
+        try pool.bind(firstSessionID, to: firstReceipt)
+        try pool.bind(firstSessionID, to: secondReceipt)
+        try pool.bind(secondSessionID, to: firstReceipt)
+        #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            try pool.bind(secondSessionID, to: secondReceipt)
+        }
+    }
+
+    @Test
+    func `failed post connect rebind releases the caller stale target ownership`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let thirdProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider, thirdProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst(), browserID: nil)
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        let third = try #require(root.authenticatedSession(named: "agent:third"))
+        let firstURL = "http://127.0.0.1:9222"
+        let secondURL = "http://127.0.0.1:9333"
+        _ = try await first.connect(channel: nil, browserURL: firstURL)
+        firstProvider.connected = false
+        _ = await first.status(channel: nil)
+        _ = try await second.connect(channel: nil, browserURL: secondURL)
+
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await first.connect(channel: nil, browserURL: secondURL)
+        }
+        _ = try await third.connect(channel: nil, browserURL: firstURL)
+
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+        await root.endAuthenticatedSession(named: "agent:third")
+    }
+
+    @Test
+    func `failed reconnect setup releases stale target ownership`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst(), browserID: nil)
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        let firstSessionID = try #require(pool.sessionID(named: "agent:first"))
+        let firstManager = try #require(pool.manager(for: firstSessionID))
+        let firstURL = "http://127.0.0.1:9222"
+        _ = try await first.connect(channel: nil, browserURL: firstURL)
+        firstProvider.connected = false
+        _ = await firstManager.status(channel: nil)
+        firstProvider.executeError = MockBrowserError.probe
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await first.connect(
+                channel: nil,
+                browserURL: "http://127.0.0.1:9333")
+        }
+        _ = try await second.connect(channel: nil, browserURL: firstURL)
+
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `returned connection failure releases stale target ownership`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: nil)
+        firstProvider.executeError = MockBrowserError.probe
+
+        let result = try await first.executeSequenceWithOutcome(
+            [BrowserMCPMappedCall(toolName: "click", arguments: [
+                "uid": "1_0",
+                "pageId": 7,
+            ])],
+            channel: nil,
+            connectionPolicy: .requireExistingLiveReceipt)
+
+        #expect(result.payload.isError)
+        _ = try await second.connect(channel: nil, browserURL: nil)
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `production Agent session resumes reuse one scoped child capability namespace`() async throws {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let services = Self.services(browser: root)
+        let agent = try PeekabooAgentService(services: services)
+        let first = try #require(agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
+        let resumed = try #require(agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
+        let other = try #require(agent.browserClient(forAgentSessionID: "session-b") as? BrowserMCPService)
+        let firstCapabilities = try #require(first.browserCapabilitySession)
+        let resumedCapabilities = try #require(resumed.browserCapabilitySession)
+        let otherCapabilities = try #require(other.browserCapabilitySession)
+
+        #expect(firstCapabilities === resumedCapabilities)
+        #expect(firstCapabilities !== otherCapabilities)
+        await agent.endBrowserClient(forAgentSessionID: "session-a")
+        let restarted = try #require(agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
+        let restartedCapabilities = try #require(restarted.browserCapabilitySession)
+        #expect(restartedCapabilities !== firstCapabilities)
+        await agent.endBrowserClient(forAgentSessionID: "session-a")
+        await agent.endBrowserClient(forAgentSessionID: "session-b")
+    }
+
+    @Test
+    func `failed expired session deletion preserves its browser capability namespace`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooAgentCleanup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let sessionID = "expired-session"
+        let expiredAt = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        try sessionManager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "test-model",
+            messages: [.user("Test session")],
+            metadata: SessionMetadata(),
+            createdAt: expiredAt,
+            updatedAt: expiredAt))
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+        let first = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        let firstCapabilities = try #require(first.browserCapabilitySession)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+
+        await agent.cleanup()
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("\(sessionID).json").path))
+        let resumed = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        #expect(resumed.browserCapabilitySession === firstCapabilities)
+        await agent.endBrowserClient(forAgentSessionID: sessionID)
     }
 
     @Test
@@ -1578,16 +1987,51 @@ extension BrowserMCPSessionManagerTests {
 
     private static func exactSession(
         manager: MockBrowserMCPManager,
-        uploadStager: BrowserMCPUploadStager = .live) -> BrowserMCPSessionManager
+        uploadStager: BrowserMCPUploadStager = .live,
+        browserURL: String = "http://127.0.0.1:9222",
+        browserID: String? = "browser-a") -> BrowserMCPSessionManager
     {
         BrowserMCPSessionManager(
             serverName: "test-browser",
             manager: manager,
             detectedBrowsers: { _ in [] },
             processStartIdentity: { _ in nil },
-            endpointResolver: self.endpointResolver(),
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                guard let port = URL(string: url)?.port else {
+                    throw BrowserMCPConnectionError.invalidEndpoint("missing port")
+                }
+                let resolvedBrowserID = browserID ?? "browser-\(port)"
+                return BrowserMCPDevToolsEndpoint(
+                    browserURL: "http://127.0.0.1:\(port)/",
+                    webSocketDebuggerURL: "ws://127.0.0.1:\(port)/devtools/browser/\(resolvedBrowserID)",
+                    browserID: resolvedBrowserID,
+                    browserVersion: "Chrome/151.0",
+                    protocolVersion: "1.3")
+            },
             uploadStager: uploadStager,
-            environment: ["PEEKABOO_BROWSER_MCP_BROWSER_URL": "http://127.0.0.1:9222"])
+            environment: ["PEEKABOO_BROWSER_MCP_BROWSER_URL": browserURL])
+    }
+
+    private static func services(browser: BrowserMCPService) -> PeekabooServices {
+        let base = PeekabooServices()
+        return PeekabooServices(
+            logging: base.logging,
+            screenCapture: base.screenCapture,
+            applications: base.applications,
+            automation: base.automation,
+            windows: base.windows,
+            menu: base.menu,
+            dock: base.dock,
+            dialogs: base.dialogs,
+            snapshots: base.snapshots,
+            files: base.files,
+            clipboard: base.clipboard,
+            permissions: base.permissions,
+            audioInput: base.audioInput,
+            browser: browser,
+            agent: nil,
+            configuration: base.configuration,
+            screens: base.screens)
     }
 
     private static func browser(pid: Int32, generation: UInt64) -> DetectedBrowser {
@@ -1788,5 +2232,13 @@ private actor SequenceBarrier {
         self.released = true
         self.releaseWaiters.forEach { $0.resume() }
         self.releaseWaiters.removeAll()
+    }
+}
+
+private actor CompletionFlag {
+    private(set) var finished = false
+
+    func markFinished() {
+        self.finished = true
     }
 }

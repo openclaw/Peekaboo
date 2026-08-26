@@ -837,7 +837,7 @@ struct BrowserToolTests {
             clipboard: services.clipboard,
             browser: client,
             executionPolicy: .unrestricted)
-        let tool = BrowserTool(context: context)
+        let tool = BrowserTool(context: context, instructionAudience: .commandLine)
 
         _ = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "list_pages",
@@ -884,6 +884,24 @@ struct BrowserToolTests {
 }
 
 extension BrowserToolTests {
+    @Test
+    func `background MCP browser status explains scoped connection bootstrap`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: []))
+        let tool = BrowserTool(
+            client: client,
+            executionPolicy: .backgroundOnly)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "status",
+        ]))
+        let text = Self.text(from: response)
+
+        #expect(text.contains("Restart this MCP server with --allow-foreground"))
+        #expect(text.contains(#"browser { "action": "connect" }"#))
+    }
+
     @Test
     func `default Browser tool requires an existing connection and returns canonical refusal`() async throws {
         let client = ConnectionPolicyBrowserMCPClient()
@@ -945,7 +963,10 @@ extension BrowserToolTests {
             browser: client,
             executionPolicy: .backgroundOnly)
 
-        let response = try await BrowserTool(context: context).execute(arguments: ToolArguments(raw: [
+        let tool = BrowserTool(
+            context: context,
+            instructionAudience: .commandLine)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "list_pages",
         ]))
 
@@ -958,6 +979,39 @@ extension BrowserToolTests {
         #expect(client.connectedChannels.isEmpty)
         #expect(client.executedSequences.isEmpty)
         #expect(client.executedTools.isEmpty)
+    }
+
+    @Test
+    func `capability context refuses unbound legacy disconnect`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: true,
+            toolCount: 1,
+            detectedBrowsers: []))
+        let services = PeekabooServices()
+        let context = MCPToolContext(
+            automation: services.automation,
+            menu: services.menu,
+            windows: services.windows,
+            applications: services.applications,
+            dialogs: services.dialogs,
+            dock: services.dock,
+            screenCapture: services.screenCapture,
+            desktopObservation: services.desktopObservation,
+            snapshots: services.snapshots,
+            screens: services.screens,
+            agent: nil,
+            permissions: services.permissions,
+            clipboard: services.clipboard,
+            browser: client,
+            executionPolicy: .unrestricted)
+
+        let response = try await BrowserTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "disconnect",
+        ]))
+
+        #expect(response.isError)
+        #expect(Self.text(from: response).contains("provider-child epoch"))
+        #expect(!client.disconnected)
     }
 }
 
