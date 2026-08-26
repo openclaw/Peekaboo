@@ -82,9 +82,9 @@ EXPECTED_IDENTITY='Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)'
 EXPECTED_TEAM_ID=FWJYW4S8P8
 EXPECTED_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\""
 TIMESTAMP_URL=http://timestamp.apple.com/ts01
-EXPECTED_RELEASE_HELPER_COMMIT=ee69e9516e61901c02abd1a71456d5f1fd9f1d5f
+EXPECTED_RELEASE_HELPER_COMMIT=20ab9a5e6bb1107788366726868f1a9b4c16d953
 EXPECTED_RELEASE_HELPER_SHA=e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255
-EXPECTED_RELEASE_HELPER_LIB_SHA=6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842
+EXPECTED_RELEASE_HELPER_LIB_SHA=c29d3c46506c2d0bd2db7ab688bd3108d54e8824074a4fe800de6e3fe17284c9
 CANONICAL_LOCK_RELATIVE=Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved
 CANONICAL_LOCK="$ROOT_DIR/$CANONICAL_LOCK_RELATIVE"
 
@@ -404,9 +404,9 @@ verify_unsigned_stage() {
       .dependency_lock_path == $lockPath and .dependency_lock_sha256 == $lockSHA and
       .toolchain == {developer_dir: $developerDir, xcodebuild_version: $xcodebuildVersion,
         sdk_version: $sdkVersion, swiftc_version: $swiftcVersion} and
-      .release_helper == {commit: "ee69e9516e61901c02abd1a71456d5f1fd9f1d5f",
+      .release_helper == {commit: "20ab9a5e6bb1107788366726868f1a9b4c16d953",
         executable_sha256: "e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255",
-        library_sha256: "6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"} and
+        library_sha256: "c29d3c46506c2d0bd2db7ab688bd3108d54e8824074a4fe800de6e3fe17284c9"} and
       (.unsigned_inputs | keys == ["cli_inventory_sha256", "peekaboo_inventory_sha256",
         "playground_inventory_sha256", "qualification_inventory_sha256",
         "qualification_node_inventory_sha256", "qualification_source_inventory_sha256"] and
@@ -614,9 +614,9 @@ EOF
     --arg qualificationSourceInventory "$(/usr/bin/shasum -a 256 "$SOURCE_TREE_MANIFEST" | /usr/bin/awk '{print $1}')" '
       {version: 1, build_mode: $buildMode, source_commit: $sourceCommit, marketing_version: $version,
        dependency_lock_path: $lockPath, dependency_lock_sha256: $lockSHA,
-       release_helper: {commit: "ee69e9516e61901c02abd1a71456d5f1fd9f1d5f",
+       release_helper: {commit: "20ab9a5e6bb1107788366726868f1a9b4c16d953",
          executable_sha256: "e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255",
-         library_sha256: "6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"},
+         library_sha256: "c29d3c46506c2d0bd2db7ab688bd3108d54e8824074a4fe800de6e3fe17284c9"},
        toolchain: {developer_dir: $developerDir, xcodebuild_version: $xcodebuildVersion,
          sdk_version: $sdkVersion, swiftc_version: $swiftcVersion},
        unsigned_inputs: {cli_inventory_sha256: $cliInventory,
@@ -1210,9 +1210,9 @@ publish_phase() {
        toolchain: {developer_dir: $developerDir, xcodebuild_version: $xcodebuildVersion,
          sdk_version: $sdkVersion, swiftc_version: $swiftcVersion},
        signing: {authority: "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)", team_id: "FWJYW4S8P8",
-         release_helper: {commit: "ee69e9516e61901c02abd1a71456d5f1fd9f1d5f",
+         release_helper: {commit: "20ab9a5e6bb1107788366726868f1a9b4c16d953",
            executable_sha256: "e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255",
-           library_sha256: "6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842"}},
+           library_sha256: "c29d3c46506c2d0bd2db7ab688bd3108d54e8824074a4fe800de6e3fe17284c9"}},
        notarization: {cli: $cliNotary[0], peekaboo_app: $appNotary[0],
          playground_app: $playgroundNotary[0], peekaboo_dmg: $dmgNotary[0],
          qualification_node_app: $nodeNotary[0], certification_controller: $controllerNotary[0]},

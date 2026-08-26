@@ -457,11 +457,11 @@ exactKeys(manifest.signing, ['authority', 'team_id', 'release_helper'], 'signing
 exactKeys(manifest.signing.release_helper, ['commit', 'executable_sha256', 'library_sha256'], 'release helper');
 if (manifest.signing.authority !== 'Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)' ||
     manifest.signing.team_id !== 'FWJYW4S8P8' ||
-    manifest.signing.release_helper.commit !== 'ee69e9516e61901c02abd1a71456d5f1fd9f1d5f' ||
+    manifest.signing.release_helper.commit !== '20ab9a5e6bb1107788366726868f1a9b4c16d953' ||
     manifest.signing.release_helper.executable_sha256 !==
       'e65e06ef89ec90ebfc537d28748a3c4de8ce89bd09b51e4d67ba4bdd95427255' ||
     manifest.signing.release_helper.library_sha256 !==
-      '6be67a85c4b83d8968bfcf3697451dc21544614a4318e49a3534b219026ee842') {
+      'c29d3c46506c2d0bd2db7ab688bd3108d54e8824074a4fe800de6e3fe17284c9') {
   throw new Error('signing identity or release helper mismatch');
 }
 exactKeys(manifest.portable, ['validator', 'tree_generator', 'archive_policy', 'dmg_policy', 'source_tree'],

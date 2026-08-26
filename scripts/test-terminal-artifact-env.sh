@@ -183,7 +183,7 @@ rg -Fq 'qualification_source_inventory_sha256' "$wrapper" || \
   fail 'build provenance omits the commit-materialized source snapshot'
 rg -Fq 'qualification_monitor:' "$wrapper" || fail 'portable manifest omits the rich monitor record'
 rg -Fq 'materialize_committed_file' "$wrapper" || fail 'published source/tools still come from the mutable worktree'
-rg -Fq 'ee69e9516e61901c02abd1a71456d5f1fd9f1d5f' "$wrapper" || \
+rg -Fq '20ab9a5e6bb1107788366726868f1a9b4c16d953' "$wrapper" || \
   fail 'terminal pipeline does not pin the package-run helper contract'
 rg -Fq 'scripts/build-terminal-artifacts.sh check-helper' "$ROOT_DIR/docs/RELEASING.md" || \
   fail 'manual release flow does not preflight the credential runner'
