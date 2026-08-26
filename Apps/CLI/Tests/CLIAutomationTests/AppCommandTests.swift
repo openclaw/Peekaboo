@@ -206,6 +206,27 @@ struct AppCommandTests {
     }
 
     @Test
+    func `App list text presents identity-poor installed status as omitted`() async throws {
+        let (output, service) = try await runAppCommandWithService(
+            ["app", "list", "--include-installed"]
+        ) { service in
+            service.applications = [ServiceApplicationInfo(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: nil,
+                name: "Incomplete",
+                bundlePath: "/Applications/Incomplete.app",
+                isHiddenKnown: false
+            )]
+        }
+
+        #expect(service.installedApplicationListCallCount == 0)
+        #expect(output.contains("Installed Application Status: omitted"))
+        #expect(!output.contains("Installed Applications, Not Running (0)"))
+        #expect(!output.contains("No installed-but-not-running applications found"))
+    }
+
+    @Test
     func `App relaunch JSON returns the new launch-bound process receipt`() async throws {
         let generation = UInt64.max - 2
         let (output, _) = try await runAppCommandWithService([

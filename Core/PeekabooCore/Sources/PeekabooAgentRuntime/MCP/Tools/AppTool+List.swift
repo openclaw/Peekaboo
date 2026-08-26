@@ -21,6 +21,7 @@ extension AppToolActions {
         let appsOutput = try await self.service.listApplications()
         let hasIdentityPoorRunningApplications =
             InstalledApplicationReconciler.hasIdentityPoorRunningApplications(appsOutput.data.applications)
+        let installedResultsOmitted = request.includeInstalled && hasIdentityPoorRunningApplications
         let installedOutput: InstalledOutput? = if let catalog, !hasIdentityPoorRunningApplications {
             try await catalog.listInstalledApplications()
         } else {
@@ -35,7 +36,7 @@ extension AppToolActions {
             }
         }
         warnings.append(contentsOf: installedOutput?.metadata.warnings ?? [])
-        if request.includeInstalled, hasIdentityPoorRunningApplications {
+        if installedResultsOmitted {
             warnings.append(
                 "Installed-but-not-running results were omitted because a live application lacked " +
                     "bundle identity metadata")
@@ -84,6 +85,7 @@ extension AppToolActions {
         var installedContent: [MCP.Tool.Content] = []
         if let installedApplications {
             baseMeta["installed_count"] = .double(Double(installedApplications.count))
+            baseMeta["installed_status"] = .string(installedResultsOmitted ? "omitted" : "complete")
             baseMeta["installed_apps"] = .array(installedApplications.map { application in
                 .object([
                     "name": .string(application.name),
@@ -92,23 +94,35 @@ extension AppToolActions {
                     "declared_presentation": .string(application.declaredPresentation.rawValue),
                 ])
             })
-            let installedSummary = installedApplications.isEmpty
-                ? "\(AgentDisplayTokens.Status.info) No installed-but-not-running applications found"
-                : installedApplications.map { application in
-                    "- \(application.name) [\(application.bundleIdentifier)] " +
-                        "(\(application.declaredPresentation.rawValue)) — \(application.launchPath)"
-                }.joined(separator: "\n")
-            installedContent = [
-                .text(
-                    text: "\(AgentDisplayTokens.Status.info) Installed but not running " +
-                        "(\(installedApplications.count)):\n\(installedSummary)",
+            if installedResultsOmitted {
+                installedContent = [.text(
+                    text: "\(AgentDisplayTokens.Status.warning) Installed application status omitted because " +
+                        "live bundle identity was incomplete",
                     annotations: nil,
-                    _meta: nil),
-            ]
+                    _meta: nil)]
+            } else {
+                let installedSummary = installedApplications.isEmpty
+                    ? "\(AgentDisplayTokens.Status.info) No installed-but-not-running applications found"
+                    : installedApplications.map { application in
+                        "- \(application.name) [\(application.bundleIdentifier)] " +
+                            "(\(application.declaredPresentation.rawValue)) — \(application.launchPath)"
+                    }.joined(separator: "\n")
+                installedContent = [
+                    .text(
+                        text: "\(AgentDisplayTokens.Status.info) Installed but not running " +
+                            "(\(installedApplications.count)):\n\(installedSummary)",
+                        annotations: nil,
+                        _meta: nil),
+                ]
+            }
         }
-        let notes = installedApplications.map {
-            "Found \(apps.count) running and \($0.count) installed apps"
-        } ?? "Found \(apps.count) apps"
+        let notes = if installedResultsOmitted {
+            "Found \(apps.count) running applications; installed status omitted due incomplete live identity"
+        } else {
+            installedApplications.map {
+                "Found \(apps.count) running and \($0.count) installed apps"
+            } ?? "Found \(apps.count) apps"
+        }
         let summaryMeta = self.makeSummary(for: nil, action: "List Applications", notes: notes)
         return ToolResponse(
             content: [

@@ -79,6 +79,7 @@ struct MCPInstalledApplicationCatalogTests {
         #expect(runningRows.count == 1)
         #expect(installedRows.count == 2)
         #expect(meta["installed_count"] == .double(2))
+        #expect(meta["installed_status"] == .string("complete"))
         #expect(firstInstalled["name"] == .string("Available"))
         #expect(firstInstalled["bundle_id"] == .string("com.example.available"))
         #expect(firstInstalled["launch_path"] == .string("/Applications/Available.app"))
@@ -141,7 +142,19 @@ struct MCPInstalledApplicationCatalogTests {
             return
         }
         #expect(meta["installed_count"] == .double(0))
+        #expect(meta["installed_status"] == .string("omitted"))
         #expect(meta["installed_apps"] == .array([]))
+        let summary = try #require(meta["summary"]?.objectValue)
+        #expect(summary["notes"] == .string(
+            "Found 1 running applications; installed status omitted due incomplete live identity"))
+        let text = response.content.compactMap { content -> String? in
+            guard case let .text(value, _, _) = content else { return nil }
+            return value
+        }.joined(separator: "\n")
+        #expect(text.contains("Installed application status omitted"))
+        #expect(!text.contains("No installed-but-not-running applications found"))
+        #expect(!text.contains("Installed but not running (0)"))
+        #expect(!text.contains("0 installed apps"))
         guard case let .array(warnings)? = meta["warnings"] else {
             Issue.record("Expected omission warning")
             return

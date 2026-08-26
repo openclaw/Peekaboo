@@ -94,6 +94,7 @@ extension AppCommand {
                     InstalledApplicationReconciler.hasIdentityPoorRunningApplications(
                         appsOutput.data.applications
                     )
+                let installedResultsOmitted = self.includeInstalled && hasIdentityPoorRunningApplications
                 let installedOutput: InstalledOutput? = if let catalog, !hasIdentityPoorRunningApplications {
                     try await catalog.listInstalledApplications()
                 } else {
@@ -147,7 +148,7 @@ extension AppCommand {
                     nil
                 }
                 var combinedWarnings = appsOutput.metadata.warnings + (installedOutput?.metadata.warnings ?? [])
-                if self.includeInstalled, hasIdentityPoorRunningApplications {
+                if installedResultsOmitted {
                     combinedWarnings.append(
                         "Installed-but-not-running results were omitted because a live application lacked " +
                             "bundle identity metadata"
@@ -206,7 +207,9 @@ extension AppCommand {
                         print("    Bundle: \(app.bundleIdentifier ?? "unknown")")
                         print("    PID: \(app.processIdentifier)")
                     }
-                    if let installedApplications {
+                    if installedResultsOmitted {
+                        print("Installed Application Status: omitted because live bundle identity was incomplete")
+                    } else if let installedApplications {
                         print("Installed Applications, Not Running (\(installedApplications.count)):")
                         for application in installedApplications {
                             print("  • \(application.name)")
