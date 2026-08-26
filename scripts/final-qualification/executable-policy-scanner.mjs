@@ -53,12 +53,13 @@ const VIRTUALIZATION_CLASS_STRING = /^(?:_?OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z
 const APPLE_FRAMEWORK_PATH = /(?:^|\/)(?:OSAKit|ScriptingBridge)\.framework(?:\/|$)/i;
 const VIRTUALIZATION_FRAMEWORK_PATH = /(?:^|\/)(?:Virtualization|Hypervisor)\.framework(?:\/|$)/i;
 const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSAppleEventDescriptor|NSAppleEventManager|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType)$/;
-const OSASCRIPT_EXECUTABLE_STRING = /^\/usr\/bin\/osascript(?:$|[ \t].*)$/;
+const OSASCRIPT_EXECUTABLE_STRING = /^(?:\/usr\/bin\/)?osascript(?:$|[ \t].*)$/;
 const APPLE_SCRIPT_COMPONENT_STRING = /^\/System\/Library\/Components\/AppleScript\.component(?:$|\/Contents\/MacOS\/AppleScript(?:$|[ \t].*))$/;
 const APPLE_EVENT_DYNAMIC_STRING = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*)$/;
 const APPLE_EVENT_COMPILER_METADATA = /^(?:AESgtGG|AESgtGGGSgtGG)$/;
 const LOAD_COMMAND_DYLIBS = new Set([0x0c, 0x0d, 0x18, 0x1f, 0x20, 0x23]);
 const MACH_O_CPU_TYPES = new Set([0x00000007, 0x01000007, 0x0000000c, 0x0100000c]);
+const CPU_SUBTYPE_VALUE_MASK = 0x00ffffff;
 const CODE_DIRECTORY_MAGIC = 0xfade0c02;
 const CODE_DIRECTORY_HASH_SIZES = new Map([[1, 20], [2, 32], [3, 20], [4, 48]]);
 const SUPERBLOB_SLOT_MAGICS = new Map([
@@ -1120,7 +1121,9 @@ function machOEvidence(bytes) {
   const evidence = { identifiers: [], imports: [], loadPaths: [], strings: [] };
   for (const record of records) {
     const slice = thinMachOSlice(bytes, record.offset, record.size);
-    if (!slice || slice.cpuType !== record.cpuType || slice.cpuSubtype !== record.cpuSubtype) return null;
+    if (!slice || slice.cpuType !== record.cpuType
+      || (slice.cpuSubtype & CPU_SUBTYPE_VALUE_MASK)
+        !== (record.cpuSubtype & CPU_SUBTYPE_VALUE_MASK)) return null;
     for (const key of ['identifiers', 'imports', 'loadPaths', 'strings']) {
       for (const value of slice[key]) evidence[key].push(value);
     }

@@ -1756,11 +1756,23 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     );
   }
   for (const [index, policyString] of [
+    'osascript',
+    'osascript -e return 1',
+    'osascript script.scpt argument',
+    'osascript ./script argument',
+    'osascript payload argument',
     '/usr/bin/osascript',
     '/usr/bin/osascript -e return 1',
+    '/usr/bin/osascript /tmp/script argument',
+    '/usr/bin/osascript payload argument',
+    '/usr/bin/osascript is unavailable',
+    'osascript documentation unavailable',
+    'osascript command is unavailable',
+    'osascript support is disabled',
     '/System/Library/Components/AppleScript.component',
     '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript',
     '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript -e return 1',
+    '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript is unavailable',
   ].entries()) {
     assert.deepEqual(
       policyFindingsForFile(
@@ -1790,6 +1802,66 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       unrelatedString,
     );
   }
+  const fatMachO = (recordSubtype, sliceSubtype) => {
+    const slice = thinMachOWithRawString('_benign');
+    slice.writeUInt32LE(sliceSubtype, 8);
+    const bytes = Buffer.alloc(28 + slice.length);
+    Buffer.from('cafebabe', 'hex').copy(bytes);
+    bytes.writeUInt32BE(1, 4);
+    bytes.writeUInt32BE(0x0100000c, 8);
+    bytes.writeUInt32BE(recordSubtype, 12);
+    bytes.writeUInt32BE(28, 16);
+    bytes.writeUInt32BE(slice.length, 20);
+    bytes.writeUInt32BE(2, 24);
+    slice.copy(bytes, 28);
+    return bytes;
+  };
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/capability-masked-fat-subtype',
+      0o755,
+      fatMachO(0x80000002, 0x40000002),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/mismatched-fat-subtype',
+      0o755,
+      fatMachO(0x80000002, 0x40000003),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  const firstCapabilitySlice = thinMachOWithRawString('_benign');
+  firstCapabilitySlice.writeUInt32LE(0x80000002, 8);
+  const secondCapabilitySlice = Buffer.from(firstCapabilitySlice);
+  secondCapabilitySlice.writeUInt32LE(0x40000002, 8);
+  const firstCapabilityOffset = 48;
+  const secondCapabilityOffset = Math.ceil(
+    (firstCapabilityOffset + firstCapabilitySlice.length) / 16,
+  ) * 16;
+  const distinctCapabilityFat = Buffer.alloc(secondCapabilityOffset + secondCapabilitySlice.length);
+  Buffer.from('cafebabe', 'hex').copy(distinctCapabilityFat);
+  distinctCapabilityFat.writeUInt32BE(2, 4);
+  for (const [entry, subtype, sliceOffset, slice] of [
+    [8, 0x80000002, firstCapabilityOffset, firstCapabilitySlice],
+    [28, 0x40000002, secondCapabilityOffset, secondCapabilitySlice],
+  ]) {
+    distinctCapabilityFat.writeUInt32BE(0x0100000c, entry);
+    distinctCapabilityFat.writeUInt32BE(subtype, entry + 4);
+    distinctCapabilityFat.writeUInt32BE(sliceOffset, entry + 8);
+    distinctCapabilityFat.writeUInt32BE(slice.length, entry + 12);
+    distinctCapabilityFat.writeUInt32BE(4, entry + 16);
+    slice.copy(distinctCapabilityFat, sliceOffset);
+  }
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/distinct-capability-fat-subtypes',
+      0o755,
+      distinctCapabilityFat,
+    ),
+    [],
+  );
   const osaKitClassSymbols = [
     'OBJC_CLASS_$_OSAScript',
     '_OBJC_CLASS_$_OSAScript',
