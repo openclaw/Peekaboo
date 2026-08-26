@@ -5,6 +5,67 @@ import Testing
 
 struct MCPPolicyAwareCatalogTests {
     @Test
+    func `Paste tool advertises only direct targeted text under background authority`() async throws {
+        let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
+        let tool = PasteTool(context: backgroundContext)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .array(required)? = schema["required"],
+              case let .array(targetAlternatives)? = schema["anyOf"]
+        else {
+            Issue.record("Expected background-only Paste schema")
+            return
+        }
+        #expect(required == [Value.string("text")])
+        let requiredTargets = targetAlternatives.compactMap { alternative -> String? in
+            guard case let .object(fields) = alternative,
+                  case let .array(required)? = fields["required"],
+                  case let .string(target)? = required.first
+            else { return nil }
+            return target
+        }
+        #expect(Set(requiredTargets) == Set(["app", "pid", "window_id", "window_title", "window_index"]))
+        #expect(properties["text"] != nil)
+        #expect(properties["app"] != nil)
+        #expect(properties["pid"] != nil)
+        #expect(properties["window_id"] != nil)
+        #expect(properties["filePath"] == nil)
+        #expect(properties["imagePath"] == nil)
+        #expect(properties["dataBase64"] == nil)
+        #expect(properties["uti"] == nil)
+        #expect(properties["alsoText"] == nil)
+        #expect(properties["allowLarge"] == nil)
+        #expect(properties["restore_delay_ms"] == nil)
+        #expect(properties["foreground"] == nil)
+        #expect(tool.description.contains("does not touch the shared clipboard"))
+        let targetless = try await backgroundContext.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["text": "must not dispatch"]))
+        #expect(targetless.isError)
+        #expect(targetless.meta?.objectValue?["refusal_reason"] == .string("foreground_consent_required"))
+        #expect(targetless.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+
+        let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
+        let foregroundTool = PasteTool(context: foregroundContext)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProperties)? = foregroundSchema["properties"]
+        else {
+            Issue.record("Expected foreground-capable Paste schema")
+            return
+        }
+        #expect(foregroundSchema["required"] == nil)
+        #expect(foregroundProperties["filePath"] != nil)
+        #expect(foregroundProperties["imagePath"] != nil)
+        #expect(foregroundProperties["dataBase64"] != nil)
+        #expect(foregroundProperties["uti"] != nil)
+        #expect(foregroundProperties["alsoText"] != nil)
+        #expect(foregroundProperties["allowLarge"] != nil)
+        #expect(foregroundProperties["restore_delay_ms"] != nil)
+        #expect(foregroundProperties["foreground"] != nil)
+        #expect(foregroundTool.description.contains("Paste the current clipboard"))
+    }
+
+    @Test
     func `Browser tool hides connection setup under background authority`() async {
         let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
         let tool = BrowserTool(context: backgroundContext)

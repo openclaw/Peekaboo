@@ -7,6 +7,7 @@ import PeekabooFoundation
 import TachikomaMCP
 import UniformTypeIdentifiers
 
+// swiftlint:disable type_body_length
 /// MCP tool for atomic clipboard+paste+restore.
 public struct PasteTool: MCPTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PasteTool")
@@ -15,7 +16,16 @@ public struct PasteTool: MCPTool {
     public let name = "paste"
 
     public var description: String {
-        """
+        if self.context.executionPolicy == .backgroundOnly {
+            return """
+            Deliver one direct text payload to an explicit app, PID, or exact window under immutable background-only
+            authority. This route does not touch the shared clipboard. Current-clipboard, binary/file/image payloads,
+            targetless input, and foreground delivery are unavailable. If delivery fails after it begins, a prefix may
+            already be present; observe the exact target before retrying.
+            """
+        }
+
+        return """
         Paste the current clipboard, or atomically set the clipboard, paste (Cmd+V), then restore it.
 
         Use this when you want fewer steps than:
@@ -44,40 +54,50 @@ public struct PasteTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                // Targeting
-                "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
-                "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
-                "window_id": SchemaBuilder.integer(
-                    description: "Exact window ID for atomic background delivery, or foreground focus when requested."),
-                "window_title": SchemaBuilder
-                    .string(description: "Window title substring for atomic exact-window background delivery."),
-                "window_index": SchemaBuilder
-                    .integer(description: "Window index (0-based); requires app/pid and pins that exact window."),
-
-                // Payload
-                "text": SchemaBuilder.string(
-                    description: "Plain text. Background delivery leaves the clipboard untouched; a failure after " +
-                        "dispatch begins is retry-unsafe because a prefix may already be present."),
-                "filePath": SchemaBuilder
-                    .string(description: "Path to a file to paste (file bytes placed on clipboard)."),
-                "imagePath": SchemaBuilder.string(description: "Path to an image to paste (alias of filePath)."),
-                "dataBase64": SchemaBuilder.string(description: "Base64-encoded payload to paste."),
-                "uti": SchemaBuilder.string(description: "UTI for dataBase64, or to force type when pasting a file."),
-                "alsoText": SchemaBuilder.string(description: "Optional plain-text companion when pasting binary."),
-                "allowLarge": SchemaBuilder.boolean(description: "Allow payloads larger than 10 MB.", default: false),
-
-                // Restore timing
-                "restore_delay_ms": SchemaBuilder.integer(
-                    description: "Delay before restoring the previous clipboard (ms). Default: 150.",
-                    minimum: 0,
-                    default: 150),
-                "foreground": SchemaBuilder.boolean(
-                    description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
-                    default: false),
-            ],
-            required: [])
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        var properties: [String: Value] = [
+            "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
+            "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
+            "window_id": SchemaBuilder.integer(
+                description: "Exact window ID for atomic background delivery, or foreground focus when requested."),
+            "window_title": SchemaBuilder
+                .string(description: "Window title substring for atomic exact-window background delivery."),
+            "window_index": SchemaBuilder
+                .integer(description: "Window index (0-based); requires app/pid and pins that exact window."),
+            "text": SchemaBuilder.string(
+                description: "Plain text. Background delivery leaves the clipboard untouched; a failure after " +
+                    "dispatch begins is retry-unsafe because a prefix may already be present."),
+        ]
+        if foregroundCapable {
+            properties["filePath"] = SchemaBuilder.string(
+                description: "Path to a file to paste (file bytes placed on clipboard).")
+            properties["imagePath"] = SchemaBuilder
+                .string(description: "Path to an image to paste (alias of filePath).")
+            properties["dataBase64"] = SchemaBuilder.string(description: "Base64-encoded payload to paste.")
+            properties["uti"] = SchemaBuilder.string(
+                description: "UTI for dataBase64, or to force type when pasting a file.")
+            properties["alsoText"] = SchemaBuilder.string(
+                description: "Optional plain-text companion when pasting binary.")
+            properties["allowLarge"] = SchemaBuilder.boolean(
+                description: "Allow payloads larger than 10 MB.",
+                default: false)
+            properties["restore_delay_ms"] = SchemaBuilder.integer(
+                description: "Delay before restoring the previous clipboard (ms). Default: 150.",
+                minimum: 0,
+                default: 150)
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
+                default: false)
+        }
+        let base = SchemaBuilder.object(
+            properties: properties,
+            required: foregroundCapable ? [] : ["text"])
+        guard !foregroundCapable, case let .object(fields) = base else { return base }
+        var backgroundSchema = fields
+        backgroundSchema["anyOf"] = .array(["app", "pid", "window_id", "window_title", "window_index"].map {
+            .object(["required": .array([.string($0)])])
+        })
+        return .object(backgroundSchema)
     }
 
     public init(context: MCPToolContext = .shared) {
@@ -1077,6 +1097,8 @@ public struct PasteTool: MCPTool {
             operation: "Background text paste").target
     }
 }
+
+// swiftlint:enable type_body_length
 
 extension PasteTool: MCPToolArgumentSemanticValidating {}
 
