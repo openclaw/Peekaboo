@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomationKit
+import PeekabooBridgeTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -9,6 +10,73 @@ import Testing
 @testable import PeekabooCore
 
 struct PeekabooServicesBrowserBridgeTests {
+    @Test
+    @MainActor
+    func `target lock stays retry safe through Bridge remote client and Browser tool`() async throws {
+        let browser = TargetLockedBrowserMCPClient()
+        let services = Self.services(browser: browser)
+        let socketPath = "/tmp/peekaboo-browser-target-lock-\(UUID().uuidString).sock"
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [])
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let bridge = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await bridge.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.browser-target-lock",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        let response = try await BrowserTool(
+            client: RemoteBrowserMCPClient(client: bridge),
+            executionPolicy: .unrestricted,
+            instructionAudience: .commandLine).execute(
+            arguments: ToolArguments(raw: ["action": "connect", "channel": "canary"]))
+
+        #expect(response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("refused"))
+        #expect(metadata["dispatch_state"] == .string("none"))
+        #expect(metadata["mutation_dispatched"] == .bool(false))
+        #expect(metadata["retry_safe"] == .bool(true))
+        #expect(metadata["refusal_reason"] == .string("transport_session_unavailable"))
+        #expect(metadata["escalation"] == .string("reconnect_session"))
+
+        guard case let .text(text: text, annotations: _, _meta: _) = response.content.first else {
+            Issue.record("Expected a text error response")
+            return
+        }
+        #expect(text.contains(BrowserMCPConnectionError.targetLocked.localizedDescription))
+        #expect(text.contains("Run `peekaboo browser disconnect`"))
+        #expect(!text.contains("enable remote debugging"))
+        #expect(browser.connectCount == 1)
+
+        let bundle = try #require(await bridge.lastOperationReceiptBundle())
+        try bundle.validate()
+        #expect(bundle.receipt.payload.operation == .browserConnect)
+        #expect(bundle.receipt.payload.outcome?.state == .refused)
+        #expect(bundle.receipt.payload.outcome?.refusalReason == .transportSessionUnavailable)
+        #expect(bundle.receipt.payload.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        let certifiedResponse = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: bundle.canonicalResponse)
+        guard case let .projectedAction(projected) = certifiedResponse,
+              case let .error(envelope) = projected.response
+        else {
+            Issue.record("Expected the target lock refusal envelope")
+            return
+        }
+        #expect(envelope.standardizedErrorCode == .browserTargetLocked)
+        await host.stop()
+    }
+
     @Test
     @MainActor
     func `legacy injected browser omits native binding capability and refuses channel connect`() async throws {
@@ -542,6 +610,49 @@ struct PeekabooServicesBrowserBridgeTests {
         screenRecording: true,
         accessibility: true,
         postEvent: true)
+}
+
+@MainActor
+private final class TargetLockedBrowserMCPClient: BrowserMCPClientProviding,
+    BrowserMCPConnectionResultProviding, @unchecked Sendable
+{
+    nonisolated var supportsNativeBrowserConnectionBinding: Bool {
+        true
+    }
+
+    private(set) var connectCount = 0
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        self.connectCount += 1
+        throw BrowserMCPConnectionError.targetLocked
+    }
+
+    func connect(channel _: BrowserMCPChannel?, browserURL _: String?) async throws -> BrowserMCPStatus {
+        self.connectCount += 1
+        throw BrowserMCPConnectionError.targetLocked
+    }
+
+    func connectWithOutcome(
+        channel _: BrowserMCPChannel?,
+        browserURL _: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
+    {
+        self.connectCount += 1
+        throw BrowserMCPConnectionError.targetLocked
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        .error("unexpected")
+    }
 }
 
 @MainActor

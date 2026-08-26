@@ -21,6 +21,7 @@ public enum StandardErrorCode: String, Codable, Sendable, Equatable {
     // Operation errors
     case captureFailed = "CAPTURE_FAILED"
     case interactionFailed = "INTERACTION_FAILED"
+    case browserTargetLocked = "BROWSER_TARGET_LOCKED"
     case accessibilityIncomplete = "ACCESSIBILITY_INCOMPLETE"
     case timeout = "TIMEOUT"
     case cancelled = "CANCELLED"

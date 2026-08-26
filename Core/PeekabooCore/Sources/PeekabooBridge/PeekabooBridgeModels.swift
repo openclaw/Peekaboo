@@ -585,7 +585,9 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.details = details
         self.permission = permission
         self.kind = kind
-        self.context = context
+        self.context = context ?? actionFailure.standardErrorCode.map {
+            Self.standardizedErrorContextPrefix + $0.rawValue
+        }
         self.operationMayHaveCompleted = actionFailure.outcome.projection.mutationDispatched
         self.actionOutcome = actionFailure.outcome.projection
         self.actionFailureHint = actionFailure.hint

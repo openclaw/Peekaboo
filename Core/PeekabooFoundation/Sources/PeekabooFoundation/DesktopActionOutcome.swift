@@ -857,14 +857,15 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         reason: DesktopActionOutcome.RefusalReason,
         message: String,
         hint: String? = nil,
-        causeDescription: String? = nil) -> DesktopActionFailure
+        causeDescription: String? = nil,
+        standardErrorCode: StandardErrorCode? = nil) -> DesktopActionFailure
     {
-        .refused(
-            route: route,
-            reason: reason,
+        Self(
+            validatedOutcome: .refused(route: route, reason: reason),
             message: message,
             hint: hint,
-            causeDescription: causeDescription)
+            causeDescription: causeDescription,
+            standardErrorCode: standardErrorCode)
     }
 
     /// Fails a step only when its implementation reported a non-confirmed canonical outcome.

@@ -42,12 +42,16 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         channel: BrowserMCPChannel?,
         browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
-        let result = try await self.client.browserConnectResult(
-            channel: channel?.rawValue,
-            browserURL: browserURL)
-        return try DesktopActionResult(
-            payload: Self.status(from: result.payload),
-            outcome: result.outcome)
+        do {
+            let result = try await self.client.browserConnectResult(
+                channel: channel?.rawValue,
+                browserURL: browserURL)
+            return try DesktopActionResult(
+                payload: Self.status(from: result.payload),
+                outcome: result.outcome)
+        } catch let failure as DesktopActionFailure where Self.isBrowserTargetLockedFailure(failure) {
+            throw BrowserMCPConnectionError.targetLocked
+        }
     }
 
     @MainActor
@@ -167,6 +171,14 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             detectedBrowsers: detectedBrowsers,
             connectionReceipt: connectionReceipt,
             error: bridgeStatus.error)
+    }
+
+    private static func isBrowserTargetLockedFailure(_ failure: DesktopActionFailure) -> Bool {
+        failure.standardErrorCode == .browserTargetLocked &&
+            failure.outcome.state == .refused &&
+            failure.outcome.refusalReason == .transportSessionUnavailable &&
+            failure.outcome.dispatchState == .none &&
+            failure.outcome.retrySafety == .safe
     }
 
     private static func bridgeReceipt(

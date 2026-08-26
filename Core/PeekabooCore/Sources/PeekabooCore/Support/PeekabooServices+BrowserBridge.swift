@@ -22,10 +22,14 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
     }
 
     public func browserConnect(channel: String?, browserURL: String?) async throws -> PeekabooBridgeBrowserStatus {
-        let status = try await self.browser.connect(
-            channel: Self.browserChannel(from: channel),
-            browserURL: browserURL)
-        return Self.bridgeStatus(from: status)
+        do {
+            let status = try await self.browser.connect(
+                channel: Self.browserChannel(from: channel),
+                browserURL: browserURL)
+            return Self.bridgeStatus(from: status)
+        } catch BrowserMCPConnectionError.targetLocked {
+            throw Self.browserTargetLockedFailure()
+        }
     }
 
     public func browserConnectResult(
@@ -38,12 +42,16 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
                 message: "The browser provider cannot report canonical connection outcomes.",
                 hint: "Update the runtime host before retrying browser connect.")
         }
-        let result = try await resultBrowser.connectWithOutcome(
-            channel: Self.browserChannel(from: channel),
-            browserURL: browserURL)
-        return DesktopActionResult(
-            payload: Self.bridgeStatus(from: result.payload),
-            outcome: result.outcome)
+        do {
+            let result = try await resultBrowser.connectWithOutcome(
+                channel: Self.browserChannel(from: channel),
+                browserURL: browserURL)
+            return DesktopActionResult(
+                payload: Self.bridgeStatus(from: result.payload),
+                outcome: result.outcome)
+        } catch BrowserMCPConnectionError.targetLocked {
+            throw Self.browserTargetLockedFailure()
+        }
     }
 
     public func browserDisconnect() async throws {
@@ -145,6 +153,14 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
                 hint: "Use one of: stable, beta, dev, or canary.")
         }
         return channel
+    }
+
+    private static func browserTargetLockedFailure() -> DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .transportSessionUnavailable,
+            message: BrowserMCPConnectionError.targetLocked.localizedDescription,
+            hint: "Disconnect the current browser connection before selecting another channel or endpoint.",
+            standardErrorCode: .browserTargetLocked)
     }
 
     private static func bridgeStatus(from status: BrowserMCPStatus) -> PeekabooBridgeBrowserStatus {
