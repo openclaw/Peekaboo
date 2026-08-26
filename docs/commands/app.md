@@ -16,8 +16,8 @@ read_when:
 | `quit` | Quit one app or *all* regular apps (with optional exclusions). | Positional `<app>` or `--app`, `--pid`, `--expected-process-start-identity`, `--all`, `--except "Finder,Terminal"`, `--force`. |
 | `relaunch` | Quit + relaunch the same app with explicit foreground consent. | Positional `<app>` or `--app`, or `--pid`; `--wait`, `--force`, `--wait-until-ready`, `--foreground` (required). |
 | `hide` / `unhide` | Hide an app, or unhide and activate it with explicit consent. | Positional `<app>` or `--app`, or `--pid`; unhide requires `--activate`. |
-| `switch` | Activate a specific app or cycle Cmd+Tab style. | Positional `<app>` or `--to`, `--cycle`, `--verify` (only with an app target). |
-| `focus` | Activate and focus an app through the same service path as the MCP app tool. | Positional `<app>` or `--app`, or `--pid`. |
+| `switch` | Activate a specific app or cycle Cmd+Tab style with explicit foreground consent. | Exactly one positional `<app>`/`--to` or `--cycle`; `--verify` only with an app target; `--foreground` required. |
+| `focus` | Activate and focus an app through the same service path as the MCP app tool. | Positional `<app>` or `--app`, or `--pid`; `--foreground` required. |
 | `list` | App-management view of running apps, filtering hidden/background apps by default. | `--include-hidden`, `--include-background`. |
 
 ## Implementation notes
@@ -28,7 +28,7 @@ read_when:
 - MCP app lifecycle and focus results expose the same generation through `target_identity.kind: process` and `target_identity.process_start_identity_decimal`. Agents must chain that target identity; the generic numeric `process_start_identity` metadata is compatibility-only and is intentionally not exported as authoritative safety metadata.
 - Quit mode supports `--all` plus `--except`, automatically ignoring core system processes (`Finder`, `Dock`, `SystemUIServer`, `WindowServer`). Bulk quit targets only generation-pinned applications whose bounded metadata explicitly classifies them as regular; accessory, prohibited, and incomplete rows are never treated as regular by default. Controlled cleanup can pair `--pid` with the lossless unsigned-decimal `--expected-process-start-identity` (including the full UInt64 range); Peekaboo atomically rejects a recycled PID instead of terminating its replacement. Each JSON result publishes the frozen target plan as `pid` plus authoritative `process_start_identity_decimal`. When quits fail, the command prints hints about unsaved changes and suggests `--force`.
 - Hide remains background-capable. Unhide requires `--activate` before runtime-host resolution and carries the selected PID/process-generation receipt through verified activation because showing an application's windows can move them in front. Hosts that cannot enforce the receipt are rejected, and the legacy identifier-only Bridge unhide operation is refused.
-- `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX.
+- `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX. Both switch forms and `app focus` require `--foreground` before application lookup or global input dispatch. Switch accepts exactly one app target or `--cycle`; it never ignores a target in favor of a global cycle.
 - App activation is successful only after the exact resolved PID reports active and Workspace-frontmost. When the
   target owns visible ordinary windows, the frontmost WindowServer window must also belong to that PID. Peekaboo
   first uses native application activation, then falls back to the application's AX frontmost attribute when macOS
@@ -68,13 +68,13 @@ peekaboo app quit TextEdit
 peekaboo app quit --pid 1234 --expected-process-start-identity 987654321 --force
 
 # Cycle to the next app exactly once
-peekaboo app switch --cycle
+peekaboo app switch --cycle --foreground
 
 # Switch and verify the app is frontmost
-peekaboo app switch Safari --verify
+peekaboo app switch Safari --verify --foreground
 
 # Focus an app without a separate launch
-peekaboo app focus Safari
+peekaboo app focus Safari --foreground
 ```
 
 ## Troubleshooting

@@ -12,13 +12,15 @@ read_when:
 ## Subcommands
 | Name | Purpose | Key options |
 | --- | --- | --- |
-| `serve` | Run Peekaboo’s MCP server over stdio. | `--transport stdio` (default); global `--bridge-socket <path>` attaches to an existing Bridge host. HTTP/SSE names and `--port` are reserved for future support and currently fail with an actionable error. |
+| `serve` | Run Peekaboo’s MCP server over stdio. | `--transport stdio` (default); `--allow-foreground` explicitly authorizes foreground/global UI for this server process; global `--bridge-socket <path>` attaches to an existing Bridge host. HTTP/SSE names and `--port` are reserved for future support and currently fail with an actionable error. |
 
 ## Implementation notes
 - `serve` instantiates `PeekabooMCPServer` and maps the transport string to `PeekabooCore.TransportType`. Stdio is the default for Claude Code integrations.
-- Public MCP servers are always background-only. Foreground actions, shared desktop input, browser connection setup,
-  and ambient browser auto-connect fail before dispatch. Establish an exact browser connection separately with
-  `peekaboo browser connect --foreground`; MCP browser calls can then reuse its signed live receipt.
+- Public MCP servers are background-only by default. Foreground actions, shared desktop input, browser connection setup,
+  and ambient browser auto-connect fail before dispatch unless a human starts that server process with
+  `--allow-foreground`. This explicit authority never exposes Shell, and a nested Agent remains background-only.
+  Without that authority, establish an exact browser connection separately with `peekaboo browser connect --foreground`;
+  MCP browser calls can then reuse its signed live receipt.
 - Direct-text `paste` is admitted only with an exact generation-pinned app/PID/window authorization and a canonical
   background result. Targetless, foreground, current-clipboard, and binary paste are refused before dispatch. The
   nested `agent` tool likewise retains immutable background-only authority and never exposes Shell.

@@ -181,6 +181,11 @@ extension AppCommand.SwitchSubcommand: CommanderSignatureProviding {
                     help: "Verify the target app becomes frontmost",
                     long: "verify"
                 ),
+                .commandFlag(
+                    "foreground",
+                    help: "Required explicit foreground consent for switching applications",
+                    long: "foreground"
+                ),
             ]
         )
     }
@@ -262,6 +267,13 @@ extension AppCommand.FocusSubcommand: CommanderSignatureProviding {
             options: [
                 .commandOption("app", help: "Application to focus", long: "app"),
                 .commandOption("pid", help: "Target application by process ID", long: "pid"),
+            ],
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Required explicit foreground consent for focusing an application",
+                    long: "foreground"
+                ),
             ]
         )
     }

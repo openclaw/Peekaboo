@@ -21,8 +21,8 @@ struct DockCommand: ParsableCommand {
                   peekaboo dock right-click --app Finder --select "New Window" --foreground
 
                   # Show/hide the Dock
-                  peekaboo dock hide
-                  peekaboo dock show
+                  peekaboo dock hide --foreground
+                  peekaboo dock show --foreground
 
                   # List all Dock items
                   peekaboo dock list
@@ -99,7 +99,8 @@ extension DockCommand.HideSubcommand: AsyncRuntimeCommand {}
 @MainActor
 extension DockCommand.HideSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        _ = values
+        self.foreground = values.flag("foreground")
+        try self.requireForegroundConsent()
     }
 }
 
@@ -117,7 +118,8 @@ extension DockCommand.ShowSubcommand: AsyncRuntimeCommand {}
 @MainActor
 extension DockCommand.ShowSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        _ = values
+        self.foreground = values.flag("foreground")
+        try self.requireForegroundConsent()
     }
 }
 

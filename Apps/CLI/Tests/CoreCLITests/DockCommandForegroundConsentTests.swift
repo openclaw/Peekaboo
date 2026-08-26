@@ -34,6 +34,23 @@ struct DockCommandForegroundConsentTests {
     }
 
     @Test
+    func `dock visibility refuses before dispatch without foreground consent`() async {
+        let dock = RecordingDockService()
+        var hide = DockCommand.HideSubcommand()
+        var show = DockCommand.ShowSubcommand()
+
+        await #expect(throws: ExitCode.self) {
+            try await hide.run(using: self.makeRuntime(dock: dock))
+        }
+        await #expect(throws: ExitCode.self) {
+            try await show.run(using: self.makeRuntime(dock: dock))
+        }
+
+        #expect(dock.hideRequestCount == 0)
+        #expect(dock.showRequestCount == 0)
+    }
+
+    @Test
     func `explicit foreground consent dispatches Dock mutations`() async throws {
         let dock = RecordingDockService()
         var launch = DockCommand.LaunchSubcommand()
@@ -47,10 +64,20 @@ struct DockCommandForegroundConsentTests {
         rightClick.foreground = true
         try await rightClick.run(using: self.makeRuntime(dock: dock))
 
+        var hide = DockCommand.HideSubcommand()
+        hide.foreground = true
+        try await hide.run(using: self.makeRuntime(dock: dock))
+
+        var show = DockCommand.ShowSubcommand()
+        show.foreground = true
+        try await show.run(using: self.makeRuntime(dock: dock))
+
         #expect(dock.launchRequests == ["Finder"])
         #expect(dock.rightClickRequests.count == 1)
         #expect(dock.rightClickRequests.first?.appName == "Finder")
         #expect(dock.rightClickRequests.first?.menuItem == "New Window")
+        #expect(dock.hideRequestCount == 1)
+        #expect(dock.showRequestCount == 1)
     }
 
     private func makeRuntime(dock: RecordingDockService) -> CommandRuntime {
@@ -65,6 +92,8 @@ struct DockCommandForegroundConsentTests {
 private final class RecordingDockService: DockServiceProtocol {
     private(set) var launchRequests: [String] = []
     private(set) var rightClickRequests: [(appName: String, menuItem: String?)] = []
+    private(set) var hideRequestCount = 0
+    private(set) var showRequestCount = 0
 
     func listDockItems(includeAll _: Bool) async throws -> [DockItem] {
         [self.finderItem]
@@ -81,8 +110,14 @@ private final class RecordingDockService: DockServiceProtocol {
         self.rightClickRequests.append((appName, menuItem))
     }
 
-    func hideDock() async throws {}
-    func showDock() async throws {}
+    func hideDock() async throws {
+        self.hideRequestCount += 1
+    }
+
+    func showDock() async throws {
+        self.showRequestCount += 1
+    }
+
     func isDockAutoHidden() async -> Bool {
         false
     }

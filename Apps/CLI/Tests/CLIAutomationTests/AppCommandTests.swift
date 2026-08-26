@@ -153,7 +153,7 @@ struct AppCommandTests {
     @Test
     func `App focus preserves an exact PID target`() async throws {
         let (output, service) = try await runAppCommandWithService([
-            "app", "focus", "--pid", "202", "--json",
+            "app", "focus", "--pid", "202", "--foreground", "--json",
         ])
         let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         #expect(object["effect"] as? String == "confirmed")
@@ -175,7 +175,7 @@ struct AppCommandTests {
         }
 
         let result = try await InProcessCommandRunner.run(
-            ["app", "focus", "TextEdit", "--json"],
+            ["app", "focus", "TextEdit", "--foreground", "--json"],
             services: context.services
         )
 

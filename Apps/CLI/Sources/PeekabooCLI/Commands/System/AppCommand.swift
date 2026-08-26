@@ -28,8 +28,8 @@ struct AppCommand: ParsableCommand {
           peekaboo app unhide --app Slack --activate
 
           # Switch between applications
-          peekaboo app switch --to Terminal
-          peekaboo app switch --cycle  # Cmd+Tab equivalent
+          peekaboo app switch --to Terminal --foreground
+          peekaboo app switch --cycle --foreground  # Cmd+Tab equivalent
 
           # Relaunch applications
           peekaboo app relaunch Safari --foreground
@@ -211,6 +211,9 @@ struct AppCommand: ParsableCommand {
 
         @Flag(help: "Verify the target app becomes frontmost")
         var verify = false
+
+        @Flag(help: "Required explicit foreground consent for switching applications")
+        var foreground = false
         @RuntimeStorage var runtime: CommandRuntime?
 
         /// Switch focus either by cycling (Cmd+Tab) or by activating a specific application.
@@ -220,10 +223,8 @@ struct AppCommand: ParsableCommand {
             self.runtime = runtime
 
             do {
+                try self.validateRequest()
                 if self.cycle {
-                    if self.verify {
-                        throw ValidationError("Verify is only supported with an app target (not --cycle)")
-                    }
                     self.resolvedRuntime.beginInteractionMutation()
                     let actionResult = try await AutomationServiceBridge.hotkey(
                         automation: self.services.automation,
@@ -322,12 +323,45 @@ struct AppCommand: ParsableCommand {
                         )
                     }
                 } else {
-                    throw ValidationError("Either --to or --cycle must be specified")
+                    throw PreDispatchActionError(
+                        message: "Application switch requires exactly one target or --cycle.",
+                        code: .VALIDATION_ERROR,
+                        hint: "Provide an application target or --cycle, but not both.",
+                        reason: .invalidRequest
+                    )
                 }
 
             } catch {
                 handleError(error)
                 throw ExitCode(1)
+            }
+        }
+
+        func validateRequest() throws {
+            let hasTarget = self.to?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            guard hasTarget != self.cycle else {
+                throw PreDispatchActionError(
+                    message: "Application switch requires exactly one target or --cycle.",
+                    code: .VALIDATION_ERROR,
+                    hint: "Provide an application target or --cycle, but not both.",
+                    reason: .invalidRequest
+                )
+            }
+            guard !(self.cycle && self.verify) else {
+                throw PreDispatchActionError(
+                    message: "Application switch verification requires an exact application target.",
+                    code: .VALIDATION_ERROR,
+                    hint: "Remove --verify when using --cycle.",
+                    reason: .invalidRequest
+                )
+            }
+            guard self.foreground else {
+                throw PreDispatchActionError(
+                    message: "Application switching changes the user's foreground app and requires explicit consent.",
+                    code: .VALIDATION_ERROR,
+                    hint: "Use --foreground only when interrupting the current application is intentional.",
+                    reason: .foregroundConsentRequired
+                )
             }
         }
 
@@ -370,11 +404,15 @@ struct AppCommand: ParsableCommand {
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
 
+        @Flag(help: "Required explicit foreground consent for focusing an application")
+        var foreground = false
+
         @RuntimeStorage var runtime: CommandRuntime?
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
             do {
+                try self.requireForegroundConsent()
                 let appIdentifier = try self.resolveApplicationIdentifier()
                 let appInfo = try await resolveApplicationForMutation(appIdentifier, services: self.services)
                 self.resolvedRuntime.beginInteractionMutation()
@@ -398,6 +436,17 @@ struct AppCommand: ParsableCommand {
             } catch {
                 handleError(error)
                 throw ExitCode.failure
+            }
+        }
+
+        func requireForegroundConsent() throws {
+            guard self.foreground else {
+                throw PreDispatchActionError(
+                    message: "Application focus changes the user's foreground app and requires explicit consent.",
+                    code: .VALIDATION_ERROR,
+                    hint: "Use --foreground only when interrupting the current application is intentional.",
+                    reason: .foregroundConsentRequired
+                )
             }
         }
     }
@@ -472,6 +521,8 @@ extension AppCommand.SwitchSubcommand: CommanderBindableCommand {
         self.to = try AppCommand.resolveAppArgument(values, optionLabel: "to")
         self.cycle = values.flag("cycle")
         self.verify = values.flag("verify")
+        self.foreground = values.flag("foreground")
+        try self.validateRequest()
     }
 }
 
@@ -486,6 +537,8 @@ extension AppCommand.FocusSubcommand: CommanderBindableCommand {
         guard self.app != nil || self.pid != nil else {
             throw CommanderBindingError.missingArgument(label: "app or --pid")
         }
+        self.foreground = values.flag("foreground")
+        try self.requireForegroundConsent()
     }
 }
 

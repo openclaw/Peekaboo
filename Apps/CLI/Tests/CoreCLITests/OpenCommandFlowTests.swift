@@ -181,6 +181,7 @@ struct AppCommandLaunchFlowTests {
 
         var command = AppCommand.SwitchSubcommand()
         command.to = "Finder"
+        command.foreground = true
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(applications: applicationService)
@@ -190,6 +191,104 @@ struct AppCommandLaunchFlowTests {
         #expect(applicationService.activateCalls == ["PID:42"])
         #expect(applicationService.activationRequests.first?.expectedIdentity?.processIdentifier == 42)
         #expect(applicationService.activationRequests.first?.expectedIdentity?.processStartIdentity == 1001)
+    }
+
+    @Test
+    func `Switch refuses without foreground consent before application lookup`() async {
+        let applicationService = self.makeLaunchService(
+            name: "Finder",
+            bundleIdentifier: "com.apple.finder"
+        )
+        var command = AppCommand.SwitchSubcommand()
+        command.to = "Finder"
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: applicationService))
+        }
+
+        #expect(applicationService.findCalls.isEmpty)
+        #expect(applicationService.activateCalls.isEmpty)
+    }
+
+    @Test
+    func `Switch rejects target plus cycle before global input`() async {
+        let automation = RecordingHotkeyAutomationService()
+        let applicationService = self.makeLaunchService(
+            name: "Finder",
+            bundleIdentifier: "com.apple.finder"
+        )
+        var command = AppCommand.SwitchSubcommand()
+        command.to = "Finder"
+        command.cycle = true
+        command.foreground = true
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: CommandRuntime(
+                configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+                services: ServicesWithApplicationStub(
+                    applications: applicationService,
+                    automation: automation
+                )
+            ))
+        }
+
+        #expect(applicationService.findCalls.isEmpty)
+        #expect(applicationService.activateCalls.isEmpty)
+        #expect(automation.hotkeyCalls.isEmpty)
+    }
+
+    @Test
+    func `Switch rejects verify plus cycle before global input`() async {
+        let automation = RecordingHotkeyAutomationService()
+        var command = AppCommand.SwitchSubcommand()
+        command.cycle = true
+        command.verify = true
+        command.foreground = true
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: CommandRuntime(
+                configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+                services: ServicesWithApplicationStub(
+                    applications: RecordingApplicationService(applications: []),
+                    automation: automation
+                )
+            ))
+        }
+
+        #expect(automation.hotkeyCalls.isEmpty)
+    }
+
+    @Test
+    func `Focus refuses without foreground consent before application lookup`() async {
+        let applicationService = self.makeLaunchService(
+            name: "Finder",
+            bundleIdentifier: "com.apple.finder"
+        )
+        var command = AppCommand.FocusSubcommand()
+        command.app = "Finder"
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: applicationService))
+        }
+
+        #expect(applicationService.findCalls.isEmpty)
+        #expect(applicationService.activateCalls.isEmpty)
+    }
+
+    @Test
+    func `Focus dispatches exact activation with foreground consent`() async throws {
+        let applicationService = self.makeLaunchService(
+            name: "Finder",
+            bundleIdentifier: "com.apple.finder"
+        )
+        var command = AppCommand.FocusSubcommand()
+        command.app = "Finder"
+        command.foreground = true
+
+        try await command.run(using: self.makeRuntime(applicationService: applicationService))
+
+        #expect(applicationService.findCalls == ["PID:42"])
+        #expect(applicationService.activateCalls == ["PID:42"])
     }
 
     @Test
@@ -227,6 +326,7 @@ struct AppCommandLaunchFlowTests {
 
         var command = AppCommand.SwitchSubcommand()
         command.cycle = true
+        command.foreground = true
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(

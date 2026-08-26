@@ -112,6 +112,44 @@ struct MCPBackgroundPolicyExecutionTests {
     }
 
     @Test
+    func `background-only refuses foreground app and Dock actions before tool entry`() async throws {
+        let backgroundContext = await MCPToolTestHelpers.makeContext(
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+        for (toolName, action) in [
+            ("app", "focus"),
+            ("app", "switch"),
+            ("dock", "hide"),
+            ("dock", "show"),
+            ("dock", "launch"),
+            ("dock", "right-click"),
+        ] {
+            let counter = BackgroundPolicyInvocationCounter()
+            let response = try await backgroundContext.execute(
+                tool: BackgroundPolicyMutationProbe(name: toolName, counter: counter),
+                arguments: ToolArguments(raw: ["action": action]))
+
+            #expect(response.isError)
+            #expect(await counter.invocationCount == 0)
+            #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+            #expect(response.meta?.objectValue?["retry_safe"] == .bool(true))
+        }
+
+        let foregroundContext = await MCPToolTestHelpers.makeContext(
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .foregroundAllowed)
+        for (toolName, action) in [("app", "focus"), ("dock", "hide")] {
+            let counter = BackgroundPolicyInvocationCounter()
+            let response = try await foregroundContext.execute(
+                tool: BackgroundPolicyMutationProbe(name: toolName, counter: counter),
+                arguments: ToolArguments(raw: ["action": action]))
+
+            #expect(!response.isError)
+            #expect(await counter.invocationCount == 1)
+        }
+    }
+
+    @Test
     func `background-only process mutation families refuse fuzzy application selectors before dispatch`() async throws {
         let textEdit = ServiceApplicationInfo(
             processIdentifier: 89,

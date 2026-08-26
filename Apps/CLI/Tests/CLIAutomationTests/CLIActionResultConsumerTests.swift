@@ -267,7 +267,7 @@ struct CLIActionResultConsumerTests {
         let services = TestServicesFactory.makePeekabooServices(automation: automation)
 
         let result = try await InProcessCommandRunner.run(
-            ["app", "switch", "--cycle", "--json", "--no-remote"],
+            ["app", "switch", "--cycle", "--foreground", "--json", "--no-remote"],
             services: services
         )
         let object = try Self.jsonObject(result.stdout)
@@ -291,7 +291,7 @@ struct CLIActionResultConsumerTests {
         let services = TestServicesFactory.makePeekabooServices(applications: applications)
 
         let result = try await InProcessCommandRunner.run(
-            ["app", "switch", "--to", "Fixture", "--json", "--no-remote"],
+            ["app", "switch", "--to", "Fixture", "--foreground", "--json", "--no-remote"],
             services: services
         )
 
@@ -325,7 +325,7 @@ struct CLIActionResultConsumerTests {
         let services = TestServicesFactory.makePeekabooServices(applications: applications)
 
         let result = try await InProcessCommandRunner.run(
-            ["app", "switch", "--to", "Fixture", "--verify", "--json", "--no-remote"],
+            ["app", "switch", "--to", "Fixture", "--verify", "--foreground", "--json", "--no-remote"],
             services: services
         )
         let object = try Self.jsonObject(result.stdout)
@@ -518,7 +518,7 @@ struct CLIActionResultConsumerTests {
                 true
             ),
             (
-                ["dock", "hide", "--json", "--no-remote"],
+                ["dock", "hide", "--foreground", "--json", "--no-remote"],
                 .confirmedChange(
                     route: .bridge,
                     delivery: .init(mechanism: .nativeFramework, mode: .background),
@@ -527,7 +527,7 @@ struct CLIActionResultConsumerTests {
                 false
             ),
             (
-                ["dock", "show", "--json", "--no-remote"],
+                ["dock", "show", "--foreground", "--json", "--no-remote"],
                 .confirmedChange(
                     route: .bridge,
                     delivery: .init(mechanism: .nativeFramework, mode: .background),
@@ -664,7 +664,7 @@ struct CLIActionResultConsumerTests {
         let services = TestServicesFactory.makePeekabooServices(dock: dock)
 
         let result = try await InProcessCommandRunner.run(
-            ["dock", "hide", "--json", "--no-remote"],
+            ["dock", "hide", "--foreground", "--json", "--no-remote"],
             services: services
         )
 
@@ -1079,7 +1079,7 @@ struct CLIActionResultConsumerTests {
         let services = TestServicesFactory.makePeekabooServices(dock: dock)
 
         let result = try await InProcessCommandRunner.run(
-            ["dock", "hide", "--json", "--no-remote"],
+            ["dock", "hide", "--foreground", "--json", "--no-remote"],
             services: services
         )
 
