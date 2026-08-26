@@ -63,7 +63,8 @@ does not depend on that value-delivery capability.
 
 Bridge protocol 1.37 separately gates generation-bound element mutations. `action` and `set-value` require the host to
 attest one snapshot process generation, resolve the final AX element from that process, and return the same canonical
-target with the outcome. Older or receiptless hosts are rejected before dispatch.
+target with the outcome. Older hosts and receiptless sessions are rejected before dispatch, and current hosts omit
+these operations unless their provider can return canonical generation-bound outcomes.
 
 Examples:
 

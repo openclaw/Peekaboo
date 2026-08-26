@@ -46,7 +46,9 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresElementActions, !self.supportsElementActions(for: handshake) {
+        if !options.requiredElementActionOperations.allSatisfy({
+            self.supportsElementAction($0, for: handshake)
+        }) {
             return false
         }
 
@@ -316,9 +318,7 @@ enum BridgeCapabilityPolicy {
         if options.requiresScreenCapturePermission {
             operations.append(.captureScreen)
         }
-        if options.requiresElementActions {
-            operations.append(contentsOf: [.setValue, .performAction])
-        }
+        operations.append(contentsOf: options.requiredElementActionOperations)
         if options.requiresInspectAccessibilityTree {
             operations.append(.inspectAccessibilityTree)
         }
@@ -510,16 +510,24 @@ enum BridgeCapabilityPolicy {
     }
 
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
-        handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion &&
+        self.supportsElementAction(.setValue, for: handshake) ||
+            self.supportsElementAction(.performAction, for: handshake)
+    }
+
+    static func supportsElementAction(
+        _ operation: PeekabooBridgeOperation,
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        guard operation == .setValue || operation == .performAction else { return false }
+        return handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
             handshake.hostCapabilities?.contains(
                 PeekabooBridgeHostCapability.processGenerationBoundElementMutations
             ) == true &&
-            handshake.hostCapabilities?.contains(
+            (operation != .setValue || handshake.hostCapabilities?.contains(
                 PeekabooBridgeHostCapability.setValueResultTargetBinding
-            ) == true &&
-            handshake.supportedOperations.contains(.setValue) &&
-            handshake.supportedOperations.contains(.performAction)
+            ) == true) &&
+            self.supportsOperation(operation, for: handshake)
     }
 
     static func supportsDesktopObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

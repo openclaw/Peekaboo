@@ -45,7 +45,7 @@ struct CommandRuntimeOptions {
     /// handshake failure. No operation-bearing command may use this diagnostic-only escape hatch.
     var permitsExplicitSocketDiagnosticFallback = false
     var bridgeSocketPath: String?
-    var requiresElementActions = false
+    var requiredElementActionOperations: Set<PeekabooBridgeOperation> = []
     var requiresInspectAccessibilityTree = false
     var requiresBrowserMCP = false
     var requiresApplicationLaunchOptions = false
@@ -417,6 +417,13 @@ extension CommandRuntime {
 
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsElementActions(for: handshake)
+    }
+
+    static func supportsElementAction(
+        _ operation: PeekabooBridgeOperation,
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        BridgeCapabilityPolicy.supportsElementAction(operation, for: handshake)
     }
 
     static func supportsDesktopObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

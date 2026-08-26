@@ -324,9 +324,11 @@ target or a window ID that contradicts the request is rejected. Screen and area 
 Protocol `1.37` adds `processGenerationBoundElementMutations`. Current clients require this capability, attested
 operation receipts, and the existing `setValueResultTargetBinding` contract before sending `setValue` or
 `performAction`. The host binds the snapshot receipt, final resolved AX element PID, canonical outcome, and returned
-target to one process generation. All pre-1.37 hosts, including protocol 1.32–1.36, and receiptless providers are refused
-before the request is written; a claimed success without its process-generation target is treated as indeterminate and
-retry-unsafe.
+target to one process generation. All pre-1.37 hosts, including protocol 1.32–1.36, are refused before the request is
+written. A current 1.37-capable host advertises these operations only when its automation provider supports
+generation-bound mutations and canonical outcomes. It removes `setValue` and `performAction` from downgraded or
+receiptless handshakes and rejects direct requests without the negotiated capability before invoking the provider. A
+claimed success without its process-generation target is treated as indeterminate and retry-unsafe.
 
 Protocol `1.34` introduced three independent capabilities:
 

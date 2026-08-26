@@ -177,6 +177,29 @@ public final class PeekabooBridgeServer {
         {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)
         }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.setValueResultTargetBindingVersion,
+           (services.automation as? any ElementActionAutomationServiceProtocol)?
+               .supportsSetValueResultTargetBinding == true,
+               self.allowedOperations.contains(.setValue),
+               supportedVersions.upperBound < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
+               Self.supportsProcessGenerationBoundElementMutationProvider(services.automation)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.setValueResultTargetBinding)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.setValueResultTargetBinding)
+        }
+        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .performAction]
+        if supportedVersions.upperBound >=
+            PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            Self.supportsProcessGenerationBoundElementMutationProvider(services.automation),
+            !elementMutationOperations.isDisjoint(with: self.allowedOperations)
+        {
+            resolvedHostCapabilities.insert(
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
+        } else {
+            resolvedHostCapabilities.remove(
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
+        }
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
             (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
         if hostIdentity?.processStartIdentity != nil {
@@ -1071,30 +1094,23 @@ public final class PeekabooBridgeServer {
 
     private func validateProcessGenerationBoundElementMutationAccess(
         _ request: PeekabooBridgeRequest,
-        peer: PeekabooBridgePeer?) throws
+        peer _: PeekabooBridgePeer?) throws
     {
         guard request.requiresProcessGenerationBoundElementMutations else { return }
-        if let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities {
-            guard session.protocolVersion < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
-                session.processGenerationBoundElementMutations
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message:
-                    "Operation \(request.operation.rawValue) requires negotiated " +
-                        "process-generation-bound element mutations")
-            }
-            return
-        }
         guard self.supportedVersions.upperBound >=
             PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion
         else { return }
-        guard let receiptlessVersion = self.receiptlessProtocolVersion(for: peer),
-              receiptlessVersion < PeekabooBridgeConstants.attestedOperationReceiptVersion
+        guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+              Self.supportsProcessGenerationBoundElementMutationProvider(self.services.automation),
+              let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities,
+              session.protocolVersion >= PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+              session.processGenerationBoundElementMutations
         else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
-                message: "Operation \(request.operation.rawValue) requires an authenticated Bridge operation session")
+                message:
+                "Operation \(request.operation.rawValue) requires an authenticated protocol " +
+                    "1.37 process-generation-bound element mutation session")
         }
     }
 }

@@ -182,7 +182,7 @@ struct BridgeStatusReportHintTests {
             requiresValidatedHistoricalDaemon: false
         )
         var options = CommandRuntimeOptions()
-        options.requiresElementActions = true
+        options.requiredElementActionOperations = [.setValue]
 
         let missingPermissionHandshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,

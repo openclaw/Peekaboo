@@ -397,6 +397,14 @@ extension PeekabooBridgeServer {
         usesAttestedOperationReceipts: Bool) -> Set<PeekabooBridgeOperation>
     {
         var compatible = PeekabooBridgeOperation.compatible(operations, with: negotiated)
+        if self.supportedVersions.upperBound >=
+            PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            !usesAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion
+        {
+            compatible.remove(.setValue)
+            compatible.remove(.performAction)
+        }
         if !usesAttestedOperationReceipts {
             compatible.remove(.observeProcessGeneration)
             compatible.remove(.certificationProducerAttestation)
@@ -435,7 +443,11 @@ extension PeekabooBridgeServer {
         {
             operations.remove(.exactWindowTargetedClick)
         }
-        if self.services.automation as? any ElementActionAutomationServiceProtocol == nil {
+        if self.services.automation as? any ElementActionAutomationServiceProtocol == nil ||
+            (self.supportedVersions.upperBound >=
+                PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion &&
+                !Self.supportsProcessGenerationBoundElementMutationProvider(self.services.automation))
+        {
             operations.remove(.setValue)
             operations.remove(.performAction)
         }
@@ -495,6 +507,14 @@ extension PeekabooBridgeServer {
             operations.remove(.quitApplication)
         }
         return operations
+    }
+
+    static func supportsProcessGenerationBoundElementMutationProvider(
+        _ automation: any UIAutomationServiceProtocol) -> Bool
+    {
+        automation is any UIAutomationActionOutcomeProviding &&
+            (automation as? any ElementActionAutomationServiceProtocol)?
+            .supportsProcessGenerationBoundElementMutations == true
     }
 
     func effectiveAllowedOperations(permissions: PermissionsStatus) -> Set<PeekabooBridgeOperation> {

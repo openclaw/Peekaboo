@@ -214,8 +214,10 @@ enum CommanderCLIBinder {
         if let socketPath = explicitBridgeSocket, !socketPath.isEmpty {
             options.bridgeSocketPath = socketPath
         }
-        if commandType == SetValueCommand.self || commandType == ActionCommand.self {
-            options.requiresElementActions = true
+        if commandType == SetValueCommand.self {
+            options.requiredElementActionOperations.insert(.setValue)
+        } else if commandType == ActionCommand.self {
+            options.requiredElementActionOperations.insert(.performAction)
         }
         if commandType == SeeCommand.self, values.flag("noScreenshot") {
             options.requiresInspectAccessibilityTree = true

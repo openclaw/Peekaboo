@@ -336,6 +336,115 @@ struct RuntimeHostResolverTests {
     }
 
     @Test
+    func `action resolution skips a policy disabled first host for an eligible peer`() async throws {
+        let disabledCandidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/disabled-element-action-host.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let eligibleCandidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/eligible-element-action-host.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let capabilities = [
+            PeekabooBridgeHostCapability.attestedOperationReceipts,
+            PeekabooBridgeHostCapability.setValueResultTargetBinding,
+            PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+        ]
+        let disabledHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            supportedOperations: [.setValue, .performAction],
+            enabledOperations: [.setValue],
+            hostCapabilities: capabilities
+        )
+        let eligibleHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            supportedOperations: [.setValue, .performAction],
+            enabledOperations: [.setValue, .performAction],
+            hostCapabilities: capabilities
+        )
+        var options = CommandRuntimeOptions()
+        options.requiredElementActionOperations = [.performAction]
+        var permissionRejections: [String] = []
+
+        let resolution = try await RuntimeHostResolver.resolveRemoteServices(
+            candidates: [disabledCandidate, eligibleCandidate],
+            identity: PeekabooBridgeClientIdentity(
+                bundleIdentifier: "boo.peekaboo.element-action-selection-tests",
+                teamIdentifier: nil,
+                processIdentifier: 42
+            ),
+            options: options,
+            snapshotInvalidationRemoteSocketPaths: [],
+            permissionRejections: &permissionRejections,
+            handshake: { candidate, _ in
+                candidate == disabledCandidate ? disabledHandshake : eligibleHandshake
+            }
+        )
+
+        #expect(resolution?.selectedRemoteSocketPath == eligibleCandidate.socketPath)
+        #expect(permissionRejections.isEmpty)
+    }
+
+    @Test
+    func `set value resolution accepts a host that does not expose perform action`() async throws {
+        let setValueCandidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/set-value-only-host.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let fallbackCandidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/element-action-fallback-host.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let capabilities = [
+            PeekabooBridgeHostCapability.attestedOperationReceipts,
+            PeekabooBridgeHostCapability.setValueResultTargetBinding,
+            PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+        ]
+        let setValueHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            supportedOperations: [.setValue],
+            enabledOperations: [.setValue],
+            hostCapabilities: capabilities
+        )
+        let fallbackHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            supportedOperations: [.setValue, .performAction],
+            enabledOperations: [.setValue, .performAction],
+            hostCapabilities: capabilities
+        )
+        var options = CommandRuntimeOptions()
+        options.requiredElementActionOperations = [.setValue]
+        var permissionRejections: [String] = []
+
+        let resolution = try await RuntimeHostResolver.resolveRemoteServices(
+            candidates: [setValueCandidate, fallbackCandidate],
+            identity: PeekabooBridgeClientIdentity(
+                bundleIdentifier: "boo.peekaboo.set-value-selection-tests",
+                teamIdentifier: nil,
+                processIdentifier: 42
+            ),
+            options: options,
+            snapshotInvalidationRemoteSocketPaths: [],
+            permissionRejections: &permissionRejections,
+            handshake: { candidate, _ in
+                candidate == setValueCandidate ? setValueHandshake : fallbackHandshake
+            }
+        )
+
+        #expect(resolution?.selectedRemoteSocketPath == setValueCandidate.socketPath)
+        #expect(resolution?.services.automation is any ElementActionAutomationServiceProtocol)
+        #expect(permissionRejections.isEmpty)
+    }
+
+    @Test
     func `Candidate validation rejects pre-long-press bridge hosts`() async {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/bridge.sock",
