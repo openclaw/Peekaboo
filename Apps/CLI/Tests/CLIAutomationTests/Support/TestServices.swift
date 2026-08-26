@@ -413,19 +413,27 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             return nextResult
         }
 
-        let totals = actions.reduce(into: (characters: 0, keyPresses: 0)) { partial, action in
+        let totals = actions.reduce(into: (characters: 0, keyPresses: 0, specialKeyPresses: 0)) {
+            partial,
+            action in
             switch action {
             case let .text(text):
                 partial.characters += text.count
                 partial.keyPresses += text.count
             case .key:
                 partial.keyPresses += 1
+                partial.specialKeyPresses += 1
             case .clear:
                 partial.keyPresses += 2
+                partial.specialKeyPresses += 2
             }
         }
 
-        return TypeResult(totalCharacters: totals.characters, keyPresses: totals.keyPresses)
+        return TypeResult(
+            totalCharacters: totals.characters,
+            keyPresses: totals.keyPresses,
+            specialKeyPresses: totals.specialKeyPresses
+        )
     }
 
     func typeActions(

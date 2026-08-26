@@ -79,6 +79,7 @@ public final class TypeService {
         PeekabooFoundation.SpecialKey,
         pid_t,
         DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
+    private let targetedKeyTapper: @MainActor (CGKeyCode, CGEventFlags, pid_t) throws -> Void
     private let targetedTextReplacer: @MainActor (String, pid_t) throws -> Bool
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
@@ -150,6 +151,8 @@ public final class TypeService {
             pid_t,
             DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary = TypeService
             .typeTargetedSpecialKey,
+        targetedKeyTapper: @escaping @MainActor (CGKeyCode, CGEventFlags, pid_t) throws -> Void = TypeService
+            .tapTargetedKey,
         targetedTextReplacer: @escaping @MainActor (String, pid_t) throws -> Bool = { text, processIdentifier in
             try BackgroundInputDriver.replaceFocusedText(
                 with: text,
@@ -182,6 +185,7 @@ public final class TypeService {
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
         self.targetedCharacterTyper = targetedCharacterTyper
         self.targetedSpecialKeyTyper = targetedSpecialKeyTyper
+        self.targetedKeyTapper = targetedKeyTapper
         self.targetedTextReplacer = targetedTextReplacer
         self.exactFocusedElementValueReader = exactFocusedElementValueReader
         self.processStartIdentityProvider = processStartIdentityProvider
@@ -538,6 +542,7 @@ public final class TypeService {
         let keyboardDelivery = automationTarget.keyboardDelivery
         var totalChars = 0
         var keyPresses = 0
+        var specialKeyPresses = 0
         var emittedUnitCount = 0
         var typedIntoSecureField = false
         var payloadDelivery: DesktopActionOutcome.Delivery?
@@ -620,6 +625,7 @@ public final class TypeService {
                                 keyboardDelivery: keyboardDelivery)
                         }
                         keyPresses += dispatch.keyPressCount
+                        specialKeyPresses += dispatch.keyPressCount
                         emittedUnitCount += dispatch.dispatchedUnitCount
                         if let delivery = dispatch.delivery {
                             recordDelivery(delivery)
@@ -645,6 +651,7 @@ public final class TypeService {
                         priorEmittedUnitCount: emittedUnitCount)
                     emittedUnitCount += clearSummary.dispatchedUnitCount
                     keyPresses += clearSummary.keyPressCount
+                    specialKeyPresses += clearSummary.keyPressCount
                     if let delivery = clearSummary.delivery {
                         recordDelivery(delivery)
                     }
@@ -680,7 +687,8 @@ public final class TypeService {
         return TypeActionPayloadSummary(
             result: TypeResult(
                 totalCharacters: totalChars,
-                keyPresses: keyPresses),
+                keyPresses: keyPresses,
+                specialKeyPresses: specialKeyPresses),
             typedIntoSecureField: typedIntoSecureField,
             dispatchedUnitCount: emittedUnitCount,
             delivery: finalDelivery)
@@ -814,10 +822,7 @@ public final class TypeService {
             }
 
             do {
-                try BackgroundInputDriver.tapKey(
-                    keyCode: 0x00,
-                    modifiers: .maskCommand,
-                    targetProcessIdentifier: targetProcessIdentifier)
+                try self.targetedKeyTapper(0x00, .maskCommand, targetProcessIdentifier)
             } catch {
                 throw Self.indeterminateDeliveryError(
                     from: error,
@@ -853,9 +858,10 @@ public final class TypeService {
         }
         if let targetProcessIdentifier {
             do {
-                try BackgroundInputDriver.tapKey(
-                    keyCode: TypeServiceSpecialKeyMapping.keyCode(for: .delete),
-                    targetProcessIdentifier: targetProcessIdentifier)
+                try self.targetedKeyTapper(
+                    TypeServiceSpecialKeyMapping.keyCode(for: .delete),
+                    [],
+                    targetProcessIdentifier)
             } catch {
                 throw Self.indeterminateDeliveryError(
                     from: error,
@@ -947,6 +953,17 @@ extension TypeService {
         }
         try BackgroundInputDriver.typeCharacter(char, targetProcessIdentifier: targetProcessIdentifier)
         return .dispatched(delivery: keyboardDelivery, keyPressCount: 1)
+    }
+
+    private static func tapTargetedKey(
+        _ keyCode: CGKeyCode,
+        modifiers: CGEventFlags,
+        targetProcessIdentifier: pid_t) throws
+    {
+        try BackgroundInputDriver.tapKey(
+            keyCode: keyCode,
+            modifiers: modifiers,
+            targetProcessIdentifier: targetProcessIdentifier)
     }
 
     private static func indeterminateDeliveryError(

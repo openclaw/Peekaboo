@@ -74,7 +74,7 @@ extension TypeTool {
             actions.append("Delay: \(request.delay)ms")
         }
         actions.append("Chars: \(result.totalCharacters)")
-        let specialKeys = max(result.keyPresses - result.totalCharacters, 0)
+        let specialKeys = result.specialKeyPresses ?? max(result.keyPresses - result.totalCharacters, 0)
         actions.append("Special keys: \(specialKeys)")
 
         let summary = actions.isEmpty ? "Performed no actions" : actions.joined(separator: ", ")

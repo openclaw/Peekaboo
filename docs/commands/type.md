@@ -60,8 +60,8 @@ that snapshot. Use `press` for standalone keys or chords.
   For other plain fields where replacement semantics are acceptable, prefer
   `set-value`: it verifies the AX value readback without exposing field contents in the result. Secure fields, special
   keys, IME-dependent input, and controls without readable values remain intentionally unverifiable.
-- JSON output reports confirmed `totalCharacters`, `keyPresses`, delivery mode, optional target PID/window ID, and elapsed time; this matches what the agent logs when executing scripted steps.
-- `keyPresses` counts actual keyboard events, while canonical `dispatched_unit_count` counts every accepted mutation. Direct background text insertion, editable selection/deletion keys, and clear use `accessibility_value` with zero key presses when AX succeeds. Event fallback counts the posted key events; a request that uses both mechanisms reports `composite`. Keyboard-clear fallback remains two key presses and two dispatches.
+- JSON output reports confirmed `totalCharacters`, `keyPresses`, `specialKeyPresses`, delivery mode, optional target PID/window ID, and elapsed time; this matches what the agent logs when executing scripted steps. Legacy providers that omit the special-key count retain the former derived fallback.
+- `keyPresses` counts all actual keyboard events, `specialKeyPresses` counts only events emitted for special-key and clear actions, and canonical `dispatched_unit_count` counts every accepted mutation. Direct background text insertion, editable selection/deletion keys, and clear use `accessibility_value` with zero key presses when AX succeeds. Event fallback counts the posted key events; a request that uses both mechanisms reports `composite`. Keyboard-clear fallback remains two key presses, two special-key presses, and two dispatches.
 
 ## Examples
 ```bash

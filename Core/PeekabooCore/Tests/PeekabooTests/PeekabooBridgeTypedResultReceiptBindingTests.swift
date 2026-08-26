@@ -568,12 +568,12 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         #expect(plan.typedResponseRule.typeActionDispatchUnits == .oneOf([3, 4, 5]))
 
         let valid: [(TypeResult, Int, DesktopActionOutcome.Delivery.Mechanism)] = [
-            (.init(totalCharacters: 1, keyPresses: 5), 5, .windowTargetedEvents),
-            (.init(totalCharacters: 1, keyPresses: 4), 5, .composite),
-            (.init(totalCharacters: 1, keyPresses: 3), 4, .composite),
-            (.init(totalCharacters: 1, keyPresses: 2), 4, .composite),
-            (.init(totalCharacters: 1, keyPresses: 1), 3, .composite),
-            (.init(totalCharacters: 1, keyPresses: 0), 3, .accessibilityValue),
+            (.init(totalCharacters: 1, keyPresses: 5, specialKeyPresses: 4), 5, .windowTargetedEvents),
+            (.init(totalCharacters: 1, keyPresses: 4, specialKeyPresses: 4), 5, .composite),
+            (.init(totalCharacters: 1, keyPresses: 3, specialKeyPresses: 2), 4, .composite),
+            (.init(totalCharacters: 1, keyPresses: 2, specialKeyPresses: 2), 4, .composite),
+            (.init(totalCharacters: 1, keyPresses: 1, specialKeyPresses: 0), 3, .composite),
+            (.init(totalCharacters: 1, keyPresses: 0, specialKeyPresses: 0), 3, .accessibilityValue),
         ]
         for (offset, shape) in valid.enumerated() {
             let response = Self.typeResponse(
@@ -594,6 +594,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             (.init(totalCharacters: 1, keyPresses: 3), 3, .composite),
             (.init(totalCharacters: 1, keyPresses: 5), 5, .composite),
             (.init(totalCharacters: 1, keyPresses: 1), 4, .composite),
+            (.init(totalCharacters: 1, keyPresses: 2, specialKeyPresses: 0), 4, .composite),
         ]
         for (offset, shape) in forged.enumerated() {
             let response = Self.typeResponse(
@@ -629,14 +630,21 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
         #expect(plan.typedResponseRule.typeActionDispatchUnits == .exact(2))
 
-        let valid: [(keyPresses: Int, mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
-            (0, .accessibilityValue),
-            (1, .composite),
-            (2, .windowTargetedEvents),
+        let valid: [(
+            keyPresses: Int,
+            specialKeyPresses: Int,
+            mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
+            (0, 0, .accessibilityValue),
+            (1, 0, .composite),
+            (1, 1, .composite),
+            (2, 1, .windowTargetedEvents),
         ]
         for (offset, shape) in valid.enumerated() {
             let response = Self.typeResponse(
-                result: .init(totalCharacters: 1, keyPresses: shape.keyPresses),
+                result: .init(
+                    totalCharacters: 1,
+                    keyPresses: shape.keyPresses,
+                    specialKeyPresses: shape.specialKeyPresses),
                 dispatchedUnits: 2,
                 delivery: .init(mechanism: shape.mechanism, mode: .background))
             let bundle = try await Self.signedBundle(
@@ -648,14 +656,20 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             try bundle.validate()
         }
 
-        let forged: [(keyPresses: Int, mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
-            (0, .composite),
-            (1, .accessibilityValue),
-            (2, .composite),
+        let forged: [(
+            keyPresses: Int,
+            specialKeyPresses: Int,
+            mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
+            (0, 1, .accessibilityValue),
+            (1, 2, .composite),
+            (2, 0, .windowTargetedEvents),
         ]
         for (offset, shape) in forged.enumerated() {
             let response = Self.typeResponse(
-                result: .init(totalCharacters: 1, keyPresses: shape.keyPresses),
+                result: .init(
+                    totalCharacters: 1,
+                    keyPresses: shape.keyPresses,
+                    specialKeyPresses: shape.specialKeyPresses),
                 dispatchedUnits: 2,
                 delivery: .init(mechanism: shape.mechanism, mode: .background))
             let bundle = try await Self.signedBundle(
@@ -688,7 +702,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         #expect(plan.typedResponseRule.typeActionDispatchUnits == .oneOf([0, 1]))
 
         let response = Self.typeResponse(
-            result: .init(totalCharacters: 0, keyPresses: 0),
+            result: .init(totalCharacters: 0, keyPresses: 0, specialKeyPresses: 0),
             outcome: .confirmedNoChange(route: .bridge))
         let bundle = try await Self.signedBundle(
             fixture: fixture,
@@ -699,7 +713,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         try bundle.validate()
 
         let forged = Self.typeResponse(
-            result: .init(totalCharacters: 0, keyPresses: 1),
+            result: .init(totalCharacters: 0, keyPresses: 1, specialKeyPresses: 0),
             outcome: .confirmedNoChange(route: .bridge))
         let forgedBundle = try await Self.signedBundle(
             fixture: fixture,

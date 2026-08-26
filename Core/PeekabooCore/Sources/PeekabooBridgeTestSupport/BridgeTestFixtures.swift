@@ -38,6 +38,7 @@ public enum BridgeTestFixtures {
     public static func typeResult(for actions: [TypeAction]) -> TypeResult {
         var totalCharacters = 0
         var keyPresses = 0
+        var specialKeyPresses = 0
         for action in actions {
             switch action {
             case let .text(text):
@@ -45,11 +46,16 @@ public enum BridgeTestFixtures {
                 keyPresses += text.count
             case .key:
                 keyPresses += 1
+                specialKeyPresses += 1
             case .clear:
                 keyPresses += 2
+                specialKeyPresses += 2
             }
         }
-        return TypeResult(totalCharacters: totalCharacters, keyPresses: keyPresses)
+        return TypeResult(
+            totalCharacters: totalCharacters,
+            keyPresses: keyPresses,
+            specialKeyPresses: specialKeyPresses)
     }
 
     /// Builds one wire-coherent handshake while keeping protocol versions explicit at every call site.

@@ -270,6 +270,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         #expect(summary.executionResult.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(5))
         #expect(summary.result.totalCharacters == 4)
         #expect(summary.result.keyPresses == 0)
+        #expect(summary.result.specialKeyPresses == 0)
     }
 
     @Test
@@ -304,6 +305,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         #expect(summary.executionResult.outcome.dispatchState.unitCount == .one)
         #expect(summary.result.totalCharacters == 0)
         #expect(summary.result.keyPresses == 0)
+        #expect(summary.result.specialKeyPresses == 0)
     }
 
     @Test
@@ -409,6 +411,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             mode: .background))
         #expect(summary.executionResult.outcome.dispatchState.unitCount == .one)
         #expect(summary.result.keyPresses == 0)
+        #expect(summary.result.specialKeyPresses == 0)
     }
 
     private func target(role: String = "AXTextField") throws -> UIAutomationTarget.ExactWindow {

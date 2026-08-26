@@ -417,10 +417,13 @@ public struct ForegroundModifierClickResult: Sendable, Codable, Equatable {
 public struct TypeResult: Sendable, Codable {
     public let totalCharacters: Int
     public let keyPresses: Int
+    /// Actual keyboard events emitted for special-key and clear actions. `nil` denotes a legacy result.
+    public let specialKeyPresses: Int?
 
-    public init(totalCharacters: Int, keyPresses: Int) {
+    public init(totalCharacters: Int, keyPresses: Int, specialKeyPresses: Int? = nil) {
         self.totalCharacters = totalCharacters
         self.keyPresses = keyPresses
+        self.specialKeyPresses = specialKeyPresses
     }
 }
 

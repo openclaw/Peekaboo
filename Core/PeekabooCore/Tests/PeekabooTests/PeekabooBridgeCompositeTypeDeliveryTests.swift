@@ -12,7 +12,7 @@ import Testing
 struct PeekabooBridgeCompositeTypeDeliveryTests {
     private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
     private static let previousVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 35)
-    private static let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 36)
+    private static let featureVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 36)
     private static let clientIdentity = PeekabooBridgeClientIdentity(
         bundleIdentifier: "dev.peekaboo.composite-type-delivery-tests",
         teamIdentifier: nil,
@@ -61,13 +61,13 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
             windowIdentity: windowIdentity,
             windowBounds: bounds)))
 
-        #expect(PeekabooBridgeConstants.protocolVersion == Self.currentVersion)
-        #expect(PeekabooBridgeConstants.compositeTypeDeliveryVersion == Self.currentVersion)
+        #expect(PeekabooBridgeConstants.protocolVersion >= Self.featureVersion)
+        #expect(PeekabooBridgeConstants.compositeTypeDeliveryVersion == Self.featureVersion)
         #expect(PeekabooBridgeOperation.compatible(operations, with: Self.previousVersion) == operations)
-        #expect(plain.minimumNegotiatedProtocolVersion == Self.currentVersion)
+        #expect(plain.minimumNegotiatedProtocolVersion == Self.featureVersion)
         #expect(eventOnly.minimumNegotiatedProtocolVersion == nil)
-        #expect(clear.minimumNegotiatedProtocolVersion == Self.currentVersion)
-        #expect(pixelClear.minimumNegotiatedProtocolVersion == Self.currentVersion)
+        #expect(clear.minimumNegotiatedProtocolVersion == Self.featureVersion)
+        #expect(pixelClear.minimumNegotiatedProtocolVersion == Self.featureVersion)
     }
 
     @Test
@@ -87,7 +87,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
             processIdentity: identity)
         let fixture = try await self.startHost(
             services: services,
-            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.currentVersion,
+            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.targetedTypeActions])
         defer { Task { await fixture.host.stop() } }
 
@@ -240,7 +240,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
             processStartIdentity: #require(SystemIdentityResolver.processStartIdentity(getpid())))
         let fixture = try await self.startHost(
             services: services,
-            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.currentVersion,
+            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.targetedTypeActions])
         defer { Task { await fixture.host.stop() } }
         let handshake = try await fixture.client.handshake(client: Self.clientIdentity)
@@ -264,7 +264,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         let services = StubServices(automation: automation)
         let fixture = try await self.startHost(
             services: services,
-            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.currentVersion,
+            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.exactWindowTargetedTypeActions])
         defer { Task { await fixture.host.stop() } }
         let handshake = try await fixture.client.handshake(client: Self.clientIdentity)
@@ -281,7 +281,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         let target = try self.exactTarget()
         let fixture = try await self.startHost(
             services: services,
-            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.currentVersion,
+            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.exactWindowTargetedTypeActions])
         defer { Task { await fixture.host.stop() } }
         let handshake = try await fixture.client.handshake(client: Self.clientIdentity)

@@ -1281,6 +1281,7 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
     private static func typeResult(for actions: [TypeAction]) -> TypeResult {
         var characters = 0
         var keyPresses = 0
+        var specialKeyPresses = 0
         for action in actions {
             switch action {
             case let .text(text):
@@ -1288,11 +1289,16 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
                 keyPresses += text.count
             case .key:
                 keyPresses += 1
+                specialKeyPresses += 1
             case .clear:
                 keyPresses += 2
+                specialKeyPresses += 2
             }
         }
-        return TypeResult(totalCharacters: characters, keyPresses: keyPresses)
+        return TypeResult(
+            totalCharacters: characters,
+            keyPresses: keyPresses,
+            specialKeyPresses: specialKeyPresses)
     }
 }
 

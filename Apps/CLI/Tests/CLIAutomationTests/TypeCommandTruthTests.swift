@@ -105,6 +105,41 @@ struct TypeCommandTruthTests {
     }
 
     @Test
+    func `CLI prefers authoritative special key event count over legacy arithmetic`() async throws {
+        let cases: [(arguments: [String], result: TypeResult, expectedSpecialKeys: Int)] = [
+            (
+                ["type", "x\\n", "--foreground", "--json"],
+                TypeResult(totalCharacters: 1, keyPresses: 1, specialKeyPresses: 1),
+                1
+            ),
+            (
+                ["type", "x", "--clear", "--foreground", "--json"],
+                TypeResult(totalCharacters: 1, keyPresses: 2, specialKeyPresses: 2),
+                2
+            ),
+        ]
+
+        for testCase in cases {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .confirmedChange(delivery: .init(
+                mechanism: .composite,
+                mode: .foreground
+            ))
+            automation.typeActionsResultProvider = { _, _, _ in testCase.result }
+            let services = TestServicesFactory.makePeekabooServices(automation: automation)
+
+            let command = try await InProcessCommandRunner.run(testCase.arguments, services: services)
+            #expect(command.exitStatus == 0, "Unexpected type failure: \(command.combinedOutput)")
+            let payload = try ExternalCommandRunner.decodeJSONResponse(
+                from: command,
+                as: CodableJSONResponse<TypeCommandResult>.self
+            )
+
+            #expect(payload.data.specialKeyPresses == testCase.expectedSpecialKeys)
+        }
+    }
+
+    @Test
     func `Type revalidates matching snapshot focus before exact-window dispatch`() async throws {
         let focused = self.textFocus()
         let automation = self.automation(focused: focused)

@@ -181,9 +181,11 @@ enum PeekabooBridgeOperationResultSemantics {
 
     struct TypeActionResultRule: Equatable, Sendable {
         let totalCharacters: Int
-        let fixedEventKeyPresses: Int
+        let fixedTextEventKeyPresses: Int
+        let fixedSpecialEventKeyPresses: Int
         let fixedEventDispatchUnits: Int
-        let flexibleAccessibilityUnits: Int
+        let flexibleTextAccessibilityUnits: Int
+        let flexibleSpecialAccessibilityUnits: Int
         let noChangeCapableAccessibilityKeys: Int
         let flexibleClearCount: Int
         let additionalAccessibilityUnits: Int
@@ -195,9 +197,11 @@ enum PeekabooBridgeOperationResultSemantics {
             additionalUsesAccessibilityValue: Bool = false)
         {
             var totalCharacters = 0
-            var fixedEventKeyPresses = 0
+            var fixedTextEventKeyPresses = 0
+            var fixedSpecialEventKeyPresses = 0
             var fixedEventDispatchUnits = 0
-            var flexibleAccessibilityUnits = 0
+            var flexibleTextAccessibilityUnits = 0
+            var flexibleSpecialAccessibilityUnits = 0
             var noChangeCapableAccessibilityKeys = 0
             var flexibleClearCount = 0
             for action in actions {
@@ -205,9 +209,9 @@ enum PeekabooBridgeOperationResultSemantics {
                 case let .text(text):
                     totalCharacters += text.count
                     if allowsAccessibilityValueDelivery {
-                        flexibleAccessibilityUnits += text.count
+                        flexibleTextAccessibilityUnits += text.count
                     } else {
-                        fixedEventKeyPresses += text.count
+                        fixedTextEventKeyPresses += text.count
                         fixedEventDispatchUnits += text.count
                     }
                 case let .key(key):
@@ -215,25 +219,27 @@ enum PeekabooBridgeOperationResultSemantics {
                         if key.mayCompleteWithoutDispatch {
                             noChangeCapableAccessibilityKeys += 1
                         } else {
-                            flexibleAccessibilityUnits += 1
+                            flexibleSpecialAccessibilityUnits += 1
                         }
                     } else {
-                        fixedEventKeyPresses += 1
+                        fixedSpecialEventKeyPresses += 1
                         fixedEventDispatchUnits += 1
                     }
                 case .clear:
                     if allowsAccessibilityValueDelivery {
                         flexibleClearCount += 1
                     } else {
-                        fixedEventKeyPresses += 2
+                        fixedSpecialEventKeyPresses += 2
                         fixedEventDispatchUnits += 2
                     }
                 }
             }
             self.totalCharacters = totalCharacters
-            self.fixedEventKeyPresses = fixedEventKeyPresses
+            self.fixedTextEventKeyPresses = fixedTextEventKeyPresses
+            self.fixedSpecialEventKeyPresses = fixedSpecialEventKeyPresses
             self.fixedEventDispatchUnits = fixedEventDispatchUnits
-            self.flexibleAccessibilityUnits = flexibleAccessibilityUnits
+            self.flexibleTextAccessibilityUnits = flexibleTextAccessibilityUnits
+            self.flexibleSpecialAccessibilityUnits = flexibleSpecialAccessibilityUnits
             self.noChangeCapableAccessibilityKeys = noChangeCapableAccessibilityKeys
             self.flexibleClearCount = flexibleClearCount
             self.additionalAccessibilityUnits = additionalUsesAccessibilityValue ? additionalDispatchUnits : 0
@@ -252,6 +258,7 @@ enum PeekabooBridgeOperationResultSemantics {
 
         func accepts(
             keyPresses: Int,
+            specialKeyPresses: Int?,
             outcome: DesktopActionOutcome) -> Bool
         {
             let dispatchUnits: Int
@@ -278,6 +285,21 @@ enum PeekabooBridgeOperationResultSemantics {
             for fallbackClearCount in 0...self.flexibleClearCount {
                 let activeNoChangeKeys = dispatchUnits - baseUnits - fallbackClearCount
                 guard (0...self.noChangeCapableAccessibilityKeys).contains(activeNoChangeKeys) else { continue }
+
+                if let specialKeyPresses {
+                    if self.acceptsExplicitSpecialKeyCount(
+                        keyPresses: keyPresses,
+                        specialKeyPresses: specialKeyPresses,
+                        activeNoChangeKeys: activeNoChangeKeys,
+                        fallbackClearCount: fallbackClearCount,
+                        expectedDeliveryShape: (
+                            usesAccessibility: expectedUsesAccessibility,
+                            usesKeyboard: expectedUsesKeyboard))
+                    {
+                        return true
+                    }
+                    continue
+                }
 
                 let flexibleEventKeyPresses = keyPresses - self.fixedEventKeyPresses - fallbackClearCount * 2
                 guard flexibleEventKeyPresses >= 0 else { continue }
@@ -306,6 +328,51 @@ enum PeekabooBridgeOperationResultSemantics {
                 }
             }
             return false
+        }
+
+        private func acceptsExplicitSpecialKeyCount(
+            keyPresses: Int,
+            specialKeyPresses: Int,
+            activeNoChangeKeys: Int,
+            fallbackClearCount: Int,
+            expectedDeliveryShape: (usesAccessibility: Bool, usesKeyboard: Bool)) -> Bool
+        {
+            guard specialKeyPresses >= 0, specialKeyPresses <= keyPresses else { return false }
+            let textEvents = keyPresses - specialKeyPresses - self.fixedTextEventKeyPresses
+            guard (0...self.flexibleTextAccessibilityUnits).contains(textEvents) else { return false }
+            let flexibleSpecialEvents = specialKeyPresses - self.fixedSpecialEventKeyPresses -
+                fallbackClearCount * 2
+            guard flexibleSpecialEvents >= 0 else { return false }
+            let minimumSpecialEvents = max(0, flexibleSpecialEvents - activeNoChangeKeys)
+            let maximumSpecialEvents = min(
+                self.flexibleSpecialAccessibilityUnits,
+                flexibleSpecialEvents)
+            guard minimumSpecialEvents <= maximumSpecialEvents else { return false }
+
+            for directCapableSpecialEvents in minimumSpecialEvents...maximumSpecialEvents {
+                let noChangeKeyEvents = flexibleSpecialEvents - directCapableSpecialEvents
+                let usesAccessibility = self.additionalAccessibilityUnits > 0 ||
+                    fallbackClearCount < self.flexibleClearCount ||
+                    textEvents < self.flexibleTextAccessibilityUnits ||
+                    directCapableSpecialEvents < self.flexibleSpecialAccessibilityUnits ||
+                    noChangeKeyEvents < activeNoChangeKeys
+                let usesKeyboard = self.fixedEventDispatchUnits > 0 || textEvents > 0 ||
+                    directCapableSpecialEvents > 0 || noChangeKeyEvents > 0 || fallbackClearCount > 0
+                if usesAccessibility == expectedDeliveryShape.usesAccessibility,
+                   usesKeyboard == expectedDeliveryShape.usesKeyboard
+                {
+                    return true
+                }
+            }
+            return false
+        }
+
+        private var fixedEventKeyPresses: Int {
+            self.fixedTextEventKeyPresses + self.fixedSpecialEventKeyPresses
+        }
+
+        private var flexibleAccessibilityUnits: Int {
+            self.flexibleTextAccessibilityUnits + self.flexibleSpecialAccessibilityUnits
         }
 
         private var minimumDispatchUnits: Int {
@@ -666,6 +733,7 @@ enum PeekabooBridgeOperationResultSemantics {
                 guard let outcome,
                       expected.accepts(
                           keyPresses: result.keyPresses,
+                          specialKeyPresses: result.specialKeyPresses,
                           outcome: outcome)
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(

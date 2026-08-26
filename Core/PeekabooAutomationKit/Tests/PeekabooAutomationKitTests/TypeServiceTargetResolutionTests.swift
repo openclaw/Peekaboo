@@ -7,6 +7,16 @@ import Testing
 
 struct TypeServiceTargetResolutionTests {
     @Test
+    func `legacy type result decodes without special key event count`() throws {
+        let data = Data(#"{"totalCharacters":1,"keyPresses":1}"#.utf8)
+        let result = try JSONDecoder().decode(TypeResult.self, from: data)
+
+        #expect(result.totalCharacters == 1)
+        #expect(result.keyPresses == 1)
+        #expect(result.specialKeyPresses == nil)
+    }
+
+    @Test
     func `targeted printable characters preserve their exact Unicode payload`() throws {
         let targetPID: pid_t = 4242
         let characters: [Character] = ["y", "z", "&", "|", "-", "\"", "ä"]
@@ -182,6 +192,7 @@ struct TypeServiceTargetResolutionTests {
             automationTarget: exactWindow)
         #expect(accessibility.result.totalCharacters == 1)
         #expect(accessibility.result.keyPresses == 0)
+        #expect(accessibility.result.specialKeyPresses == 0)
         #expect(accessibility.executionResult.outcome.delivery == accessibilityDelivery)
         #expect(accessibility.executionResult.outcome.dispatchState.unitCount ==
             DesktopActionOutcome.DispatchUnitCount(2))
@@ -201,6 +212,7 @@ struct TypeServiceTargetResolutionTests {
             snapshotId: nil,
             automationTarget: exactWindow)
         #expect(event.result.keyPresses == 2)
+        #expect(event.result.specialKeyPresses == 1)
         #expect(event.executionResult.outcome.delivery == exactWindow.keyboardDelivery)
         #expect(event.executionResult.outcome.dispatchState.unitCount ==
             DesktopActionOutcome.DispatchUnitCount(2))
@@ -220,11 +232,78 @@ struct TypeServiceTargetResolutionTests {
             snapshotId: nil,
             automationTarget: exactWindow)
         #expect(mixed.result.keyPresses == 1)
+        #expect(mixed.result.specialKeyPresses == 1)
         #expect(mixed.executionResult.outcome.delivery == .init(
             mechanism: .composite,
             mode: .background))
         #expect(mixed.executionResult.outcome.dispatchState.unitCount ==
             DesktopActionOutcome.DispatchUnitCount(2))
+
+        let mixedSpecialService = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedSpecialKeyTyper: { key, _, delivery in
+                key == .space
+                    ? .dispatched(delivery: accessibilityDelivery, keyPressCount: 0)
+                    : .dispatched(delivery: delivery, keyPressCount: 1)
+            })
+        let mixedSpecial = try await mixedSpecialService.typeActionsTrackingSecureInput(
+            [.key(.space), .key(.return)],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: exactWindow)
+        #expect(mixedSpecial.result.totalCharacters == 0)
+        #expect(mixedSpecial.result.keyPresses == 1)
+        #expect(mixedSpecial.result.specialKeyPresses == 1)
+        #expect(mixedSpecial.executionResult.outcome.delivery == .init(
+            mechanism: .composite,
+            mode: .background))
+        #expect(mixedSpecial.executionResult.outcome.dispatchState.unitCount ==
+            DesktopActionOutcome.DispatchUnitCount(2))
+    }
+
+    @Test
+    @MainActor
+    func `targeted keyboard clear and AX text keep special key events distinct`() async throws {
+        let processIdentifier = getpid()
+        let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let target = try UIAutomationTarget.exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: processIdentifier,
+                ownerProcessStartIdentity: 91,
+                capturedBounds: bounds),
+            bounds: bounds))
+        let accessibilityDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityValue,
+            mode: .background)
+        var keyTaps: [(CGKeyCode, CGEventFlags)] = []
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { _, _, _ in
+                .dispatched(delivery: accessibilityDelivery, keyPressCount: 0)
+            },
+            targetedKeyTapper: { keyCode, modifiers, _ in
+                keyTaps.append((keyCode, modifiers))
+            },
+            targetedTextReplacer: { _, _ in false })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("x")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: target)
+
+        #expect(keyTaps.map(\.0) == [0x00, TypeServiceSpecialKeyMapping.keyCode(for: .delete)])
+        #expect(summary.result.totalCharacters == 1)
+        #expect(summary.result.keyPresses == 2)
+        #expect(summary.result.specialKeyPresses == 2)
+        #expect(summary.executionResult.outcome.delivery == .init(
+            mechanism: .composite,
+            mode: .background))
+        #expect(summary.executionResult.outcome.dispatchState.unitCount ==
+            DesktopActionOutcome.DispatchUnitCount(3))
     }
 
     @Test
@@ -246,6 +325,7 @@ struct TypeServiceTargetResolutionTests {
             automationTarget: target)
 
         #expect(summary.result.keyPresses == 0)
+        #expect(summary.result.specialKeyPresses == 0)
         #expect(summary.executionResult.outcome.state == .confirmedNoChange)
         #expect(summary.executionResult.outcome.dispatchState == .none)
         #expect(summary.executionResult.outcome.delivery == nil)

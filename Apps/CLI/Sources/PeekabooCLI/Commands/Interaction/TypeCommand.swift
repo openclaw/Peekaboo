@@ -473,7 +473,9 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         let effectConfirmed = input.typingOutcome?.state == .confirmedChange
         let confirmedCharacters = effectConfirmed ? typeResult.totalCharacters : 0
         let confirmedKeyPresses = effectConfirmed ? typeResult.keyPresses : 0
-        let specialKeys = max(confirmedKeyPresses - confirmedCharacters, 0)
+        let specialKeys = effectConfirmed
+            ? typeResult.specialKeyPresses ?? max(confirmedKeyPresses - confirmedCharacters, 0)
+            : 0
         let confirmedTypedText = effectConfirmed
             ? Self.literalTypedText(from: actions, requestedText: self.resolvedText)
             : nil
