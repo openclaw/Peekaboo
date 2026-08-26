@@ -116,6 +116,7 @@ struct AppCommandTests {
         #expect(schemaCapabilities.contains("processStartIdentityDecimal"))
         #expect(data["installed_apps"] == nil)
         #expect(data["installed_count"] == nil)
+        #expect(data["installed_status"] == nil)
         #expect(!schemaCapabilities.contains("installedApplicationSidecar"))
     }
 
@@ -164,6 +165,7 @@ struct AppCommandTests {
         #expect((data["count"] as? NSNumber)?.intValue == 1)
         #expect(running.map { $0["name"] as? String } == ["Running"])
         #expect((data["installed_count"] as? NSNumber)?.intValue == 1)
+        #expect(data["installed_status"] as? String == "complete")
         #expect(installed.map { $0["name"] as? String } == ["Available"])
         #expect(installedApp["bundle_id"] as? String == "com.example.available")
         #expect(installedApp["launch_path"] as? String == "/Applications/Available.app")
@@ -199,6 +201,7 @@ struct AppCommandTests {
 
         #expect(service.installedApplicationListCallCount == 0)
         #expect((data["installed_count"] as? NSNumber)?.intValue == 0)
+        #expect(data["installed_status"] as? String == "omitted")
         #expect((data["installed_apps"] as? [[String: Any]])?.isEmpty == true)
         #expect((data["warnings"] as? [String])?.contains {
             $0.contains("omitted because a live application lacked bundle identity metadata")

@@ -69,6 +69,10 @@ extension AppCommand {
             return applications.filter { $0.declaredPresentation == .regular }
         }
 
+        static func installedStatus(_ included: Bool, _ omitted: Bool) -> String? {
+            included ? (omitted ? "omitted" : "complete") : nil
+        }
+
         /// Enumerate running applications, apply filtering flags, and emit the chosen output representation.
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -129,6 +133,7 @@ extension AppCommand {
                     let count: Int
                     let apps: [AppInfo]
                     let installed_count: Int?
+                    let installed_status: String?
                     let installed_apps: [InstalledAppInfo]?
                     let warnings: [String]
                     let schema_capabilities: [String]
@@ -155,6 +160,7 @@ extension AppCommand {
                     )
                 }
                 let warnings = Array(Set(combinedWarnings)).sorted()
+                let installedStatus = Self.installedStatus(self.includeInstalled, installedResultsOmitted)
 
                 let data = ListResult(
                     count: filtered.count,
@@ -171,6 +177,7 @@ extension AppCommand {
                         )
                     },
                     installed_count: installedApplications?.count,
+                    installed_status: installedStatus,
                     installed_apps: installedApplications?.map { application in
                         InstalledAppInfo(
                             name: application.name,
