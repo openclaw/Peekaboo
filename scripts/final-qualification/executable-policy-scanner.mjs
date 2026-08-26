@@ -45,6 +45,7 @@ const TEXT_FORBIDDEN_MARKERS = [
 const STRUCTURAL_NAME_MARKER = /(^|[\/._ -])(cua-driver|osascript|applescript|jxa|lume|parallels|prl_|vmware|virtualbox|virtualization|utm|tart|vfkit|qemu|vnc|screen sharing|screensharing|remote desktop|remotedesktop|jump desktop)([\/._ -]|$)/i;
 const APPLE_EVENT_IMPORT = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScript|AppleEventDescriptor|AppleEventManager|UserAppleScriptTask))$/;
 const APPLE_EVENT_CLASS_STRING = /^_?OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScript|AppleEventDescriptor|AppleEventManager|UserAppleScriptTask)$/;
+const OSAKIT_CLASS_SYMBOL = /^_?OBJC_(?:CLASS|METACLASS)_\$_OSA(?:Language(?:Instance)?|Script(?:Controller|View)?)$/;
 const SCRIPTING_BRIDGE_IMPORT = /^_?OBJC_(?:CLASS|METACLASS)_\$_SB(?:Application|ElementArray|Object)$/;
 const SCRIPTING_BRIDGE_CLASS_STRING = /^(?:SBApplication|SBElementArray|SBObject)$/;
 const VIRTUALIZATION_IMPORT = /^_?(?:VZ[A-Z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+)$/;
@@ -58,9 +59,16 @@ const LOAD_COMMAND_DYLIBS = new Set([0x0c, 0x0d, 0x18, 0x1f, 0x20, 0x23]);
 const MACH_O_CPU_TYPES = new Set([0x00000007, 0x01000007, 0x0000000c, 0x0100000c]);
 const CODE_DIRECTORY_MAGIC = 0xfade0c02;
 
+function isAppleScriptImport(value) {
+  return APPLE_EVENT_IMPORT.test(value)
+    || OSAKIT_CLASS_SYMBOL.test(value)
+    || SCRIPTING_BRIDGE_IMPORT.test(value);
+}
+
 function isAppleScriptPolicyString(value) {
   return APPLE_EVENT_STRING.test(value)
     || APPLE_EVENT_CLASS_STRING.test(value)
+    || OSAKIT_CLASS_SYMBOL.test(value)
     || SCRIPTING_BRIDGE_IMPORT.test(value)
     || SCRIPTING_BRIDGE_CLASS_STRING.test(value)
     || APPLE_FRAMEWORK_PATH.test(value)
@@ -112,11 +120,15 @@ function cString(bytes, offset, limit) {
   return value.every((byte) => byte >= 0x20 && byte <= 0x7e) ? value.toString('ascii') : null;
 }
 
-function policyStrings(bytes, excludedRanges = []) {
+function policyStrings(bytes, excludedRanges = [], ignoredStringRanges = []) {
   const exclusions = excludedRanges
     .filter(({ start, end }) => Number.isSafeInteger(start) && Number.isSafeInteger(end)
       && start >= 0 && end > start && end <= bytes.length)
     .sort((left, right) => left.start - right.start);
+  const ignoredStrings = new Set(ignoredStringRanges
+    .filter(({ start, end }) => Number.isSafeInteger(start) && Number.isSafeInteger(end)
+      && start >= 0 && end > start && end <= bytes.length)
+    .map(({ start, end }) => `${start}:${end}`));
   const values = [];
   let start = null;
   let exclusionIndex = 0;
@@ -131,7 +143,7 @@ function policyStrings(bytes, excludedRanges = []) {
       && bytes[index] >= 0x20 && bytes[index] <= 0x7e;
     if (printable && start === null) start = index;
     if (!printable && start !== null) {
-      if (index - start >= 4) {
+      if (index - start >= 4 && !ignoredStrings.has(`${start}:${index}`)) {
         const value = bytes.subarray(start, index).toString('ascii');
         if (isAppleScriptPolicyString(value) || isVirtualizationPolicyString(value)) {
           values.push(value);
@@ -262,9 +274,7 @@ function chainedFixupPolicyImports(bytes, offset, size, endian) {
     const decoded = decodeSymbolName(nameOffset);
     if (!decoded.ok || !decoded.value) return null;
     const name = decoded.value;
-    if (APPLE_EVENT_IMPORT.test(name)
-      || SCRIPTING_BRIDGE_IMPORT.test(name)
-      || VIRTUALIZATION_IMPORT.test(name)) imports.push(name);
+    if (isAppleScriptImport(name) || VIRTUALIZATION_IMPORT.test(name)) imports.push(name);
   }
   return imports;
 }
@@ -291,6 +301,7 @@ function thinMachOSlice(bytes, offset, size) {
   let symbolTable = null;
   let sawChainedFixups = false;
   const policyStringExclusions = [];
+  const ignoredPolicyStringRanges = [];
   let sawCodeSignature = false;
   let sawSegment = false;
   let cursor = offset + headerSize;
@@ -395,15 +406,28 @@ function thinMachOSlice(bytes, offset, size) {
     const entryOffset = offset + symbolOffset + index * symbolSize;
     const nameOffset = unsignedInteger(bytes, entryOffset, 4, format.endian);
     const type = bytes[entryOffset + 4];
-    const isUndefinedExternal = (type & 0xe0) === 0 && (type & 0x0e) === 0 && (type & 0x01) === 1;
-    if (!isUndefinedExternal) continue;
-    if (nameOffset === null || nameOffset >= stringSize) return null;
+    const symbolType = type & 0x0e;
+    const isImportedExternal = (type & 0xe0) === 0 && (type & 0x01) === 1
+      && (symbolType === 0 || symbolType === 0x0c);
+    if (nameOffset === null || nameOffset >= stringSize) {
+      if (isImportedExternal) return null;
+      continue;
+    }
+    if (nameOffset === 0 && !isImportedExternal) continue;
     const decoded = decodeSymbolName(nameOffset);
-    if (!decoded.ok || !decoded.value) return null;
+    if (!decoded.ok || !decoded.value) {
+      if (isImportedExternal) return null;
+      continue;
+    }
     const name = decoded.value;
-    if (name && (APPLE_EVENT_IMPORT.test(name)
-      || SCRIPTING_BRIDGE_IMPORT.test(name)
-      || VIRTUALIZATION_IMPORT.test(name))) {
+    if (!isImportedExternal) {
+      ignoredPolicyStringRanges.push({
+        start: stringOffset + nameOffset,
+        end: stringOffset + nameOffset + name.length,
+      });
+      continue;
+    }
+    if (name && (isAppleScriptImport(name) || VIRTUALIZATION_IMPORT.test(name))) {
       imports.push(name);
     }
   }
@@ -413,7 +437,11 @@ function thinMachOSlice(bytes, offset, size) {
     identifiers,
     imports,
     loadPaths,
-    strings: policyStrings(bytes.subarray(offset, offset + size), policyStringExclusions),
+    strings: policyStrings(
+      bytes.subarray(offset, offset + size),
+      policyStringExclusions,
+      ignoredPolicyStringRanges,
+    ),
   };
 }
 
@@ -495,9 +523,7 @@ export function policyFindingsForFile(relativePath, mode, bytes) {
           families.add('virtualization');
         }
       }
-      if (evidence.imports.some((value) => (
-        APPLE_EVENT_IMPORT.test(value) || SCRIPTING_BRIDGE_IMPORT.test(value)
-      ))) {
+      if (evidence.imports.some((value) => isAppleScriptImport(value))) {
         families.add('apple-script');
       }
       if (evidence.imports.some((value) => VIRTUALIZATION_IMPORT.test(value))) {

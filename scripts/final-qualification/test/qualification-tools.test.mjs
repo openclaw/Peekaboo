@@ -1714,7 +1714,7 @@ test('policy scanner classifies every thin and fat Mach-O byte order as loadable
   );
 });
 
-test('policy scanner recognizes acronym-led VZ classes and bounds chained symbol decoding', () => {
+test('policy scanner recognizes native class symbols and bounds chained symbol decoding', () => {
   const thinMachOWithRawString = (value) => {
     const raw = Buffer.from(`${value}\0`);
     const bytes = Buffer.alloc(129 + raw.length);
@@ -1754,22 +1754,162 @@ test('policy scanner recognizes acronym-led VZ classes and bounds chained symbol
       unrelatedValue,
     );
   }
+  const osaKitClassSymbols = [
+    'OBJC_CLASS_$_OSAScript',
+    '_OBJC_CLASS_$_OSAScript',
+    'OBJC_METACLASS_$_OSALanguage',
+    '_OBJC_CLASS_$_OSALanguageInstance',
+    'OBJC_CLASS_$_OSAScriptView',
+    'OBJC_CLASS_$_OSAScriptController',
+  ];
+  for (const classSymbol of osaKitClassSymbols) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/osa-class-${classSymbol.length}`,
+        0o755,
+        thinMachOWithRawString(classSymbol),
+      ),
+      [{ family: 'apple-script' }],
+      classSymbol,
+    );
+  }
+  for (const unrelatedSymbol of [
+    'OBJC_CLASS_$_OSAFake',
+    'OBJC_CLASS_$_OSALanguageModel',
+    'OBJC_CLASS_$_OSAScriptViewController',
+  ]) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/unrelated-osa-${unrelatedSymbol.length}`,
+        0o755,
+        thinMachOWithRawString(unrelatedSymbol),
+      ),
+      [],
+      unrelatedSymbol,
+    );
+  }
 
-  const chainedMachO = (nameOffsets) => {
-    const symbolBytes = Buffer.concat([Buffer.alloc(1024, 0x41), Buffer.alloc(1)]);
+  const thinMachOWithNListSymbol = (
+    value,
+    type,
+    { nameOffset = 1, unreferencedStrings = [] } = {},
+  ) => {
+    const stringTable = Buffer.from(`\0${[value, ...unreferencedStrings].join('\0')}\0`);
+    const bytes = Buffer.alloc(144 + stringTable.length);
+    Buffer.from('cffaedfe', 'hex').copy(bytes);
+    bytes.writeUInt32LE(0x0100000c, 4);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(96, 20);
+    bytes.writeUInt32LE(0x19, 32);
+    bytes.writeUInt32LE(72, 36);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    bytes.writeUInt32LE(0x02, 104);
+    bytes.writeUInt32LE(24, 108);
+    bytes.writeUInt32LE(128, 112);
+    bytes.writeUInt32LE(1, 116);
+    bytes.writeUInt32LE(144, 120);
+    bytes.writeUInt32LE(stringTable.length, 124);
+    bytes.writeUInt32LE(nameOffset, 128);
+    bytes[132] = type;
+    stringTable.copy(bytes, 144);
+    return bytes;
+  };
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/defined-ae-symbol',
+      0o755,
+      thinMachOWithNListSymbol('_AECreateWidget', 0x0f),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/undefined-ae-symbol',
+      0o755,
+      thinMachOWithNListSymbol('_AECreateWidget', 0x01),
+    ),
+    [{ family: 'apple-script' }],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/prebound-undefined-ae-symbol',
+      0o755,
+      thinMachOWithNListSymbol('_AECreateWidget', 0x0d),
+    ),
+    [{ family: 'apple-script' }],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/unreferenced-osa-string',
+      0o755,
+      thinMachOWithNListSymbol('_benign', 0x0f, {
+        unreferencedStrings: ['_OBJC_CLASS_$_OSAScript'],
+      }),
+    ),
+    [{ family: 'apple-script' }],
+  );
+  const overlappingOSAClass = '_OBJC_CLASS_$_OSAScript';
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/overlapping-osa-string',
+      0o755,
+      thinMachOWithNListSymbol(overlappingOSAClass, 0x0f, {
+        nameOffset: 1 + overlappingOSAClass.indexOf('Script'),
+      }),
+    ),
+    [{ family: 'apple-script' }],
+  );
+
+  const thinMachOWithRawNList = (value) => {
+    const symbolTable = Buffer.alloc(32);
+    Buffer.from(`${value}\0`).copy(symbolTable);
+    const bytes = Buffer.alloc(161);
+    Buffer.from('cffaedfe', 'hex').copy(bytes);
+    bytes.writeUInt32LE(0x0100000c, 4);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(96, 20);
+    bytes.writeUInt32LE(0x19, 32);
+    bytes.writeUInt32LE(72, 36);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    bytes.writeUInt32LE(0x02, 104);
+    bytes.writeUInt32LE(24, 108);
+    bytes.writeUInt32LE(128, 112);
+    bytes.writeUInt32LE(2, 116);
+    bytes.writeUInt32LE(160, 120);
+    bytes.writeUInt32LE(1, 124);
+    symbolTable.copy(bytes, 128);
+    return bytes;
+  };
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/raw-nlist-policy-string',
+      0o755,
+      thinMachOWithRawNList('_OBJC_CLASS_$_OSAScript'),
+    ),
+    [{ family: 'apple-script' }],
+  );
+
+  const chainedMachO = (
+    nameOffsets,
+    symbolBytes = Buffer.concat([Buffer.alloc(1024, 0x41), Buffer.alloc(1)]),
+    symbolsFormat = 0,
+  ) => {
+    const encodedSymbols = symbolsFormat === 0 ? symbolBytes : deflateSync(symbolBytes);
     const importsOffset = 32;
     const symbolsOffset = importsOffset + nameOffsets.length * 4;
-    const payload = Buffer.alloc(symbolsOffset + symbolBytes.length);
+    const payload = Buffer.alloc(symbolsOffset + encodedSymbols.length);
     payload.writeUInt32LE(28, 4);
     payload.writeUInt32LE(importsOffset, 8);
     payload.writeUInt32LE(symbolsOffset, 12);
     payload.writeUInt32LE(nameOffsets.length, 16);
     payload.writeUInt32LE(1, 20);
-    payload.writeUInt32LE(0, 24);
+    payload.writeUInt32LE(symbolsFormat, 24);
     for (const [index, nameOffset] of nameOffsets.entries()) {
       payload.writeUInt32LE(nameOffset << 9, importsOffset + index * 4);
     }
-    symbolBytes.copy(payload, symbolsOffset);
+    encodedSymbols.copy(payload, symbolsOffset);
 
     const payloadOffset = 144;
     const bytes = Buffer.alloc(payloadOffset + payload.length);
@@ -1802,6 +1942,14 @@ test('policy scanner recognizes acronym-led VZ classes and bounds chained symbol
   assert.deepEqual(
     policyFindingsForFile('runtime/hostile-chained-names', 0o755, chainedMachO([0, 1, 2, 3, 4])),
     [{ family: 'uninspectable-native-executable' }],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/compressed-osa-class',
+      0o755,
+      chainedMachO([0], Buffer.from('_OBJC_CLASS_$_OSAScript\0'), 1),
+    ),
+    [{ family: 'apple-script' }],
   );
 });
 
