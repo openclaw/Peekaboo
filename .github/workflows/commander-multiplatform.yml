@@ -11,6 +11,9 @@ on:
       - '.github/workflows/commander-multiplatform.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   macos-host:
     runs-on: macos-26

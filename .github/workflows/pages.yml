@@ -7,6 +7,7 @@ on:
       - "docs/**"
       - "scripts/build-docs-site.mjs"
       - "scripts/docs-site-assets.mjs"
+      - "scripts/docs-site-toc.mjs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 

@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 concurrency:
   group: macos-ci-${{ github.ref }}
   cancel-in-progress: true
@@ -30,7 +33,9 @@ jobs:
           bun-version: "latest"
 
       - name: Docs lint
-        run: node scripts/docs-lint.mjs
+        run: |
+          node scripts/docs-lint.mjs
+          node --test tests/docs-site-toc.test.mjs
 
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |

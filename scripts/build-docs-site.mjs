@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { css, faviconSvg, js } from "./docs-site-assets.mjs";
+import { renderedHeadingText } from "./docs-site-toc.mjs";
 
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
@@ -482,10 +483,7 @@ function tocFromHtml(html) {
   const re = /<h([23]) id="([^"]+)">([\s\S]*?)<\/h[23]>/g;
   let m;
   while ((m = re.exec(html))) {
-    const text = m[3]
-      .replace(/<a class="anchor"[^>]*>.*?<\/a>/, "")
-      .replace(/<[^>]+>/g, "")
-      .trim();
+    const text = renderedHeadingText(m[3]);
     items.push({ level: Number(m[1]), id: m[2], text });
   }
   if (items.length < 2) return "";
