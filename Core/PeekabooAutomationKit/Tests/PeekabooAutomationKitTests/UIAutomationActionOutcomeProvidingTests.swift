@@ -673,12 +673,25 @@ private final class OutcomeActionInputDriver: ActionInputDriving {
 private struct FixedOutcomeAutomationElementResolver: AutomationElementResolving {
     private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
 
-    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
-        self.element
+    func resolve(
+        detectedElement _: DetectedElement,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier: pid_t?) -> AutomationElement?
+    {
+        targetProcessIdentifier.map {
+            AutomationElement(Element(AXUIElementCreateApplication($0)))
+        } ?? self.element
     }
 
-    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
-        self.element
+    func resolve(
+        query _: String,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier: pid_t?,
+        requireTextInput _: Bool) -> AutomationElement?
+    {
+        targetProcessIdentifier.map {
+            AutomationElement(Element(AXUIElementCreateApplication($0)))
+        } ?? self.element
     }
 }
 

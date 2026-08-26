@@ -183,15 +183,32 @@ actor UISnapshot {
             let incomingProcessIdentifier = context?.applicationProcessId
             let incomingWindowIdentity = context?.windowMutationIdentity
             let incomingFocusedElement = context?.focusedElement
-            let incomingReceipt = incomingWindowIdentity.map {
+            let incomingReceipt: ApplicationProcessIdentity? = if let incomingProcessIdentifier,
+                                                                  let processStartIdentity =
+                                                                  context?.applicationProcessStartIdentity
+            {
                 ApplicationProcessIdentity(
-                    processIdentifier: $0.ownerProcessIdentifier,
-                    processStartIdentity: $0.ownerProcessStartIdentity)
+                    processIdentifier: incomingProcessIdentifier,
+                    processStartIdentity: processStartIdentity)
+            } else {
+                incomingWindowIdentity.map {
+                    ApplicationProcessIdentity(
+                        processIdentifier: $0.ownerProcessIdentifier,
+                        processStartIdentity: $0.ownerProcessStartIdentity)
+                }
             }
             let effectiveIncomingProcessIdentifier = incomingProcessIdentifier ??
                 incomingWindowIdentity?.ownerProcessIdentifier
             let hasMalformedIncomingProcess = if let incomingProcessIdentifier, let incomingWindowIdentity {
                 incomingProcessIdentifier != incomingWindowIdentity.ownerProcessIdentifier
+            } else {
+                false
+            }
+            let hasMalformedIncomingGeneration = if let processStartIdentity =
+                context?.applicationProcessStartIdentity,
+                let incomingWindowIdentity
+            {
+                processStartIdentity != incomingWindowIdentity.ownerProcessStartIdentity
             } else {
                 false
             }
@@ -228,7 +245,7 @@ actor UISnapshot {
             } else {
                 false
             }
-            if hasMalformedIncomingProcess || hasMalformedIncomingWindow ||
+            if hasMalformedIncomingProcess || hasMalformedIncomingGeneration || hasMalformedIncomingWindow ||
                 hasMalformedIncomingFocus || hasPriorProcessConflict || hasPriorGenerationConflict ||
                 hasPriorWindowConflict
             {

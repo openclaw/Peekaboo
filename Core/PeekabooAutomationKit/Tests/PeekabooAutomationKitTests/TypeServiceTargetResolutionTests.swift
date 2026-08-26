@@ -590,12 +590,21 @@ private final class RecordingTypeAutomationElementResolver: AutomationElementRes
     private(set) var detectedResolutionCount = 0
     private(set) var queryResolutionCount = 0
 
-    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
+    func resolve(
+        detectedElement _: DetectedElement,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?) -> AutomationElement?
+    {
         self.detectedResolutionCount += 1
         return nil
     }
 
-    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
+    func resolve(
+        query _: String,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?,
+        requireTextInput _: Bool) -> AutomationElement?
+    {
         self.queryResolutionCount += 1
         return nil
     }

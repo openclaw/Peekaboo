@@ -46,21 +46,19 @@ protocol AutomationElementResolving: Sendable {
 }
 
 extension AutomationElementResolving {
-    func resolve(
-        detectedElement: DetectedElement,
-        windowContext: WindowContext?,
-        targetProcessIdentifier _: pid_t?) -> AutomationElement?
-    {
-        self.resolve(detectedElement: detectedElement, windowContext: windowContext)
+    func resolve(detectedElement: DetectedElement, windowContext: WindowContext?) -> AutomationElement? {
+        self.resolve(
+            detectedElement: detectedElement,
+            windowContext: windowContext,
+            targetProcessIdentifier: nil)
     }
 
-    func resolve(
-        query: String,
-        windowContext: WindowContext?,
-        targetProcessIdentifier _: pid_t?,
-        requireTextInput: Bool) -> AutomationElement?
-    {
-        self.resolve(query: query, windowContext: windowContext, requireTextInput: requireTextInput)
+    func resolve(query: String, windowContext: WindowContext?, requireTextInput: Bool) -> AutomationElement? {
+        self.resolve(
+            query: query,
+            windowContext: windowContext,
+            targetProcessIdentifier: nil,
+            requireTextInput: requireTextInput)
     }
 }
 
@@ -115,6 +113,14 @@ struct AutomationElementResolver: AutomationElementResolving {
     {
         self.windowRootResolver = windowRootResolver
         self.treeReader = treeReader
+    }
+
+    static func processIdentifier(of element: AutomationElement) -> pid_t? {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element.element.underlyingElement, &processIdentifier) == .success else {
+            return nil
+        }
+        return processIdentifier
     }
 
     func resolve(
@@ -281,7 +287,10 @@ struct AutomationElementResolver: AutomationElementResolving {
                     return AutomationElement(element)
                 }
 
-                if let score = scorer(element, descriptor), score > bestScore {
+                if self.matchesProcessIdentifier(element, targetProcessIdentifier),
+                   let score = scorer(element, descriptor),
+                   score > bestScore
+                {
                     best = element
                     bestScore = score
                 }
@@ -292,7 +301,7 @@ struct AutomationElementResolver: AutomationElementResolving {
             }
         }
 
-        guard let best, self.matchesProcessIdentifier(best, targetProcessIdentifier) else { return nil }
+        guard let best else { return nil }
         return AutomationElement(best)
     }
 

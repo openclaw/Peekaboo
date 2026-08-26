@@ -510,7 +510,14 @@ enum BridgeCapabilityPolicy {
     }
 
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
-        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 3) &&
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations
+            ) == true &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.setValueResultTargetBinding
+            ) == true &&
             handshake.supportedOperations.contains(.setValue) &&
             handshake.supportedOperations.contains(.performAction)
     }

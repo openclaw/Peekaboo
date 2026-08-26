@@ -160,7 +160,9 @@ extension PasteCommandTests {
         #expect(payload.outcome?.deliveryMode == .background)
         #expect(payload.outcome?.mutationDispatched == true)
         #expect(payload.outcome?.retrySafe == false)
-        #expect(payload.target_receipt == nil)
+        #expect(payload.target_receipt?.processIdentifier == 2468)
+        #expect(payload.target_receipt?.processStartIdentity == 71)
+        #expect(payload.target_receipt?.windowID == 901)
     }
 
     @Test

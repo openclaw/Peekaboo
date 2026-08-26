@@ -1487,11 +1487,20 @@ private final class ClickFixedAutomationElementResolver: AutomationElementResolv
 
 @MainActor
 private struct ClickMissingAutomationElementResolver: AutomationElementResolving {
-    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
+    func resolve(
+        detectedElement _: DetectedElement,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?) -> AutomationElement?
+    {
         nil
     }
 
-    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
+    func resolve(
+        query _: String,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?,
+        requireTextInput _: Bool) -> AutomationElement?
+    {
         nil
     }
 }

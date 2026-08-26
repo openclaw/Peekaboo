@@ -302,7 +302,7 @@ struct ScrollServiceTargetResolutionTests {
             snapshotManager: InMemorySnapshotManager(),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst))
 
-        do {
+        let failure = await #expect(throws: DesktopActionFailure.self) {
             try await service.scroll(ScrollRequest(
                 direction: .down,
                 amount: 1,
@@ -310,12 +310,10 @@ struct ScrollServiceTargetResolutionTests {
                 smooth: false,
                 delay: 0,
                 snapshotId: SnapshotReferenceFixtures.first.rawValue))
-            Issue.record("Expected stale element error for missing action snapshot.")
-        } catch let error as PeekabooError {
-            #expect(error.localizedDescription.contains("snapshot"))
-        } catch {
-            Issue.record("Unexpected error: \(error)")
         }
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.message.lowercased().contains("snapshot") == true)
     }
 
     @Test
@@ -507,10 +505,12 @@ struct ScrollServiceTargetResolutionTests {
             syntheticInputDriver: synthetic,
             automationElementResolver: ScrollFixedAutomationElementResolver())
 
-        let error = await #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+        let failure = await #expect(throws: DesktopActionFailure.self) {
             _ = try await service.scroll(Self.backgroundRequest())
         }
-        #expect(error?.receiptError == .missingProcessGeneration)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.causeDescription == DesktopTargetIdentityError.missingProcessGeneration.localizedDescription)
         #expect(action.scrollCalls.isEmpty)
         #expect(synthetic.events.isEmpty)
     }
@@ -530,10 +530,12 @@ struct ScrollServiceTargetResolutionTests {
             exactWindowIdentityValidator: { _, _ in true },
             processStartIdentityProvider: { _ in 11 })
 
-        let error = await #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+        let failure = await #expect(throws: DesktopActionFailure.self) {
             _ = try await service.scroll(Self.backgroundRequest())
         }
-        #expect(error?.receiptError == .contradictoryWindowBounds)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.causeDescription == DesktopTargetIdentityError.contradictoryWindowBounds.localizedDescription)
         #expect(action.scrollCalls.isEmpty)
     }
 
@@ -586,9 +588,11 @@ struct ScrollServiceTargetResolutionTests {
             exactWindowIdentityValidator: { _, _ in true },
             processStartIdentityProvider: { _ in generation.value })
 
-        await #expect(throws: PeekabooError.self) {
+        let failure = await #expect(throws: DesktopActionFailure.self) {
             _ = try await service.scroll(Self.backgroundRequest())
         }
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.standardErrorCode == .snapshotStale)
         #expect(action.scrollCalls.isEmpty)
     }
 
@@ -607,9 +611,11 @@ struct ScrollServiceTargetResolutionTests {
             exactWindowIdentityValidator: { _, _ in windowIsCurrent.value },
             processStartIdentityProvider: { _ in 11 })
 
-        await #expect(throws: PeekabooError.self) {
+        let failure = await #expect(throws: DesktopActionFailure.self) {
             _ = try await service.scroll(Self.backgroundRequest())
         }
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.standardErrorCode == .snapshotStale)
         #expect(action.scrollCalls.isEmpty)
     }
 
@@ -716,12 +722,21 @@ private final class ScrollFixedAutomationElementResolver: AutomationElementResol
         self.afterResolve = afterResolve
     }
 
-    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
+    func resolve(
+        detectedElement _: DetectedElement,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?) -> AutomationElement?
+    {
         self.afterResolve()
         return self.element
     }
 
-    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
+    func resolve(
+        query _: String,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?,
+        requireTextInput _: Bool) -> AutomationElement?
+    {
         self.element
     }
 }

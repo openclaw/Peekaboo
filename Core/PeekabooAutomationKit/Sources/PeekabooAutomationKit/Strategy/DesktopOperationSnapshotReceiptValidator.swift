@@ -18,14 +18,11 @@ enum DesktopOperationSnapshotReceiptValidator {
         -> DesktopOperationPlan.CaptureReceipt
     {
         guard let detectionResult else {
-            guard !requireExactWindow else {
-                throw PeekabooError.snapshotStale("background mutation requires a fresh exact-window snapshot")
-            }
-            throw PeekabooError.snapshotStale(
-                "background mutation requires a fresh process-targeted snapshot")
+            let scope = requireExactWindow ? "exact-window" : "process-targeted"
+            throw self.preDispatchFailure("Background mutation requires a fresh \(scope) snapshot.")
         }
         guard detectionResult.snapshotId == snapshotID else {
-            throw PeekabooError.snapshotStale("snapshot identity changed before desktop mutation planning")
+            throw self.preDispatchFailure("Snapshot identity changed before desktop mutation planning.")
         }
         let captureReceipt: DesktopOperationPlan.CaptureReceipt
         do {
@@ -42,23 +39,22 @@ enum DesktopOperationSnapshotReceiptValidator {
             }
             captureReceipt = try DesktopOperationPlan.CaptureReceipt(snapshotReceipt: receiptPlan.receipt)
         } catch let error as DesktopTargetIdentityError {
-            throw SnapshotTargetReceiptPreDispatchError(error)
+            throw SnapshotTargetReceiptPreDispatchError(error).actionFailure
         }
         if requireExactWindow, captureReceipt.exactWindow == nil {
-            throw SnapshotTargetReceiptPreDispatchError(.incompleteExactWindow)
+            throw SnapshotTargetReceiptPreDispatchError(.incompleteExactWindow).actionFailure
         }
         guard let processIdentity = captureReceipt.processIdentity,
               processStartIdentityProvider(processIdentity.processIdentifier) ==
               processIdentity.processStartIdentity
         else {
-            throw PeekabooError.snapshotStale(
-                "target process generation changed before desktop mutation")
+            throw self.preDispatchFailure("Target process generation changed before desktop mutation.")
         }
         if let exactWindow = captureReceipt.exactWindow,
            !exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds)
         {
-            throw PeekabooError.snapshotStale(
-                "target window owner, process generation, or bounds changed before desktop mutation")
+            throw self.preDispatchFailure(
+                "Target window owner, process generation, or bounds changed before desktop mutation.")
         }
         return captureReceipt
     }
@@ -70,7 +66,7 @@ enum DesktopOperationSnapshotReceiptValidator {
         exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool) throws
     {
         guard detectionResult?.snapshotId == receipt.snapshotID else {
-            throw PeekabooError.snapshotStale("target snapshot changed before desktop mutation dispatch")
+            throw self.preDispatchFailure("Target snapshot changed before desktop mutation dispatch.")
         }
         try self.validate(
             context: detectionResult?.metadata.windowContext,
@@ -92,7 +88,7 @@ enum DesktopOperationSnapshotReceiptValidator {
         guard let context,
               DesktopTargetEvidenceAdapter.evidence(context: context).processIdentity == expectedProcessIdentity
         else {
-            throw PeekabooError.snapshotStale("target process generation changed before desktop mutation dispatch")
+            throw self.preDispatchFailure("Target process generation changed before desktop mutation dispatch.")
         }
         if let exactWindow = receipt.exactWindow {
             let expectedWindowIdentity = exactWindow.identity
@@ -101,8 +97,8 @@ enum DesktopOperationSnapshotReceiptValidator {
                   let resolvedWindowIdentity = context.windowMutationIdentity,
                   resolvedWindowIdentity.hasSameStableReceipt(as: expectedWindowIdentity)
             else {
-                throw PeekabooError.snapshotStale(
-                    "target window owner, process generation, or bounds changed before desktop mutation dispatch")
+                throw self.preDispatchFailure(
+                    "Target window owner, process generation, or bounds changed before desktop mutation dispatch.")
             }
         }
         if validateCurrentIdentity,
@@ -111,9 +107,17 @@ enum DesktopOperationSnapshotReceiptValidator {
                processStartIdentityProvider: processStartIdentityProvider,
                exactWindowIdentityValidator: exactWindowIdentityValidator) != nil
         {
-            throw PeekabooError.snapshotStale(
-                "target window owner, process generation, or bounds changed before desktop mutation dispatch")
+            throw self.preDispatchFailure(
+                "Target window owner, process generation, or bounds changed before desktop mutation dispatch.")
         }
+    }
+
+    private static func preDispatchFailure(_ message: String) -> DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: message,
+            hint: "Run 'peekaboo see' again and retry with its fresh target snapshot.",
+            standardErrorCode: .snapshotStale)
     }
 
     static func currentIdentityMismatch(

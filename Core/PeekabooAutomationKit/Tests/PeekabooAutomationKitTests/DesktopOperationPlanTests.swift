@@ -126,7 +126,7 @@ struct DesktopOperationPlanTests {
         let detectionResult = AutomationTestFixtures.detectionResult(
             windowContext: WindowContext(applicationProcessId: 321))
 
-        let error = #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+        let failure = #expect(throws: DesktopActionFailure.self) {
             _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
                 snapshotID: detectionResult.snapshotId,
                 detectionResult: detectionResult,
@@ -138,7 +138,10 @@ struct DesktopOperationPlanTests {
                 exactWindowIdentityValidator: { _, _ in false })
         }
 
-        #expect(error?.receiptError == .missingProcessGeneration)
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.causeDescription == DesktopTargetIdentityError.missingProcessGeneration.localizedDescription)
     }
 
     @Test
@@ -151,7 +154,7 @@ struct DesktopOperationPlanTests {
                 applicationProcessId: processIdentity.processIdentifier,
                 applicationProcessStartIdentity: processIdentity.processStartIdentity))
 
-        #expect(throws: (any Error).self) {
+        let failure = #expect(throws: DesktopActionFailure.self) {
             _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
                 snapshotID: detectionResult.snapshotId,
                 detectionResult: detectionResult,
@@ -159,6 +162,8 @@ struct DesktopOperationPlanTests {
                 processStartIdentityProvider: { _ in processIdentity.processStartIdentity + 1 },
                 exactWindowIdentityValidator: { _, _ in false })
         }
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.standardErrorCode == .snapshotStale)
     }
 
     @Test
@@ -178,7 +183,7 @@ struct DesktopOperationPlanTests {
             applicationProcessStartIdentity: processIdentity.processStartIdentity)
 
         for context in [reusedPID, substitutedProcess] {
-            #expect(throws: (any Error).self) {
+            let failure = #expect(throws: DesktopActionFailure.self) {
                 try DesktopOperationSnapshotReceiptValidator.validate(
                     context: context,
                     receipt: receipt,
@@ -186,6 +191,8 @@ struct DesktopOperationPlanTests {
                     processStartIdentityProvider: { _ in processIdentity.processStartIdentity },
                     exactWindowIdentityValidator: { _, _ in false })
             }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .snapshotStale)
         }
     }
 
@@ -242,7 +249,7 @@ struct DesktopOperationPlanTests {
                 windowBounds: bounds,
                 windowMutationIdentity: identity))
 
-        let error = #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+        let failure = #expect(throws: DesktopActionFailure.self) {
             _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
                 snapshotID: detectionResult.snapshotId,
                 detectionResult: detectionResult,
@@ -257,8 +264,9 @@ struct DesktopOperationPlanTests {
                 })
         }
 
-        #expect(error?.receiptError == .incompleteExactWindow)
-        #expect(error?.localizedDescription.contains("immutable captured bounds") == true)
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.causeDescription == DesktopTargetIdentityError.incompleteExactWindow.localizedDescription)
+        #expect(failure?.localizedDescription.contains("immutable captured bounds") == true)
     }
 
     @Test
@@ -275,7 +283,7 @@ struct DesktopOperationPlanTests {
                 windowBounds: capturedBounds.offsetBy(dx: 1, dy: 0),
                 windowMutationIdentity: identity))
 
-        let error = #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+        let failure = #expect(throws: DesktopActionFailure.self) {
             _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
                 snapshotID: detectionResult.snapshotId,
                 detectionResult: detectionResult,
@@ -284,7 +292,8 @@ struct DesktopOperationPlanTests {
                 exactWindowIdentityValidator: { _, _ in true })
         }
 
-        #expect(error?.receiptError == .contradictoryWindowBounds)
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.causeDescription == DesktopTargetIdentityError.contradictoryWindowBounds.localizedDescription)
     }
 
     @Test
@@ -309,8 +318,11 @@ struct DesktopOperationPlanTests {
                 processStartIdentityProvider: { _ in process.processStartIdentity + 1 },
                 exactWindowIdentityValidator: { _, _ in true })
             Issue.record("Expected live process drift to remain a stale-snapshot failure")
-        } catch let PeekabooError.snapshotStale(reason) {
-            #expect(reason.contains("process generation"))
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.standardErrorCode == .snapshotStale)
+            #expect(failure.message.lowercased().contains("process generation"))
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

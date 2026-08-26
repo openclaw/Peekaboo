@@ -849,6 +849,7 @@ extension TargetedClickServiceProtocol {
 @MainActor
 public protocol ElementActionAutomationServiceProtocol: UIAutomationServiceProtocol {
     var supportsSetValueResultTargetBinding: Bool { get }
+    var supportsProcessGenerationBoundElementMutations: Bool { get }
 
     func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws -> ElementActionResult
     func performAction(target: String, actionName: String, snapshotId: String?) async throws -> ElementActionResult
@@ -856,6 +857,10 @@ public protocol ElementActionAutomationServiceProtocol: UIAutomationServiceProto
 
 extension ElementActionAutomationServiceProtocol {
     public var supportsSetValueResultTargetBinding: Bool {
+        false
+    }
+
+    public var supportsProcessGenerationBoundElementMutations: Bool {
         false
     }
 }

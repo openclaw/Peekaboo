@@ -193,7 +193,12 @@ struct BridgeStatusReportHintTests {
                 accessibility: false,
                 appleScript: false,
                 postEvent: true
-            )
+            ),
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.setValueResultTargetBinding,
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+            ]
         )
         let permissionEvaluation = await RuntimeHostResolver.evaluateRemoteCandidate(
             candidate,

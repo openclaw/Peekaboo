@@ -61,6 +61,10 @@ reusable snapshot; an older 1.34 host is not treated as capable from its version
 separately gates the verified `AXFocused` write used when a background click focuses a text field. Ordinary `AXPress`
 does not depend on that value-delivery capability.
 
+Bridge protocol 1.37 separately gates generation-bound element mutations. `action` and `set-value` require the host to
+attest one snapshot process generation, resolve the final AX element from that process, and return the same canonical
+target with the outcome. Older or receiptless hosts are rejected before dispatch.
+
 Examples:
 
 ```bash

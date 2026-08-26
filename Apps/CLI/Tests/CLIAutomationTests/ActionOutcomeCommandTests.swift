@@ -114,6 +114,9 @@ struct ActionOutcomeCommandTests {
             context.automation.actionOutcome = outcome
             var arguments = testCase.arguments
             if ["action", "set-value"].contains(arguments[0]) {
+                context.automation.actionOutcomeTargetIdentity = try DesktopTargetIdentity(
+                    processIdentity: .init(processIdentifier: 12345, processStartIdentity: 7)
+                )
                 arguments += ["--snapshot", snapshotID]
             }
 
@@ -1218,34 +1221,6 @@ struct ActionOutcomeCommandTests {
         #expect(automation.outcomeHotkeyCallCount == 2)
     }
 
-    private static func storeElementSnapshot(in snapshots: StubSnapshotManager) async throws -> String {
-        let snapshotID = try await snapshots.createSnapshot()
-        let element = DetectedElement(
-            id: "B1",
-            type: .button,
-            label: "Fixture",
-            value: "before",
-            bounds: CGRect(x: 10, y: 10, width: 100, height: 40),
-            isEnabled: true,
-            isSelected: nil,
-            attributes: [:]
-        )
-        try await snapshots.storeDetectionResult(
-            snapshotId: snapshotID,
-            result: ElementDetectionResult(
-                snapshotId: snapshotID,
-                screenshotPath: "/tmp/fixture.png",
-                elements: DetectedElements(buttons: [element]),
-                metadata: DetectionMetadata(
-                    detectionTime: 0,
-                    elementCount: 1,
-                    method: "fixture"
-                )
-            )
-        )
-        return snapshotID
-    }
-
     static func storeExactWindowElementSnapshot(in snapshots: StubSnapshotManager) async throws -> String {
         let snapshotID = try await snapshots.createSnapshot()
         let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
@@ -1307,6 +1282,40 @@ struct ActionOutcomeCommandTests {
         let services: PeekabooServices
         let automation: OutcomeStubAutomationService
         let snapshots: StubSnapshotManager
+    }
+}
+
+extension ActionOutcomeCommandTests {
+    fileprivate static func storeElementSnapshot(in snapshots: StubSnapshotManager) async throws -> String {
+        let snapshotID = try await snapshots.createSnapshot()
+        let element = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Fixture",
+            value: "before",
+            bounds: CGRect(x: 10, y: 10, width: 100, height: 40),
+            isEnabled: true,
+            isSelected: nil,
+            attributes: [:]
+        )
+        try await snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/fixture.png",
+                elements: DetectedElements(buttons: [element]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 1,
+                    method: "fixture",
+                    windowContext: WindowContext(
+                        applicationProcessId: 12345,
+                        applicationProcessStartIdentity: 7
+                    )
+                )
+            )
+        )
+        return snapshotID
     }
 }
 

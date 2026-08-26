@@ -383,6 +383,7 @@ public enum PeekabooBridgeHostCapability {
     public static let nativeBrowserConnectionBinding = "nativeBrowserConnectionBinding"
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
+    public static let processGenerationBoundElementMutations = "processGenerationBoundElementMutations"
     public static let exactDialogInputExecution = "exactDialogInputExecution"
     public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"

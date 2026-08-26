@@ -549,18 +549,16 @@ struct ActionInputDriverTests {
                 Issue.record("Snapshotless element action reached target resolution")
             })
 
-        do {
-            _ = try await service.setValue(target: "Delete", value: .string("yes"), snapshotId: nil)
-            Issue.record("Expected snapshotless setValue to fail")
-        } catch let PeekabooError.snapshotNotAvailable(message) {
-            #expect(message.contains("require a current UI snapshot"))
-        }
-
-        do {
-            _ = try await service.performAction(target: "Delete", actionName: "AXPress", snapshotId: nil)
-            Issue.record("Expected snapshotless performAction to fail")
-        } catch let PeekabooError.snapshotNotAvailable(message) {
-            #expect(message.contains("require a current UI snapshot"))
+        for operation in [
+            { try await service.setValue(target: "Delete", value: .string("yes"), snapshotId: nil) },
+            { try await service.performAction(target: "Delete", actionName: "AXPress", snapshotId: nil) },
+        ] {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await operation()
+            }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .snapshotNotFound)
+            #expect(failure?.message.contains("require a current UI snapshot") == true)
         }
     }
 
@@ -573,15 +571,14 @@ struct ActionInputDriverTests {
             actionInputDriver: RecordingActionInputDriver(),
             automationElementResolver: AutomationElementResolver())
 
-        do {
-            _ = try await service.setValue(target: "Delete", value: .string("yes"), snapshotId: "missing-snapshot")
-            Issue.record("Expected missing explicit snapshot to fail")
-        } catch let error as PeekabooError {
-            if case .snapshotNotFound("missing-snapshot") = error {
-                return
-            }
-            Issue.record("Expected snapshotNotFound('missing-snapshot'), got \(error)")
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await service.setValue(
+                target: "Delete",
+                value: .string("yes"),
+                snapshotId: "missing-snapshot")
         }
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.standardErrorCode == .snapshotNotFound)
     }
 
     @MainActor
@@ -612,18 +609,16 @@ struct ActionInputDriverTests {
             automationElementResolver: FixedActionAutomationElementResolver(),
             processStartIdentityProvider: { _ in processStartIdentity })
 
-        do {
-            _ = try await service.setValue(target: "B1", value: .string("hello"), snapshotId: snapshotID)
-            Issue.record("Expected stale snapshot error from setValue")
-        } catch let PeekabooError.snapshotStale(reason) {
-            #expect(reason.contains("no longer available"))
-        }
-
-        do {
-            _ = try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: snapshotID)
-            Issue.record("Expected stale snapshot error from performAction")
-        } catch let PeekabooError.snapshotStale(reason) {
-            #expect(reason.contains("no longer available"))
+        for operation in [
+            { try await service.setValue(target: "B1", value: .string("hello"), snapshotId: snapshotID) },
+            { try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: snapshotID) },
+        ] {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await operation()
+            }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .snapshotStale)
+            #expect(failure?.message.contains("no longer available") == true)
         }
     }
 
@@ -666,23 +661,80 @@ struct ActionInputDriverTests {
             liveGeneration: process.processStartIdentity + 1)
 
         for automation in [missingGeneration, reusedPID] {
-            await #expect(throws: (any Error).self) {
+            let setFailure = await #expect(throws: DesktopActionFailure.self) {
                 _ = try await automation.setValue(
                     target: "T1",
                     value: .string("new"),
                     snapshotId: snapshotID)
             }
-            await #expect(throws: (any Error).self) {
+            let actionFailure = await #expect(throws: DesktopActionFailure.self) {
                 _ = try await automation.performAction(
                     target: "T1",
                     actionName: "AXPress",
                     snapshotId: snapshotID)
             }
+            #expect(setFailure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(setFailure?.standardErrorCode == .snapshotStale)
+            #expect(actionFailure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(actionFailure?.standardErrorCode == .snapshotStale)
         }
 
         #expect(resolutions == 0)
         #expect(driver.setValueCallCount == 0)
         #expect(driver.performActionCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func `process scoped element mutations revalidate generation at the driver boundary`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.first.rawValue
+        let process = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 77)
+        let detected = DetectedElement(
+            id: "T1",
+            type: .textField,
+            label: "Value",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            snapshotID: snapshotID,
+            elements: DetectedElements(textFields: [detected]),
+            windowContext: WindowContext(
+                applicationProcessId: process.processIdentifier,
+                applicationProcessStartIdentity: process.processStartIdentity))
+
+        for invoke in [
+            { (service: UIAutomationService) in
+                try await service.setValue(target: "T1", value: .string("new"), snapshotId: snapshotID)
+            },
+            { (service: UIAutomationService) in
+                try await service.performAction(target: "T1", actionName: "AXPress", snapshotId: snapshotID)
+            },
+        ] {
+            let generations = ProcessGenerationReadSequence([
+                process.processStartIdentity,
+                process.processStartIdentity,
+                process.processStartIdentity + 1,
+            ])
+            let driver = RecordingActionInputDriver(allowsElementActions: true)
+            var resolutions = 0
+            let service = try await UIAutomationService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
+                inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+                actionInputDriver: driver,
+                automationElementResolver: FixedActionAutomationElementResolver {
+                    resolutions += 1
+                },
+                processStartIdentityProvider: { _ in generations.next() })
+
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await invoke(service)
+            }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .snapshotStale)
+            #expect(resolutions == 1)
+            #expect(generations.readCount >= 3)
+            #expect(driver.setValueCallCount == 0)
+            #expect(driver.performActionCallCount == 0)
+        }
     }
 
     @MainActor
@@ -720,6 +772,48 @@ struct ActionInputDriverTests {
         #expect(result.targetIdentity?.exactWindow == nil)
         #expect(result.actionTargetReceipt == process.actionTargetReceipt)
         #expect(driver.performActionCallCount == 1)
+    }
+
+    @MainActor
+    @Test
+    func `process scoped element mutations reject a foreign resolved AX element before dispatch`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.third.rawValue
+        let process = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 79)
+        let detected = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            snapshotID: snapshotID,
+            elements: DetectedElements(buttons: [detected]),
+            windowContext: WindowContext(
+                applicationProcessId: process.processIdentifier,
+                applicationProcessStartIdentity: process.processStartIdentity))
+        let resolver = CrossProcessActionAutomationElementResolver(
+            returnedProcessIdentifier: process.processIdentifier + 1)
+        let driver = RecordingActionInputDriver(allowsElementActions: true)
+        let service = try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: driver,
+            automationElementResolver: resolver,
+            processStartIdentityProvider: { _ in process.processStartIdentity })
+
+        for operation in [
+            { try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: snapshotID) },
+            { try await service.setValue(target: "B1", value: .string("new"), snapshotId: snapshotID) },
+        ] {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await operation()
+            }
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .snapshotStale)
+        }
+        #expect(resolver.targetProcessIdentifiers == [process.processIdentifier, process.processIdentifier])
+        #expect(driver.performActionCallCount == 0)
+        #expect(driver.setValueCallCount == 0)
     }
 
     @MainActor
@@ -864,18 +958,16 @@ struct ActionInputDriverTests {
             currentGeneration: { _ in process.processStartIdentity + 1 },
             onResolve: { Issue.record("Stale element mutation reached target resolution") })
 
-        do {
-            _ = try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: snapshotID)
-            Issue.record("Expected reused process generation to refuse action")
-        } catch let PeekabooError.snapshotStale(reason) {
-            #expect(reason.contains("process generation"))
-        }
-
-        do {
-            _ = try await service.setValue(target: "B1", value: .string("new"), snapshotId: snapshotID)
-            Issue.record("Expected reused process generation to refuse set-value")
-        } catch let PeekabooError.snapshotStale(reason) {
-            #expect(reason.contains("process generation"))
+        for operation in [
+            { try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: snapshotID) },
+            { try await service.setValue(target: "B1", value: .string("new"), snapshotId: snapshotID) },
+        ] {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await operation()
+            }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .snapshotStale)
+            #expect(failure?.message.lowercased().contains("process generation") == true)
         }
     }
 
@@ -1420,6 +1512,28 @@ private final class RecordingActionInputDriver: ActionInputDriving {
     }
 }
 
+private final class ProcessGenerationReadSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UInt64]
+    private var reads = 0
+
+    init(_ values: [UInt64]) {
+        self.values = values
+    }
+
+    var readCount: Int {
+        self.lock.withLock { self.reads }
+    }
+
+    func next() -> UInt64? {
+        self.lock.withLock {
+            self.reads += 1
+            guard !self.values.isEmpty else { return nil }
+            return self.values.removeFirst()
+        }
+    }
+}
+
 @MainActor
 private final class FixedActionAutomationElementResolver: AutomationElementResolving {
     private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
@@ -1437,10 +1551,12 @@ private final class FixedActionAutomationElementResolver: AutomationElementResol
     func resolve(
         detectedElement _: DetectedElement,
         windowContext _: WindowContext?,
-        targetProcessIdentifier _: pid_t?) -> AutomationElement?
+        targetProcessIdentifier: pid_t?) -> AutomationElement?
     {
         self.onResolve()
-        return self.element
+        return targetProcessIdentifier.map {
+            AutomationElement(Element(AXUIElementCreateApplication($0)))
+        } ?? self.element
     }
 
     func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
@@ -1451,11 +1567,41 @@ private final class FixedActionAutomationElementResolver: AutomationElementResol
     func resolve(
         query _: String,
         windowContext _: WindowContext?,
-        targetProcessIdentifier _: pid_t?,
+        targetProcessIdentifier: pid_t?,
         requireTextInput _: Bool) -> AutomationElement?
     {
         self.onResolve()
-        return self.element
+        return targetProcessIdentifier.map {
+            AutomationElement(Element(AXUIElementCreateApplication($0)))
+        } ?? self.element
+    }
+}
+
+@MainActor
+private final class CrossProcessActionAutomationElementResolver: AutomationElementResolving {
+    private let returnedProcessIdentifier: pid_t
+    private(set) var targetProcessIdentifiers: [pid_t?] = []
+
+    init(returnedProcessIdentifier: pid_t) {
+        self.returnedProcessIdentifier = returnedProcessIdentifier
+    }
+
+    func resolve(
+        detectedElement _: DetectedElement,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier: pid_t?) -> AutomationElement?
+    {
+        self.targetProcessIdentifiers.append(targetProcessIdentifier)
+        return AutomationElement(Element(AXUIElementCreateApplication(self.returnedProcessIdentifier)))
+    }
+
+    func resolve(
+        query _: String,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?,
+        requireTextInput _: Bool) -> AutomationElement?
+    {
+        nil
     }
 }
 

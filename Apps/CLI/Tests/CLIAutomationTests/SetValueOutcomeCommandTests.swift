@@ -108,7 +108,115 @@ struct SetValueOutcomeCommandTests {
         #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
     }
 
+    @Test
+    func `element action commands refuse receiptless legacy providers before dispatch`() async throws {
+        for arguments in [
+            ["set-value", "updated", "--on", "elem_3"],
+            ["action", "AXIncrement", "--on", "elem_3"],
+        ] {
+            let automation = CapabilityClaimingLegacyAutomationService()
+            let snapshots = StubSnapshotManager()
+            let services = TestServicesFactory.makePeekabooServices(
+                snapshots: snapshots,
+                automation: automation
+            )
+            let snapshotID = try await ActionOutcomeCommandTests.storeExactWindowElementSnapshot(in: snapshots)
+            let result = try await InProcessCommandRunner.run(
+                arguments + ["--snapshot", snapshotID, "--json", "--no-remote"],
+                services: services
+            )
+            let object = try Self.jsonObject(result.stdout)
+            let outcome = try #require(object["outcome"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(outcome["state"] as? String == "refused")
+            #expect(outcome["refusal_reason"] as? String == "runtime_incompatible")
+            #expect(outcome["mutation_dispatched"] as? Bool == false)
+            #expect(outcome["retry_safe"] as? Bool == true)
+            #expect(automation.setValueCalls.isEmpty)
+            #expect(automation.performActionCalls.isEmpty)
+            #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
+        }
+    }
+
+    @Test
+    func `element action commands reject targetless confirmed results and invalidate the snapshot`() async throws {
+        for arguments in [
+            ["set-value", "updated", "--on", "elem_3"],
+            ["action", "AXIncrement", "--on", "elem_3"],
+        ] {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .confirmedNoChange()
+            automation.actionOutcomeTargetIdentity = nil
+            let snapshots = StubSnapshotManager()
+            let services = TestServicesFactory.makePeekabooServices(
+                snapshots: snapshots,
+                automation: automation
+            )
+            let snapshotID = try await ActionOutcomeCommandTests.storeExactWindowElementSnapshot(in: snapshots)
+            let result = try await InProcessCommandRunner.run(
+                arguments + ["--snapshot", snapshotID, "--json", "--no-remote"],
+                services: services
+            )
+            let object = try Self.jsonObject(result.stdout)
+            let outcome = try #require(object["outcome"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(outcome["state"] as? String == "indeterminate")
+            #expect(outcome["mutation_dispatched"] as? Bool == true)
+            #expect(outcome["retry_safe"] as? Bool == false)
+            #expect(outcome["requires_fresh_observation"] as? Bool == true)
+            #expect(object["target_identity"] == nil)
+            let receipt = try #require(object["target_receipt"] as? [String: Any])
+            #expect(receipt["pid"] as? Int == 12345)
+            #expect(receipt["process_start_identity_decimal"] as? String == "7")
+        }
+    }
+
+    @Test
+    func `element action commands reject results from another process generation`() async throws {
+        for arguments in [
+            ["set-value", "updated", "--on", "elem_3"],
+            ["action", "AXIncrement", "--on", "elem_3"],
+        ] {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .confirmedNoChange()
+            automation.actionOutcomeTargetIdentity = try DesktopTargetIdentity(
+                processIdentity: .init(processIdentifier: 54321, processStartIdentity: 8)
+            )
+            let snapshots = StubSnapshotManager()
+            let services = TestServicesFactory.makePeekabooServices(
+                snapshots: snapshots,
+                automation: automation
+            )
+            let snapshotID = try await ActionOutcomeCommandTests.storeExactWindowElementSnapshot(in: snapshots)
+            let result = try await InProcessCommandRunner.run(
+                arguments + ["--snapshot", snapshotID, "--json", "--no-remote"],
+                services: services
+            )
+            let object = try Self.jsonObject(result.stdout)
+            let outcome = try #require(object["outcome"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(outcome["state"] as? String == "indeterminate")
+            #expect(outcome["mutation_dispatched"] as? Bool == true)
+            #expect(outcome["retry_safe"] as? Bool == false)
+            #expect(outcome["requires_fresh_observation"] as? Bool == true)
+            #expect(object["target_identity"] == nil)
+            let receipt = try #require(object["target_receipt"] as? [String: Any])
+            #expect(receipt["pid"] as? Int == 12345)
+            #expect(receipt["process_start_identity_decimal"] as? String == "7")
+        }
+    }
+
     private static func jsonObject(_ output: String) throws -> [String: Any] {
         try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+    }
+}
+
+@MainActor
+private final class CapabilityClaimingLegacyAutomationService: StubAutomationService {
+    override var supportsProcessGenerationBoundElementMutations: Bool {
+        true
     }
 }

@@ -321,7 +321,14 @@ retry-unsafe result rather than a speculative retry.
 Window and frontmost capture receipts bind the exact process/window identity returned by capture metadata; a missing
 target or a window ID that contradicts the request is rejected. Screen and area captures remain targetless global reads.
 
-Protocol `1.34` remains the wire version for three independent capabilities:
+Protocol `1.37` adds `processGenerationBoundElementMutations`. Current clients require this capability, attested
+operation receipts, and the existing `setValueResultTargetBinding` contract before sending `setValue` or
+`performAction`. The host binds the snapshot receipt, final resolved AX element PID, canonical outcome, and returned
+target to one process generation. All pre-1.37 hosts, including protocol 1.32–1.36, and receiptless providers are refused
+before the request is written; a claimed success without its process-generation target is treated as indeterminate and
+retry-unsafe.
+
+Protocol `1.34` introduced three independent capabilities:
 
 - `nativeBrowserConnectionBinding` authenticates native Chrome channel ownership.
 - `producerBoundSnapshotReferences` enables canonical snapshot creation plus the read-only `ownsSnapshot` ownership

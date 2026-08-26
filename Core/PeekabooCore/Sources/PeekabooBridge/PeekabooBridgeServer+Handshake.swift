@@ -221,6 +221,17 @@ extension PeekabooBridgeServer {
         {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.setValueResultTargetBinding)
         }
+        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .performAction]
+        if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
+            !(self.services.automation is any UIAutomationActionOutcomeProviding) ||
+            (self.services.automation as? any ElementActionAutomationServiceProtocol)?
+            .supportsProcessGenerationBoundElementMutations != true ||
+            elementMutationOperations.isDisjoint(with: advertisedOps)
+        {
+            advertisedCapabilities.remove(
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
+        }
         if !supportsAttestedOperationReceipts ||
             negotiated < PeekabooBridgeConstants.composedInputParityVersion ||
             !self.services.snapshots.supportsSnapshotMutationLeases ||
@@ -279,7 +290,9 @@ extension PeekabooBridgeServer {
                         requestPinnedExactWindowScrollReceipt: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt),
                         compositeTypeDelivery: advertisedCapabilities.contains(
-                            PeekabooBridgeHostCapability.compositeTypeDelivery)),
+                            PeekabooBridgeHostCapability.compositeTypeDelivery),
+                        processGenerationBoundElementMutations: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.processGenerationBoundElementMutations)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {

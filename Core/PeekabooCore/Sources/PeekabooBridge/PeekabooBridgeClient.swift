@@ -59,6 +59,7 @@ public actor PeekabooBridgeClient {
     var processGenerationObservationEnabled = false
     var certificationProducerAttestationEnabled = false
     var setValueResultTargetBindingEnabled = false
+    var processGenerationBoundElementMutationsEnabled = false
     var foregroundModifierClickSnapshotLeaseEnabled = false
     var nativeBrowserConnectionBindingEnabled = false
     var producerBoundSnapshotReferencesEnabled = false
@@ -455,6 +456,7 @@ public actor PeekabooBridgeClient {
         self.processGenerationObservationEnabled = false
         self.certificationProducerAttestationEnabled = false
         self.setValueResultTargetBindingEnabled = false
+        self.processGenerationBoundElementMutationsEnabled = false
         self.foregroundModifierClickSnapshotLeaseEnabled = false
         self.nativeBrowserConnectionBindingEnabled = false
         self.producerBoundSnapshotReferencesEnabled = false
@@ -900,6 +902,8 @@ public actor PeekabooBridgeClient {
             processGenerationObservationEnabled: Self.supportsProcessGenerationObservation(handshake),
             certificationProducerAttestationEnabled: Self.supportsCertificationProducerAttestation(handshake),
             setValueResultTargetBindingEnabled: Self.supportsSetValueResultTargetBinding(handshake),
+            processGenerationBoundElementMutationsEnabled:
+            Self.supportsProcessGenerationBoundElementMutations(handshake),
             foregroundModifierClickSnapshotLeaseEnabled:
             Self.supportsForegroundModifierClickSnapshotLease(handshake),
             nativeBrowserConnectionBindingEnabled:
@@ -994,6 +998,15 @@ public actor PeekabooBridgeClient {
             handshake.supportedOperations.contains(.setValue)
     }
 
+    private static func supportsProcessGenerationBoundElementMutations(
+        _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
+    {
+        handshake.negotiatedVersion >=
+            PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations) == true
+    }
+
     private static func supportsForegroundModifierClickSnapshotLease(
         _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
     {
@@ -1076,6 +1089,8 @@ public actor PeekabooBridgeClient {
         self.processGenerationObservationEnabled = candidate.processGenerationObservationEnabled
         self.certificationProducerAttestationEnabled = candidate.certificationProducerAttestationEnabled
         self.setValueResultTargetBindingEnabled = candidate.setValueResultTargetBindingEnabled
+        self.processGenerationBoundElementMutationsEnabled =
+            candidate.processGenerationBoundElementMutationsEnabled
         self.foregroundModifierClickSnapshotLeaseEnabled =
             candidate.foregroundModifierClickSnapshotLeaseEnabled
         self.nativeBrowserConnectionBindingEnabled = candidate.nativeBrowserConnectionBindingEnabled
@@ -1373,6 +1388,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let processGenerationObservationEnabled: Bool
     let certificationProducerAttestationEnabled: Bool
     let setValueResultTargetBindingEnabled: Bool
+    let processGenerationBoundElementMutationsEnabled: Bool
     let foregroundModifierClickSnapshotLeaseEnabled: Bool
     let nativeBrowserConnectionBindingEnabled: Bool
     let producerBoundSnapshotReferencesEnabled: Bool

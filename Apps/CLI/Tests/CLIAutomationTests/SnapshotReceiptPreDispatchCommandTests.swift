@@ -45,6 +45,46 @@ struct SnapshotReceiptPreDispatchCommandTests {
     }
 
     @Test
+    func `process scoped element actions refuse live generation drift without consuming the snapshot`() async throws {
+        let snapshots = StubSnapshotManager()
+        let liveGeneration = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        let snapshotID = try await Self.storeProcessElementSnapshot(
+            in: snapshots,
+            processStartIdentity: liveGeneration + 1
+        )
+        let automation = UIAutomationService(snapshotManager: snapshots)
+        let services = TestServicesFactory.makePeekabooServices(
+            snapshots: snapshots,
+            automation: automation
+        )
+
+        for arguments in [
+            ["set-value", "updated", "--on", "E1"],
+            ["action", "AXIncrement", "--on", "B1"],
+        ] {
+            let result = try await InProcessCommandRunner.run(
+                arguments + ["--snapshot", snapshotID, "--no-remote", "--json"],
+                services: services
+            )
+            let object = try Self.jsonObject(result.stdout)
+            let outcome = try #require(object["outcome"] as? [String: Any])
+            let error = try #require(object["error"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(error["code"] as? String == ErrorCode.SNAPSHOT_STALE.rawValue)
+            #expect((error["message"] as? String)?.lowercased().contains("process generation") == true)
+            #expect(error["retry_safe"] as? Bool == true)
+            #expect(error["mutation_dispatched"] as? Bool == false)
+            #expect(outcome["state"] as? String == "refused")
+            #expect(outcome["dispatch_state"] as? String == "none")
+            #expect(outcome["requires_fresh_observation"] as? Bool == false)
+        }
+
+        let lease = try await snapshots.beginSnapshotMutation(snapshotId: snapshotID)
+        try await snapshots.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
     func `incomplete exact receipt refusals release the snapshot lease across action commands`() async throws {
         let snapshots = StubSnapshotManager()
         let snapshotID = try await Self.storeIncompleteExactWindowElementSnapshot(in: snapshots)
@@ -112,7 +152,7 @@ struct SnapshotReceiptPreDispatchCommandTests {
         #expect(humanResult.exitStatus == 1)
         #expect(humanResult.combinedOutput.contains("Snapshot target receipt is incomplete"))
         #expect(humanResult.combinedOutput.contains("immutable captured bounds"))
-        #expect(humanResult.combinedOutput.contains("complete exact-window snapshot"))
+        #expect(humanResult.combinedOutput.contains("fresh complete target snapshot"))
         #expect(!humanResult.combinedOutput.contains("already drove a mutation"))
 
         let lease = try await snapshots.beginSnapshotMutation(snapshotId: snapshotID)
@@ -172,6 +212,13 @@ struct SnapshotReceiptPreDispatchCommandTests {
     private static func storeProcessWithoutGenerationElementSnapshot(
         in snapshots: StubSnapshotManager
     ) async throws -> String {
+        try await self.storeProcessElementSnapshot(in: snapshots, processStartIdentity: nil)
+    }
+
+    private static func storeProcessElementSnapshot(
+        in snapshots: StubSnapshotManager,
+        processStartIdentity: UInt64?
+    ) async throws -> String {
         let snapshotID = try await snapshots.createSnapshot()
         let button = AutomationTestFixtures.detectedElement(
             id: "B1",
@@ -198,7 +245,10 @@ struct SnapshotReceiptPreDispatchCommandTests {
                     buttons: [button],
                     textFields: [textField]
                 ),
-                windowContext: WindowContext(applicationProcessId: getpid())
+                windowContext: WindowContext(
+                    applicationProcessId: getpid(),
+                    applicationProcessStartIdentity: processStartIdentity
+                )
             )
         )
         return snapshotID

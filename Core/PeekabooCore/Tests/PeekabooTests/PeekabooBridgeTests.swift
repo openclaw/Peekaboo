@@ -2259,6 +2259,7 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
     ExactWindowTargetedKeyboardServiceProtocol
 {
     var supportsSetValueResultTargetBinding = true
+    var supportsProcessGenerationBoundElementMutations = true
     var dragError: (any Error)?
     let supportsProcessGenerationPinnedHotkeys = true
     let supportsProcessGenerationPinnedTypeActions = true

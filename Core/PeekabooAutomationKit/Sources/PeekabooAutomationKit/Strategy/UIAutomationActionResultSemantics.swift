@@ -294,6 +294,7 @@ public enum UIAutomationActionResultSemantics {
                     message: contradictoryMessage ?? "\(operation) returned a contradictory target identity.",
                     hint: contradictoryHint,
                     causeDescription: error.localizedDescription)
+                    .attributed(to: expected.actionTargetReceipt)
             }
         }
 

@@ -50,31 +50,32 @@ public struct ActionTool: MCPTool {
                     errorCode: "RUNTIME_INCOMPATIBLE",
                     refusalReason: .runtimeIncompatible)
             }
+            guard automation.supportsProcessGenerationBoundElementMutations else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The automation host cannot bind element actions to one process generation.",
+                    hint: "Update the runtime host before retrying this element action.")
+            }
+            guard let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The automation host cannot return a receipted action outcome.",
+                    hint: "Update the runtime host before retrying this element action.")
+            }
 
             let startTime = Date()
-            effectiveSnapshotId = try await self.effectiveSnapshotId(request.snapshotId)
-            let actionResult: UIAutomationActionResult<ElementActionResult> = if let outcomeAutomation =
-                automation as? any UIAutomationActionOutcomeProviding
-            {
-                try await outcomeAutomation.performActionWithOutcome(
-                    target: request.target,
-                    actionName: request.actionName,
-                    snapshotId: effectiveSnapshotId)
-            } else {
-                try await UIAutomationActionResult(
-                    payload: automation.performAction(
-                        target: request.target,
-                        actionName: request.actionName,
-                        snapshotId: effectiveSnapshotId),
-                    outcome: nil)
-            }
-            do {
-                try DesktopActionFailure.requireConfirmedIfReported(
-                    actionResult.outcome,
-                    operation: "Action")
-            } catch let failure as DesktopActionFailure {
-                throw actionResult.actionTargetReceipt.map { failure.attributed(to: $0) } ?? failure
-            }
+            let snapshot = try await self.effectiveSnapshot(request.snapshotId)
+            effectiveSnapshotId = snapshot.id
+            let expectedTarget = try MCPElementActionSnapshotAuthority.expectedTargetIdentity(snapshot)
+            let actionResult = try await outcomeAutomation.performActionWithOutcome(
+                target: request.target,
+                actionName: request.actionName,
+                snapshotId: effectiveSnapshotId)
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                actionResult,
+                policy: .confirmed(requiring: .background),
+                targetRequirement: .compatible(expectedTarget),
+                operation: "Action")
             let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: effectiveSnapshotId,
@@ -86,26 +87,19 @@ public struct ActionTool: MCPTool {
                 invalidatedSnapshotId: invalidatedSnapshotId)
         } catch let error as ActionToolError {
             return try Self.preDispatchErrorResponse(error)
-        } catch let error as SnapshotTargetReceiptPreDispatchError {
-            return Self.snapshotRefusalResponse(error)
-        } catch let error as PeekabooError {
-            if case .snapshotStale = error {
-                return Self.snapshotRefusalResponse(error)
-            }
-            self.logger.error("action failed: \(error.localizedDescription)")
-            return ToolResponse.error("Failed to perform action: \(error.localizedDescription)")
         } catch let failure as DesktopActionFailure {
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
                 uiSnapshots: self.context.uiSnapshots,
-                snapshotID: effectiveSnapshotId)
+                snapshotID: effectiveSnapshotId,
+                additionalFields: ObservationActionResultSupport.standardErrorFields(failure))
         } catch {
             self.logger.error("action failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform action: \(error.localizedDescription)")
         }
     }
 
-    private func effectiveSnapshotId(_ requestedSnapshotId: String?) async throws -> String {
+    private func effectiveSnapshot(_ requestedSnapshotId: String?) async throws -> UISnapshot {
         if let requestedSnapshotId {
             guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: requestedSnapshotId) else {
                 throw ActionToolError(
@@ -113,7 +107,7 @@ public struct ActionTool: MCPTool {
                     errorCode: "SNAPSHOT_NOT_FOUND",
                     refusalReason: .targetUnavailable)
             }
-            return snapshot.id
+            return snapshot
         }
         guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: nil) else {
             throw ActionToolError(
@@ -121,7 +115,7 @@ public struct ActionTool: MCPTool {
                 errorCode: "SNAPSHOT_NOT_FOUND",
                 refusalReason: .targetUnavailable)
         }
-        return snapshot.id
+        return snapshot
     }
 
     private static func preDispatchErrorResponse(_ error: ActionToolError) throws -> ToolResponse {
@@ -129,13 +123,6 @@ public struct ActionTool: MCPTool {
             message: error.message,
             reason: error.refusalReason,
             additionalFields: ["error_code": .string(error.errorCode)])
-    }
-
-    private static func snapshotRefusalResponse(_ error: any LocalizedError) -> ToolResponse {
-        MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
-            message: error.localizedDescription,
-            reason: .targetUnavailable,
-            additionalFields: ["error_code": .string("SNAPSHOT_STALE")])
     }
 
     private func buildResponse(

@@ -63,6 +63,39 @@ struct AutomationElementResolverTests {
         #expect(reader.processIdentifierReads == [wrongProcess, wrongProcess])
     }
 
+    @Test
+    func `foreign fuzzy candidate cannot shadow a valid target process candidate`() throws {
+        let app = try #require(NSWorkspace.shared.runningApplications.first { !$0.isTerminated })
+        let root = self.makeElement(21)
+        let foreignHighScore = self.makeElement(22)
+        let validLowerScore = self.makeElement(23)
+        let targetFrame = CGRect(x: 120, y: 240, width: 80, height: 32)
+        let reader = ResolverTreeReader(
+            descriptors: [
+                foreignHighScore: self.descriptor(
+                    identifier: "target-id",
+                    frame: CGRect(x: 420, y: 540, width: 80, height: 32)),
+                validLowerScore: self.descriptor(identifier: "other-id", frame: targetFrame),
+            ],
+            children: [root: [foreignHighScore, validLowerScore]],
+            processIdentifiers: [
+                foreignHighScore: app.processIdentifier + 1,
+                validLowerScore: app.processIdentifier,
+            ])
+        let resolver = AutomationElementResolver(
+            windowRootResolver: ResolverWindowRootResolver(root: root),
+            treeReader: reader)
+
+        let resolved = resolver.resolve(
+            detectedElement: self.detectedElement(identifier: "target-id", frame: targetFrame),
+            windowContext: WindowContext(applicationProcessId: app.processIdentifier, windowID: 42),
+            targetProcessIdentifier: app.processIdentifier)
+
+        #expect(resolved?.element == validLowerScore)
+        #expect(reader.processIdentifierReads.contains(foreignHighScore))
+        #expect(reader.processIdentifierReads.contains(validLowerScore))
+    }
+
     private func detectedElement(identifier: String, frame: CGRect) -> DetectedElement {
         DetectedElement(
             id: "B1",

@@ -1,4 +1,5 @@
 import MCP
+import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
@@ -42,5 +43,21 @@ enum MCPDesktopActionSnapshotInvalidator {
     {
         guard mutationDispatched else { return nil }
         return await uiSnapshots.invalidateActiveSnapshot(id: snapshotID)
+    }
+}
+
+enum MCPElementActionSnapshotAuthority {
+    static func expectedTargetIdentity(_ snapshot: UISnapshot) throws -> DesktopTargetIdentity {
+        do {
+            let identity = try snapshot.targetReceipt().requireIdentity()
+            return try DesktopTargetIdentity(processIdentity: identity.processIdentity)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The selected snapshot has no consistent process-generation receipt.",
+                hint: "Run 'peekaboo see' or 'inspect_ui' again before retrying this element action.",
+                causeDescription: error.localizedDescription,
+                standardErrorCode: .snapshotStale)
+        }
     }
 }

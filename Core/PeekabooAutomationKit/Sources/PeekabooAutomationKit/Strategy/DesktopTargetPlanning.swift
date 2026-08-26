@@ -167,6 +167,15 @@ public struct SnapshotTargetReceiptPreDispatchError: LocalizedError, Equatable, 
             "Snapshot target receipt is invalid: \(self.receiptError.localizedDescription)"
         }
     }
+
+    var actionFailure: DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: self.localizedDescription,
+            hint: "Run 'peekaboo see' again and use a fresh complete target snapshot.",
+            causeDescription: self.receiptError.localizedDescription,
+            standardErrorCode: .snapshotStale)
+    }
 }
 
 /// Snapshot lifecycle plus optional stable target identity. Coordinate authority is admitted separately.

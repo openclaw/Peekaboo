@@ -381,7 +381,9 @@ extension PeekabooBridgeClient {
     {
         try await self.actionResult(
             for: .setValue(.init(target: target, value: value, snapshotId: snapshotId)),
-            expectedResponse: "setValue")
+            expectedResponse: "setValue",
+            requiresTargetIdentity: true,
+            operationReceiptRequirement: .required)
         { response in
             guard case let .elementActionResult(result) = response else { return nil }
             return result
@@ -395,7 +397,9 @@ extension PeekabooBridgeClient {
     {
         try await self.actionResult(
             for: .performAction(.init(target: target, actionName: actionName, snapshotId: snapshotId)),
-            expectedResponse: "performAction")
+            expectedResponse: "performAction",
+            requiresTargetIdentity: true,
+            operationReceiptRequirement: .required)
         { response in
             guard case let .elementActionResult(result) = response else { return nil }
             return result

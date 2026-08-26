@@ -95,6 +95,15 @@ extension PeekabooBridgeRequest {
         return payload.allowsAccessibilityValueDelivery != nil
     }
 
+    var requiresProcessGenerationBoundElementMutations: Bool {
+        switch self.unwrappedOperationRequest.operation {
+        case .setValue, .performAction:
+            true
+        default:
+            false
+        }
+    }
+
     var requiresNativeBrowserConnectionBinding: Bool {
         switch self.unwrappedOperationRequest {
         case let .browserConnect(payload):

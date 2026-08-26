@@ -8,6 +8,64 @@ import Testing
 
 struct PeekabooBridgeSetValueFailureTests {
     @Test
+    @MainActor
+    func `signed snapshot refusal cancels the Bridge mutation barrier without watermark`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-set-value-refusal-\(UUID().uuidString)", isDirectory: true)
+        let socketPath = "/tmp/peekaboo-set-value-refusal-\(UUID().uuidString).sock"
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root.appendingPathComponent("watermarks"))
+        let snapshots = InMemorySnapshotManager(desktopMutationWatermarkStore: store)
+        let services = await MainActor.run { StubServices(snapshots: snapshots) }
+        await MainActor.run {
+            services.automationStub.elementActionError = DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Target process generation changed before desktop mutation.",
+                standardErrorCode: .snapshotStale)
+        }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                desktopMutationWatermarkStore: store)
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+
+        do {
+            let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+            _ = try await client.handshake(client: .init(
+                bundleIdentifier: "dev.peekaboo.set-value-refusal-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid(),
+                hostname: nil))
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await client.setValueWithOutcome(
+                    target: "T1",
+                    value: .string("hello"),
+                    snapshotId: "S1")
+            }
+            #expect(failure?.outcome.route == .bridge)
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.outcome.retrySafety == .safe)
+            #expect(failure?.standardErrorCode == .snapshotStale)
+            #expect(store.effectiveWatermark() == nil)
+            #expect(services.automationStub.lastSetValue == nil)
+        } catch {
+            await host.stop()
+            throw error
+        }
+        await host.stop()
+    }
+
+    @Test
     func `signed client preserves post-dispatch readback failure and target receipt`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-set-value-failure-\(UUID().uuidString).sock"
         let services = await MainActor.run { StubServices() }

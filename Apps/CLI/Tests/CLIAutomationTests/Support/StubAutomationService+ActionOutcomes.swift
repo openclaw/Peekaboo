@@ -19,6 +19,10 @@ final class OutcomeStubAutomationService: StubAutomationService, ScriptedUIAutom
     }
 
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
+    override var supportsProcessGenerationBoundElementMutations: Bool {
+        true
+    }
+
     let supportsExactWindowTargetedKeyboard = true
     let supportsExactWindowCompositeTypeDelivery = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil

@@ -15,6 +15,7 @@ public enum StandardErrorCode: String, Codable, Sendable, Equatable {
     case elementNotFound = "ELEMENT_NOT_FOUND"
     case sessionNotFound = "SESSION_NOT_FOUND"
     case snapshotNotFound = "SNAPSHOT_NOT_FOUND"
+    case snapshotStale = "SNAPSHOT_STALE"
     case fileNotFound = "FILE_NOT_FOUND"
     case menuNotFound = "MENU_NOT_FOUND"
 

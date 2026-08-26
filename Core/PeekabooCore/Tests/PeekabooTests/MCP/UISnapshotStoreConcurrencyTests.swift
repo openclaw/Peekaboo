@@ -215,6 +215,22 @@ struct UISnapshotStoreConcurrencyTests {
     }
 
     @Test
+    func `process scoped detection metadata establishes generation receipt without pixels`() async throws {
+        let snapshot = UISnapshot()
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: 901,
+            applicationProcessStartIdentity: 91))
+
+        let identity = try snapshot.targetReceipt().requireIdentity()
+        #expect(identity.processIdentity == ApplicationProcessIdentity(
+            processIdentifier: 901,
+            processStartIdentity: 91))
+        #expect(identity.exactWindow == nil)
+        #expect(!snapshot.targetReceiptInvalidated)
+    }
+
+    @Test
     func `receiptless window metadata does not mint exact-window authority`() async throws {
         let snapshot = UISnapshot()
         let bounds = CGRect(x: 10, y: 20, width: 200, height: 100)

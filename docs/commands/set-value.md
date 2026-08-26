@@ -24,7 +24,9 @@ read_when:
 - The target element must expose a settable accessibility value.
 - Every mutation requires a current snapshot. App/PID/window target flags capture one automatically; without target
   flags, run `peekaboo see` first. A missing snapshot is refused instead of falling through to the frontmost app. Exact
-  process/window receipts are revalidated before the value is written.
+  process/window receipts and the final resolved Accessibility element PID are revalidated before the value is written.
+- Remote value mutation requires Bridge protocol 1.37 and `processGenerationBoundElementMutations`; older or
+  receiptless hosts are refused before the request is sent.
 - A result with `requires_fresh_observation: true`, or no canonical outcome, makes that snapshot mutation-ineligible.
   The old evidence stays readable, but another mutation must use a new `peekaboo see` snapshot and otherwise fails
   before dispatch.

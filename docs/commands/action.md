@@ -26,6 +26,10 @@ snapshot can be established, the command refuses rather than searching the user'
 snapshots pin the process generation; exact-window snapshots additionally pin window identity and bounds. Missing or
 changed generation evidence is refused before element resolution or dispatch.
 
+Remote element actions require Bridge protocol 1.37 and `processGenerationBoundElementMutations`; older or receiptless
+hosts are refused before the request is sent. The final resolved Accessibility element must report the same PID as the
+snapshot receipt.
+
 Successful JSON and MCP results include the canonical `target_identity` and `target_receipt`, including the process-start
 identity needed to distinguish a live process from PID reuse.
 

@@ -710,6 +710,10 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
 @MainActor
 public final class RemoteElementActionUIAutomationService: RemoteUIAutomationService,
 ElementActionAutomationServiceProtocol {
+    public var supportsProcessGenerationBoundElementMutations: Bool {
+        true
+    }
+
     public func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws
         -> ElementActionResult
     {

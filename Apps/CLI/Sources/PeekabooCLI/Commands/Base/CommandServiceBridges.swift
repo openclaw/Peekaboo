@@ -277,15 +277,25 @@ enum AutomationServiceBridge {
                     "This automation host does not support direct accessibility value setting"
                 )
             }
-            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
-                return try await outcomeAutomation.setValueWithOutcome(
-                    target: target,
-                    value: value,
-                    snapshotId: snapshotId
+            guard automation.supportsProcessGenerationBoundElementMutations else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The automation host cannot bind set-value to one process generation.",
+                    hint: "Update the runtime host before retrying set-value."
                 )
             }
-            let payload = try await automation.setValue(target: target, value: value, snapshotId: snapshotId)
-            return UIAutomationActionResult(payload: payload, outcome: nil)
+            guard let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The automation host cannot return a receipted set-value outcome.",
+                    hint: "Update the runtime host before retrying set-value."
+                )
+            }
+            return try await outcomeAutomation.setValueWithOutcome(
+                target: target,
+                value: value,
+                snapshotId: snapshotId
+            )
         }.value
     }
 
@@ -301,19 +311,25 @@ enum AutomationServiceBridge {
                     "This automation host does not support direct accessibility action invocation"
                 )
             }
-            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
-                return try await outcomeAutomation.performActionWithOutcome(
-                    target: target,
-                    actionName: actionName,
-                    snapshotId: snapshotId
+            guard automation.supportsProcessGenerationBoundElementMutations else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The automation host cannot bind element actions to one process generation.",
+                    hint: "Update the runtime host before retrying this element action."
                 )
             }
-            let payload = try await automation.performAction(
+            guard let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The automation host cannot return a receipted action outcome.",
+                    hint: "Update the runtime host before retrying this element action."
+                )
+            }
+            return try await outcomeAutomation.performActionWithOutcome(
                 target: target,
                 actionName: actionName,
                 snapshotId: snapshotId
             )
-            return UIAutomationActionResult(payload: payload, outcome: nil)
         }.value
     }
 

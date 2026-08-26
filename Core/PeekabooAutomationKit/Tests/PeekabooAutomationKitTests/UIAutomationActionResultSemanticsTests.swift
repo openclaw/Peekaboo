@@ -260,7 +260,7 @@ struct UIAutomationActionResultSemanticsTests {
     }
 
     @Test
-    func `compatible target contradiction remains unattributed`() throws {
+    func `compatible target contradiction retains expected authority`() throws {
         let expected = AutomationTestFixtures.linkedDesktopTarget(
             processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
             windowID: 71,
@@ -279,7 +279,7 @@ struct UIAutomationActionResultSemanticsTests {
             Issue.record("Expected contradictory compatible targets to fail")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
-            #expect(failure.targetReceipt == nil)
+            #expect(failure.targetReceipt == expected.processTargetReceipt)
         }
     }
 

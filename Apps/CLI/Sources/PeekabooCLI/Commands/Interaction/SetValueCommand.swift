@@ -218,6 +218,10 @@ enum ElementActionCommandExecutor {
                 observation,
                 snapshots: services.snapshots
             )
+            let expectedActionTarget = try await self.requireActionTargetIdentity(
+                snapshotID: actionSnapshotId,
+                snapshots: services.snapshots
+            )
             let startTime = Date()
             runtime.beginInteractionMutation()
             if Self.shouldFocus(target: target, focusOptions: context.focusOptions) {
@@ -241,12 +245,19 @@ enum ElementActionCommandExecutor {
                 snapshotId: actionSnapshotId,
                 snapshots: services.snapshots,
                 operation: {
-                    try await operation(
+                    let result = try await operation(
                         services.automation,
                         prepared.target,
                         prepared.value,
                         actionSnapshotId
                     )
+                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                        result,
+                        policy: .confirmedOrDispatched(requiring: .background),
+                        targetRequirement: .compatible(expectedActionTarget),
+                        operation: "Element action"
+                    )
+                    return result
                 },
                 outcome: { $0.outcome }
             )
@@ -340,6 +351,27 @@ enum ElementActionCommandExecutor {
                 message: error.localizedDescription,
                 code: code,
                 hint: nil,
+                reason: .targetUnavailable
+            )
+        }
+    }
+
+    private static func requireActionTargetIdentity(
+        snapshotID: String,
+        snapshots: any SnapshotManagerProtocol
+    ) async throws -> DesktopTargetIdentity {
+        do {
+            return try await SnapshotTargetReceiptPlanner(snapshots: snapshots)
+                .planProcessIdentity(snapshotID: snapshotID)
+                .receipt
+                .requireIdentity()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw PreDispatchActionError(
+                message: "Snapshot '\(snapshotID)' has no consistent process-generation receipt.",
+                code: .SNAPSHOT_STALE,
+                hint: "Run 'peekaboo see' again and retry with its fresh target snapshot.",
                 reason: .targetUnavailable
             )
         }

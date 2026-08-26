@@ -197,27 +197,53 @@ struct CommanderBinderTests {
     @Test
     func `Element actions require bridge protocol and operation support`() {
         let current = BridgeTestFixtures.handshake(
-            negotiatedVersion: .init(major: 1, minor: 3),
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
             hostKind: .gui,
             build: nil,
-            supportedOperations: [.setValue, .performAction]
+            supportedOperations: [.setValue, .performAction],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.setValueResultTargetBinding,
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+            ]
         )
         let oldProtocol = BridgeTestFixtures.handshake(
-            negotiatedVersion: .init(major: 1, minor: 2),
+            negotiatedVersion: .init(major: 1, minor: 36),
             hostKind: .gui,
             build: nil,
-            supportedOperations: [.setValue, .performAction]
+            supportedOperations: [.setValue, .performAction],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.setValueResultTargetBinding,
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+            ]
         )
         let missingOperation = BridgeTestFixtures.handshake(
-            negotiatedVersion: .init(major: 1, minor: 3),
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
             hostKind: .gui,
             build: nil,
-            supportedOperations: [.setValue]
+            supportedOperations: [.setValue],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.setValueResultTargetBinding,
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+            ]
+        )
+        let missingCapability = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.setValue, .performAction],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.setValueResultTargetBinding,
+            ]
         )
 
         #expect(CommandRuntime.supportsElementActions(for: current))
         #expect(!CommandRuntime.supportsElementActions(for: oldProtocol))
         #expect(!CommandRuntime.supportsElementActions(for: missingOperation))
+        #expect(!CommandRuntime.supportsElementActions(for: missingCapability))
     }
 
     @Test
@@ -1236,16 +1262,26 @@ extension CommanderBinderTests {
     @Test
     func `Remote requirements skip bridges missing required element action support`() {
         let current = BridgeTestFixtures.handshake(
-            negotiatedVersion: .init(major: 1, minor: 3),
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
             hostKind: .gui,
             build: nil,
-            supportedOperations: [.captureScreen, .setValue, .performAction]
+            supportedOperations: [.captureScreen, .setValue, .performAction],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.setValueResultTargetBinding,
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+            ]
         )
         let oldProtocol = BridgeTestFixtures.handshake(
-            negotiatedVersion: .init(major: 1, minor: 2),
+            negotiatedVersion: .init(major: 1, minor: 36),
             hostKind: .gui,
             build: nil,
-            supportedOperations: [.captureScreen, .setValue, .performAction]
+            supportedOperations: [.captureScreen, .setValue, .performAction],
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.attestedOperationReceipts,
+                PeekabooBridgeHostCapability.setValueResultTargetBinding,
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+            ]
         )
         var ordinaryOptions = CommandRuntimeOptions()
         var elementActionOptions = CommandRuntimeOptions()

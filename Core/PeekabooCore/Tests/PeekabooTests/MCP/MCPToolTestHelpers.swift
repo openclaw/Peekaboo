@@ -8,6 +8,22 @@ import Testing
 @testable import PeekabooCore
 
 enum MCPToolTestHelpers {
+    static let elementActionProcessIdentity = ApplicationProcessIdentity(
+        processIdentifier: 42,
+        processStartIdentity: 1001)
+
+    static func createElementActionSnapshot(
+        in snapshots: MCPToolUISnapshotStore,
+        processIdentity: ApplicationProcessIdentity = MCPToolTestHelpers.elementActionProcessIdentity) async
+        -> UISnapshot
+    {
+        let snapshot = await snapshots.createSnapshot()
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationProcessId: processIdentity.processIdentifier,
+            applicationProcessStartIdentity: processIdentity.processStartIdentity))
+        return snapshot
+    }
+
     static func makeContext(
         automation: (any UIAutomationServiceProtocol)? = nil,
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,

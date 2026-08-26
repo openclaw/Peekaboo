@@ -12,6 +12,10 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         true
     }
 
+    public var supportsProcessGenerationBoundElementMutations: Bool {
+        true
+    }
+
     public func setValue(
         target: String,
         value: UIElementValue,
@@ -41,8 +45,11 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 for: .setValue,
                 bundleIdentifier: captureReceipt.bundleIdentifier),
             prepare: {
-                let target = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
-                try self.validateElementMutationTarget(target.windowContext, receipt: captureReceipt)
+                let target = try await self.resolveActionTarget(
+                    target,
+                    snapshotId: requiredSnapshotId,
+                    targetProcessIdentifier: captureReceipt.processIdentifier)
+                try self.validateElementMutationTarget(target, receipt: captureReceipt)
                 resolved = target
                 oldValue = self.elementMutationValueReader(target.element)
             },
@@ -56,6 +63,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 guard let resolved else {
                     throw PeekabooError.operationError(message: "Element mutation target was not prepared")
                 }
+                try self.validateElementMutationTarget(resolved, receipt: captureReceipt)
                 do {
                     return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
                 } catch let error as ActionInputError where error.isUnsupportedValueMutation {
@@ -85,7 +93,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             },
             finalize: { self.elementDetectionService.invalidateCache() })
         self.logger.debug("Set value requested - target: \(target, privacy: .public)")
-        let execution = try await self.normalizingSnapshotErrors {
+        let execution = try await self.normalizingElementMutationErrors {
             try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
         }
         let result = execution.payload
@@ -135,8 +143,11 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     throw PeekabooError.invalidInput(
                         "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")
                 }
-                let target = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
-                try self.validateElementMutationTarget(target.windowContext, receipt: captureReceipt)
+                let target = try await self.resolveActionTarget(
+                    target,
+                    snapshotId: requiredSnapshotId,
+                    targetProcessIdentifier: captureReceipt.processIdentifier)
+                try self.validateElementMutationTarget(target, receipt: captureReceipt)
                 resolved = target
             },
             routing: {
@@ -149,6 +160,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 guard let resolved else {
                     throw PeekabooError.operationError(message: "Element action target was not prepared")
                 }
+                try self.validateElementMutationTarget(resolved, receipt: captureReceipt)
                 do {
                     return try self.actionInputDriver.tryPerformAction(
                         element: resolved.element,
@@ -166,7 +178,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             finalize: { self.elementDetectionService.invalidateCache() })
         let requestDescription = "Perform action requested - target: \(target), action: \(actionName)"
         self.logger.debug("\(requestDescription, privacy: .public)")
-        let execution = try await self.normalizingSnapshotErrors {
+        let execution = try await self.normalizingElementMutationErrors {
             try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
         }
         let result = execution.payload
@@ -183,7 +195,10 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             targetIdentity: execution.targetIdentity)
     }
 
-    private func resolveActionTarget(_ target: String, snapshotId: String) async throws
+    private func resolveActionTarget(
+        _ target: String,
+        snapshotId: String,
+        targetProcessIdentifier: pid_t?) async throws
         -> ResolvedElementMutationTarget
     {
         let normalized = target.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -197,10 +212,13 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 throw PeekabooError.snapshotNotFound(snapshotId)
             }
             detectionResult = result
-        } catch let error as PeekabooError {
-            throw error
+        } catch let failure as DesktopActionFailure {
+            throw failure
         } catch {
-            throw PeekabooError.snapshotNotFound(snapshotId)
+            throw Self.elementMutationRefusal(
+                "Snapshot '\(snapshotId)' is no longer available for element mutation.",
+                standardErrorCode: .snapshotNotFound,
+                cause: error)
         }
 
         if let detected = detectionResult.elements.findById(normalized) ??
@@ -211,9 +229,19 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             }
             guard let element = self.automationElementResolver.resolve(
                 detectedElement: detected,
-                windowContext: detectionResult.metadata.windowContext)
+                windowContext: detectionResult.metadata.windowContext,
+                targetProcessIdentifier: targetProcessIdentifier)
             else {
-                throw PeekabooError.snapshotStale("target element is no longer available")
+                throw Self.elementMutationRefusal(
+                    "Target element is no longer available in the receipted process generation.",
+                    standardErrorCode: .snapshotStale)
+            }
+            guard let targetProcessIdentifier,
+                  AutomationElementResolver.processIdentifier(of: element) == targetProcessIdentifier
+            else {
+                throw Self.elementMutationRefusal(
+                    "Resolved element belongs to a different process than the snapshot receipt.",
+                    standardErrorCode: .snapshotStale)
             }
             return (
                 element,
@@ -222,16 +250,18 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 detectionResult.metadata.windowContext)
         }
 
-        throw NotFoundError.element(normalized)
+        throw Self.elementMutationRefusal(
+            "Element '\(normalized)' was not found in the receipted process generation.",
+            standardErrorCode: .elementNotFound)
     }
 
     private static func requireElementActionSnapshotID(_ snapshotId: String?) throws -> String {
         guard let snapshotId = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines),
               !snapshotId.isEmpty
         else {
-            throw PeekabooError.snapshotNotAvailable(
-                "Direct element actions require a current UI snapshot. Run 'peekaboo see' first, then retry " +
-                    "with its element ID or snapshot context.")
+            throw self.elementMutationRefusal(
+                "Direct element actions require a current UI snapshot.",
+                standardErrorCode: .snapshotNotFound)
         }
         return snapshotId
     }
@@ -270,10 +300,13 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 throw PeekabooError.snapshotNotFound(snapshotId)
             }
             detectionResult = result
-        } catch let error as PeekabooError {
-            throw error
+        } catch let failure as DesktopActionFailure {
+            throw failure
         } catch {
-            throw PeekabooError.snapshotNotFound(snapshotId)
+            throw Self.elementMutationRefusal(
+                "Snapshot '\(snapshotId)' is no longer available for element mutation.",
+                standardErrorCode: .snapshotNotFound,
+                cause: error)
         }
         return try DesktopOperationSnapshotReceiptValidator.captureReceipt(
             snapshotID: snapshotId,
@@ -284,14 +317,59 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
     }
 
     private func validateElementMutationTarget(
-        _ context: WindowContext?,
+        _ target: ResolvedElementMutationTarget,
         receipt: DesktopOperationPlan.CaptureReceipt) throws
     {
         try DesktopOperationSnapshotReceiptValidator.validate(
-            context: context,
+            context: target.windowContext,
             receipt: receipt,
             processStartIdentityProvider: self.processStartIdentityProvider,
             exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+        guard let processIdentifier = receipt.processIdentifier,
+              AutomationElementResolver.processIdentifier(of: target.element) == processIdentifier
+        else {
+            throw Self.elementMutationRefusal(
+                "Resolved element belongs to a different process than the snapshot receipt.",
+                standardErrorCode: .snapshotStale)
+        }
+    }
+
+    private func normalizingElementMutationErrors<T>(
+        _ operation: () async throws -> T) async throws -> T
+    {
+        do {
+            return try await self.normalizingSnapshotErrors(operation)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            switch error {
+            case .snapshotNotFound, .snapshotNotAvailable:
+                throw Self.elementMutationRefusal(
+                    error.localizedDescription,
+                    standardErrorCode: .snapshotNotFound,
+                    cause: error)
+            case .snapshotStale:
+                throw Self.elementMutationRefusal(
+                    error.localizedDescription,
+                    standardErrorCode: .snapshotStale,
+                    cause: error)
+            default:
+                throw error
+            }
+        }
+    }
+
+    private static func elementMutationRefusal(
+        _ message: String,
+        standardErrorCode: StandardErrorCode,
+        cause: (any Error)? = nil) -> DesktopActionFailure
+    {
+        .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: message,
+            hint: "Run 'peekaboo see' again and retry with its fresh target snapshot.",
+            causeDescription: cause?.localizedDescription,
+            standardErrorCode: standardErrorCode)
     }
 
     private static func isValidActionName(_ actionName: String) -> Bool {

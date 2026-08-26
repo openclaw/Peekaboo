@@ -799,7 +799,7 @@ struct MCPToolExecutionTests {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let tool = SetValueTool(context: context)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
         let snapshotId = await snapshot.id
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -815,8 +815,9 @@ struct MCPToolExecutionTests {
         #expect(call?.snapshotId == snapshotId)
         let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        let implicitLatestID = await implicitLatest?.id
         #expect(preserved != nil)
-        #expect(implicitLatest == nil)
+        #expect(implicitLatestID == snapshotId)
         #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -826,7 +827,7 @@ struct MCPToolExecutionTests {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let tool = SetValueTool(context: context)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
         let snapshotId = await snapshot.id
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -839,8 +840,9 @@ struct MCPToolExecutionTests {
         #expect(call?.snapshotId == snapshotId)
         let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        let implicitLatestID = await implicitLatest?.id
         #expect(preserved != nil)
-        #expect(implicitLatest == nil)
+        #expect(implicitLatestID == snapshotId)
         #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -864,7 +866,7 @@ struct MCPToolExecutionTests {
                 for: .setValue)
         }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
         let snapshotID = await snapshot.id
 
         let response = try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -896,7 +898,7 @@ struct MCPToolExecutionTests {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let tool = ActionTool(context: context)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
         let snapshotId = await snapshot.id
 
         let missing = try await tool.execute(arguments: ToolArguments(raw: ["on": "B1"]))
@@ -915,8 +917,9 @@ struct MCPToolExecutionTests {
         #expect(call?.snapshotId == snapshotId)
         let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        let implicitLatestID = await implicitLatest?.id
         #expect(preserved != nil)
-        #expect(implicitLatest == nil)
+        #expect(implicitLatestID == snapshotId)
         #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -1305,6 +1308,9 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
 @MainActor
 private final class MockElementActionAutomationService: MockAutomationService, ElementActionAutomationServiceProtocol,
 ScriptedUIAutomationActionOutcomeProviding {
+    let supportsProcessGenerationBoundElementMutations = true
+    let uiAutomationOutcomeTargetIdentity = try? DesktopTargetIdentity(
+        processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
     struct SetValueCall {
         let target: String
         let value: UIElementValue
@@ -1319,7 +1325,8 @@ ScriptedUIAutomationActionOutcomeProviding {
 
     private(set) var setValueCalls: [SetValueCall] = []
     private(set) var performActionCalls: [PerformActionCall] = []
-    let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript(
+        defaultResponse: .outcome(.confirmedNoChange()))
 
     func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws -> ElementActionResult {
         self.setValueCalls.append(SetValueCall(target: target, value: value, snapshotId: snapshotId))
