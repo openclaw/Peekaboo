@@ -121,7 +121,7 @@ struct AppCommandTests {
 
     @Test
     func `App list keeps installed apps in a separate PID-free sidecar`() async throws {
-        let (output, _) = try await runAppCommandWithService(
+        let (output, service) = try await runAppCommandWithService(
             ["app", "list", "--include-installed", "--json"]
         ) { service in
             service.applications = [ServiceApplicationInfo(
@@ -171,6 +171,38 @@ struct AppCommandTests {
         #expect(installedApp["pid"] == nil)
         #expect(data["warnings"] as? [String] == ["catalog partial"])
         #expect(capabilities == ["processStartIdentityDecimal", "installedApplicationSidecar"])
+        #expect(service.installedApplicationListCallCount == 1)
+    }
+
+    @Test
+    func `App list skips installed catalog IO for identity-poor running inventory`() async throws {
+        let (output, service) = try await runAppCommandWithService(
+            ["app", "list", "--include-installed", "--json"]
+        ) { service in
+            service.applications = [ServiceApplicationInfo(
+                processIdentifier: 42,
+                processStartIdentity: 7,
+                bundleIdentifier: nil,
+                name: "Incomplete",
+                bundlePath: "/Applications/Incomplete.app",
+                isHiddenKnown: false
+            )]
+            service.installedApplications = [ServiceInstalledApplicationInfo(
+                name: "Available",
+                bundleIdentifier: "com.example.available",
+                launchPath: "/Applications/Available.app",
+                declaredPresentation: .regular
+            )]
+        }
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+
+        #expect(service.installedApplicationListCallCount == 0)
+        #expect((data["installed_count"] as? NSNumber)?.intValue == 0)
+        #expect((data["installed_apps"] as? [[String: Any]])?.isEmpty == true)
+        #expect((data["warnings"] as? [String])?.contains {
+            $0.contains("omitted because a live application lacked bundle identity metadata")
+        } == true)
     }
 
     @Test

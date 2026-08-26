@@ -114,6 +114,45 @@ struct MCPInstalledApplicationCatalogTests {
     }
 
     @Test
+    func `identity-poor running inventory skips catalog IO`() async throws {
+        let service = InstalledCatalogApplicationService(applications: [ServiceApplicationInfo(
+            processIdentifier: 41,
+            processStartIdentity: 70,
+            bundleIdentifier: nil,
+            name: "Incomplete",
+            bundlePath: "/Applications/Incomplete.app",
+            isHiddenKnown: false)])
+        service.installedApplications = [ServiceInstalledApplicationInfo(
+            name: "Available",
+            bundleIdentifier: "com.example.available",
+            launchPath: "/Applications/Available.app",
+            declaredPresentation: .regular)]
+        let tool = await AppTool(context: MCPToolTestHelpers.makeLegacyContext(applications: service))
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "list",
+            "includeInstalled": true,
+        ]))
+
+        #expect(!response.isError)
+        #expect(service.installedListCallCount == 0)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected list metadata")
+            return
+        }
+        #expect(meta["installed_count"] == .double(0))
+        #expect(meta["installed_apps"] == .array([]))
+        guard case let .array(warnings)? = meta["warnings"] else {
+            Issue.record("Expected omission warning")
+            return
+        }
+        #expect(warnings.contains {
+            guard case let .string(value) = $0 else { return false }
+            return value.contains("omitted because a live application lacked bundle identity metadata")
+        })
+    }
+
+    @Test
     func `installed opt-in is rejected for non-list actions`() async throws {
         let service = InstalledCatalogApplicationService(applications: [])
         let tool = await AppTool(context: MCPToolTestHelpers.makeLegacyContext(applications: service))

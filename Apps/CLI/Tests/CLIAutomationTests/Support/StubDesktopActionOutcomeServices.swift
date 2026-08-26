@@ -22,6 +22,7 @@ InstalledApplicationCatalogProviding {
     nonisolated let supportsInstalledApplicationCatalog = true
     var installedApplications: [ServiceInstalledApplicationInfo] = []
     var installedApplicationWarnings: [String] = []
+    private(set) var installedApplicationListCallCount = 0
 
     func launchApplicationActionResult(
         request: ApplicationLaunchRequest
@@ -78,7 +79,8 @@ InstalledApplicationCatalogProviding {
     }
 
     func listInstalledApplications() async throws -> UnifiedToolOutput<ServiceInstalledApplicationListData> {
-        UnifiedToolOutput(
+        self.installedApplicationListCallCount += 1
+        return UnifiedToolOutput(
             data: ServiceInstalledApplicationListData(applications: self.installedApplications),
             summary: .init(
                 brief: "Fixture installed applications",

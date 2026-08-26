@@ -6,20 +6,25 @@ import TachikomaMCP
 @MainActor
 extension AppToolActions {
     func handleList(request: AppToolRequest) async throws -> ToolResponse {
-        let appsOutput: UnifiedToolOutput<ServiceApplicationListData>
-        let installedOutput: UnifiedToolOutput<ServiceInstalledApplicationListData>?
+        typealias InstalledOutput = UnifiedToolOutput<ServiceInstalledApplicationListData>
+        let catalog: (any InstalledApplicationCatalogProviding)?
         if request.includeInstalled {
-            guard let catalog = self.service as? any InstalledApplicationCatalogProviding,
-                  catalog.supportsInstalledApplicationCatalog
+            guard let provider = self.service as? any InstalledApplicationCatalogProviding,
+                  provider.supportsInstalledApplicationCatalog
             else {
                 return ToolResponse.error("The selected runtime host does not support installed application discovery")
             }
-            async let pendingInstalled = catalog.listInstalledApplications()
-            appsOutput = try await self.service.listApplications()
-            installedOutput = try await pendingInstalled
+            catalog = provider
         } else {
-            appsOutput = try await self.service.listApplications()
-            installedOutput = nil
+            catalog = nil
+        }
+        let appsOutput = try await self.service.listApplications()
+        let hasIdentityPoorRunningApplications =
+            InstalledApplicationReconciler.hasIdentityPoorRunningApplications(appsOutput.data.applications)
+        let installedOutput: InstalledOutput? = if let catalog, !hasIdentityPoorRunningApplications {
+            try await catalog.listInstalledApplications()
+        } else {
+            nil
         }
         // Preserve the MCP tool's historical app-level inventory. The CLI has explicit
         // --include-background semantics for prohibited helpers; MCP list has no such opt-in.
@@ -30,19 +35,21 @@ extension AppToolActions {
             }
         }
         warnings.append(contentsOf: installedOutput?.metadata.warnings ?? [])
-        if installedOutput != nil,
-           InstalledApplicationReconciler.hasIdentityPoorRunningApplications(appsOutput.data.applications)
-        {
+        if request.includeInstalled, hasIdentityPoorRunningApplications {
             warnings.append(
                 "Installed-but-not-running results were omitted because a live application lacked " +
                     "bundle identity metadata")
         }
         warnings = Array(Set(warnings)).sorted()
-        let installedApplications = installedOutput.map { output in
-            InstalledApplicationReconciler.installedButNotRunning(
-                catalog: output.data.applications,
-                running: appsOutput.data.applications)
-                .filter { $0.declaredPresentation != .backgroundOnly }
+        let installedApplications: [ServiceInstalledApplicationInfo]? = if request.includeInstalled {
+            installedOutput.map { output in
+                InstalledApplicationReconciler.installedButNotRunning(
+                    catalog: output.data.applications,
+                    running: appsOutput.data.applications)
+                    .filter { $0.declaredPresentation != .backgroundOnly }
+            } ?? []
+        } else {
+            nil
         }
         let executionTime = self.executionTime(since: request.startTime)
 

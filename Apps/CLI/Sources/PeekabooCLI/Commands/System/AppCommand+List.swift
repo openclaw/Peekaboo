@@ -75,22 +75,29 @@ extension AppCommand {
             self.runtime = runtime
 
             do {
-                let appsOutput: UnifiedToolOutput<ServiceApplicationListData>
-                let installedOutput: UnifiedToolOutput<ServiceInstalledApplicationListData>?
+                typealias InstalledOutput = UnifiedToolOutput<ServiceInstalledApplicationListData>
+                let catalog: (any InstalledApplicationCatalogProviding)?
                 if self.includeInstalled {
-                    guard let catalog = self.services.applications as? any InstalledApplicationCatalogProviding,
-                          catalog.supportsInstalledApplicationCatalog
+                    guard let provider = self.services.applications as? any InstalledApplicationCatalogProviding,
+                          provider.supportsInstalledApplicationCatalog
                     else {
                         throw PeekabooError.serviceUnavailable(
                             "The selected runtime host does not support installed application discovery"
                         )
                     }
-                    async let pendingInstalled = catalog.listInstalledApplications()
-                    appsOutput = try await self.services.applications.listApplications()
-                    installedOutput = try await pendingInstalled
+                    catalog = provider
                 } else {
-                    appsOutput = try await self.services.applications.listApplications()
-                    installedOutput = nil
+                    catalog = nil
+                }
+                let appsOutput = try await self.services.applications.listApplications()
+                let hasIdentityPoorRunningApplications =
+                    InstalledApplicationReconciler.hasIdentityPoorRunningApplications(
+                        appsOutput.data.applications
+                    )
+                let installedOutput: InstalledOutput? = if let catalog, !hasIdentityPoorRunningApplications {
+                    try await catalog.listInstalledApplications()
+                } else {
+                    nil
                 }
 
                 let filtered = Self.filteredApplications(
@@ -126,20 +133,21 @@ extension AppCommand {
                     let schema_capabilities: [String]
                 }
 
-                let installedApplications = installedOutput.map { output in
-                    Self.filteredInstalledApplications(
-                        InstalledApplicationReconciler.installedButNotRunning(
-                            catalog: output.data.applications,
-                            running: appsOutput.data.applications
-                        ),
-                        includeBackground: self.includeBackground
-                    )
+                let installedApplications: [ServiceInstalledApplicationInfo]? = if self.includeInstalled {
+                    installedOutput.map { output in
+                        Self.filteredInstalledApplications(
+                            InstalledApplicationReconciler.installedButNotRunning(
+                                catalog: output.data.applications,
+                                running: appsOutput.data.applications
+                            ),
+                            includeBackground: self.includeBackground
+                        )
+                    } ?? []
+                } else {
+                    nil
                 }
                 var combinedWarnings = appsOutput.metadata.warnings + (installedOutput?.metadata.warnings ?? [])
-                if installedOutput != nil,
-                   InstalledApplicationReconciler.hasIdentityPoorRunningApplications(
-                       appsOutput.data.applications
-                   ) {
+                if self.includeInstalled, hasIdentityPoorRunningApplications {
                     combinedWarnings.append(
                         "Installed-but-not-running results were omitted because a live application lacked " +
                             "bundle identity metadata"
