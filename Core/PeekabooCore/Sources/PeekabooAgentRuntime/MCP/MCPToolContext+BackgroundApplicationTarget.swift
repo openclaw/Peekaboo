@@ -4,6 +4,18 @@ import PeekabooFoundation
 import TachikomaMCP
 
 extension MCPToolContext {
+    private enum BackgroundSnapshotTargetRequirement {
+        case processIdentity
+        case exactWindow
+
+        init(toolName: String) {
+            self = switch toolName {
+            case "action", "set_value": .processIdentity
+            default: .exactWindow
+            }
+        }
+    }
+
     private struct BackgroundExactWindowSelectorKeys {
         let application: String
         let pid: String?
@@ -47,6 +59,7 @@ extension MCPToolContext {
 
     @MainActor
     func backgroundSnapshotTargetPlan(
+        toolName: String,
         snapshotID: String,
         mirroredSnapshot: UISnapshot,
         detectionResult: ElementDetectionResult) async throws -> AuthorizedDesktopTargetPlan
@@ -59,12 +72,24 @@ extension MCPToolContext {
         {
             throw DesktopTargetIdentityError.snapshotSourceMismatch
         }
-        guard mirroredIdentity.exactWindow != nil else { throw DesktopTargetIdentityError.incompleteExactWindow }
-        let identity = try SnapshotTargetReceiptPlanner.assemble(
-            snapshotID: snapshotID,
-            detectionResult: detectionResult,
-            additionalEvidence: [.init(target: mirroredIdentity)],
-            applicationName: mirroredReceipt.applicationName).receipt.requireIdentity()
+        let identity: DesktopTargetIdentity
+        switch BackgroundSnapshotTargetRequirement(toolName: toolName) {
+        case .processIdentity where mirroredIdentity.exactWindow == nil:
+            identity = try SnapshotTargetReceiptPlanner.assembleProcessIdentity(
+                snapshotID: snapshotID,
+                detectionResult: detectionResult,
+                additionalEvidence: [.init(target: mirroredIdentity)],
+                applicationName: mirroredReceipt.applicationName).receipt.requireIdentity()
+        case .processIdentity, .exactWindow:
+            guard mirroredIdentity.exactWindow != nil else {
+                throw DesktopTargetIdentityError.incompleteExactWindow
+            }
+            identity = try SnapshotTargetReceiptPlanner.assemble(
+                snapshotID: snapshotID,
+                detectionResult: detectionResult,
+                additionalEvidence: [.init(target: mirroredIdentity)],
+                applicationName: mirroredReceipt.applicationName).receipt.requireIdentity()
+        }
         let authority = try await self.receiptBoundMutationAuthority(for: identity)
         return AuthorizedDesktopTargetPlan(mutationAuthority: authority)
     }

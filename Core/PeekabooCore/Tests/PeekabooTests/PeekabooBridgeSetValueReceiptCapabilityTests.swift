@@ -371,7 +371,7 @@ struct PeekabooBridgeSetValueReceiptCapabilityTests {
             server: server,
             capabilities: .current)
         #expect(error?.actionOutcome?.state == .refused)
-        #expect(error?.actionOutcome?.dispatchState == .none)
+        #expect(error?.actionOutcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(services.automationStub.lastSetValue == nil)
         await host.stop()
     }

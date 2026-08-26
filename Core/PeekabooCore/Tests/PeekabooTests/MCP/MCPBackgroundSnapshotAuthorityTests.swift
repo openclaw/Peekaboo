@@ -13,6 +13,136 @@ import Testing
 struct MCPBackgroundSnapshotAuthorityTests {
     @Test
     @MainActor
+    func `process scoped action reaches its generation bound leaf through context authorization`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.id(207)
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 1001)
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+        automation.uiAutomationOutcomeTargetIdentity = try DesktopTargetIdentity(
+            processIdentity: processIdentity)
+        let context = try await Self.makeProcessScopedContext(
+            snapshotID: snapshotID,
+            processIdentity: processIdentity,
+            automation: automation)
+
+        let response = try await context.execute(
+            tool: ActionTool(context: context),
+            arguments: ToolArguments(raw: [
+                "on": "B1",
+                "action": "AXIncrement",
+                "snapshot": snapshotID,
+            ]))
+
+        #expect(!response.isError)
+        #expect(automation.lastPerformAction?.target == "B1")
+        #expect(automation.lastPerformAction?.snapshotId == snapshotID)
+    }
+
+    @Test
+    @MainActor
+    func `process scoped set value reaches its generation bound leaf through context authorization`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.id(208)
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 1001)
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background))
+        automation.uiAutomationOutcomeTargetIdentity = try DesktopTargetIdentity(
+            processIdentity: processIdentity)
+        let context = try await Self.makeProcessScopedContext(
+            snapshotID: snapshotID,
+            processIdentity: processIdentity,
+            automation: automation)
+
+        let response = try await context.execute(
+            tool: SetValueTool(context: context),
+            arguments: ToolArguments(raw: [
+                "on": "T1",
+                "value": "updated",
+                "snapshot": snapshotID,
+            ]))
+
+        #expect(!response.isError)
+        #expect(automation.lastSetValue?.target == "T1")
+        #expect(automation.lastSetValue?.snapshotId == snapshotID)
+    }
+
+    @Test
+    @MainActor
+    func `process scoped click still refuses before dispatch without exact window authority`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.id(209)
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 1001)
+        let automation = StubAutomationService()
+        let context = try await Self.makeProcessScopedContext(
+            snapshotID: snapshotID,
+            processIdentity: processIdentity,
+            automation: automation)
+
+        let response = try await context.execute(
+            tool: ClickTool(context: context),
+            arguments: ToolArguments(raw: [
+                "on": "B1",
+                "snapshot": snapshotID,
+            ]))
+
+        #expect(response.isError)
+        #expect(automation.lastProcessTargetedClick == nil)
+        Self.expectSafeTargetRefusal(response)
+    }
+
+    @Test
+    @MainActor
+    func `process scoped element mutation refuses final generation replacement before dispatch`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.id(210)
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 1001)
+        let application = Self.processScopedApplication(processIdentity: processIdentity)
+        let graph = try LinkedApplicationInventoryGraph(nodes: [
+            .init(application: application, windows: []),
+        ])
+        let replacement = AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity + 1,
+            bundleIdentifier: application.bundleIdentifier,
+            name: application.name,
+            windowCount: 0,
+            windowIDs: [])
+        let applications = ReplacingSnapshotAuthorityApplicationService(
+            graph: graph,
+            responses: [application, application, replacement])
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+        automation.uiAutomationOutcomeTargetIdentity = try DesktopTargetIdentity(
+            processIdentity: processIdentity)
+        let context = try await Self.makeProcessScopedContext(
+            snapshotID: snapshotID,
+            processIdentity: processIdentity,
+            automation: automation,
+            applications: applications)
+
+        let response = try await context.execute(
+            tool: ActionTool(context: context),
+            arguments: ToolArguments(raw: [
+                "on": "B1",
+                "action": "AXIncrement",
+                "snapshot": snapshotID,
+            ]))
+
+        #expect(response.isError)
+        #expect(automation.lastPerformAction == nil)
+        Self.expectSafeTargetRefusal(response)
+    }
+
+    @Test
+    @MainActor
     func `snapshot mutation uses one shared receipt and live authority`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: SnapshotReferenceFixtures.id(201))
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [fixture.desktopTarget])
@@ -275,6 +405,50 @@ struct MCPBackgroundSnapshotAuthorityTests {
             windows: windows,
             snapshots: snapshots,
             snapshotOwner: owner)
+    }
+
+    @MainActor
+    private static func makeProcessScopedContext(
+        snapshotID: String,
+        processIdentity: ApplicationProcessIdentity,
+        automation: StubAutomationService,
+        applications: ScriptedApplicationInventoryService? = nil) async throws -> MCPToolContext
+    {
+        let application = Self.processScopedApplication(processIdentity: processIdentity)
+        let graph = try LinkedApplicationInventoryGraph(nodes: [
+            .init(application: application, windows: []),
+        ])
+        let windowContext = WindowContext(
+            applicationName: application.name,
+            applicationBundleId: application.bundleIdentifier,
+            applicationProcessId: processIdentity.processIdentifier,
+            applicationProcessStartIdentity: processIdentity.processStartIdentity)
+        let detection = AutomationTestFixtures.detectionResult(
+            snapshotID: snapshotID,
+            windowContext: windowContext)
+        let snapshots = try await InMemorySnapshotManager.containing(detection)
+        let owner = MCPToolSnapshotOwner()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications ?? ScriptedApplicationInventoryService(graph: graph),
+            windows: ScriptedWindowInventoryService(graph: graph),
+            snapshots: snapshots,
+            snapshotOwner: owner)
+        let mirroredSnapshot = await context.uiSnapshots.createSnapshot(id: snapshotID)
+        await mirroredSnapshot.setTargetMetadata(from: windowContext)
+        return context
+    }
+
+    private static func processScopedApplication(
+        processIdentity: ApplicationProcessIdentity) -> ServiceApplicationInfo
+    {
+        AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "com.example.ProcessScoped",
+            name: "Process Scoped",
+            windowCount: 0,
+            windowIDs: [])
     }
 
     private static func expectSafeTargetRefusal(_ response: ToolResponse) {

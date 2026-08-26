@@ -617,6 +617,7 @@ public struct MCPToolContext: @unchecked Sendable {
         let targetPlan: AuthorizedDesktopTargetPlan
         do {
             targetPlan = try await self.backgroundSnapshotTargetPlan(
+                toolName: toolName,
                 snapshotID: effectiveSnapshotID,
                 mirroredSnapshot: mirroredSnapshot,
                 detectionResult: detectionResult)
