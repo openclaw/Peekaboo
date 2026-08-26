@@ -3,6 +3,24 @@ import Foundation
 import os.log
 import PeekabooFoundation
 
+@MainActor
+private final class SeededSnapshotReferenceGenerator {
+    private let initial: SnapshotReference
+    private var usedInitial = false
+
+    init(initial: SnapshotReference) {
+        self.initial = initial
+    }
+
+    func next() -> SnapshotReference {
+        if !self.usedInitial {
+            self.usedInitial = true
+            return self.initial
+        }
+        return SnapshotReference.generate()
+    }
+}
+
 /// In-memory implementation of `SnapshotManagerProtocol`.
 ///
 /// Unlike `SnapshotManager`, this manager does not persist snapshot state to disk and is ideal for long-lived host apps
@@ -12,6 +30,7 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation = true
     public let supportsSnapshotMutationLeases = true
     public let supportsExplicitSnapshotPublication = true
+    public let supportsProducerBoundSnapshotReferences = true
     public var copiesScreenshotArtifactsIntoStorage: Bool {
         self.options.copyArtifactsOnStore
     }
@@ -81,32 +100,85 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "InMemorySnapshotManager")
     let options: Options
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
+    let snapshotReferenceGenerator: SnapshotReferenceGenerator
     var entries: [String: Entry] = [:]
     var implicitLatestInvalidatedAt: Date?
     var implicitLatestPreservation: ImplicitLatestPreservation?
     var mutationLeases: [String: MutationLeaseState] = [:]
 
     public init(
-        detectionResult: ElementDetectionResult? = nil,
         options: Options = Options(),
-        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
+        snapshotReferenceGenerator: @escaping SnapshotReferenceGenerator = SnapshotReference.generate)
     {
         self.options = options
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
+        self.snapshotReferenceGenerator = snapshotReferenceGenerator
+    }
 
-        if let detectionResult {
-            let now = Date()
-            let snapshotId = detectionResult.snapshotId
-            var entry = Entry(
-                createdAt: now,
-                lastAccessedAt: now,
-                processId: getpid(),
-                isPending: false,
-                isImplicitLatestEligible: true,
-                detectionResult: detectionResult,
-                snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
-            self.applyDetectionResult(detectionResult, to: &entry.snapshotData)
-            self.entries[snapshotId] = entry
+    @available(*, deprecated, message: "Use await InMemorySnapshotManager.containing(_:) for seeded state")
+    public convenience init(
+        detectionResult: ElementDetectionResult?,
+        options: Options = Options(),
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
+    {
+        self.init(
+            options: options,
+            desktopMutationWatermarkStore: desktopMutationWatermarkStore)
+        guard let detectionResult else { return }
+        do {
+            try SnapshotPublicationBinding.validate(
+                snapshotId: detectionResult.snapshotId,
+                detectionResult: detectionResult)
+        } catch {
+            self.logger.error("Refusing invalid compatibility snapshot publication: \(error.localizedDescription)")
+            return
         }
+
+        let now = Date()
+        var entry = Entry(
+            createdAt: now,
+            lastAccessedAt: now,
+            processId: getpid(),
+            isPending: false,
+            isImplicitLatestEligible: true,
+            detectionResult: detectionResult,
+            snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
+        self.applyDetectionResult(detectionResult, to: &entry.snapshotData)
+        self.entries[detectionResult.snapshotId] = entry
+    }
+
+    /// Creates a manager through the same create-before-store path used by production observation.
+    public static func containing(
+        _ detectionResult: ElementDetectionResult,
+        options: Options = Options(),
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil) async throws
+        -> InMemorySnapshotManager
+    {
+        guard let reference = SnapshotReference(rawValue: detectionResult.snapshotId) else {
+            throw SnapshotError.invalidSnapshotReference(detectionResult.snapshotId)
+        }
+        let generator = SeededSnapshotReferenceGenerator(initial: reference)
+        let manager = InMemorySnapshotManager(
+            options: options,
+            desktopMutationWatermarkStore: desktopMutationWatermarkStore,
+            snapshotReferenceGenerator: { generator.next() })
+        let snapshotId = try await manager.createSnapshot()
+        try await manager.storeDetectionResult(snapshotId: snapshotId, result: detectionResult)
+        return manager
+    }
+
+    func validateSnapshotReference(_ snapshotId: String) throws {
+        guard SnapshotReference(rawValue: snapshotId) != nil else {
+            throw SnapshotError.invalidSnapshotReference(snapshotId)
+        }
+    }
+
+    func requireEntry(for snapshotId: String) throws -> Entry {
+        try self.validateSnapshotReference(snapshotId)
+        guard let entry = self.entries[snapshotId] else {
+            throw SnapshotError.snapshotNotFound
+        }
+        return entry
     }
 }

@@ -1,12 +1,54 @@
 import Darwin
 import Dispatch
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
 @MainActor
 struct InMemorySnapshotManagerTests {
+    @Test
+    func `detection-only identifiers never claim producer-bound snapshot authority`() {
+        let transient = SnapshotPublicationBinding.resultIdentifier(explicit: nil)
+        let ocrTransient = SnapshotPublicationBinding.resultIdentifier(
+            explicit: nil,
+            transientPrefix: "ocr")
+        let explicit = SnapshotReferenceFixtures.first.rawValue
+
+        #expect(SnapshotReference(rawValue: transient) == nil)
+        #expect(SnapshotReference(rawValue: ocrTransient) == nil)
+        #expect(ocrTransient.hasPrefix("ocr-"))
+        #expect(SnapshotPublicationBinding.resultIdentifier(explicit: explicit) == explicit)
+    }
+
+    @Test
+    func `failed disk snapshot initialization rolls back producer ownership`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-reservation-rollback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        let manager = SnapshotManager(snapshotStorageURL: storageURL)
+
+        for failure in [SnapshotInitializationFailure.configure, .payload] {
+            let reservation = try manager.reserveOwnedSnapshotDirectory()
+            await #expect(throws: (any Error).self) {
+                _ = try await manager.initializeReservedSnapshot(reservation) { snapshotPath in
+                    switch failure {
+                    case .configure:
+                        throw failure
+                    case .payload:
+                        try FileManager.default.createDirectory(
+                            at: snapshotPath.appendingPathComponent("snapshot.json"),
+                            withIntermediateDirectories: false)
+                    }
+                }
+            }
+            #expect(!FileManager.default.fileExists(atPath: reservation.url.path))
+            #expect(try await !manager.ownsSnapshot(snapshotId: reservation.snapshotId))
+        }
+    }
+
     @Test
     func `legacy protocol conformer gets non-destructive invalidation default`() async throws {
         let legacyManager: any SnapshotManagerProtocol = UnusedSnapshotManager()
@@ -255,22 +297,30 @@ struct InMemorySnapshotManagerTests {
     }
 
     @Test
-    func `disk clean all removes incomplete and corrupt snapshot directories`() async throws {
+    func `disk clean all removes only producer-owned snapshot directories`() async throws {
         let storageURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-incomplete-cleanup-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: storageURL) }
         let corruptURL = storageURL.appendingPathComponent("corrupt-snapshot", isDirectory: true)
-        let stagingURL = storageURL.appendingPathComponent(".pending-abandoned", isDirectory: true)
+        let malformedPendingURL = storageURL.appendingPathComponent(".pending-abandoned", isDirectory: true)
+        let legacyPendingURL = storageURL.appendingPathComponent(
+            ".pending-\(UUID().uuidString)",
+            isDirectory: true)
         try FileManager.default.createDirectory(at: corruptURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: malformedPendingURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: legacyPendingURL, withIntermediateDirectories: true)
         try Data("artifact".utf8).write(to: corruptURL.appendingPathComponent("raw.png"))
+        try Data("legacy pending artifact".utf8).write(to: legacyPendingURL.appendingPathComponent("raw.png"))
 
         let manager = SnapshotManager(snapshotStorageURL: storageURL)
+        let owned = try await manager.createSnapshot()
         let count = try await manager.cleanAllSnapshots()
 
         #expect(count == 2)
-        #expect(!FileManager.default.fileExists(atPath: corruptURL.path))
-        #expect(!FileManager.default.fileExists(atPath: stagingURL.path))
+        #expect(!FileManager.default.fileExists(atPath: storageURL.appendingPathComponent(owned).path))
+        #expect(!FileManager.default.fileExists(atPath: legacyPendingURL.path))
+        #expect(FileManager.default.fileExists(atPath: corruptURL.path))
+        #expect(FileManager.default.fileExists(atPath: malformedPendingURL.path))
     }
 
     @Test
@@ -405,16 +455,18 @@ struct InMemorySnapshotManagerTests {
 
         let first = try await manager.createSnapshot()
         try await Task.sleep(nanoseconds: 1_000_000)
-        try await manager.storeScreenshot(Self.screenshotRequest(snapshotId: "external", path: "/tmp/external.png"))
+        let second = try await manager.createSnapshot()
+        try await manager.storeScreenshot(Self.screenshotRequest(snapshotId: second, path: "/tmp/external.png"))
 
         let snapshots = try await manager.listSnapshots()
-        #expect(snapshots.map(\.id) == ["external"])
+        #expect(snapshots.map(\.id) == [second])
         #expect(snapshots.contains { $0.id == first } == false)
     }
 
     @Test
     func `snapshot cleanup removes managed temporary artifacts`() async throws {
-        let snapshotId = "managed-temp"
+        let manager = InMemorySnapshotManager()
+        let snapshotId = try await manager.createSnapshot()
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-see/\(snapshotId)", isDirectory: true)
         let raw = directory.appendingPathComponent("raw.png")
@@ -423,8 +475,6 @@ struct InMemorySnapshotManagerTests {
         try Data("raw".utf8).write(to: raw)
         try Data("annotated".utf8).write(to: annotated)
 
-        let manager = InMemorySnapshotManager()
-        _ = try await manager.createSnapshot()
         try await manager.storeScreenshot(Self.screenshotRequest(snapshotId: snapshotId, path: raw.path))
         try await manager.storeAnnotatedScreenshot(snapshotId: snapshotId, annotatedScreenshotPath: annotated.path)
 
@@ -433,6 +483,304 @@ struct InMemorySnapshotManagerTests {
         #expect(!FileManager.default.fileExists(atPath: raw.path))
         #expect(!FileManager.default.fileExists(atPath: annotated.path))
         #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @Test
+    func `producer-bound references own only explicitly created snapshots`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-owned-snapshots-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        let managers: [any SnapshotManagerProtocol] = [
+            InMemorySnapshotManager(),
+            SnapshotManager(snapshotStorageURL: storageURL),
+        ]
+
+        for manager in managers {
+            let owned = try await manager.createSnapshot()
+            #expect(SnapshotReference(rawValue: owned) != nil)
+            #expect(try await manager.ownsSnapshot(snapshotId: owned))
+            #expect(try await !manager.ownsSnapshot(snapshotId: SnapshotReferenceFixtures.id(99)))
+            try await manager.cleanSnapshot(snapshotId: owned)
+            #expect(try await !manager.ownsSnapshot(snapshotId: owned))
+            await #expect(throws: SnapshotError.self) {
+                _ = try await manager.ownsSnapshot(snapshotId: "snapshot-1")
+            }
+        }
+    }
+
+    @Test
+    func `disk ownership survives manager restart`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-owned-restart-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+
+        let snapshotID = try await SnapshotManager(snapshotStorageURL: storageURL).createSnapshot()
+        let restarted = SnapshotManager(snapshotStorageURL: storageURL)
+
+        #expect(try await restarted.ownsSnapshot(snapshotId: snapshotID))
+        #expect(try await restarted.listSnapshots().map(\.id) == [snapshotID])
+    }
+
+    @Test
+    func `disk caller local namespace is one producer across manager instances`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-owned-namespace-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        let first = SnapshotManager(snapshotStorageURL: storageURL)
+        let second = SnapshotManager(snapshotStorageURL: storageURL)
+        let snapshotID = try await first.createSnapshot()
+
+        #expect(try await first.ownsSnapshot(snapshotId: snapshotID))
+        #expect(try await second.ownsSnapshot(snapshotId: snapshotID))
+
+        let lease = try await first.beginSnapshotMutation(snapshotId: snapshotID)
+        await #expect(throws: PeekabooError.self) {
+            _ = try await second.beginSnapshotMutation(snapshotId: snapshotID)
+        }
+        try await first.finishSnapshotMutation(lease, requiresFreshObservation: false)
+    }
+
+    @Test
+    func `containing factory seeds one fixture and remains reusable`() async throws {
+        let fixture = AutomationTestFixtures.detectionResult(snapshotID: SnapshotReferenceFixtures.first.rawValue)
+        let manager = try await InMemorySnapshotManager.containing(fixture)
+
+        #expect(try await manager.ownsSnapshot(snapshotId: SnapshotReferenceFixtures.first.rawValue))
+        let next = try await manager.createSnapshot()
+        #expect(next != SnapshotReferenceFixtures.first.rawValue)
+        #expect(SnapshotReference(rawValue: next) != nil)
+    }
+
+    @Test
+    func `legacy seeded initializer remains source compatible and rejects malformed authority`() async throws {
+        let fixture = AutomationTestFixtures.detectionResult(snapshotID: SnapshotReferenceFixtures.first.rawValue)
+        let manager = InMemorySnapshotManager(detectionResult: fixture)
+
+        #expect(try await manager.ownsSnapshot(snapshotId: SnapshotReferenceFixtures.first.rawValue))
+        let next = try await manager.createSnapshot()
+        #expect(next != SnapshotReferenceFixtures.first.rawValue)
+
+        let malformed = AutomationTestFixtures.detectionResult(snapshotID: "snapshot-1")
+        let rejected = InMemorySnapshotManager(detectionResult: malformed)
+        #expect(try await rejected.listSnapshots().isEmpty)
+    }
+
+    @Test
+    func `legacy seeded initializer rejects mismatched embedded coordinate authority`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.first.rawValue
+        let malformed = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "fixture",
+                truncationInfo: nil,
+                captureCoordinateContext: CaptureCoordinateContext(
+                    metadata: CaptureMetadata(size: .init(width: 10, height: 10), mode: .screen),
+                    referenceID: SnapshotReferenceFixtures.second.rawValue)))
+
+        let manager = InMemorySnapshotManager(detectionResult: malformed)
+
+        #expect(try await manager.listSnapshots().isEmpty)
+        #expect(try await !manager.ownsSnapshot(snapshotId: snapshotID))
+    }
+
+    @Test
+    func `stores require prior ownership and exact embedded references`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-store-authority-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        let managers: [any SnapshotManagerProtocol] = [
+            InMemorySnapshotManager(),
+            SnapshotManager(snapshotStorageURL: storageURL),
+        ]
+
+        for manager in managers {
+            let foreign = SnapshotReferenceFixtures.id(81)
+            await #expect(throws: SnapshotError.self) {
+                try await manager.storeScreenshot(Self.screenshotRequest(
+                    snapshotId: foreign,
+                    path: "/tmp/foreign.png"))
+            }
+
+            let owned = try await manager.createSnapshot()
+            let mismatched = ElementDetectionResult(
+                snapshotId: SnapshotReferenceFixtures.id(82),
+                screenshotPath: "",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "fixture"))
+            await #expect(throws: SnapshotError.self) {
+                try await manager.storeDetectionResult(snapshotId: owned, result: mismatched)
+            }
+            await #expect(throws: SnapshotError.self) {
+                try await manager.storeObservationSnapshot(.init(
+                    screenshot: Self.screenshotRequest(snapshotId: owned, path: "/tmp/owned.png"),
+                    detectionResult: mismatched,
+                    annotatedScreenshotPath: nil))
+            }
+            let mismatchedCoordinateResult = ElementDetectionResult(
+                snapshotId: owned,
+                screenshotPath: "",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "fixture",
+                    truncationInfo: nil,
+                    captureCoordinateContext: CaptureCoordinateContext(
+                        metadata: CaptureMetadata(size: .init(width: 10, height: 10), mode: .screen),
+                        referenceID: SnapshotReferenceFixtures.id(83))))
+            await #expect(throws: SnapshotError.self) {
+                try await manager.storeDetectionResult(snapshotId: owned, result: mismatchedCoordinateResult)
+            }
+            let persistedDetection = try await manager.getDetectionResult(snapshotId: owned)
+            #expect(persistedDetection?.snapshotId != mismatched.snapshotId)
+            #expect(persistedDetection?.elements.all.isEmpty ?? true)
+            #expect(try await manager.getUIAutomationSnapshot(snapshotId: owned)?.screenshotPath == nil)
+        }
+    }
+
+    @Test
+    func `reference generators retry collisions and fail after a bounded exhaustion`() async throws {
+        let retrySequence = SnapshotReferenceSequence([
+            SnapshotReferenceFixtures.first,
+            SnapshotReferenceFixtures.first,
+            SnapshotReferenceFixtures.second,
+        ])
+        let retrying = InMemorySnapshotManager(snapshotReferenceGenerator: { retrySequence.next() })
+        #expect(try await retrying.createSnapshot() == SnapshotReferenceFixtures.first.rawValue)
+        #expect(try await retrying.createSnapshot() == SnapshotReferenceFixtures.second.rawValue)
+
+        let exhausted = InMemorySnapshotManager(
+            snapshotReferenceGenerator: { SnapshotReferenceFixtures.third })
+        #expect(try await exhausted.createSnapshot() == SnapshotReferenceFixtures.third.rawValue)
+        await #expect(throws: SnapshotError.self) {
+            _ = try await exhausted.createSnapshot()
+        }
+
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-collision-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        let disk = SnapshotManager(
+            snapshotStorageURL: storageURL,
+            snapshotReferenceGenerator: { SnapshotReferenceFixtures.first })
+        #expect(try await disk.createSnapshot() == SnapshotReferenceFixtures.first.rawValue)
+        await #expect(throws: SnapshotError.self) {
+            _ = try await disk.createSnapshot()
+        }
+
+        let retryStorageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-disk-collision-retry-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: retryStorageURL) }
+        let diskRetrySequence = SnapshotReferenceSequence([
+            SnapshotReferenceFixtures.first,
+            SnapshotReferenceFixtures.first,
+            SnapshotReferenceFixtures.second,
+        ])
+        let retryingDisk = SnapshotManager(
+            snapshotStorageURL: retryStorageURL,
+            snapshotReferenceGenerator: { diskRetrySequence.next() })
+        #expect(try await retryingDisk.createSnapshot() == SnapshotReferenceFixtures.first.rawValue)
+        #expect(try await retryingDisk.createSnapshot() == SnapshotReferenceFixtures.second.rawValue)
+    }
+
+    @Test
+    func `legacy timestamp directories are cleanup-only for disk managers`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-legacy-cleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        try FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
+        let legacyID = "1787675983803-1514"
+        let legacyURL = storageURL.appendingPathComponent(legacyID, isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyURL, withIntermediateDirectories: false)
+        try Data("{}".utf8).write(to: legacyURL.appendingPathComponent("snapshot.json"))
+        let manager = SnapshotManager(snapshotStorageURL: storageURL)
+
+        #expect(try await manager.listSnapshots().isEmpty)
+        await #expect(throws: SnapshotError.self) {
+            _ = try await manager.ownsSnapshot(snapshotId: legacyID)
+        }
+        #expect(try await manager.cleanAllSnapshots() == 1)
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    @Test
+    func `legacy and unowned directories cannot shadow latest owned snapshot`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-latest-ownership-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        let manager = SnapshotManager(
+            snapshotStorageURL: storageURL,
+            snapshotReferenceGenerator: { SnapshotReferenceFixtures.first })
+        let owned = try await manager.createSnapshot()
+        try await Task.sleep(for: .milliseconds(2))
+
+        for snapshotID in ["1787675983803-1514", SnapshotReferenceFixtures.id(88)] {
+            let directory = storageURL.appendingPathComponent(snapshotID, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            try Data("{}".utf8).write(to: directory.appendingPathComponent("snapshot.json"))
+        }
+
+        #expect(await manager.getMostRecentSnapshot() == owned)
+        #expect(try await manager.listSnapshots().map(\.id) == [owned])
+    }
+
+    @Test
+    func `disk payload symlink is never actionable or followed`() async throws {
+        let container = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-payload-symlink-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: container) }
+        let storageURL = container.appendingPathComponent("snapshots", isDirectory: true)
+        let outsideURL = container.appendingPathComponent("outside.json")
+        let outsideContents = Data("outside".utf8)
+        try FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
+        try outsideContents.write(to: outsideURL)
+        let manager = SnapshotManager(snapshotStorageURL: storageURL)
+        let snapshotID = try await manager.createSnapshot()
+        let payloadURL = storageURL.appendingPathComponent(snapshotID).appendingPathComponent("snapshot.json")
+        try FileManager.default.removeItem(at: payloadURL)
+        try FileManager.default.createSymbolicLink(at: payloadURL, withDestinationURL: outsideURL)
+
+        #expect(try await manager.ownsSnapshot(snapshotId: snapshotID))
+        #expect(try await manager.getDetectionResult(snapshotId: snapshotID) == nil)
+        #expect(await manager.getMostRecentSnapshot() == nil)
+        #expect(try await manager.listSnapshots().isEmpty)
+        #expect(try Data(contentsOf: outsideURL) == outsideContents)
+
+        #expect(try await manager.cleanAllSnapshots() == 1)
+        #expect(try Data(contentsOf: outsideURL) == outsideContents)
+    }
+
+    @Test
+    func `disk store cannot resurrect a snapshot cleaned after ownership load`() async throws {
+        let storageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-store-clean-race-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storageURL) }
+        let entered = SnapshotTestLatch()
+        let resume = SnapshotTestLatch()
+        let manager = SnapshotManager(
+            snapshotStorageURL: storageURL,
+            postLoadBarrier: {
+                await entered.open()
+                await resume.wait()
+            })
+        let snapshotID = try await manager.createSnapshot()
+        let store = Task { @MainActor in
+            try await manager.storeDetectionResult(
+                snapshotId: snapshotID,
+                result: AutomationTestFixtures.detectionResult(snapshotID: snapshotID))
+        }
+
+        await entered.wait()
+        try FileManager.default.removeItem(at: storageURL.appendingPathComponent(snapshotID))
+        await resume.open()
+        await #expect(throws: SnapshotError.self) {
+            try await store.value
+        }
+        #expect(!FileManager.default.fileExists(atPath: storageURL.appendingPathComponent(snapshotID).path))
+        #expect(try await !manager.ownsSnapshot(snapshotId: snapshotID))
     }
 
     @Test
@@ -804,5 +1152,48 @@ struct InMemorySnapshotManagerTests {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("artifact".utf8).write(to: url)
         return url
+    }
+}
+
+private enum SnapshotInitializationFailure: Error {
+    case configure
+    case payload
+}
+
+@MainActor
+private final class SnapshotReferenceSequence: @unchecked Sendable {
+    private let references: [SnapshotReference]
+    private var index = 0
+
+    init(_ references: [SnapshotReference]) {
+        self.references = references
+    }
+
+    func next() -> SnapshotReference {
+        let reference = self.references[min(self.index, self.references.count - 1)]
+        self.index += 1
+        return reference
+    }
+}
+
+private actor SnapshotTestLatch {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !self.isOpen else { return }
+        await withCheckedContinuation { continuation in
+            self.waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !self.isOpen else { return }
+        self.isOpen = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }

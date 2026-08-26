@@ -5,11 +5,19 @@ import PeekabooFoundation
 extension SnapshotManager {
     /// Store raw screenshot and build UI map
     public func storeScreenshot(_ request: SnapshotScreenshotRequest) async throws {
-        let snapshotPath = self.getSnapshotPath(for: request.snapshotId)
-        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        guard let snapshotPath = try self.ownedSnapshotURL(for: request.snapshotId) else {
+            throw SnapshotError.snapshotNotFound
+        }
+        try SnapshotPublicationBinding.validate(
+            snapshotId: request.snapshotId,
+            captureCoordinateContext: request.captureCoordinateContext)
 
-        var snapshotData = await self.snapshotActor
-            .loadSnapshot(snapshotId: request.snapshotId, from: snapshotPath) ?? UIAutomationSnapshot()
+        guard var snapshotData = await self.snapshotActor
+            .loadSnapshot(snapshotId: request.snapshotId, from: snapshotPath)
+        else {
+            throw SnapshotError.snapshotNotFound
+        }
+        await self.postLoadBarrier()
         if snapshotData.creatorProcessId == nil {
             snapshotData.creatorProcessId = getpid()
         }
@@ -51,11 +59,16 @@ extension SnapshotManager {
     }
 
     public func storeAnnotatedScreenshot(snapshotId: String, annotatedScreenshotPath: String) async throws {
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
-        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        guard let snapshotPath = try self.ownedSnapshotURL(for: snapshotId) else {
+            throw SnapshotError.snapshotNotFound
+        }
 
-        var snapshotData = await self.snapshotActor
-            .loadSnapshot(snapshotId: snapshotId, from: snapshotPath) ?? UIAutomationSnapshot()
+        guard var snapshotData = await self.snapshotActor
+            .loadSnapshot(snapshotId: snapshotId, from: snapshotPath)
+        else {
+            throw SnapshotError.snapshotNotFound
+        }
+        await self.postLoadBarrier()
         if snapshotData.creatorProcessId == nil {
             snapshotData.creatorProcessId = getpid()
         }

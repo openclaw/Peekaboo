@@ -185,6 +185,7 @@ public nonisolated struct MenuBarData: Codable, Sendable {
 
 /// Snapshot storage error types
 public enum SnapshotError: LocalizedError, Sendable {
+    case invalidSnapshotReference(String)
     case snapshotNotFound
     case noValidSnapshotFound
     case versionMismatch(found: Int, expected: Int)
@@ -193,6 +194,8 @@ public enum SnapshotError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case let .invalidSnapshotReference(reference):
+            "Invalid snapshot reference '\(reference)'; expected ps1_ followed by 32 lowercase hexadecimal digits"
         case .snapshotNotFound:
             "Snapshot not found or expired"
         case .noValidSnapshotFound:

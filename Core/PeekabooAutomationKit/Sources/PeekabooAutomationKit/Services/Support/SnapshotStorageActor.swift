@@ -12,17 +12,24 @@ actor SnapshotStorageActor {
     }
 
     func saveSnapshot(snapshotId: String, data: UIAutomationSnapshot, at snapshotPath: URL) throws {
-        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        guard let snapshotFile = SnapshotPathValidator.producerOwnedSnapshotPayloadURL(
+            for: snapshotId,
+            in: snapshotPath.deletingLastPathComponent(),
+            allowMissing: true)
+        else {
+            throw SnapshotError.snapshotNotFound
+        }
 
-        let snapshotFile = snapshotPath.appendingPathComponent("snapshot.json")
         let jsonData = try self.encoder.encode(data)
         try jsonData.write(to: snapshotFile, options: .atomic)
     }
 
     func loadSnapshot(snapshotId: String, from snapshotPath: URL) -> UIAutomationSnapshot? {
-        let snapshotFile = snapshotPath.appendingPathComponent("snapshot.json")
-
-        guard FileManager.default.fileExists(atPath: snapshotFile.path) else {
+        guard let snapshotFile = SnapshotPathValidator.producerOwnedSnapshotPayloadURL(
+            for: snapshotId,
+            in: snapshotPath.deletingLastPathComponent(),
+            allowMissing: false)
+        else {
             return nil
         }
 

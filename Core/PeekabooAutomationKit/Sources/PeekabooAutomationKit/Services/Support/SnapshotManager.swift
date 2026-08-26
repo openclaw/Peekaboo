@@ -10,6 +10,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation = true
     public let supportsSnapshotMutationLeases = true
     public let supportsExplicitSnapshotPublication = true
+    public let supportsProducerBoundSnapshotReferences = true
     public let copiesScreenshotArtifactsIntoStorage = true
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
@@ -22,75 +23,89 @@ public final class SnapshotManager: SnapshotManagerProtocol {
     let snapshotActor = SnapshotStorageActor()
     let snapshotStorageURLOverride: URL?
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
+    let snapshotReferenceGenerator: SnapshotReferenceGenerator
+    let postLoadBarrier: @MainActor @Sendable () async -> Void
 
     /// Snapshot validity window (10 minutes)
     let snapshotValidityWindow: TimeInterval = 600
 
-    public init(desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil) {
+    public init(
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
+        snapshotReferenceGenerator: @escaping SnapshotReferenceGenerator = SnapshotReference.generate)
+    {
         self.snapshotStorageURLOverride = nil
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
+        self.snapshotReferenceGenerator = snapshotReferenceGenerator
+        self.postLoadBarrier = {}
     }
 
     init(
         snapshotStorageURL: URL,
-        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
+        snapshotReferenceGenerator: @escaping SnapshotReferenceGenerator = SnapshotReference.generate,
+        postLoadBarrier: @escaping @MainActor @Sendable () async -> Void = {})
     {
         self.snapshotStorageURLOverride = snapshotStorageURL
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
+        self.snapshotReferenceGenerator = snapshotReferenceGenerator
+        self.postLoadBarrier = postLoadBarrier
     }
 
     public func createSnapshot() async throws -> String {
-        // Generate timestamp-based snapshot ID for cross-process compatibility
-        let snapshotId = self.makeSnapshotID()
-
-        self.logger.debug("Creating new snapshot: \(snapshotId)")
-
-        // Create snapshot directory
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
-        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
-
-        // Initialize empty snapshot data
-        let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
-        try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: snapshotPath)
-
-        return snapshotId
+        let reservation = try self.reserveOwnedSnapshotDirectory()
+        self.logger.debug("Creating new snapshot: \(reservation.snapshotId)")
+        return try await self.initializeReservedSnapshot(reservation)
     }
 
     public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
-        let snapshotId = self.makeSnapshotID()
-        let storageURL = self.getSnapshotStorageURL()
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
-        let stagingPath = storageURL.appendingPathComponent(".pending-\(UUID().uuidString)", isDirectory: true)
-
-        self.logger.debug("Reserving pending snapshot: \(snapshotId)")
-        try FileManager.default.createDirectory(at: stagingPath, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: stagingPath) }
-
-        try self.markSnapshotPending(at: stagingPath, observationStartedAt: observationStartedAt)
-        let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
-        try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: stagingPath)
-        try FileManager.default.moveItem(at: stagingPath, to: snapshotPath)
-        return snapshotId
+        let reservation = try self.reserveOwnedSnapshotDirectory()
+        self.logger.debug("Reserving pending snapshot: \(reservation.snapshotId)")
+        return try await self.initializeReservedSnapshot(reservation) { snapshotPath in
+            try self.markSnapshotPending(at: snapshotPath, observationStartedAt: observationStartedAt)
+        }
     }
 
     public func createExplicitSnapshot() async throws -> String {
-        let snapshotId = self.makeSnapshotID()
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+        let reservation = try self.reserveOwnedSnapshotDirectory()
+        self.logger.debug("Creating explicit-only snapshot: \(reservation.snapshotId)")
+        return try await self.initializeReservedSnapshot(reservation) { snapshotPath in
+            try self.markSnapshotExplicitOnly(at: snapshotPath)
+        }
+    }
 
-        self.logger.debug("Creating explicit-only snapshot: \(snapshotId)")
-        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
-        try self.markSnapshotExplicitOnly(at: snapshotPath)
-        let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
-        try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: snapshotPath)
-        return snapshotId
+    func initializeReservedSnapshot(
+        _ reservation: (snapshotId: String, url: URL),
+        configure: (URL) throws -> Void = { _ in }) async throws -> String
+    {
+        do {
+            try configure(reservation.url)
+            let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
+            try await self.snapshotActor.saveSnapshot(
+                snapshotId: reservation.snapshotId,
+                data: snapshotData,
+                at: reservation.url)
+            return reservation.snapshotId
+        } catch {
+            try? FileManager.default.removeItem(at: reservation.url)
+            throw error
+        }
     }
 
     public func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+        guard let snapshotPath = try self.ownedSnapshotURL(for: snapshotId) else {
+            throw SnapshotError.snapshotNotFound
+        }
+        try SnapshotPublicationBinding.validate(
+            snapshotId: snapshotId,
+            detectionResult: result,
+            captureCoordinateContext: result.metadata.captureCoordinateContext)
 
-        // Load existing snapshot or create new
-        var snapshotData = await self.snapshotActor
-            .loadSnapshot(snapshotId: snapshotId, from: snapshotPath) ?? UIAutomationSnapshot()
+        guard var snapshotData = await self.snapshotActor
+            .loadSnapshot(snapshotId: snapshotId, from: snapshotPath)
+        else {
+            throw SnapshotError.snapshotNotFound
+        }
+        await self.postLoadBarrier()
         if snapshotData.creatorProcessId == nil {
             snapshotData.creatorProcessId = getpid()
         }
@@ -140,7 +155,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
     }
 
     public func getDetectionResult(snapshotId: String) async throws -> ElementDetectionResult? {
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+        guard let snapshotPath = try self.ownedSnapshotURL(for: snapshotId) else { return nil }
 
         guard let snapshotData = await self.snapshotActor.loadSnapshot(snapshotId: snapshotId, from: snapshotPath)
         else {
@@ -294,11 +309,15 @@ public final class SnapshotManager: SnapshotManagerProtocol {
         }
     }
 
+    public func ownsSnapshot(snapshotId: String) async throws -> Bool {
+        // Disk ownership is the caller-local cache namespace, durable across short-lived CLI manager instances.
+        // Long-lived Bridge hosts use InMemorySnapshotManager, so they do not claim this disk namespace.
+        try self.ownedSnapshotURL(for: snapshotId, requiringSnapshotData: false) != nil
+    }
+
     public func cleanSnapshotsOlderThan(days: Int) async throws -> Int {
         let cutoffDate = Date().addingTimeInterval(-Double(days) * 24 * 3600)
-        let snapshotIDs = try self.snapshotDirectoryURLs(
-            includingPending: true,
-            requiringSnapshotData: false).compactMap { url -> String? in
+        let snapshotIDs = try self.cleanupEligibleSnapshotDirectoryURLs().compactMap { url -> String? in
             guard let createdAt = self.snapshotCreationDate(at: url), createdAt < cutoffDate else { return nil }
             return url.lastPathComponent
         }
@@ -311,9 +330,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
     }
 
     public func cleanAllSnapshots() async throws -> Int {
-        let snapshotIDs = try self.snapshotDirectoryURLs(
-            includingPending: true,
-            requiringSnapshotData: false).map(\.lastPathComponent)
+        let snapshotIDs = try self.cleanupEligibleSnapshotDirectoryURLs().map(\.lastPathComponent)
 
         for snapshotID in snapshotIDs {
             try await self.cleanSnapshot(snapshotId: snapshotID)

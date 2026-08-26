@@ -49,9 +49,74 @@ extension SnapshotManager {
     }
 
     func makeSnapshotID() -> String {
-        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
-        let randomSuffix = Int.random(in: 1000...9999)
-        return "\(timestamp)-\(randomSuffix)"
+        self.snapshotReferenceGenerator().rawValue
+    }
+
+    func reserveOwnedSnapshotDirectory() throws -> (snapshotId: String, url: URL) {
+        for _ in 0..<8 {
+            let snapshotId = self.makeSnapshotID()
+            // getSnapshotPath creates the storage root; keep only the random child nonrecursive so collisions surface.
+            let snapshotURL = self.getSnapshotPath(for: snapshotId)
+            do {
+                try FileManager.default.createDirectory(
+                    at: snapshotURL,
+                    withIntermediateDirectories: false)
+            } catch {
+                if FileManager.default.fileExists(atPath: snapshotURL.path) {
+                    continue
+                }
+                throw error
+            }
+            do {
+                try self.markSnapshotOwned(at: snapshotURL, snapshotId: snapshotId)
+                return (snapshotId, snapshotURL)
+            } catch {
+                try? FileManager.default.removeItem(at: snapshotURL)
+                throw error
+            }
+        }
+        throw SnapshotError.storageError("Could not reserve a unique producer-bound snapshot reference")
+    }
+
+    func markSnapshotOwned(at snapshotURL: URL, snapshotId: String) throws {
+        try Data(snapshotId.utf8).write(
+            to: snapshotURL.appendingPathComponent(SnapshotPathValidator.producerOwnerMarkerName),
+            options: .atomic)
+    }
+
+    func isOwnedSnapshot(at snapshotURL: URL, snapshotId: String) -> Bool {
+        SnapshotPathValidator.producerOwnedDirectChildURL(
+            for: snapshotId,
+            in: snapshotURL.deletingLastPathComponent()) == snapshotURL.standardizedFileURL
+    }
+
+    func validatedSnapshotReference(_ snapshotId: String) throws -> SnapshotReference {
+        guard let reference = SnapshotReference(rawValue: snapshotId) else {
+            throw SnapshotError.invalidSnapshotReference(snapshotId)
+        }
+        return reference
+    }
+
+    func ownedSnapshotURL(
+        for snapshotId: String,
+        requiringSnapshotData: Bool = true) throws -> URL?
+    {
+        _ = try self.validatedSnapshotReference(snapshotId)
+        guard let candidate = SnapshotPathValidator.directChildURL(
+            for: snapshotId,
+            in: self.getSnapshotStorageURL()),
+            FileManager.default.fileExists(atPath: candidate.path),
+            self.isOwnedSnapshot(at: candidate, snapshotId: snapshotId)
+        else { return nil }
+        if requiringSnapshotData,
+           SnapshotPathValidator.producerOwnedSnapshotPayloadURL(
+               for: snapshotId,
+               in: self.getSnapshotStorageURL(),
+               allowMissing: false) == nil
+        {
+            return nil
+        }
+        return candidate
     }
 
     func getSnapshotStorageURL() -> URL {
@@ -125,6 +190,29 @@ extension SnapshotManager {
         }
     }
 
+    func cleanupEligibleSnapshotDirectoryURLs() throws -> [URL] {
+        do {
+            return try self.withImplicitLatestInvalidationLock(mode: .read) {
+                let storageURL = self.getSnapshotStorageURL()
+                return try FileManager.default.contentsOfDirectory(
+                    at: storageURL,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: []).filter { url in
+                    guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                        return false
+                    }
+                    return SnapshotPathValidator.cleanupEligibleDirectChildURL(
+                        for: url.lastPathComponent,
+                        in: storageURL) == url.standardizedFileURL
+                }
+            }
+        } catch {
+            self.logger.error("Failed to lock snapshot state for cleanup directory read: \(error)")
+            throw SnapshotError.storageError(
+                "Failed to lock snapshot state for directory read: \(error.localizedDescription)")
+        }
+    }
+
     private func snapshotDirectoryURLsUnlocked(
         includingPending: Bool,
         requiringSnapshotData: Bool = true) -> [URL]
@@ -136,12 +224,15 @@ extension SnapshotManager {
         else { return [] }
         return urls.filter { url in
             guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return false }
-            if url.lastPathComponent.hasPrefix(".pending-") {
+            if SnapshotPathValidator.isLegacyPendingSnapshotDirectoryName(url.lastPathComponent) {
                 return includingPending
             }
+            guard self.isOwnedSnapshot(at: url, snapshotId: url.lastPathComponent) else { return false }
             guard includingPending || !self.isPendingSnapshot(at: url) else { return false }
-            return !requiringSnapshotData || FileManager.default.fileExists(
-                atPath: url.appendingPathComponent("snapshot.json").path)
+            return !requiringSnapshotData || SnapshotPathValidator.producerOwnedSnapshotPayloadURL(
+                for: url.lastPathComponent,
+                in: self.getSnapshotStorageURL(),
+                allowMissing: false) != nil
         }
     }
 
@@ -264,21 +355,34 @@ extension SnapshotManager {
     }
 
     private func validPreservationSnapshotURL(for snapshotId: String) -> URL? {
-        guard let candidate = self.safeSnapshotURL(for: snapshotId) else { return nil }
+        guard let candidate = try? self.ownedSnapshotURL(for: snapshotId) else { return nil }
         guard !self.isExplicitOnlySnapshot(at: candidate) else { return nil }
-        guard FileManager.default.fileExists(atPath: candidate.appendingPathComponent("snapshot.json").path)
+        guard SnapshotPathValidator.producerOwnedSnapshotPayloadURL(
+            for: snapshotId,
+            in: self.getSnapshotStorageURL(),
+            allowMissing: false) != nil
         else { return nil }
         return candidate
     }
 
     private func safeSnapshotURL(for snapshotId: String) -> URL? {
-        SnapshotPathValidator.directChildURL(for: snapshotId, in: self.getSnapshotStorageURL())
+        try? self.ownedSnapshotURL(for: snapshotId, requiringSnapshotData: false)
     }
 
     func removeSnapshotAndPreservation(snapshotId: String) throws -> Bool {
-        guard let snapshotURL = self.safeSnapshotURL(for: snapshotId) else {
-            throw SnapshotError.storageError("Invalid snapshot ID")
+        let snapshotURL: URL?
+        if SnapshotReference(rawValue: snapshotId) != nil {
+            snapshotURL = try self.ownedSnapshotURL(for: snapshotId, requiringSnapshotData: false)
+        } else if SnapshotPathValidator.isLegacyTimestampSnapshotID(snapshotId) ||
+            SnapshotPathValidator.isLegacyPendingSnapshotDirectoryName(snapshotId)
+        {
+            snapshotURL = SnapshotPathValidator.cleanupEligibleDirectChildURL(
+                for: snapshotId,
+                in: self.getSnapshotStorageURL())
+        } else {
+            throw SnapshotError.invalidSnapshotReference(snapshotId)
         }
+        guard let snapshotURL else { return false }
         return try self.withImplicitLatestInvalidationLock(mode: .write) {
             let existed = FileManager.default.fileExists(atPath: snapshotURL.path)
             if existed {
@@ -432,9 +536,13 @@ extension SnapshotManager {
                   watermark.map({ createdAt > $0 }) ?? true,
                   latestCreationDate.map({ createdAt <= $0 }) ?? true,
                   url.hasDirectoryPath,
+                  self.isOwnedSnapshot(at: url, snapshotId: url.lastPathComponent),
                   !self.isPendingSnapshot(at: url),
                   !self.isExplicitOnlySnapshot(at: url),
-                  FileManager.default.fileExists(atPath: url.appendingPathComponent("snapshot.json").path)
+                  SnapshotPathValidator.producerOwnedSnapshotPayloadURL(
+                      for: url.lastPathComponent,
+                      in: snapshotDir,
+                      allowMissing: false) != nil
             else {
                 return nil
             }

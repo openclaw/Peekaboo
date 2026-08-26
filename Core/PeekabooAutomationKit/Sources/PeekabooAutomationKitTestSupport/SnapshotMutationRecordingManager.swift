@@ -17,12 +17,24 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
 
     public private(set) var beginCalls: [String] = []
     public private(set) var finishCalls: [FinishCall] = []
+    public private(set) var ownsCalls: [String] = []
+    public private(set) var createCalls: [Date?] = []
+    public private(set) var createExplicitCallCount = 0
     public var failFinish = false
+    public var ownsSnapshotError: (any Error)?
 
     private let wrapped: any SnapshotManagerProtocol
+    private let producerBoundSnapshotReferencesOverride: Bool?
+    private let createdSnapshotReferenceOverride: String?
 
-    public init(wrapping wrapped: any SnapshotManagerProtocol) {
+    public init(
+        wrapping wrapped: any SnapshotManagerProtocol,
+        supportsProducerBoundSnapshotReferences: Bool? = nil,
+        createdSnapshotReferenceOverride: String? = nil)
+    {
         self.wrapped = wrapped
+        self.producerBoundSnapshotReferencesOverride = supportsProducerBoundSnapshotReferences
+        self.createdSnapshotReferenceOverride = createdSnapshotReferenceOverride
     }
 
     public var supportsImplicitLatestSnapshotInvalidation: Bool {
@@ -45,20 +57,45 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
         self.wrapped.supportsExplicitSnapshotPublication
     }
 
+    public var supportsProducerBoundSnapshotReferences: Bool {
+        self.producerBoundSnapshotReferencesOverride ?? self.wrapped.supportsProducerBoundSnapshotReferences
+    }
+
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         self.wrapped.effectiveImplicitLatestInvalidationWatermark
     }
 
     public func createSnapshot() async throws -> String {
-        try await self.wrapped.createSnapshot()
+        self.createCalls.append(nil)
+        if let createdSnapshotReferenceOverride {
+            return createdSnapshotReferenceOverride
+        }
+        return try await self.wrapped.createSnapshot()
     }
 
     public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
-        try await self.wrapped.createSnapshot(pendingAt: observationStartedAt)
+        self.createCalls.append(observationStartedAt)
+        if let createdSnapshotReferenceOverride {
+            return createdSnapshotReferenceOverride
+        }
+        return try await self.wrapped.createSnapshot(pendingAt: observationStartedAt)
     }
 
     public func createExplicitSnapshot() async throws -> String {
-        try await self.wrapped.createExplicitSnapshot()
+        self.createExplicitCallCount += 1
+        if let createdSnapshotReferenceOverride {
+            return createdSnapshotReferenceOverride
+        }
+        return try await self.wrapped.createExplicitSnapshot()
+    }
+
+    public func ownsSnapshot(snapshotId: String) async throws -> Bool {
+        self.ownsCalls.append(snapshotId)
+        if let ownsSnapshotError {
+            throw ownsSnapshotError
+        }
+        guard self.supportsProducerBoundSnapshotReferences else { return false }
+        return try await self.wrapped.ownsSnapshot(snapshotId: snapshotId)
     }
 
     public func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {

@@ -809,7 +809,9 @@ public enum ObservationOCRMapper {
             minConfidence: minConfidence)
         let grouped = DetectedElements(other: elements)
         return ElementDetectionResult(
-            snapshotId: snapshotID ?? "ocr-\(UUID().uuidString)",
+            snapshotId: SnapshotPublicationBinding.resultIdentifier(
+                explicit: snapshotID,
+                transientPrefix: "ocr"),
             screenshotPath: screenshotPath,
             elements: grouped,
             metadata: DetectionMetadata(

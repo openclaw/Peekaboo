@@ -82,7 +82,7 @@ extension GameBridgeDetectionService {
             other: other)
 
         return ElementDetectionResult(
-            snapshotId: snapshotId ?? UUID().uuidString,
+            snapshotId: SnapshotPublicationBinding.resultIdentifier(explicit: snapshotId),
             screenshotPath: "",
             elements: elements,
             metadata: DetectionMetadata(

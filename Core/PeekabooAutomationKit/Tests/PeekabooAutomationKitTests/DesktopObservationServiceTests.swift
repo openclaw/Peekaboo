@@ -1,6 +1,8 @@
 import AppKit
 import CoreGraphics
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import XCTest
 @testable import PeekabooAutomationKit
 
@@ -396,12 +398,12 @@ extension DesktopObservationServiceTests {
                 mode: .accessibility,
                 allowWebFocusFallback: false,
                 includeMenuBarElements: false),
-            output: DesktopObservationOutputOptions(snapshotID: "snapshot-1"),
+            output: DesktopObservationOutputOptions(snapshotID: SnapshotReferenceFixtures.first.rawValue),
             timeout: DesktopObservationTimeouts(detection: 60)))
 
         XCTAssertNotNil(result.elements)
         XCTAssertEqual(automation.detectCalls, 1)
-        XCTAssertEqual(automation.lastSnapshotID, "snapshot-1")
+        XCTAssertEqual(automation.lastSnapshotID, SnapshotReferenceFixtures.first.rawValue)
         XCTAssertEqual(automation.lastWindowContext?.applicationName, "Fixture")
         XCTAssertEqual(automation.lastWindowContext?.applicationBundleId, "com.example.fixture")
         XCTAssertEqual(automation.lastWindowContext?.windowTitle, "Editor")
@@ -450,8 +452,7 @@ extension DesktopObservationServiceTests {
                 output: DesktopObservationOutputOptions(
                     path: outputURL.path,
                     saveRawScreenshot: true,
-                    saveSnapshot: true,
-                    snapshotID: "empty-incomplete")))
+                    saveSnapshot: true)))
             XCTFail("Expected empty incomplete combined evidence to fail")
         } catch let error as PeekabooError {
             guard case .accessibilityIncomplete = error else {
@@ -461,6 +462,10 @@ extension DesktopObservationServiceTests {
         }
 
         XCTAssertEqual(automation.detectCalls, 1)
+        let reservedSnapshotID = try XCTUnwrap(automation.lastSnapshotID)
+        XCTAssertNotNil(SnapshotReference(rawValue: reservedSnapshotID))
+        let ownsFailedReservation = try await snapshots.ownsSnapshot(snapshotId: reservedSnapshotID)
+        XCTAssertFalse(ownsFailedReservation)
         XCTAssertEqual(try Data(contentsOf: outputURL), Data([9]))
         let publishedSnapshots = try await snapshots.listSnapshots()
         XCTAssertTrue(publishedSnapshots.isEmpty)
@@ -839,6 +844,11 @@ extension DesktopObservationServiceTests {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-snapshot-test-\(UUID().uuidString).png")
         let snapshotManager = InMemorySnapshotManager()
+        let detectionStarted = expectation(description: "snapshot observation reached detection")
+        let allowDetectionToFinish = ObservationDetectionSuspension {
+            detectionStarted.fulfill()
+        }
+        defer { allowDetectionToFinish.release() }
         let automation = RecordingUIAutomationService(elements: DetectedElements(buttons: [
             DetectedElement(
                 id: "B1",
@@ -846,7 +856,7 @@ extension DesktopObservationServiceTests {
                 label: "Save",
                 bounds: CGRect(x: 20, y: 30, width: 40, height: 20),
                 isEnabled: true),
-        ]))
+        ]), detectionSuspension: allowDetectionToFinish)
         let service = try DesktopObservationService(
             screenCapture: RecordingScreenCaptureService(
                 result: Self.captureResult(
@@ -857,21 +867,37 @@ extension DesktopObservationServiceTests {
             applications: applications,
             snapshotManager: snapshotManager)
 
-        let result = try await service.observe(DesktopObservationRequest(
-            target: .app(identifier: "Fixture", window: .automatic),
-            detection: DesktopDetectionOptions(mode: .accessibility),
-            output: DesktopObservationOutputOptions(
-                path: outputURL.path,
-                saveSnapshot: true)))
+        let observation = Task {
+            try await service.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility),
+                output: DesktopObservationOutputOptions(
+                    path: outputURL.path,
+                    saveSnapshot: true)))
+        }
+        await fulfillment(of: [detectionStarted], timeout: 2)
+        let latestDuringDetection = await snapshotManager.getMostRecentSnapshot()
+        let listedDuringDetection = try await snapshotManager.listSnapshots()
+        XCTAssertNil(latestDuringDetection)
+        XCTAssertTrue(listedDuringDetection.isEmpty)
+
+        allowDetectionToFinish.release()
+        let result = try await observation.value
 
         XCTAssertEqual(result.files.rawScreenshotPath, outputURL.path)
-        let snapshotID = try XCTUnwrap(result.elements?.snapshotId)
-        XCTAssertEqual(result.files.publishedSnapshotID, snapshotID)
-        let storedDetection = try await snapshotManager.getDetectionResult(snapshotId: snapshotID)
+        let resultSnapshotID = try XCTUnwrap(result.elements?.snapshotId)
+        XCTAssertNotNil(SnapshotReference(rawValue: resultSnapshotID))
+        XCTAssertEqual(automation.lastSnapshotID, resultSnapshotID)
+        XCTAssertEqual(result.files.publishedSnapshotID, resultSnapshotID)
+        let ownsPublishedSnapshot = try await snapshotManager.ownsSnapshot(snapshotId: resultSnapshotID)
+        XCTAssertTrue(ownsPublishedSnapshot)
+        let latestAfterPublication = await snapshotManager.getMostRecentSnapshot()
+        XCTAssertEqual(latestAfterPublication, resultSnapshotID)
+        let storedDetection = try await snapshotManager.getDetectionResult(snapshotId: resultSnapshotID)
         XCTAssertEqual(storedDetection?.screenshotPath, outputURL.path)
         XCTAssertEqual(storedDetection?.elements.all.first?.id, "B1")
 
-        let storedSnapshot = try await snapshotManager.getUIAutomationSnapshot(snapshotId: snapshotID)
+        let storedSnapshot = try await snapshotManager.getUIAutomationSnapshot(snapshotId: resultSnapshotID)
         XCTAssertEqual(storedSnapshot?.screenshotPath, outputURL.path)
         XCTAssertEqual(storedSnapshot?.applicationBundleId, "com.example.fixture")
         XCTAssertEqual(storedSnapshot?.windowTitle, "Snapshot")
@@ -879,6 +905,48 @@ extension DesktopObservationServiceTests {
         XCTAssertTrue(result.timings.spans.map(\.name).contains("snapshot.write"))
 
         try? FileManager.default.removeItem(at: outputURL)
+    }
+
+    func testSnapshotObservationRequiresProducerBoundManagerBeforeCapture() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 189,
+            title: "Snapshot authority",
+            bounds: CGRect(x: 10, y: 20, width: 160, height: 120))
+
+        for (manager, expectedCreateCalls) in [
+            (
+                SnapshotMutationRecordingManager(
+                    wrapping: InMemorySnapshotManager(),
+                    supportsProducerBoundSnapshotReferences: false),
+                0),
+            (
+                SnapshotMutationRecordingManager(
+                    wrapping: InMemorySnapshotManager(),
+                    supportsProducerBoundSnapshotReferences: true,
+                    createdSnapshotReferenceOverride: "snapshot-legacy"),
+                1),
+        ] {
+            let capture = RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window))
+            let service = DesktopObservationService(
+                screenCapture: capture,
+                automation: RecordingUIAutomationService(),
+                applications: RecordingApplicationService(applications: [app], windows: [window]),
+                snapshotManager: manager)
+
+            do {
+                _ = try await service.observe(DesktopObservationRequest(
+                    target: .app(identifier: "Fixture", window: .automatic),
+                    detection: DesktopDetectionOptions(mode: .accessibility),
+                    output: DesktopObservationOutputOptions(saveSnapshot: true)))
+                XCTFail("Expected an unsupported snapshot authority to fail before capture")
+            } catch is SnapshotError {
+                // Expected: either unsupported producer authority or a malformed claimed reference.
+            }
+
+            XCTAssertEqual(manager.createCalls.count, expectedCreateCalls)
+            XCTAssertTrue(capture.operations.isEmpty)
+        }
     }
 
     func testObservationForwardsCaptureEnginePreferenceWhenSupported() async throws {

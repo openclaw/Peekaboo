@@ -3,9 +3,7 @@ import PeekabooFoundation
 
 extension InMemorySnapshotManager {
     public func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
-        guard self.entries[snapshotId] != nil else {
-            throw SnapshotError.snapshotNotFound
-        }
+        _ = try self.requireEntry(for: snapshotId)
         guard self.mutationLeases[snapshotId] == nil else {
             throw PeekabooError.snapshotStale(
                 "Snapshot '\(snapshotId)' already drove a mutation whose result requires a fresh observation. " +
@@ -21,6 +19,7 @@ extension InMemorySnapshotManager {
         _ lease: SnapshotMutationLease,
         requiresFreshObservation: Bool) async throws
     {
+        try self.validateSnapshotReference(lease.snapshotId)
         guard let state = self.mutationLeases[lease.snapshotId], state.lease == lease else {
             throw SnapshotError.storageError(
                 "Mutation lease for snapshot '\(lease.snapshotId)' changed before completion")

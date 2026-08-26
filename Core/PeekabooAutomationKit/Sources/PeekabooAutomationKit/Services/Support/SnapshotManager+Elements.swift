@@ -3,7 +3,9 @@ import Foundation
 extension SnapshotManager {
     /// Get element by ID from snapshot
     public func getElement(snapshotId: String, elementId: String) async throws -> UIElement? {
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+        guard let snapshotPath = try self.ownedSnapshotURL(for: snapshotId) else {
+            throw SnapshotError.snapshotNotFound
+        }
         guard let snapshotData = await self.snapshotActor.loadSnapshot(snapshotId: snapshotId, from: snapshotPath)
         else {
             throw SnapshotError.snapshotNotFound
@@ -13,7 +15,9 @@ extension SnapshotManager {
 
     /// Find elements matching a query
     public func findElements(snapshotId: String, matching query: String) async throws -> [UIElement] {
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+        guard let snapshotPath = try self.ownedSnapshotURL(for: snapshotId) else {
+            throw SnapshotError.snapshotNotFound
+        }
         guard let snapshotData = await self.snapshotActor.loadSnapshot(snapshotId: snapshotId, from: snapshotPath)
         else {
             throw SnapshotError.snapshotNotFound
@@ -38,7 +42,7 @@ extension SnapshotManager {
     }
 
     public func getUIAutomationSnapshot(snapshotId: String) async throws -> UIAutomationSnapshot? {
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+        guard let snapshotPath = try self.ownedSnapshotURL(for: snapshotId) else { return nil }
         return await self.snapshotActor.loadSnapshot(snapshotId: snapshotId, from: snapshotPath)
     }
 }

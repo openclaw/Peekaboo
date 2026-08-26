@@ -14,7 +14,7 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
             EXAMPLES:
               peekaboo clean --all-snapshots      # Remove all snapshot data
               peekaboo clean --older-than 24      # Remove snapshots older than 24 hours
-              peekaboo clean --snapshot 12345     # Remove specific snapshot
+              peekaboo clean --snapshot ps1_0123456789abcdef0123456789abcdef
               peekaboo clean --dry-run            # Preview what would be deleted
 
             SNAPSHOT CACHE:
@@ -24,6 +24,9 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
 
               --snapshot only checks the on-disk cache. If the ID exists only in the
               daemon's memory backend, the command reports not_found and removes nothing.
+              Current IDs are ps1_ plus 32 lowercase hexadecimal digits. Exact legacy
+              13-digit-timestamp-4-digit directories remain cleanup-only when they contain
+              a regular snapshot.json; legacy IDs cannot drive automation.
         """,
 
         showHelpOnEmptyInvocation: true

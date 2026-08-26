@@ -2,6 +2,8 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
+public typealias SnapshotReferenceGenerator = @MainActor @Sendable () -> SnapshotReference
+
 /// Durable, single-use claim acquired immediately before a snapshot-backed UI mutation.
 public struct SnapshotMutationLease: Codable, Equatable, Sendable {
     public let snapshotId: String
@@ -84,6 +86,9 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// Whether this manager can publish snapshots that remain excluded from implicit latest lookup.
     var supportsExplicitSnapshotPublication: Bool { get }
 
+    /// Whether every created snapshot uses a producer-bound `ps1_` authority and strict ownership checks.
+    var supportsProducerBoundSnapshotReferences: Bool { get }
+
     /// Effective desktop-wide cutoff applied to implicit latest-snapshot lookup.
     /// Managers without a shared watermark can rely on the default `nil` implementation.
     var effectiveImplicitLatestInvalidationWatermark: Date? { get }
@@ -100,6 +105,12 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// Explicit-only snapshots participate in normal retention, cleanup, and mutation leasing, but never replace
     /// the element-producing snapshot returned by implicit latest lookup.
     func createExplicitSnapshot() async throws -> String
+
+    /// Return whether this manager created and still owns the canonical snapshot reference.
+    ///
+    /// A syntactically invalid reference throws ``SnapshotError/invalidSnapshotReference(_:)``;
+    /// a canonical reference owned by another producer returns `false`.
+    func ownsSnapshot(snapshotId: String) async throws -> Bool
 
     /// Store element detection results in a snapshot
     /// - Parameters:
@@ -228,6 +239,10 @@ extension SnapshotManagerProtocol {
         false
     }
 
+    public var supportsProducerBoundSnapshotReferences: Bool {
+        false
+    }
+
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         nil
     }
@@ -240,6 +255,13 @@ extension SnapshotManagerProtocol {
     public func createExplicitSnapshot() async throws -> String {
         throw SnapshotError.storageError(
             "This snapshot manager does not support explicit-reference-only snapshots")
+    }
+
+    public func ownsSnapshot(snapshotId: String) async throws -> Bool {
+        guard SnapshotReference(rawValue: snapshotId) != nil else {
+            throw SnapshotError.invalidSnapshotReference(snapshotId)
+        }
+        return false
     }
 
     public func storeObservationSnapshot(_ request: SnapshotObservationPublicationRequest) async throws {

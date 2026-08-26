@@ -461,9 +461,30 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
     }
 
     private func observeWithinOverallDeadline(
+        _ originalRequest: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
+    {
+        try DesktopObservationROIProcessor.validateRequest(originalRequest.capture.roi, target: originalRequest.target)
+        var request = originalRequest
+        let reservation = try await self.outputWriter.reserveSnapshotIfNeeded(options: request.output)
+        request.output.snapshotID = request.output.snapshotID ?? reservation?.snapshotID
+
+        do {
+            let result = try await self.observePreparedRequest(request)
+            if let reservation {
+                try await self.outputWriter.publishReservedSnapshot(reservation)
+            }
+            return result
+        } catch {
+            if let reservation {
+                try? await self.outputWriter.cleanReservedSnapshot(snapshotID: reservation.snapshotID)
+            }
+            throw error
+        }
+    }
+
+    private func observePreparedRequest(
         _ request: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
     {
-        try DesktopObservationROIProcessor.validateRequest(request.capture.roi, target: request.target)
         let tracer = DesktopObservationTraceRecorder()
         let observeStart = ContinuousClock.now
         let serializesDetection =

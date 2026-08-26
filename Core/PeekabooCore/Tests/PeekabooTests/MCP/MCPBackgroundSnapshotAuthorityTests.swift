@@ -2,6 +2,7 @@ import CoreGraphics
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -13,12 +14,12 @@ struct MCPBackgroundSnapshotAuthorityTests {
     @Test
     @MainActor
     func `snapshot mutation uses one shared receipt and live authority`() async throws {
-        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: "shared-authority")
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: SnapshotReferenceFixtures.id(201))
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [fixture.desktopTarget])
         let applications = ScriptedApplicationInventoryService(graph: graph)
         let windows = ScriptedWindowInventoryService(graph: graph)
         let automation = SnapshotAuthorityAutomationService()
-        let context = await Self.makeContext(
+        let context = try await Self.makeContext(
             fixture: fixture,
             automation: automation,
             applications: applications,
@@ -40,7 +41,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
     @Test
     @MainActor
     func `contradictory snapshot sources refuse before inventory or dispatch`() async throws {
-        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: "contradictory-sources")
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: SnapshotReferenceFixtures.id(202))
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [fixture.desktopTarget])
         let applications = ScriptedApplicationInventoryService(graph: graph)
         let windows = ScriptedWindowInventoryService(graph: graph)
@@ -66,7 +67,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
                     bundleIdentifier: fixture.desktopTarget.application.bundleIdentifier,
                     name: fixture.desktopTarget.application.name),
                 windowInfo: contradictoryWindow))
-        let snapshots = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let snapshots = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
@@ -91,7 +92,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
     @Test
     @MainActor
     func `partial exact-window inventory without the receipt target refuses before dispatch`() async throws {
-        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: "partial-inventory")
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: SnapshotReferenceFixtures.id(203))
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [fixture.desktopTarget])
         let applications = ScriptedApplicationInventoryService(graph: graph)
         let windows = ScriptedWindowInventoryService(
@@ -102,7 +103,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
                 ],
             ])
         let automation = SnapshotAuthorityAutomationService()
-        let context = await Self.makeContext(
+        let context = try await Self.makeContext(
             fixture: fixture,
             automation: automation,
             applications: applications,
@@ -123,7 +124,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
     @Test
     @MainActor
     func `process generation replacement during final revalidation refuses before dispatch`() async throws {
-        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: "replaced-generation")
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: SnapshotReferenceFixtures.id(204))
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [fixture.desktopTarget])
         let replacement = AutomationTestFixtures.application(
             processIdentifier: fixture.desktopTarget.processIdentity.processIdentifier,
@@ -137,7 +138,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
             responses: [fixture.desktopTarget.application, fixture.desktopTarget.application, replacement])
         let windows = ScriptedWindowInventoryService(graph: graph)
         let automation = SnapshotAuthorityAutomationService()
-        let context = await Self.makeContext(
+        let context = try await Self.makeContext(
             fixture: fixture,
             automation: automation,
             applications: applications,
@@ -158,7 +159,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
     @Test
     @MainActor
     func `missing capture generation refuses before inventory or dispatch`() async throws {
-        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: "missing-generation")
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: SnapshotReferenceFixtures.id(205))
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [fixture.desktopTarget])
         let applications = ScriptedApplicationInventoryService(graph: graph)
         let windows = ScriptedWindowInventoryService(graph: graph)
@@ -176,11 +177,12 @@ struct MCPBackgroundSnapshotAuthorityTests {
         let detection = AutomationTestFixtures.detectionResult(
             snapshotID: fixture.snapshotID,
             windowContext: incompleteContext)
+        let snapshots = try await InMemorySnapshotManager.containing(detection)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
             windows: windows,
-            snapshots: InMemorySnapshotManager(detectionResult: detection),
+            snapshots: snapshots,
             snapshotOwner: owner)
 
         let response = try await context.execute(
@@ -200,12 +202,12 @@ struct MCPBackgroundSnapshotAuthorityTests {
     @Test
     @MainActor
     func `snapshot authority preserves cancellation`() async throws {
-        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: "cancelled-authority")
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(snapshotID: SnapshotReferenceFixtures.id(206))
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [fixture.desktopTarget])
         let applications = CancellingSnapshotAuthorityApplicationService(graph: graph)
         let windows = ScriptedWindowInventoryService(graph: graph)
         let automation = SnapshotAuthorityAutomationService()
-        let context = await Self.makeContext(
+        let context = try await Self.makeContext(
             fixture: fixture,
             automation: automation,
             applications: applications,
@@ -255,7 +257,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
         fixture: LinkedSnapshotTargetFixture,
         automation: SnapshotAuthorityAutomationService,
         applications: ScriptedApplicationInventoryService,
-        windows: ScriptedWindowInventoryService) async -> MCPToolContext
+        windows: ScriptedWindowInventoryService) async throws -> MCPToolContext
     {
         let owner = MCPToolSnapshotOwner()
         let snapshot = await MCPToolUISnapshotStore(owner: owner).createSnapshot(id: fixture.snapshotID)
@@ -266,11 +268,12 @@ struct MCPBackgroundSnapshotAuthorityTests {
                 mode: .window,
                 applicationInfo: fixture.desktopTarget.application,
                 windowInfo: fixture.desktopTarget.window))
+        let snapshots = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         return await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
             windows: windows,
-            snapshots: InMemorySnapshotManager(detectionResult: fixture.detectionResult),
+            snapshots: snapshots,
             snapshotOwner: owner)
     }
 

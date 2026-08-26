@@ -32,13 +32,17 @@ public final class FileService: FileServiceProtocol {
         let snapshotDirs = try FileManager.default.contentsOfDirectory(
             at: cacheDir,
             includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
-            options: .skipsHiddenFiles)
+            options: [])
 
         for snapshotDir in snapshotDirs {
-            guard snapshotDir.hasDirectoryPath else { continue }
+            let snapshotId = snapshotDir.lastPathComponent
+            guard snapshotDir.hasDirectoryPath,
+                  SnapshotPathValidator.cleanupEligibleDirectChildURL(
+                      for: snapshotId,
+                      in: cacheDir) == snapshotDir.standardizedFileURL
+            else { continue }
 
             let snapshotSize = try await calculateDirectorySize(snapshotDir)
-            let snapshotId = snapshotDir.lastPathComponent
             let resourceValues = try snapshotDir.resourceValues(forKeys: [
                 .creationDateKey,
                 .contentModificationDateKey,
@@ -84,18 +88,21 @@ public final class FileService: FileServiceProtocol {
         let snapshotDirs = try FileManager.default.contentsOfDirectory(
             at: cacheDir,
             includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
-            options: .skipsHiddenFiles)
+            options: [])
 
         for snapshotDir in snapshotDirs {
-            guard snapshotDir.hasDirectoryPath else { continue }
+            let snapshotId = snapshotDir.lastPathComponent
+            guard snapshotDir.hasDirectoryPath,
+                  SnapshotPathValidator.cleanupEligibleDirectChildURL(
+                      for: snapshotId,
+                      in: cacheDir) == snapshotDir.standardizedFileURL
+            else { continue }
 
             let resourceValues = try snapshotDir.resourceValues(forKeys: [.contentModificationDateKey])
             let modificationDate = resourceValues.contentModificationDate
 
             if let modDate = modificationDate, modDate < cutoffDate {
                 let snapshotSize = try await calculateDirectorySize(snapshotDir)
-                let snapshotId = snapshotDir.lastPathComponent
-
                 let detail = SnapshotDetail(
                     snapshotId: snapshotId,
                     path: snapshotDir.path,
@@ -121,12 +128,17 @@ public final class FileService: FileServiceProtocol {
 
     public func cleanSpecificSnapshot(snapshotId: String, dryRun: Bool) async throws -> SnapshotCleanResult {
         let cacheDir = self.getSnapshotCacheDirectory()
-        guard let snapshotDir = SnapshotPathValidator.directChildURL(for: snapshotId, in: cacheDir) else {
+        guard SnapshotReference(rawValue: snapshotId) != nil ||
+            SnapshotPathValidator.isLegacyTimestampSnapshotID(snapshotId) ||
+            SnapshotPathValidator.isLegacyPendingSnapshotDirectoryName(snapshotId)
+        else {
             throw FileServiceError.invalidSnapshotID
         }
 
-        guard FileManager.default.fileExists(atPath: snapshotDir.path) else {
-            // Return empty result instead of throwing error for consistency with original behavior
+        guard let snapshotDir = SnapshotPathValidator.cleanupEligibleDirectChildURL(
+            for: snapshotId,
+            in: cacheDir)
+        else {
             return SnapshotCleanResult(
                 snapshotsRemoved: 0,
                 bytesFreed: 0,
@@ -193,9 +205,12 @@ public final class FileService: FileServiceProtocol {
             options: .skipsHiddenFiles)
 
         for snapshotDir in snapshotDirs {
-            guard snapshotDir.hasDirectoryPath else { continue }
-
             let snapshotId = snapshotDir.lastPathComponent
+            guard snapshotDir.hasDirectoryPath,
+                  SnapshotPathValidator.producerOwnedDirectChildURL(
+                      for: snapshotId,
+                      in: cacheDir) == snapshotDir.standardizedFileURL
+            else { continue }
             let snapshotSize = try await calculateDirectorySize(snapshotDir)
             let resourceValues = try snapshotDir.resourceValues(forKeys: [
                 .creationDateKey,

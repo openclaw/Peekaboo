@@ -43,7 +43,7 @@ struct DetachedAXObservationOutcome: Sendable {
  *
  * let result = try await detectionService.detectElements(
  *     in: screenshotData,
- *     snapshotId: "snapshot_123",
+ *     snapshotId: "ps1_0123456789abcdef0123456789abcdef",
  *     windowContext: WindowContext(applicationName: "Safari")
  * )
  *
@@ -134,7 +134,7 @@ public final class ElementDetectionService {
     {
         self.logger.info("Starting accessibility tree inspection")
 
-        let effectiveSnapshotId = snapshotId ?? UUID().uuidString
+        let effectiveSnapshotId = SnapshotPublicationBinding.resultIdentifier(explicit: snapshotId)
 
         let targetApp = try await self.windowResolver.resolveApplication(windowContext: windowContext)
         let applicationIdentity = Self.applicationIdentity(

@@ -2,6 +2,7 @@ import Foundation
 import os
 import PeekabooAutomation
 import PeekabooAutomationKit
+import PeekabooFoundation
 
 actor UISnapshot {
     private struct TargetCache: Sendable {
@@ -26,7 +27,7 @@ actor UISnapshot {
     /// Cache readable from any isolation domain without `nonisolated(unsafe)` stored properties.
     private let targetCache = OSAllocatedUnfairLock(initialState: TargetCache())
 
-    init(id: String = UUID().uuidString, createdAt: Date = Date()) {
+    init(id: String = SnapshotReference.generate().rawValue, createdAt: Date = Date()) {
         self.id = id
         self.createdAt = createdAt
         self.lastAccessedAt = createdAt
@@ -374,7 +375,7 @@ struct MCPToolUISnapshotStore: Sendable {
     }
 
     func createSnapshot(
-        id: String = UUID().uuidString,
+        id: String = SnapshotReference.generate().rawValue,
         at creationDate: Date = Date(),
         pending: Bool = false) async -> UISnapshot
     {
@@ -473,7 +474,7 @@ actor UISnapshotManager {
 
     func createSnapshot(
         owner: MCPToolSnapshotOwner,
-        id: String = UUID().uuidString,
+        id: String = SnapshotReference.generate().rawValue,
         at creationDate: Date = Date(),
         pending: Bool = false) -> UISnapshot
     {
@@ -696,7 +697,7 @@ actor UISnapshotManager {
     /// Source-compatible test seams. Production callers use the owner-scoped
     /// store injected by `MCPToolContext`.
     func createSnapshot(
-        id: String = UUID().uuidString,
+        id: String = SnapshotReference.generate().rawValue,
         at creationDate: Date = Date(),
         pending: Bool = false) -> UISnapshot
     {

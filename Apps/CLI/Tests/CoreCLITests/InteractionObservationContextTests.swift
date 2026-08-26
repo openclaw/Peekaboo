@@ -5,6 +5,7 @@ import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooCore
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -12,19 +13,20 @@ import Testing
 @MainActor
 struct InteractionObservationContextTests {
     @Test
-    func `Explicit snapshot is trimmed and wins over latest`() async throws {
+    func `Explicit canonical snapshot wins over latest`() async throws {
         let snapshots = CoreSnapshotManagerStub()
         let latest = try await snapshots.createSnapshot()
+        let explicit = SnapshotReferenceFixtures.first.rawValue
 
         let context = await InteractionObservationContext.resolve(
-            explicitSnapshot: "  explicit-snapshot  ",
+            explicitSnapshot: explicit,
             fallbackToLatest: true,
             snapshots: snapshots
         )
 
-        #expect(latest != "explicit-snapshot")
-        #expect(context.explicitSnapshotId == "explicit-snapshot")
-        #expect(context.snapshotId == "explicit-snapshot")
+        #expect(latest != explicit)
+        #expect(context.explicitSnapshotId == explicit)
+        #expect(context.snapshotId == explicit)
         #expect(context.source == .explicit)
     }
 
@@ -53,10 +55,10 @@ struct InteractionObservationContextTests {
     @Test
     func `Explicit latest alias resolves to most recent snapshot`() async throws {
         let snapshots = CoreSnapshotManagerStub()
-        let latest = try await snapshots.createSnapshot(id: "fresh-snapshot")
+        let latest = try await snapshots.createSnapshot(id: SnapshotReferenceFixtures.second.rawValue)
 
         let context = await InteractionObservationContext.resolve(
-            explicitSnapshot: " latest ",
+            explicitSnapshot: "latest",
             fallbackToLatest: true,
             snapshots: snapshots
         )
@@ -69,7 +71,7 @@ struct InteractionObservationContextTests {
     @Test
     func `Explicit latest alias resolves even when omitted fallback is disabled`() async throws {
         let snapshots = CoreSnapshotManagerStub()
-        let latest = try await snapshots.createSnapshot(id: "fresh-snapshot")
+        let latest = try await snapshots.createSnapshot(id: SnapshotReferenceFixtures.second.rawValue)
 
         let context = await InteractionObservationContext.resolve(
             explicitSnapshot: "most-recent",

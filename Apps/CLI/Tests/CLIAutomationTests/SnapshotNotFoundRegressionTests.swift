@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -150,6 +151,44 @@ struct SnapshotNotFoundRegressionTests {
         let response = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
         #expect(response.success == false)
         #expect(response.error?.code == ErrorCode.SNAPSHOT_NOT_FOUND.rawValue)
+    }
+
+    @Test
+    @MainActor
+    func `shared snapshot fixture refuses storage before producer creation`() async throws {
+        let snapshots = StubSnapshotManager()
+        let unownedSnapshotID = SnapshotReference.generate().rawValue
+        let detection = ElementDetectionResult(
+            snapshotId: unownedSnapshotID,
+            screenshotPath: "/tmp/screenshot.png",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "stub")
+        )
+
+        #expect(try await !snapshots.ownsSnapshot(snapshotId: unownedSnapshotID))
+        await #expect(throws: SnapshotError.self) {
+            try await snapshots.storeDetectionResult(snapshotId: unownedSnapshotID, result: detection)
+        }
+        await #expect(throws: SnapshotError.self) {
+            try await snapshots.storeScreenshot(.init(
+                snapshotId: unownedSnapshotID,
+                screenshotPath: "/tmp/screenshot.png",
+                applicationBundleId: nil,
+                applicationProcessId: nil,
+                applicationName: nil,
+                windowTitle: nil,
+                windowBounds: nil
+            ))
+        }
+        await #expect(throws: SnapshotError.self) {
+            try await snapshots.storeAnnotatedScreenshot(
+                snapshotId: unownedSnapshotID,
+                annotatedScreenshotPath: "/tmp/annotated.png"
+            )
+        }
+
+        let ownedSnapshotID = try await snapshots.createSnapshot()
+        #expect(try await snapshots.ownsSnapshot(snapshotId: ownedSnapshotID))
     }
 
     private func makeSnapshot(with snapshots: StubSnapshotManager) async throws -> String {

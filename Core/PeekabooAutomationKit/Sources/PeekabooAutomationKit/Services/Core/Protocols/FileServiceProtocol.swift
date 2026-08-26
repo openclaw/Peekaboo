@@ -147,7 +147,8 @@ public enum FileServiceError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidSnapshotID:
-            "Invalid snapshot ID: expected one folder name"
+            "Invalid snapshot ID: expected ps1_ plus 32 lowercase hex digits, or a cleanup-only legacy " +
+                "timestamp in 1234567890123-1234 form"
         case let .snapshotNotFound(snapshotId):
             "Snapshot '\(snapshotId)' not found"
         case let .directoryNotFound(url):

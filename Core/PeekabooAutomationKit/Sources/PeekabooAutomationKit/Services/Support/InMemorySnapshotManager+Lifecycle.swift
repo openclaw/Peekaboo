@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 extension InMemorySnapshotManager {
     // MARK: - Snapshot lifecycle
@@ -21,9 +22,7 @@ extension InMemorySnapshotManager {
     {
         self.pruneIfNeeded()
 
-        let timestamp = Int(Date().timeIntervalSince1970 * 1000) // milliseconds
-        let randomSuffix = Int.random(in: 1000...9999)
-        let snapshotId = "\(timestamp)-\(randomSuffix)"
+        let snapshotId = try self.nextSnapshotID()
 
         let now = Date()
         self.entries[snapshotId] = Entry(
@@ -39,17 +38,23 @@ extension InMemorySnapshotManager {
         return snapshotId
     }
 
+    private func nextSnapshotID() throws -> String {
+        for _ in 0..<8 {
+            let snapshotId = self.snapshotReferenceGenerator().rawValue
+            if self.entries[snapshotId] == nil {
+                return snapshotId
+            }
+        }
+        throw SnapshotError.storageError("Could not reserve a unique producer-bound snapshot reference")
+    }
+
     public func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
         self.pruneIfNeeded()
-
-        var entry = self.entries[snapshotId] ?? Entry(
-            createdAt: Date(),
-            lastAccessedAt: Date(),
-            processId: getpid(),
-            isPending: false,
-            isImplicitLatestEligible: true,
-            detectionResult: nil,
-            snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
+        var entry = try self.requireEntry(for: snapshotId)
+        try SnapshotPublicationBinding.validate(
+            snapshotId: snapshotId,
+            detectionResult: result,
+            captureCoordinateContext: result.metadata.captureCoordinateContext)
 
         entry.lastAccessedAt = Date()
         self.applyDetectionResult(result, to: &entry.snapshotData)
@@ -63,6 +68,7 @@ extension InMemorySnapshotManager {
     }
 
     public func getDetectionResult(snapshotId: String) async throws -> ElementDetectionResult? {
+        try self.validateSnapshotReference(snapshotId)
         guard var entry = self.entries[snapshotId] else { return nil }
         entry.lastAccessedAt = Date()
         self.entries[snapshotId] = entry
@@ -220,8 +226,14 @@ extension InMemorySnapshotManager {
     }
 
     public func cleanSnapshot(snapshotId: String) async throws {
+        try self.validateSnapshotReference(snapshotId)
         self.mutationLeases.removeValue(forKey: snapshotId)
         self.removeEntry(forSnapshotId: snapshotId)
+    }
+
+    public func ownsSnapshot(snapshotId: String) async throws -> Bool {
+        try self.validateSnapshotReference(snapshotId)
+        return self.entries[snapshotId] != nil
     }
 
     public func cleanSnapshotsOlderThan(days: Int) async throws -> Int {

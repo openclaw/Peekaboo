@@ -7,18 +7,14 @@ extension InMemorySnapshotManager {
 
     public func storeScreenshot(_ request: SnapshotScreenshotRequest) async throws {
         self.pruneIfNeeded()
+        var entry = try self.requireEntry(for: request.snapshotId)
+        try SnapshotPublicationBinding.validate(
+            snapshotId: request.snapshotId,
+            captureCoordinateContext: request.captureCoordinateContext)
         let storedPath = try self.storedArtifactPath(
             sourcePath: request.screenshotPath,
             preferredName: "raw")
 
-        var entry = self.entries[request.snapshotId] ?? Entry(
-            createdAt: Date(),
-            lastAccessedAt: Date(),
-            processId: getpid(),
-            isPending: false,
-            isImplicitLatestEligible: true,
-            detectionResult: nil,
-            snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
         if self.options.copyArtifactsOnStore {
             self.deleteManagedTemporaryArtifacts(for: entry.snapshotData)
         }
@@ -43,6 +39,11 @@ extension InMemorySnapshotManager {
     }
 
     public func storeObservationSnapshot(_ request: SnapshotObservationPublicationRequest) async throws {
+        var entry = try self.requireEntry(for: request.screenshot.snapshotId)
+        try SnapshotPublicationBinding.validate(
+            snapshotId: request.screenshot.snapshotId,
+            detectionResult: request.detectionResult,
+            captureCoordinateContext: request.screenshot.captureCoordinateContext)
         let storedRawPath = try self.storedArtifactPath(
             sourcePath: request.screenshot.screenshotPath,
             preferredName: "raw")
@@ -58,14 +59,6 @@ extension InMemorySnapshotManager {
             throw error
         }
 
-        var entry = self.entries[request.screenshot.snapshotId] ?? Entry(
-            createdAt: Date(),
-            lastAccessedAt: Date(),
-            processId: getpid(),
-            isPending: false,
-            isImplicitLatestEligible: true,
-            detectionResult: nil,
-            snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
         // Pending visibility belongs to the outer mutation coordinator. Ordinary reservations are already visible;
         // web-focus observations must stay pending until their mutation and preservation boundary is published.
         let previousSnapshotData = entry.snapshotData
@@ -104,18 +97,10 @@ extension InMemorySnapshotManager {
 
     public func storeAnnotatedScreenshot(snapshotId: String, annotatedScreenshotPath: String) async throws {
         self.pruneIfNeeded()
+        var entry = try self.requireEntry(for: snapshotId)
         let storedPath = try self.storedArtifactPath(
             sourcePath: annotatedScreenshotPath,
             preferredName: "annotated")
-
-        var entry = self.entries[snapshotId] ?? Entry(
-            createdAt: Date(),
-            lastAccessedAt: Date(),
-            processId: getpid(),
-            isPending: false,
-            isImplicitLatestEligible: true,
-            detectionResult: nil,
-            snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 
         entry.lastAccessedAt = Date()
         if self.options.copyArtifactsOnStore,
@@ -131,18 +116,14 @@ extension InMemorySnapshotManager {
     }
 
     public func getElement(snapshotId: String, elementId: String) async throws -> UIElement? {
-        guard var entry = self.entries[snapshotId] else {
-            throw SnapshotError.snapshotNotFound
-        }
+        var entry = try self.requireEntry(for: snapshotId)
         entry.lastAccessedAt = Date()
         self.entries[snapshotId] = entry
         return entry.snapshotData.uiMap[elementId]
     }
 
     public func findElements(snapshotId: String, matching query: String) async throws -> [UIElement] {
-        guard var entry = self.entries[snapshotId] else {
-            throw SnapshotError.snapshotNotFound
-        }
+        var entry = try self.requireEntry(for: snapshotId)
         entry.lastAccessedAt = Date()
         self.entries[snapshotId] = entry
 
@@ -165,6 +146,7 @@ extension InMemorySnapshotManager {
     }
 
     public func getUIAutomationSnapshot(snapshotId: String) async throws -> UIAutomationSnapshot? {
+        try self.validateSnapshotReference(snapshotId)
         guard var entry = self.entries[snapshotId] else { return nil }
         entry.lastAccessedAt = Date()
         self.entries[snapshotId] = entry

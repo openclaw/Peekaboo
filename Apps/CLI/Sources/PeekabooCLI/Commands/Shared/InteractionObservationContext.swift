@@ -11,8 +11,7 @@ enum InteractionSnapshotSource: String {
 
 enum InteractionSnapshotReference {
     static func normalized(_ snapshotId: String?) -> String? {
-        let trimmed = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
+        snapshotId?.isEmpty == false ? snapshotId : nil
     }
 
     static func isConcrete(_ snapshotId: String?) -> Bool {

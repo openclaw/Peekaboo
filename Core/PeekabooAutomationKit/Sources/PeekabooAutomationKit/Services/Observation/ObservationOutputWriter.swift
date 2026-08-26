@@ -2,6 +2,11 @@ import AppKit
 import Foundation
 import PeekabooFoundation
 
+struct ObservationSnapshotReservation: Sendable {
+    let snapshotID: String
+    let observationStartedAt: Date
+}
+
 @MainActor
 public final class ObservationOutputWriter {
     private let snapshotManager: (any SnapshotManagerProtocol)?
@@ -57,6 +62,51 @@ public final class ObservationOutputWriter {
 
     public nonisolated static func annotatedScreenshotPath(forRawScreenshotPath rawPath: String) -> String {
         (rawPath as NSString).deletingPathExtension + "_annotated.png"
+    }
+
+    func reserveSnapshotIfNeeded(options: DesktopObservationOutputOptions) async throws
+        -> ObservationSnapshotReservation?
+    {
+        guard options.saveSnapshot, options.snapshotID == nil, let snapshotManager else {
+            return nil
+        }
+        guard snapshotManager.supportsProducerBoundSnapshotReferences,
+              snapshotManager.supportsImplicitLatestSnapshotInvalidation
+        else {
+            throw SnapshotError.storageError(
+                "This snapshot manager cannot reserve a producer-bound observation until publication")
+        }
+        let observationStartedAt = Date()
+        let snapshotID = try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
+        guard SnapshotReference(rawValue: snapshotID) != nil else {
+            try? await snapshotManager.cleanSnapshot(snapshotId: snapshotID)
+            throw SnapshotError.invalidSnapshotReference(snapshotID)
+        }
+        guard try await snapshotManager.ownsSnapshot(snapshotId: snapshotID) else {
+            try? await snapshotManager.cleanSnapshot(snapshotId: snapshotID)
+            throw SnapshotError.storageError(
+                "The snapshot manager did not retain ownership of its observation reservation")
+        }
+        return ObservationSnapshotReservation(
+            snapshotID: snapshotID,
+            observationStartedAt: observationStartedAt)
+    }
+
+    func publishReservedSnapshot(_ reservation: ObservationSnapshotReservation) async throws {
+        guard let snapshotManager else {
+            throw SnapshotError.storageError("The snapshot manager disappeared before observation publication")
+        }
+        _ = try await snapshotManager.invalidateImplicitLatestSnapshot(
+            through: reservation.observationStartedAt,
+            preserving: reservation.snapshotID,
+            preservedAt: Date())
+        guard try await snapshotManager.ownsSnapshot(snapshotId: reservation.snapshotID) else {
+            throw SnapshotError.snapshotNotFound
+        }
+    }
+
+    func cleanReservedSnapshot(snapshotID: String) async throws {
+        try await self.snapshotManager?.cleanSnapshot(snapshotId: snapshotID)
     }
 
     private func writeRawScreenshotIfNeeded(

@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooCore
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -102,9 +103,10 @@ struct CleanCommandSimpleTests {
     @MainActor
     func `Clean snapshot miss reports disk not found in JSON and text`() async throws {
         let services = TestServicesFactory.makePeekabooServices(files: StubFileService())
+        let missingSnapshotID = SnapshotReferenceFixtures.first.rawValue
 
         let jsonResult = try await InProcessCommandRunner.run(
-            ["clean", "--snapshot", "memory-only", "--json"],
+            ["clean", "--snapshot", missingSnapshotID, "--json"],
             services: services
         )
 
@@ -116,7 +118,7 @@ struct CleanCommandSimpleTests {
         #expect(payloadData["not_found"] as? Bool == true)
 
         let textResult = try await InProcessCommandRunner.run(
-            ["clean", "--snapshot", "memory-only"],
+            ["clean", "--snapshot", missingSnapshotID],
             services: services
         )
 
@@ -144,6 +146,6 @@ struct CleanCommandSimpleTests {
         )
         #expect(response.success == false)
         #expect(response.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
-        #expect(response.error?.message == "Invalid snapshot ID: expected one folder name")
+        #expect(response.error?.message == FileServiceError.invalidSnapshotID.localizedDescription)
     }
 }
