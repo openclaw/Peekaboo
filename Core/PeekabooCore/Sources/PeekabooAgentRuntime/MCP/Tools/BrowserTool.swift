@@ -15,102 +15,114 @@ public struct BrowserTool: MCPTool {
     private let instructionAudience: BrowserToolInstructionAudience
 
     public let name = "browser"
-    public let description = """
-    Controls and inspects Chrome web pages through Chrome DevTools MCP.
+    public var description: String {
+        if self.executionPolicy == .backgroundOnly {
+            return """
+            Controls and inspects Chrome web pages through one existing exact DevTools connection under immutable
+            background-only authority. Use `status` to inspect its receipt, then page-scoped actions with explicit
+            page IDs. Connect is unavailable because Chrome may surface remote-debugging setup or approval UI; use a
+            human-authorized foreground-capable session or standalone CLI to establish the connection first.
+            """
+        }
 
-    Use this for browser page content: DOM/accessibility snapshots, web forms, navigation,
-    console messages, network requests, screenshots, and performance traces. Use Peekaboo's
-    native tools for macOS chrome, menus, dialogs, permissions, and non-browser applications.
+        return """
+        Controls and inspects Chrome web pages through Chrome DevTools MCP.
 
-    Chrome DevTools MCP requires Chrome 144+ with remote debugging enabled at
-    chrome://inspect/#remote-debugging. The user must accept Chrome's remote debugging prompt.
-    Peekaboo starts chrome-devtools-mcp with usage statistics and CrUX lookups disabled.
-    Background-only Agent sessions reuse an existing exact connection and never auto-connect;
-    ask the user to connect explicitly when status reports no live connection receipt.
-    """
+        Use this for browser page content: DOM/accessibility snapshots, web forms, navigation,
+        console messages, network requests, screenshots, and performance traces. Use Peekaboo's
+        native tools for macOS chrome, menus, dialogs, permissions, and non-browser applications.
+
+        Chrome DevTools MCP requires Chrome 144+ with remote debugging enabled at
+        chrome://inspect/#remote-debugging. The user must accept Chrome's remote debugging prompt.
+        Peekaboo starts chrome-devtools-mcp with usage statistics and CrUX lookups disabled.
+        """
+    }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: """
-                    Browser action to perform. Use `status` before connecting. Use `connect` after the user
-                    enables remote debugging and accepts Chrome's prompt. Connect is a foreground-consent action
-                    and is refused by background-only contexts.
-                    """,
-                    enum: BrowserAction.allCases.map(\.rawValue)),
-                "channel": SchemaBuilder.string(
-                    description: """
-                    Chrome channel selected by explicit connect. Defaults to the running Chrome channel, then stable.
-                    Other actions never auto-connect in a background-only context.
-                    """,
-                    enum: BrowserMCPChannel.allCases.map(\.rawValue)),
-                "browser_url": SchemaBuilder.string(description: """
-                Exact loopback DevTools HTTP endpoint for connect, for example http://127.0.0.1:9222.
-                Peekaboo resolves and pins its browser WebSocket identity. Required when multiple Chrome
-                processes share one channel.
-                """),
-                "page_id": SchemaBuilder.integer(description: """
-                Chrome DevTools page ID. Required for every page-scoped action so concurrent clients cannot
-                redirect one another by changing the shared selected page. Use list_pages to discover IDs.
-                """, minimum: 0),
-                "url": SchemaBuilder.string(description: "URL for navigate/new_page."),
-                "navigation_type": SchemaBuilder.string(
-                    description: "Navigation type for navigate.",
-                    enum: ["url", "back", "forward", "reload"]),
-                "uid": SchemaBuilder.string(description: """
-                Element uid from the latest browser snapshot. Required for element actions, including type and
-                press_key so keyboard input cannot inherit an unrelated focused element.
-                """),
-                "to_uid": SchemaBuilder.string(description: "Drop target uid for drag."),
-                "text": SchemaBuilder.string(description: "Text for type or wait_for."),
-                "value": SchemaBuilder.string(description: "Value for fill."),
-                "key": SchemaBuilder.string(description: "Key or key combination for press_key."),
-                "submit_key": SchemaBuilder.string(description: "Optional key pressed after type_text."),
-                "dialog_action": SchemaBuilder.string(
-                    description: "Browser dialog action.",
-                    enum: ["accept", "dismiss"]),
-                "include_snapshot": SchemaBuilder.boolean(
-                    description: "Ask Chrome DevTools MCP to include a fresh snapshot when supported.",
-                    default: false),
-                "double": SchemaBuilder.boolean(description: "Double-click for click.", default: false),
-                "bring_to_front": SchemaBuilder.boolean(description: "Bring selected page to front.", default: false),
-                "background": SchemaBuilder.boolean(description: "Open new page in the background.", default: true),
-                "timeout": SchemaBuilder.integer(description: "Timeout in milliseconds for navigation/waits."),
-                "page_size": SchemaBuilder.integer(description: "Pagination size for console/network listings."),
-                "page_index": SchemaBuilder.integer(description: "Zero-based page index for console/network listings."),
-                "types": SchemaBuilder.array(
-                    items: SchemaBuilder.string(),
-                    description: "Console message types to include."),
-                "resource_types": SchemaBuilder.array(
-                    items: SchemaBuilder.string(),
-                    description: "Network resource types to include."),
-                "include_preserved": SchemaBuilder.boolean(
-                    description: "Include preserved console/network data from recent navigations.",
-                    default: false),
-                "message_id": SchemaBuilder.integer(description: "Console message ID for get_console_message."),
-                "request_id": SchemaBuilder.integer(description: "Network request ID for get_network_request."),
-                "request_file_path": SchemaBuilder.string(description: "Path for saving a network request body."),
-                "response_file_path": SchemaBuilder.string(description: "Path for saving a network response body."),
-                "path": SchemaBuilder.string(description: "Absolute input file for upload_file; output path for " +
-                    "snapshots, screenshots, or traces. Uploads accept current-user regular files up to 100 MiB."),
-                "format": SchemaBuilder.string(
-                    description: "Screenshot format.",
-                    enum: ["png", "jpeg", "webp"]),
-                "quality": SchemaBuilder.integer(description: "Screenshot quality for jpeg/webp."),
-                "full_page": SchemaBuilder.boolean(description: "Capture a full-page screenshot.", default: false),
-                "trace_action": SchemaBuilder.string(
-                    description: "Performance trace operation.",
-                    enum: ["start", "stop", "analyze"]),
-                "reload": SchemaBuilder.boolean(description: "Reload page when starting a trace.", default: true),
-                "auto_stop": SchemaBuilder.boolean(description: "Auto-stop trace after capture.", default: true),
-                "insight_set_id": SchemaBuilder.string(description: "Insight set id from trace summary."),
-                "insight_name": SchemaBuilder.string(description: "Insight name from trace summary."),
-                "mcp_tool": SchemaBuilder.string(
-                    description: "Advanced: audited Chrome DevTools MCP v1.6.0 tool name for call."),
-                "mcp_args_json": SchemaBuilder.string(description: "Advanced: JSON object args for raw MCP call. " +
-                    "Page-targeted tools require top-level page_id; nested pageId cannot select the page."),
-            ],
+        let foregroundCapable = self.executionPolicy != .backgroundOnly
+        let actions = BrowserAction.allCases.filter { foregroundCapable || $0 != .connect }
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "Browser action. Use status before explicit connect; connect may present Chrome approval UI."
+                    : "Background-safe action against an existing exact connection; connect is unavailable.",
+                enum: actions.map(\.rawValue)),
+            "channel": SchemaBuilder.string(
+                description: """
+                Chrome channel selected by explicit connect. Defaults to the running Chrome channel, then stable.
+                Other actions never auto-connect in a background-only context.
+                """,
+                enum: BrowserMCPChannel.allCases.map(\.rawValue)),
+            "page_id": SchemaBuilder.integer(description: """
+            Chrome DevTools page ID. Required for every page-scoped action so concurrent clients cannot
+            redirect one another by changing the shared selected page. Use list_pages to discover IDs.
+            """, minimum: 0),
+            "url": SchemaBuilder.string(description: "URL for navigate/new_page."),
+            "navigation_type": SchemaBuilder.string(
+                description: "Navigation type for navigate.",
+                enum: ["url", "back", "forward", "reload"]),
+            "uid": SchemaBuilder.string(description: """
+            Element uid from the latest browser snapshot. Required for element actions, including type and
+            press_key so keyboard input cannot inherit an unrelated focused element.
+            """),
+            "to_uid": SchemaBuilder.string(description: "Drop target uid for drag."),
+            "text": SchemaBuilder.string(description: "Text for type or wait_for."),
+            "value": SchemaBuilder.string(description: "Value for fill."),
+            "key": SchemaBuilder.string(description: "Key or key combination for press_key."),
+            "submit_key": SchemaBuilder.string(description: "Optional key pressed after type_text."),
+            "dialog_action": SchemaBuilder.string(
+                description: "Browser dialog action.",
+                enum: ["accept", "dismiss"]),
+            "include_snapshot": SchemaBuilder.boolean(
+                description: "Ask Chrome DevTools MCP to include a fresh snapshot when supported.",
+                default: false),
+            "double": SchemaBuilder.boolean(description: "Double-click for click.", default: false),
+            "bring_to_front": SchemaBuilder.boolean(description: "Bring selected page to front.", default: false),
+            "background": SchemaBuilder.boolean(description: "Open new page in the background.", default: true),
+            "timeout": SchemaBuilder.integer(description: "Timeout in milliseconds for navigation/waits."),
+            "page_size": SchemaBuilder.integer(description: "Pagination size for console/network listings."),
+            "page_index": SchemaBuilder.integer(description: "Zero-based page index for console/network listings."),
+            "types": SchemaBuilder.array(
+                items: SchemaBuilder.string(),
+                description: "Console message types to include."),
+            "resource_types": SchemaBuilder.array(
+                items: SchemaBuilder.string(),
+                description: "Network resource types to include."),
+            "include_preserved": SchemaBuilder.boolean(
+                description: "Include preserved console/network data from recent navigations.",
+                default: false),
+            "message_id": SchemaBuilder.integer(description: "Console message ID for get_console_message."),
+            "request_id": SchemaBuilder.integer(description: "Network request ID for get_network_request."),
+            "request_file_path": SchemaBuilder.string(description: "Path for saving a network request body."),
+            "response_file_path": SchemaBuilder.string(description: "Path for saving a network response body."),
+            "path": SchemaBuilder.string(description: "Absolute input file for upload_file; output path for " +
+                "snapshots, screenshots, or traces. Uploads accept current-user regular files up to 100 MiB."),
+            "format": SchemaBuilder.string(
+                description: "Screenshot format.",
+                enum: ["png", "jpeg", "webp"]),
+            "quality": SchemaBuilder.integer(description: "Screenshot quality for jpeg/webp."),
+            "full_page": SchemaBuilder.boolean(description: "Capture a full-page screenshot.", default: false),
+            "trace_action": SchemaBuilder.string(
+                description: "Performance trace operation.",
+                enum: ["start", "stop", "analyze"]),
+            "reload": SchemaBuilder.boolean(description: "Reload page when starting a trace.", default: true),
+            "auto_stop": SchemaBuilder.boolean(description: "Auto-stop trace after capture.", default: true),
+            "insight_set_id": SchemaBuilder.string(description: "Insight set id from trace summary."),
+            "insight_name": SchemaBuilder.string(description: "Insight name from trace summary."),
+            "mcp_tool": SchemaBuilder.string(
+                description: "Advanced: audited Chrome DevTools MCP v1.6.0 tool name for call."),
+            "mcp_args_json": SchemaBuilder.string(description: "Advanced: JSON object args for raw MCP call. " +
+                "Page-targeted tools require top-level page_id; nested pageId cannot select the page."),
+        ]
+        if foregroundCapable {
+            properties["browser_url"] = SchemaBuilder.string(description: """
+            Exact loopback DevTools HTTP endpoint for connect, for example http://127.0.0.1:9222.
+            Peekaboo resolves and pins its browser WebSocket identity. Required when multiple Chrome
+            processes share one channel.
+            """)
+        }
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 

@@ -5,6 +5,39 @@ import Testing
 
 struct MCPPolicyAwareCatalogTests {
     @Test
+    func `Browser tool hides connection setup under background authority`() async {
+        let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
+        let tool = BrowserTool(context: backgroundContext)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(action)? = properties["action"],
+              case let .array(actions)? = action["enum"]
+        else {
+            Issue.record("Expected background-only Browser schema")
+            return
+        }
+        #expect(!actions.contains(.string(BrowserAction.connect.rawValue)))
+        #expect(actions.contains(.string(BrowserAction.status.rawValue)))
+        #expect(actions.contains(.string(BrowserAction.listPages.rawValue)))
+        #expect(properties["browser_url"] == nil)
+        #expect(tool.description.contains("Connect is unavailable"))
+
+        let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
+        let foregroundTool = BrowserTool(context: foregroundContext)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProperties)? = foregroundSchema["properties"],
+              case let .object(foregroundAction)? = foregroundProperties["action"],
+              case let .array(foregroundActions)? = foregroundAction["enum"]
+        else {
+            Issue.record("Expected foreground-capable Browser schema")
+            return
+        }
+        #expect(foregroundActions.contains(.string(BrowserAction.connect.rawValue)))
+        #expect(foregroundProperties["browser_url"] != nil)
+        #expect(foregroundTool.description.contains("accept Chrome's remote debugging prompt"))
+    }
+
+    @Test
     func `Dialog tool omits foreground-only actions and inputs under background authority`() async {
         let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
         let tool = DialogTool(context: backgroundContext)
