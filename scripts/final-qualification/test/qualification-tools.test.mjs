@@ -1755,6 +1755,41 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       unrelatedValue,
     );
   }
+  for (const [index, policyString] of [
+    '/usr/bin/osascript',
+    '/usr/bin/osascript -e return 1',
+    '/System/Library/Components/AppleScript.component',
+    '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript',
+    '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript -e return 1',
+  ].entries()) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/native-policy-path-${index}`,
+        0o755,
+        thinMachOWithRawString(policyString),
+      ),
+      [{ family: 'apple-script' }],
+      policyString,
+    );
+  }
+  for (const [index, unrelatedString] of [
+    'prefix /usr/bin/osascript -e return 1',
+    '/usr/bin/osascripter -e return 1',
+    '/usr/bin/osascript-helper',
+    '/System/Library/Components/AppleScript.component.backup',
+    '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScripter',
+    'AppleScript component support is disabled',
+  ].entries()) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/unrelated-native-policy-path-${index}`,
+        0o755,
+        thinMachOWithRawString(unrelatedString),
+      ),
+      [],
+      unrelatedString,
+    );
+  }
   const osaKitClassSymbols = [
     'OBJC_CLASS_$_OSAScript',
     '_OBJC_CLASS_$_OSAScript',

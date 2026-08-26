@@ -52,7 +52,9 @@ const VIRTUALIZATION_IMPORT = /^_?(?:VZ[A-Z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLAS
 const VIRTUALIZATION_CLASS_STRING = /^(?:_?OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+|VZ(?=[A-Z][A-Za-z0-9_]*[a-z])[A-Z][A-Za-z0-9_]*)$/;
 const APPLE_FRAMEWORK_PATH = /(?:^|\/)(?:OSAKit|ScriptingBridge)\.framework(?:\/|$)/i;
 const VIRTUALIZATION_FRAMEWORK_PATH = /(?:^|\/)(?:Virtualization|Hypervisor)\.framework(?:\/|$)/i;
-const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSAppleEventDescriptor|NSAppleEventManager|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|\/usr\/bin\/osascript)$/;
+const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSAppleEventDescriptor|NSAppleEventManager|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType)$/;
+const OSASCRIPT_EXECUTABLE_STRING = /^\/usr\/bin\/osascript(?:$|[ \t].*)$/;
+const APPLE_SCRIPT_COMPONENT_STRING = /^\/System\/Library\/Components\/AppleScript\.component(?:$|\/Contents\/MacOS\/AppleScript(?:$|[ \t].*))$/;
 const APPLE_EVENT_DYNAMIC_STRING = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*)$/;
 const APPLE_EVENT_COMPILER_METADATA = /^(?:AESgtGG|AESgtGGGSgtGG)$/;
 const LOAD_COMMAND_DYLIBS = new Set([0x0c, 0x0d, 0x18, 0x1f, 0x20, 0x23]);
@@ -82,6 +84,8 @@ function isAppleScriptImport(value) {
 
 function isAppleScriptPolicyString(value) {
   return APPLE_EVENT_STRING.test(value)
+    || OSASCRIPT_EXECUTABLE_STRING.test(value)
+    || APPLE_SCRIPT_COMPONENT_STRING.test(value)
     || APPLE_EVENT_CLASS_STRING.test(value)
     || OSAKIT_CLASS_SYMBOL.test(value)
     || SCRIPTING_BRIDGE_IMPORT.test(value)
