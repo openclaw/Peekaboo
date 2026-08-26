@@ -301,14 +301,30 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
   if (length < 12 || length > size || count === 0 || count > 1024 || 12 + count * 8 > length) {
     return null;
   }
+  const slotTypes = new Set();
+  let authorizedCodeDirectories = 0;
   for (let index = 0; index < count; index += 1) {
+    const slotType = bytes.readUInt32BE(offset + 12 + index * 8);
     const blobOffset = bytes.readUInt32BE(offset + 12 + index * 8 + 4);
-    if (blobOffset < 12 + count * 8 || blobOffset + 8 > length) return null;
+    if (slotTypes.has(slotType) || blobOffset < 12 + count * 8 || blobOffset + 8 > length) {
+      return null;
+    }
+    slotTypes.add(slotType);
     const blobMagic = bytes.readUInt32BE(offset + blobOffset);
-    if (blobMagic === CODE_DIRECTORY_MAGIC
-      && !parseCodeDirectory(offset + blobOffset, offset + length)) return null;
+    const blobLength = bytes.readUInt32BE(offset + blobOffset + 4);
+    if (blobLength < 8 || blobOffset + blobLength > length) return null;
+    const codeDirectorySlot = slotType === 0 || (slotType >= 0x1000 && slotType <= 0x1004);
+    if (codeDirectorySlot) {
+      if (blobMagic !== CODE_DIRECTORY_MAGIC
+        || !parseCodeDirectory(offset + blobOffset, offset + blobOffset + blobLength)) return null;
+      authorizedCodeDirectories += 1;
+    } else if (blobMagic === CODE_DIRECTORY_MAGIC) {
+      return null;
+    }
   }
-  return identifiers.length > 0 ? { identifiers, validatedSize: length } : null;
+  return authorizedCodeDirectories > 0 && identifiers.length > 0
+    ? { identifiers, validatedSize: length }
+    : null;
 }
 
 function symbolNameDecoder(bytes, offset, size) {

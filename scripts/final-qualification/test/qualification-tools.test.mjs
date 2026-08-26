@@ -2308,6 +2308,63 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       bytes.writeUInt32LE(payloadSize, command + 12);
     },
   );
+  const signatureSuperBlob = (entries) => {
+    const indexSize = 12 + entries.length * 8;
+    const totalSize = indexSize + entries.reduce((total, entry) => total + entry.blob.length, 0);
+    const payload = Buffer.alloc(totalSize);
+    payload.writeUInt32BE(0xfade0cc0, 0);
+    payload.writeUInt32BE(totalSize, 4);
+    payload.writeUInt32BE(entries.length, 8);
+    let blobOffset = indexSize;
+    for (const [index, entry] of entries.entries()) {
+      payload.writeUInt32BE(entry.type, 12 + index * 8);
+      payload.writeUInt32BE(blobOffset, 16 + index * 8);
+      entry.blob.copy(payload, blobOffset);
+      blobOffset += entry.blob.length;
+    }
+    return payload;
+  };
+  const genericSignatureBlob = Buffer.alloc(8);
+  genericSignatureBlob.writeUInt32BE(0xfade0b01, 0);
+  genericSignatureBlob.writeUInt32BE(8, 4);
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/unauthorized-code-directory-slot',
+      0o755,
+      signedMachO(signatureSuperBlob([{ type: 5, blob: codeDirectory() }])),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  for (const type of [0, 0x1000, 0x1004]) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/authorized-code-directory-slot-${type}`,
+        0o755,
+        signedMachO(signatureSuperBlob([{ type, blob: codeDirectory() }])),
+      ),
+      [],
+    );
+  }
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/mixed-code-directory-slots',
+      0o755,
+      signedMachO(signatureSuperBlob([
+        { type: 0, blob: codeDirectory() },
+        { type: 0x1000, blob: codeDirectory() },
+        { type: 5, blob: genericSignatureBlob },
+      ])),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/mismatched-primary-slot',
+      0o755,
+      signedMachO(signatureSuperBlob([{ type: 0, blob: genericSignatureBlob }])),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
   assert.deepEqual(policyFindingsForFile('runtime/valid-code-directory', 0o755, signedMachO(codeDirectory())), []);
   const versionedCodeDirectory = (
     version,
