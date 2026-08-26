@@ -157,8 +157,8 @@ struct BrowserToolCapabilityIntegrationTests {
         #expect(Self.text(from: response) == domainResult)
     }
 
-    @Test
-    func `third party singleton uid without a fresh snapshot fails closed`() async throws {
+    @Test(arguments: ["1_0", "stashed-0"])
+    func `third party projection refusal preserves exact postdispatch evidence`(providerUID: String) async throws {
         let client = CapabilityBrowserMCPClient()
         let context = Self.context(client: client)
         let tool = BrowserTool(context: context)
@@ -172,7 +172,7 @@ struct BrowserToolCapabilityIntegrationTests {
                 "page_id": pageReference,
             ]))
         let elementReference = try Self.elementReference(from: snapshot)
-        let providerResult = #"{"result":{"uid":"1_0"}}"#
+        let providerResult = #"{"result":{"uid":"\#(providerUID)"}}"#
         client.executeHandler = { toolName in
             guard toolName == "execute_3p_developer_tool" else { return .text("ok") }
             return ToolResponse(
@@ -195,8 +195,16 @@ struct BrowserToolCapabilityIntegrationTests {
             ]))
 
         #expect(response.isError)
-        #expect(!Self.allText(from: response).contains("1_0"))
+        #expect(!Self.allText(from: response).contains(providerUID))
         #expect(!Self.allText(from: response).contains(elementReference))
+        let outcome = try #require(
+            MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta).projection?.outcome)
+        #expect(outcome.state == .indeterminate)
+        #expect(outcome.route == .local)
+        #expect(outcome.delivery == .init(mechanism: .browserProtocol, mode: .background))
+        #expect(outcome.evidence == .completionUnknown)
+        #expect(outcome.dispatchState.unitCount == .one)
+        #expect(outcome.retrySafety == .unsafe)
     }
 
     @Test
@@ -347,7 +355,7 @@ struct BrowserToolCapabilityIntegrationTests {
         #expect(response.isError)
         #expect(coordinator.sharedPrepareCount == 1)
         #expect(coordinator.concurrentPrepareCount == 0)
-        #expect(coordinator.completionCount == 0)
+        #expect(coordinator.completionCount == 1)
     }
 
     @Test
@@ -521,8 +529,8 @@ extension BrowserToolCapabilityIntegrationTests {
         #expect(response.meta?.objectValue?["state"] == .string("dispatched_unverified"))
     }
 
-    @Test
-    func `third party domain uid text without a snapshot remains unchanged`() async throws {
+    @Test(arguments: ["customer-42", "١_٢"])
+    func `third party domain uid text without a snapshot remains unchanged`(domainUID: String) async throws {
         let client = CapabilityBrowserMCPClient()
         let context = Self.context(client: client)
         let tool = BrowserTool(context: context)
@@ -530,7 +538,7 @@ extension BrowserToolCapabilityIntegrationTests {
             tool: tool,
             arguments: ToolArguments(raw: ["action": "list_pages"]))
         let pageReference = try Self.pageReference(from: listed)
-        let providerText = #"{"label":"uid=customer-42"}"#
+        let providerText = #"{"uid":"\#(domainUID)"}"#
         client.executeHandler = { toolName in
             toolName == "execute_3p_developer_tool" ? .text(providerText) : .text("ok")
         }

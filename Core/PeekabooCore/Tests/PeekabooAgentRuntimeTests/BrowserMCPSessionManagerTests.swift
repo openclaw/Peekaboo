@@ -742,6 +742,22 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `session teardown releases its lifecycle gate before ending the provider session`() async {
+        let lifecycleGate = MCPToolSnapshotExecutionGate()
+        let browser = LifecycleGateProbingBrowserClient(gate: lifecycleGate)
+        let context = MCPToolContext(
+            services: Self.services(browser: browser),
+            snapshotExecutionGate: MCPToolSnapshotExecutionGate(),
+            browserMutationExecutionGate: lifecycleGate,
+            snapshotOwner: MCPToolSnapshotOwner(),
+            executionPolicy: .unrestricted)
+
+        await context.releaseSnapshotOwner()
+
+        #expect(browser.acquiredLifecycleGate)
+    }
+
+    @Test
     func `foreground browser completion retains session lifecycle gate through teardown`() async throws {
         let provider = MockBrowserMCPManager()
         let pool = BrowserMCPAuthenticatedSessionPool { _ in
@@ -3041,6 +3057,48 @@ private actor EndpointMap {
             browserID: browserID,
             browserVersion: "Chrome/151.0",
             protocolVersion: "1.3")
+    }
+}
+
+@MainActor
+private final class LifecycleGateProbingBrowserClient: BrowserMCPAuthenticatedSessionEnding, @unchecked Sendable {
+    private let gate: MCPToolSnapshotExecutionGate
+    private(set) var acquiredLifecycleGate = false
+
+    init(gate: MCPToolSnapshotExecutionGate) {
+        self.gate = gate
+    }
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        await self.status(channel: nil)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        .text("unused")
+    }
+
+    func endAuthenticatedBrowserSession() async {
+        do {
+            self.acquiredLifecycleGate = try await BrowserMCPConnectionDeadline.run(
+                until: ContinuousClock.now.advanced(by: .milliseconds(100)))
+            {
+                try await self.gate.acquire()
+                await self.gate.release()
+                return true
+            }
+        } catch {
+            self.acquiredLifecycleGate = false
+        }
     }
 }
 

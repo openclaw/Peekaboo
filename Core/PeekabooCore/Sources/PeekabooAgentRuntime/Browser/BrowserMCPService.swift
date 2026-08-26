@@ -900,11 +900,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         target: BrowserMCPLaunchTarget,
         headless: Bool) -> MCPServerConfig
     {
-        var args = [
-            "-y",
-            "chrome-devtools-mcp@1.6.0",
-            "--experimentalPageIdRouting",
-        ]
+        var args = self.chromeDevToolsBaseArguments
         let description: String
 
         switch target {
@@ -938,13 +934,16 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             description: description)
     }
 
-    private static func chromeDevToolsConfig(browserURL: String, headless _: Bool) -> MCPServerConfig {
-        var args = [
-            "-y",
-            "chrome-devtools-mcp@1.6.0",
-            "--experimentalPageIdRouting",
-            "--browserUrl=\(browserURL)",
-        ]
+    private static let chromeDevToolsBaseArguments = [
+        "-y",
+        "chrome-devtools-mcp@1.6.0",
+        "--experimentalPageIdRouting",
+        "--experimentalStructuredContent",
+    ]
+
+    static func chromeDevToolsConfig(browserURL: String, headless _: Bool) -> MCPServerConfig {
+        var args = self.chromeDevToolsBaseArguments
+        args.append("--browserUrl=\(browserURL)")
         args.append("--no-usage-statistics")
         args.append("--no-performance-crux")
         return MCPServerConfig(

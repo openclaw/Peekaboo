@@ -54,6 +54,7 @@ const { createTools } = await import(
 
 const serverArgs = {
   experimentalPageIdRouting: true,
+  experimentalStructuredContent: true,
   slim: false,
   viaCli: false,
 };
@@ -65,6 +66,47 @@ const inertMutex = {
 const tools = createTools(serverArgs);
 const handlers = new Map(
   tools.map((tool) => [tool.name, new ToolHandler(tool, serverArgs, async () => undefined, inertMutex)]),
+);
+
+const structuredFixtureTool = {
+  name: "peekaboo_structured_fixture",
+  description: "Exercises the real pinned ToolHandler structured-content gate",
+  annotations: { category: "navigation" },
+  schema: {},
+  blockedByDialog: false,
+  verifyFilesSchema: [],
+  async handler(_request, response) {
+    response.appendResponseLine("structured fixture");
+  },
+};
+const fixtureContext = {
+  consumeReconnectNotice() {
+    return false;
+  },
+};
+const structuredHandler = new ToolHandler(
+  structuredFixtureTool,
+  serverArgs,
+  async () => fixtureContext,
+  inertMutex,
+);
+const textOnlyHandler = new ToolHandler(
+  structuredFixtureTool,
+  { ...serverArgs, experimentalStructuredContent: false },
+  async () => fixtureContext,
+  inertMutex,
+);
+const structuredFixture = await structuredHandler.handle({});
+const textOnlyFixture = await textOnlyHandler.handle({});
+assert.equal(
+  structuredFixture.structuredContent?.message,
+  "structured fixture",
+  "the pinned provider no longer emits opted-in structured content",
+);
+assert.equal(
+  Object.hasOwn(textOnlyFixture, "structuredContent"),
+  false,
+  "structured-content proof must discriminate the provider's default text-only behavior",
 );
 
 function unwrapOptional(schema) {

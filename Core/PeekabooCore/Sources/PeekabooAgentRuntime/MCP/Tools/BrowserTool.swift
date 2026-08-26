@@ -365,15 +365,55 @@ public struct BrowserTool: MCPTool {
                 expectedSessionBinding: sessionBinding,
                 elementPreflight: elementPreflight)
             guard let capabilitySession = self.capabilitySession else { return response }
-            return try await capabilitySession.project(
-                response,
-                calls: calls,
-                resolved: resolved,
-                sessionBinding: sessionBinding)
+            do {
+                return try await capabilitySession.project(
+                    response,
+                    calls: calls,
+                    resolved: resolved,
+                    sessionBinding: sessionBinding)
+            } catch let error as BrowserToolCapabilityError {
+                await capabilitySession.invalidateAfterProviderEntry(calls: calls, resolved: resolved)
+                return try Self.projectionFailureResponse(
+                    error: error,
+                    response: response,
+                    calls: calls)
+            }
         } catch {
             await self.capabilitySession?.invalidateAfterProviderEntry(calls: calls, resolved: resolved)
             throw error
         }
+    }
+
+    private static func projectionFailureResponse(
+        error _: BrowserToolCapabilityError,
+        response: ToolResponse,
+        calls: [BrowserMCPMappedCall]) throws -> ToolResponse
+    {
+        let message = "Browser provider completed the request, but its returned capabilities were invalid and withheld."
+        let hint = "Observe the browser before retrying; do not reuse prior page or element references."
+        guard Self.sequenceSemantics(calls) == .mutating else {
+            return ToolResponse.error(message)
+        }
+
+        let originalOutcome = MCPToolResponseMetadataProjector
+            .actionOutcomeResolution(from: response.meta)
+            .projection?.outcome
+        let mutationCount = calls.count { call in
+            BrowserMCPPageRoutingContract.actionSemantics(
+                for: call.toolName,
+                arguments: call.arguments) != .readOnly
+        }
+        let failure = DesktopActionFailure.indeterminate(
+            route: originalOutcome?.route ?? .local,
+            delivery: originalOutcome?.delivery ?? .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: originalOutcome?.dispatchState.unitCount ??
+                DesktopActionOutcome.DispatchUnitCount(mutationCount),
+            message: message,
+            hint: hint)
+        return try MCPToolResponseMetadataProjector.errorResponse(
+            for: failure,
+            invalidatedSnapshotID: nil)
     }
 
     @MainActor

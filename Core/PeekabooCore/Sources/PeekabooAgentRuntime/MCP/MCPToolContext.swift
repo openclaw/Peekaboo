@@ -371,6 +371,7 @@ public struct MCPToolContext: @unchecked Sendable {
             let completionSucceeded = await self.completeMutation(
                 completedScope,
                 succeeded: !response.isError,
+                snapshotMutationCoordinator: self.snapshotMutationCoordinator,
                 usesCoordinatorBarrier: usesCoordinatorBarrier)
             try Self.checkCancellationUnlessResponseIsCanonical(response)
             if !completionSucceeded {
@@ -380,13 +381,15 @@ public struct MCPToolContext: @unchecked Sendable {
                     let rollbackSucceeded = await self.completeMutation(
                         completedScope,
                         succeeded: false,
+                        snapshotMutationCoordinator: self.snapshotMutationCoordinator,
                         usesCoordinatorBarrier: usesCoordinatorBarrier)
                     try Self.checkCancellationUnlessResponseIsCanonical(response)
                     if !rollbackSucceeded {
                         await sharedInvalidationGate.recordPendingInvalidation(
                             completedScope,
                             owner: self.uiSnapshots.owner,
-                            usesCoordinatorBarrier: usesCoordinatorBarrier)
+                            usesCoordinatorBarrier: usesCoordinatorBarrier,
+                            snapshotMutationCoordinator: self.snapshotMutationCoordinator)
                     }
                     await self.releaseMutationLane(mutationLane)
                     return ToolResponse.error("Failed to publish the refreshed UI snapshot")
@@ -395,7 +398,8 @@ public struct MCPToolContext: @unchecked Sendable {
                 await sharedInvalidationGate.recordPendingInvalidation(
                     completedScope,
                     owner: self.uiSnapshots.owner,
-                    usesCoordinatorBarrier: usesCoordinatorBarrier)
+                    usesCoordinatorBarrier: usesCoordinatorBarrier,
+                    snapshotMutationCoordinator: self.snapshotMutationCoordinator)
                 if response.isError {
                     await self.releaseMutationLane(mutationLane)
                     return response
@@ -414,12 +418,14 @@ public struct MCPToolContext: @unchecked Sendable {
                 let cleanupSucceeded = await self.completeMutation(
                     failedScope,
                     succeeded: false,
+                    snapshotMutationCoordinator: self.snapshotMutationCoordinator,
                     usesCoordinatorBarrier: usesCoordinatorBarrier)
                 if !cleanupSucceeded {
                     await sharedInvalidationGate.recordPendingInvalidation(
                         failedScope,
                         owner: self.uiSnapshots.owner,
-                        usesCoordinatorBarrier: usesCoordinatorBarrier)
+                        usesCoordinatorBarrier: usesCoordinatorBarrier,
+                        snapshotMutationCoordinator: self.snapshotMutationCoordinator)
                 }
             }
             await self.releaseMutationLane(mutationLane)
@@ -521,6 +527,7 @@ public struct MCPToolContext: @unchecked Sendable {
                 let retrySucceeded = await self.completeMutation(
                     pending.scope,
                     succeeded: false,
+                    snapshotMutationCoordinator: pending.snapshotMutationCoordinator,
                     uiSnapshots: MCPToolUISnapshotStore(owner: pending.owner),
                     usesCoordinatorBarrier: pending.usesCoordinatorBarrier,
                     recreateSnapshotOwnerIfNeeded: false)
@@ -644,9 +651,7 @@ public struct MCPToolContext: @unchecked Sendable {
     }
 
     func releaseSnapshotOwner() async {
-        if let ownedBrowser = self.browser as? any BrowserMCPAuthenticatedSessionEnding {
-            await ownedBrowser.endAuthenticatedBrowserSession()
-        }
+        let ownedBrowser = self.browser as? any BrowserMCPAuthenticatedSessionEnding
         let capabilitySession = self.browserCapabilities
         let lifecycleGate = self.browserMutationExecutionGate
         let snapshotGate = self.snapshotExecutionGate
@@ -665,6 +670,10 @@ public struct MCPToolContext: @unchecked Sendable {
                     return
                 }
             }
+            _ = try? await self.recoverPendingInvalidations(
+                on: snapshotGate,
+                acquireGate: false,
+                blockedToolName: "browser session teardown")
             await capabilitySession.end()
             await self.uiSnapshots.removeOwner()
             if usesSeparateSnapshotGate {
@@ -672,6 +681,7 @@ public struct MCPToolContext: @unchecked Sendable {
             }
             await lifecycleGate.release()
         }.value
+        await ownedBrowser?.endAuthenticatedBrowserSession()
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {
@@ -966,6 +976,7 @@ public struct MCPToolContext: @unchecked Sendable {
     private func completeMutation(
         _ scope: MCPToolSnapshotMutationScope,
         succeeded: Bool,
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?,
         uiSnapshots: MCPToolUISnapshotStore? = nil,
         usesCoordinatorBarrier: Bool = true,
         recreateSnapshotOwnerIfNeeded: Bool = true) async -> Bool
@@ -973,7 +984,7 @@ public struct MCPToolContext: @unchecked Sendable {
         guard scope.effect != .freshObservation else { return true }
         let resolvedScope: MCPToolSnapshotMutationScope
         do {
-            if let barrier = try self.snapshotMutationCoordinator?.completeMutationBarrier(scope) {
+            if let barrier = try snapshotMutationCoordinator?.completeMutationBarrier(scope) {
                 resolvedScope = scope.completed(
                     at: scope.completedAt ?? Date(),
                     preserving: scope.preservedSnapshotID,

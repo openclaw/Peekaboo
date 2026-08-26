@@ -53,12 +53,14 @@ Peekaboo starts Chrome DevTools MCP with:
 npx -y chrome-devtools-mcp@1.6.0 \
   --wsEndpoint=ws://127.0.0.1:<port>/devtools/browser/<id> \
   --experimentalPageIdRouting \
+  --experimentalStructuredContent \
   --no-usage-statistics \
   --no-performance-crux
 ```
 
-Peekaboo pins the verified Chrome DevTools MCP version because direct page-ID routing is an experimental upstream
-contract. Upgrade the pin only after its page-scoped tool schemas and routing behavior have been revalidated.
+Peekaboo pins the verified Chrome DevTools MCP version because direct page-ID routing and the structured response data
+used to mint opaque page/element capabilities are experimental upstream contracts. Upgrade the pin only after its
+page-scoped schemas, structured response surfaces, and routing behavior have been revalidated.
 
 For deterministic local tests or custom Chrome endpoints:
 
