@@ -201,13 +201,11 @@ public enum ApplicationActionResultSemantics {
         operation: String) throws
     {
         guard let outcome else { return }
-        guard !outcome.isAccepted(by: .confirmedOrDispatched) else { return }
-        guard let failure = DesktopActionFailure(
-            outcome: outcome,
-            message: "\(operation) did not return a successful application outcome.",
-            hint: "Follow the canonical escalation metadata before deciding whether to retry.")
-        else { return }
-        throw failure
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            outcome,
+            policy: .confirmedOrDispatched,
+            operation: operation,
+            rejectedOutcomeMessage: "\(operation) did not return a successful application outcome.")
     }
 
     public static func requireSuccessfulExactProcessResult(
@@ -215,40 +213,17 @@ public enum ApplicationActionResultSemantics {
         expectedIdentity: ApplicationProcessIdentity,
         operation: String) throws
     {
-        guard let outcome = result.outcome else {
-            throw DesktopActionFailure.indeterminate(
-                evidence: .completionUnknown,
-                message: "\(operation) returned without a canonical outcome.",
-                hint: "Observe the selected application before retrying and update the runtime host.")
-        }
-        if outcome.state == .refused, outcome.dispatchState == .none {
-            try self.requireSuccessfulOutcome(outcome, operation: operation)
-        }
-        if let returnedIdentity = result.targetIdentity?.processIdentity,
-           returnedIdentity != expectedIdentity
-        {
-            throw DesktopActionFailure.indeterminate(
-                route: outcome.route,
-                delivery: outcome.delivery,
-                evidence: .completionUnknown,
-                unitCount: outcome.dispatchState.unitCount,
-                message: "\(operation) returned a different process-generation target.",
-                hint: "Observe the selected application before retrying and update the runtime host.")
-        }
-        do {
-            try self.requireSuccessfulOutcome(outcome, operation: operation)
-        } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: expectedIdentity.actionTargetReceipt)
-        }
-        guard result.targetIdentity?.processIdentity == expectedIdentity else {
-            throw DesktopActionFailure.indeterminate(
-                route: outcome.route,
-                delivery: outcome.delivery,
-                evidence: .completionUnknown,
-                unitCount: outcome.dispatchState.unitCount,
-                message: "\(operation) returned without the exact process-generation target.",
-                hint: "Observe the selected application before retrying and update the runtime host.")
-        }
+        _ = try UIAutomationActionResultSemantics.requireAcceptedExactProcessResult(
+            result,
+            expectedIdentity: expectedIdentity,
+            policy: .confirmedOrDispatched,
+            operation: operation,
+            missingOutcomeMessage: "\(operation) returned without a canonical outcome.",
+            missingTargetMessage: "\(operation) returned without the exact process-generation target.",
+            contradictoryTargetMessage: "\(operation) returned a different process-generation target.",
+            rejectedOutcomeMessage: "\(operation) did not return a successful application outcome.",
+            missingOutcomeHint: "Observe the selected application before retrying and update the runtime host.",
+            targetHint: "Observe the selected application before retrying and update the runtime host.")
     }
 
     public static func requireConsistentQuitResult(

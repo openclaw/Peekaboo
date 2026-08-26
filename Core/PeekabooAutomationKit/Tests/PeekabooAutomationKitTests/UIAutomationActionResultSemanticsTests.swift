@@ -81,6 +81,88 @@ struct UIAutomationActionResultSemanticsTests {
     }
 
     @Test
+    func `exact process validator accepts process and window refinements from the same generation`() throws {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001),
+            windowID: 71,
+            bounds: Self.windowBounds)
+        let outcome = DesktopActionOutcome.confirmedChange(delivery: self.backgroundDelivery)
+
+        for target in [fixture.processTargetIdentity, fixture.windowTargetIdentity] {
+            let accepted = try UIAutomationActionResultSemantics.requireAcceptedExactProcessResult(
+                UIAutomationActionResult(payload: (), outcome: outcome, targetIdentity: target),
+                expectedIdentity: fixture.processIdentity,
+                policy: .confirmedOrDispatched,
+                operation: "Fixture action")
+            #expect(accepted == outcome)
+        }
+    }
+
+    @Test
+    func `exact process validator preserves target and provider failure ordering`() throws {
+        let expected = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
+        let replacement = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1002))
+        let providerFailure = DesktopActionOutcome.suspectedNoop(delivery: self.backgroundDelivery)
+
+        do {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedExactProcessResult(
+                UIAutomationActionResult<Void>(
+                    payload: (),
+                    outcome: providerFailure,
+                    targetIdentity: nil),
+                expectedIdentity: expected.processIdentity,
+                policy: .confirmedOrDispatched,
+                operation: "Fixture action",
+                contradictoryTargetMessage: "contradictory target",
+                rejectedOutcomeMessage: "provider failure")
+            Issue.record("Expected provider failure before missing-target validation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == providerFailure)
+            #expect(failure.message == "provider failure")
+            #expect(failure.targetReceipt == expected.processTargetReceipt)
+        }
+
+        do {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedExactProcessResult(
+                UIAutomationActionResult(
+                    payload: (),
+                    outcome: providerFailure,
+                    targetIdentity: replacement.processTargetIdentity),
+                expectedIdentity: expected.processIdentity,
+                policy: .confirmedOrDispatched,
+                operation: "Fixture action",
+                contradictoryTargetMessage: "contradictory target",
+                rejectedOutcomeMessage: "provider failure")
+            Issue.record("Expected target contradiction before provider failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.message == "contradictory target")
+            #expect(failure.targetReceipt == nil)
+        }
+
+        let refusal = DesktopActionOutcome.refused(reason: .targetUnavailable)
+        do {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedExactProcessResult(
+                UIAutomationActionResult(
+                    payload: (),
+                    outcome: refusal,
+                    targetIdentity: replacement.processTargetIdentity),
+                expectedIdentity: expected.processIdentity,
+                policy: .confirmedOrDispatched,
+                operation: "Fixture action",
+                contradictoryTargetMessage: "contradictory target",
+                rejectedOutcomeMessage: "provider refusal")
+            Issue.record("Expected pre-dispatch refusal before target validation")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == refusal)
+            #expect(failure.message == "provider refusal")
+            #expect(failure.targetReceipt == nil)
+        }
+    }
+
+    @Test
     func `shared validator rejects delivery drift and attributes the target`() throws {
         let target = AutomationTestFixtures.linkedDesktopTarget(
             processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))

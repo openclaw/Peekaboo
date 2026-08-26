@@ -32,6 +32,145 @@ struct ApplicationServiceProtocolTests {
     }
 
     @Test
+    func `application outcome policy retains legacy nil compatibility`() throws {
+        try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+            nil,
+            operation: "Application action")
+    }
+
+    @Test
+    func `application outcome policy delegates reported results to canonical acceptance`() throws {
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .nativeFramework,
+            mode: .background)
+        try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+            .confirmedChange(delivery: delivery),
+            operation: "Application action")
+        try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+            .dispatchedUnverified(
+                delivery: delivery,
+                evidence: .deliveryAccepted),
+            operation: "Application action")
+
+        let rejected = DesktopActionOutcome.suspectedNoop(delivery: delivery)
+        do {
+            try ApplicationActionResultSemantics.requireSuccessfulOutcome(
+                rejected,
+                operation: "Application action")
+            Issue.record("Expected canonical provider failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == rejected)
+            #expect(failure.message == "Application action did not return a successful application outcome.")
+            #expect(failure.hint == "Follow the canonical escalation metadata before deciding whether to retry.")
+            #expect(failure.causeDescription == nil)
+            #expect(failure.targetReceipt == nil)
+        }
+    }
+
+    @Test
+    func `exact application result rejects missing outcome without inventing target evidence`() throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+
+        do {
+            try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
+                UIAutomationActionResult<Void>(payload: (), outcome: nil, targetIdentity: nil),
+                expectedIdentity: identity,
+                operation: "Application hide")
+            Issue.record("Expected missing-outcome failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == .indeterminate(
+                evidence: .completionUnknown))
+            #expect(failure.message == "Application hide returned without a canonical outcome.")
+            #expect(failure.hint == "Observe the selected application before retrying and update the runtime host.")
+            #expect(failure.causeDescription == nil)
+            #expect(failure.targetReceipt == nil)
+        }
+    }
+
+    @Test
+    func `exact application result distinguishes missing and contradictory targets`() throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        let outcome = DesktopActionOutcome.confirmedChange(
+            route: .bridge,
+            delivery: delivery)
+        let replacement = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: identity.processIdentifier,
+            processStartIdentity: identity.processStartIdentity + 1))
+
+        let cases: [(DesktopTargetIdentity?, String)] = [
+            (nil, "Application hide returned without the exact process-generation target."),
+            (replacement, "Application hide returned a different process-generation target."),
+        ]
+        for (targetIdentity, expectedMessage) in cases {
+            do {
+                try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
+                    UIAutomationActionResult(payload: (), outcome: outcome, targetIdentity: targetIdentity),
+                    expectedIdentity: identity,
+                    operation: "Application hide")
+                Issue.record("Expected exact-target failure")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome == .indeterminate(
+                    route: .bridge,
+                    delivery: delivery,
+                    evidence: .completionUnknown))
+                #expect(failure.message == expectedMessage)
+                #expect(failure.hint ==
+                    "Observe the selected application before retrying and update the runtime host.")
+                #expect(failure.causeDescription == nil)
+                #expect(failure.targetReceipt == nil)
+            }
+        }
+    }
+
+    @Test
+    func `exact application result preserves provider failure before requiring a missing target`() throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+        let outcome = DesktopActionOutcome.suspectedNoop(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+
+        do {
+            try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
+                UIAutomationActionResult<Void>(payload: (), outcome: outcome, targetIdentity: nil),
+                expectedIdentity: identity,
+                operation: "Application hide")
+            Issue.record("Expected provider failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == outcome)
+            #expect(failure.message == "Application hide did not return a successful application outcome.")
+            #expect(failure.hint == "Follow the canonical escalation metadata before deciding whether to retry.")
+            #expect(failure.causeDescription == nil)
+            #expect(failure.targetReceipt == identity.actionTargetReceipt)
+        }
+    }
+
+    @Test
+    func `exact application result preserves pre-dispatch refusal ahead of contradictory target evidence`() throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+        let replacement = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: identity.processIdentifier,
+            processStartIdentity: identity.processStartIdentity + 1))
+        let refusal = DesktopActionOutcome.refused(route: .bridge, reason: .targetUnavailable)
+
+        do {
+            try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
+                UIAutomationActionResult(payload: (), outcome: refusal, targetIdentity: replacement),
+                expectedIdentity: identity,
+                operation: "Application hide")
+            Issue.record("Expected provider refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == refusal)
+            #expect(failure.message == "Application hide did not return a successful application outcome.")
+            #expect(failure.hint == "Follow the canonical escalation metadata before deciding whether to retry.")
+            #expect(failure.causeDescription == nil)
+            #expect(failure.targetReceipt == nil)
+        }
+    }
+
+    @Test
     func `exact quit rejects missing canonical outcome`() {
         let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
 

@@ -43,6 +43,75 @@ public enum UIAutomationActionResultSemantics {
         target.keyboardDelivery
     }
 
+    /// Applies one acceptance policy to a result pinned to an exact process generation.
+    ///
+    /// A provider refusal before dispatch remains authoritative even when target evidence is absent
+    /// or contradictory. After dispatch, contradictory target evidence takes precedence over the
+    /// provider outcome, while a missing target is reported only after accepting the outcome.
+    @discardableResult
+    public static func requireAcceptedExactProcessResult(
+        _ result: UIAutomationActionResult<some Sendable>,
+        expectedIdentity: ApplicationProcessIdentity,
+        policy: DesktopActionOutcome.SuccessPolicy,
+        operation: String,
+        missingOutcomeMessage: String? = nil,
+        missingTargetMessage: String? = nil,
+        contradictoryTargetMessage: String? = nil,
+        rejectedOutcomeMessage: String? = nil,
+        missingOutcomeHint: String = "Observe the target before retrying and update the runtime host.",
+        targetHint: String = "Observe the target before retrying and update the runtime host.",
+        rejectedOutcomeHint: String =
+            "Follow the canonical escalation metadata before deciding whether to retry.") throws
+        -> DesktopActionOutcome
+    {
+        guard let outcome = result.outcome else {
+            return try self.requireAcceptedOutcome(
+                result.outcome,
+                policy: policy,
+                operation: operation,
+                missingOutcomeMessage: missingOutcomeMessage,
+                missingOutcomeHint: missingOutcomeHint,
+                rejectedOutcomeHint: rejectedOutcomeHint)
+        }
+        if outcome.state == .refused, outcome.dispatchState == .none {
+            return try self.requireAcceptedOutcome(
+                outcome,
+                policy: policy,
+                operation: operation,
+                rejectedOutcomeMessage: rejectedOutcomeMessage,
+                rejectedOutcomeHint: rejectedOutcomeHint)
+        }
+        if let returnedIdentity = result.targetIdentity?.processIdentity,
+           returnedIdentity != expectedIdentity
+        {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: contradictoryTargetMessage ?? "\(operation) returned a contradictory process target.",
+                hint: targetHint)
+        }
+
+        let acceptedOutcome = try self.requireAcceptedOutcome(
+            outcome,
+            policy: policy,
+            operation: operation,
+            targetReceipt: expectedIdentity.actionTargetReceipt,
+            rejectedOutcomeMessage: rejectedOutcomeMessage,
+            rejectedOutcomeHint: rejectedOutcomeHint)
+        guard result.targetIdentity?.processIdentity == expectedIdentity else {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: missingTargetMessage ?? "\(operation) returned without its exact process target.",
+                hint: targetHint)
+        }
+        return acceptedOutcome
+    }
+
     public static func requireAcceptedOutcome(
         _ result: UIAutomationActionResult<some Sendable>,
         policy: DesktopActionOutcome.SuccessPolicy,
