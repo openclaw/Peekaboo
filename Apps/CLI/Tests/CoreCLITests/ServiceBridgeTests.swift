@@ -402,7 +402,7 @@ class MockAutomationService: UIAutomationServiceProtocol {
 
 @MainActor
 final class MockTargetedAutomationService: MockAutomationService, TargetedHotkeyServiceProtocol,
-TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
+TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol, CompositeTypeDeliveryServiceProtocol {
     struct TargetedHotkeyCall {
         let keys: String
         let holdDuration: Int
@@ -434,6 +434,8 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
     var targetedHotkeyRequiresEventSynthesizingPermission = false
     var supportsTargetedTypeActions = true
     var supportsProcessGenerationPinnedTypeActions = true
+    let supportsExactWindowCompositeTypeDelivery = true
+    let exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsTargetedClicks = true
