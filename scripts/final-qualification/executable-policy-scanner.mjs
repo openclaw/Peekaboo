@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { isUtf8 } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,20 +23,402 @@ const HEX40 = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const SCRIPT_EXTENSIONS = new Set([
   '.applescript', '.bash', '.cjs', '.command', '.js', '.jxa', '.mjs', '.osa', '.pl', '.py',
-  '.rb', '.sh', '.swift', '.zsh',
+  '.rb', '.scpt', '.scptd', '.sh', '.swift', '.zsh',
 ]);
-const MACH_O_MAGICS = new Set([
-  'feedface', 'cefaedfe',
-  'feedfacf', 'cffaedfe',
-  'cafebabe', 'bebafeca',
-  'cafebabf', 'bfbafeca',
+const MACH_O_MAGICS = new Map([
+  ['feedface', { bits: 32, endian: 'be', kind: 'thin' }],
+  ['cefaedfe', { bits: 32, endian: 'le', kind: 'thin' }],
+  ['feedfacf', { bits: 64, endian: 'be', kind: 'thin' }],
+  ['cffaedfe', { bits: 64, endian: 'le', kind: 'thin' }],
+  ['cafebabe', { bits: 32, endian: 'be', kind: 'fat' }],
+  ['bebafeca', { bits: 32, endian: 'le', kind: 'fat' }],
+  ['cafebabf', { bits: 64, endian: 'be', kind: 'fat' }],
+  ['bfbafeca', { bits: 64, endian: 'le', kind: 'fat' }],
 ]);
-const FORBIDDEN_MARKERS = [
+const TEXT_FORBIDDEN_MARKERS = [
   ['apple-script', /(^|[^a-z0-9])(osascript|osascriptd|applescript|nsapplescript|jxa|osaexecute|javascript for automation)([^a-z0-9]|$)/],
   ['cua-driver', /(^|[^a-z0-9])cua-driver([^a-z0-9]|$)/],
   ['virtualization', /(^|[^a-z0-9])(lume|parallels|vmware|virtualbox|virtualization|utm|tart|vfkit|qemu)([^a-z0-9]|$)/],
   ['remote-desktop', /(^|[^a-z0-9])(vnc|screen sharing|screensharing|remote desktop|remotedesktop)([^a-z0-9]|$)/],
 ];
+const STRUCTURAL_NAME_MARKER = /(^|[\/._ -])(cua-driver|osascript|applescript|jxa|lume|parallels|prl_|vmware|virtualbox|virtualization|utm|tart|vfkit|qemu|vnc|screen sharing|screensharing|remote desktop|remotedesktop|jump desktop)([\/._ -]|$)/i;
+const APPLE_EVENT_IMPORT = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScript|AppleEventDescriptor|AppleEventManager|UserAppleScriptTask))$/;
+const SCRIPTING_BRIDGE_IMPORT = /^_?OBJC_(?:CLASS|METACLASS)_\$_SB(?:Application|ElementArray|Object)$/;
+const VIRTUALIZATION_IMPORT = /^_?(?:VZ[A-Z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+)$/;
+const APPLE_FRAMEWORK_PATH = /(?:^|\/)(?:OSAKit|ScriptingBridge)\.framework(?:\/|$)/i;
+const VIRTUALIZATION_FRAMEWORK_PATH = /(?:^|\/)(?:Virtualization|Hypervisor)\.framework(?:\/|$)/i;
+const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|\/usr\/bin\/osascript)$/;
+const APPLE_EVENT_DYNAMIC_STRING = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*)$/;
+const APPLE_EVENT_COMPILER_METADATA = /^(?:AESgtGG|AESgtGGGSgtGG)$/;
+const LOAD_COMMAND_DYLIBS = new Set([0x0c, 0x0d, 0x18, 0x1f, 0x20, 0x23]);
+const MACH_O_CPU_TYPES = new Set([0x00000007, 0x01000007, 0x0000000c, 0x0100000c]);
+const CODE_DIRECTORY_MAGIC = 0xfade0c02;
+
+function isAppleScriptPolicyString(value) {
+  return APPLE_EVENT_STRING.test(value)
+    || SCRIPTING_BRIDGE_IMPORT.test(value)
+    || APPLE_FRAMEWORK_PATH.test(value)
+    || (!APPLE_EVENT_COMPILER_METADATA.test(value) && APPLE_EVENT_DYNAMIC_STRING.test(value));
+}
+
+function isVirtualizationPolicyString(value) {
+  return VIRTUALIZATION_IMPORT.test(value) || VIRTUALIZATION_FRAMEWORK_PATH.test(value);
+}
+
+function structuralFamily(value) {
+  if (/(^|\/)[^/]+\.(?:applescript|jxa|osa|scpt|scptd)(\/|$)/i.test(value)) {
+    return 'apple-script';
+  }
+  if (/(^|[\/._ -])(?:osascriptd)([\/._ -]|$)/i.test(value)) return 'apple-script';
+  if (/(^|[\/._ -])(?:cua-driver|cuadriver|trycua)([\/._ -]|$)/i.test(value)) {
+    return 'cua-driver';
+  }
+  if (/(^|[\/._ -])(?:prl_[a-z0-9_-]*|vmware-vmx|virtualboxvm)([\/._ -]|$)/i.test(value)) {
+    return 'virtualization';
+  }
+  if (/(^|[\/._ -])(?:ardagent|rdc|remotedesktopagent|screensharingd|vncserver|vncviewer)([\/._ -]|$)/i.test(value)) {
+    return 'remote-desktop';
+  }
+  const match = value.match(STRUCTURAL_NAME_MARKER);
+  if (!match) return null;
+  const marker = match[2].toLowerCase();
+  if (marker === 'cua-driver') return 'cua-driver';
+  if (['osascript', 'applescript', 'jxa'].includes(marker)) return 'apple-script';
+  if (['vnc', 'screen sharing', 'screensharing', 'remote desktop', 'remotedesktop', 'jump desktop'].includes(marker)) {
+    return 'remote-desktop';
+  }
+  return 'virtualization';
+}
+
+function unsignedInteger(bytes, offset, size, endian) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + size > bytes.length) return null;
+  if (size === 4) return endian === 'le' ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
+  const value = endian === 'le' ? bytes.readBigUInt64LE(offset) : bytes.readBigUInt64BE(offset);
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+}
+
+function cString(bytes, offset, limit) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset >= limit || limit > bytes.length) return null;
+  let end = offset;
+  while (end < limit && bytes[end] !== 0) end += 1;
+  if (end === offset || end >= limit) return null;
+  const value = bytes.subarray(offset, end);
+  return value.every((byte) => byte >= 0x20 && byte <= 0x7e) ? value.toString('ascii') : null;
+}
+
+function policyStrings(bytes) {
+  const values = [];
+  let start = null;
+  for (let index = 0; index <= bytes.length; index += 1) {
+    const printable = index < bytes.length && bytes[index] >= 0x20 && bytes[index] <= 0x7e;
+    if (printable && start === null) start = index;
+    if (!printable && start !== null) {
+      if (index - start >= 4) {
+        const value = bytes.subarray(start, index).toString('ascii');
+        if (isAppleScriptPolicyString(value) || isVirtualizationPolicyString(value)) {
+          values.push(value);
+        }
+      }
+      start = null;
+    }
+  }
+  return values;
+}
+
+function codeDirectoryIdentifiers(bytes, offset, size) {
+  const identifiers = [];
+  const parseCodeDirectory = (start, maximum) => {
+    if (start < offset || start + 24 > maximum || maximum > offset + size) return false;
+    const magic = bytes.readUInt32BE(start);
+    if (magic !== CODE_DIRECTORY_MAGIC) return false;
+    const length = bytes.readUInt32BE(start + 4);
+    const identifierOffset = bytes.readUInt32BE(start + 20);
+    if (length < 24 || start + length > maximum || identifierOffset >= length) return false;
+    const identifier = cString(bytes, start + identifierOffset, start + length);
+    if (!identifier) return false;
+    identifiers.push(identifier);
+    return true;
+  };
+  if (offset < 0 || size < 8 || offset + size > bytes.length) return null;
+  const magic = bytes.readUInt32BE(offset);
+  if (magic === CODE_DIRECTORY_MAGIC) {
+    return parseCodeDirectory(offset, offset + size) ? identifiers : null;
+  }
+  if (magic !== 0xfade0cc0 || size < 12) return null;
+  const length = bytes.readUInt32BE(offset + 4);
+  const count = bytes.readUInt32BE(offset + 8);
+  if (length < 12 || length > size || count === 0 || count > 1024 || 12 + count * 8 > length) {
+    return null;
+  }
+  for (let index = 0; index < count; index += 1) {
+    const blobOffset = bytes.readUInt32BE(offset + 12 + index * 8 + 4);
+    if (blobOffset < 12 + count * 8 || blobOffset + 8 > length) return null;
+    const blobMagic = bytes.readUInt32BE(offset + blobOffset);
+    if (blobMagic === CODE_DIRECTORY_MAGIC
+      && !parseCodeDirectory(offset + blobOffset, offset + length)) return null;
+  }
+  return identifiers.length > 0 ? identifiers : null;
+}
+
+function symbolNameDecoder(bytes, offset, size) {
+  if (size === 0 || offset < 0 || offset + size > bytes.length) return null;
+  const cache = new Map();
+  let remainingBytes = size * 4;
+  return (nameOffset) => {
+    if (!Number.isSafeInteger(nameOffset) || nameOffset < 0 || nameOffset >= size) {
+      return { ok: false, value: null };
+    }
+    if (cache.has(nameOffset)) return cache.get(nameOffset);
+    let cursor = nameOffset;
+    while (cursor < size && bytes[offset + cursor] !== 0) {
+      remainingBytes -= 1;
+      if (remainingBytes < 0) return { ok: false, value: null };
+      const byte = bytes[offset + cursor];
+      if (byte < 0x20 || byte > 0x7e) return { ok: false, value: null };
+      cursor += 1;
+    }
+    if (cursor >= size || cursor === nameOffset) return { ok: false, value: null };
+    const result = {
+      ok: true,
+      value: bytes.subarray(offset + nameOffset, offset + cursor).toString('ascii'),
+    };
+    cache.set(nameOffset, result);
+    return result;
+  };
+}
+
+function thinMachOSlice(bytes, offset, size) {
+  if (offset < 0 || size < 28 || offset + size > bytes.length) return null;
+  const magic = bytes.subarray(offset, offset + 4).toString('hex');
+  const format = MACH_O_MAGICS.get(magic);
+  if (!format || format.kind !== 'thin') return null;
+  const headerSize = format.bits === 64 ? 32 : 28;
+  const cpuType = unsignedInteger(bytes, offset + 4, 4, format.endian);
+  const cpuSubtype = unsignedInteger(bytes, offset + 8, 4, format.endian);
+  const fileType = unsignedInteger(bytes, offset + 12, 4, format.endian);
+  const commandCount = unsignedInteger(bytes, offset + 16, 4, format.endian);
+  const commandBytes = unsignedInteger(bytes, offset + 20, 4, format.endian);
+  if (cpuType === null || cpuSubtype === null || fileType === null
+    || !MACH_O_CPU_TYPES.has(cpuType) || fileType < 1 || fileType > 12
+    || commandCount === null || commandCount === 0 || commandCount > 65_536
+    || commandBytes === null || commandBytes < commandCount * 8
+    || headerSize + commandBytes > size) return null;
+  const loadPaths = [];
+  const imports = [];
+  const identifiers = [];
+  let symbolTable = null;
+  let sawCodeSignature = false;
+  let sawSegment = false;
+  let cursor = offset + headerSize;
+  const commandLimit = cursor + commandBytes;
+  for (let index = 0; index < commandCount; index += 1) {
+    if (cursor + 8 > commandLimit) return null;
+    const command = unsignedInteger(bytes, cursor, 4, format.endian);
+    const commandSize = unsignedInteger(bytes, cursor + 4, 4, format.endian);
+    if (command === null || commandSize === null || commandSize < 8
+      || commandSize % (format.bits === 64 ? 8 : 4) !== 0
+      || cursor + commandSize > commandLimit) return null;
+    const baseCommand = command & 0x7fffffff;
+    if (baseCommand === 0x01 || baseCommand === 0x19) {
+      const is64BitSegment = baseCommand === 0x19;
+      const expectedSegmentCommand = format.bits === 64 ? 0x19 : 0x01;
+      const minimumSize = is64BitSegment ? 72 : 56;
+      const sectionSize = is64BitSegment ? 80 : 68;
+      if (baseCommand !== expectedSegmentCommand || commandSize < minimumSize) return null;
+      const sectionCount = unsignedInteger(
+        bytes,
+        cursor + (is64BitSegment ? 64 : 48),
+        4,
+        format.endian,
+      );
+      const fileOffset = unsignedInteger(
+        bytes,
+        cursor + (is64BitSegment ? 40 : 32),
+        is64BitSegment ? 8 : 4,
+        format.endian,
+      );
+      const fileSize = unsignedInteger(
+        bytes,
+        cursor + (is64BitSegment ? 48 : 36),
+        is64BitSegment ? 8 : 4,
+        format.endian,
+      );
+      if (sectionCount === null || sectionCount > 4096
+        || minimumSize + sectionCount * sectionSize !== commandSize
+        || fileOffset === null || fileSize === null || fileOffset + fileSize > size) return null;
+      sawSegment = true;
+    } else if (LOAD_COMMAND_DYLIBS.has(baseCommand)) {
+      if (commandSize < 24) return null;
+      const nameOffset = unsignedInteger(bytes, cursor + 8, 4, format.endian);
+      if (nameOffset === null || nameOffset < 24 || nameOffset >= commandSize) return null;
+      const name = cString(bytes, cursor + nameOffset, cursor + commandSize);
+      if (!name) return null;
+      loadPaths.push(name);
+    } else if (baseCommand === 0x02) {
+      if (commandSize < 24 || symbolTable !== null) return null;
+      symbolTable = {
+        symbolOffset: unsignedInteger(bytes, cursor + 8, 4, format.endian),
+        symbolCount: unsignedInteger(bytes, cursor + 12, 4, format.endian),
+        stringOffset: unsignedInteger(bytes, cursor + 16, 4, format.endian),
+        stringSize: unsignedInteger(bytes, cursor + 20, 4, format.endian),
+      };
+    } else if (baseCommand === 0x1d) {
+      if (commandSize < 16 || sawCodeSignature) return null;
+      sawCodeSignature = true;
+      const signatureOffset = unsignedInteger(bytes, cursor + 8, 4, format.endian);
+      const signatureSize = unsignedInteger(bytes, cursor + 12, 4, format.endian);
+      if (signatureOffset === null || signatureSize === null || signatureSize === 0
+        || signatureOffset + signatureSize > size) return null;
+      const codeIdentifiers = codeDirectoryIdentifiers(
+        bytes,
+        offset + signatureOffset,
+        signatureSize,
+      );
+      if (!codeIdentifiers) return null;
+      identifiers.push(...codeIdentifiers);
+    }
+    cursor += commandSize;
+  }
+  if (cursor !== commandLimit || !sawSegment || !symbolTable) {
+    return cursor === commandLimit && sawSegment ? {
+      cpuSubtype,
+      cpuType,
+      identifiers,
+      imports,
+      loadPaths,
+      strings: policyStrings(bytes.subarray(offset, offset + size)),
+    } : null;
+  }
+  const { symbolOffset, symbolCount, stringOffset, stringSize } = symbolTable;
+  const symbolSize = format.bits === 64 ? 16 : 12;
+  if ([symbolOffset, symbolCount, stringOffset, stringSize].some((value) => value === null)
+    || symbolCount > 2_000_000
+    || symbolOffset + symbolCount * symbolSize > size
+    || stringOffset + stringSize > size) return null;
+  const decodeSymbolName = symbolNameDecoder(bytes, offset + stringOffset, stringSize);
+  if (!decodeSymbolName) return null;
+  for (let index = 0; index < symbolCount; index += 1) {
+    const entryOffset = offset + symbolOffset + index * symbolSize;
+    const nameOffset = unsignedInteger(bytes, entryOffset, 4, format.endian);
+    const type = bytes[entryOffset + 4];
+    const isUndefinedExternal = (type & 0xe0) === 0 && (type & 0x0e) === 0 && (type & 0x01) === 1;
+    if (!isUndefinedExternal) continue;
+    if (nameOffset === null || nameOffset >= stringSize) return null;
+    const decoded = decodeSymbolName(nameOffset);
+    if (!decoded.ok || !decoded.value) return null;
+    const name = decoded.value;
+    if (name && (APPLE_EVENT_IMPORT.test(name)
+      || SCRIPTING_BRIDGE_IMPORT.test(name)
+      || VIRTUALIZATION_IMPORT.test(name))) {
+      imports.push(name);
+    }
+  }
+  return {
+    cpuSubtype,
+    cpuType,
+    identifiers,
+    imports,
+    loadPaths,
+    strings: policyStrings(bytes.subarray(offset, offset + size)),
+  };
+}
+
+function machOEvidence(bytes) {
+  if (bytes.length < 4) return null;
+  const magic = bytes.subarray(0, 4).toString('hex');
+  const format = MACH_O_MAGICS.get(magic);
+  if (!format) return null;
+  if (format.kind === 'thin') return thinMachOSlice(bytes, 0, bytes.length);
+  if (bytes.length < 8) return null;
+  const count = unsignedInteger(bytes, 4, 4, format.endian);
+  const entrySize = format.bits === 64 ? 32 : 20;
+  if (count === null || count === 0 || count > 128 || 8 + count * entrySize > bytes.length) return null;
+  const tableEnd = 8 + count * entrySize;
+  const records = [];
+  const architectures = new Set();
+  for (let index = 0; index < count; index += 1) {
+    const entry = 8 + index * entrySize;
+    const cpuType = unsignedInteger(bytes, entry, 4, format.endian);
+    const cpuSubtype = unsignedInteger(bytes, entry + 4, 4, format.endian);
+    const offset = unsignedInteger(bytes, entry + 8, format.bits === 64 ? 8 : 4, format.endian);
+    const size = unsignedInteger(bytes, entry + (format.bits === 64 ? 16 : 12),
+      format.bits === 64 ? 8 : 4, format.endian);
+    const alignment = unsignedInteger(bytes, entry + (format.bits === 64 ? 24 : 16), 4, format.endian);
+    const reserved = format.bits === 64
+      ? unsignedInteger(bytes, entry + 28, 4, format.endian)
+      : 0;
+    if (cpuType === null || cpuSubtype === null || !MACH_O_CPU_TYPES.has(cpuType)
+      || offset === null || size === null || size === 0 || offset < tableEnd
+      || offset + size > bytes.length || alignment === null || alignment > 31
+      || offset % (2 ** alignment) !== 0 || reserved !== 0) return null;
+    const architecture = `${cpuType}:${cpuSubtype}`;
+    if (architectures.has(architecture)) return null;
+    architectures.add(architecture);
+    records.push({ cpuSubtype, cpuType, offset, size });
+  }
+  const ordered = [...records].sort((left, right) => left.offset - right.offset);
+  for (let index = 1; index < ordered.length; index += 1) {
+    if (ordered[index - 1].offset + ordered[index - 1].size > ordered[index].offset) return null;
+  }
+  const evidence = { identifiers: [], imports: [], loadPaths: [], strings: [] };
+  for (const record of records) {
+    const slice = thinMachOSlice(bytes, record.offset, record.size);
+    if (!slice || slice.cpuType !== record.cpuType || slice.cpuSubtype !== record.cpuSubtype) return null;
+    for (const key of ['identifiers', 'imports', 'loadPaths', 'strings']) {
+      for (const value of slice[key]) evidence[key].push(value);
+    }
+  }
+  return evidence;
+}
+
+export function policyFindingsForFile(relativePath, mode, bytes) {
+  const kind = classifyPolicyFile(relativePath, mode, bytes);
+  if (kind === 'data') return [];
+  const families = new Set();
+  const pathFamily = structuralFamily(relativePath);
+  if (pathFamily) families.add(pathFamily);
+  if (kind === 'script') {
+    const searchable = bytes.toString('utf8').toLowerCase();
+    for (const [family, expression] of TEXT_FORBIDDEN_MARKERS) {
+      if (expression.test(searchable)) families.add(family);
+    }
+  } else {
+    const evidence = machOEvidence(bytes);
+    if (!evidence) {
+      families.add('uninspectable-native-executable');
+    } else {
+      for (const identifier of evidence.identifiers) {
+        const family = structuralFamily(identifier);
+        if (family) families.add(family);
+      }
+      for (const loadPath of evidence.loadPaths) {
+        const family = structuralFamily(loadPath);
+        if (family) families.add(family);
+        if (APPLE_FRAMEWORK_PATH.test(loadPath)) {
+          families.add('apple-script');
+        }
+        if (VIRTUALIZATION_FRAMEWORK_PATH.test(loadPath)) {
+          families.add('virtualization');
+        }
+      }
+      if (evidence.imports.some((value) => (
+        APPLE_EVENT_IMPORT.test(value) || SCRIPTING_BRIDGE_IMPORT.test(value)
+      ))) {
+        families.add('apple-script');
+      }
+      if (evidence.imports.some((value) => VIRTUALIZATION_IMPORT.test(value))) {
+        families.add('virtualization');
+      }
+      if (evidence.strings.some((value) => isAppleScriptPolicyString(value))) {
+        families.add('apple-script');
+      }
+      if (evidence.strings.some((value) => isVirtualizationPolicyString(value))) {
+        families.add('virtualization');
+      }
+    }
+  }
+  return [...families].sort().map((family) => ({ family }));
+}
 
 function safeRelativePath(value, label) {
   requireCondition(typeof value === 'string' && value.length > 0 && !path.isAbsolute(value)
@@ -114,17 +497,21 @@ function artifactRoots(value) {
 }
 
 export function classifyPolicyFile(relativePath, mode, bytes) {
+  const magic = bytes.length >= 4 ? bytes.subarray(0, 4).toString('hex') : null;
+  if (MACH_O_MAGICS.has(magic)) return 'executable';
   if (bytes.subarray(0, 2).equals(Buffer.from('#!'))
     || SCRIPT_EXTENSIONS.has(path.extname(relativePath).toLowerCase())) return 'script';
-  const magic = bytes.length >= 4 ? bytes.subarray(0, 4).toString('hex') : null;
-  if (MACH_O_MAGICS.has(magic) || (mode & 0o111) !== 0) return 'executable';
+  if ((mode & 0o111) !== 0) {
+    const text = isUtf8(bytes) && bytes.every((byte) => (
+      byte === 0x09 || byte === 0x0a || byte === 0x0d || (byte >= 0x20 && byte !== 0x7f)
+    ));
+    return text ? 'script' : 'executable';
+  }
   return 'data';
 }
 
-function findingsFor(entry, bytes, kind) {
-  if (kind === 'data') return [];
-  const searchable = bytes.toString('latin1').toLowerCase();
-  return FORBIDDEN_MARKERS.filter(([, expression]) => expression.test(searchable)).map(([family]) => ({
+function findingsFor(entry, bytes) {
+  return policyFindingsForFile(entry.relative_path, entry.mode, bytes).map(({ family }) => ({
     artifact: entry.artifact,
     relative_path: entry.relative_path,
     family,
@@ -148,6 +535,21 @@ function scanInstalledInventory(inventoryPath, rootsValue) {
       requireCondition(info.isSymbolicLink() && fs.readlinkSync(filePath) === entry.target
         && fs.realpathSync(path.dirname(filePath)) === path.dirname(filePath),
         `policy scanner inventory entry ${index} symlink changed`);
+      const resolvedTarget = path.resolve(path.dirname(filePath), entry.target);
+      const relativeTarget = path.relative(root, resolvedTarget);
+      requireCondition(!path.isAbsolute(entry.target)
+        && relativeTarget !== '..' && !relativeTarget.startsWith(`..${path.sep}`),
+      `policy scanner inventory entry ${index} symlink escapes its artifact root`);
+      const families = new Set([
+        structuralFamily(entry.relative_path),
+        structuralFamily(entry.target),
+        structuralFamily(relativeTarget),
+      ].filter(Boolean));
+      forbiddenFindings.push(...[...families].sort().map((family) => ({
+        artifact: entry.artifact,
+        relative_path: entry.relative_path,
+        family,
+      })));
       continue;
     }
     requireCondition(info.isFile() && !info.isSymbolicLink() && info.nlink === 1n
@@ -166,7 +568,7 @@ function scanInstalledInventory(inventoryPath, rootsValue) {
       sha256: retained.sha256,
       classification: kind,
     });
-    forbiddenFindings.push(...findingsFor(entry, retained.bytes, kind));
+    forbiddenFindings.push(...findingsFor(entry, retained.bytes));
   }
   const scannerPath = fs.realpathSync(fileURLToPath(import.meta.url));
   const scanner = readStableFile(scannerPath, 'executable policy scanner source', {
@@ -210,7 +612,7 @@ export function generatePolicyReport(specPath, outputPath) {
     'policy scanner spec is malformed');
   const report = scanInstalledInventory(spec.installed_inventory, spec.artifact_roots);
   requireCondition(report.forbidden_findings.length === 0,
-    'policy scanner found forbidden executable or script markers');
+    'policy scanner found forbidden executable or script policy evidence');
   const written = writePrivateExclusive(outputPath, report);
   return { report, sha256: written.sha256 };
 }

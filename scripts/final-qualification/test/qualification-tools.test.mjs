@@ -8,7 +8,10 @@ import { projectBindings } from '../project-live-bindings.mjs';
 import { constructLivePlan } from '../construct-live-plan.mjs';
 import { compareCrashInventories } from '../crash-inventory.mjs';
 import { runManagedLaunch } from '../managed-launcher.mjs';
-import { classifyPolicyFile } from '../executable-policy-scanner.mjs';
+import {
+  classifyPolicyFile,
+  policyFindingsForFile,
+} from '../executable-policy-scanner.mjs';
 import {
   accumulateDescendantPIDs,
   isFinalProcessTableSample,
@@ -902,7 +905,7 @@ function deploymentFixture(
     installedFile(
       'peekaboo_cli',
       'runtime/libswiftCompatibilitySpan.dylib',
-      Buffer.concat([Buffer.from('cafebabe', 'hex'), Buffer.from('fixture native library')]),
+      fs.readFileSync('/usr/bin/true'),
       0o644,
     ),
     installedFile(
@@ -1704,6 +1707,474 @@ test('policy scanner classifies every thin and fat Mach-O byte order as loadable
       'data',
     );
   }
+  assert.equal(
+    classifyPolicyFile('runtime/disguised.sh', 0o644, fs.readFileSync('/usr/bin/true')),
+    'executable',
+  );
+});
+
+test('policy scanner uses structural Mach-O evidence and broad markers only for text scripts', () => {
+  const cleanMachO = fs.readFileSync('/usr/bin/true');
+  const legacyProse = Buffer.concat([
+    cleanMachO,
+    Buffer.from(' random .utm. jxa applescript remote desktop observation post-processing '),
+  ]);
+  assert.deepEqual(policyFindingsForFile('runtime/helper', 0o755, legacyProse), []);
+
+  const systemLibrary = Buffer.from('/usr/lib/libSystem.B.dylib\0');
+  const virtualizationLibrary = Buffer.from('Virtualization.framework/V\0');
+  assert.equal(systemLibrary.length, virtualizationLibrary.length);
+  const virtualizationMachO = Buffer.from(cleanMachO);
+  const loadOffset = virtualizationMachO.indexOf(systemLibrary);
+  assert(loadOffset >= 0);
+  virtualizationLibrary.copy(virtualizationMachO, loadOffset);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/helper', 0o755, virtualizationMachO),
+    [{ family: 'virtualization' }],
+  );
+  const appleScriptMachO = Buffer.from(cleanMachO);
+  appleScriptMachO.fill(0, loadOffset, loadOffset + systemLibrary.length);
+  Buffer.from('/usr/bin/osascript\0').copy(appleScriptMachO, loadOffset);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/helper', 0o755, appleScriptMachO),
+    [{ family: 'apple-script' }],
+  );
+  const benignIdentifier = Buffer.from('com.apple.true\0');
+  const virtualizationIdentifier = Buffer.from('com.utm.UTM\0');
+  const identifierMachO = Buffer.from(cleanMachO);
+  const identifierOffset = identifierMachO.indexOf(benignIdentifier);
+  assert(identifierOffset >= 0);
+  identifierMachO.fill(0, identifierOffset, identifierOffset + benignIdentifier.length);
+  virtualizationIdentifier.copy(identifierMachO, identifierOffset);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/helper', 0o755, identifierMachO),
+    [{ family: 'virtualization' }],
+  );
+
+  const structuralExecutables = [
+    ['runtime/helper', '/usr/bin/osascript', 'apple-script'],
+    ['runtime/cua-driver', '/usr/bin/true', 'cua-driver'],
+    ['runtime/Lume/helper', '/usr/bin/true', 'virtualization'],
+    ['runtime/prl_vm_app', '/usr/bin/true', 'virtualization'],
+    ['runtime/UTM/helper', '/usr/bin/true', 'virtualization'],
+    ['runtime/VirtualBoxVM', '/usr/bin/true', 'virtualization'],
+    ['runtime/virtualization/helper', '/usr/bin/true', 'virtualization'],
+    ['runtime/ARDAgent', '/usr/bin/true', 'remote-desktop'],
+    ['runtime/Jump Desktop/helper', '/usr/bin/true', 'remote-desktop'],
+    ['runtime/rdc', '/usr/bin/true', 'remote-desktop'],
+    ['runtime/remotedesktop/helper', '/usr/bin/true', 'remote-desktop'],
+    ['runtime/vncviewer', '/usr/bin/true', 'remote-desktop'],
+  ];
+  for (const [relativePath, filePath, family] of structuralExecutables) {
+    assert.deepEqual(
+      policyFindingsForFile(relativePath, 0o755, fs.readFileSync(filePath)),
+      [{ family }],
+      relativePath,
+    );
+  }
+  assert.deepEqual(
+    policyFindingsForFile('runtime/opaque', 0o755, Buffer.from([0x00, 0x01, 0x02, 0x03])),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  assert.deepEqual(
+    policyFindingsForFile('Resources/payload.scpt', 0o644, Buffer.from([0x00, 0x01, 0x02])),
+    [{ family: 'apple-script' }],
+  );
+  assert.deepEqual(
+    policyFindingsForFile('Resources/readme.txt', 0o644, Buffer.from('AppleScript UTM remote desktop')),
+    [],
+  );
+  assert.deepEqual(
+    policyFindingsForFile('runtime/text-helper', 0o755, Buffer.from('exec osascript payload\n')),
+    [{ family: 'apple-script' }],
+  );
+
+  const appleScriptFixtureRoot = fs.mkdtempSync('/private/tmp/pbq-policy-applescript-');
+  fs.chmodSync(appleScriptFixtureRoot, 0o700);
+  try {
+    const disabledProseSource = writeFile(path.join(appleScriptFixtureRoot, 'disabled.c'), [
+      '#include <stdio.h>',
+      'int main(void) { return puts("NSAppleScript support is disabled") < 0; }',
+      '',
+    ].join('\n'));
+    const disabledProseExecutable = path.join(appleScriptFixtureRoot, 'disabled-helper');
+    const disabledProseBuild = spawnSync('/usr/bin/xcrun', [
+      'clang', disabledProseSource, '-o', disabledProseExecutable,
+    ], { encoding: 'utf8' });
+    assert.equal(disabledProseBuild.status, 0, disabledProseBuild.stderr);
+    assert.deepEqual(
+      policyFindingsForFile(
+        'runtime/disabled-helper',
+        0o755,
+        fs.readFileSync(disabledProseExecutable),
+      ),
+      [],
+    );
+
+    const dynamicFrameworkFixtures = [
+      {
+        name: 'helper-one',
+        framework: '/System/Library/Frameworks/ScriptingBridge.framework/ScriptingBridge',
+        symbol: 'OBJC_CLASS_$_SBApplication',
+        family: 'apple-script',
+      },
+      {
+        name: 'helper-two',
+        framework: '/System/Library/Frameworks/Virtualization.framework/Virtualization',
+        symbol: 'OBJC_CLASS_$_VZVirtualMachine',
+        family: 'virtualization',
+      },
+    ];
+    for (const fixture of dynamicFrameworkFixtures) {
+      const dynamicSource = writeFile(path.join(appleScriptFixtureRoot, `${fixture.name}.c`), [
+        '#include <dlfcn.h>',
+        'int main(void) {',
+        `  void *handle = dlopen("${fixture.framework}", RTLD_LAZY);`,
+        '  if (handle == 0) return 1;',
+        `  return dlsym(handle, "${fixture.symbol}") == 0;`,
+        '}',
+        '',
+      ].join('\n'));
+      const dynamicExecutable = path.join(appleScriptFixtureRoot, fixture.name);
+      const dynamicBuild = spawnSync('/usr/bin/xcrun', [
+        'clang', dynamicSource, '-o', dynamicExecutable,
+      ], { encoding: 'utf8' });
+      assert.equal(dynamicBuild.status, 0, dynamicBuild.stderr);
+      assert.deepEqual(
+        policyFindingsForFile(
+          `runtime/${fixture.name}`,
+          0o755,
+          fs.readFileSync(dynamicExecutable),
+        ),
+        [{ family: fixture.family }],
+      );
+    }
+
+    const sourcePath = writeFile(path.join(appleScriptFixtureRoot, 'fixture.m'), [
+      '#import <Foundation/Foundation.h>',
+      'int main(void) {',
+      '  NSAppleScript *script = [[NSAppleScript alloc] initWithSource:@"return 1"];',
+      '  return script == nil;',
+      '}',
+      '',
+    ].join('\n'));
+    const executablePath = path.join(appleScriptFixtureRoot, 'native-helper');
+    const build = spawnSync('/usr/bin/xcrun', [
+      'clang', '-fobjc-arc', sourcePath, '-framework', 'Foundation', '-o', executablePath,
+    ], { encoding: 'utf8' });
+    assert.equal(build.status, 0, build.stderr);
+    assert.deepEqual(
+      policyFindingsForFile('runtime/native-helper', 0o755, fs.readFileSync(executablePath)),
+      [{ family: 'apple-script' }],
+    );
+
+    const descriptorSource = writeFile(path.join(appleScriptFixtureRoot, 'descriptor.m'), [
+      '#import <Foundation/Foundation.h>',
+      'int main(void) {',
+      '  NSAppleEventDescriptor *descriptor = [NSAppleEventDescriptor descriptorWithInt32:1];',
+      '  return descriptor == nil;',
+      '}',
+      '',
+    ].join('\n'));
+    const descriptorExecutable = path.join(appleScriptFixtureRoot, 'descriptor-helper');
+    const descriptorBuild = spawnSync('/usr/bin/xcrun', [
+      'clang', '-fobjc-arc', descriptorSource,
+      '-framework', 'Foundation', '-o', descriptorExecutable,
+    ], { encoding: 'utf8' });
+    assert.equal(descriptorBuild.status, 0, descriptorBuild.stderr);
+    assert.deepEqual(
+      policyFindingsForFile('runtime/descriptor-helper', 0o755, fs.readFileSync(descriptorExecutable)),
+      [{ family: 'apple-script' }],
+    );
+
+    const scriptingBridgeSource = writeFile(path.join(appleScriptFixtureRoot, 'bridge.m'), [
+      '#import <ScriptingBridge/ScriptingBridge.h>',
+      'int main(void) {',
+      '  SBApplication *application = [SBApplication applicationWithBundleIdentifier:@"com.apple.Finder"];',
+      '  return application == nil;',
+      '}',
+      '',
+    ].join('\n'));
+    const scriptingBridgeExecutable = path.join(appleScriptFixtureRoot, 'bridge-helper');
+    const scriptingBridgeBuild = spawnSync('/usr/bin/xcrun', [
+      'clang', '-fobjc-arc', scriptingBridgeSource,
+      '-framework', 'ScriptingBridge', '-framework', 'Foundation',
+      '-o', scriptingBridgeExecutable,
+    ], { encoding: 'utf8' });
+    assert.equal(scriptingBridgeBuild.status, 0, scriptingBridgeBuild.stderr);
+    assert.deepEqual(
+      policyFindingsForFile(
+        'runtime/bridge-helper',
+        0o755,
+        fs.readFileSync(scriptingBridgeExecutable),
+      ),
+      [{ family: 'apple-script' }],
+    );
+
+    const signedCuaExecutable = path.join(appleScriptFixtureRoot, 'signed-native-helper');
+    fs.copyFileSync('/usr/bin/true', signedCuaExecutable);
+    fs.chmodSync(signedCuaExecutable, 0o755);
+    const signCua = spawnSync('/usr/bin/codesign', [
+      '--force', '--sign', '-', '--identifier', 'com.trycua.driver', signedCuaExecutable,
+    ], { encoding: 'utf8' });
+    assert.equal(signCua.status, 0, signCua.stderr);
+    assert.deepEqual(
+      policyFindingsForFile('runtime/signed-native-helper', 0o755, fs.readFileSync(signedCuaExecutable)),
+      [{ family: 'cua-driver' }],
+    );
+
+    const dylibSource = writeFile(
+      path.join(appleScriptFixtureRoot, 'remote.c'),
+      'int fixture(void) { return 0; }\n',
+    );
+    const dylibPath = path.join(appleScriptFixtureRoot, 'neutral.dylib');
+    const dylibBuild = spawnSync('/usr/bin/xcrun', [
+      'clang', '-dynamiclib', dylibSource,
+      '-Wl,-install_name,@rpath/VNC/helper.dylib', '-o', dylibPath,
+    ], { encoding: 'utf8' });
+    assert.equal(dylibBuild.status, 0, dylibBuild.stderr);
+    assert.deepEqual(
+      policyFindingsForFile('runtime/neutral.dylib', 0o644, fs.readFileSync(dylibPath)),
+      [{ family: 'remote-desktop' }],
+    );
+  } finally {
+    fs.rmSync(appleScriptFixtureRoot, { recursive: true, force: true });
+  }
+
+  const hostileScripts = [
+    ['bootstrap.sh', '#!/bin/sh\nexec /usr/bin/osascript payload.applescript\n', 'apple-script'],
+    ['driver.jxa', '#!/usr/bin/osascript -l JavaScript\nObjC.import("AppKit")\n', 'apple-script'],
+    ['payload.osa', 'OSAExecute forbidden\n', 'apple-script'],
+    ['launch.sh', '#!/bin/sh\nexec cua-driver run\n', 'cua-driver'],
+    ['vm.sh', '#!/bin/sh\nexec lume run fixture\n', 'virtualization'],
+    ['utm.sh', '#!/bin/sh\nexec utm run fixture\n', 'virtualization'],
+    ['remote.sh', '#!/bin/sh\nexec remotedesktop fixture\n', 'remote-desktop'],
+  ];
+  for (const [relativePath, source, family] of hostileScripts) {
+    assert.deepEqual(
+      policyFindingsForFile(relativePath, 0o755, Buffer.from(source)),
+      [{ family }],
+      relativePath,
+    );
+  }
+
+  const emptyMachO = Buffer.alloc(32);
+  Buffer.from('cffaedfe', 'hex').copy(emptyMachO);
+  emptyMachO.writeUInt32LE(0x0100000c, 4);
+  emptyMachO.writeUInt32LE(2, 12);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/empty-native', 0o755, emptyMachO),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+
+  const invalidDylibCommand = Buffer.from(cleanMachO);
+  const invalidDylibOffset = invalidDylibCommand.indexOf(systemLibrary) - 24;
+  assert(invalidDylibOffset >= 0);
+  invalidDylibCommand.writeUInt32LE(0xfffffff0, invalidDylibOffset + 8);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/invalid-load', 0o755, invalidDylibCommand),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+
+  const symbolMachO = (uniqueOffsets, symbolName = null) => {
+    const symbolCount = 10_000;
+    const stringSize = 4096;
+    const symbolOffset = 128;
+    const stringOffset = symbolOffset + symbolCount * 16;
+    const bytes = Buffer.alloc(stringOffset + stringSize);
+    Buffer.from('cffaedfe', 'hex').copy(bytes);
+    bytes.writeUInt32LE(0x0100000c, 4);
+    bytes.writeUInt32LE(1, 12);
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(96, 20);
+    bytes.writeUInt32LE(0x19, 32);
+    bytes.writeUInt32LE(72, 36);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    bytes.writeUInt32LE(0x02, 104);
+    bytes.writeUInt32LE(24, 108);
+    bytes.writeUInt32LE(symbolOffset, 112);
+    bytes.writeUInt32LE(symbolCount, 116);
+    bytes.writeUInt32LE(stringOffset, 120);
+    bytes.writeUInt32LE(stringSize, 124);
+    for (let index = 0; index < symbolCount; index += 1) {
+      bytes.writeUInt32LE(uniqueOffsets ? 1 + (index % (stringSize - 2)) : 1, symbolOffset + index * 16);
+      bytes[symbolOffset + index * 16 + 4] = 0x01;
+    }
+    if (symbolName === null) {
+      bytes.fill(0x41, stringOffset + 1, stringOffset + stringSize - 1);
+    } else {
+      const encoded = Buffer.from(`${symbolName}\0`);
+      assert(encoded.length < stringSize);
+      encoded.copy(bytes, stringOffset + 1);
+    }
+    return bytes;
+  };
+  assert.deepEqual(policyFindingsForFile('runtime/cached-symbols', 0o755, symbolMachO(false)), []);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/hostile-symbols', 0o755, symbolMachO(true)),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/sb-json',
+      0o755,
+      symbolMachO(false, '_OBJC_CLASS_$_SBJsonParser'),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/sb-button',
+      0o755,
+      symbolMachO(false, '_OBJC_CLASS_$_SBButton'),
+    ),
+    [],
+  );
+
+  const unalignedLoadCommand = Buffer.from(cleanMachO);
+  unalignedLoadCommand.writeUInt32LE(25, invalidDylibOffset + 4);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/unaligned-load', 0o755, unalignedLoadCommand),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  const fakeCodeDirectory = Buffer.from(cleanMachO);
+  const codeDirectoryOffset = fakeCodeDirectory.indexOf(Buffer.from('fade0c02', 'hex'));
+  assert(codeDirectoryOffset >= 0);
+  fakeCodeDirectory.writeUInt32BE(0xfade0c03, codeDirectoryOffset);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/fake-code-directory', 0o755, fakeCodeDirectory),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+
+  assert.equal(cleanMachO.subarray(0, 4).toString('hex'), 'cafebabe');
+  assert(cleanMachO.readUInt32BE(4) >= 2);
+  const mismatchedFatMachO = Buffer.from(cleanMachO);
+  const firstCPUType = mismatchedFatMachO.readUInt32BE(8);
+  mismatchedFatMachO.writeUInt32BE(
+    firstCPUType === 0x01000007 ? 0x0100000c : 0x01000007,
+    8,
+  );
+  assert.deepEqual(
+    policyFindingsForFile('runtime/mismatched-fat', 0o755, mismatchedFatMachO),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  const overlappingFatMachO = Buffer.from(cleanMachO);
+  overlappingFatMachO.writeUInt32BE(overlappingFatMachO.readUInt32BE(16), 36);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/overlapping-fat', 0o755, overlappingFatMachO),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  const firstCPU = cleanMachO.readUInt32BE(8);
+  const firstSubtype = cleanMachO.readUInt32BE(12);
+  const firstSliceOffset = cleanMachO.readUInt32BE(16);
+  const firstSliceSize = cleanMachO.readUInt32BE(20);
+  const duplicateAlignment = 12;
+  const duplicateFirstOffset = 2 ** duplicateAlignment;
+  const duplicateSecondOffset = Math.ceil(
+    (duplicateFirstOffset + firstSliceSize) / (2 ** duplicateAlignment),
+  ) * (2 ** duplicateAlignment);
+  const duplicateFatMachO = Buffer.alloc(duplicateSecondOffset + firstSliceSize);
+  Buffer.from('cafebabe', 'hex').copy(duplicateFatMachO);
+  duplicateFatMachO.writeUInt32BE(2, 4);
+  for (const [entry, sliceOffset] of [[8, duplicateFirstOffset], [28, duplicateSecondOffset]]) {
+    duplicateFatMachO.writeUInt32BE(firstCPU, entry);
+    duplicateFatMachO.writeUInt32BE(firstSubtype, entry + 4);
+    duplicateFatMachO.writeUInt32BE(sliceOffset, entry + 8);
+    duplicateFatMachO.writeUInt32BE(firstSliceSize, entry + 12);
+    duplicateFatMachO.writeUInt32BE(duplicateAlignment, entry + 16);
+    cleanMachO.copy(
+      duplicateFatMachO,
+      sliceOffset,
+      firstSliceOffset,
+      firstSliceOffset + firstSliceSize,
+    );
+  }
+  assert.deepEqual(
+    policyFindingsForFile('runtime/duplicate-fat', 0o755, duplicateFatMachO),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+});
+
+test('installed Foundation-signed Peekaboo 4.2.2 CLI and app tree are benign', (context) => {
+  const fixtures = [
+    {
+      label: 'CLI',
+      executable: '/Users/steipete/bin/peekaboo',
+      identifier: 'boo.peekaboo.peekaboo',
+      signatureTarget: '/Users/steipete/bin/peekaboo',
+      verifyArguments: ['--verify', '--strict'],
+      relativePath: 'bin/peekaboo',
+    },
+    {
+      label: 'app',
+      executable: '/Applications/Peekaboo.app/Contents/MacOS/Peekaboo',
+      identifier: 'boo.peekaboo.mac',
+      signatureTarget: '/Applications/Peekaboo.app',
+      verifyArguments: ['--verify', '--deep', '--strict'],
+      relativePath: 'Peekaboo.app/Contents/MacOS/Peekaboo',
+    },
+  ];
+  if (fixtures.some((fixture) => !fs.existsSync(fixture.executable))) {
+    context.skip('installed Peekaboo 4.2.2 fixtures are unavailable on this host');
+    return;
+  }
+  const cliVersion = spawnSync(fixtures[0].executable, ['--version'], { encoding: 'utf8' });
+  if (cliVersion.status !== 0 || !/^Peekaboo 4\.2\.2\b/.test(cliVersion.stdout)) {
+    context.skip('installed Peekaboo CLI is not the 4.2.2 release fixture');
+    return;
+  }
+  const appVersion = spawnSync('/usr/libexec/PlistBuddy', [
+    '-c', 'Print :CFBundleShortVersionString', '/Applications/Peekaboo.app/Contents/Info.plist',
+  ], { encoding: 'utf8' });
+  if (appVersion.status !== 0 || appVersion.stdout.trim() !== '4.2.2') {
+    context.skip('installed Peekaboo app is not the 4.2.2 release fixture');
+    return;
+  }
+  for (const fixture of fixtures) {
+    const verify = spawnSync('/usr/bin/codesign', [...fixture.verifyArguments, fixture.signatureTarget], {
+      encoding: 'utf8',
+    });
+    assert.equal(verify.status, 0, `${fixture.label}: ${verify.stderr}`);
+    const detail = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', fixture.signatureTarget], {
+      encoding: 'utf8',
+    });
+    assert.equal(detail.status, 0, `${fixture.label}: ${detail.stderr}`);
+    assert.match(detail.stderr, new RegExp(`Identifier=${fixture.identifier.replaceAll('.', '\\.')}`));
+    assert.match(detail.stderr, /TeamIdentifier=FWJYW4S8P8/);
+    assert.match(detail.stderr, /Authority=Developer ID Application: OpenClaw Foundation \(FWJYW4S8P8\)/);
+    const bytes = fs.readFileSync(fixture.executable);
+    const legacySearch = bytes.toString('latin1').toLowerCase();
+    assert.match(legacySearch, /jxa/);
+    assert.match(legacySearch, /applescript/);
+    assert.match(legacySearch, /remote desktop observation post-processing/);
+    assert.deepEqual(policyFindingsForFile(fixture.relativePath, 0o755, bytes), []);
+  }
+  const appRoot = '/Applications/Peekaboo.app';
+  const pending = [appRoot];
+  let scannedCodeCount = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const name of fs.readdirSync(current)) {
+      const filePath = path.join(current, name);
+      const info = fs.lstatSync(filePath);
+      if (info.isSymbolicLink()) continue;
+      if (info.isDirectory()) {
+        pending.push(filePath);
+        continue;
+      }
+      if (!info.isFile()) continue;
+      const bytes = fs.readFileSync(filePath);
+      const relativePath = path.relative('/Applications', filePath);
+      if (classifyPolicyFile(relativePath, info.mode & 0o7777, bytes) === 'data') continue;
+      scannedCodeCount += 1;
+      assert.deepEqual(
+        policyFindingsForFile(relativePath, info.mode & 0o7777, bytes),
+        [],
+        relativePath,
+      );
+    }
+  }
+  assert(scannedCodeCount >= 5);
 });
 
 test('process-tree collector is read-only and continuously detects short-lived children', async () => {
@@ -4615,7 +5086,7 @@ test('qualification manifest closes every required evidence class and detects by
       '--output', path.join(root, 'forbidden-scanner-report.json'),
     ], { encoding: 'utf8' });
     assert.notEqual(forbiddenScannerRun.status, 0);
-    assert.match(forbiddenScannerRun.stderr, /forbidden executable or script markers/);
+    assert.match(forbiddenScannerRun.stderr, /forbidden executable or script policy evidence/);
     writeFile(installedScriptPath, cleanInstalledScript, 0o755);
     const installedDylibPath = path.join(
       deployment.artifactRoots.peekaboo_cli,
@@ -4624,7 +5095,7 @@ test('qualification manifest closes every required evidence class and detects by
     const cleanInstalledDylib = fs.readFileSync(installedDylibPath);
     writeFile(
       installedDylibPath,
-      Buffer.concat([Buffer.from('cffaedfe', 'hex'), Buffer.from(' osascript ')]),
+      fs.readFileSync('/usr/bin/osascript'),
       0o644,
     );
     const forbiddenDylibEntries = structuredClone(
@@ -4656,8 +5127,51 @@ test('qualification manifest closes every required evidence class and detects by
       '--output', path.join(root, 'forbidden-dylib-report.json'),
     ], { encoding: 'utf8' });
     assert.notEqual(forbiddenDylibRun.status, 0);
-    assert.match(forbiddenDylibRun.stderr, /forbidden executable or script markers/);
+    assert.match(forbiddenDylibRun.stderr, /forbidden executable or script policy evidence/);
     writeFile(installedDylibPath, cleanInstalledDylib, 0o644);
+    const installedSymlinkPath = path.join(
+      deployment.artifactRoots.peekaboo_cli,
+      'symlink/peekaboo',
+    );
+    const cleanInstalledSymlinkTarget = fs.readlinkSync(installedSymlinkPath);
+    for (const [target, suffix, expected] of [
+      ['../runtime/cua-driver', 'forbidden-symlink', /forbidden executable or script policy evidence/],
+      ['/usr/bin/osascript', 'escaping-symlink', /symlink escapes its artifact root/],
+    ]) {
+      fs.unlinkSync(installedSymlinkPath);
+      fs.symlinkSync(target, installedSymlinkPath);
+      const symlinkEntries = structuredClone(
+        JSON.parse(fs.readFileSync(deployment.installed[0])).entries,
+      );
+      const symlinkEntry = symlinkEntries.find((entry) => (
+        entry.relative_path === 'symlink/peekaboo'
+      ));
+      symlinkEntry.target = target;
+      const symlinkInventory = installedInventory(
+        root,
+        'local',
+        deployment.localUUID,
+        symlinkEntries,
+        qualificationToolsAggregate,
+        sha256(fs.readFileSync(deployment.elevationReceipts[0])),
+        `-${suffix}`,
+      );
+      const symlinkSpec = writeJSON(path.join(root, `${suffix}-spec.json`), {
+        version: 1,
+        installed_inventory: symlinkInventory,
+        artifact_roots: deployment.artifactRoots,
+      });
+      const symlinkRun = spawnSync(process.execPath, [
+        deployment.policyScanner,
+        'generate',
+        '--spec', symlinkSpec,
+        '--output', path.join(root, `${suffix}-report.json`),
+      ], { encoding: 'utf8' });
+      assert.notEqual(symlinkRun.status, 0);
+      assert.match(symlinkRun.stderr, expected);
+    }
+    fs.unlinkSync(installedSymlinkPath);
+    fs.symlinkSync(cleanInstalledSymlinkTarget, installedSymlinkPath);
     const legacyInput = structuredClone(inputValue);
     legacyInput.version = 1;
     assert.throws(
