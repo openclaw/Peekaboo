@@ -42,6 +42,13 @@ struct TypeActionDispatchSummary: Equatable, Sendable {
 }
 
 /// Service for handling typing and text input operations
+typealias TypeServiceExactFocusedValueRunner = @Sendable (
+    pid_t,
+    UInt64,
+    Duration,
+    @escaping @Sendable () -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>) async
+    -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>?
+
 @MainActor
 public final class TypeService {
     struct TypeExecutionSummary {
@@ -87,6 +94,7 @@ public final class TypeService {
     private let pixelFocusPlanEntryHook: @MainActor @Sendable () async throws -> Void
     private let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity)
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+    private let exactFocusedValueRunner: TypeServiceExactFocusedValueRunner
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let effectConfirmationTiming: ExactLiteralTypingEffectConfirmationTiming
 
@@ -113,6 +121,8 @@ public final class TypeService {
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
         exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
+        exactFocusedValueRunner: @escaping TypeServiceExactFocusedValueRunner =
+            TypeService.runExactFocusedValueObservation,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
@@ -128,6 +138,7 @@ public final class TypeService {
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: Self.focusedElementIsSecureField,
             exactFocusedElementValueReader: exactFocusedElementValueReader,
+            exactFocusedValueRunner: exactFocusedValueRunner,
             processStartIdentityProvider: processStartIdentityProvider,
             desktopOperationExecutor: desktopOperationExecutor,
             operationFinalizer: operationFinalizer)
@@ -161,6 +172,8 @@ public final class TypeService {
         },
         exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
+        exactFocusedValueRunner: @escaping TypeServiceExactFocusedValueRunner =
+            TypeService.runExactFocusedValueObservation,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
@@ -190,6 +203,7 @@ public final class TypeService {
         self.targetedKeyTapper = targetedKeyTapper
         self.targetedTextReplacer = targetedTextReplacer
         self.exactFocusedElementValueReader = exactFocusedElementValueReader
+        self.exactFocusedValueRunner = exactFocusedValueRunner
         self.processStartIdentityProvider = processStartIdentityProvider
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
@@ -493,41 +507,6 @@ public final class TypeService {
             throw PeekabooError.operationError(message: "Type action execution did not produce a result")
         }
         return summary
-    }
-
-    func prepareEffectConfirmationBaseline(
-        _ confirmation: ExactLiteralTypingEffectConfirmation?,
-        lanePreparation: @escaping @MainActor () async -> Void) async -> String?
-    {
-        await lanePreparation()
-        guard let confirmation else { return nil }
-        return await self.exactFocusedValue(for: confirmation)
-    }
-
-    func exactFocusedValue(
-        for confirmation: ExactLiteralTypingEffectConfirmation,
-        timeout: Duration = .milliseconds(200)) async -> String?
-    {
-        guard timeout > .zero else { return nil }
-        let reader = self.exactFocusedElementValueReader
-        let processStartIdentityProvider = self.processStartIdentityProvider
-        let focusedElement = confirmation.focusedElement
-        let expectedGeneration = confirmation.processStartIdentity
-        let observation = try? await ElementDetectionTimeoutRunner.runDetached(
-            targetProcessIdentifier: focusedElement.processIdentifier,
-            targetProcessStartIdentity: expectedGeneration,
-            seconds: Self.timeInterval(timeout))
-        {
-            guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
-                return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
-            }
-            let observation = reader(focusedElement)
-            guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
-                return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
-            }
-            return observation
-        }
-        return observation.flatMap(confirmation.readableValue(from:))
     }
 
     private func performSyntheticTypeActions(
@@ -1261,6 +1240,41 @@ extension TypeService {
             targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
     }
 
+    func prepareEffectConfirmationBaseline(
+        _ confirmation: ExactLiteralTypingEffectConfirmation?,
+        lanePreparation: @escaping @MainActor () async -> Void) async -> String?
+    {
+        await lanePreparation()
+        guard let confirmation else { return nil }
+        return await self.exactFocusedValue(for: confirmation)
+    }
+
+    func exactFocusedValue(
+        for confirmation: ExactLiteralTypingEffectConfirmation,
+        timeout: Duration = .milliseconds(200)) async -> String?
+    {
+        guard timeout > .zero else { return nil }
+        let reader = self.exactFocusedElementValueReader
+        let processStartIdentityProvider = self.processStartIdentityProvider
+        let focusedElement = confirmation.focusedElement
+        let expectedGeneration = confirmation.processStartIdentity
+        let observation = await self.exactFocusedValueRunner(
+            focusedElement.processIdentifier,
+            expectedGeneration,
+            timeout)
+        {
+            guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
+                return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
+            }
+            let observation = reader(focusedElement)
+            guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
+                return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
+            }
+            return observation
+        }
+        return observation.flatMap(confirmation.readableValue(from:))
+    }
+
     private func confirmExactLiteralTypingEffect(
         from outcome: DesktopActionOutcome,
         confirmation: ExactLiteralTypingEffectConfirmation?,
@@ -1304,6 +1318,20 @@ extension TypeService {
         let components = duration.components
         return TimeInterval(components.seconds) +
             TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
+    }
+
+    private static func runExactFocusedValueObservation(
+        processIdentifier: pid_t,
+        processStartIdentity: UInt64,
+        timeout: Duration,
+        operation: @escaping @Sendable () -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>) async
+        -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>?
+    {
+        try? await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: processIdentifier,
+            targetProcessStartIdentity: processStartIdentity,
+            seconds: self.timeInterval(timeout),
+            operation: operation)
     }
 
     private static func plannedKeyPressCount(_ actions: [TypeAction]) -> Int {

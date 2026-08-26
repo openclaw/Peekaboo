@@ -60,6 +60,54 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         XCTAssertLessThan(Self.seconds(start.duration(to: .now)), 0.5)
     }
 
+    func testExactValueReadHonorsProvidedRemainingBudget() async throws {
+        let processIdentifier: pid_t = 930_011
+        let bounds = CGRect(x: 0, y: 0, width: 500, height: 400)
+        let focusedElement = FocusedElementIdentity(
+            processIdentifier: processIdentifier,
+            windowID: 42,
+            role: "AXTextField",
+            identifier: "editor",
+            frame: CGRect(x: 20, y: 20, width: 200, height: 30))
+        let target = try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: processIdentifier,
+                ownerProcessStartIdentity: 33,
+                capturedBounds: bounds),
+            bounds: bounds,
+            focusedElement: focusedElement)
+        let confirmation = try XCTUnwrap(ExactLiteralTypingEffectConfirmation.plan(
+            actions: [.clear, .text("safe")],
+            target: target))
+        let started = LockedBoolean()
+        let release = DispatchSemaphore(value: 0)
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { _ in
+                started.setTrue()
+                release.wait()
+                return .success(ExactWindowFocusSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: 42,
+                    frame: focusedElement.frame,
+                    role: focusedElement.role,
+                    identifier: focusedElement.identifier,
+                    value: "safe"))
+            },
+            processStartIdentityProvider: { _ in 33 })
+        defer { release.signal() }
+        let start = ContinuousClock.now
+
+        let value = await service.exactFocusedValue(
+            for: confirmation,
+            timeout: .milliseconds(40))
+
+        XCTAssertNil(value)
+        XCTAssertTrue(started.value)
+        XCTAssertLessThan(Self.seconds(start.duration(to: .now)), 0.15)
+    }
+
     func testSamePIDAndWindowIDReuseWithSameBoundsDispatchesNoKeyboardEvents() async throws {
         let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
         let staleIdentity = WindowMutationIdentity(

@@ -289,28 +289,30 @@ struct ExactLiteralTypingEffectConfirmationTests {
 
     @Test
     @MainActor
-    func `slow AX sample cannot overrun the remaining settlement budget`() async throws {
-        let target = try self.target(processIdentifier: 334)
+    func `settlement samples receive only their remaining monotonic budget`() async throws {
+        let target = try self.target()
         let value = TypingLockedValue("before")
-        let readCount = TypingLockedCounter()
-        let release = DispatchSemaphore(value: 0)
-        defer { release.signal() }
-        let timing = ExactLiteralTypingEffectConfirmationTiming(
-            timeout: .milliseconds(40),
-            interval: .milliseconds(10),
-            maximumSampleCount: 4,
-            now: { ContinuousClock.now },
-            sleep: { try await ContinuousClock().sleep(for: $0) })
-        let service = self.eventFallbackService(
-            value: value,
-            timing: timing,
-            valueReader: { focusedElement in
-                if readCount.next() > 1 {
-                    release.wait()
-                }
-                return .success(Self.focusSnapshot(focusedElement, value: "before"))
-            })
-        let start = ContinuousClock.now
+        let clock = TypingEffectPollClock()
+        let observedTimeouts = TypingLockedValue<[Duration]>([])
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { _, _, delivery in
+                .dispatched(delivery: delivery, keyPressCount: 1)
+            },
+            targetedTextReplacer: { text, _ in
+                value.set(text)
+                return true
+            },
+            exactFocusedElementValueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            },
+            exactFocusedValueRunner: { _, _, timeout, operation in
+                observedTimeouts.update { $0.append(timeout) }
+                return operation()
+            },
+            processStartIdentityProvider: { _ in 33 },
+            effectConfirmationTiming: clock.timing())
 
         let summary = try await service.typeActionsTrackingSecureInput(
             [.clear, .text("safe")],
@@ -320,8 +322,12 @@ struct ExactLiteralTypingEffectConfirmationTests {
             deliveryValidator: {})
 
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
-        #expect(start.duration(to: .now) < .milliseconds(150))
-        #expect(readCount.value == 2)
+        #expect(observedTimeouts.get() == [
+            .milliseconds(200),
+            .milliseconds(60),
+            .milliseconds(40),
+            .milliseconds(20),
+        ])
     }
 
     @Test
@@ -690,6 +696,10 @@ private final class TypingLockedValue<Value: Sendable>: @unchecked Sendable {
 
     func set(_ value: Value) {
         self.lock.withLock { self.value = value }
+    }
+
+    func update(_ body: (inout Value) -> Void) {
+        self.lock.withLock { body(&self.value) }
     }
 }
 
