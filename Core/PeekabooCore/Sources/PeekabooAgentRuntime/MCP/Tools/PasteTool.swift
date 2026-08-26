@@ -18,10 +18,10 @@ public struct PasteTool: MCPTool {
     public var description: String {
         if self.context.executionPolicy == .backgroundOnly {
             return """
-            Deliver one direct text payload to an explicit app, PID, or exact window under immutable background-only
-            authority. This route does not touch the shared clipboard. Current-clipboard, binary/file/image payloads,
-            targetless input, and foreground delivery are unavailable. If delivery fails after it begins, a prefix may
-            already be present; observe the exact target before retrying.
+            Deliver one direct text payload to an explicit app, PID, or exact-window UI target under immutable
+            background-only authority. This route does not touch the shared clipboard. Current-clipboard,
+            binary/file/image payloads, targetless input, and foreground delivery are unavailable. If delivery fails
+            after it begins, a prefix may already be present; observe the exact target before retrying.
             """
         }
 

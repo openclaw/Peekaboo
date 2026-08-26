@@ -37,6 +37,7 @@ struct MCPPolicyAwareCatalogTests {
         #expect(properties["allowLarge"] == nil)
         #expect(properties["restore_delay_ms"] == nil)
         #expect(properties["foreground"] == nil)
+        #expect(tool.description.contains("explicit app, PID, or exact-window UI target"))
         #expect(tool.description.contains("does not touch the shared clipboard"))
         let targetless = try await backgroundContext.execute(
             tool: tool,
