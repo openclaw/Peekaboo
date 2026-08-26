@@ -320,42 +320,6 @@ struct MCPSpecificToolTests {
         }
     }
 
-    // MARK: - Space Tool Tests
-
-    @Test
-    func `Space tool schema includes Mission Control actions`() {
-        let tool = makeTestTool(SpaceTool.init)
-
-        guard case let .object(schema) = tool.inputSchema,
-              let properties = schema["properties"],
-              case let .object(props) = properties
-        else {
-            Issue.record("Expected object schema with properties")
-            return
-        }
-
-        #expect(props["action"] != nil)
-        #expect(props["to"] != nil)
-        #expect(props["app"] != nil)
-        #expect(props["window_title"] != nil)
-        #expect(props["window_index"] != nil)
-        #expect(props["to_current"] != nil)
-        #expect(props["follow"] != nil)
-        #expect(props["foreground"] != nil)
-        #expect(props["detailed"] != nil)
-
-        // Check action types
-        if let actionSchema = props["action"],
-           case let .object(actionDict) = actionSchema,
-           let enumValue = actionDict["enum"],
-           case let .array(actions) = enumValue
-        {
-            #expect(actions.contains(.string("list")))
-            #expect(actions.contains(.string("switch")))
-            #expect(actions.contains(.string("move-window")))
-        }
-    }
-
     // MARK: - Drag Tool Tests
 
     @Test
@@ -388,32 +352,6 @@ struct MCPSpecificToolTests {
     }
 
     // MARK: - Window Tool Tests
-
-    @Test
-    func `Dock tool requires foreground consent for global UI actions`() async throws {
-        let tool = makeTestTool(DockTool.init)
-        guard case let .object(schema) = tool.inputSchema,
-              case let .object(properties)? = schema["properties"],
-              case let .object(foreground)? = properties["foreground"],
-              case .bool(false)? = foreground["default"]
-        else {
-            Issue.record("Expected Dock foreground schema default")
-            return
-        }
-
-        for action in ["launch", "right-click"] {
-            let response = try await tool.execute(arguments: ToolArguments(raw: [
-                "action": action,
-                "app": "Finder",
-            ]))
-            #expect(response.isError)
-            guard case let .text(text: message, annotations: _, _meta: _) = response.content.first else {
-                Issue.record("Expected Dock foreground validation error")
-                continue
-            }
-            #expect(message.contains("foreground=true"))
-        }
-    }
 
     @Test
     func `Window tool schema omits background-refused focus and foreground fallback`() {

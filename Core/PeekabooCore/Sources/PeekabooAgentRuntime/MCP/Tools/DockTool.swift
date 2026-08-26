@@ -14,7 +14,16 @@ public struct DockTool: MCPTool {
     public let name = "dock"
 
     public var description: String {
-        """
+        if self.context.executionPolicy == .backgroundOnly {
+            return """
+            Inspect the macOS Dock under immutable background-only authority. The available action is `list`.
+            Dock launch, context menus, hide, and show mutate shared desktop UI and require a human-authorized
+            foreground-capable Agent session or the standalone CLI.
+            \(PeekabooMCPVersion.banner) using openai/gpt-5.6 and anthropic/claude-opus-5
+            """
+        }
+
+        return """
         Interact with the macOS Dock - launch apps, show context menus, hide/show dock.
         Actions: launch, right-click (with menu selection), hide, show, list
         launch and right-click activate global Dock UI and require foreground=true.
@@ -25,22 +34,29 @@ public struct DockTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: "Action to perform on the dock",
-                    enum: ["launch", "right-click", "hide", "show", "list"]),
-                "app": SchemaBuilder.string(
-                    description: "Application name for launch/right-click actions"),
-                "select": SchemaBuilder.string(
-                    description: "Menu item to select after right-clicking"),
-                "foreground": SchemaBuilder.boolean(
-                    description: "Confirm foreground/global Dock UI for launch and right-click actions.",
-                    default: false),
-                "include_all": SchemaBuilder.boolean(
-                    description: "Include all items when listing (default: false)",
-                    default: false),
-            ],
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let actions = foregroundCapable ? ["launch", "right-click", "hide", "show", "list"] : ["list"]
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "Action to perform on the Dock"
+                    : "Background-safe Dock action; mutations are unavailable",
+                enum: actions),
+            "include_all": SchemaBuilder.boolean(
+                description: "Include all items when listing (default: false)",
+                default: false),
+        ]
+        if foregroundCapable {
+            properties["app"] = SchemaBuilder.string(
+                description: "Application name for launch/right-click actions")
+            properties["select"] = SchemaBuilder.string(
+                description: "Menu item to select after right-clicking")
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Confirm foreground/global Dock UI for launch and right-click actions.",
+                default: false)
+        }
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 

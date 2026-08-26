@@ -40,7 +40,21 @@ public struct SpaceTool: MCPTool {
     public let name = "space"
 
     public var description: String {
-        """
+        if self.context.executionPolicy == .backgroundOnly {
+            return """
+            Inspect macOS Spaces or move an exact window without following it under immutable background-only
+            authority. Available actions are `list` and `move-window`. Space switching and `follow=true` change the
+            user's visible desktop and require a human-authorized foreground-capable Agent session or standalone CLI.
+
+            Examples:
+            - List spaces: { "action": "list" }
+            - Move window to space 3: { "action": "move-window", "app": "Safari", "to": 3 }
+            - Move window to current space: { "action": "move-window", "app": "TextEdit", "to_current": true }
+            \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
+            """
+        }
+
+        return """
         Manage macOS Spaces (virtual desktops).
 
         Actions:
@@ -64,34 +78,41 @@ public struct SpaceTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: "The action to perform",
-                    enum: ["list", "switch", "move-window"]),
-                "to": SchemaBuilder.integer(
-                    description: "Space number to switch to (for switch action)"),
-                "app": SchemaBuilder.string(
-                    description: "Application name for move-window action"),
-                "window_id": SchemaBuilder.integer(
-                    description: "Exact window ID for move-window action"),
-                "window_title": SchemaBuilder.string(
-                    description: "Window title to move"),
-                "window_index": SchemaBuilder.integer(
-                    description: "Window index for multi-window apps"),
-                "to_current": SchemaBuilder.boolean(
-                    description: "Move window to current space (for move-window action)",
-                    default: false),
-                "follow": SchemaBuilder.boolean(
-                    description: "Follow the window to the new space; requires foreground=true",
-                    default: false),
-                "foreground": SchemaBuilder.boolean(
-                    description: "Explicit consent for switch and move-window follow actions",
-                    default: false),
-                "detailed": SchemaBuilder.boolean(
-                    description: "Show detailed space information (for list action)",
-                    default: false),
-            ],
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let actions = foregroundCapable ? ["list", "switch", "move-window"] : ["list", "move-window"]
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "The action to perform"
+                    : "Background-safe Space action; switching is unavailable",
+                enum: actions),
+            "to": SchemaBuilder.integer(
+                description: "Space number to switch or move a window to"),
+            "app": SchemaBuilder.string(
+                description: "Application name for move-window action"),
+            "window_id": SchemaBuilder.integer(
+                description: "Exact window ID for move-window action"),
+            "window_title": SchemaBuilder.string(
+                description: "Window title to move"),
+            "window_index": SchemaBuilder.integer(
+                description: "Window index for multi-window apps"),
+            "to_current": SchemaBuilder.boolean(
+                description: "Move window to current space (for move-window action)",
+                default: false),
+            "detailed": SchemaBuilder.boolean(
+                description: "Show detailed space information (for list action)",
+                default: false),
+        ]
+        if foregroundCapable {
+            properties["follow"] = SchemaBuilder.boolean(
+                description: "Follow the window to the new space; requires foreground=true",
+                default: false)
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Explicit consent for switch and move-window follow actions",
+                default: false)
+        }
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 
