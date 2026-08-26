@@ -183,6 +183,9 @@ struct ComposedInputParityValidationTests {
         let object = try Self.jsonObject(result.stdout)
         let outcome = try #require(object["outcome"] as? [String: Any])
         #expect(outcome["state"] as? String == "dispatched_unverified")
+        #expect(object["data"] is NSNull)
+        #expect(!result.combinedOutput.contains("typedText"))
+        #expect(!result.combinedOutput.contains("totalCharacters"))
         #expect(await fixture.snapshots.getMostRecentSnapshot() == nil)
         #expect(fixture.snapshots.invalidationCutoffs.count == 1)
     }

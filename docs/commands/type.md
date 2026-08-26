@@ -56,7 +56,8 @@ that snapshot. Use `press` for standalone keys or chords.
   only when the typing effect is a confirmed change. `confirmed_no_change` and missing outcomes are also non-success.
   Exact-window `--clear` followed only by printable literal text can confirm when a generation-bound, readable,
   non-secure AX value changes from its private pre-dispatch value to the exact requested value; field contents never
-  enter the result. An already-equal value remains unverifiable. Requested actions remain available for diagnosis.
+  enter the result. Pixel-focus typing applies the same private readback after its focus write; confirmed focus alone
+  never confirms the typing leaf. An already-equal value remains unverifiable. Requested actions remain available for diagnosis.
   For other plain fields where replacement semantics are acceptable, prefer
   `set-value`: it verifies the AX value readback without exposing field contents in the result. Secure fields, special
   keys, IME-dependent input, and controls without readable values remain intentionally unverifiable.

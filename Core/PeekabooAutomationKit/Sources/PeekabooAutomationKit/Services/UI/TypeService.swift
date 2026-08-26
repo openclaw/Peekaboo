@@ -472,15 +472,10 @@ public final class TypeService {
                     return
                 }
                 var verifiedExecutionResult = executionResult
-                if let effectConfirmation,
-                   let confirmationPreflightValue,
-                   let observedValue = await self.exactFocusedValue(for: effectConfirmation)
-                {
-                    verifiedExecutionResult.outcome = effectConfirmation.confirmedOutcome(
-                        from: executionResult.outcome,
-                        previousValue: confirmationPreflightValue,
-                        observedValue: observedValue)
-                }
+                verifiedExecutionResult.outcome = await self.confirmExactLiteralTypingEffect(
+                    from: executionResult.outcome,
+                    confirmation: effectConfirmation,
+                    preflightValue: confirmationPreflightValue)
                 let completedSummary = TypeActionExecutionSummary(
                     result: payloadSummary.result,
                     executionResult: verifiedExecutionResult,
@@ -1164,6 +1159,16 @@ extension TypeService {
                         try await deliveryValidator(focusedElement)
                     }
                     try await validateFocusedElement()
+                    let focusedExactWindow = try UIAutomationTarget.ExactWindow(
+                        identity: exactWindow.identity,
+                        bounds: exactWindow.bounds,
+                        focusedElement: focusedElement)
+                    let effectConfirmation = ExactLiteralTypingEffectConfirmation.plan(
+                        actions: request.actions,
+                        target: focusedExactWindow)
+                    let confirmationPreflightValue = await self.prepareEffectConfirmationBaseline(
+                        effectConfirmation,
+                        lanePreparation: {})
                     let typed = try await self.performSyntheticTypeActions(
                         request.actions,
                         cadence: request.cadence,
@@ -1176,10 +1181,18 @@ extension TypeService {
                         throw PeekabooError.invalidInput("Pixel-focus typing produced no keyboard input")
                     }
                     payloadSummary = typed
-                    sequence.record(.dispatched(
+                    var typingOutcome = DesktopActionOutcome.dispatchedUnverified(
                         route: .local,
                         delivery: typingDelivery,
-                        unitCount: typingUnits))
+                        evidence: .deliveryAccepted,
+                        unitCount: typingUnits)
+                    typingOutcome = await self.confirmExactLiteralTypingEffect(
+                        from: typingOutcome,
+                        confirmation: effectConfirmation,
+                        preflightValue: confirmationPreflightValue)
+                    sequence.record(.reportedOutcome(
+                        typingOutcome,
+                        defaultDispatchedUnitCount: typingUnits))
                     let resolution = sequence.successResolution()
                     sequenceResolution = resolution
                     guard let outcome = resolution.outcome else {
@@ -1241,6 +1254,21 @@ extension TypeService {
             payload: payloadSummary.result,
             outcome: sequenceResolution?.outcome,
             targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
+    }
+
+    private func confirmExactLiteralTypingEffect(
+        from outcome: DesktopActionOutcome,
+        confirmation: ExactLiteralTypingEffectConfirmation?,
+        preflightValue: String?) async -> DesktopActionOutcome
+    {
+        guard let confirmation,
+              let preflightValue,
+              let observedValue = await self.exactFocusedValue(for: confirmation)
+        else { return outcome }
+        return confirmation.confirmedOutcome(
+            from: outcome,
+            previousValue: preflightValue,
+            observedValue: observedValue)
     }
 
     private static func plannedKeyPressCount(_ actions: [TypeAction]) -> Int {

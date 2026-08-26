@@ -189,12 +189,14 @@ enum PeekabooBridgeOperationResultSemantics {
         let noChangeCapableAccessibilityKeys: Int
         let flexibleClearCount: Int
         let additionalAccessibilityUnits: Int
+        let allowsConfirmedChange: Bool
 
         init(
             actions: [TypeAction],
             allowsAccessibilityValueDelivery: Bool = false,
             additionalDispatchUnits: Int = 0,
-            additionalUsesAccessibilityValue: Bool = false)
+            additionalUsesAccessibilityValue: Bool = false,
+            allowsConfirmedChange: Bool = false)
         {
             var totalCharacters = 0
             var fixedTextEventKeyPresses = 0
@@ -243,6 +245,7 @@ enum PeekabooBridgeOperationResultSemantics {
             self.noChangeCapableAccessibilityKeys = noChangeCapableAccessibilityKeys
             self.flexibleClearCount = flexibleClearCount
             self.additionalAccessibilityUnits = additionalUsesAccessibilityValue ? additionalDispatchUnits : 0
+            self.allowsConfirmedChange = allowsConfirmedChange && Self.isDeterministicClearLiteral(actions)
             precondition(additionalUsesAccessibilityValue || additionalDispatchUnits == 0)
         }
 
@@ -261,6 +264,7 @@ enum PeekabooBridgeOperationResultSemantics {
             specialKeyPresses: Int?,
             outcome: DesktopActionOutcome) -> Bool
         {
+            guard outcome.state != .confirmedChange || self.allowsConfirmedChange else { return false }
             let dispatchUnits: Int
             let expectedUsesAccessibility: Bool
             let expectedUsesKeyboard: Bool
@@ -399,6 +403,14 @@ enum PeekabooBridgeOperationResultSemantics {
                 nil
             }
         }
+
+        private static func isDeterministicClearLiteral(_ actions: [TypeAction]) -> Bool {
+            guard let first = actions.first, case .clear = first else { return false }
+            return actions.dropFirst().allSatisfy { action in
+                guard case let .text(text) = action else { return false }
+                return text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
+            }
+        }
     }
 
     enum TypedResponseRule: Equatable, Sendable {
@@ -413,6 +425,11 @@ enum PeekabooBridgeOperationResultSemantics {
         var typeActionDispatchUnits: UnitPolicy? {
             guard case let .typeActions(rule) = self else { return nil }
             return rule.dispatchUnits
+        }
+
+        var typeActionAllowsConfirmedChange: Bool? {
+            guard case let .typeActions(rule) = self else { return nil }
+            return rule.allowsConfirmedChange
         }
 
         func isConsistent(with binding: TypedResponseBinding) -> Bool {
@@ -1239,13 +1256,17 @@ extension PeekabooBridgeOperationResultSemantics {
         case let .targetedTypeActions(payload):
             .typeActions(.init(actions: payload.actions, allowsAccessibilityValueDelivery: true))
         case let .exactWindowTargetedTypeActions(payload):
-            .typeActions(.init(actions: payload.actions, allowsAccessibilityValueDelivery: true))
+            .typeActions(.init(
+                actions: payload.actions,
+                allowsAccessibilityValueDelivery: true,
+                allowsConfirmedChange: payload.expectedFocusedElement != nil))
         case let .exactWindowPixelFocusType(payload):
             .typeActions(.init(
                 actions: payload.request.actions,
                 allowsAccessibilityValueDelivery: true,
                 additionalDispatchUnits: 1,
-                additionalUsesAccessibilityValue: true))
+                additionalUsesAccessibilityValue: true,
+                allowsConfirmedChange: true))
         case let .setValue(payload):
             .setValue(
                 target: payload.target,
@@ -1867,6 +1888,11 @@ extension PeekabooBridgeOperationResultSemantics {
               plan.allowsSuccessState(outcome.state),
               self.successResponseMatchesPolicy(response, outcome: outcome, plan: plan)
         else { return false }
+        if outcome.state == .confirmedChange,
+           plan.typedResponseRule.typeActionAllowsConfirmedChange == false
+        {
+            return false
+        }
         if outcome.state == .confirmedNoChange {
             return outcome.delivery == nil && outcome.dispatchState == .none
         }
