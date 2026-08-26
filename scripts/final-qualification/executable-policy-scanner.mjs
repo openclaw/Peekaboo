@@ -181,6 +181,8 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
           : version >= 0x20300 ? 64
             : version >= 0x20200 ? 52
               : version >= 0x20100 ? 48 : 44;
+    if (version < 0x20001 || version > 0x20600 || length < headerSize
+      || start + length > maximum) return false;
     const hashOffset = bytes.readUInt32BE(start + 16);
     const identifierOffset = bytes.readUInt32BE(start + 20);
     const specialSlotCount = bytes.readUInt32BE(start + 24);
@@ -237,6 +239,25 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
         if (!sawSentinel || pagesConsumed !== codeSlotCount) scatterValid = false;
       }
     }
+    const teamOffset = version >= 0x20200 ? bytes.readUInt32BE(start + 48) : 0;
+    const teamIdentifier = teamOffset === 0 ? null : cString(bytes, start + teamOffset, start + length);
+    const spare3 = version >= 0x20300 ? bytes.readUInt32BE(start + 52) : 0;
+    const execSegmentBase = version >= 0x20400 ? bytes.readBigUInt64BE(start + 64) : 0n;
+    const execSegmentLimit = version >= 0x20400 ? bytes.readBigUInt64BE(start + 72) : 0n;
+    const execSegmentFlags = version >= 0x20400 ? bytes.readBigUInt64BE(start + 80) : 0n;
+    const preEncryptOffset = version >= 0x20500 ? bytes.readUInt32BE(start + 92) : 0;
+    const preEncryptEnd = preEncryptOffset + codeSlotCount * hashSize;
+    const linkageHashType = version >= 0x20600 ? bytes[start + 96] : 0;
+    const linkageApplicationType = version >= 0x20600 ? bytes[start + 97] : 0;
+    const linkageApplicationSubType = version >= 0x20600 ? bytes.readUInt16BE(start + 98) : 0;
+    const linkageOffset = version >= 0x20600 ? bytes.readUInt32BE(start + 100) : 0;
+    const linkageSize = version >= 0x20600 ? bytes.readUInt32BE(start + 104) : 0;
+    const linkageEnd = linkageOffset + linkageSize;
+    const linkageHashSize = CODE_DIRECTORY_HASH_SIZES.get(linkageHashType);
+    const linkageApplicationValid = linkageApplicationType === 1
+      ? linkageApplicationSubType === 0
+      : linkageApplicationType === 2 && [1, 2].includes(linkageApplicationSubType);
+    const execSegmentEnd = execSegmentBase + execSegmentLimit;
     // Security CodeDirectory::checkIntegrity applies this slot-count rule after scatter validation too.
     if (version < 0x20001 || version > 0x20600 || length < headerSize
       || start + length > maximum || CODE_DIRECTORY_HASH_SIZES.get(hashType) !== hashSize
@@ -245,6 +266,20 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
       || !Number.isSafeInteger(codeHashBytes) || hashStart < headerSize
       || !Number.isSafeInteger(codeLimit64) || !scatterValid
       || requiredCodeSlots !== codeSlotCount
+      || teamOffset >= hashStart || (teamOffset !== 0 && teamOffset < headerSize)
+      || (teamOffset !== 0 && !teamIdentifier)
+      || (teamIdentifier && teamOffset + teamIdentifier.length + 1 > hashStart)
+      || spare3 !== 0 || (execSegmentFlags & ~0x3f1n) !== 0n
+      || execSegmentEnd > BigInt(signingLimit)
+      || !Number.isSafeInteger(preEncryptEnd)
+      || (preEncryptOffset !== 0 && (preEncryptOffset < headerSize || preEncryptEnd > length))
+      || (linkageHashType === 0
+        && (linkageApplicationType !== 0 || linkageApplicationSubType !== 0
+          || linkageOffset !== 0 || linkageSize !== 0))
+      || (linkageHashType !== 0
+        && (!linkageApplicationValid || linkageHashSize === undefined || linkageSize < 20
+          || !Number.isSafeInteger(linkageEnd) || linkageOffset < headerSize
+          || linkageEnd > length))
       || hashEnd > length || identifierOffset < headerSize || identifierOffset >= hashStart) return false;
     const identifier = cString(bytes, start + identifierOffset, start + length);
     if (!identifier || identifierOffset + identifier.length + 1 > hashStart) return false;
@@ -404,7 +439,7 @@ function bindStreamPolicyImports(bytes, offset, size, kind) {
     } else if (opcode === 0x10 || opcode === 0x30) {
       // The immediate is the complete operand.
     } else if (opcode === 0x20 || opcode === 0x70 || opcode === 0x80) {
-      const decoded = readULEB128(bytes, cursor, limit);
+      const decoded = readUnsigned64LEB128(bytes, cursor, limit);
       if (!decoded) return null;
       cursor = decoded.cursor;
     } else if (opcode === 0x40) {
@@ -425,20 +460,20 @@ function bindStreamPolicyImports(bytes, offset, size, kind) {
       if (!retainCurrentSymbol()) return null;
     } else if (opcode === 0xa0) {
       if (!retainCurrentSymbol()) return null;
-      const decoded = readULEB128(bytes, cursor, limit);
+      const decoded = readUnsigned64LEB128(bytes, cursor, limit);
       if (!decoded) return null;
       cursor = decoded.cursor;
     } else if (opcode === 0xb0) {
       if (!retainCurrentSymbol()) return null;
     } else if (opcode === 0xc0) {
-      const count = readULEB128(bytes, cursor, limit);
+      const count = readUnsigned64LEB128(bytes, cursor, limit);
       if (!count) return null;
-      const skip = readULEB128(bytes, count.cursor, limit);
-      if (!skip || (count.value > 0 && !retainCurrentSymbol())) return null;
+      const skip = readUnsigned64LEB128(bytes, count.cursor, limit);
+      if (!skip || (count.value > 0n && !retainCurrentSymbol())) return null;
       cursor = skip.cursor;
     } else if (opcode === 0xd0) {
       if (immediate === 0) {
-        const decoded = readULEB128(bytes, cursor, limit);
+        const decoded = readUnsigned64LEB128(bytes, cursor, limit);
         if (!decoded) return null;
         cursor = decoded.cursor;
       } else if (immediate !== 1) {

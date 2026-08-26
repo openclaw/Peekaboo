@@ -2168,6 +2168,30 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     policyFindingsForFile('runtime/threaded-regular-bind', 0o755, threadedBindMachO),
     [{ family: 'apple-script' }],
   );
+  const hugeBindOperand = encodeULEB64(1n << 60n);
+  const hugeOperandBindStream = Buffer.concat([
+    Buffer.from([0x70]),
+    hugeBindOperand,
+    Buffer.from([0x40]),
+    Buffer.from('_OBJC_CLASS_$_NSAppleScript\0'),
+    Buffer.from([0xa0]),
+    hugeBindOperand,
+    Buffer.from([0x00]),
+  ]);
+  const hugeOperandBindMachO = thinMachOWithLinkeditCommand(
+    48,
+    hugeOperandBindStream,
+    (bytes, command, payloadOffset, payloadSize) => {
+      bytes.writeUInt32LE(0x80000022, command);
+      bytes.writeUInt32LE(48, command + 4);
+      bytes.writeUInt32LE(payloadOffset, command + 16);
+      bytes.writeUInt32LE(payloadSize, command + 20);
+    },
+  );
+  assert.deepEqual(
+    policyFindingsForFile('runtime/huge-uleb-bind-operands', 0o755, hugeOperandBindMachO),
+    [{ family: 'apple-script' }],
+  );
   const unicodeThenPolicyBindStream = Buffer.concat([
     Buffer.from([0x40, 0xc3, 0xa9, 0x00, 0x90, 0x40]),
     Buffer.from('_OBJC_CLASS_$_NSAppleScript\0'),
@@ -2285,6 +2309,62 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     },
   );
   assert.deepEqual(policyFindingsForFile('runtime/valid-code-directory', 0o755, signedMachO(codeDirectory())), []);
+  const versionedCodeDirectory = (version, mutate = () => {}) => {
+    const headerSize = version >= 0x20600 ? 108
+      : version >= 0x20500 ? 96
+        : version >= 0x20400 ? 88
+          : version >= 0x20300 ? 64
+            : version >= 0x20200 ? 52 : 48;
+    const identifier = Buffer.from('dev.peekaboo.versioned\0');
+    const hashOffset = headerSize + identifier.length;
+    const payload = Buffer.alloc(hashOffset + 32);
+    payload.writeUInt32BE(0xfade0c02, 0);
+    payload.writeUInt32BE(payload.length, 4);
+    payload.writeUInt32BE(version, 8);
+    payload.writeUInt32BE(hashOffset, 16);
+    payload.writeUInt32BE(headerSize, 20);
+    payload.writeUInt32BE(1, 28);
+    payload.writeUInt32BE(1, 32);
+    payload[36] = 32;
+    payload[37] = 2;
+    payload[39] = 12;
+    identifier.copy(payload, headerSize);
+    mutate(payload, { hashOffset, headerSize });
+    return payload;
+  };
+  for (const version of [0x20200, 0x20300, 0x20400, 0x20500, 0x20600]) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/code-directory-${version.toString(16)}`,
+        0o755,
+        signedMachO(versionedCodeDirectory(version)),
+      ),
+      [],
+    );
+  }
+  const malformedVersionedDirectories = [
+    ['team-offset', 0x20200, (payload, layout) => payload.writeUInt32BE(layout.hashOffset, 48)],
+    ['spare3', 0x20300, (payload) => payload.writeUInt32BE(1, 52)],
+    ['exec-segment', 0x20400, (payload) => payload.writeBigUInt64BE(2n, 72)],
+    ['pre-encrypt', 0x20500, (payload) => payload.writeUInt32BE(payload.length - 1, 92)],
+    ['linkage', 0x20600, (payload) => {
+      payload[96] = 2;
+      payload[97] = 1;
+      payload.writeUInt32BE(payload.length - 1, 100);
+      payload.writeUInt32BE(20, 104);
+    }],
+  ];
+  for (const [label, version, mutate] of malformedVersionedDirectories) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/code-directory-invalid-${label}`,
+        0o755,
+        signedMachO(versionedCodeDirectory(version, mutate)),
+      ),
+      [{ family: 'uninspectable-native-executable' }],
+      label,
+    );
+  }
   const scatteredCodeDirectory = (
     codeLimit = 0x1000,
     codeSlotCount = 1,
