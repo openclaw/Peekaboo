@@ -43,11 +43,13 @@ const TEXT_FORBIDDEN_MARKERS = [
 ];
 const STRUCTURAL_NAME_MARKER = /(^|[\/._ -])(cua-driver|osascript|applescript|jxa|lume|parallels|prl_|vmware|virtualbox|virtualization|utm|tart|vfkit|qemu|vnc|screen sharing|screensharing|remote desktop|remotedesktop|jump desktop)([\/._ -]|$)/i;
 const APPLE_EVENT_IMPORT = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScript|AppleEventDescriptor|AppleEventManager|UserAppleScriptTask))$/;
+const APPLE_EVENT_CLASS_STRING = /^_?OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScript|AppleEventDescriptor|AppleEventManager|UserAppleScriptTask)$/;
 const SCRIPTING_BRIDGE_IMPORT = /^_?OBJC_(?:CLASS|METACLASS)_\$_SB(?:Application|ElementArray|Object)$/;
 const VIRTUALIZATION_IMPORT = /^_?(?:VZ[A-Z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+)$/;
+const VIRTUALIZATION_CLASS_STRING = /^_?OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+$/;
 const APPLE_FRAMEWORK_PATH = /(?:^|\/)(?:OSAKit|ScriptingBridge)\.framework(?:\/|$)/i;
 const VIRTUALIZATION_FRAMEWORK_PATH = /(?:^|\/)(?:Virtualization|Hypervisor)\.framework(?:\/|$)/i;
-const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|\/usr\/bin\/osascript)$/;
+const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSAppleEventDescriptor|NSAppleEventManager|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|\/usr\/bin\/osascript)$/;
 const APPLE_EVENT_DYNAMIC_STRING = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*)$/;
 const APPLE_EVENT_COMPILER_METADATA = /^(?:AESgtGG|AESgtGGGSgtGG)$/;
 const LOAD_COMMAND_DYLIBS = new Set([0x0c, 0x0d, 0x18, 0x1f, 0x20, 0x23]);
@@ -56,13 +58,14 @@ const CODE_DIRECTORY_MAGIC = 0xfade0c02;
 
 function isAppleScriptPolicyString(value) {
   return APPLE_EVENT_STRING.test(value)
+    || APPLE_EVENT_CLASS_STRING.test(value)
     || SCRIPTING_BRIDGE_IMPORT.test(value)
     || APPLE_FRAMEWORK_PATH.test(value)
     || (!APPLE_EVENT_COMPILER_METADATA.test(value) && APPLE_EVENT_DYNAMIC_STRING.test(value));
 }
 
 function isVirtualizationPolicyString(value) {
-  return VIRTUALIZATION_IMPORT.test(value) || VIRTUALIZATION_FRAMEWORK_PATH.test(value);
+  return VIRTUALIZATION_CLASS_STRING.test(value) || VIRTUALIZATION_FRAMEWORK_PATH.test(value);
 }
 
 function structuralFamily(value) {
@@ -106,11 +109,23 @@ function cString(bytes, offset, limit) {
   return value.every((byte) => byte >= 0x20 && byte <= 0x7e) ? value.toString('ascii') : null;
 }
 
-function policyStrings(bytes) {
+function policyStrings(bytes, excludedRanges = []) {
+  const exclusions = excludedRanges
+    .filter(({ start, end }) => Number.isSafeInteger(start) && Number.isSafeInteger(end)
+      && start >= 0 && end > start && end <= bytes.length)
+    .sort((left, right) => left.start - right.start);
   const values = [];
   let start = null;
+  let exclusionIndex = 0;
   for (let index = 0; index <= bytes.length; index += 1) {
-    const printable = index < bytes.length && bytes[index] >= 0x20 && bytes[index] <= 0x7e;
+    while (exclusionIndex < exclusions.length && index >= exclusions[exclusionIndex].end) {
+      exclusionIndex += 1;
+    }
+    const exclusion = exclusions[exclusionIndex];
+    const excluded = index < bytes.length && exclusion
+      && index >= exclusion.start && index < exclusion.end;
+    const printable = index < bytes.length && !excluded
+      && bytes[index] >= 0x20 && bytes[index] <= 0x7e;
     if (printable && start === null) start = index;
     if (!printable && start !== null) {
       if (index - start >= 4) {
@@ -207,6 +222,7 @@ function thinMachOSlice(bytes, offset, size) {
   const imports = [];
   const identifiers = [];
   let symbolTable = null;
+  const policyStringExclusions = [];
   let sawCodeSignature = false;
   let sawSegment = false;
   let cursor = offset + headerSize;
@@ -269,6 +285,7 @@ function thinMachOSlice(bytes, offset, size) {
       const signatureSize = unsignedInteger(bytes, cursor + 12, 4, format.endian);
       if (signatureOffset === null || signatureSize === null || signatureSize === 0
         || signatureOffset + signatureSize > size) return null;
+      policyStringExclusions.push({ start: signatureOffset, end: signatureOffset + signatureSize });
       const codeIdentifiers = codeDirectoryIdentifiers(
         bytes,
         offset + signatureOffset,
@@ -279,16 +296,7 @@ function thinMachOSlice(bytes, offset, size) {
     }
     cursor += commandSize;
   }
-  if (cursor !== commandLimit || !sawSegment || !symbolTable) {
-    return cursor === commandLimit && sawSegment ? {
-      cpuSubtype,
-      cpuType,
-      identifiers,
-      imports,
-      loadPaths,
-      strings: policyStrings(bytes.subarray(offset, offset + size)),
-    } : null;
-  }
+  if (cursor !== commandLimit || !sawSegment || !symbolTable) return null;
   const { symbolOffset, symbolCount, stringOffset, stringSize } = symbolTable;
   const symbolSize = format.bits === 64 ? 16 : 12;
   if ([symbolOffset, symbolCount, stringOffset, stringSize].some((value) => value === null)
@@ -319,7 +327,7 @@ function thinMachOSlice(bytes, offset, size) {
     identifiers,
     imports,
     loadPaths,
-    strings: policyStrings(bytes.subarray(offset, offset + size)),
+    strings: policyStrings(bytes.subarray(offset, offset + size), policyStringExclusions),
   };
 }
 

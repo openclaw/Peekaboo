@@ -1824,6 +1824,18 @@ test('policy scanner uses structural Mach-O evidence and broad markers only for 
         symbol: 'OBJC_CLASS_$_VZVirtualMachine',
         family: 'virtualization',
       },
+      {
+        name: 'helper-three',
+        framework: '/System/Library/Frameworks/Foundation.framework/Foundation',
+        symbol: 'OBJC_CLASS_$_NSAppleScript',
+        family: 'apple-script',
+      },
+      {
+        name: 'helper-four',
+        framework: '/System/Library/Frameworks/Foundation.framework/Foundation',
+        symbol: 'NSAppleEventDescriptor',
+        family: 'apple-script',
+      },
     ];
     for (const fixture of dynamicFrameworkFixtures) {
       const dynamicSource = writeFile(path.join(appleScriptFixtureRoot, `${fixture.name}.c`), [
@@ -1849,6 +1861,38 @@ test('policy scanner uses structural Mach-O evidence and broad markers only for 
         [{ family: fixture.family }],
       );
     }
+
+    const signedNeutralExecutable = path.join(appleScriptFixtureRoot, 'signed-neutral-helper');
+    fs.copyFileSync(disabledProseExecutable, signedNeutralExecutable);
+    const signNeutral = spawnSync('/usr/bin/codesign', [
+      '--force', '--sign', '-', '--identifier', 'dev.peekaboo.neutral', signedNeutralExecutable,
+    ], { encoding: 'utf8' });
+    assert.equal(signNeutral.status, 0, signNeutral.stderr);
+    const signedNeutralBytes = fs.readFileSync(signedNeutralExecutable);
+    assert.equal(signedNeutralBytes.subarray(0, 4).toString('hex'), 'cffaedfe');
+    const commandCount = signedNeutralBytes.readUInt32LE(16);
+    let commandOffset = 32;
+    let signatureCommandOffset = null;
+    for (let index = 0; index < commandCount; index += 1) {
+      const command = signedNeutralBytes.readUInt32LE(commandOffset) & 0x7fffffff;
+      const commandSize = signedNeutralBytes.readUInt32LE(commandOffset + 4);
+      if (command === 0x1d) signatureCommandOffset = commandOffset;
+      commandOffset += commandSize;
+    }
+    assert.notEqual(signatureCommandOffset, null);
+    const signatureOffset = signedNeutralBytes.readUInt32LE(signatureCommandOffset + 8);
+    const signatureSize = signedNeutralBytes.readUInt32LE(signatureCommandOffset + 12);
+    assert.equal(signatureOffset + signatureSize, signedNeutralBytes.length);
+    const signatureCollision = Buffer.from('OBJC_CLASS_$_VZVirtualMachine\0');
+    const signatureCollisionBytes = Buffer.concat([signedNeutralBytes, signatureCollision]);
+    signatureCollisionBytes.writeUInt32LE(
+      signatureSize + signatureCollision.length,
+      signatureCommandOffset + 12,
+    );
+    assert.deepEqual(
+      policyFindingsForFile('runtime/signed-neutral-helper', 0o755, signatureCollisionBytes),
+      [],
+    );
 
     const sourcePath = writeFile(path.join(appleScriptFixtureRoot, 'fixture.m'), [
       '#import <Foundation/Foundation.h>',
@@ -1964,6 +2008,31 @@ test('policy scanner uses structural Mach-O evidence and broad markers only for 
   emptyMachO.writeUInt32LE(2, 12);
   assert.deepEqual(
     policyFindingsForFile('runtime/empty-native', 0o755, emptyMachO),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+
+  const chainedFixupOnlyMachO = Buffer.alloc(160);
+  Buffer.from('cffaedfe', 'hex').copy(chainedFixupOnlyMachO);
+  chainedFixupOnlyMachO.writeUInt32LE(0x0100000c, 4);
+  chainedFixupOnlyMachO.writeUInt32LE(2, 12);
+  chainedFixupOnlyMachO.writeUInt32LE(2, 16);
+  chainedFixupOnlyMachO.writeUInt32LE(88, 20);
+  chainedFixupOnlyMachO.writeUInt32LE(0x19, 32);
+  chainedFixupOnlyMachO.writeUInt32LE(72, 36);
+  chainedFixupOnlyMachO.writeBigUInt64LE(BigInt(chainedFixupOnlyMachO.length), 80);
+  chainedFixupOnlyMachO.writeUInt32LE(0x80000034, 104);
+  chainedFixupOnlyMachO.writeUInt32LE(16, 108);
+  chainedFixupOnlyMachO.writeUInt32LE(120, 112);
+  chainedFixupOnlyMachO.writeUInt32LE(40, 116);
+  chainedFixupOnlyMachO.writeUInt32LE(28, 124);
+  chainedFixupOnlyMachO.writeUInt32LE(28, 128);
+  chainedFixupOnlyMachO.writeUInt32LE(32, 132);
+  chainedFixupOnlyMachO.writeUInt32LE(1, 136);
+  chainedFixupOnlyMachO.writeUInt32LE(1, 140);
+  chainedFixupOnlyMachO.writeUInt32LE(1, 144);
+  Buffer.from('compressed-import-pool').copy(chainedFixupOnlyMachO, 148);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/chained-fixups-only', 0o755, chainedFixupOnlyMachO),
     [{ family: 'uninspectable-native-executable' }],
   );
 
