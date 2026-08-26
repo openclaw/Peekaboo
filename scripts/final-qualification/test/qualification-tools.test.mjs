@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 import { projectBindings } from '../project-live-bindings.mjs';
 import { constructLivePlan } from '../construct-live-plan.mjs';
 import { compareCrashInventories } from '../crash-inventory.mjs';
@@ -1836,6 +1837,18 @@ test('policy scanner uses structural Mach-O evidence and broad markers only for 
         symbol: 'NSAppleEventDescriptor',
         family: 'apple-script',
       },
+      {
+        name: 'helper-five',
+        framework: '/System/Library/Frameworks/ScriptingBridge.framework/ScriptingBridge',
+        symbol: 'SBApplication',
+        family: 'apple-script',
+      },
+      {
+        name: 'helper-six',
+        framework: '/System/Library/Frameworks/Virtualization.framework/Virtualization',
+        symbol: 'VZVirtualMachine',
+        family: 'virtualization',
+      },
     ];
     for (const fixture of dynamicFrameworkFixtures) {
       const dynamicSource = writeFile(path.join(appleScriptFixtureRoot, `${fixture.name}.c`), [
@@ -1883,6 +1896,10 @@ test('policy scanner uses structural Mach-O evidence and broad markers only for 
     const signatureOffset = signedNeutralBytes.readUInt32LE(signatureCommandOffset + 8);
     const signatureSize = signedNeutralBytes.readUInt32LE(signatureCommandOffset + 12);
     assert.equal(signatureOffset + signatureSize, signedNeutralBytes.length);
+    assert.deepEqual(
+      policyFindingsForFile('runtime/signed-neutral-helper', 0o755, signedNeutralBytes),
+      [],
+    );
     const signatureCollision = Buffer.from('OBJC_CLASS_$_VZVirtualMachine\0');
     const signatureCollisionBytes = Buffer.concat([signedNeutralBytes, signatureCollision]);
     signatureCollisionBytes.writeUInt32LE(
@@ -1891,7 +1908,7 @@ test('policy scanner uses structural Mach-O evidence and broad markers only for 
     );
     assert.deepEqual(
       policyFindingsForFile('runtime/signed-neutral-helper', 0o755, signatureCollisionBytes),
-      [],
+      [{ family: 'virtualization' }],
     );
 
     const sourcePath = writeFile(path.join(appleScriptFixtureRoot, 'fixture.m'), [
@@ -2034,6 +2051,43 @@ test('policy scanner uses structural Mach-O evidence and broad markers only for 
   assert.deepEqual(
     policyFindingsForFile('runtime/chained-fixups-only', 0o755, chainedFixupOnlyMachO),
     [{ family: 'uninspectable-native-executable' }],
+  );
+
+  const chainedSymbol = Buffer.from('_OBJC_CLASS_$_NSAppleScript\0');
+  const compressedSymbols = deflateSync(chainedSymbol);
+  const chainedPayloadSize = 36 + compressedSymbols.length;
+  const chainedPayloadOffset = 144;
+  const chainedAndSymtabMachO = Buffer.alloc(chainedPayloadOffset + chainedPayloadSize);
+  Buffer.from('cffaedfe', 'hex').copy(chainedAndSymtabMachO);
+  chainedAndSymtabMachO.writeUInt32LE(0x0100000c, 4);
+  chainedAndSymtabMachO.writeUInt32LE(2, 12);
+  chainedAndSymtabMachO.writeUInt32LE(3, 16);
+  chainedAndSymtabMachO.writeUInt32LE(112, 20);
+  chainedAndSymtabMachO.writeUInt32LE(0x19, 32);
+  chainedAndSymtabMachO.writeUInt32LE(72, 36);
+  chainedAndSymtabMachO.writeBigUInt64LE(BigInt(chainedAndSymtabMachO.length), 80);
+  chainedAndSymtabMachO.writeUInt32LE(0x02, 104);
+  chainedAndSymtabMachO.writeUInt32LE(24, 108);
+  chainedAndSymtabMachO.writeUInt32LE(chainedPayloadOffset, 112);
+  chainedAndSymtabMachO.writeUInt32LE(0, 116);
+  chainedAndSymtabMachO.writeUInt32LE(chainedAndSymtabMachO.length - 1, 120);
+  chainedAndSymtabMachO.writeUInt32LE(1, 124);
+  chainedAndSymtabMachO.writeUInt32LE(0x80000034, 128);
+  chainedAndSymtabMachO.writeUInt32LE(16, 132);
+  chainedAndSymtabMachO.writeUInt32LE(chainedPayloadOffset, 136);
+  chainedAndSymtabMachO.writeUInt32LE(chainedPayloadSize, 140);
+  chainedAndSymtabMachO.writeUInt32LE(28, chainedPayloadOffset + 4);
+  chainedAndSymtabMachO.writeUInt32LE(32, chainedPayloadOffset + 8);
+  chainedAndSymtabMachO.writeUInt32LE(36, chainedPayloadOffset + 12);
+  chainedAndSymtabMachO.writeUInt32LE(1, chainedPayloadOffset + 16);
+  chainedAndSymtabMachO.writeUInt32LE(1, chainedPayloadOffset + 20);
+  chainedAndSymtabMachO.writeUInt32LE(1, chainedPayloadOffset + 24);
+  chainedAndSymtabMachO.writeUInt32LE(0, chainedPayloadOffset + 28);
+  chainedAndSymtabMachO.writeUInt32LE(1, chainedPayloadOffset + 32);
+  compressedSymbols.copy(chainedAndSymtabMachO, chainedPayloadOffset + 36);
+  assert.deepEqual(
+    policyFindingsForFile('runtime/chained-fixups-and-symtab', 0o755, chainedAndSymtabMachO),
+    [{ family: 'apple-script' }],
   );
 
   const invalidDylibCommand = Buffer.from(cleanMachO);

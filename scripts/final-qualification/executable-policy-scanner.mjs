@@ -4,6 +4,7 @@ import { isUtf8 } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inflateSync } from 'node:zlib';
 import {
   aggregateSHA256,
   exactKeys,
@@ -45,8 +46,9 @@ const STRUCTURAL_NAME_MARKER = /(^|[\/._ -])(cua-driver|osascript|applescript|jx
 const APPLE_EVENT_IMPORT = /^_?(?:AE(?:[A-Z][a-z]{2}[A-Za-z0-9_]*|(?:Is|Do)[A-Z][A-Za-z0-9_]*)|OSA[A-Z][a-z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScript|AppleEventDescriptor|AppleEventManager|UserAppleScriptTask))$/;
 const APPLE_EVENT_CLASS_STRING = /^_?OBJC_(?:CLASS|METACLASS)_\$_NS(?:AppleScript|AppleEventDescriptor|AppleEventManager|UserAppleScriptTask)$/;
 const SCRIPTING_BRIDGE_IMPORT = /^_?OBJC_(?:CLASS|METACLASS)_\$_SB(?:Application|ElementArray|Object)$/;
+const SCRIPTING_BRIDGE_CLASS_STRING = /^(?:SBApplication|SBElementArray|SBObject)$/;
 const VIRTUALIZATION_IMPORT = /^_?(?:VZ[A-Z][A-Za-z0-9_]*|OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+)$/;
-const VIRTUALIZATION_CLASS_STRING = /^_?OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+$/;
+const VIRTUALIZATION_CLASS_STRING = /^(?:_?OBJC_(?:CLASS|METACLASS)_\$_VZ[A-Za-z0-9_]+|VZ[A-Z][a-z][A-Za-z0-9_]*)$/;
 const APPLE_FRAMEWORK_PATH = /(?:^|\/)(?:OSAKit|ScriptingBridge)\.framework(?:\/|$)/i;
 const VIRTUALIZATION_FRAMEWORK_PATH = /(?:^|\/)(?:Virtualization|Hypervisor)\.framework(?:\/|$)/i;
 const APPLE_EVENT_STRING = /^(?:NSAppleScript|NSAppleEventDescriptor|NSAppleEventManager|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|\/usr\/bin\/osascript)$/;
@@ -60,6 +62,7 @@ function isAppleScriptPolicyString(value) {
   return APPLE_EVENT_STRING.test(value)
     || APPLE_EVENT_CLASS_STRING.test(value)
     || SCRIPTING_BRIDGE_IMPORT.test(value)
+    || SCRIPTING_BRIDGE_CLASS_STRING.test(value)
     || APPLE_FRAMEWORK_PATH.test(value)
     || (!APPLE_EVENT_COMPILER_METADATA.test(value) && APPLE_EVENT_DYNAMIC_STRING.test(value));
 }
@@ -157,7 +160,10 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
   if (offset < 0 || size < 8 || offset + size > bytes.length) return null;
   const magic = bytes.readUInt32BE(offset);
   if (magic === CODE_DIRECTORY_MAGIC) {
-    return parseCodeDirectory(offset, offset + size) ? identifiers : null;
+    const length = bytes.readUInt32BE(offset + 4);
+    return length <= size && parseCodeDirectory(offset, offset + length)
+      ? { identifiers, validatedSize: length }
+      : null;
   }
   if (magic !== 0xfade0cc0 || size < 12) return null;
   const length = bytes.readUInt32BE(offset + 4);
@@ -172,7 +178,7 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     if (blobMagic === CODE_DIRECTORY_MAGIC
       && !parseCodeDirectory(offset + blobOffset, offset + length)) return null;
   }
-  return identifiers.length > 0 ? identifiers : null;
+  return identifiers.length > 0 ? { identifiers, validatedSize: length } : null;
 }
 
 function symbolNameDecoder(bytes, offset, size) {
@@ -202,6 +208,62 @@ function symbolNameDecoder(bytes, offset, size) {
   };
 }
 
+function chainedFixupPolicyImports(bytes, offset, size, endian) {
+  if (offset < 0 || size < 28 || offset + size > bytes.length) return null;
+  const read32 = (relativeOffset) => unsignedInteger(bytes, offset + relativeOffset, 4, endian);
+  const version = read32(0);
+  const startsOffset = read32(4);
+  const importsOffset = read32(8);
+  const symbolsOffset = read32(12);
+  const importsCount = read32(16);
+  const importsFormat = read32(20);
+  const symbolsFormat = read32(24);
+  if (version !== 0 || startsOffset === null || startsOffset < 28 || startsOffset >= size
+    || importsOffset === null || importsOffset < 28 || importsOffset >= size
+    || symbolsOffset === null || symbolsOffset < 28 || symbolsOffset >= size
+    || importsCount === null || importsCount > 2_000_000
+    || ![1, 2, 3].includes(importsFormat) || ![0, 1].includes(symbolsFormat)) return null;
+  const entrySize = importsFormat === 1 ? 4 : importsFormat === 2 ? 8 : 16;
+  const importsEnd = importsOffset + importsCount * entrySize;
+  if (!Number.isSafeInteger(importsEnd) || importsEnd > symbolsOffset) return null;
+
+  let symbolBytes;
+  try {
+    const encodedSymbols = bytes.subarray(offset + symbolsOffset, offset + size);
+    symbolBytes = symbolsFormat === 0
+      ? encodedSymbols
+      : inflateSync(encodedSymbols, { maxOutputLength: 64 * 1024 * 1024 });
+  } catch {
+    return null;
+  }
+  if (importsCount > 0 && symbolBytes.length === 0) return null;
+
+  const imports = [];
+  for (let index = 0; index < importsCount; index += 1) {
+    const entryOffset = offset + importsOffset + index * entrySize;
+    let nameOffset;
+    if (importsFormat === 3) {
+      const value = endian === 'le'
+        ? bytes.readBigUInt64LE(entryOffset)
+        : bytes.readBigUInt64BE(entryOffset);
+      if (((value >> 17n) & 0x7fffn) !== 0n) return null;
+      const rawNameOffset = value >> 32n;
+      if (rawNameOffset > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      nameOffset = Number(rawNameOffset);
+    } else {
+      const value = unsignedInteger(bytes, entryOffset, 4, endian);
+      if (value === null) return null;
+      nameOffset = value >>> 9;
+    }
+    const name = cString(symbolBytes, nameOffset, symbolBytes.length);
+    if (!name) return null;
+    if (APPLE_EVENT_IMPORT.test(name)
+      || SCRIPTING_BRIDGE_IMPORT.test(name)
+      || VIRTUALIZATION_IMPORT.test(name)) imports.push(name);
+  }
+  return imports;
+}
+
 function thinMachOSlice(bytes, offset, size) {
   if (offset < 0 || size < 28 || offset + size > bytes.length) return null;
   const magic = bytes.subarray(offset, offset + 4).toString('hex');
@@ -222,6 +284,7 @@ function thinMachOSlice(bytes, offset, size) {
   const imports = [];
   const identifiers = [];
   let symbolTable = null;
+  let sawChainedFixups = false;
   const policyStringExclusions = [];
   let sawCodeSignature = false;
   let sawSegment = false;
@@ -285,14 +348,32 @@ function thinMachOSlice(bytes, offset, size) {
       const signatureSize = unsignedInteger(bytes, cursor + 12, 4, format.endian);
       if (signatureOffset === null || signatureSize === null || signatureSize === 0
         || signatureOffset + signatureSize > size) return null;
-      policyStringExclusions.push({ start: signatureOffset, end: signatureOffset + signatureSize });
-      const codeIdentifiers = codeDirectoryIdentifiers(
+      const codeSignature = codeDirectoryIdentifiers(
         bytes,
         offset + signatureOffset,
         signatureSize,
       );
-      if (!codeIdentifiers) return null;
-      identifiers.push(...codeIdentifiers);
+      if (!codeSignature) return null;
+      policyStringExclusions.push({
+        start: signatureOffset,
+        end: signatureOffset + codeSignature.validatedSize,
+      });
+      identifiers.push(...codeSignature.identifiers);
+    } else if (baseCommand === 0x34) {
+      if (commandSize < 16 || sawChainedFixups) return null;
+      sawChainedFixups = true;
+      const fixupsOffset = unsignedInteger(bytes, cursor + 8, 4, format.endian);
+      const fixupsSize = unsignedInteger(bytes, cursor + 12, 4, format.endian);
+      if (fixupsOffset === null || fixupsSize === null || fixupsSize === 0
+        || fixupsOffset + fixupsSize > size) return null;
+      const chainedImports = chainedFixupPolicyImports(
+        bytes,
+        offset + fixupsOffset,
+        fixupsSize,
+        format.endian,
+      );
+      if (!chainedImports) return null;
+      imports.push(...chainedImports);
     }
     cursor += commandSize;
   }
