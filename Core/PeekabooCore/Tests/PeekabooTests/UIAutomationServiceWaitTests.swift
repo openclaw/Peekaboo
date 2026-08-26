@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomation
 @testable import PeekabooCore
@@ -32,7 +33,8 @@ struct UIAutomationServiceWaitTests {
                 bounds: CGRect(x: 100, y: 200, width: 50, height: 20))])
         let detection = Self.makeDetectionResult(elements: elements)
 
-        let service = UIAutomationService(snapshotManager: InMemorySnapshotManager(detectionResult: detection))
+        let snapshots = try await InMemorySnapshotManager.containing(detection)
+        let service = UIAutomationService(snapshotManager: snapshots)
 
         let result = try await service.waitForElement(
             target: .elementId("B42"),
@@ -56,7 +58,8 @@ struct UIAutomationServiceWaitTests {
                 bounds: CGRect(x: 10, y: 10, width: 80, height: 30))])
         let detection = Self.makeDetectionResult(elements: elements)
 
-        let service = UIAutomationService(snapshotManager: InMemorySnapshotManager(detectionResult: detection))
+        let snapshots = try await InMemorySnapshotManager.containing(detection)
+        let service = UIAutomationService(snapshotManager: snapshots)
 
         let result = try await service.waitForElement(
             target: .query("submit"),
@@ -80,7 +83,8 @@ struct UIAutomationServiceWaitTests {
                 attributes: ["identifier": "continuous-slider"])])
         let detection = Self.makeDetectionResult(elements: elements)
 
-        let service = UIAutomationService(snapshotManager: InMemorySnapshotManager(detectionResult: detection))
+        let snapshots = try await InMemorySnapshotManager.containing(detection)
+        let service = UIAutomationService(snapshotManager: snapshots)
 
         let result = try await service.waitForElement(
             target: .query("continuous-slider"),
@@ -94,7 +98,7 @@ struct UIAutomationServiceWaitTests {
     // MARK: - Helpers
 
     private static func makeDetectionResult(
-        snapshotId: String = "snapshot-test",
+        snapshotId: String = SnapshotReferenceFixtures.id(100),
         elements: DetectedElements) -> ElementDetectionResult
     {
         let metadata = DetectionMetadata(

@@ -23,6 +23,12 @@ ScreenCaptureKit lease at every real SCK leaf by rescanning all same-user potent
 owner-unaware processes that started after acquisition. Caller-local MCP retains the broader legacy-socket scan because
 no external Bridge generation owns its capture path.
 
+Snapshots returned by current `see` calls use producer-bound references with the exact form `ps1_` plus 32 lowercase
+hexadecimal digits. Follow-up tools carrying that reference stay with its unique authenticated producer; a missing,
+ambiguous, incompatible, or unreachable owner is a pre-dispatch refusal, never a reason to recreate the snapshot or
+replay the action elsewhere. An explicit MCP `--bridge-socket` remains strict for the server lifetime. See
+[Bridge snapshot authority](bridge-host.md#snapshot-authority) for routing and protocol 1.34 capability negotiation.
+
 Action-oriented UI tools include:
 
 - `click`, `scroll`, `type`, and `press` for the background-safe interaction surface.
@@ -226,7 +232,9 @@ ROI requires Bridge protocol 1.21. CLI host selection and MCP remote dispatch re
 request, so a pre-1.21 host cannot ignore the crop or acknowledge only part of the snapshot. After dispatch, the
 client also decodes the quarantined raster and checks its real pixel dimensions against the crop receipt before
 publishing files or the snapshot. A compatible host must enable desktop observation plus the snapshot-publication
-operations used to finalize the validated result.
+operations used to finalize the validated result. Current clients additionally require the independently negotiated
+protocol 1.34 `producerBoundSnapshotReferences` capability before creating or publishing the reference; an old 1.34
+host cannot cause the result to be rebound locally.
 
 The `click` tool accepts exactly one target shape: `on`, `query`, or `coords`. Its published schema requires every
 background `coords` call to include either `snapshot` or `coordinate_reference`; a PID alone is only a consistency

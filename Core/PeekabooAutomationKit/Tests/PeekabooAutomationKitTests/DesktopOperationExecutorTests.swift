@@ -1,11 +1,14 @@
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
 @MainActor
 struct DesktopOperationExecutorTests {
+    private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
+
     @Test
     func `v4 initializer remains conservative and current result round trips`() throws {
         let legacy = UIInputExecutionResult(
@@ -708,14 +711,14 @@ struct DesktopOperationExecutorTests {
             label: "Input",
             bounds: CGRect(x: 20, y: 30, width: 200, height: 30))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/type-target.png",
             elements: DetectedElements(textFields: [target]),
             metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "test"))
         let synthetic = ClickRecordingSyntheticInputDriver()
         var finalizerCount = 0
-        let service = TypeService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await TypeService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             syntheticInputDriver: synthetic,
             desktopOperationExecutor: executor,
@@ -726,7 +729,7 @@ struct DesktopOperationExecutorTests {
             target: "T1",
             clearExisting: false,
             typingDelay: 0,
-            snapshotId: "snapshot")
+            snapshotId: Self.snapshotID)
 
         #expect(summary.result.path == .synth)
         #expect(finalizerCount == 1)

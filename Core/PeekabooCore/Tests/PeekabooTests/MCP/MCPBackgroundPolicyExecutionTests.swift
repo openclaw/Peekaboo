@@ -247,10 +247,11 @@ struct MCPBackgroundPolicyExecutionTests {
                     method: "AXorcist",
                     windowContext: windowContext,
                     isDialog: isDialog))
+            let snapshots = try await InMemorySnapshotManager.containing(detection)
             let context = await MCPToolTestHelpers.makeContext(
                 applications: applications,
                 windows: PointerPolicyWindowService(window: window),
-                snapshots: InMemorySnapshotManager(detectionResult: detection),
+                snapshots: snapshots,
                 snapshotOwner: Self.uiSnapshots.owner,
                 executionPolicy: .backgroundOnly)
             let counter = BackgroundPolicyInvocationCounter()

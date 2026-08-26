@@ -188,6 +188,25 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
         let targetProcessIdentifier: pid_t
         let targetWindowID: Int?
         let expectedProcessIdentity: ApplicationProcessIdentity?
+        let allowsAccessibilityValueDelivery: Bool?
+
+        init(
+            target: ClickTarget,
+            clickType: ClickType,
+            snapshotId: String?,
+            targetProcessIdentifier: pid_t,
+            targetWindowID: Int?,
+            expectedProcessIdentity: ApplicationProcessIdentity?,
+            allowsAccessibilityValueDelivery: Bool? = nil
+        ) {
+            self.target = target
+            self.clickType = clickType
+            self.snapshotId = snapshotId
+            self.targetProcessIdentifier = targetProcessIdentifier
+            self.targetWindowID = targetWindowID
+            self.expectedProcessIdentity = expectedProcessIdentity
+            self.allowsAccessibilityValueDelivery = allowsAccessibilityValueDelivery
+        }
     }
 
     struct WaitForElementCall {
@@ -246,6 +265,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
     var supportsTargetedClicks = true
     var supportsProcessGenerationPinnedClicks = true
     var supportsStatelessClickVariants = true
+    var supportsTargetedClickAccessibilityValueDelivery = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
     var clickError: (any Error)?
@@ -693,6 +713,7 @@ class StubApplicationService: ScriptedApplicationInventoryService {
 final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     let supportsImplicitLatestSnapshotInvalidation = true
     let supportsSnapshotMutationLeases = true
+    let supportsProducerBoundSnapshotReferences = true
     var copiesScreenshotArtifactsIntoStorage = false
     var effectiveImplicitLatestInvalidationWatermark: Date?
     private(set) var detectionResults: [String: ElementDetectionResult] = [:]
@@ -737,7 +758,7 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     }
 
     private func createSnapshotImpl(pendingAt observationStartedAt: Date?) -> String {
-        let snapshotId = UUID().uuidString
+        let snapshotId = SnapshotReference.generate().rawValue
         let now = observationStartedAt ?? Date()
         self.snapshotInfos[snapshotId] = SnapshotInfo(
             id: snapshotId,
@@ -757,6 +778,7 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     }
 
     func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
+        try self.requireCreatedSnapshot(snapshotId)
         if self.pendingSnapshotIDs.contains(snapshotId), self.mostRecentSnapshotId == snapshotId {
             self.exposedPendingSnapshotDuringWrite = true
         }
@@ -812,6 +834,13 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
 
     func getMostRecentSnapshot(applicationBundleId _: String) async -> String? {
         self.mostRecentSnapshotId
+    }
+
+    func ownsSnapshot(snapshotId: String) async throws -> Bool {
+        guard SnapshotReference(rawValue: snapshotId) != nil else {
+            throw SnapshotError.invalidSnapshotReference(snapshotId)
+        }
+        return self.snapshotInfos[snapshotId] != nil
     }
 
     func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
@@ -935,6 +964,7 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     }
 
     func storeScreenshot(_ request: SnapshotScreenshotRequest) async throws {
+        try self.requireCreatedSnapshot(request.snapshotId)
         if self.pendingSnapshotIDs.contains(request.snapshotId), self.mostRecentSnapshotId == request.snapshotId {
             self.exposedPendingSnapshotDuringWrite = true
         }
@@ -965,9 +995,19 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     }
 
     func storeAnnotatedScreenshot(snapshotId: String, annotatedScreenshotPath: String) async throws {
+        try self.requireCreatedSnapshot(snapshotId)
         var records = self.storedAnnotatedScreenshots[snapshotId] ?? []
         records.append(annotatedScreenshotPath)
         self.storedAnnotatedScreenshots[snapshotId] = records
+    }
+
+    private func requireCreatedSnapshot(_ snapshotId: String) throws {
+        guard SnapshotReference(rawValue: snapshotId) != nil else {
+            throw SnapshotError.invalidSnapshotReference(snapshotId)
+        }
+        guard self.snapshotInfos[snapshotId] != nil else {
+            throw SnapshotError.snapshotNotFound
+        }
     }
 
     func getElement(snapshotId: String, elementId: String) async throws -> PeekabooCore.UIElement? {

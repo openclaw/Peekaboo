@@ -149,7 +149,11 @@ struct DragCommandTests {
 
     @Test
     func `Drag from element to coordinates scenario`() async throws {
-        let snapshotId = "test-snapshot"
+        let windows = await MainActor.run {
+            InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        }
+        let context = await self.makeAutomationContext(windows: windows)
+        let snapshotId = try await context.snapshots.createSnapshot()
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -165,10 +169,6 @@ struct DragCommandTests {
             "--foreground",
         ]
 
-        let windows = await MainActor.run {
-            InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
-        }
-        let context = await self.makeAutomationContext(windows: windows)
         let services = await MainActor.run {
             InputExecutionHostServices(host: .remote, base: context.services)
         }

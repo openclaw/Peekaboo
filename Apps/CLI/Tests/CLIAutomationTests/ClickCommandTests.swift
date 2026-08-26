@@ -248,16 +248,20 @@ struct ClickCommandTests {
 
     @Test
     func `Click command refuses PID only background coordinates without snapshot`() async throws {
-        for snapshotArguments in [[], ["--snapshot", ""]] {
+        let cases = [
+            (snapshotArguments: [String](), expectedMessage: "require --snapshot"),
+            (snapshotArguments: ["--snapshot", ""], expectedMessage: "Invalid snapshot reference"),
+        ]
+        for testCase in cases {
             let context = await makeContext()
             let result = try await InProcessCommandRunner.run(
                 ["click", "--at", "100,200", "--pid", "12345", "--global"] +
-                    snapshotArguments + ["--json"],
+                    testCase.snapshotArguments + ["--json"],
                 services: context.services
             )
 
             #expect(result.exitStatus == 1)
-            #expect(result.combinedOutput.contains("require --snapshot"))
+            #expect(result.combinedOutput.contains(testCase.expectedMessage))
             let calls = await automationState(context) { $0.targetedClickCalls }
             #expect(calls.isEmpty)
             #expect(context.snapshots.invalidationCutoffs.isEmpty)

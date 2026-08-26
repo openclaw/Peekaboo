@@ -24,6 +24,9 @@ read_when:
 - Implicit screen-capture observation, AX-tree inspection, browser, and snapshot-state commands first prefer the exact
   CLI build's build-scoped daemon and may auto-start it before considering the GUI host. Use the command's actual
   requirements—not the generic status ordering—to interpret which reported host it will select.
+- A command carrying a canonical `ps1_` snapshot reference uses unique authenticated producer affinity instead of the
+  generic ordering, including local, daemon, Peekaboo.app, Claude.app, and Clawdbot.app candidates. Zero or multiple
+  owners fail before dispatch with no fallback or replay. See [`bridge-host.md`](../bridge-host.md#snapshot-authority).
 - `--no-remote` (or `PEEKABOO_NO_REMOTE`) skips remote probing and forces local execution.
 - `--bridge-socket <path>` (or `PEEKABOO_BRIDGE_SOCKET`) overrides host discovery and probes only that socket.
   The override is strict: an unavailable or incompatible host fails non-zero instead of silently using the local
@@ -36,6 +39,11 @@ read_when:
 - Structured status includes optional `hostIdentity` and `hostCapabilities` from current hosts.
   `hostIdentity` carries the serving PID/process-start identity plus bundle versions and the exact
   executable code-signature hash; older hosts omit these fields and continue to decode normally.
+- Protocol 1.34 negotiates `nativeBrowserConnectionBinding`, `producerBoundSnapshotReferences`, and
+  `targetedClickAccessibilityValueDelivery` independently. The snapshot and targeted-click additions require matching
+  optional raw client offers, so old 1.34 clients are not shown the unknown `ownsSnapshot` operation, an omitted click
+  policy retains legacy value fallback, and either explicit allow or deny requires a host that understands the field.
+  New clients refuse hosts that cannot publish producer-bound references.
 - Protocol 1.29 binds every post-handshake call to one ephemeral listener identity and one listener-signed logical
   operation session, then returns a signed terminal receipt. The listener remains stable for the socket lifetime;
   bounded peer sessions roll over without restarting the host or invalidating older in-flight receipts. Each session

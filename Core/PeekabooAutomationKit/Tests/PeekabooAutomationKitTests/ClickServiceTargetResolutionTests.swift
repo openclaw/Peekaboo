@@ -8,11 +8,14 @@ import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 import enum PeekabooFoundation.ScrollDirection
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
 @Suite(.serialized)
 struct ClickServiceTargetResolutionTests {
+    private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
+
     @Test
     @MainActor
     func `generation-pinned click rejects recycled PID before dispatch`() async throws {
@@ -41,7 +44,7 @@ struct ClickServiceTargetResolutionTests {
         let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 71)
         let action = ClickSuccessfulActionInputDriver()
         let detection = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [DetectedElement(
                 id: "B1",
@@ -61,8 +64,8 @@ struct ClickServiceTargetResolutionTests {
                         ownerProcessIdentifier: identity.processIdentifier,
                         ownerProcessStartIdentity: identity.processStartIdentity,
                         capturedBounds: Self.testWindowBounds))))
-        let service = UIAutomationService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+        let service = try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: action,
             automationElementResolver: ClickFixedAutomationElementResolver(
@@ -74,7 +77,7 @@ struct ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 expectedProcessIdentity: identity)
         }
         #expect(action.performedActionNames.isEmpty)
@@ -89,7 +92,7 @@ struct ClickServiceTargetResolutionTests {
         let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
         try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let detection = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [DetectedElement(
                     id: "B1",
@@ -109,8 +112,8 @@ struct ClickServiceTargetResolutionTests {
                             ownerProcessIdentifier: identity.processIdentifier,
                             ownerProcessStartIdentity: identity.processStartIdentity,
                             capturedBounds: Self.testWindowBounds))))
-            let service = UIAutomationService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+            let service = try await UIAutomationService(
+                snapshotManager: InMemorySnapshotManager.containing(detection),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
                 actionInputDriver: action,
                 automationElementResolver: ClickFixedAutomationElementResolver(),
@@ -121,7 +124,7 @@ struct ClickServiceTargetResolutionTests {
                 try await service.click(
                     target: .elementId("B1"),
                     clickType: .single,
-                    snapshotId: "snapshot",
+                    snapshotId: Self.snapshotID,
                     expectedProcessIdentity: identity)
                 Issue.record("Expected post-dispatch process drift")
             } catch let failure as DesktopActionFailure {
@@ -143,20 +146,20 @@ struct ClickServiceTargetResolutionTests {
             bounds: CGRect(x: 20, y: 30, width: 100, height: 40),
             attributes: ["identifier": "peekaboo-post-validation-never-focused"])
         let detection = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "test"))
 
         for target in [ClickTarget.elementId("B1"), .query("Post Validation Target")] {
             let synthetic = ClickRecordingSyntheticInputDriver(failGlobalClickAt: 2)
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detection),
                 inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
                 syntheticInputDriver: synthetic)
 
             do {
-                _ = try await service.click(target: target, clickType: .single, snapshotId: "snapshot")
+                _ = try await service.click(target: target, clickType: .single, snapshotId: Self.snapshotID)
                 Issue.record("Expected post-click focus validation failure")
             } catch let failure as DesktopActionFailure {
                 #expect(failure.outcome.state == .dispatchedUnverified)
@@ -226,18 +229,18 @@ struct ClickServiceTargetResolutionTests {
             isSelected: nil,
             attributes: [:])
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(other: [element]),
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "test"))
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic,
             automationElementResolver: ClickMissingAutomationElementResolver())
 
-        let result = try await service.click(target: .elementId("C1"), clickType: .right, snapshotId: "snapshot")
+        let result = try await service.click(target: .elementId("C1"), clickType: .right, snapshotId: Self.snapshotID)
 
         #expect(result.path == .synth)
         #expect(result.fallbackReason == .missingElement)
@@ -248,7 +251,7 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `OCR semantic element refuses before exact owner delivery or synthetic fallback`() async {
+    func `OCR semantic element refuses before exact owner delivery or synthetic fallback`() async throws {
         let pid = getpid()
         let element = DetectedElement(
             id: "ocr_1",
@@ -260,7 +263,7 @@ struct ClickServiceTargetResolutionTests {
                 "confidence": "0.93",
             ])
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/calendar.png",
             elements: DetectedElements(other: [element]),
             metadata: DetectionMetadata(
@@ -271,8 +274,8 @@ struct ClickServiceTargetResolutionTests {
         let action = ClickSuccessfulActionInputDriver()
         let synthetic = ClickRecordingSyntheticInputDriver()
         let resolver = ClickFixedAutomationElementResolver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
@@ -283,7 +286,7 @@ struct ClickServiceTargetResolutionTests {
             _ = try await service.click(
                 target: .elementId("ocr_1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
             Issue.record("Expected OCR semantic evidence refusal")
         } catch let PeekabooError.invalidInput(message) {
@@ -316,7 +319,7 @@ struct ClickServiceTargetResolutionTests {
             label: "August",
             bounds: CGRect(x: 10, y: 40, width: 100, height: 20))
         let result = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/calendar.png",
             elements: DetectedElements(other: [ocr, ordinary]),
             metadata: DetectionMetadata(detectionTime: 0, elementCount: 2, method: "test"))
@@ -376,7 +379,7 @@ struct ClickServiceTargetResolutionTests {
                 label: "Background Button",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -391,8 +394,8 @@ struct ClickServiceTargetResolutionTests {
                 evidence: .deliveryAccepted,
                 unitCount: unitCount)
             let synthetic = ClickRecordingSyntheticInputDriver(targetedClickOutcome: expectedOutcome)
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: action,
                 syntheticInputDriver: synthetic,
@@ -402,7 +405,7 @@ struct ClickServiceTargetResolutionTests {
             let result = try await service.click(
                 target: .elementId("B1"),
                 clickType: .double,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
 
             #expect(result.path == .synth)
@@ -437,7 +440,7 @@ struct ClickServiceTargetResolutionTests {
                 isSelected: nil,
                 attributes: ["identifier": "background-button", "role": "AXButton"])
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -446,8 +449,8 @@ struct ClickServiceTargetResolutionTests {
                     method: "test",
                     windowContext: Self.exactWindowContext(processIdentifier: pid)))
             let synthetic = ClickRecordingSyntheticInputDriver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 syntheticInputDriver: synthetic,
                 exactWindowIdentityValidator: { _, _ in true })
@@ -455,7 +458,7 @@ struct ClickServiceTargetResolutionTests {
             let result = try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
 
             #expect(result.path == .synth)
@@ -484,7 +487,7 @@ struct ClickServiceTargetResolutionTests {
                 label: "Background Button",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -495,8 +498,8 @@ struct ClickServiceTargetResolutionTests {
             let action = ClickSuccessfulActionInputDriver()
             let synthetic = ClickRecordingSyntheticInputDriver()
             let resolver = ClickFixedAutomationElementResolver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: action,
                 syntheticInputDriver: synthetic,
@@ -506,7 +509,7 @@ struct ClickServiceTargetResolutionTests {
             let result = try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
 
             #expect(result.path == .action)
@@ -530,7 +533,7 @@ struct ClickServiceTargetResolutionTests {
                 label: "Background Button",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -541,8 +544,8 @@ struct ClickServiceTargetResolutionTests {
             let action = ClickSuccessfulActionInputDriver()
             let synthetic = ClickRecordingSyntheticInputDriver()
             let resolver = ClickFixedAutomationElementResolver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: action,
                 syntheticInputDriver: synthetic,
@@ -552,7 +555,7 @@ struct ClickServiceTargetResolutionTests {
             let result = try await service.click(
                 target: .elementId("B1"),
                 clickType: .right,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
 
             #expect(result.path == .action)
@@ -565,17 +568,17 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background element right click reports synthetic permission when AX fallback fails`() async {
+    func `background element right click reports synthetic permission when AX fallback fails`() async throws {
         let pid = getpid()
         let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
-        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+        try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
                 type: .button,
                 label: "Background Button",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -586,8 +589,8 @@ struct ClickServiceTargetResolutionTests {
             let synthetic = ClickRecordingSyntheticInputDriver(
                 targetedClickError: PeekabooError.permissionDeniedEventSynthesizing)
             let resolver = ClickFixedAutomationElementResolver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: ClickFailingActionInputDriver(error: .permissionDenied),
                 syntheticInputDriver: synthetic,
@@ -598,7 +601,7 @@ struct ClickServiceTargetResolutionTests {
                 _ = try await service.click(
                     target: .elementId("B1"),
                     clickType: .right,
-                    snapshotId: "snapshot",
+                    snapshotId: Self.snapshotID,
                     targetProcessIdentifier: pid)
                 Issue.record("Expected Event Synthesizing permission error")
             } catch PeekabooError.permissionDeniedEventSynthesizing {
@@ -622,7 +625,7 @@ struct ClickServiceTargetResolutionTests {
             label: "Background Button",
             bounds: .init(x: 20, y: 30, width: 100, height: 40))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(
@@ -633,8 +636,8 @@ struct ClickServiceTargetResolutionTests {
         let action = ClickSuccessfulActionInputDriver()
         let synthetic = ClickRecordingSyntheticInputDriver()
         let resolver = ClickFixedAutomationElementResolver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
@@ -644,7 +647,7 @@ struct ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
         }
 
@@ -667,7 +670,7 @@ struct ClickServiceTargetResolutionTests {
                 DetectedElementRootPolicy.sourceAttribute: DetectedElementRootPolicy.applicationMenuBarSource,
             ])
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(menus: [element]),
             metadata: DetectionMetadata(
@@ -678,8 +681,8 @@ struct ClickServiceTargetResolutionTests {
         let action = ClickSuccessfulActionInputDriver()
         let synthetic = ClickRecordingSyntheticInputDriver()
         let resolver = ClickFixedAutomationElementResolver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
@@ -688,7 +691,7 @@ struct ClickServiceTargetResolutionTests {
         let result = try await service.click(
             target: .elementId("M1"),
             clickType: .single,
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             targetProcessIdentifier: pid)
 
         #expect(result.path == .action)
@@ -707,7 +710,7 @@ struct ClickServiceTargetResolutionTests {
             label: "Different Button",
             bounds: .init(x: 20, y: 30, width: 100, height: 40))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(
@@ -717,8 +720,8 @@ struct ClickServiceTargetResolutionTests {
                 windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let action = ClickSuccessfulActionInputDriver()
         let resolver = ClickFixedAutomationElementResolver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
             automationElementResolver: resolver,
@@ -727,7 +730,7 @@ struct ClickServiceTargetResolutionTests {
         let result = try await service.click(
             target: .query("Live Button"),
             clickType: .single,
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             targetProcessIdentifier: pid)
 
         #expect(result.path == .action)
@@ -738,7 +741,7 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background missing snapshot query never synthesizes outside its window`() async {
+    func `background missing snapshot query never synthesizes outside its window`() async throws {
         let pid = getpid()
         let element = DetectedElement(
             id: "B1",
@@ -746,7 +749,7 @@ struct ClickServiceTargetResolutionTests {
             label: "Different Button",
             bounds: .init(x: 20, y: 30, width: 100, height: 40))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(
@@ -756,8 +759,8 @@ struct ClickServiceTargetResolutionTests {
                 windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let synthetic = ClickRecordingSyntheticInputDriver()
         let resolver = ClickFixedAutomationElementResolver(resolveQueries: false)
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic,
             automationElementResolver: resolver,
@@ -767,7 +770,7 @@ struct ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .query("Missing Button"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
         }
 
@@ -778,17 +781,17 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background element click rejects vanished window without snapshot bounds`() async {
+    func `background element click rejects vanished window without snapshot bounds`() async throws {
         let pid = getpid()
         let tracker = ClickWindowTracker(bounds: nil)
-        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+        try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
                 type: .button,
                 label: "Background Button",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -800,8 +803,8 @@ struct ClickServiceTargetResolutionTests {
                         windowID: 42)))
             let action = ClickSuccessfulActionInputDriver()
             let synthetic = ClickRecordingSyntheticInputDriver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: action,
                 syntheticInputDriver: synthetic,
@@ -811,7 +814,7 @@ struct ClickServiceTargetResolutionTests {
                 try await service.click(
                     target: .elementId("B1"),
                     clickType: .single,
-                    snapshotId: "snapshot",
+                    snapshotId: Self.snapshotID,
                     targetProcessIdentifier: pid)
             }
 
@@ -832,7 +835,7 @@ struct ClickServiceTargetResolutionTests {
                 label: "Duplicate",
                 bounds: CGRect(x: 120, y: 140, width: 80, height: 30))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -848,8 +851,8 @@ struct ClickServiceTargetResolutionTests {
                             capturedBounds: CGRect(x: 100, y: 100, width: 300, height: 300)))))
             let resolver = ClickFixedAutomationElementResolver()
             let synthetic = ClickRecordingSyntheticInputDriver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: ClickSuccessfulActionInputDriver(),
                 syntheticInputDriver: synthetic,
@@ -859,7 +862,7 @@ struct ClickServiceTargetResolutionTests {
             let result = try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
 
             #expect(result.path == .action)
@@ -883,7 +886,7 @@ struct ClickServiceTargetResolutionTests {
                 label: "Background Button",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -892,8 +895,8 @@ struct ClickServiceTargetResolutionTests {
                     method: "test",
                     windowContext: Self.exactWindowContext(processIdentifier: pid)))
             let synthetic = ClickRecordingSyntheticInputDriver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: ClickFailingActionInputDriver(error: .permissionDenied),
                 syntheticInputDriver: synthetic,
@@ -903,7 +906,7 @@ struct ClickServiceTargetResolutionTests {
             let result = try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid)
 
             #expect(result.path == .synth)
@@ -921,7 +924,7 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background element click rejects snapshot from another process`() async {
+    func `background element click rejects snapshot from another process`() async throws {
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -929,7 +932,7 @@ struct ClickServiceTargetResolutionTests {
             bounds: .init(x: 20, y: 30, width: 100, height: 40),
             attributes: ["identifier": "background-button", "role": "AXButton"])
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(
@@ -938,8 +941,8 @@ struct ClickServiceTargetResolutionTests {
                 method: "test",
                 windowContext: WindowContext(applicationProcessId: 222)))
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic)
 
@@ -947,7 +950,7 @@ struct ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: 333)
         }
         #expect(synthetic.events.isEmpty)
@@ -955,20 +958,20 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background element click rejects snapshot without process identity`() async {
+    func `background element click rejects snapshot without process identity`() async throws {
         let element = DetectedElement(
             id: "B1",
             type: .button,
             label: "Background Button",
             bounds: .init(x: 20, y: 30, width: 100, height: 40))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "test"))
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic)
 
@@ -976,7 +979,7 @@ struct ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: getpid())
         }
         #expect(synthetic.events.isEmpty)
@@ -984,17 +987,17 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `targeted action-only permission denial maps to accessibility permission`() async {
+    func `targeted action-only permission denial maps to accessibility permission`() async throws {
         let pid = getpid()
         let tracker = ClickWindowTracker(bounds: Self.testWindowBounds)
-        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+        try await WindowMovementTrackingProviderScope.withProvider(tracker) {
             let element = DetectedElement(
                 id: "B1",
                 type: .button,
                 label: "Background Button",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -1002,8 +1005,8 @@ struct ClickServiceTargetResolutionTests {
                     elementCount: 1,
                     method: "test",
                     windowContext: Self.exactWindowContext(processIdentifier: pid)))
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
                 actionInputDriver: ClickFailingActionInputDriver(error: .permissionDenied),
                 automationElementResolver: ClickFixedAutomationElementResolver(),
@@ -1013,7 +1016,7 @@ struct ClickServiceTargetResolutionTests {
                 try await service.click(
                     target: .elementId("B1"),
                     clickType: .single,
-                    snapshotId: "snapshot",
+                    snapshotId: Self.snapshotID,
                     targetProcessIdentifier: pid)
                 Issue.record("Expected Accessibility permission error")
             } catch PeekabooError.permissionDeniedAccessibility {
@@ -1130,14 +1133,14 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background synth only click rejects snapshot from another process`() async {
+    func `background synth only click rejects snapshot from another process`() async throws {
         let element = DetectedElement(
             id: "B1",
             type: .button,
             label: "Background Button",
             bounds: .init(x: 20, y: 30, width: 100, height: 40))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(
@@ -1146,8 +1149,8 @@ struct ClickServiceTargetResolutionTests {
                 method: "test",
                 windowContext: WindowContext(applicationProcessId: 222)))
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             syntheticInputDriver: synthetic)
 
@@ -1155,7 +1158,7 @@ struct ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: 333)
         }
         #expect(synthetic.events.isEmpty)
@@ -1217,7 +1220,7 @@ struct ClickServiceTargetResolutionTests {
             attributes: ["identifier": "basic-text-field", "role": "AXTextField"])
 
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [focusButton], textFields: [basicField]),
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 2, method: "test"))
@@ -1249,7 +1252,7 @@ struct ClickServiceTargetResolutionTests {
             attributes: ["identifier": "basic-text-field", "role": "AXTextField"])
 
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(textFields: [higher, lower]),
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 2, method: "test"))
@@ -1297,7 +1300,7 @@ extension ClickServiceTargetResolutionTests {
                 label: "Settings",
                 bounds: .init(x: 20, y: 30, width: 100, height: 40))
             let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 screenshotPath: "/tmp/shot.png",
                 elements: DetectedElements(buttons: [element]),
                 metadata: DetectionMetadata(
@@ -1307,8 +1310,8 @@ extension ClickServiceTargetResolutionTests {
                     windowContext: Self.exactWindowContext(processIdentifier: pid)))
             let action = ClickSuccessfulActionInputDriver()
             let synthetic = ClickRecordingSyntheticInputDriver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            let service = try await ClickService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 actionInputDriver: action,
                 syntheticInputDriver: synthetic,
@@ -1320,7 +1323,7 @@ extension ClickServiceTargetResolutionTests {
                 _ = try await service.click(
                     target: .elementId("TAB1"),
                     clickType: .single,
-                    snapshotId: "snapshot",
+                    snapshotId: Self.snapshotID,
                     targetProcessIdentifier: pid)
                 Issue.record("Expected an indeterminate accepted tab press")
             } catch let failure as DesktopActionFailure {

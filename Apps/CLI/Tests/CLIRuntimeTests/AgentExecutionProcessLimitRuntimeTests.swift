@@ -99,7 +99,7 @@ struct AgentExecutionProcessLimitRuntimeTests {
     }
 
     @Test
-    func `Real gated Agent completes a provider tool provider loop through nested Bridge`() async throws {
+    func `Real gated Agent refuses receiptless custom Bridge before provider execution`() async throws {
         let bridge = try ConcurrentGatedBridgePeer()
         let binaryPath = try TestChildProcess.peekabooBinaryURL().path
         let challenge = String(repeating: "b", count: 64)
@@ -141,29 +141,13 @@ struct AgentExecutionProcessLimitRuntimeTests {
         responder.cancel()
         _ = try? await responder.value
 
-        #expect(
-            result.waitStatus == 0,
-            """
-            Agent stdout: \(String(data: result.output, encoding: .utf8) ?? "<non-UTF8>"); \
-            stderr: \(String(data: result.standardError, encoding: .utf8) ?? "<non-UTF8>"); \
-            accepted: \(acceptedConnections); requests: \(requestBodies)
-            """
-        )
+        #expect(result.waitStatus != 0)
         let response = try #require(JSONSerialization.jsonObject(with: result.output) as? [String: Any])
-        let payload = try #require(response["result"] as? [String: Any])
-        let trace = try #require(payload["executionTrace"] as? [String: Any])
-        let entries = try #require(trace["entries"] as? [[String: Any]])
-        #expect(response["success"] as? Bool == true)
-        #expect(
-            payload["content"] as? String == "agent-provider-tool-ok",
-            "Bridge requests: \(requestBodies)"
-        )
-        #expect(entries.map { $0["name"] as? String } == ["app"])
-        #expect(
-            entries.map { $0["disposition"] as? String } == ["executed/succeeded"],
-            "Agent stdout: \(String(data: result.output, encoding: .utf8) ?? "<non-UTF8>")"
-        )
-        #expect(trace["totalCallCount"] as? Int == 1)
+        let error = try #require(response["error"] as? [String: Any])
+        #expect(response["success"] as? Bool == false)
+        #expect(error["code"] as? String == "BRIDGE_UNAVAILABLE")
+        #expect((error["message"] as? String)?.contains(bridge.socketPath) == true)
+        #expect(result.standardError.isEmpty)
 
         let decodedRequests = try requests.map {
             try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeRequest.self, from: $0)
@@ -182,13 +166,11 @@ struct AgentExecutionProcessLimitRuntimeTests {
             return request.operation
         }
         let invalidationCount = operations.count(where: { $0 == .invalidateImplicitLatestSnapshot })
-        // SCK safety inspection and runtime selection retain one authenticated client/session.
         #expect(handshakeCount == 1, "Bridge requests: \(requestBodies)")
-        #expect((0...1).contains(invalidationCount), "Bridge requests: \(requestBodies)")
-        #expect(operations.count(where: { $0 == .getFrontmostApplication }) == 2)
-        #expect(operations.count(where: { $0 == .getFocusedWindow }) == 2)
-        #expect(operations.count(where: { $0 == .listApplications }) == 3)
-        #expect(requests.count == 8 + invalidationCount, "Bridge requests: \(requestBodies)")
+        #expect(invalidationCount == 0)
+        #expect(operations.isEmpty)
+        #expect(acceptedConnections == 1)
+        #expect(requests.count == 1)
     }
 
     private static func response(for request: PeekabooBridgeRequest) -> PeekabooBridgeResponse {

@@ -6,10 +6,14 @@ import enum PeekabooFoundation.ClickType
 import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
 struct ClickServiceExactWindowTests {
+    private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
+    private static let incompleteSnapshotID = SnapshotReferenceFixtures.second.rawValue
+
     @Test
     @MainActor
     func `Middle and triple clicks use only the exact-window routed synthesis owner`() async throws {
@@ -92,7 +96,7 @@ struct ClickServiceExactWindowTests {
             processStartIdentity: 72)
         let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
         let detection = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(buttons: [DetectedElement(
                 id: "B1",
@@ -112,8 +116,8 @@ struct ClickServiceExactWindowTests {
                         processIdentity: replacementProcess,
                         bounds: bounds))))
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             syntheticInputDriver: synthetic,
             exactWindowIdentityValidator: { _, _ in true },
@@ -123,7 +127,7 @@ struct ClickServiceExactWindowTests {
             _ = try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pinnedProcess.processIdentifier,
                 expectedProcessIdentity: pinnedProcess)
         }
@@ -142,7 +146,7 @@ struct ClickServiceExactWindowTests {
             processIdentity: process,
             bounds: nil)
         let detection = AutomationTestFixtures.detectionResult(
-            snapshotID: "incomplete",
+            snapshotID: Self.incompleteSnapshotID,
             elements: DetectedElements(buttons: [AutomationTestFixtures.detectedElement(
                 id: "B1",
                 type: .button,
@@ -153,8 +157,8 @@ struct ClickServiceExactWindowTests {
                 windowBounds: bounds,
                 windowMutationIdentity: identity))
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             syntheticInputDriver: synthetic,
             exactWindowIdentityValidator: { _, _ in
@@ -422,7 +426,7 @@ struct ClickServiceExactWindowTests {
 
     @Test
     @MainActor
-    func `Application menu target cannot use a document window`() async {
+    func `Application menu target cannot use a document window`() async throws {
         let pid = getpid()
         let menuItem = DetectedElement(
             id: "M1",
@@ -434,7 +438,7 @@ struct ClickServiceExactWindowTests {
                 DetectedElementRootPolicy.sourceAttribute: DetectedElementRootPolicy.applicationMenuBarSource,
             ])
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(menus: [menuItem]),
             metadata: DetectionMetadata(
@@ -443,8 +447,8 @@ struct ClickServiceExactWindowTests {
                 method: "test",
                 windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ClickService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             syntheticInputDriver: synthetic)
 
@@ -452,7 +456,7 @@ struct ClickServiceExactWindowTests {
             try await service.click(
                 target: .elementId("M1"),
                 clickType: .single,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: pid,
                 targetWindowID: 42)
         }
@@ -482,7 +486,7 @@ struct ClickServiceExactWindowTests {
 
             for target in targets {
                 let detectionResult = ElementDetectionResult(
-                    snapshotId: "snapshot",
+                    snapshotId: Self.snapshotID,
                     screenshotPath: "/tmp/shot.png",
                     elements: DetectedElements(menus: [target]),
                     metadata: DetectionMetadata(
@@ -498,8 +502,8 @@ struct ClickServiceExactWindowTests {
                                 ownerProcessIdentifier: pid,
                                 ownerProcessStartIdentity: 1))))
                 let synthetic = ClickRecordingSyntheticInputDriver()
-                let service = ClickService(
-                    snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+                let service = try await ClickService(
+                    snapshotManager: InMemorySnapshotManager.containing(detectionResult),
                     inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
                     syntheticInputDriver: synthetic,
                     exactWindowIdentityValidator: { _, _ in true })
@@ -507,7 +511,7 @@ struct ClickServiceExactWindowTests {
                 let result = try await service.click(
                     target: .elementId(target.id),
                     clickType: .single,
-                    snapshotId: "snapshot",
+                    snapshotId: Self.snapshotID,
                     targetProcessIdentifier: pid,
                     targetWindowID: 42,
                     expectedWindowIdentity: WindowMutationIdentity(

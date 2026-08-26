@@ -15,6 +15,17 @@ build-scoped daemon and may auto-start it before considering a healthy Peekaboo.
 AX-tree-only forms because their snapshots and capability decisions are host-memory state. An explicit
 `--bridge-socket`, a custom daemon socket, or `--no-remote` remains authoritative.
 
+Every reusable snapshot is identified by a producer-generated reference with the exact form `ps1_` followed by 32
+lowercase ASCII hexadecimal digits, for example `ps1_0123456789abcdef0123456789abcdef`. The 32-digit suffix contains
+128 random bits. The selected local or Bridge producer reserves that reference before storing detection results or
+screenshots; later store operations can update only a reference that producer already owns and cannot create one.
+
+A later command that supplies a concrete reference finds its unique live authenticated producer before applying the
+normal daemon/app host preferences. Explicit routing remains a hard boundary: `--bridge-socket` probes only that host,
+and `--no-remote` checks only the local process. Either form refuses before action when its selected host does not own
+the reference. Legacy timestamp IDs are never accepted as action references; [clean](clean.md) recognizes only their
+strict on-disk shape for cache removal.
+
 ```bash
 # Capture frontmost window, print JSON, and save an annotated PNG
 peekaboo see --json --annotate --path /tmp/see.png
@@ -86,6 +97,11 @@ Pixel-only `see --no-elements` captures without `--path` write a generated file 
 
 Remote ROI requires Bridge protocol 1.21 with enabled observation and atomic snapshot publication and is rejected before dispatch against an older or restricted host. Returned files and snapshots remain quarantined or unpublished until the client verifies both the exact-window/viewport receipt and every raster's real cropped pixel dimensions. The host commits the snapshot raster, element map, and optional annotation as one transaction. If a validated snapshot is saved but a caller-visible file cannot be installed afterward, the observation remains successful with a warning and omits the unavailable file paths; the independently managed snapshot stays usable. Ordinary full-window `see` remains compatible with older desktop-observation hosts.
 
+Producer-bound references use an independently negotiated Bridge 1.34 client/host capability. A current client does
+not infer support from the `1.34` version number alone: an older 1.34 host that cannot advertise producer ownership is
+refused before a snapshot is published. The separate Bridge 1.34 targeted Accessibility-value delivery capability
+controls click behavior and does not grant snapshot ownership.
+
 ROI coordinates are `x,y,width,height` in top-left-origin, window-local logical points. `--retina` changes the delivered pixel density, not that coordinate system. Pixel alignment can expand a fractional logical rectangle by less than one source pixel; JSON reports both the requested and delivered rectangles.
 
 ROI JSON adds `coordinate_context.viewport`:
@@ -112,7 +128,7 @@ This fallback only runs inside the resolved window (it won’t hop between windo
 
 When `--json` is supplied, the CLI prints:
 
-- `snapshot_id` – reference for subsequent `click --snapshot …` and `type --snapshot …`.
+- `snapshot_id` – producer-bound `ps1_` reference for subsequent `click --snapshot …` and `type --snapshot …`.
 - `semantic_scope`, `snapshot_reusable`, and `mutation_targeting_available` – authority for the returned semantics. `application_partial` always carries `snapshot_id: null`, an empty `ui_map`, both authority booleans `false`, `interactable_count: 0`, and no actionable/value-settable element claims; its elements are read-only context from the exact window's attested process, not evidence for the requested exact window.
 - `ui_map` – path to the persisted snapshot file (`~/.peekaboo/snapshots/<id>/snapshot.json`).
 - `ui_elements` – flattened AX nodes with honest `is_actionable` and optional `is_value_settable` capability metadata.
@@ -135,6 +151,9 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 ## Troubleshooting tips
 
 - If the CLI reports **blind typing**, pass an explicit `--app`, `--pid`, `--window-id`, or fresh `--snapshot` so `type` can resolve a background target process, or add `--foreground` when the target app requires focused keyboard input.
+- If a concrete snapshot reports no unique live host affinity, keep the producing host running or capture again. Do
+  not rewrite the reference, switch to a legacy timestamp ID, or force a different Bridge socket: explicit sockets
+  and `--no-remote` intentionally refuse references they do not own.
 - If JSON/text output reports an AX time deadline, rerun with a longer `--timeout` or a narrower exact-window target. Increase `--depth`, `--max-elements`, or `--max-children` only when the corresponding structural cap is reported. A tree-only inspection that reaches a cap before finding any element exits nonzero instead of publishing an unusable empty snapshot; useful partial evidence remains successful and explicitly truncated.
 - `ACCESSIBILITY_INCOMPLETE` means the exact target exists but an AX-only or combined screenshot+AX observation returned no usable Accessibility elements. This includes legacy Bridge responses that omit the incomplete-read marker: an empty exact-window map is not clean success. Combined failure preserves a valid raster at an explicitly requested `--path` but does not publish the unusable element snapshot. A read-only `--tree --no-screenshot` request can instead return nonempty `application_partial` semantics when the exact WindowServer window still belongs to the requested process but has no AX-window counterpart. That result is explicitly incomplete, has no reusable snapshot or mutation authority, and never claims its elements came from the requested window. Retry the same exact observation once for fresh evidence; if it persists, use `--no-elements` for explicit screenshot-only evidence or add OCR. This code never means the element is absent and never substitutes for `TIMEOUT`; useful nonempty partial evidence remains successful with its warning.
 - Missing text fields after an explicit `--web-focus` retry usually means the page is shielding its inputs from AX entirely. For Chrome targets, use the `browser` tool (`status` → `connect` → `snapshot`/`fill`/`click`) after enabling Chrome remote debugging; otherwise rely on image-based hit tests.

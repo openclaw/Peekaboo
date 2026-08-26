@@ -185,17 +185,17 @@ struct UIAutomationActionOutcomeProvidingTests {
             outcome: expected,
             storedValue: "old",
             setValueAnchorPoint: driverAnchor)
-        let resultService = self.makeElementActionService(actionDriver: resultDriver)
-        let legacyService = self.makeElementActionService(actionDriver: legacyDriver)
+        let resultService = try await self.makeElementActionService(actionDriver: resultDriver)
+        let legacyService = try await self.makeElementActionService(actionDriver: legacyDriver)
 
         let result = try await resultService.setValueWithOutcome(
             target: "E1",
             value: .string("new"),
-            snapshotId: "snapshot")
+            snapshotId: Self.elementSnapshotID)
         let legacy = try await legacyService.setValue(
             target: "E1",
             value: .string("new"),
-            snapshotId: "snapshot")
+            snapshotId: Self.elementSnapshotID)
 
         #expect(result.outcome == expected)
         #expect(result.payload == legacy)
@@ -215,17 +215,17 @@ struct UIAutomationActionOutcomeProvidingTests {
         let expected = Self.outcome(mechanism: .accessibilityAction, mode: .background)
         let resultDriver = OutcomeActionInputDriver(outcome: expected)
         let legacyDriver = OutcomeActionInputDriver(outcome: expected)
-        let resultService = self.makeElementActionService(actionDriver: resultDriver)
-        let legacyService = self.makeElementActionService(actionDriver: legacyDriver)
+        let resultService = try await self.makeElementActionService(actionDriver: resultDriver)
+        let legacyService = try await self.makeElementActionService(actionDriver: legacyDriver)
 
         let result = try await resultService.performActionWithOutcome(
             target: "E1",
             actionName: "AXPress",
-            snapshotId: "snapshot")
+            snapshotId: Self.elementSnapshotID)
         let legacy = try await legacyService.performAction(
             target: "E1",
             actionName: "AXPress",
-            snapshotId: "snapshot")
+            snapshotId: Self.elementSnapshotID)
 
         #expect(result.outcome == expected)
         #expect(result.payload == legacy)
@@ -263,7 +263,7 @@ struct UIAutomationActionOutcomeProvidingTests {
             focusedElement: focused)
         let expectedClick = Self.outcome(mechanism: .windowTargetedEvents, mode: .background)
         let synthetic = OutcomeSyntheticInputDriver(clickOutcome: expectedClick)
-        let service = self.makeTargetedService(
+        let service = try await self.makeTargetedService(
             synthetic: synthetic,
             generation: generation,
             windowIdentity: windowIdentity,
@@ -279,17 +279,17 @@ struct UIAutomationActionOutcomeProvidingTests {
             let pidClick = try await service.clickWithOutcome(
                 target: clickTarget,
                 clickType: .single,
-                snapshotId: "targeted",
+                snapshotId: Self.targetedSnapshotID,
                 targetProcessIdentifier: getpid())
             let processClick = try await service.clickWithOutcome(
                 target: clickTarget,
                 clickType: .single,
-                snapshotId: "targeted",
+                snapshotId: Self.targetedSnapshotID,
                 expectedProcessIdentity: processIdentity)
             let windowClick = try await service.clickWithOutcome(
                 target: clickTarget,
                 clickType: .single,
-                snapshotId: "targeted",
+                snapshotId: Self.targetedSnapshotID,
                 expectedWindowIdentity: windowIdentity,
                 expectedWindowBounds: bounds)
             return [pidClick, processClick, windowClick]
@@ -398,7 +398,10 @@ struct UIAutomationActionOutcomeProvidingTests {
             })
     }
 
-    private func makeElementActionService(actionDriver: OutcomeActionInputDriver) -> UIAutomationService {
+    private static let elementSnapshotID = SnapshotReferenceFixtures.first.rawValue
+    private static let targetedSnapshotID = SnapshotReferenceFixtures.second.rawValue
+
+    private func makeElementActionService(actionDriver: OutcomeActionInputDriver) async throws -> UIAutomationService {
         let detected = AutomationTestFixtures.detectedElement(
             id: "E1",
             type: .textField,
@@ -406,15 +409,15 @@ struct UIAutomationActionOutcomeProvidingTests {
         let processIdentity = AutomationTestFixtures.processIdentity(processIdentifier: getpid())
         let window = AutomationTestFixtures.window(processIdentity: processIdentity)
         let detection = AutomationTestFixtures.detectionResult(
-            snapshotID: "snapshot",
+            snapshotID: Self.elementSnapshotID,
             elements: DetectedElements(textFields: [detected]),
             windowContext: WindowContext(
                 applicationProcessId: getpid(),
                 windowID: window.windowID,
                 windowBounds: window.bounds,
                 windowMutationIdentity: window.mutationIdentity))
-        return UIAutomationService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+        return try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: actionDriver,
             automationElementResolver: FixedOutcomeAutomationElementResolver(),
@@ -429,7 +432,7 @@ struct UIAutomationActionOutcomeProvidingTests {
         synthetic: OutcomeSyntheticInputDriver,
         generation: UInt64,
         windowIdentity: WindowMutationIdentity,
-        focused: FocusedElementIdentity) -> UIAutomationService
+        focused: FocusedElementIdentity) async throws -> UIAutomationService
     {
         let detected = AutomationTestFixtures.detectedElement(
             id: "B1",
@@ -445,11 +448,11 @@ struct UIAutomationActionOutcomeProvidingTests {
             windowBounds: windowIdentity.capturedBounds,
             windowMutationIdentity: windowIdentity)
         let detection = AutomationTestFixtures.detectionResult(
-            snapshotID: "targeted",
+            snapshotID: Self.targetedSnapshotID,
             elements: DetectedElements(buttons: [detected]),
             windowContext: context)
-        return UIAutomationService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+        return try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             actionInputDriver: OutcomeActionInputDriver(outcome: Self.backgroundOutcome),
             syntheticInputDriver: synthetic,

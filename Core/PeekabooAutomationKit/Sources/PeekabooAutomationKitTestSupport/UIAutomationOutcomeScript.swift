@@ -193,6 +193,38 @@ extension ScriptedUIAutomationActionOutcomeProviding {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        guard let service = self as? any TargetedClickServiceProtocol,
+              service.supportsTargetedClicks,
+              service.supportsProcessGenerationPinnedClicks,
+              allowsAccessibilityValueDelivery || service.supportsTargetedClickAccessibilityValueDelivery
+        else {
+            throw PeekabooError.serviceUnavailable(
+                self.targetedCapabilityReason(
+                    (self as? any TargetedClickServiceProtocol)?.targetedClickUnavailableReason,
+                    fallback: "This automation test double does not support process-generation-pinned clicks"))
+        }
+        let targetIdentity = try self.outcomeTargetIdentity(
+            expectedProcessIdentity: expectedProcessIdentity)
+        let outcome = try self.uiAutomationOutcomeScript.nextOutcome(for: .click)
+        try await service.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: outcome,
+            targetIdentity: targetIdentity)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
@@ -214,6 +246,40 @@ extension ScriptedUIAutomationActionOutcomeProviding {
             snapshotId: snapshotId,
             expectedWindowIdentity: expectedWindowIdentity,
             expectedWindowBounds: expectedWindowBounds)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: outcome,
+            targetIdentity: targetIdentity)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
+    {
+        guard let service = self as? any ExactWindowTargetedClickServiceProtocol,
+              service.supportsExactWindowTargetedClicks,
+              allowsAccessibilityValueDelivery || service.supportsTargetedClickAccessibilityValueDelivery
+        else {
+            throw PeekabooError.serviceUnavailable(
+                self.targetedCapabilityReason(
+                    (self as? any TargetedClickServiceProtocol)?.targetedClickUnavailableReason,
+                    fallback: "This automation test double does not support exact-window clicks"))
+        }
+        let targetIdentity = try self.outcomeTargetIdentity(
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+        let outcome = try self.uiAutomationOutcomeScript.nextOutcome(for: .click)
+        try await service.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
         return UIAutomationActionResult(
             payload: (),
             outcome: outcome,

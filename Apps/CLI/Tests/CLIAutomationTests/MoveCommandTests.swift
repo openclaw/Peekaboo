@@ -61,6 +61,7 @@ struct MoveCommandTests {
     @Test
     func `Move by element ID resolves using stored detection results`() async throws {
         let (context, services) = await self.makeExactElementContext()
+        let snapshotID = try await context.snapshots.createSnapshot()
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -68,7 +69,7 @@ struct MoveCommandTests {
             bounds: CGRect(x: 50, y: 70, width: 120, height: 40)
         )
         let detection = ElementDetectionResult(
-            snapshotId: "snapshot-id",
+            snapshotId: snapshotID,
             screenshotPath: "/tmp/screenshot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(
@@ -78,10 +79,10 @@ struct MoveCommandTests {
                 windowContext: Self.inputFocusWindowContext
             )
         )
-        try await context.snapshots.storeDetectionResult(snapshotId: "snapshot-id", result: detection)
+        try await context.snapshots.storeDetectionResult(snapshotId: snapshotID, result: detection)
 
         let result = try await InProcessCommandRunner.run(
-            ["move", "--on", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
+            ["move", "--on", "B1", "--snapshot", snapshotID, "--json", "--foreground"],
             services: services
         )
 
@@ -96,6 +97,7 @@ struct MoveCommandTests {
     @Test
     func `Move by element ID is repeatable`() async throws {
         let (context, services) = await self.makeExactElementContext()
+        let snapshotID = try await context.snapshots.createSnapshot()
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -103,7 +105,7 @@ struct MoveCommandTests {
             bounds: CGRect(x: 50, y: 70, width: 120, height: 40)
         )
         let detection = ElementDetectionResult(
-            snapshotId: "snapshot-id",
+            snapshotId: snapshotID,
             screenshotPath: "/tmp/screenshot.png",
             elements: DetectedElements(buttons: [element]),
             metadata: DetectionMetadata(
@@ -113,10 +115,10 @@ struct MoveCommandTests {
                 windowContext: Self.inputFocusWindowContext
             )
         )
-        try await context.snapshots.storeDetectionResult(snapshotId: "snapshot-id", result: detection)
+        try await context.snapshots.storeDetectionResult(snapshotId: snapshotID, result: detection)
 
         let result = try await InProcessCommandRunner.run(
-            ["move", "--on", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
+            ["move", "--on", "B1", "--snapshot", snapshotID, "--json", "--foreground"],
             services: services
         )
 

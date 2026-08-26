@@ -201,6 +201,33 @@ struct AutomationKitTestSupportTests {
     }
 
     @Test
+    func `legacy targeted click permits value delivery but refuses explicit opt out`() async throws {
+        let script = UIAutomationOutcomeScript(defaultResponse: .outcome(Self.outcome(evidence: .deliveryAccepted)))
+        let service = PlainScriptedAutomationService(outcomeScript: script)
+        let identity = AutomationTestFixtures.processIdentity()
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.clickWithOutcome(
+                target: .elementId("field"),
+                clickType: .single,
+                snapshotId: nil,
+                expectedProcessIdentity: identity,
+                allowsAccessibilityValueDelivery: false)
+        }
+        #expect(service.clickCount == 0)
+        #expect(script.totalCallCount == 0)
+
+        _ = try await service.clickWithOutcome(
+            target: .elementId("field"),
+            clickType: .single,
+            snapshotId: nil,
+            expectedProcessIdentity: identity,
+            allowsAccessibilityValueDelivery: true)
+        #expect(service.clickCount == 1)
+        #expect(script.callCount(for: .click) == 1)
+    }
+
+    @Test
     func `script default outcome is mutable and instance owned`() async throws {
         let script = UIAutomationOutcomeScript()
         let service = PlainScriptedAutomationService(outcomeScript: script)
@@ -232,9 +259,11 @@ private enum OutcomeScriptTestError: Error {
 @MainActor
 private final class PlainScriptedAutomationService:
     UnusedUIAutomationService,
-    ScriptedUIAutomationActionOutcomeProviding
+    ScriptedUIAutomationActionOutcomeProviding,
+    TargetedClickServiceProtocol
 {
     let uiAutomationOutcomeScript: UIAutomationOutcomeScript
+    let supportsProcessGenerationPinnedClicks = true
     private(set) var clickCount = 0
 
     init(outcomeScript: UIAutomationOutcomeScript) {
@@ -242,6 +271,24 @@ private final class PlainScriptedAutomationService:
     }
 
     override func click(target _: ClickTarget, clickType _: ClickType, snapshotId _: String?) async throws {
+        self.clickCount += 1
+    }
+
+    func click(
+        target _: ClickTarget,
+        clickType _: ClickType,
+        snapshotId _: String?,
+        targetProcessIdentifier _: pid_t) async throws
+    {
+        self.clickCount += 1
+    }
+
+    func click(
+        target _: ClickTarget,
+        clickType _: ClickType,
+        snapshotId _: String?,
+        expectedProcessIdentity _: ApplicationProcessIdentity) async throws
+    {
         self.clickCount += 1
     }
 }

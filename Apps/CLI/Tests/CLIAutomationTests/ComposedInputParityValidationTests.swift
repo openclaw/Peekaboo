@@ -3,19 +3,21 @@ import CoreGraphics
 import Foundation
 import PeekabooCore
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
 @Suite(.tags(.safe))
 struct ComposedInputParityValidationTests {
     private typealias Fixture = (services: PeekabooServices, snapshots: StubSnapshotManager, snapshotID: String)
+    private static let canonicalSnapshotID = SnapshotReferenceFixtures.first.rawValue
 
     @Test(arguments: [
         "invalid", "10", "10,20,30", "nan,20", "10,inf", ",10,20", "10,,20", "10,20,",
     ])
     func `pixel focus type requires one finite coordinate pair`(_ point: String) throws {
         var command = try TypeCommand.parse([
-            "hello", "--at", point, "--snapshot", "snap",
+            "hello", "--at", point, "--snapshot", Self.canonicalSnapshotID,
         ])
 
         let error = #expect(throws: ValidationError.self) {
@@ -29,8 +31,8 @@ struct ComposedInputParityValidationTests {
         let invalidArguments = [
             ["hello", "--at", "10,20"],
             ["hello", "--at", "10,20", "--snapshot", "latest"],
-            ["hello", "--at", "10,20", "--snapshot", "snap", "--foreground"],
-            ["hello", "--at", "10,20", "--snapshot", "snap", "--app", "TextEdit"],
+            ["hello", "--at", "10,20", "--snapshot", Self.canonicalSnapshotID, "--foreground"],
+            ["hello", "--at", "10,20", "--snapshot", Self.canonicalSnapshotID, "--app", "TextEdit"],
         ]
 
         for arguments in invalidArguments {
@@ -41,7 +43,8 @@ struct ComposedInputParityValidationTests {
         }
 
         var accepted = try TypeCommand.parse([
-            "hello", "--at", "10,20", "--coordinate-space", "image_pixels", "--snapshot", "snap",
+            "hello", "--at", "10,20", "--coordinate-space", "image_pixels", "--snapshot",
+            Self.canonicalSnapshotID,
             "--focus-background",
         ])
         try accepted.validate()
@@ -56,7 +59,7 @@ struct ComposedInputParityValidationTests {
     ])
     func `pixel focus type rejects foreground focus overrides`(_ focusArguments: [String]) throws {
         var command = try TypeCommand.parse([
-            "hello", "--at", "10,20", "--snapshot", "snap",
+            "hello", "--at", "10,20", "--snapshot", Self.canonicalSnapshotID,
         ] + focusArguments)
 
         let error = #expect(throws: ValidationError.self) {
@@ -69,14 +72,23 @@ struct ComposedInputParityValidationTests {
     @Test
     func `modifier click requires explicit foreground and exact snapshot authority`() throws {
         let invalidArguments = [
-            ["--on", "B1", "--modifiers", "cmd", "--snapshot", "snap"],
+            ["--on", "B1", "--modifiers", "cmd", "--snapshot", Self.canonicalSnapshotID],
             ["--on", "B1", "--modifiers", "cmd", "--foreground"],
             ["--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", "latest"],
-            ["--on", "B1", "--modifiers", "fn", "--foreground", "--snapshot", "snap"],
-            ["--on", "B1", "--modifiers", "ctrl", "--foreground", "--snapshot", "snap"],
-            ["--on", "B1", "--modifiers", "cmd", "--right", "--foreground", "--snapshot", "snap"],
-            ["--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", "snap", "--app", "Safari"],
-            ["--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", "snap", "--space-switch"],
+            ["--on", "B1", "--modifiers", "fn", "--foreground", "--snapshot", Self.canonicalSnapshotID],
+            ["--on", "B1", "--modifiers", "ctrl", "--foreground", "--snapshot", Self.canonicalSnapshotID],
+            [
+                "--on", "B1", "--modifiers", "cmd", "--right", "--foreground", "--snapshot",
+                Self.canonicalSnapshotID,
+            ],
+            [
+                "--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", Self.canonicalSnapshotID,
+                "--app", "Safari",
+            ],
+            [
+                "--on", "B1", "--modifiers", "cmd", "--foreground", "--snapshot", Self.canonicalSnapshotID,
+                "--space-switch",
+            ],
         ]
 
         for arguments in invalidArguments {
@@ -87,7 +99,7 @@ struct ComposedInputParityValidationTests {
         }
 
         var accepted = try ClickCommand.parse([
-            "--on", "B1", "--modifiers", "cmd,shift", "--foreground", "--snapshot", "snap",
+            "--on", "B1", "--modifiers", "cmd,shift", "--foreground", "--snapshot", Self.canonicalSnapshotID,
         ])
         try accepted.validate()
     }

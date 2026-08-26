@@ -16,7 +16,7 @@ read_when:
 | `--on <id>` | Target an opaque Peekaboo element ID copied exactly from current `see` or MCP `inspect_ui` output. |
 | `--at x,y` | Click coordinates. With target flags, coordinates are relative to the resolved target window; without target flags, they are global screen coordinates. |
 | `--global` | Treat `--at` as global screen coordinates even when target flags are supplied. |
-| `--snapshot <id>` | Reuse a prior snapshot; defaults to the latest snapshot for element/query clicks. Background coordinate clicks require an explicit nonempty snapshot from a fresh exact-window `see`. |
+| `--snapshot <id>` | Reuse a prior snapshot. A concrete ID must be `ps1_` plus 32 lowercase ASCII hexadecimal digits; element/query clicks otherwise default to the latest snapshot. Background coordinate clicks require an explicit reference from a fresh exact-window `see`. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — resolve the app/window that should receive the click. In background mode this does not focus the app; with `--foreground` it focuses before clicking. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | `--wait-for <duration>` | Timeout while waiting for the element (default `5s`; bare values are milliseconds). |
 | `--double` / `--triple` / `--right` / `--middle` | Select one alternate click kind. Background middle/triple delivery requires a fresh exact-window snapshot and uses native window-routed events; `--foreground` remains available for shared-pointer behavior. Click-kind flags are mutually exclusive. |
@@ -25,6 +25,24 @@ read_when:
 | `--foreground` | Focus target and send a foreground mouse click. Focus flags require this explicit mode. |
 | Focus flags | `--no-auto-focus`, `--focus-timeout`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |
+
+## Snapshot affinity
+
+The process that performs `see` generates a 128-bit random `ps1_` reference and reserves it before storing the
+snapshot contents. Stores cannot mint an unreserved reference. When `click --snapshot` receives a concrete reference,
+Peekaboo asks the local process and authenticated live Bridge candidates who owns it, requires exactly one owner, and
+routes there before considering the usual daemon/app preferences. A stopped producer, no owner, or multiple claimants
+is a pre-dispatch refusal rather than permission to guess.
+
+`--bridge-socket` and `--no-remote` stay authoritative. The former checks only the named authenticated Bridge host;
+the latter checks only the current local process. If that selected execution boundary does not own the snapshot, the
+click fails without rerouting. Old timestamp IDs are non-actionable and fail validation even when a legacy cache
+directory still exists.
+
+Bridge 1.34 negotiates producer ownership separately from targeted Accessibility-value click delivery. A current
+client refuses an older 1.34 host that lacks producer-bound reference support before publishing a reusable snapshot.
+The independent targeted-value capability permits the verified `AXFocused` write used for a focusable text field;
+without it, the client does not request that fallback, while ordinary `AXPress` delivery remains available.
 
 ## Delivery modes
 - **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. Single clicks prefer accessibility actions and never activate or focus the app: element/query clicks invoke the matching AX action on the cached element; coordinate clicks hit-test the AX element at the point (`AXUIElementCopyElementAtPosition`), then press the actionable hit, descendant, or ancestor. Pressability is checked with the Accessibility actions API, so SwiftUI buttons that expose no action attribute are still pressed.
@@ -101,6 +119,9 @@ peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180 \
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
 - Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see` (or omit `--snapshot` to use the most recent one). Cleaned/expired snapshots cannot be reused.
+- If an explicit socket or local-only run reports that it does not own the snapshot, repeat `see` on that same host or
+  remove the routing override and let Peekaboo find the unique live producer. It will not silently cross an explicit
+  host boundary.
 - If you see `SNAPSHOT_STALE` after an unverified or indeterminate action, do not replay the old snapshot. Observe again and use the new snapshot ID.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
 - Chromium browsers can expose menus plus generic web-area/layout containers while omitting actionable web-content descendants from `see --annotate`. This is a browser accessibility limitation, not proof that the page is empty. Use `screen list` and `window list` to map the intended display/window, then use `--foreground --input-strategy synthOnly` with window-relative coordinates. For already-focused browser automation, targetless `--global` is also valid.

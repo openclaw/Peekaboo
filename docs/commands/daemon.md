@@ -31,6 +31,11 @@ If an incompatible daemon already owns `daemon.sock`, automation uses a build-sc
 the compatible fallback and warns about the additional daemon; `start` promotes an idle, safely stoppable fallback from
 auto to persistent manual mode on the same socket.
 
+Concrete `ps1_` snapshot references are not routed by these daemon preferences. Peekaboo selects the one authenticated
+local, daemon, or GUI Bridge producer that claims the reference and refuses before dispatch if ownership is missing or
+ambiguous. Explicit socket and local-only options remain strict; see
+[Bridge snapshot authority](../bridge-host.md#snapshot-authority).
+
 ## Commands
 
 ### Start

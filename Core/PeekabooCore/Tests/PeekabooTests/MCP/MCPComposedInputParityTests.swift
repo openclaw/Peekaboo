@@ -3,6 +3,7 @@ import Foundation
 import MCP
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -15,7 +16,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `pixel focus type maps capture coordinates and routes one exact composite request`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "500,250",
             "coordinate_space": "image_pixels",
@@ -41,7 +42,7 @@ struct MCPComposedInputParityTests {
         let focusedElement = AutomationTestFixtures.focusedElement(
             processIdentity: .init(processIdentifier: 111, processStartIdentity: 7),
             windowID: 42)
-        let fixture = await Self.makeFixture(focusedElement: focusedElement)
+        let fixture = try await Self.makeFixture(focusedElement: focusedElement)
 
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "500,250",
@@ -58,7 +59,7 @@ struct MCPComposedInputParityTests {
 
     @Test(arguments: [",10,20", "10,,20", "10,20,", "nan,20", "10,inf"])
     func `pixel focus type rejects malformed coordinate tuples before dispatch`(_ coords: String) async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": coords,
             "snapshot": fixture.snapshotID,
@@ -72,7 +73,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `pixel focus receipt planning preserves cancellation before dispatch or lease consumption`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         let operation = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await TypeTool.planPixelFocusReceipt(
@@ -90,7 +91,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `pixel focus execution propagates receipt cancellation before dispatch`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         let operation = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
@@ -111,7 +112,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `modifier click refuses background then projects truthful foreground restoration`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         let refused = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "600,300",
             "snapshot": fixture.snapshotID,
@@ -162,7 +163,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `modifier click adapter forwards typed refusal without owning the host lease`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickRefusalReason = .targetUnavailable
         }
@@ -188,7 +189,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `modifier click adapter refuses a service without host leaf leasing`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         await MainActor.run {
             fixture.automation.supportsForegroundModifierClickSnapshotLease = false
         }
@@ -212,7 +213,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `modifier click adapter preserves prelane cancellation without a client lease`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = DesktopActionFailure.preDispatchRefusal(
                 reason: .requestCancelled,
@@ -240,7 +241,7 @@ struct MCPComposedInputParityTests {
     @Test
     func `already focused pre click cancellation refuses without consuming snapshot`() async throws {
         let automation = await MainActor.run { AlreadyFocusedCancellingModifierClickService() }
-        let fixture = await Self.makeFixture(automation: automation)
+        let fixture = try await Self.makeFixture(automation: automation)
         let operation = Task {
             try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
                 "coords": "600,300",
@@ -262,7 +263,7 @@ struct MCPComposedInputParityTests {
     @Test
     func `input drift before first focus write refuses without consuming snapshot`() async throws {
         let automation = await MainActor.run { PreFocusInputDriftModifierClickService() }
-        let fixture = await Self.makeFixture(automation: automation)
+        let fixture = try await Self.makeFixture(automation: automation)
         let response = try await ClickTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "600,300",
             "snapshot": fixture.snapshotID,
@@ -280,7 +281,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `modifier click adapter preserves postdispatch failure without owning the host lease`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = DesktopActionFailure.indeterminate(
                 delivery: .init(mechanism: .composite, mode: .foreground),
@@ -309,7 +310,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `modifier click adapter preserves typed receipt refusal without a client lease`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = SnapshotTargetReceiptPreDispatchError(
                 .incompleteExactWindow)
@@ -336,7 +337,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `unknown modifier click failure is retry unsafe without a client lease`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = MCPComposedInputTestError.unknownServiceFailure
         }
@@ -365,7 +366,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `raw prelease modifier click cancellation remains canonical cancellation`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         await MainActor.run {
             fixture.automation.foregroundModifierClickError = CancellationError()
         }
@@ -391,7 +392,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `pixel focus type rejects ambiguous authority before dispatch`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         let invalidArguments: [[String: Any]] = [
             ["coords": "600,300", "text": "hi"],
             ["coords": "600,300", "text": "hi", "snapshot": fixture.snapshotID, "foreground": true],
@@ -410,7 +411,7 @@ struct MCPComposedInputParityTests {
 
     @Test
     func `composed input schemas expose closed coordinate and modifier vocabularies`() async throws {
-        let fixture = await Self.makeFixture()
+        let fixture = try await Self.makeFixture()
         let typeProperties = try #require(TypeTool(context: fixture.context).inputSchema
             .objectValue?["properties"]?.objectValue)
         let clickProperties = try #require(ClickTool(context: fixture.context).inputSchema
@@ -435,7 +436,7 @@ struct MCPComposedInputParityTests {
 
     private static func makeFixture(
         automation providedAutomation: MockAutomationService? = nil,
-        focusedElement: FocusedElementIdentity? = nil) async
+        focusedElement: FocusedElementIdentity? = nil) async throws
         -> (
             context: MCPToolContext,
             automation: MockAutomationService,
@@ -445,7 +446,7 @@ struct MCPComposedInputParityTests {
     {
         await self.uiSnapshots.removeAllSnapshots()
         let fixture = AutomationTestFixtures.linkedSnapshotTarget(
-            snapshotID: "composed-input-\(UUID().uuidString)",
+            snapshotID: SnapshotReferenceFixtures.id(301),
             processIdentity: .init(processIdentifier: 111, processStartIdentity: 7),
             bundleIdentifier: "com.example.composed-input",
             applicationName: "ComposedInput",
@@ -468,9 +469,9 @@ struct MCPComposedInputParityTests {
         let automation = await MainActor.run {
             providedAutomation ?? MockAutomationService(accessibilityGranted: true)
         }
+        let storedSnapshots = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let snapshots = await MainActor.run {
-            SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-                detectionResult: fixture.detectionResult))
+            SnapshotMutationRecordingManager(wrapping: storedSnapshots)
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,

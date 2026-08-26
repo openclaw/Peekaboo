@@ -24,6 +24,52 @@ extension StubAutomationService {
         }
     }
 
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity,
+        allowsAccessibilityValueDelivery: Bool
+    ) async throws {
+        self.targetedClickCalls.append(TargetedClickCall(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+            targetWindowID: nil,
+            expectedProcessIdentity: expectedProcessIdentity,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
+        ))
+        if let clickError {
+            throw clickError
+        }
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect,
+        allowsAccessibilityValueDelivery: Bool
+    ) async throws {
+        self.targetedClickCalls.append(TargetedClickCall(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            targetWindowID: expectedWindowIdentity.windowID,
+            expectedProcessIdentity: ApplicationProcessIdentity(
+                processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity
+            ),
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
+        ))
+        if let clickError {
+            throw clickError
+        }
+    }
+
     func typeActions(
         _ actions: [TypeAction],
         cadence: TypingCadence,

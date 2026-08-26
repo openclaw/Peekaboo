@@ -9,8 +9,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `service owns the modifier click snapshot lease before foreground work`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let heldLease = try await manager.beginSnapshotMutation(snapshotId: fixture.snapshotID)
@@ -34,8 +34,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `mismatched snapshot authority refuses and releases the unused lease`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let otherBounds = CGRect(x: 900, y: 900, width: 200, height: 200)
@@ -67,8 +67,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `blank and consumed modifier click snapshots refuse before foreground work`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
 
@@ -109,8 +109,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `successful host operation consumes one lease and blocks replay`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         var operationCount = 0
@@ -142,8 +142,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `typed predispatch refusal releases the host lease for a safe retry`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
 
@@ -171,8 +171,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test(arguments: [false, true])
     func `raw operation error and cancellation consume the host lease`(cancel: Bool) async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
 
@@ -203,8 +203,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `lease finalization failure is exact target indeterminate`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         manager.failFinish = true
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
@@ -236,8 +236,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `predispatch refusal cannot hide lease finalization failure`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         manager.failFinish = true
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
@@ -265,8 +265,8 @@ struct UIAutomationServiceModifierClickSnapshotTests {
     @Test
     func `snapshot mismatch cannot hide lease finalization failure`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager(
-            detectionResult: fixture.detectionResult))
+        let manager = try await SnapshotMutationRecordingManager(
+            wrapping: InMemorySnapshotManager.containing(fixture.detectionResult))
         manager.failFinish = true
         let service = UIAutomationService(snapshotManager: manager)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)

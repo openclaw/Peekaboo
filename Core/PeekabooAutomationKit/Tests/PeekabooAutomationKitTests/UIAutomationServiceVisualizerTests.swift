@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -61,14 +62,15 @@ struct UIAutomationServiceVisualizerTests {
 
     @Test
     @MainActor
-    func `targeted background interactions stay silent with a resolved target window`() async {
+    func `targeted background interactions stay silent with a resolved target window`() async throws {
         let feedback = RecordingAutomationFeedbackClient()
+        let snapshotID = SnapshotReferenceFixtures.first.rawValue
         let target = VisualizerTargetWindow(
             processIdentifier: 42,
             windowID: 7,
             frame: CGRect(x: 0, y: 0, width: 800, height: 600))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "resolved-target",
+            snapshotId: snapshotID,
             screenshotPath: "/tmp/resolved-target.png",
             elements: DetectedElements(),
             metadata: DetectionMetadata(
@@ -79,8 +81,8 @@ struct UIAutomationServiceVisualizerTests {
                     applicationProcessId: target.processIdentifier,
                     windowID: Int(target.windowID),
                     windowBounds: target.frame)))
-        let service = UIAutomationService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             feedbackClient: feedback)
 
         await service.visualizeClick(

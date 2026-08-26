@@ -7,18 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Fixed
-
-- Bind Bridge 1.34 Chrome channel connections to an exact live Chrome bundle, native process-owned DevTools listener, and approval-gated WebSocket under one 90-second deadline, verifying `Browser.getVersion` once without legacy HTTP discovery or repeated permission probes and failing closed on helper-service names, file, socket, generation, or endpoint drift.
-- Authenticate native Chrome channels against Google Team ID `EQHXZ8M8AV`, pin the exact signed identifier and CDHash for the process generation, and enumerate the target process's complete listener inventory independently of Peekaboo's file-descriptor limit.
-- Honor the configured default save directory for pathless pixel-only `see` captures and add collision-resistant generated filenames for concurrent callers, while preserving explicit paths and stdout streaming. Thanks @PollyBot13 for #607.
-- Preserve the exact browser target-lock refusal so reconnecting to a different live Chrome channel or endpoint tells callers to disconnect first instead of reporting a generic unavailable target.
-- Advertise only actions and input shapes reachable under immutable background-only authority, while keeping foreground-capable app, Dock, Space, dialog, menu, browser, clipboard, and paste workflows explicit.
-- Emit one lossless target identity and process-generation receipt across CLI envelopes and App MCP responses, preventing extra metadata from overriding the canonical target.
-- Let exact `dialog` targeting prefer one active child sheet or alert beneath its structural parent, retain ambiguity for multiple children, and preserve actionable parent-window recovery hints through Bridge routing.
-
-## [4.2.3] - 2026-08-23
-
 ### Highlights
 
 - **Credentials and provider authentication are safer.** Secure prompts, stdin, and owner-only files keep secrets out of process lists, with additional Gemini, OAuth, clipboard, and editor hardening.
@@ -39,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Bind Bridge 1.34 Chrome channel connections to an exact live Chrome bundle, native process-owned DevTools listener, and approval-gated WebSocket under one 90-second deadline, verifying `Browser.getVersion` once without legacy HTTP discovery or repeated permission probes and failing closed on helper-service names, file, socket, generation, or endpoint drift.
+- Authenticate native Chrome channels against Google Team ID `EQHXZ8M8AV`, pin the exact signed identifier and CDHash for the process generation, and enumerate the target process's complete listener inventory independently of Peekaboo's file-descriptor limit.
+- Honor the configured default save directory for pathless pixel-only `see` captures and add collision-resistant generated filenames for concurrent callers, while preserving explicit paths and stdout streaming. Thanks @PollyBot13 for #607.
+- Preserve the exact browser target-lock refusal so reconnecting to a different live Chrome channel or endpoint tells callers to disconnect first instead of reporting a generic unavailable target.
+- Advertise only actions and input shapes reachable under immutable background-only authority, while keeping foreground-capable app, Dock, Space, dialog, menu, browser, clipboard, and paste workflows explicit.
+- Emit one lossless target identity and process-generation receipt across CLI envelopes and App MCP responses, preventing extra metadata from overriding the canonical target.
+- Let exact `dialog` targeting prefer one active child sheet or alert beneath its structural parent, retain ambiguity for multiple children, and preserve actionable parent-window recovery hints through Bridge routing.
+- Bind snapshots to strict producer-owned `ps1_` references, route concrete IDs to their unique authenticated local or Bridge host before normal preference, and fail closed on malformed, stale, duplicate, incapable, or explicitly misrouted hosts while keeping legacy timestamp directories cleanup-only.
 - Downscale straight-alpha legacy screenshots to logical 1x instead of silently returning Retina-sized pixels.
 - Bound modern capture transaction-lock waits inside the Bridge request envelope so a wedged peer fails clearly instead of hanging indefinitely. Thanks @SebTardif for #599.
 - Send Gemini API keys in request headers, require HTTPS OAuth endpoints, and redact OAuth state. Thanks Vincent Koc for #575 and Tachikoma #73.

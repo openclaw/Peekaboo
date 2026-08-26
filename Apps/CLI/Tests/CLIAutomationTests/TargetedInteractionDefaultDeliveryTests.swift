@@ -720,6 +720,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         #expect(call.targetProcessIdentifier == 2468)
         #expect(call.targetWindowID == targetWindow.windowID)
         #expect(call.snapshotId == snapshotId)
+        #expect(call.allowsAccessibilityValueDelivery == true)
         if case let .coordinates(point) = call.target {
             #expect(point == CGPoint(x: 10, y: 20))
         } else {

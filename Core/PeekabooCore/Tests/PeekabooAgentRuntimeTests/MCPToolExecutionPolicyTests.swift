@@ -1,5 +1,6 @@
 import MCP
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Tachikoma
 import TachikomaMCP
@@ -355,7 +356,7 @@ struct MCPToolExecutionPolicyTests {
     @Test
     @MainActor
     func `background-only refuses generic AXPress when an exact Dock snapshot lacks its tool mirror`() async throws {
-        let snapshotID = "dock-policy-\(UUID().uuidString)"
+        let snapshotID = SnapshotReference.generate().rawValue
         let processIdentifier = getpid()
         let processStartIdentity: UInt64 = 77
         let bounds = CGRect(x: 0, y: 900, width: 1200, height: 100)
@@ -387,7 +388,7 @@ struct MCPToolExecutionPolicyTests {
                 elementCount: 1,
                 method: "test",
                 windowContext: windowContext))
-        let snapshots = InMemorySnapshotManager(detectionResult: detectionResult)
+        let snapshots = try await InMemorySnapshotManager.containing(detectionResult)
         let services = PeekabooServices(snapshotManager: snapshots)
         let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
         let pressCapture = PolicySnapshotArgumentCapture()
@@ -423,7 +424,7 @@ struct MCPToolExecutionPolicyTests {
     @Test
     @MainActor
     func `background-only pins the authorized implicit snapshot into mutation dispatch`() async throws {
-        let snapshotID = "implicit-policy-\(UUID().uuidString)"
+        let snapshotID = SnapshotReference.generate().rawValue
         let processIdentifier = getpid()
         let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
         let identity = WindowMutationIdentity(
@@ -431,14 +432,14 @@ struct MCPToolExecutionPolicyTests {
             ownerProcessIdentifier: processIdentifier,
             ownerProcessStartIdentity: 78,
             capturedBounds: bounds)
-        let windowContext = WindowContext(
+        let desktopTarget = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: identity.processIdentity,
+            bundleIdentifier: "com.apple.TextEdit",
             applicationName: "TextEdit",
-            applicationBundleId: "com.apple.TextEdit",
-            applicationProcessId: processIdentifier,
+            windowID: identity.windowID,
             windowTitle: "Untitled",
-            windowID: 701,
-            windowBounds: bounds,
-            windowMutationIdentity: identity)
+            bounds: bounds)
+        let windowContext = desktopTarget.windowContext
         let detectionResult = ElementDetectionResult(
             snapshotId: snapshotID,
             screenshotPath: "/tmp/implicit-policy.png",
@@ -454,9 +455,8 @@ struct MCPToolExecutionPolicyTests {
                 elementCount: 1,
                 method: "test",
                 windowContext: windowContext))
-        let snapshots = InMemorySnapshotManager(detectionResult: detectionResult)
-        let services = PeekabooServices(snapshotManager: snapshots)
-        let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
+        let snapshots = try await InMemorySnapshotManager.containing(detectionResult)
+        let context = try Self.makePolicyContext(snapshots: snapshots, desktopTarget: desktopTarget)
         let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
         await toolSnapshot.setTargetMetadata(from: windowContext)
         let capture = PolicySnapshotArgumentCapture()
@@ -477,7 +477,7 @@ struct MCPToolExecutionPolicyTests {
     @MainActor
     // swiftlint:disable:next function_body_length
     func `background-only rejects conflicting snapshot selectors before dispatch`() async throws {
-        let snapshotID = "selector-policy-\(UUID().uuidString)"
+        let snapshotID = SnapshotReference.generate().rawValue
         let processIdentifier = getpid()
         let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
         let identity = WindowMutationIdentity(
@@ -485,14 +485,14 @@ struct MCPToolExecutionPolicyTests {
             ownerProcessIdentifier: processIdentifier,
             ownerProcessStartIdentity: 79,
             capturedBounds: bounds)
-        let windowContext = WindowContext(
+        let desktopTarget = AutomationTestFixtures.linkedDesktopTarget(
+            processIdentity: identity.processIdentity,
+            bundleIdentifier: "com.apple.TextEdit",
             applicationName: "TextEdit",
-            applicationBundleId: "com.apple.TextEdit",
-            applicationProcessId: processIdentifier,
+            windowID: identity.windowID,
             windowTitle: "Untitled",
-            windowID: 702,
-            windowBounds: bounds,
-            windowMutationIdentity: identity)
+            bounds: bounds)
+        let windowContext = desktopTarget.windowContext
         let detectionResult = ElementDetectionResult(
             snapshotId: snapshotID,
             screenshotPath: "/tmp/selector-policy.png",
@@ -508,9 +508,8 @@ struct MCPToolExecutionPolicyTests {
                 elementCount: 1,
                 method: "test",
                 windowContext: windowContext))
-        let snapshots = InMemorySnapshotManager(detectionResult: detectionResult)
-        let services = PeekabooServices(snapshotManager: snapshots)
-        let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
+        let snapshots = try await InMemorySnapshotManager.containing(detectionResult)
+        let context = try Self.makePolicyContext(snapshots: snapshots, desktopTarget: desktopTarget)
         let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
         await toolSnapshot.setTargetMetadata(from: windowContext)
         let capture = PolicySnapshotArgumentCapture()
@@ -636,6 +635,32 @@ struct MCPToolExecutionPolicyTests {
         }
         #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
         #expect(meta["mutation_dispatched"] == .bool(false))
+    }
+
+    @MainActor
+    private static func makePolicyContext(
+        snapshots: any SnapshotManagerProtocol,
+        desktopTarget: LinkedDesktopTargetFixture) throws -> MCPToolContext
+    {
+        let graph = try LinkedApplicationInventoryGraph(linkedTargets: [desktopTarget])
+        let base = PeekabooServices(snapshotManager: snapshots)
+        return MCPToolContext(
+            automation: base.automation,
+            menu: base.menu,
+            windows: ScriptedWindowInventoryService(graph: graph),
+            applications: ScriptedApplicationInventoryService(graph: graph),
+            dialogs: base.dialogs,
+            dock: base.dock,
+            screenCapture: base.screenCapture,
+            desktopObservation: base.desktopObservation,
+            snapshots: snapshots,
+            screens: base.screens,
+            agent: base.agent,
+            permissions: base.permissions,
+            clipboard: base.clipboard,
+            browser: base.browser,
+            permissionsStatusProvider: base,
+            executionPolicy: .backgroundOnly)
     }
 
     @Test

@@ -23,6 +23,9 @@ and host capabilities on the same executable generation. An explicit Bridge sock
 Operations that permit process-local fallback can use it when no compatible host is available. Application inventory
 and launch prefer the GUI host, while relaunch and quit require a reusable daemon that survives the caller.
 
+Commands carrying a concrete snapshot reference do not use this preference order. They resolve the unique producer as
+described in [Snapshot authority](#snapshot-authority) before selecting an execution host.
+
 Bridge diagnostics inspect sockets in this order:
 
 1. **Peekaboo daemon** (normal automation runtime)
@@ -36,7 +39,9 @@ Bridge diagnostics inspect sockets in this order:
 5. **Local in-process** (operation-dependent fallback or explicit `--no-remote`; requires caller-process TCC grants)
 
 This selection preserves existing app-held TCC grants while keeping socket ownership separate. Claude.app and
-Clawdbot.app sockets remain diagnostic-only unless selected with `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET`.
+Clawdbot.app sockets participate automatically only in authenticated snapshot-owner resolution; for commands without
+a concrete snapshot they remain diagnostic-only unless selected with `--bridge-socket` or
+`PEEKABOO_BRIDGE_SOCKET`.
 
 There is **no auto-launch** of Peekaboo.app.
 
@@ -130,6 +135,7 @@ those app-only services are injected separately; moving them into the embedded r
 - Payloads are `Codable` JSON with a small handshake for:
   - protocol version negotiation
   - capability/operation advertisement
+  - optional raw-string client capability offers for same-version feature negotiation
   - optional host PID/process-start identity, bundle version, code-signature hash, and launch-mode
     capabilities for exact-generation deployment readiness checks
 - Each listener holds an exclusive lease beside its socket for its full lifetime.
@@ -307,6 +313,22 @@ retry-unsafe result rather than a speculative retry.
 Window and frontmost capture receipts bind the exact process/window identity returned by capture metadata; a missing
 target or a window ID that contradicts the request is rejected. Screen and area captures remain targetless global reads.
 
+Protocol `1.34` remains the wire version for three independent capabilities:
+
+- `nativeBrowserConnectionBinding` authenticates native Chrome channel ownership.
+- `producerBoundSnapshotReferences` enables canonical snapshot creation plus the read-only `ownsSnapshot` ownership
+  probe.
+- `targetedClickAccessibilityValueDelivery` attests that the host understands and enforces the targeted-click
+  Accessibility value-delivery policy. An omitted policy retains legacy value fallback; explicit `true` and `false`
+  both require this negotiated capability.
+
+Clients must test the capability needed by an operation; none implies either of the others. The latter two additions
+also require their exact raw strings in the optional handshake `clientCapabilities` offer. A current host suppresses
+`ownsSnapshot` and the corresponding host capability when an already-shipped 1.34 client omits that offer, so the old
+client never sees an unknown operation. Conversely, a current client refuses snapshot creation/publication through an
+old or restricted 1.34 host that does not return `producerBoundSnapshotReferences`. It does not silently downgrade to
+timestamp references, publish locally after remote observation, or replay an action through another host.
+
 Browser execution is bound atomically to the connection receipt observed before dispatch. Protocol 1.29 carries the
 complete normalized browser URL, WebSocket debugger URL, DevTools browser ID, browser version, protocol version, and
 channel. Protocol 1.34 plus `nativeBrowserConnectionBinding` is required for native channel resolution, which carries
@@ -359,12 +381,31 @@ Debug-only escape hatch:
 
 - Set `PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1` to allow same-UID unsigned clients (local dev only).
 
-## Snapshot state
+## Snapshot authority
 
-Bridge hosts are intended to be long-lived and keep automation state **in memory**:
+Actionable snapshot references are producer-bound opaque values with the exact grammar `ps1_` plus 32 lowercase ASCII
+hexadecimal digits. The 128-bit random suffix makes cross-process collisions impractical; a reference becomes owned
+only when its producer creates it, before storing detection or screenshot state. Malformed and legacy timestamp-style
+IDs are never accepted as action authority.
 
-- Hosts typically use `InMemorySnapshotManager` so follow-up actions can reuse the “most recent snapshot” per app/bundle without passing IDs around.
-- Screenshot artifacts are referenced by **file path** (e.g. in `/tmp`). Protocol 1.5 desktop observation avoids returning raw image bytes for daemon-backed screenshot calls.
+The disk owner marker is durable routing and collision evidence inside the user's cooperative cache. It does not
+authenticate snapshot state against a hostile same-user process that can already rewrite that cache.
+
+When an action supplies a concrete reference, the CLI checks caller-local services and all authenticated live Bridge
+candidates: reusable and build-scoped daemons, Peekaboo.app, Claude.app, and Clawdbot.app. It routes only when exactly
+one reports ownership through `ownsSnapshot`. Zero claims, multiple claims, an unreachable producer, or a host that
+cannot negotiate producer-bound references fails before dispatch. There is no “latest” substitution, local fallback,
+cross-host recreation, or speculative replay.
+
+`--bridge-socket` and `PEEKABOO_BRIDGE_SOCKET` are strict: only that authenticated listener may claim the reference,
+and failure is terminal. `--no-remote` and `PEEKABOO_NO_REMOTE` check only the caller-local manager. Without either
+override, the ownership probe can select Claude.app or Clawdbot.app even though those sockets are not general implicit
+routing fallbacks.
+
+Long-lived hosts normally keep automation state in memory; disk-backed managers persist an owner marker with the
+snapshot directory so ownership survives restart. Screenshot artifacts remain path references rather than raw Bridge
+response bytes. Protocol 1.5 desktop observation provides the raster metadata, while protocol 1.34 plus the negotiated
+`producerBoundSnapshotReferences` capability governs current creation and affinity checks.
 
 ## CLI behavior
 

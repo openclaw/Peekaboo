@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -189,15 +190,15 @@ struct TypeServiceTargetResolutionTests {
     @Test
     @MainActor
     func `action-first type does not escape an explicit snapshot`() async throws {
-        let snapshotId = "snapshot"
+        let snapshotId = SnapshotReferenceFixtures.first.rawValue
         let detectionResult = ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(),
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 0, method: "test"))
         let resolver = RecordingTypeAutomationElementResolver()
-        let service = TypeService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await TypeService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             automationElementResolver: resolver)
 
@@ -220,7 +221,7 @@ struct TypeServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `direct OCR target refuses before AX resolution or typing`() async {
+    func `direct OCR target refuses before AX resolution or typing`() async throws {
         let element = DetectedElement(
             id: "ocr_1",
             type: .staticText,
@@ -231,14 +232,14 @@ struct TypeServiceTargetResolutionTests {
                 "confidence": "0.93",
             ])
         let result = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: SnapshotReferenceFixtures.second.rawValue,
             screenshotPath: "/tmp/calendar.png",
             elements: DetectedElements(other: [element]),
             metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "AXorcist+OCR"))
         let resolver = RecordingTypeAutomationElementResolver()
         var typed: [Character] = []
-        let service = TypeService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: result),
+        let service = try await TypeService(
+            snapshotManager: InMemorySnapshotManager.containing(result),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             automationElementResolver: resolver,
             randomSource: SystemTypingCadenceRandomSource(),
@@ -250,7 +251,7 @@ struct TypeServiceTargetResolutionTests {
                 target: "ocr_1",
                 clearExisting: false,
                 typingDelay: 0,
-                snapshotId: "snapshot")
+                snapshotId: SnapshotReferenceFixtures.second.rawValue)
             Issue.record("Expected OCR semantic evidence refusal")
         } catch let PeekabooError.invalidInput(message) {
             #expect(message.contains("semantic evidence"))

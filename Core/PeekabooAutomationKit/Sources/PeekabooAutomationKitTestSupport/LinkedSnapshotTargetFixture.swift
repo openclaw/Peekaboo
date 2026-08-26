@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 
 /// Coherent automation-snapshot and detection-result sources for one exact desktop target.
 public struct LinkedSnapshotTargetFixture: Sendable {
@@ -29,7 +30,7 @@ public struct LinkedSnapshotTargetFixture: Sendable {
 
 extension AutomationTestFixtures {
     public static func linkedSnapshotTarget(
-        snapshotID: String = "snapshot-1",
+        snapshotID: String = SnapshotReferenceFixtures.first.rawValue,
         processIdentity: ApplicationProcessIdentity = Self.processIdentity(),
         bundleIdentifier: String? = "com.example.TestApp",
         applicationName: String = "Test App",

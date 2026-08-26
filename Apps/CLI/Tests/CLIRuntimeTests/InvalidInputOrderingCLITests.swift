@@ -99,7 +99,8 @@ struct InvalidInputOrderingCLITests {
         ),
         JSONCase(
             arguments: [
-                "type", "alpha", "--at", "nan,20", "--snapshot", "snapshot-1", "--json",
+                "type", "alpha", "--at", "nan,20", "--snapshot",
+                "ps1_00000000000000000000000000000001", "--json",
             ],
             code: "VALIDATION_ERROR",
             message: "Invalid coordinates format. Use: x,y",
@@ -107,7 +108,8 @@ struct InvalidInputOrderingCLITests {
         ),
         JSONCase(
             arguments: [
-                "type", "alpha", "--at", "10,,20", "--snapshot", "snapshot-1", "--json",
+                "type", "alpha", "--at", "10,,20", "--snapshot",
+                "ps1_00000000000000000000000000000001", "--json",
             ],
             code: "VALIDATION_ERROR",
             message: "Invalid coordinates format. Use: x,y",

@@ -373,8 +373,8 @@ struct PressCommandTests {
 
     @Test
     func `Foreground snapshot without an exact target refuses before global input`() async throws {
-        let snapshotId = "snapshot-42"
         let context = await self.makeContext()
+        let snapshotId = try await context.snapshots.createSnapshot()
         let detection = ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "/tmp/screenshot.png",

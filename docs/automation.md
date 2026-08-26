@@ -23,6 +23,17 @@ Prefer IDs when you can capture them, labels when you can't, and coordinates onl
 
 Process and window selectors are fail-closed. Choose either `--app` or `--pid`, never both. Choose at most one of `--window-id`, `--window-title`, or `--window-index`; title and index require an app or PID owner. The same rules apply to MCP's `app`, `pid`, `window_id`, `window_title`, and `window_index` fields.
 
+Reusable snapshots have producer-bound references: exactly `ps1_` plus 32 lowercase ASCII hexadecimal digits. The
+producer generates the 128-bit random suffix and reserves the reference before it can store detection results,
+screenshots, or other snapshot state. A store cannot claim an ID that was not created first. Treat the reference as an
+opaque receipt and copy it exactly; legacy timestamp IDs are non-actionable and exist only for strict cache cleanup.
+
+A command with a concrete snapshot reference resolves its unique live authenticated producer before the ordinary
+daemon/app preference order. This keeps a snapshot and its in-memory state together even when several Peekaboo hosts
+are available. Explicit routing is still authoritative: `--bridge-socket` checks only that Bridge host, while
+`--no-remote` checks only the local process, and either refuses rather than rerouting when the selected boundary does
+not own the reference.
+
 ## Delivery modes
 
 Peekaboo has two input delivery modes:
@@ -43,6 +54,12 @@ Multi-unit background input is prefix-aware. Once any scroll unit or semantic cl
 Application menu list/click, dialog list, dialog button click, normal dialog dismissal, window close, and exact minimized-window restore also default to background Accessibility actions. Restore changes only the retained window's `AXMinimized` state. Dialog list never focuses. Dialog keyboard/file flows, forced Escape dismissal, coordinate fallback, and window-close Cmd-W fallback require an explicit `--foreground` (or `foreground: true` in MCP) so these global actions cannot interrupt an unrelated foreground app by accident.
 
 Observation follows the same background-first rule. `see` and `capture` do not focus targeted apps by default. Web-content focus recovery is opt-in with `see --web-focus` or MCP `web_focus: true`; live-capture foreground focus remains explicit.
+
+At Bridge protocol 1.34, producer-bound snapshot ownership and targeted Accessibility-value delivery are independent
+client/host capabilities. A current client requires the ownership capability before a remote producer can publish a
+reusable snapshot; an older 1.34 host is not treated as capable from its version alone. The targeted-value capability
+separately gates the verified `AXFocused` write used when a background click focuses a text field. Ordinary `AXPress`
+does not depend on that value-delivery capability.
 
 Examples:
 

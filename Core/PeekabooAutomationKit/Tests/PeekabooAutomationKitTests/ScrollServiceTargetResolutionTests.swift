@@ -8,6 +8,7 @@ import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 import enum PeekabooFoundation.ScrollDirection
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -66,8 +67,8 @@ struct ScrollServiceTargetResolutionTests {
         let detectionResult = Self.exactDetectionResult(element: element)
         let action = ScrollRecordingActionInputDriver()
         let synthetic = ScrollRecordingSyntheticInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
@@ -79,7 +80,7 @@ struct ScrollServiceTargetResolutionTests {
             direction: .down,
             amount: 3,
             target: "S1",
-            snapshotId: "snapshot"))
+            snapshotId: Self.snapshotID))
 
         #expect(result.path == .action)
         #expect(result.strategy == .actionOnly)
@@ -127,8 +128,8 @@ struct ScrollServiceTargetResolutionTests {
         let action = ScrollRecordingActionInputDriver(
             scrollError: ActionInputError.unsupported(.actionUnsupported))
         let synthetic = ScrollRecordingSyntheticInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
             automationElementResolver: ScrollFixedAutomationElementResolver(),
@@ -143,7 +144,7 @@ struct ScrollServiceTargetResolutionTests {
             direction: .down,
             amount: 2,
             target: "S1",
-            snapshotId: "snapshot"))
+            snapshotId: Self.snapshotID))
 
         #expect(result.path == .action)
         #expect(result.actionName == "WindowRoutedWheel")
@@ -193,8 +194,8 @@ struct ScrollServiceTargetResolutionTests {
             delivery: .init(mechanism: .accessibilityAction, mode: .background),
             unitCount: .one,
             message: "One of three AX page units was accepted")
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             actionInputDriver: ScrollRecordingActionInputDriver(scrollError: prefixFailure),
             automationElementResolver: ScrollFixedAutomationElementResolver(),
             windowRoutedPointerDriver: routedDriver,
@@ -207,7 +208,7 @@ struct ScrollServiceTargetResolutionTests {
                 direction: .down,
                 amount: 3,
                 target: "S1",
-                snapshotId: "snapshot"))
+                snapshotId: Self.snapshotID))
             Issue.record("Expected the AX prefix failure to remain authoritative")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .partial)
@@ -219,7 +220,7 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `unsupported AX group refuses when application lacks WebKit capability`() async {
+    func `unsupported AX group refuses when application lacks WebKit capability`() async throws {
         let laneRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("web-scroll-refusal-lane-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: laneRoot) }
@@ -231,8 +232,9 @@ struct ScrollServiceTargetResolutionTests {
             attributes: ["role": "AXGroup"])
         let action = ScrollRecordingActionInputDriver(
             scrollError: ActionInputError.unsupported(.actionUnsupported))
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: Self.exactDetectionResult(element: element)),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(
+                Self.exactDetectionResult(element: element)),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver(),
             backgroundWheelCapability: { _ in false },
@@ -282,7 +284,7 @@ struct ScrollServiceTargetResolutionTests {
                 target: "S1",
                 smooth: false,
                 delay: 0,
-                snapshotId: "missing"))
+                snapshotId: SnapshotReferenceFixtures.first.rawValue))
             Issue.record("Expected stale element error for missing action snapshot.")
         } catch let error as PeekabooError {
             #expect(error.localizedDescription.contains("snapshot"))
@@ -320,7 +322,7 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `foreground OCR target refuses before pointer motion or scroll dispatch`() async {
+    func `foreground OCR target refuses before pointer motion or scroll dispatch`() async throws {
         let element = DetectedElement(
             id: "ocr_1",
             type: .staticText,
@@ -331,13 +333,13 @@ struct ScrollServiceTargetResolutionTests {
                 "confidence": "0.93",
             ])
         let result = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/calendar.png",
             elements: DetectedElements(other: [element]),
             metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "AXorcist+OCR"))
         let synthetic = ScrollRecordingSyntheticInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: result),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(result),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthFirst),
             syntheticInputDriver: synthetic)
 
@@ -347,7 +349,7 @@ struct ScrollServiceTargetResolutionTests {
                 amount: 1,
                 target: "ocr_1",
                 smooth: true,
-                snapshotId: "snapshot",
+                snapshotId: Self.snapshotID,
                 foreground: true))
             Issue.record("Expected OCR semantic evidence refusal")
         } catch let PeekabooError.invalidInput(message) {
@@ -373,8 +375,8 @@ struct ScrollServiceTargetResolutionTests {
             attributes: [:])
         let detectionResult = Self.exactDetectionResult(element: element)
         let synthetic = ScrollRecordingSyntheticInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic,
             exactWindowIdentityValidator: { _, _ in true },
@@ -387,7 +389,7 @@ struct ScrollServiceTargetResolutionTests {
                 target: "S1",
                 smooth: false,
                 delay: 0,
-                snapshotId: "snapshot"))
+                snapshotId: Self.snapshotID))
             Issue.record("Expected an explicit foreground-required error")
         } catch let error as PeekabooError {
             #expect(error.localizedDescription.contains("foreground"))
@@ -411,14 +413,14 @@ struct ScrollServiceTargetResolutionTests {
             target: "S1",
             smooth: false,
             delay: 0,
-            snapshotId: "snapshot")))
+            snapshotId: Self.snapshotID)))
         #expect(ScrollService.requiresSyntheticScrollSemantics(ScrollRequest(
             direction: .down,
             amount: 3,
             target: "S1",
             smooth: true,
             delay: 0,
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             foreground: true)))
         #expect(!ScrollService.requiresSyntheticScrollSemantics(ScrollRequest(
             direction: .down,
@@ -426,7 +428,7 @@ struct ScrollServiceTargetResolutionTests {
             target: "S1",
             smooth: false,
             delay: 2,
-            snapshotId: "snapshot")))
+            snapshotId: Self.snapshotID)))
     }
 
     @Test
@@ -461,21 +463,21 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background scroll refuses incomplete exact receipt before dispatch`() async {
+    func `background scroll refuses incomplete exact receipt before dispatch`() async throws {
         let element = DetectedElement(
             id: "S1",
             type: .other,
             label: "List",
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400))
         let detectionResult = ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(other: [element]),
             metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "test"))
         let action = ScrollRecordingActionInputDriver()
         let synthetic = ScrollRecordingSyntheticInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
             automationElementResolver: ScrollFixedAutomationElementResolver())
@@ -489,14 +491,14 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background scroll refuses conflicting capture bounds before dispatch`() async {
+    func `background scroll refuses conflicting capture bounds before dispatch`() async throws {
         let element = Self.scrollElement()
         let detectionResult = Self.exactDetectionResult(
             element: element,
             identityBounds: CGRect(x: 0, y: 0, width: 700, height: 600))
         let action = ScrollRecordingActionInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver(),
             exactWindowIdentityValidator: { _, _ in true },
@@ -511,11 +513,11 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background scroll revalidates generation after element resolution`() async {
+    func `background scroll revalidates generation after element resolution`() async throws {
         let generation = ScrollLockedValue<UInt64>(11)
         let action = ScrollRecordingActionInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: Self.exactDetectionResult(
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
                 element: Self.scrollElement())),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver {
@@ -532,11 +534,11 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background scroll refuses window drift after element resolution`() async {
+    func `background scroll refuses window drift after element resolution`() async throws {
         let windowIsCurrent = ScrollLockedValue(true)
         let action = ScrollRecordingActionInputDriver()
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: Self.exactDetectionResult(
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
                 element: Self.scrollElement())),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver {
@@ -553,13 +555,13 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background scroll reports post-dispatch generation drift as retry unsafe`() async {
+    func `background scroll reports post-dispatch generation drift as retry unsafe`() async throws {
         let generation = ScrollLockedValue<UInt64>(11)
         let action = ScrollRecordingActionInputDriver {
             generation.value = 12
         }
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: Self.exactDetectionResult(
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
                 element: Self.scrollElement())),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver(),
@@ -586,8 +588,8 @@ struct ScrollServiceTargetResolutionTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
         let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 11)
-        let service = ScrollService(
-            snapshotManager: InMemorySnapshotManager(detectionResult: Self.exactDetectionResult(
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
                 element: Self.scrollElement())),
             actionInputDriver: ScrollRecordingActionInputDriver(),
             automationElementResolver: ScrollFixedAutomationElementResolver(),
@@ -602,8 +604,10 @@ struct ScrollServiceTargetResolutionTests {
         }
     }
 
+    private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
+
     private static func backgroundRequest() -> ScrollRequest {
-        ScrollRequest(direction: .down, amount: 1, target: "S1", snapshotId: "snapshot")
+        ScrollRequest(direction: .down, amount: 1, target: "S1", snapshotId: self.snapshotID)
     }
 
     private static func scrollElement() -> DetectedElement {
@@ -623,7 +627,7 @@ struct ScrollServiceTargetResolutionTests {
     {
         let capturedBounds = identityBounds ?? bounds
         return ElementDetectionResult(
-            snapshotId: "snapshot",
+            snapshotId: Self.snapshotID,
             screenshotPath: "/tmp/shot.png",
             elements: DetectedElements(other: [element]),
             metadata: DetectionMetadata(

@@ -834,6 +834,7 @@ struct ActionOutcomeCommandTests {
         #expect(firstOutcome["requires_fresh_observation"] as? Bool == true)
         #expect(firstOutcome["retry_safe"] as? Bool == false)
         #expect(automation.targetedClickCalls.count == 1)
+        #expect(automation.targetedClickCalls.first?.allowsAccessibilityValueDelivery == true)
 
         let second = try await InProcessCommandRunner.run(arguments, services: services)
         let secondObject = try Self.jsonObject(second.stdout)

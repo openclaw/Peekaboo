@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -118,13 +119,19 @@ struct PreDispatchActionEnvelopeTests {
                 ),
                 (
                     "missing explicit type snapshot",
-                    ["type", "hello", "--snapshot", "synthetic-missing-snapshot", "--json", "--no-remote"],
+                    [
+                        "type", "hello", "--snapshot", SnapshotReferenceFixtures.first.rawValue,
+                        "--json", "--no-remote",
+                    ],
                     .SNAPSHOT_NOT_FOUND,
                     .targetUnavailable
                 ),
                 (
                     "missing explicit press snapshot",
-                    ["press", "return", "--snapshot", "synthetic-missing-snapshot", "--json", "--no-remote"],
+                    [
+                        "press", "return", "--snapshot", SnapshotReferenceFixtures.first.rawValue,
+                        "--json", "--no-remote",
+                    ],
                     .SNAPSHOT_NOT_FOUND,
                     .targetUnavailable
                 ),

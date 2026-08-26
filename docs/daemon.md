@@ -30,6 +30,11 @@ Commands outside the exact-build preference below prefer the reusable daemon whe
 they use a healthy Peekaboo.app host with the required capability before auto-starting a daemon. If no remote host is
 usable, the command falls back to process-local services when that operation permits it.
 
+A command carrying a concrete `ps1_` snapshot reference bypasses that preference order. It uses the unique
+authenticated producer across caller-local state and live daemon/GUI Bridge candidates, and refuses before dispatch
+when no single host can prove ownership. Explicit `--bridge-socket` checks only that listener; `--no-remote` checks
+only caller-local state. See [Bridge snapshot authority](bridge-host.md#snapshot-authority).
+
 Implicit commands that require screen capture, inspect the AX tree, use browser MCP, or consume/invalidate snapshot
 state first prefer the current CLI build's deterministic `daemon-<build>.sock`. They may auto-start that exact-build
 daemon before considering an otherwise healthy Peekaboo.app host, because protocol compatibility alone does not make

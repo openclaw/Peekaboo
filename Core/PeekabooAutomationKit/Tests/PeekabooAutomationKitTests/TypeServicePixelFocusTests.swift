@@ -13,7 +13,7 @@ struct TypeServicePixelFocusTests {
             processIdentity: ApplicationProcessIdentity(
                 processIdentifier: getpid(),
                 processStartIdentity: 42))
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let synthetic = ClickRecordingSyntheticInputDriver()
         var focusRequests: [(point: CGPoint, window: UIAutomationTarget.ExactWindow)] = []
         let executor = DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
@@ -75,7 +75,7 @@ struct TypeServicePixelFocusTests {
             processIdentity: ApplicationProcessIdentity(
                 processIdentifier: getpid(),
                 processStartIdentity: 45))
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let suspension = PixelFocusDeliverySuspension()
         var focusCount = 0
         var typed: [Character] = []
@@ -133,7 +133,7 @@ struct TypeServicePixelFocusTests {
             processIdentity: ApplicationProcessIdentity(
                 processIdentifier: getpid(),
                 processStartIdentity: 43))
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let synthetic = ClickRecordingSyntheticInputDriver()
         let executor = DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
             coordinationRootURL: self.temporaryRoot()))
@@ -184,7 +184,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `stale coordinate authority refuses before click or typing`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let synthetic = ClickRecordingSyntheticInputDriver()
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         var focusAttempted = false
@@ -224,7 +224,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `ordinary snapshot planning failure releases lease before focus`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         var focusAttempted = false
         let service = TypeService(
@@ -260,7 +260,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `snapshot planning cancellation preserves cancellation and releases lease`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         var focusAttempted = false
         let service = TypeService(
@@ -296,7 +296,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `unknown pixel focus failure finalizes snapshot as retry unsafe`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let storage = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let storage = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let manager = SnapshotMutationRecordingManager(wrapping: storage)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let service = TypeService(
@@ -344,7 +344,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `accessibility refusal before focus releases snapshot lease`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let service = TypeService(
             snapshotManager: manager,
@@ -381,7 +381,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `cancellation before focus releases snapshot lease`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let service = TypeService(
             snapshotManager: manager,
@@ -413,7 +413,7 @@ struct TypeServicePixelFocusTests {
             processIdentity: ApplicationProcessIdentity(
                 processIdentifier: getpid(),
                 processStartIdentity: 46))
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -470,7 +470,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `raw cancellation after plan entry preserves pending snapshot lease`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         var focusAttempted = false
         let service = TypeService(
@@ -511,7 +511,7 @@ struct TypeServicePixelFocusTests {
             processIdentity: ApplicationProcessIdentity(
                 processIdentifier: getpid(),
                 processStartIdentity: 47))
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let root = self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -564,7 +564,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `cancellation after focus keeps snapshot replay blocked`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let service = TypeService(
             snapshotManager: manager,
@@ -594,7 +594,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `zero keyboard units refuse before the focus write`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let synthetic = ClickRecordingSyntheticInputDriver()
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         var focusAttempted = false
@@ -630,7 +630,7 @@ struct TypeServicePixelFocusTests {
     @Test
     func `malformed exact window refuses before acquiring snapshot lease`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget()
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let service = TypeService(snapshotManager: manager)
         let mismatchedBounds = exactWindow.bounds.offsetBy(dx: 1, dy: 0)
@@ -656,7 +656,7 @@ struct TypeServicePixelFocusTests {
             processIdentity: ApplicationProcessIdentity(
                 processIdentifier: getpid(),
                 processStartIdentity: 44))
-        let manager = InMemorySnapshotManager(detectionResult: fixture.detectionResult)
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         var typed: [Character] = []
         var validatedReceipts: [FocusedElementIdentity] = []

@@ -260,7 +260,6 @@ struct ScrollCommandTests {
 
     @Test
     func `partial scroll failure preserves exact accepted units in JSON`() async throws {
-        let snapshotID = "partial-scroll-snapshot"
         let automation = await MainActor.run { OutcomeStubAutomationService() }
         await MainActor.run {
             automation.uiAutomationOutcomeScript.appendFailure(
@@ -273,6 +272,7 @@ struct ScrollCommandTests {
             )
         }
         let snapshots = StubSnapshotManager()
+        let snapshotID = try await snapshots.createSnapshot()
         try await snapshots.storeDetectionResult(
             snapshotId: snapshotID,
             result: Self.detectionResult(snapshotId: snapshotID, element: Self.buttonElement(id: "B1"))
@@ -302,12 +302,12 @@ struct ScrollCommandTests {
 
     @Test
     func `stale background scroll reports canonical retry-safe refusal`() async throws {
-        let snapshotId = "stale-scroll-snapshot"
         let context = await self.makeContext { automation, _ in
             automation.scrollError = PeekabooError.snapshotStale(
                 "target window owner, process generation, or bounds changed"
             )
         }
+        let snapshotId = try await context.snapshots.createSnapshot()
         try await context.snapshots.storeDetectionResult(
             snapshotId: snapshotId,
             result: Self.detectionResult(snapshotId: snapshotId, element: Self.buttonElement(id: "B1"))
@@ -336,12 +336,12 @@ struct ScrollCommandTests {
 
     @Test
     func `unsupported background scroll reports canonical retry-safe refusal`() async throws {
-        let snapshotId = "unsupported-scroll-snapshot"
         let context = await self.makeContext { automation, _ in
             automation.scrollError = PeekabooError.invalidInput(
                 "Background scroll is unavailable for this target"
             )
         }
+        let snapshotId = try await context.snapshots.createSnapshot()
         try await context.snapshots.storeDetectionResult(
             snapshotId: snapshotId,
             result: Self.detectionResult(snapshotId: snapshotId, element: Self.buttonElement(id: "B1"))

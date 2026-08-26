@@ -1295,7 +1295,7 @@ extension SeeCommandRuntimeTests {
     }
 
     static func makeSeeCommandRuntimeFixture() -> RuntimeFixture {
-        let snapshotId = UUID().uuidString
+        let snapshotId = SnapshotReference.generate().rawValue
         let windowBounds = CGRect(x: 10, y: 20, width: 800, height: 600)
         let applicationInfo = Self.makeSeeFixtureApplicationInfo()
         let windowInfo = Self.makeSeeFixtureWindowInfo(windowBounds: windowBounds)

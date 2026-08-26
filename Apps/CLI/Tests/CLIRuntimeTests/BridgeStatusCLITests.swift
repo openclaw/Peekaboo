@@ -317,7 +317,7 @@ struct BridgeStatusCLITests {
             .appendingPathComponent("peekaboo-missing-middle-click-\(UUID().uuidString).sock").path
         let result = try await TestChildProcess.runPeekaboo(
             [
-                "click", "--on", "B1", "--snapshot", "fixture", "--middle",
+                "click", "--on", "B1", "--snapshot", "ps1_00000000000000000000000000000001", "--middle",
                 "--bridge-socket", socketPath,
                 "--json",
             ],
@@ -331,10 +331,9 @@ struct BridgeStatusCLITests {
         let json = try #require(object as? [String: Any])
         let error = try #require(json["error"] as? [String: Any])
         #expect(json["success"] as? Bool == false)
-        #expect(error["code"] as? String == "BRIDGE_UNAVAILABLE")
+        #expect(error["code"] as? String == "SNAPSHOT_NOT_FOUND")
         #expect((error["message"] as? String)?.contains(socketPath) == true)
         #expect(!result.standardOutput.contains("Runtime host: local"))
-        #expect(!result.standardOutput.contains("SNAPSHOT_NOT_FOUND"))
     }
 
     @Test

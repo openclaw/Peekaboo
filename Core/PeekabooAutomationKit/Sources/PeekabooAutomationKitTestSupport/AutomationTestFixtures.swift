@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 
 /// Canonical deterministic builders for automation tests.
 public enum AutomationTestFixtures {
@@ -152,7 +153,7 @@ public enum AutomationTestFixtures {
     }
 
     public static func captureCoordinateContext(
-        snapshotID: String = "snapshot-1",
+        snapshotID: String = SnapshotReferenceFixtures.first.rawValue,
         window: ServiceWindowInfo = Self.window(),
         deliveredImageSize: CGSize? = nil,
         viewport: CaptureViewport? = nil) -> CaptureCoordinateContext
@@ -246,7 +247,7 @@ public enum AutomationTestFixtures {
     }
 
     public static func detectionResult(
-        snapshotID: String = "snapshot-1",
+        snapshotID: String = SnapshotReferenceFixtures.first.rawValue,
         screenshotPath: String = "/tmp/peekaboo-test.png",
         elements: DetectedElements = DetectedElements(),
         windowContext: WindowContext? = nil,

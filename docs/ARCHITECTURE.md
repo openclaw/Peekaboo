@@ -54,9 +54,18 @@ Permission-bound automation can execute in three runtime shapes:
 | Peekaboo.app | GUI-held TCC grants and app lifecycle | `bridge.sock` Bridge protocol |
 | MCP server | Process-local services owned by the MCP client | stdio; no Bridge listener |
 
-CLI automation resolves a healthy daemon first, then a capable Peekaboo.app host, then auto-starts the reusable daemon.
-Operations that permit local fallback can run in the CLI process when no host is usable. Explicit socket and
-`--no-remote` flags override this selection.
+CLI automation without a snapshot reference resolves a healthy daemon first, then a capable Peekaboo.app host, then
+auto-starts the reusable daemon. Operations that permit local fallback can run in the CLI process when no host is
+usable. Explicit socket and `--no-remote` flags override this selection.
+
+A concrete snapshot reference changes the authority rule from preference to producer affinity. Actionable references
+have the exact grammar `ps1_` followed by 32 lowercase hexadecimal digits (128 random bits). The resolver asks the
+caller-local store and every authenticated live daemon, Peekaboo.app, Claude.app, and Clawdbot.app Bridge candidate
+whether it owns that reference, then proceeds only when exactly one host claims it. Missing, incompatible, unreachable,
+or multiple owners are pre-dispatch refusals; Peekaboo does not replay the action against another host or reinterpret
+the reference as local state. An explicit socket restricts the ownership check to that listener, while `--no-remote`
+restricts it to caller-local services. See [bridge-host.md](bridge-host.md#snapshot-authority) for the handshake and
+compatibility contract.
 
 The daemon and GUI app never share a socket. Each Bridge listener holds an exclusive lease, publishes its socket
 atomically, and removes only the filesystem object it owns. See [daemon.md](daemon.md) and

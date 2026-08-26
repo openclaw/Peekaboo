@@ -88,10 +88,11 @@ struct MCPExactWindowKeyboardToolTests {
     @Test
     func `Background-only exact snapshot press reaches the exact leaf`() async throws {
         let snapshot = await Self.makeSnapshot(window: Self.keyboardWindow(id: 42, index: 0))
+        let snapshots = try await InMemorySnapshotManager.containing(snapshot.detectionResult)
         let fixture = await Self.makeFixture(
             focusedWindowID: 42,
             backgroundOnly: true,
-            snapshots: InMemorySnapshotManager(detectionResult: snapshot.detectionResult))
+            snapshots: snapshots)
 
         let response = try await fixture.context.execute(
             tool: PressTool(context: fixture.context),

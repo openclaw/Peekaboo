@@ -135,6 +135,8 @@ let package = Package(
                 "PeekabooAgentRuntime",
                 "PeekabooCore",
                 .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
+                .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
+                .product(name: "PeekabooAutomationKitTestSupport", package: "PeekabooAutomationKit"),
             ],
             path: "Tests/PeekabooAgentRuntimeTests",
             swiftSettings: testTargetSettings),
