@@ -478,7 +478,11 @@ struct MCPKeyboardBackgroundToolTests {
     @Test
     func `Process clear refuses missing composite capability before element focus`() async throws {
         await Self.uiSnapshots.removeAllSnapshots()
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run {
+            let automation = MockAutomationService(accessibilityGranted: true)
+            automation.supportsExactWindowCompositeTypeDelivery = false
+            return automation
+        }
         let applications = await MainActor.run {
             MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: 112,

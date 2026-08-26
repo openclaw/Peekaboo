@@ -122,7 +122,7 @@ extension PeekabooBridgeRequest {
         default:
             return false
         }
-        return actions.contains(where: \.isClear)
+        return actions.contains(where: \.mayUseAccessibilityValueDelivery)
     }
 
     var requiresExactWindowHeldPointerLifecycleSupport: Bool {

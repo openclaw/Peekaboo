@@ -569,8 +569,11 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
 
         let valid: [(TypeResult, Int, DesktopActionOutcome.Delivery.Mechanism)] = [
             (.init(totalCharacters: 1, keyPresses: 5), 5, .windowTargetedEvents),
+            (.init(totalCharacters: 1, keyPresses: 4), 5, .composite),
             (.init(totalCharacters: 1, keyPresses: 3), 4, .composite),
+            (.init(totalCharacters: 1, keyPresses: 2), 4, .composite),
             (.init(totalCharacters: 1, keyPresses: 1), 3, .composite),
+            (.init(totalCharacters: 1, keyPresses: 0), 3, .accessibilityValue),
         ]
         for (offset, shape) in valid.enumerated() {
             let response = Self.typeResponse(
@@ -606,6 +609,106 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             #expect(throws: PeekabooBridgeOperationReceiptError.self) {
                 try bundle.validate()
             }
+        }
+    }
+
+    @Test
+    func `signed exact text and key routes preserve AX event and mixed delivery`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let actions: [TypeAction] = [.text("x"), .key(.space)]
+        let bounds = try #require(fixture.windowIdentity.capturedBounds)
+        let rawRequest = PeekabooBridgeRequest.exactWindowTargetedTypeActions(.init(
+            actions: actions,
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: SnapshotReferenceFixtures.first.rawValue,
+            expectedWindowIdentity: fixture.windowIdentity,
+            expectedWindowBounds: bounds,
+            expectedFocusedElement: nil))
+        let request = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
+        let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
+        #expect(plan.typedResponseRule.typeActionDispatchUnits == .exact(2))
+
+        let valid: [(keyPresses: Int, mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
+            (0, .accessibilityValue),
+            (1, .composite),
+            (2, .windowTargetedEvents),
+        ]
+        for (offset, shape) in valid.enumerated() {
+            let response = Self.typeResponse(
+                result: .init(totalCharacters: 1, keyPresses: shape.keyPresses),
+                dispatchedUnits: 2,
+                delivery: .init(mechanism: shape.mechanism, mode: .background))
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(offset),
+                request: request,
+                response: response,
+                target: .window(fixture.windowIdentity))
+            try bundle.validate()
+        }
+
+        let forged: [(keyPresses: Int, mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
+            (0, .composite),
+            (1, .accessibilityValue),
+            (2, .composite),
+        ]
+        for (offset, shape) in forged.enumerated() {
+            let response = Self.typeResponse(
+                result: .init(totalCharacters: 1, keyPresses: shape.keyPresses),
+                dispatchedUnits: 2,
+                delivery: .init(mechanism: shape.mechanism, mode: .background))
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(valid.count + offset),
+                request: request,
+                response: response,
+                target: .window(fixture.windowIdentity))
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                try bundle.validate()
+            }
+        }
+    }
+
+    @Test
+    func `signed exact deletion admits truthful zero dispatch`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let actions: [TypeAction] = [.key(.delete)]
+        let bounds = try #require(fixture.windowIdentity.capturedBounds)
+        let rawRequest = PeekabooBridgeRequest.exactWindowTargetedTypeActions(.init(
+            actions: actions,
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: SnapshotReferenceFixtures.first.rawValue,
+            expectedWindowIdentity: fixture.windowIdentity,
+            expectedWindowBounds: bounds,
+            expectedFocusedElement: nil))
+        let request = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
+        let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
+        #expect(plan.typedResponseRule.typeActionDispatchUnits == .oneOf([0, 1]))
+
+        let response = Self.typeResponse(
+            result: .init(totalCharacters: 0, keyPresses: 0),
+            outcome: .confirmedNoChange(route: .bridge))
+        let bundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 0,
+            request: request,
+            response: response,
+            target: .window(fixture.windowIdentity))
+        try bundle.validate()
+
+        let forged = Self.typeResponse(
+            result: .init(totalCharacters: 0, keyPresses: 1),
+            outcome: .confirmedNoChange(route: .bridge))
+        let forgedBundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 1,
+            request: request,
+            response: forged,
+            target: .window(fixture.windowIdentity))
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try forgedBundle.validate()
         }
     }
 
@@ -834,6 +937,15 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
                 delivery: delivery,
                 evidence: .deliveryAccepted,
                 unitCount: DesktopActionOutcome.DispatchUnitCount(dispatchedUnits)).projection))
+    }
+
+    private static func typeResponse(
+        result: TypeResult,
+        outcome: DesktopActionOutcome) -> PeekabooBridgeResponse
+    {
+        .projectedAction(.init(
+            response: .typeResult(result),
+            outcome: outcome.projection))
     }
 
     private static func performActionResponse(_ result: ElementActionResult) -> PeekabooBridgeResponse {

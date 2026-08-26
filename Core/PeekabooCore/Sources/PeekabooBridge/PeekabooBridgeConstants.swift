@@ -86,7 +86,7 @@ public enum PeekabooBridgeConstants {
         PeekabooBridgeProtocolVersion(major: 1, minor: 35)
 
     /// First protocol whose process- and exact-window targeted type results distinguish direct
-    /// AXValue clear writes from keyboard events and admit their composite delivery receipt.
+    /// AXValue text/key/clear mutations from keyboard events and admit their composite delivery receipt.
     public static let compositeTypeDeliveryVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 36)
 
     /// First protocol with host-atomic exact-window pixel-focus typing and modifier-click payloads.

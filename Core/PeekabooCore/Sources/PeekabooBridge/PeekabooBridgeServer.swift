@@ -244,7 +244,7 @@ public final class PeekabooBridgeServer {
         if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion,
            !self.allowedOperations.isDisjoint(with: compositeTypeOperations),
            (services.automation as? any UIAutomationActionOutcomeProviding) != nil,
-           (services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+           (services.automation as? any CompositeTypeDeliveryServiceProtocol)?
                .supportsExactWindowCompositeTypeDelivery == true
         {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)

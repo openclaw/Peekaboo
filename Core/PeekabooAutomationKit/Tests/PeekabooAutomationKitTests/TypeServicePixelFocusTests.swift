@@ -38,7 +38,10 @@ struct TypeServicePixelFocusTests {
             syntheticInputDriver: synthetic,
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { character, _ in typed.append(character) },
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            },
             desktopOperationExecutor: executor,
             operationFinalizer: { finalizerCount += 1 })
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
@@ -97,7 +100,10 @@ struct TypeServicePixelFocusTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { character, _ in typed.append(character) },
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            },
             desktopOperationExecutor: executor)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
         let request = ExactWindowPixelFocusTypeRequest(
@@ -153,11 +159,12 @@ struct TypeServicePixelFocusTests {
             syntheticInputDriver: synthetic,
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { _, _ in
+            targetedCharacterTyper: { _, _, delivery in
                 typedCount += 1
                 if typedCount == 2 {
                     throw PixelFocusFixtureError.deliveryFailed
                 }
+                return .dispatched(delivery: delivery, keyPressCount: 1)
             },
             desktopOperationExecutor: executor)
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
@@ -530,7 +537,10 @@ struct TypeServicePixelFocusTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { character, _ in typed.append(character) },
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            },
             desktopOperationExecutor: executor,
             operationFinalizer: {
                 manager.mutationLeases[fixture.snapshotID] = .requiresFreshObservation(
@@ -675,7 +685,10 @@ struct TypeServicePixelFocusTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { character, _ in typed.append(character) },
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            },
             desktopOperationExecutor: executor)
 
         do {

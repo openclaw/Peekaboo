@@ -30,7 +30,10 @@ struct TypeServiceTargetResolutionTests {
         var validationCount = 0
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
-            targetedCharacterTyper: { character, _ in typed.append(character) })
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            })
 
         do {
             _ = try await service.typeActionsTrackingSecureInput(
@@ -67,9 +70,10 @@ struct TypeServiceTargetResolutionTests {
         var validationCount = 0
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
-            targetedCharacterTyper: { character, _ in
+            targetedCharacterTyper: { character, _, delivery in
                 typed.append(character)
                 destinationIsValid = false
+                return .dispatched(delivery: delivery, keyPressCount: 1)
             })
 
         do {
@@ -121,7 +125,10 @@ struct TypeServiceTargetResolutionTests {
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { character, _ in typed.append(character) })
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            })
 
         let processSummary = try await service.typeActionsTrackingSecureInput(
             [.text("p")],
@@ -141,6 +148,107 @@ struct TypeServiceTargetResolutionTests {
         #expect(exactSummary.executionResult.outcome.delivery == .init(
             mechanism: .windowTargetedEvents,
             mode: .background))
+    }
+
+    @Test
+    @MainActor
+    func `targeted text and special keys report AX event and mixed dispatch shapes`() async throws {
+        let processIdentifier = getpid()
+        let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let exactWindow = try UIAutomationTarget.exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: processIdentifier,
+                ownerProcessStartIdentity: 91,
+                capturedBounds: bounds),
+            bounds: bounds))
+        let accessibilityDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityValue,
+            mode: .background)
+
+        let accessibilityService = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { _, _, _ in
+                .dispatched(delivery: accessibilityDelivery, keyPressCount: 0)
+            },
+            targetedSpecialKeyTyper: { _, _, _ in
+                .dispatched(delivery: accessibilityDelivery, keyPressCount: 0)
+            })
+        let accessibility = try await accessibilityService.typeActionsTrackingSecureInput(
+            [.text("a"), .key(.space)],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: exactWindow)
+        #expect(accessibility.result.totalCharacters == 1)
+        #expect(accessibility.result.keyPresses == 0)
+        #expect(accessibility.executionResult.outcome.delivery == accessibilityDelivery)
+        #expect(accessibility.executionResult.outcome.dispatchState.unitCount ==
+            DesktopActionOutcome.DispatchUnitCount(2))
+
+        let eventService = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { _, _, delivery in
+                .dispatched(delivery: delivery, keyPressCount: 1)
+            },
+            targetedSpecialKeyTyper: { _, _, delivery in
+                .dispatched(delivery: delivery, keyPressCount: 1)
+            })
+        let event = try await eventService.typeActionsTrackingSecureInput(
+            [.text("a"), .key(.return)],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: exactWindow)
+        #expect(event.result.keyPresses == 2)
+        #expect(event.executionResult.outcome.delivery == exactWindow.keyboardDelivery)
+        #expect(event.executionResult.outcome.dispatchState.unitCount ==
+            DesktopActionOutcome.DispatchUnitCount(2))
+
+        let mixedService = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { _, _, _ in
+                .dispatched(delivery: accessibilityDelivery, keyPressCount: 0)
+            },
+            targetedSpecialKeyTyper: { _, _, delivery in
+                .dispatched(delivery: delivery, keyPressCount: 1)
+            })
+        let mixed = try await mixedService.typeActionsTrackingSecureInput(
+            [.text("a"), .key(.return)],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: exactWindow)
+        #expect(mixed.result.keyPresses == 1)
+        #expect(mixed.executionResult.outcome.delivery == .init(
+            mechanism: .composite,
+            mode: .background))
+        #expect(mixed.executionResult.outcome.dispatchState.unitCount ==
+            DesktopActionOutcome.DispatchUnitCount(2))
+    }
+
+    @Test
+    @MainActor
+    func `targeted special key no change reports zero dispatch`() async throws {
+        let processIdentifier = getpid()
+        let target = try UIAutomationTarget.process(.init(
+            processIdentifier: processIdentifier,
+            identity: .init(processIdentifier: processIdentifier, processStartIdentity: 91)))
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedSpecialKeyTyper: { _, _, _ in .noChange })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.key(.delete)],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: target)
+
+        #expect(summary.result.keyPresses == 0)
+        #expect(summary.executionResult.outcome.state == .confirmedNoChange)
+        #expect(summary.executionResult.outcome.dispatchState == .none)
+        #expect(summary.executionResult.outcome.delivery == nil)
     }
 
     @Test
@@ -243,7 +351,10 @@ struct TypeServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             automationElementResolver: resolver,
             randomSource: SystemTypingCadenceRandomSource(),
-            targetedCharacterTyper: { character, _ in typed.append(character) })
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            })
 
         do {
             try await service.type(

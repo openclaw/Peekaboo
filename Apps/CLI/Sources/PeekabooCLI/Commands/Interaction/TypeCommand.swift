@@ -314,7 +314,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 "This automation host cannot run atomic exact-window pixel-focus typing"
             )
         }
-        if actions.contains(where: \.isClear) {
+        if actions.contains(where: \.mayUseAccessibilityValueDelivery) {
             try ExactWindowKeyboardRuntime.requireCompositeTypeDelivery(
                 automation: self.services.automation,
                 operation: "Pixel-focus background typing"

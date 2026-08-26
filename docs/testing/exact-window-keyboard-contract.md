@@ -38,8 +38,8 @@ Peekaboo must deliver type, press, and paste to one exact background window with
 - Stale, incomplete, or contradictory receipts fail before any keyboard or clipboard mutation.
 - Plain-text paste does not read, write, clear, save, or restore the clipboard.
 - Clipboard-backed paste tests use only mocks; no validator step reads or mutates the ambient clipboard.
-- Plain exact Bridge routing retains its existing compatibility surface. Clear-bearing process, exact-window, and pixel-focus typing requires protocol 1.36 `compositeTypeDelivery`; older or capability-missing sessions refuse before dispatch.
-- Direct AX clear reports one Accessibility-value dispatch and zero key presses. Clear plus literal typing reports composite delivery with dispatch units equal to literal key presses plus the clear write; keyboard fallback reports its real Cmd+A/Delete key events.
+- Event-only exact Bridge routing retains its existing compatibility surface. Process, exact-window, and pixel-focus typing that may use AXValue delivery requires protocol 1.36 `compositeTypeDelivery`; older or capability-missing sessions refuse before dispatch.
+- Direct AX text, editable special keys, and clear report Accessibility-value dispatches with zero key presses. Mixed AX/event typing reports composite delivery, while keyboard fallback reports only its real key events.
 
 ## Anti-cheat probes
 

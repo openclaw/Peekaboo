@@ -239,7 +239,12 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { character, _ in value.set(value.get() + String(character)) },
+            targetedCharacterTyper: { character, _, _ in
+                value.set(value.get() + String(character))
+                return .dispatched(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                    keyPressCount: 0)
+            },
             targetedTextReplacer: { text, _ in
                 value.set(text)
                 return true
@@ -259,10 +264,12 @@ struct ExactLiteralTypingEffectConfirmationTests {
 
         #expect(value.get() == "safe")
         #expect(summary.executionResult.outcome.state == .confirmedChange)
-        #expect(summary.executionResult.outcome.delivery == .init(mechanism: .composite, mode: .background))
+        #expect(summary.executionResult.outcome.delivery == .init(
+            mechanism: .accessibilityValue,
+            mode: .background))
         #expect(summary.executionResult.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(5))
         #expect(summary.result.totalCharacters == 4)
-        #expect(summary.result.keyPresses == 4)
+        #expect(summary.result.keyPresses == 0)
     }
 
     @Test
@@ -305,7 +312,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let target = try self.target()
         let cases: [(failOnCharacter: Int, units: Int, mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
             (1, 1, .accessibilityValue),
-            (2, 2, .composite),
+            (2, 2, .accessibilityValue),
         ]
 
         for testCase in cases {
@@ -313,11 +320,14 @@ struct ExactLiteralTypingEffectConfirmationTests {
             let service = TypeService(
                 randomSource: SystemTypingCadenceRandomSource(),
                 focusedElementSecurityProbe: { _ in false },
-                targetedCharacterTyper: { _, _ in
+                targetedCharacterTyper: { _, _, _ in
                     characterCalls += 1
                     if characterCalls == testCase.failOnCharacter {
                         throw TypingEffectFixtureError.characterDispatchFailed
                     }
+                    return .dispatched(
+                        delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                        keyPressCount: 0)
                 },
                 targetedTextReplacer: { _, _ in true },
                 processStartIdentityProvider: { _ in 33 })
@@ -377,7 +387,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { _, _ in },
+            targetedCharacterTyper: { _, _, _ in .noChange },
             targetedTextReplacer: { _, _ in true },
             exactFocusedElementValueReader: { focusedElement in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
@@ -394,9 +404,11 @@ struct ExactLiteralTypingEffectConfirmationTests {
 
         #expect(value.get() == "safe")
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
-        #expect(summary.executionResult.outcome.delivery == .init(mechanism: .composite, mode: .background))
-        #expect(summary.executionResult.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(5))
-        #expect(summary.result.keyPresses == 4)
+        #expect(summary.executionResult.outcome.delivery == .init(
+            mechanism: .accessibilityValue,
+            mode: .background))
+        #expect(summary.executionResult.outcome.dispatchState.unitCount == .one)
+        #expect(summary.result.keyPresses == 0)
     }
 
     private func target(role: String = "AXTextField") throws -> UIAutomationTarget.ExactWindow {

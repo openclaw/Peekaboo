@@ -2266,7 +2266,7 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
     let supportsStatelessClickVariants = true
     let supportsExactWindowTargetedKeyboard = true
     var supportsExactWindowCompositeTypeDelivery: Bool {
-        false
+        true
     }
 
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil

@@ -22,6 +22,25 @@ private final class PixelFocusPlanEntryState {
     var entered = false
 }
 
+struct TypeActionDispatchSummary: Equatable, Sendable {
+    let dispatchedUnitCount: Int
+    let keyPressCount: Int
+    let delivery: DesktopActionOutcome.Delivery?
+
+    static let noChange = Self(dispatchedUnitCount: 0, keyPressCount: 0, delivery: nil)
+
+    static func dispatched(
+        delivery: DesktopActionOutcome.Delivery,
+        keyPressCount: Int,
+        unitCount: Int = 1) -> Self
+    {
+        Self(
+            dispatchedUnitCount: unitCount,
+            keyPressCount: keyPressCount,
+            delivery: delivery)
+    }
+}
+
 /// Service for handling typing and text input operations
 @MainActor
 public final class TypeService {
@@ -43,12 +62,6 @@ public final class TypeService {
         let delivery: DesktopActionOutcome.Delivery?
     }
 
-    private struct ClearDispatchSummary {
-        let dispatchedUnitCount: Int
-        let keyPressCount: Int
-        let delivery: DesktopActionOutcome.Delivery
-    }
-
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "TypeService")
     let snapshotManager: any SnapshotManagerProtocol
     private let clickService: ClickService
@@ -58,7 +71,14 @@ public final class TypeService {
     private let syntheticInputDriver: any SyntheticInputDriving
     private let automationElementResolver: any AutomationElementResolving
     private let focusedElementSecurityProbe: @MainActor (pid_t?) -> Bool
-    private let targetedCharacterTyper: @MainActor (Character, pid_t) throws -> Void
+    private let targetedCharacterTyper: @MainActor (
+        Character,
+        pid_t,
+        DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
+    private let targetedSpecialKeyTyper: @MainActor (
+        PeekabooFoundation.SpecialKey,
+        pid_t,
+        DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
     private let targetedTextReplacer: @MainActor (String, pid_t) throws -> Bool
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
@@ -120,8 +140,16 @@ public final class TypeService {
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
         randomSource: any TypingCadenceRandomSource,
         focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField,
-        targetedCharacterTyper: @escaping @MainActor (Character, pid_t) throws -> Void = TypeService
+        targetedCharacterTyper: @escaping @MainActor (
+            Character,
+            pid_t,
+            DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary = TypeService
             .typeTargetedCharacter,
+        targetedSpecialKeyTyper: @escaping @MainActor (
+            PeekabooFoundation.SpecialKey,
+            pid_t,
+            DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary = TypeService
+            .typeTargetedSpecialKey,
         targetedTextReplacer: @escaping @MainActor (String, pid_t) throws -> Bool = { text, processIdentifier in
             try BackgroundInputDriver.replaceFocusedText(
                 with: text,
@@ -153,6 +181,7 @@ public final class TypeService {
         self.cadenceRandom = randomSource
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
         self.targetedCharacterTyper = targetedCharacterTyper
+        self.targetedSpecialKeyTyper = targetedSpecialKeyTyper
         self.targetedTextReplacer = targetedTextReplacer
         self.exactFocusedElementValueReader = exactFocusedElementValueReader
         self.processStartIdentityProvider = processStartIdentityProvider
@@ -551,7 +580,15 @@ public final class TypeService {
                             deliveryValidator,
                             emittedUnitCount: emittedUnitCount)
                         do {
-                            try await self.typeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)
+                            let dispatch = try await self.typeCharacter(
+                                character,
+                                targetProcessIdentifier: targetProcessIdentifier,
+                                keyboardDelivery: keyboardDelivery)
+                            keyPresses += dispatch.keyPressCount
+                            emittedUnitCount += dispatch.dispatchedUnitCount
+                            if let delivery = dispatch.delivery {
+                                recordDelivery(delivery)
+                            }
                         } catch let error as InputDeliveryIndeterminateError {
                             throw error
                         } catch {
@@ -560,9 +597,6 @@ public final class TypeService {
                                 emittedUnitCount: emittedUnitCount > 0 ? emittedUnitCount : nil)
                         }
                         totalChars += 1
-                        keyPresses += 1
-                        emittedUnitCount += 1
-                        recordDelivery(keyboardDelivery)
                         try await self.sleepAfterKeystroke(
                             typedCharacter: character,
                             cadence: cadence,
@@ -575,7 +609,21 @@ public final class TypeService {
                         deliveryValidator,
                         emittedUnitCount: emittedUnitCount)
                     do {
-                        try self.typeSpecialKey(key, targetProcessIdentifier: targetProcessIdentifier)
+                        let dispatch = if let targetProcessIdentifier {
+                            try self.targetedSpecialKeyTyper(
+                                key,
+                                targetProcessIdentifier,
+                                keyboardDelivery)
+                        } else {
+                            try self.typeSpecialKey(
+                                key,
+                                keyboardDelivery: keyboardDelivery)
+                        }
+                        keyPresses += dispatch.keyPressCount
+                        emittedUnitCount += dispatch.dispatchedUnitCount
+                        if let delivery = dispatch.delivery {
+                            recordDelivery(delivery)
+                        }
                     } catch let error as InputDeliveryIndeterminateError {
                         throw error
                     } catch {
@@ -583,9 +631,6 @@ public final class TypeService {
                             from: error,
                             emittedUnitCount: emittedUnitCount > 0 ? emittedUnitCount : nil)
                     }
-                    keyPresses += 1
-                    emittedUnitCount += 1
-                    recordDelivery(keyboardDelivery)
                     try await self.sleepAfterKeystroke(
                         typedCharacter: nil,
                         cadence: cadence,
@@ -600,7 +645,9 @@ public final class TypeService {
                         priorEmittedUnitCount: emittedUnitCount)
                     emittedUnitCount += clearSummary.dispatchedUnitCount
                     keyPresses += clearSummary.keyPressCount
-                    recordDelivery(clearSummary.delivery)
+                    if let delivery = clearSummary.delivery {
+                        recordDelivery(delivery)
+                    }
                     try await self.sleepAfterKeystroke(
                         typedCharacter: nil,
                         cadence: cadence,
@@ -733,7 +780,7 @@ public final class TypeService {
         targetProcessIdentifier: pid_t? = nil,
         keyboardDelivery: DesktopActionOutcome.Delivery? = nil,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
-        priorEmittedUnitCount: Int = 0) async throws -> ClearDispatchSummary
+        priorEmittedUnitCount: Int = 0) async throws -> TypeActionDispatchSummary
     {
         self.logger.debug("Clearing current field")
         try await self.validateDelivery(
@@ -754,10 +801,9 @@ public final class TypeService {
                             emittedUnitCount: priorEmittedUnitCount + 1,
                             delivery: .init(mechanism: .accessibilityValue, mode: .background))
                     }
-                    return ClearDispatchSummary(
-                        dispatchedUnitCount: 1,
-                        keyPressCount: 0,
-                        delivery: .init(mechanism: .accessibilityValue, mode: .background))
+                    return TypeActionDispatchSummary.dispatched(
+                        delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                        keyPressCount: 0)
                 }
             } catch let error as InputDeliveryIndeterminateError {
                 throw error
@@ -834,10 +880,10 @@ public final class TypeService {
                 emittedUnitCount: priorEmittedUnitCount + 2,
                 delivery: fallbackDelivery)
         }
-        return ClearDispatchSummary(
-            dispatchedUnitCount: 2,
+        return TypeActionDispatchSummary.dispatched(
+            delivery: fallbackDelivery,
             keyPressCount: 2,
-            delivery: fallbackDelivery)
+            unitCount: 2)
     }
 
     private func validateDelivery(
@@ -858,10 +904,14 @@ public final class TypeService {
                 causeDescription: error.localizedDescription)
         }
     }
+}
 
+extension TypeService {
     private func typeTextWithDelay(_ text: String, delay: TimeInterval) async throws {
         for char in text {
-            try await self.typeCharacter(char)
+            _ = try await self.typeCharacter(
+                char,
+                keyboardDelivery: .init(mechanism: .globalEvents, mode: .foreground))
 
             if delay > 0 {
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -869,26 +919,36 @@ public final class TypeService {
         }
     }
 
-    private func typeCharacter(_ char: Character, targetProcessIdentifier: pid_t? = nil) async throws {
+    private func typeCharacter(
+        _ char: Character,
+        targetProcessIdentifier: pid_t? = nil,
+        keyboardDelivery: DesktopActionOutcome.Delivery) async throws -> TypeActionDispatchSummary
+    {
         if let targetProcessIdentifier {
-            try self.targetedCharacterTyper(char, targetProcessIdentifier)
+            return try self.targetedCharacterTyper(char, targetProcessIdentifier, keyboardDelivery)
         } else {
             try self.syntheticInputDriver.type(String(char), delayPerCharacter: 0)
+            return .dispatched(delivery: keyboardDelivery, keyPressCount: 1)
         }
     }
 
-    private static func typeTargetedCharacter(_ char: Character, targetProcessIdentifier: pid_t) throws {
+    private static func typeTargetedCharacter(
+        _ char: Character,
+        targetProcessIdentifier: pid_t,
+        keyboardDelivery: DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
+    {
         if try BackgroundInputDriver.insertTextIntoFocusedText(
             String(char),
             targetProcessIdentifier: targetProcessIdentifier)
         {
-            return
+            return .dispatched(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                keyPressCount: 0)
         }
         try BackgroundInputDriver.typeCharacter(char, targetProcessIdentifier: targetProcessIdentifier)
+        return .dispatched(delivery: keyboardDelivery, keyPressCount: 1)
     }
-}
 
-extension TypeService {
     private static func indeterminateDeliveryError(
         from error: any Error,
         emittedUnitCount: Int?,

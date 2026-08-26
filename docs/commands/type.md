@@ -48,9 +48,9 @@ that snapshot. Use `press` for standalone keys or chords.
   relaunch, window/bounds drift, sibling focus, a different internal key window, or an unreadable focus attribute
   stops delivery instead of widening to application or foreground focus.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
-- Background delivery uses process-targeted CoreGraphics keyboard events and requires Event Synthesizing access. Apps that only accept typing in a focused key window may still need `--foreground`.
-- Printable background text is carried as Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.
-- Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Plain exact-window remote typing retains its existing compatibility floor; clear-bearing process, exact-window, and pixel-focus requests require Bridge protocol 1.36 plus `compositeTypeDelivery` so older sessions refuse before dispatch.
+- Background delivery prefers Accessibility value and selection edits for writable focused text controls. Unsupported or rejected AX routes fall back to process-targeted CoreGraphics keyboard events, which require Event Synthesizing access. Apps that accept neither background route may still need `--foreground`.
+- Printable event fallback carries Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.
+- Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Requests containing non-empty text, clear, or an editable focused-text key require Bridge protocol 1.36 plus `compositeTypeDelivery`, because those actions may use AXValue delivery; event-only special keys retain their earlier compatibility floor.
 - Event injection is not evidence that the receiver changed. A native `dispatched_unverified` result is returned as
   non-success and requires a fresh observation; `typedText`, `totalCharacters`, and `keyPresses` claim completed work
   only when the typing effect is a confirmed change. `confirmed_no_change` and missing outcomes are also non-success.
@@ -61,7 +61,7 @@ that snapshot. Use `press` for standalone keys or chords.
   `set-value`: it verifies the AX value readback without exposing field contents in the result. Secure fields, special
   keys, IME-dependent input, and controls without readable values remain intentionally unverifiable.
 - JSON output reports confirmed `totalCharacters`, `keyPresses`, delivery mode, optional target PID/window ID, and elapsed time; this matches what the agent logs when executing scripted steps.
-- `keyPresses` counts actual keyboard events, while canonical `dispatched_unit_count` counts every accepted mutation. A direct background clear is one `accessibility_value` dispatch and zero key presses; clear plus literal typing uses `composite` delivery and adds one dispatch beyond its text key count. Keyboard-clear fallback remains two key presses and two dispatches.
+- `keyPresses` counts actual keyboard events, while canonical `dispatched_unit_count` counts every accepted mutation. Direct background text insertion, editable selection/deletion keys, and clear use `accessibility_value` with zero key presses when AX succeeds. Event fallback counts the posted key events; a request that uses both mechanisms reports `composite`. Keyboard-clear fallback remains two key presses and two dispatches.
 
 ## Examples
 ```bash

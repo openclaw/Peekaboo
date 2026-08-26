@@ -180,70 +180,156 @@ enum PeekabooBridgeOperationResultSemantics {
     }
 
     struct TypeActionResultRule: Equatable, Sendable {
-        struct DispatchShape: Equatable, Sendable {
-            let keyPresses: Int
-            let dispatchUnits: Int
-            let usesAccessibilityValue: Bool
-        }
-
         let totalCharacters: Int
-        let dispatchShapes: [DispatchShape]
+        let fixedEventKeyPresses: Int
+        let fixedEventDispatchUnits: Int
+        let flexibleAccessibilityUnits: Int
+        let noChangeCapableAccessibilityKeys: Int
+        let flexibleClearCount: Int
+        let additionalAccessibilityUnits: Int
 
         init(
             actions: [TypeAction],
-            allowsDirectClear: Bool = false,
+            allowsAccessibilityValueDelivery: Bool = false,
             additionalDispatchUnits: Int = 0,
             additionalUsesAccessibilityValue: Bool = false)
         {
             var totalCharacters = 0
-            var nonClearKeyPresses = 0
-            var clearCount = 0
+            var fixedEventKeyPresses = 0
+            var fixedEventDispatchUnits = 0
+            var flexibleAccessibilityUnits = 0
+            var noChangeCapableAccessibilityKeys = 0
+            var flexibleClearCount = 0
             for action in actions {
                 switch action {
                 case let .text(text):
                     totalCharacters += text.count
-                    nonClearKeyPresses += text.count
-                case .key:
-                    nonClearKeyPresses += 1
+                    if allowsAccessibilityValueDelivery {
+                        flexibleAccessibilityUnits += text.count
+                    } else {
+                        fixedEventKeyPresses += text.count
+                        fixedEventDispatchUnits += text.count
+                    }
+                case let .key(key):
+                    if allowsAccessibilityValueDelivery, key.mayUseAccessibilityValueDelivery {
+                        if key.mayCompleteWithoutDispatch {
+                            noChangeCapableAccessibilityKeys += 1
+                        } else {
+                            flexibleAccessibilityUnits += 1
+                        }
+                    } else {
+                        fixedEventKeyPresses += 1
+                        fixedEventDispatchUnits += 1
+                    }
                 case .clear:
-                    clearCount += 1
+                    if allowsAccessibilityValueDelivery {
+                        flexibleClearCount += 1
+                    } else {
+                        fixedEventKeyPresses += 2
+                        fixedEventDispatchUnits += 2
+                    }
                 }
             }
             self.totalCharacters = totalCharacters
-            let directClearCounts = allowsDirectClear ? Array(0...clearCount) : [0]
-            self.dispatchShapes = directClearCounts.map { directClearCount in
-                let fallbackClearCount = clearCount - directClearCount
-                return DispatchShape(
-                    keyPresses: nonClearKeyPresses + fallbackClearCount * 2,
-                    dispatchUnits: nonClearKeyPresses + directClearCount + fallbackClearCount * 2 +
-                        additionalDispatchUnits,
-                    usesAccessibilityValue: directClearCount > 0 || additionalUsesAccessibilityValue)
-            }
+            self.fixedEventKeyPresses = fixedEventKeyPresses
+            self.fixedEventDispatchUnits = fixedEventDispatchUnits
+            self.flexibleAccessibilityUnits = flexibleAccessibilityUnits
+            self.noChangeCapableAccessibilityKeys = noChangeCapableAccessibilityKeys
+            self.flexibleClearCount = flexibleClearCount
+            self.additionalAccessibilityUnits = additionalUsesAccessibilityValue ? additionalDispatchUnits : 0
+            precondition(additionalUsesAccessibilityValue || additionalDispatchUnits == 0)
         }
 
         var dispatchUnits: UnitPolicy {
-            let units = Array(Set(self.dispatchShapes.map(\.dispatchUnits))).sorted()
-            return units.count == 1 ? .exact(units[0]) : .oneOf(units)
+            let minimum = self.minimumDispatchUnits
+            let maximum = self.maximumDispatchUnits
+            return minimum == maximum ? .exact(minimum) : .oneOf(Array(minimum...maximum))
         }
 
         var hasPositiveDispatch: Bool {
-            self.dispatchShapes.contains { $0.dispatchUnits > 0 }
+            self.maximumDispatchUnits > 0
         }
 
         func accepts(
             keyPresses: Int,
-            dispatchUnitCount: DesktopActionOutcome.DispatchUnitCount?,
-            delivery: DesktopActionOutcome.Delivery?) -> Bool
+            outcome: DesktopActionOutcome) -> Bool
         {
-            guard let dispatchUnitCount, let delivery else { return false }
-            return self.dispatchShapes.contains {
-                guard $0.keyPresses == keyPresses,
-                      $0.dispatchUnits == dispatchUnitCount.rawValue
+            let dispatchUnits: Int
+            let expectedUsesAccessibility: Bool
+            let expectedUsesKeyboard: Bool
+            switch outcome.dispatchState {
+            case .none:
+                guard outcome.state == .confirmedNoChange, outcome.delivery == nil else { return false }
+                dispatchUnits = 0
+                expectedUsesAccessibility = false
+                expectedUsesKeyboard = false
+            case let .dispatched(unitCount):
+                guard let unitCount,
+                      let deliveryShape = Self.deliveryShape(outcome.delivery)
                 else { return false }
-                if $0.usesAccessibilityValue {
-                    return delivery.mechanism == ($0.keyPresses == 0 ? .accessibilityValue : .composite)
+                dispatchUnits = unitCount.rawValue
+                expectedUsesAccessibility = deliveryShape.usesAccessibility
+                expectedUsesKeyboard = deliveryShape.usesKeyboard
+            case .mayHaveDispatched:
+                return false
+            }
+
+            let baseUnits = self.minimumDispatchUnits
+            for fallbackClearCount in 0...self.flexibleClearCount {
+                let activeNoChangeKeys = dispatchUnits - baseUnits - fallbackClearCount
+                guard (0...self.noChangeCapableAccessibilityKeys).contains(activeNoChangeKeys) else { continue }
+
+                let flexibleEventKeyPresses = keyPresses - self.fixedEventKeyPresses - fallbackClearCount * 2
+                guard flexibleEventKeyPresses >= 0 else { continue }
+                let minimumFlexibleEvents = max(
+                    0,
+                    flexibleEventKeyPresses - activeNoChangeKeys)
+                let maximumFlexibleEvents = min(
+                    self.flexibleAccessibilityUnits,
+                    flexibleEventKeyPresses)
+                guard minimumFlexibleEvents <= maximumFlexibleEvents else { continue }
+
+                let usesKeyboard = self.fixedEventDispatchUnits > 0 ||
+                    flexibleEventKeyPresses > 0 || fallbackClearCount > 0
+                guard usesKeyboard == expectedUsesKeyboard else { continue }
+
+                let accessibilityIsUnavoidable = self.additionalAccessibilityUnits > 0 ||
+                    fallbackClearCount < self.flexibleClearCount
+                let noAccessibilityCandidate = !accessibilityIsUnavoidable &&
+                    maximumFlexibleEvents == self.flexibleAccessibilityUnits &&
+                    activeNoChangeKeys - flexibleEventKeyPresses + maximumFlexibleEvents == 0
+                let candidateCount = maximumFlexibleEvents - minimumFlexibleEvents + 1
+                let hasAccessibilityCandidate = accessibilityIsUnavoidable ||
+                    !noAccessibilityCandidate || candidateCount > 1
+                if expectedUsesAccessibility ? hasAccessibilityCandidate : noAccessibilityCandidate {
+                    return true
                 }
-                return delivery.mechanism != .accessibilityValue && delivery.mechanism != .composite
+            }
+            return false
+        }
+
+        private var minimumDispatchUnits: Int {
+            self.fixedEventDispatchUnits + self.flexibleAccessibilityUnits + self.flexibleClearCount +
+                self.additionalAccessibilityUnits
+        }
+
+        private var maximumDispatchUnits: Int {
+            self.minimumDispatchUnits + self.noChangeCapableAccessibilityKeys + self.flexibleClearCount
+        }
+
+        private static func deliveryShape(
+            _ delivery: DesktopActionOutcome.Delivery?) -> (usesAccessibility: Bool, usesKeyboard: Bool)?
+        {
+            guard let delivery else { return nil }
+            return switch delivery.mechanism {
+            case .accessibilityValue:
+                (true, false)
+            case .composite:
+                (true, true)
+            case .globalEvents, .processTargetedEvents, .windowTargetedEvents:
+                (false, true)
+            default:
+                nil
             }
         }
     }
@@ -578,11 +664,9 @@ enum PeekabooBridgeOperationResultSemantics {
                         "type response request counts")
                 }
                 guard let outcome,
-                      case let .dispatched(actualUnits) = outcome.dispatchState,
                       expected.accepts(
                           keyPresses: result.keyPresses,
-                          dispatchUnitCount: actualUnits,
-                          delivery: outcome.delivery)
+                          outcome: outcome)
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "type response key and dispatch units")
@@ -1085,13 +1169,13 @@ extension PeekabooBridgeOperationResultSemantics {
         case let .typeActions(payload):
             .typeActions(.init(actions: payload.actions))
         case let .targetedTypeActions(payload):
-            .typeActions(.init(actions: payload.actions, allowsDirectClear: true))
+            .typeActions(.init(actions: payload.actions, allowsAccessibilityValueDelivery: true))
         case let .exactWindowTargetedTypeActions(payload):
-            .typeActions(.init(actions: payload.actions, allowsDirectClear: true))
+            .typeActions(.init(actions: payload.actions, allowsAccessibilityValueDelivery: true))
         case let .exactWindowPixelFocusType(payload):
             .typeActions(.init(
                 actions: payload.request.actions,
-                allowsDirectClear: true,
+                allowsAccessibilityValueDelivery: true,
                 additionalDispatchUnits: 1,
                 additionalUsesAccessibilityValue: true))
         case let .setValue(payload):
@@ -1448,7 +1532,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 rule(processBackground, .variable),
                 rule(axBackground, .variable),
             ]
-            if payload.actions.contains(where: \.isClear) {
+            if payload.actions.contains(where: \.mayUseAccessibilityValueDelivery) {
                 rules.append(rule(valueBackground, .variable))
                 rules.append(rule(compositeBackground, .variable))
             }
@@ -1458,7 +1542,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 rule(windowBackground, .variable),
                 rule(axBackground, .variable),
             ]
-            if payload.actions.contains(where: \.isClear) {
+            if payload.actions.contains(where: \.mayUseAccessibilityValueDelivery) {
                 rules.append(rule(valueBackground, .variable))
                 rules.append(rule(compositeBackground, .variable))
             }
@@ -1467,7 +1551,8 @@ extension PeekabooBridgeOperationResultSemantics {
             let valueRule = DeliveryRule(
                 delivery: valueBackground,
                 units: .positive,
-                allowsSuccessfulOutcome: payload.request.actions.contains(where: \.isClear))
+                allowsSuccessfulOutcome: payload.request.actions.allSatisfy(
+                    \.mayUseAccessibilityValueDelivery))
             return [rule(compositeBackground, .positive), valueRule]
         case .foregroundModifierClick:
             return [

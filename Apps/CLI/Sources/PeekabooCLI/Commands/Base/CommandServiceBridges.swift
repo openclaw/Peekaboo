@@ -169,6 +169,12 @@ enum AutomationServiceBridge {
             else {
                 throw self.targetedTypeUnavailableError(service: targetedTypeService)
             }
+            if request.actions.contains(where: \.mayUseAccessibilityValueDelivery) {
+                try ExactWindowKeyboardRuntime.requireCompositeTypeDelivery(
+                    automation: automation,
+                    operation: "Background typing"
+                )
+            }
 
             if let automation = automation as? any UIAutomationActionOutcomeProviding {
                 return try await automation.typeActionsWithOutcome(
@@ -209,7 +215,9 @@ enum AutomationServiceBridge {
                 expectedProcessIdentity: identity
             )
         case let .exactWindow(exactWindow):
-            let requiresCompositeTypeDelivery = request.actions.contains(where: \.isClear)
+            let requiresCompositeTypeDelivery = request.actions.contains(
+                where: \.mayUseAccessibilityValueDelivery
+            )
             let outcomeService = if requiresCompositeTypeDelivery {
                 try ExactWindowKeyboardRuntime.requireTypeOutcomeProvider(
                     automation: automation,

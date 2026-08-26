@@ -6,6 +6,12 @@ import Foundation
 import os.log
 import PeekabooFoundation
 
+enum FocusedTextKeyDispatch: Equatable {
+    case unsupported
+    case noChange
+    case accessibilityValue
+}
+
 /// Background input that targets a process directly without focusing it or moving the cursor.
 ///
 /// Keyboard input is delivered as pid-routed CGEvents. Single left clicks prefer accessibility
@@ -311,7 +317,7 @@ enum BackgroundInputDriver {
         guard try self.setText(text, on: element) else {
             return false
         }
-        self.setSelectedTextRange(CFRange(location: text.utf16.count, length: 0), on: element)
+        _ = self.setSelectedTextRange(CFRange(location: text.utf16.count, length: 0), on: element)
         return true
     }
 
@@ -332,71 +338,8 @@ enum BackgroundInputDriver {
         guard try self.setText(edit.text, on: element) else {
             return false
         }
-        self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+        _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
         return true
-    }
-
-    @discardableResult
-    static func performFocusedTextKey(
-        _ key: PeekabooFoundation.SpecialKey,
-        targetProcessIdentifier: pid_t) throws -> Bool
-    {
-        try self.validateLiveTarget(targetProcessIdentifier)
-        guard let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier),
-              let currentText = try self.textValue(from: element)
-        else {
-            return false
-        }
-
-        let textLength = currentText.utf16.count
-        let selection = self.clampedSelection(self.selectedTextRange(from: element), textLength: textLength)
-
-        switch key {
-        case .leftArrow:
-            let location = self.cursorLocationMovingLeft(from: selection, in: currentText)
-            self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
-            return true
-
-        case .rightArrow:
-            let location = self.cursorLocationMovingRight(from: selection, in: currentText)
-            self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
-            return true
-
-        case .home:
-            self.setSelectedTextRange(CFRange(location: 0, length: 0), on: element)
-            return true
-
-        case .end:
-            self.setSelectedTextRange(CFRange(location: textLength, length: 0), on: element)
-            return true
-
-        case .delete:
-            guard let editRange = self.deletionRangeBeforeSelection(selection, in: currentText) else {
-                return true
-            }
-            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
-            guard try self.setText(edit.text, on: element) else { return false }
-            self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
-            return true
-
-        case .forwardDelete:
-            guard let editRange = self.deletionRangeAfterSelection(selection, in: currentText) else {
-                return true
-            }
-            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
-            guard try self.setText(edit.text, on: element) else { return false }
-            self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
-            return true
-
-        case .space:
-            let edit = self.textByReplacingSelection(in: currentText, selection: selection, replacement: " ")
-            guard try self.setText(edit.text, on: element) else { return false }
-            self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
-            return true
-
-        default:
-            return false
-        }
     }
 
     @discardableResult
@@ -414,8 +357,7 @@ enum BackgroundInputDriver {
             return false
         }
 
-        self.setSelectedTextRange(CFRange(location: 0, length: currentText.utf16.count), on: element)
-        return true
+        return self.setSelectedTextRange(CFRange(location: 0, length: currentText.utf16.count), on: element)
     }
 
     private static func post(_ event: CGEvent, to pid: pid_t) {
@@ -794,15 +736,16 @@ enum BackgroundInputDriver {
         return range
     }
 
-    private static func setSelectedTextRange(_ range: CFRange, on element: AXUIElement) {
+    @discardableResult
+    private static func setSelectedTextRange(_ range: CFRange, on element: AXUIElement) -> Bool {
         var range = range
         guard let value = AXValueCreate(.cfRange, &range) else {
-            return
+            return false
         }
-        _ = AXUIElementSetAttributeValue(
+        return AXUIElementSetAttributeValue(
             element,
             kAXSelectedTextRangeAttribute as CFString,
-            value)
+            value) == .success
     }
 
     private static func stringAttribute(_ attributeName: CFString, from element: AXUIElement) -> String? {
@@ -992,6 +935,72 @@ enum BackgroundInputDriver {
 }
 
 extension BackgroundInputDriver {
+    static func performFocusedTextKey(
+        _ key: PeekabooFoundation.SpecialKey,
+        targetProcessIdentifier: pid_t) throws -> FocusedTextKeyDispatch
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        guard let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier),
+              let currentText = try self.textValue(from: element)
+        else {
+            return .unsupported
+        }
+
+        let textLength = currentText.utf16.count
+        let selection = self.clampedSelection(self.selectedTextRange(from: element), textLength: textLength)
+
+        switch key {
+        case .leftArrow:
+            let location = self.cursorLocationMovingLeft(from: selection, in: currentText)
+            return self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
+                ? .accessibilityValue
+                : .unsupported
+
+        case .rightArrow:
+            let location = self.cursorLocationMovingRight(from: selection, in: currentText)
+            return self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
+                ? .accessibilityValue
+                : .unsupported
+
+        case .home:
+            return self.setSelectedTextRange(CFRange(location: 0, length: 0), on: element)
+                ? .accessibilityValue
+                : .unsupported
+
+        case .end:
+            return self.setSelectedTextRange(CFRange(location: textLength, length: 0), on: element)
+                ? .accessibilityValue
+                : .unsupported
+
+        case .delete:
+            guard let editRange = self.deletionRangeBeforeSelection(selection, in: currentText) else {
+                return .noChange
+            }
+            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
+            guard try self.setText(edit.text, on: element) else { return .unsupported }
+            _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            return .accessibilityValue
+
+        case .forwardDelete:
+            guard let editRange = self.deletionRangeAfterSelection(selection, in: currentText) else {
+                return .noChange
+            }
+            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
+            guard try self.setText(edit.text, on: element) else { return .unsupported }
+            _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            return .accessibilityValue
+
+        case .space:
+            let edit = self.textByReplacingSelection(in: currentText, selection: selection, replacement: " ")
+            guard try self.setText(edit.text, on: element) else { return .unsupported }
+            _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            return .accessibilityValue
+
+        default:
+            return .unsupported
+        }
+    }
+
     @MainActor
     static func performPositionalClickAction(
         _ action: PositionalClickAction,

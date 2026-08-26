@@ -19,7 +19,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         processIdentifier: getpid())
 
     @Test
-    func `protocol 1 36 gates only clear-bearing background type requests`() {
+    func `protocol 1 36 gates AX-capable background type requests`() {
         let operations: Set<PeekabooBridgeOperation> = [
             .targetedTypeActions,
             .exactWindowTargetedTypeActions,
@@ -36,6 +36,12 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
             capturedBounds: bounds)
         let plain = PeekabooBridgeRequest.targetedTypeActions(.init(
             actions: [.text("plain")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            targetProcessIdentifier: getpid(),
+            expectedProcessIdentity: processIdentity))
+        let eventOnly = PeekabooBridgeRequest.targetedTypeActions(.init(
+            actions: [.key(.return)],
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             targetProcessIdentifier: getpid(),
@@ -58,13 +64,16 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         #expect(PeekabooBridgeConstants.protocolVersion == Self.currentVersion)
         #expect(PeekabooBridgeConstants.compositeTypeDeliveryVersion == Self.currentVersion)
         #expect(PeekabooBridgeOperation.compatible(operations, with: Self.previousVersion) == operations)
-        #expect(plain.minimumNegotiatedProtocolVersion == nil)
+        #expect(plain.minimumNegotiatedProtocolVersion == Self.currentVersion)
+        #expect(eventOnly.minimumNegotiatedProtocolVersion == nil)
         #expect(clear.minimumNegotiatedProtocolVersion == Self.currentVersion)
         #expect(pixelClear.minimumNegotiatedProtocolVersion == Self.currentVersion)
     }
 
     @Test
-    func `protocol 1 35 session dispatches plain type but refuses clear before service entry`() async throws {
+    func `protocol 1 35 session dispatches event-only type but refuses AX-capable input before service entry`()
+        async throws
+    {
         let automation = CompositeTypeAutomationService()
         let services = StubServices(automation: automation)
         let identity = try ApplicationProcessIdentity(
@@ -88,27 +97,30 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         #expect(handshake.supportedOperations.contains(.targetedTypeActions))
         #expect(handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.compositeTypeDelivery) != true)
 
-        let plain = try await fixture.client.typeActionsWithOutcome(
-            [.text("x")],
+        let eventOnly = try await fixture.client.typeActionsWithOutcome(
+            [.key(.return)],
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             expectedProcessIdentity: identity)
-        #expect(plain.payload.totalCharacters == 1)
-        #expect(plain.payload.keyPresses == 1)
+        #expect(eventOnly.payload.totalCharacters == 0)
+        #expect(eventOnly.payload.keyPresses == 1)
         #expect(automation.targetedTypeCallCount == 1)
 
-        do {
-            _ = try await fixture.client.typeActionsWithOutcome(
-                [.clear, .text("x")],
-                cadence: .fixed(milliseconds: 0),
-                snapshotId: nil,
-                expectedProcessIdentity: identity)
-            Issue.record("Expected protocol 1.35 clear typing to refuse before transport")
-        } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .refused)
-            #expect(failure.outcome.dispatchState == .none)
-            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
-            #expect(failure.outcome.retrySafety == .safe)
+        let refusedActions: [[TypeAction]] = [[.text("x")], [.clear, .text("x")]]
+        for actions in refusedActions {
+            do {
+                _ = try await fixture.client.typeActionsWithOutcome(
+                    actions,
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotId: nil,
+                    expectedProcessIdentity: identity)
+                Issue.record("Expected protocol 1.35 AX-capable typing to refuse before transport")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .refused)
+                #expect(failure.outcome.dispatchState == .none)
+                #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+                #expect(failure.outcome.retrySafety == .safe)
+            }
         }
         #expect(automation.targetedTypeCallCount == 1)
         await fixture.host.stop()
@@ -219,7 +231,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
     }
 
     @Test
-    func `current host omits clear capability when its provider cannot attest it`() async throws {
+    func `current host omits type delivery capability when its provider cannot attest it`() async throws {
         let automation = CompositeTypeAutomationService()
         automation.compositeTypeDeliverySupported = false
         let services = StubServices(automation: automation)
@@ -237,7 +249,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         #expect(handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.compositeTypeDelivery) != true)
         await #expect(throws: DesktopActionFailure.self) {
             _ = try await fixture.client.typeActionsWithOutcome(
-                [.clear],
+                [.text("x")],
                 cadence: .fixed(milliseconds: 0),
                 snapshotId: nil,
                 expectedProcessIdentity: identity)
@@ -247,7 +259,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
     }
 
     @Test
-    func `current host omits clear capability without an outcome provider`() async throws {
+    func `current host omits type delivery capability without an outcome provider`() async throws {
         let automation = NonOutcomeCompositeTypeAutomationService()
         let services = StubServices(automation: automation)
         let fixture = try await self.startHost(

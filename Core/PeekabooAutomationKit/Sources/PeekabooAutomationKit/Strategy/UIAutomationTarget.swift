@@ -353,10 +353,10 @@ public enum ExactWindowKeyboardRuntime {
         automation: any UIAutomationServiceProtocol,
         operation: String) throws
     {
-        guard let exactService = automation as? any ExactWindowTargetedKeyboardServiceProtocol,
-              exactService.supportsExactWindowCompositeTypeDelivery
+        guard let compositeService = automation as? any CompositeTypeDeliveryServiceProtocol,
+              compositeService.supportsExactWindowCompositeTypeDelivery
         else {
-            let reason = (automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+            let reason = (automation as? any CompositeTypeDeliveryServiceProtocol)?
                 .exactWindowCompositeTypeDeliveryUnavailableReason
             throw PeekabooError.serviceUnavailable(
                 reason ?? "\(operation) requires truthful composite type-delivery receipts")

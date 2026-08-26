@@ -240,7 +240,7 @@ extension PeekabooBridgeServer {
         if !supportsAttestedOperationReceipts ||
             negotiated < PeekabooBridgeConstants.compositeTypeDeliveryVersion ||
             (self.services.automation as? any UIAutomationActionOutcomeProviding) == nil ||
-            (self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+            (self.services.automation as? any CompositeTypeDeliveryServiceProtocol)?
             .supportsExactWindowCompositeTypeDelivery != true ||
             !advertisedOps.contains(where: {
                 [.targetedTypeActions, .exactWindowTargetedTypeActions, .exactWindowPixelFocusType].contains($0)

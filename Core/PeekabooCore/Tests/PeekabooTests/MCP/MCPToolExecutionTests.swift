@@ -1003,7 +1003,9 @@ actor EmptyRecordingWindowService: WindowManagementServiceProtocol, WindowMutati
 
 @MainActor
 class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHotkeyServiceProtocol,
-TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, ForegroundModifierClickServiceProtocol {
+    TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, ForegroundModifierClickServiceProtocol,
+    CompositeTypeDeliveryServiceProtocol
+{
     struct ClickCall {
         let target: ClickTarget
         let clickType: ClickType
@@ -1033,6 +1035,9 @@ TargetedTypeServiceProtocol, ExactWindowPixelFocusTypingServiceProtocol, Foregro
         let targetProcessIdentifier: pid_t
         let expectedProcessIdentity: ApplicationProcessIdentity?
     }
+
+    var supportsExactWindowCompositeTypeDelivery = true
+    let exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil
 
     private let accessibilityGranted: Bool
     private let detectionResult: ElementDetectionResult?

@@ -452,10 +452,12 @@ ForegroundModifierClickServiceProtocol {
 
 @MainActor
 private final class PixelFocusStubAutomationService: StubAutomationService,
-ExactWindowPixelFocusTypingServiceProtocol {
+ExactWindowPixelFocusTypingServiceProtocol, CompositeTypeDeliveryServiceProtocol {
     let behavior: ComposedInputStubBehavior
     let supportsExactWindowPixelFocusTyping = true
     let exactWindowPixelFocusTypingUnavailableReason: String? = nil
+    let supportsExactWindowCompositeTypeDelivery = true
+    let exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil
 
     init(behavior: ComposedInputStubBehavior) {
         self.behavior = behavior

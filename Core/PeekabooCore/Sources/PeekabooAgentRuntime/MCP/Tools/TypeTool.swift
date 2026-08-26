@@ -943,7 +943,7 @@ extension TypeTool {
     }
 
     private static func requiresCompositeTypeDelivery(_ actions: [TypeAction]) -> Bool {
-        actions.contains(where: \.isClear)
+        actions.contains(where: \.mayUseAccessibilityValueDelivery)
     }
 
     private func snapshotExactWindow(_ snapshot: UISnapshot?) throws -> UIAutomationTarget.ExactWindow? {

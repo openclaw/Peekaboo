@@ -898,7 +898,7 @@ extension PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Atomic exact-window background typing is not supported by this bridge host")
         }
-        if payload.actions.contains(where: \.isClear) {
+        if payload.actions.contains(where: \.mayUseAccessibilityValueDelivery) {
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
                   self.hostCapabilities.contains(PeekabooBridgeHostCapability.compositeTypeDelivery),
                   service.supportsExactWindowCompositeTypeDelivery
@@ -965,10 +965,10 @@ extension PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Atomic exact-window pixel-focus typing is not supported by this bridge host")
         }
-        if payload.request.actions.contains(where: \.isClear) {
+        if payload.request.actions.contains(where: \.mayUseAccessibilityValueDelivery) {
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
                   self.hostCapabilities.contains(PeekabooBridgeHostCapability.compositeTypeDelivery),
-                  (self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+                  (self.services.automation as? any CompositeTypeDeliveryServiceProtocol)?
                       .supportsExactWindowCompositeTypeDelivery == true
             else {
                 throw PeekabooBridgeErrorEnvelope(
@@ -1160,10 +1160,10 @@ extension PeekabooBridgeServer {
         _ payload: PeekabooBridgeTargetedTypeActionsRequest,
         service: any TargetedTypeServiceProtocol) async throws -> PeekabooBridgeHandledResponse
     {
-        if payload.actions.contains(where: \.isClear) {
+        if payload.actions.contains(where: \.mayUseAccessibilityValueDelivery) {
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
                   self.hostCapabilities.contains(PeekabooBridgeHostCapability.compositeTypeDelivery),
-                  (self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+                  (self.services.automation as? any CompositeTypeDeliveryServiceProtocol)?
                       .supportsExactWindowCompositeTypeDelivery == true
             else {
                 throw PeekabooBridgeErrorEnvelope(

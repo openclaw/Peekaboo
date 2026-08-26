@@ -493,6 +493,23 @@ public protocol ExactWindowPixelFocusTypingServiceProtocol: UIAutomationServiceP
         _ request: ExactWindowPixelFocusTypeRequest) async throws -> UIAutomationActionResult<TypeResult>
 }
 
+/// Capability for targeted type actions whose implementation may mix AXValue and keyboard events.
+@MainActor
+public protocol CompositeTypeDeliveryServiceProtocol: UIAutomationServiceProtocol {
+    var supportsExactWindowCompositeTypeDelivery: Bool { get }
+    var exactWindowCompositeTypeDeliveryUnavailableReason: String? { get }
+}
+
+extension CompositeTypeDeliveryServiceProtocol {
+    public var supportsExactWindowCompositeTypeDelivery: Bool {
+        false
+    }
+
+    public var exactWindowCompositeTypeDeliveryUnavailableReason: String? {
+        nil
+    }
+}
+
 /// Explicit foreground modifier-click with exact target preflight and compare-and-swap restoration.
 @MainActor
 public protocol ForegroundModifierClickServiceProtocol: UIAutomationServiceProtocol {
@@ -513,11 +530,9 @@ extension ForegroundModifierClickServiceProtocol {
 
 /// Atomically validates an exact background window's focused element and dispatches keyboard input.
 @MainActor
-public protocol ExactWindowTargetedKeyboardServiceProtocol: UIAutomationServiceProtocol {
+public protocol ExactWindowTargetedKeyboardServiceProtocol: CompositeTypeDeliveryServiceProtocol {
     var supportsExactWindowTargetedKeyboard: Bool { get }
     var exactWindowTargetedKeyboardUnavailableReason: String? { get }
-    var supportsExactWindowCompositeTypeDelivery: Bool { get }
-    var exactWindowCompositeTypeDeliveryUnavailableReason: String? { get }
 
     func typeActions(
         _ actions: [TypeAction],
@@ -545,14 +560,6 @@ public protocol ExactWindowTargetedKeyboardServiceProtocol: UIAutomationServiceP
 }
 
 extension ExactWindowTargetedKeyboardServiceProtocol {
-    public var supportsExactWindowCompositeTypeDelivery: Bool {
-        false
-    }
-
-    public var exactWindowCompositeTypeDeliveryUnavailableReason: String? {
-        nil
-    }
-
     public func typeActions(
         _: [TypeAction],
         cadence _: TypingCadence,

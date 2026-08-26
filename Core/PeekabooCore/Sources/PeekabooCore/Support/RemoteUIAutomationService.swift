@@ -691,7 +691,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     }
 
     func requireCompositeTypeDeliveryIfNeeded(_ actions: [TypeAction]) throws {
-        guard actions.contains(where: \.isClear) else { return }
+        guard actions.contains(where: \.mayUseAccessibilityValueDelivery) else { return }
         guard self.supportsExactWindowCompositeTypeDelivery else {
             throw PeekabooError.serviceUnavailable(
                 self.exactWindowCompositeTypeDeliveryUnavailableReason ??
