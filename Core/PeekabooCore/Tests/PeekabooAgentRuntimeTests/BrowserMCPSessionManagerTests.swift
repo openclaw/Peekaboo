@@ -2838,7 +2838,7 @@ extension BrowserMCPSessionManagerTests {
             environment: ["PEEKABOO_BROWSER_MCP_BROWSER_URL": browserURL])
     }
 
-    private static func services(browser: BrowserMCPService) -> PeekabooServices {
+    private static func services(browser: any BrowserMCPClientProviding) -> PeekabooServices {
         let base = PeekabooServices()
         return PeekabooServices(
             logging: base.logging,
