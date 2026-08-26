@@ -167,6 +167,39 @@ struct PeekabooBridgeOperationSemanticPlanTests {
     }
 
     @Test
+    func `Pixel focus AX delivery treats empty text as a zero emission action`() {
+        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+        let identity = WindowMutationIdentity(
+            windowID: 71,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 1001,
+            capturedBounds: bounds)
+        func request(_ actions: [TypeAction]) -> PeekabooBridgeRequest {
+            .exactWindowPixelFocusType(.init(request: .init(
+                point: CGPoint(x: 40, y: 50),
+                actions: actions,
+                cadence: .fixed(milliseconds: 0),
+                snapshotID: "snapshot",
+                windowIdentity: identity,
+                windowBounds: bounds)))
+        }
+
+        let axOnlyOutcome = DesktopActionOutcome.confirmedChange(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            unitCount: .init(2))
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            axOnlyOutcome,
+            request: request([.clear, .text("")])))
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            axOnlyOutcome,
+            request: request([.clear, .text(""), .key(.return)])))
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            axOnlyOutcome,
+            request: request([.text("")])))
+    }
+
+    @Test
     // swiftlint:disable:next function_body_length
     func `composed input parity binds response family delivery units and exact target`() async throws {
         let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)

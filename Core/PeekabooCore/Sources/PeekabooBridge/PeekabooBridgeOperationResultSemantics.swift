@@ -1637,11 +1637,17 @@ extension PeekabooBridgeOperationResultSemantics {
             }
             return rules
         case let .exactWindowPixelFocusType(payload):
+            let actions = payload.request.actions
             let valueRule = DeliveryRule(
                 delivery: valueBackground,
                 units: .positive,
-                allowsSuccessfulOutcome: payload.request.actions.allSatisfy(
-                    \.mayUseAccessibilityValueDelivery))
+                allowsSuccessfulOutcome: actions.contains(where: \.mayUseAccessibilityValueDelivery) &&
+                    actions.allSatisfy { action in
+                        if case let .text(text) = action, text.isEmpty {
+                            return true
+                        }
+                        return action.mayUseAccessibilityValueDelivery
+                    })
             return [rule(compositeBackground, .positive), valueRule]
         case .foregroundModifierClick:
             return [
