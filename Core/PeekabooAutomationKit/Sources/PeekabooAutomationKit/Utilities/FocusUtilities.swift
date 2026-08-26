@@ -417,10 +417,7 @@ enum FocusDispatchAccounting {
         requiredDeliveryMode: DesktopActionOutcome.Delivery.Mode,
         operation: String) throws -> DesktopActionOutcome
     {
-        let targetReceipt = DesktopActionTargetReceipt(
-            processIdentifier: expectedIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedIdentity.ownerProcessStartIdentity,
-            windowID: expectedIdentity.windowID)
+        let targetReceipt = expectedIdentity.actionTargetReceipt
         let expectedWindow: UIAutomationTarget.ExactWindow
         do {
             guard let capturedBounds = expectedIdentity.capturedBounds else {

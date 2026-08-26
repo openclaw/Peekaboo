@@ -122,7 +122,7 @@ extension DialogCommand {
                         do {
                             outcome = try result.requiredPreparedOutcome(kind: .dismiss)
                         } catch let failure as DesktopActionFailure {
-                            throw failure.attributed(to: DialogCommand.targetReceipt(receipt.target))
+                            throw failure.attributed(to: receipt.target.actionTargetReceipt)
                         }
                         do {
                             guard let exactTarget = try DialogCommand.exactResultTargetIdentity(

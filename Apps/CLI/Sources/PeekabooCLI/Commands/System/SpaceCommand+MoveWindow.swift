@@ -189,11 +189,7 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
                         message: "Space move-window follow could not compose its two canonical outcomes.",
                         hint: "Observe both the exact window and active Space before retrying."
                     )
-                    .attributed(to: DesktopActionTargetReceipt(
-                        processIdentifier: expectedWindow.identity.ownerProcessIdentifier,
-                        processStartIdentity: expectedWindow.identity.ownerProcessStartIdentity,
-                        windowID: expectedWindow.identity.windowID
-                    ))
+                    .attributed(to: expectedWindow.actionTargetReceipt)
                 }
                 outcome = combinedOutcome
             } else {

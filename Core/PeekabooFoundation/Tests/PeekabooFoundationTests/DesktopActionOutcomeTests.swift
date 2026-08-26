@@ -136,6 +136,30 @@ struct DesktopActionOutcomeTests {
     }
 
     @Test
+    func `confirmed no change requires canonical zero dispatch shape`() throws {
+        let outcome = DesktopActionOutcome.confirmedNoChange(route: .bridge)
+        #expect(outcome.delivery == nil)
+        #expect(outcome.dispatchState == .none)
+        #expect(outcome.isAccepted(by: .confirmed))
+        #expect(outcome.isAccepted(by: .confirmedOrDispatched))
+        #expect(outcome.isAccepted(by: .observation))
+
+        let contradictoryDelivery = try self.mutatedJSON(outcome) { object in
+            object["delivery_mechanism"] = "browser_protocol"
+            object["delivery_mode"] = "foreground"
+        }
+        let contradictoryDispatch = try self.mutatedJSON(outcome) { object in
+            object["dispatch_state"] = "dispatched"
+            object["dispatched_unit_count"] = 1
+        }
+        for data in [contradictoryDelivery, contradictoryDispatch] {
+            #expect(throws: DecodingError.self) {
+                try JSONDecoder().decode(DesktopActionOutcome.self, from: data)
+            }
+        }
+    }
+
+    @Test
     func `decoder rejects incomplete delivery and invalid unit counts`() throws {
         #expect(DesktopActionOutcome.DispatchUnitCount(0) == nil)
         #expect(DesktopActionOutcome.DispatchUnitCount(-1) == nil)

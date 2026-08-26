@@ -63,6 +63,25 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
 
     @Test
     @MainActor
+    func `browser connect accepts canonical existing connection no change`() async throws {
+        let services = StubServices()
+        services.browserConnectOutcome = .confirmedNoChange()
+        let handled = try await Self.handleCurrent(
+            .browserConnect(.init(channel: "stable")),
+            with: Self.server(services: services))
+
+        #expect(handled.outcome?.state == .confirmedNoChange)
+        #expect(handled.outcome?.delivery == nil)
+        #expect(handled.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        guard case let .handlerResolved(target)? = handled.mutation?.target else {
+            Issue.record("Expected the existing browser connection to retain its exact process target")
+            return
+        }
+        #expect(target.processIdentity == .init(processIdentifier: 42, processStartIdentity: 10042))
+    }
+
+    @Test
+    @MainActor
     func `browser execution binds every accepted call and response to one exact browser receipt`() async throws {
         let services = StubServices()
         let server = Self.server(services: services)

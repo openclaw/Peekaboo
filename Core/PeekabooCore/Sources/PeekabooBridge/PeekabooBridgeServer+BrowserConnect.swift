@@ -27,18 +27,10 @@ extension PeekabooBridgeServer {
                 message: "Browser connect returned a connection receipt for a different endpoint or channel.",
                 hint: "Check browser status before deciding whether to reconnect and update the runtime host.")
         }
-        switch outcome.state {
-        case .confirmedNoChange:
-            guard outcome.delivery == nil, outcome.dispatchState == .none else {
-                throw Self.invalidBrowserConnectOutcome(outcome)
-            }
-        case .dispatchedUnverified:
-            guard outcome.delivery == .init(mechanism: .browserProtocol, mode: .foreground),
-                  outcome.dispatchState.unitCount == .one
-            else {
-                throw Self.invalidBrowserConnectOutcome(outcome)
-            }
-        case .confirmedChange, .partial, .suspectedNoop, .refused, .indeterminate:
+        let policy = DesktopActionOutcome.SuccessPolicy.confirmedNoChangeOrDispatched(
+            requiring: .init(mechanism: .browserProtocol, mode: .foreground),
+            unitCount: .exact(.one))
+        guard outcome.isAccepted(by: policy) else {
             throw Self.invalidBrowserConnectOutcome(outcome)
         }
         return try .init(

@@ -295,10 +295,7 @@ extension WindowManagementServiceProtocol {
         expectedIdentity: WindowMutationIdentity,
         operation: String) throws -> UIAutomationActionResult<Void>
     {
-        let receipt = DesktopActionTargetReceipt(
-            processIdentifier: expectedIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedIdentity.ownerProcessStartIdentity,
-            windowID: expectedIdentity.windowID)
+        let receipt = expectedIdentity.actionTargetReceipt
         guard let outcome = result.outcome else {
             throw DesktopActionFailure.indeterminate(
                 evidence: .completionUnknown,

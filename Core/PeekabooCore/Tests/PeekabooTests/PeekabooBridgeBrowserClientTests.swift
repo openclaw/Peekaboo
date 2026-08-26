@@ -833,9 +833,6 @@ extension StubServices: PeekabooBridgeBrowserConnectionResultProviding {
         }
         return try await DesktopActionResult(
             payload: self.browserConnect(channel: channel, browserURL: browserURL),
-            outcome: .dispatchedUnverified(
-                delivery: .init(mechanism: .browserProtocol, mode: .foreground),
-                evidence: .deliveryAccepted,
-                unitCount: .one))
+            outcome: self.browserConnectOutcome)
     }
 }

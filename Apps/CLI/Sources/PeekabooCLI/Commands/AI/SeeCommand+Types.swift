@@ -27,7 +27,7 @@ struct SeeExecutionReceipt: Equatable, Sendable {
     ) {
         let targetReceipt: DesktopActionTargetReceipt? =
             if let targetIdentity = result.targetIdentity {
-                Self.targetReceipt(from: targetIdentity)
+                targetIdentity.actionTargetReceipt
             } else {
                 fallbackTargetReceipt
             }
@@ -58,7 +58,7 @@ struct SeeExecutionReceipt: Equatable, Sendable {
         )
         return Self(
             outcome: result.outcome,
-            targetReceipt: Self.targetReceipt(from: target)
+            targetReceipt: target?.actionTargetReceipt
         )
     }
 
@@ -83,7 +83,7 @@ struct SeeExecutionReceipt: Equatable, Sendable {
         )
         return Self(
             outcome: result.outcome,
-            targetReceipt: Self.targetReceipt(from: target)
+            targetReceipt: target?.actionTargetReceipt
         )
     }
 
@@ -146,38 +146,6 @@ struct SeeExecutionReceipt: Equatable, Sendable {
             operation: operation,
             message: "\(operation) failed after its conditional desktop mutation result was returned.",
             hint: "Observe the target before deciding whether to retry \(operation)."
-        )
-    }
-
-    static func targetReceipt(from identity: DesktopTargetIdentity?) -> DesktopActionTargetReceipt? {
-        identity?.actionTargetReceipt
-    }
-
-    static func targetReceipt(from result: DesktopObservationResult) -> DesktopActionTargetReceipt? {
-        self.targetReceipt(from: result.capture.metadata.windowInfo?.mutationIdentity)
-            ?? result.elements.flatMap(self.targetReceipt(from:))
-    }
-
-    static func targetReceipt(from result: ElementDetectionResult) -> DesktopActionTargetReceipt? {
-        self.targetReceipt(from: result.metadata.windowContext)
-    }
-
-    static func targetReceipt(from context: WindowContext?) -> DesktopActionTargetReceipt? {
-        self.targetReceipt(from: context?.windowMutationIdentity)
-    }
-
-    private static func targetReceipt(
-        from identity: WindowMutationIdentity?
-    ) -> DesktopActionTargetReceipt? {
-        guard let identity,
-              identity.ownerProcessIdentifier > 0,
-              identity.ownerProcessStartIdentity > 0,
-              identity.windowID > 0
-        else { return nil }
-        return DesktopActionTargetReceipt(
-            processIdentifier: identity.ownerProcessIdentifier,
-            processStartIdentity: identity.ownerProcessStartIdentity,
-            windowID: identity.windowID
         )
     }
 }

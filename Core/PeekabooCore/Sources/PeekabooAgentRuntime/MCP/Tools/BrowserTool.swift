@@ -359,27 +359,19 @@ public struct BrowserTool: MCPTool {
                 message: "Browser connect returned without a canonical action outcome.",
                 hint: "Check browser status before deciding whether to reconnect.")
         }
-        switch outcome.state {
-        case .confirmedNoChange:
-            guard outcome.delivery == nil,
-                  outcome.dispatchState == .none
-            else { break }
-            return outcome
-        case .dispatchedUnverified:
-            guard outcome.delivery == .init(mechanism: .browserProtocol, mode: .foreground),
-                  outcome.dispatchState.unitCount == .one
-            else { break }
-            return outcome
-        case .confirmedChange, .partial, .suspectedNoop, .refused, .indeterminate:
-            break
+        let policy = DesktopActionOutcome.SuccessPolicy.confirmedNoChangeOrDispatched(
+            requiring: .init(mechanism: .browserProtocol, mode: .foreground),
+            unitCount: .exact(.one))
+        guard outcome.isAccepted(by: policy) else {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: "Browser connect returned contradictory canonical action semantics.",
+                hint: "Check browser status before deciding whether to reconnect and update the runtime host.")
         }
-        throw DesktopActionFailure.indeterminate(
-            route: outcome.route,
-            delivery: outcome.delivery,
-            evidence: .completionUnknown,
-            unitCount: outcome.dispatchState.unitCount,
-            message: "Browser connect returned contradictory canonical action semantics.",
-            hint: "Check browser status before deciding whether to reconnect and update the runtime host.")
+        return outcome
     }
 
     private func formatStatus(

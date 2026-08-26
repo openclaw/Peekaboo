@@ -79,7 +79,7 @@ extension AppToolActions {
                 reason: .targetUnavailable,
                 message: "Background application readiness returned no process-generation identity.",
                 hint: "Refresh the application inventory before retrying.")
-                .attributed(to: Self.targetReceipt(authorizedIdentity))
+                .attributed(to: authorizedIdentity.actionTargetReceipt)
         }
         _ = try context.coalesceAuthorizedDesktopTarget(
             DesktopTargetIdentity(processIdentity: returnedIdentity),
@@ -90,7 +90,7 @@ extension AppToolActions {
                 evidence: .completionUnknown,
                 message: "Background application readiness returned without a canonical no-dispatch outcome.",
                 hint: "Inspect the selected application before retrying and update the runtime host.")
-                .attributed(to: Self.targetReceipt(authorizedIdentity))
+                .attributed(to: authorizedIdentity.actionTargetReceipt)
         }
         guard outcome.state == .confirmedNoChange,
               outcome.dispatchState == .none,
@@ -103,15 +103,9 @@ extension AppToolActions {
                 unitCount: outcome.dispatchState.unitCount,
                 message: "Background application readiness did not prove an exact read-only no-op.",
                 hint: "Inspect the selected application before retrying and update the runtime host.")
-                .attributed(to: Self.targetReceipt(authorizedIdentity))
+                .attributed(to: authorizedIdentity.actionTargetReceipt)
         }
         return outcome
-    }
-
-    private static func targetReceipt(_ identity: ApplicationProcessIdentity) -> DesktopActionTargetReceipt {
-        DesktopActionTargetReceipt(
-            processIdentifier: identity.processIdentifier,
-            processStartIdentity: identity.processStartIdentity)
     }
 
     func handleOpen(request: AppToolRequest) async throws -> ToolResponse {

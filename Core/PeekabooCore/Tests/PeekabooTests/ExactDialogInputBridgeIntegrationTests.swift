@@ -9,6 +9,52 @@ import Testing
 struct ExactDialogInputBridgeIntegrationTests {
     @Test
     @MainActor
+    func `current exact dialog input accepts canonical no change`() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 480, height: 320)
+        let identity = WindowMutationIdentity(
+            windowID: 700,
+            ownerProcessIdentifier: 4242,
+            ownerProcessStartIdentity: 99,
+            capturedBounds: bounds)
+        let receipt = identity.actionTargetReceipt
+        let dialogs = ExactDialogInputBridgeStub(
+            receipt: receipt,
+            windowIdentity: identity,
+            windowBounds: bounds,
+            exactInputOutcome: .confirmedNoChange())
+        let server = PeekabooBridgeServer(
+            services: ExactDialogInputBridgeServices(dialogs: dialogs),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.exactDialogEnterText])
+        let request = try DialogInputExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 4242, windowID: 700),
+            text: "",
+            fieldIdentifier: "Name",
+            clearExisting: false,
+            focus: DialogForegroundFocusPolicy(autoFocus: false))
+
+        let handled = try await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(.current) {
+            try await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                try await server.handleAuthorized(
+                    .exactDialogEnterText(request),
+                    peer: nil,
+                    permissions: .init(screenRecording: false, accessibility: true, postEvent: true))
+            }
+        }
+
+        #expect(handled.outcome?.state == .confirmedNoChange)
+        #expect(handled.outcome?.delivery == nil)
+        #expect(handled.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        guard case .responseResolved? = handled.mutation?.target else {
+            Issue.record("Expected the no-change dialog result to retain its resolved exact target")
+            return
+        }
+    }
+
+    @Test
+    @MainActor
     func `legacy exact dialog input refuses missing PostEvent before dispatch`() throws {
         let receipt = DesktopActionTargetReceipt(
             processIdentifier: 4242,
@@ -825,6 +871,7 @@ private final class ExactDialogInputBridgeStub: DialogServiceProtocol {
     private let windowIdentity: WindowMutationIdentity?
     private let windowBounds: CGRect?
     private let resolvedTarget: ResolvedDialogTargetEvidence?
+    private let exactInputOutcome: DesktopActionOutcome
     private let foregroundCompatibleInputOutcome: DesktopActionOutcome
     private(set) var legacyTexts: [String] = []
     private(set) var lastExactRequest: DialogInputExecutionRequest?
@@ -840,6 +887,10 @@ private final class ExactDialogInputBridgeStub: DialogServiceProtocol {
         windowIdentity: WindowMutationIdentity? = nil,
         windowBounds: CGRect? = nil,
         resolvedTarget: ResolvedDialogTargetEvidence? = nil,
+        exactInputOutcome: DesktopActionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one),
         foregroundCompatibleInputOutcome: DesktopActionOutcome = .dispatchedUnverified(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             evidence: .deliveryAccepted,
@@ -850,6 +901,7 @@ private final class ExactDialogInputBridgeStub: DialogServiceProtocol {
         self.windowIdentity = windowIdentity
         self.windowBounds = windowBounds
         self.resolvedTarget = resolvedTarget
+        self.exactInputOutcome = exactInputOutcome
         self.foregroundCompatibleInputOutcome = foregroundCompatibleInputOutcome
         self.supportsBackgroundExactDialogInput = supportsBackgroundExactDialogInput
     }
@@ -895,10 +947,7 @@ private final class ExactDialogInputBridgeStub: DialogServiceProtocol {
                 "process_start_identity_decimal": "99",
                 "window_id": "700",
             ],
-            outcome: .dispatchedUnverified(
-                delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                evidence: .deliveryAccepted,
-                unitCount: .one),
+            outcome: self.exactInputOutcome,
             targetReceipt: self.receipt,
             targetWindowIdentity: self.windowIdentity,
             targetWindowBounds: self.windowBounds,

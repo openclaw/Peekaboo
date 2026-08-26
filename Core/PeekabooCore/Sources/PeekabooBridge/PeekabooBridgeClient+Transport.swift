@@ -113,7 +113,7 @@ extension PeekabooBridgeClient {
                    throwsActionFailures
                 {
                     if let failure = envelope.desktopActionFailure {
-                        throw failure.attributed(to: Self.actionTargetReceipt(verifiedTargetIdentity))
+                        throw failure.attributed(to: verifiedTargetIdentity?.actionTargetReceipt)
                     }
                     if envelope.operationMayHaveCompleted {
                         throw Self.legacyCompletionUnknownFailure(envelope: envelope)
@@ -157,12 +157,6 @@ extension PeekabooBridgeClient {
                     mutating: mayMutateDesktop)
             }
         }
-    }
-
-    private nonisolated static func actionTargetReceipt(
-        _ targetIdentity: DesktopTargetIdentity?) -> DesktopActionTargetReceipt?
-    {
-        targetIdentity?.actionTargetReceipt
     }
 
     private func prepareWireRequestForSend(

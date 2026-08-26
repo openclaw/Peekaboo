@@ -158,7 +158,7 @@ extension DialogService {
                     action: .handleFileDialog,
                     details: details,
                     outcome: actionSequence.successResolution().outcome,
-                    targetReceipt: Self.desktopActionTargetReceipt(retainedTarget),
+                    targetReceipt: retainedTarget.actionTargetReceipt,
                     targetWindowIdentity: retainedTarget.identity,
                     targetWindowBounds: retainedTarget.bounds,
                     focusedElement: nil)
@@ -222,7 +222,7 @@ extension DialogService {
         after sequence: DesktopActionSequenceAccumulator,
         target: UIAutomationTarget.ExactWindow?) -> any Error
     {
-        let targetReceipt = target.map(Self.desktopActionTargetReceipt)
+        let targetReceipt = target?.actionTargetReceipt
         if let failure = error as? DesktopActionFailure {
             return sequence.failure(
                 combining: failure,

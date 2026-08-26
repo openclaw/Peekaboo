@@ -6,10 +6,6 @@ extension PasteCommand {
         UIAutomationActionResultSemantics.keyboardDelivery(for: target)
     }
 
-    static func pasteTargetReceipt(for target: UIAutomationTarget) -> DesktopActionTargetReceipt? {
-        try? UIAutomationActionResultSemantics.actionTargetReceipt(for: target)
-    }
-
     static func validateBackgroundTextResult(
         _ result: UIAutomationActionResult<TypeResult>,
         authorizedTarget: UIAutomationTarget

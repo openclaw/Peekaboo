@@ -543,14 +543,14 @@ struct DialogExactInputContractTests {
             action: .enterText,
             details: ["window_id": "700"],
             outcome: .confirmedNoChange(),
-            targetReceipt: DialogService.desktopActionTargetReceipt(target),
+            targetReceipt: target.actionTargetReceipt,
             targetWindowIdentity: target.identity,
             targetWindowBounds: target.bounds,
             focusedElement: target.focusedElement)
         let roundTrip = try JSONDecoder().decode(
             DialogActionResult.self,
             from: JSONEncoder().encode(result))
-        #expect(roundTrip.targetReceipt == DialogService.desktopActionTargetReceipt(target))
+        #expect(roundTrip.targetReceipt == target.actionTargetReceipt)
         #expect(roundTrip.targetWindowIdentity == target.identity)
         #expect(roundTrip.targetWindowBounds == target.bounds)
         #expect(roundTrip.focusedElement == target.focusedElement)

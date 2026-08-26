@@ -235,10 +235,7 @@ public struct CaptureTool: MCPTool {
                 expectedIdentity: identity,
                 operation: "Live capture focus")
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: DesktopActionTargetReceipt(
-                processIdentifier: identity.ownerProcessIdentifier,
-                processStartIdentity: identity.ownerProcessStartIdentity,
-                windowID: identity.windowID))
+            throw failure.attributed(to: identity.actionTargetReceipt)
         }
         try await Task.sleep(nanoseconds: 50_000_000)
     }

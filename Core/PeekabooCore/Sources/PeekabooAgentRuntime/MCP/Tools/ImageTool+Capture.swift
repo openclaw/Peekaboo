@@ -194,9 +194,7 @@ extension ImageTool {
             throw PeekabooError.serviceUnavailable(
                 "Image target activation did not retain its process-generation identity")
         }
-        let receipt = DesktopActionTargetReceipt(
-            processIdentifier: expectedIdentity.processIdentifier,
-            processStartIdentity: expectedIdentity.processStartIdentity)
+        let receipt = expectedIdentity.actionTargetReceipt
         let result: UIAutomationActionResult<Void>
         do {
             result = try await self.context.applications.activateApplicationTargetedResult(
@@ -451,9 +449,7 @@ extension ImageTool {
                 outcome,
                 expectedDelivery: expectedDelivery,
                 message: "Image target activation returned incomplete or contradictory action semantics.")
-                .attributed(to: DesktopActionTargetReceipt(
-                    processIdentifier: target.processIdentifier,
-                    processStartIdentity: target.processStartIdentity))
+                .attributed(to: target.actionTargetReceipt)
         }
         return outcome
     }

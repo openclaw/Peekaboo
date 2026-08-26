@@ -1810,10 +1810,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 failureResult = normalized.finalizingMutation(
                     outcome: outcome,
                     target: .handlerResolved(target))
-                attributedFailure = failure.attributed(to: DesktopActionTargetReceipt(
-                    processIdentifier: target.processIdentity.processIdentifier,
-                    processStartIdentity: target.processIdentity.processStartIdentity,
-                    windowID: target.exactWindow?.identity.windowID))
+                attributedFailure = failure.attributed(to: target.actionTargetReceipt)
             } else {
                 failureResult = normalized
                 attributedFailure = failure
@@ -1901,23 +1898,7 @@ extension PeekabooBridgeOperationResultSemantics {
               let delivery = outcome.delivery,
               let unitCount = plan.defaultSuccessfulDispatchUnitCount(for: delivery)
         else { return outcome }
-        switch outcome.state {
-        case .confirmedChange:
-            return .confirmedChange(route: outcome.route, delivery: delivery, unitCount: unitCount)
-        case .dispatchedUnverified:
-            guard let evidence = DesktopActionOutcome.DispatchedUnverifiedEvidence(
-                rawValue: outcome.evidence.rawValue)
-            else { return outcome }
-            return .dispatchedUnverified(
-                route: outcome.route,
-                delivery: delivery,
-                evidence: evidence,
-                unitCount: unitCount)
-        case .suspectedNoop:
-            return .suspectedNoop(route: outcome.route, delivery: delivery, unitCount: unitCount)
-        case .confirmedNoChange, .partial, .indeterminate, .refused:
-            return outcome
-        }
+        return outcome.fillingSuccessfulDispatchUnitCount(unitCount)
     }
 
     static func canonicalFailure(

@@ -294,7 +294,7 @@ extension SpaceTool {
                     message: "The window moved, but following it to the target Space failed.",
                     hint: "Observe both the exact window and active Space before retrying.",
                     causeDescription: switchFailure.causeDescription ?? error.localizedDescription)
-                throw combinedFailure.attributed(to: Self.targetReceipt(expectedIdentity))
+                throw combinedFailure.attributed(to: expectedIdentity.actionTargetReceipt)
             }
             let resolution = sequence.successResolution()
             guard let outcome = resolution.outcome else {
@@ -304,7 +304,7 @@ extension SpaceTool {
                     unitCount: resolution.mutationDisposition.unitCount,
                     message: "Space move-window follow returned incompatible canonical outcomes.",
                     hint: "Observe both the exact window and active Space before retrying.")
-                    .attributed(to: Self.targetReceipt(expectedIdentity))
+                    .attributed(to: expectedIdentity.actionTargetReceipt)
             }
             actionResult = UIAutomationActionResult(
                 payload: (),
@@ -429,7 +429,7 @@ extension SpaceTool {
     private static func expectedTargetIdentity(
         _ identity: WindowMutationIdentity) throws -> DesktopTargetIdentity
     {
-        let receipt = self.targetReceipt(identity)
+        let receipt = identity.actionTargetReceipt
         guard let bounds = identity.capturedBounds else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -449,15 +449,6 @@ extension SpaceTool {
                 causeDescription: error.localizedDescription)
                 .attributed(to: receipt)
         }
-    }
-
-    private static func targetReceipt(
-        _ identity: WindowMutationIdentity) -> DesktopActionTargetReceipt
-    {
-        DesktopActionTargetReceipt(
-            processIdentifier: identity.ownerProcessIdentifier,
-            processStartIdentity: identity.ownerProcessStartIdentity,
-            windowID: identity.windowID)
     }
 
     private func createWindowTarget(

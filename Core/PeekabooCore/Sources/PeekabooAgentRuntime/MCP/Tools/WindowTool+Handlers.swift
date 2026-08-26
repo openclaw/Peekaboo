@@ -485,12 +485,7 @@ extension WindowTool {
                 message: "\(action) was dispatched, but the exact window could not be read back.",
                 hint: "Observe the exact window before deciding whether to retry.",
                 causeDescription: error.localizedDescription)
-            let receipt = actionResult.targetIdentity?.exactWindow.map {
-                DesktopActionTargetReceipt(
-                    processIdentifier: $0.identity.ownerProcessIdentifier,
-                    processStartIdentity: $0.identity.ownerProcessStartIdentity,
-                    windowID: $0.identity.windowID)
-            }
+            let receipt = actionResult.targetIdentity?.exactWindow?.actionTargetReceipt
             throw failure.attributed(to: receipt)
         }
     }

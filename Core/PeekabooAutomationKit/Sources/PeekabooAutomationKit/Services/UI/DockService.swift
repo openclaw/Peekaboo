@@ -149,7 +149,7 @@ public final class DockService: DockServiceProtocol, DockServiceActionResultProv
         } catch let failure as DesktopActionFailure {
             let combinedEvidence = (selectedLeafEvidence ?? []) + (failure.selectedLeafEvidence ?? [])
             throw failure
-                .attributed(to: processIdentity)
+                .attributed(to: processIdentity.actionTargetReceipt)
                 .selectingLeaves(combinedEvidence.isEmpty ? nil : combinedEvidence)
         }
     }

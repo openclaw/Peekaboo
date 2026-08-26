@@ -23,7 +23,7 @@ extension ApplicationService {
                 try await self.performApplicationRelaunchWithOutcomeOwnedLane(request)
             }
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: request.expectedTargetIdentity.map(Self.applicationTargetReceipt))
+            throw failure.attributed(to: request.expectedTargetIdentity?.actionTargetReceipt)
         }
     }
 
@@ -41,7 +41,7 @@ extension ApplicationService {
                 return DesktopActionResult(outcome: outcome)
             }
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: request.expectedIdentity.map(Self.applicationTargetReceipt))
+            throw failure.attributed(to: request.expectedIdentity?.actionTargetReceipt)
         }
     }
 
@@ -62,7 +62,7 @@ extension ApplicationService {
                 identifier: "PID:\(identity.processIdentifier)",
                 expectedIdentity: identity))
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: Self.applicationTargetReceipt(identity))
+            throw failure.attributed(to: identity.actionTargetReceipt)
         }
         return try UIAutomationActionResult(
             payload: result.payload,
@@ -107,7 +107,7 @@ extension ApplicationService {
                 return DesktopActionResult(payload: attempt.terminated, outcome: outcome)
             }
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: Self.applicationTargetReceipt(expectedIdentity))
+            throw failure.attributed(to: expectedIdentity.actionTargetReceipt)
         }
     }
 
@@ -146,7 +146,7 @@ extension ApplicationService {
                 hidden: true,
                 expectedIdentity: request.expectedIdentity)
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: Self.applicationTargetReceipt(request.expectedIdentity))
+            throw failure.attributed(to: request.expectedIdentity.actionTargetReceipt)
         }
         return try UIAutomationActionResult(
             payload: result.payload,
@@ -311,14 +311,6 @@ extension ApplicationService {
         DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: mode)
     }
 
-    private static func applicationTargetReceipt(
-        _ identity: ApplicationProcessIdentity) -> DesktopActionTargetReceipt
-    {
-        DesktopActionTargetReceipt(
-            processIdentifier: identity.processIdentifier,
-            processStartIdentity: identity.processStartIdentity)
-    }
-
     static func checkApplicationDispatchCancellation(
         operation: String,
         _ checkCancellation: () throws -> Void = { try Task.checkCancellation() }) throws
@@ -423,7 +415,7 @@ extension ApplicationService {
                     "process generation before visibility dispatch.",
                 hint: "Refresh the application inventory before retrying.",
                 causeDescription: String(describing: error))
-                .attributed(to: expectedIdentity)
+                .attributed(to: expectedIdentity.actionTargetReceipt)
         }
     }
 
@@ -464,7 +456,7 @@ extension ApplicationService {
                 reason: .targetUnavailable,
                 message: "The application visibility target changed process generation before dispatch.",
                 hint: "Refresh the application inventory before retrying.")
-                .attributed(to: processIdentity)
+                .attributed(to: processIdentity.actionTargetReceipt)
         }
         try self.validateApplicationVisibilityIdentity(processIdentity, resolvedApplication: app)
 

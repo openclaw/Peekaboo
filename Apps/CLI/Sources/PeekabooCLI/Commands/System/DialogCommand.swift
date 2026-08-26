@@ -20,14 +20,6 @@ struct DialogCommand: ParsableCommand {
         let actionSequence: CommandActionSequenceAccumulator
     }
 
-    static func targetReceipt(_ target: UIAutomationTarget.ExactWindow) -> DesktopActionTargetReceipt {
-        DesktopActionTargetReceipt(
-            processIdentifier: target.identity.ownerProcessIdentifier,
-            processStartIdentity: target.identity.ownerProcessStartIdentity,
-            windowID: target.identity.windowID
-        )
-    }
-
     static func exactResultTargetIdentity(
         from result: DialogActionResult,
         matching selector: DialogTargetSelector? = nil,

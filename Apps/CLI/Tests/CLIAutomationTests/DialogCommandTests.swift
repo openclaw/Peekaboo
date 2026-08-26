@@ -513,7 +513,7 @@ struct DialogCommandTests {
                 delivery: .init(mechanism: .accessibilityValue, mode: .background),
                 unitCount: .one
             ),
-            targetReceipt: DialogCommand.targetReceipt(exactTarget),
+            targetReceipt: exactTarget.actionTargetReceipt,
             targetWindowIdentity: identity,
             targetWindowBounds: bounds,
             focusedElement: nil,

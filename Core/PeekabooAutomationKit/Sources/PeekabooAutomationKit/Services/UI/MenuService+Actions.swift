@@ -174,7 +174,7 @@ extension MenuService {
         do {
             return try await operation()
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: processIdentity)
+            throw failure.attributed(to: processIdentity.actionTargetReceipt)
         }
     }
 

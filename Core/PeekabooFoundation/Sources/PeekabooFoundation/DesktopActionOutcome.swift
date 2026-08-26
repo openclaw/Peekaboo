@@ -217,9 +217,27 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
     /// dispatch. A delivery-mode requirement applies only to states that dispatched work;
     /// `confirmedNoChange` remains valid because it proves that no dispatch was necessary.
     public struct SuccessPolicy: Equatable, Sendable {
+        public enum DispatchedUnitCountRequirement: Equatable, Sendable {
+            case required
+            case exact(DispatchUnitCount)
+
+            fileprivate func accepts(_ unitCount: DispatchUnitCount?) -> Bool {
+                switch self {
+                case .required:
+                    unitCount != nil
+                case let .exact(expected):
+                    unitCount == expected
+                }
+            }
+        }
+
         public let acceptsDispatchedUnverified: Bool
         public let acceptsSuspectedNoop: Bool
         public let requiredDeliveryMode: Delivery.Mode?
+        private let acceptsConfirmedChange: Bool
+        private let acceptsConfirmedNoChange: Bool
+        private let requiredDelivery: Delivery?
+        private let dispatchedUnitCountRequirement: DispatchedUnitCountRequirement?
 
         public init(
             acceptsDispatchedUnverified: Bool,
@@ -229,6 +247,28 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
             self.acceptsDispatchedUnverified = acceptsDispatchedUnverified
             self.acceptsSuspectedNoop = acceptsSuspectedNoop
             self.requiredDeliveryMode = requiredDeliveryMode
+            self.acceptsConfirmedChange = true
+            self.acceptsConfirmedNoChange = true
+            self.requiredDelivery = nil
+            self.dispatchedUnitCountRequirement = nil
+        }
+
+        private init(
+            acceptsConfirmedChange: Bool,
+            acceptsConfirmedNoChange: Bool,
+            acceptsDispatchedUnverified: Bool,
+            acceptsSuspectedNoop: Bool,
+            requiredDeliveryMode: Delivery.Mode?,
+            requiredDelivery: Delivery?,
+            dispatchedUnitCountRequirement: DispatchedUnitCountRequirement?)
+        {
+            self.acceptsConfirmedChange = acceptsConfirmedChange
+            self.acceptsConfirmedNoChange = acceptsConfirmedNoChange
+            self.acceptsDispatchedUnverified = acceptsDispatchedUnverified
+            self.acceptsSuspectedNoop = acceptsSuspectedNoop
+            self.requiredDeliveryMode = requiredDeliveryMode
+            self.requiredDelivery = requiredDelivery
+            self.dispatchedUnitCountRequirement = dispatchedUnitCountRequirement
         }
 
         public static let confirmed = Self(acceptsDispatchedUnverified: false)
@@ -262,10 +302,31 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
                 requiredDeliveryMode: deliveryMode)
         }
 
+        /// Accepts an idempotent no-change result or one exact unverified dispatch shape.
+        ///
+        /// This policy is intentionally stricter than ``confirmedOrDispatched``: a reported
+        /// confirmed change is contradictory at connection/setup boundaries that can only prove
+        /// no work was necessary or that one delivery was accepted.
+        public static func confirmedNoChangeOrDispatched(
+            requiring delivery: Delivery,
+            unitCount: DispatchedUnitCountRequirement) -> Self
+        {
+            Self(
+                acceptsConfirmedChange: false,
+                acceptsConfirmedNoChange: true,
+                acceptsDispatchedUnverified: true,
+                acceptsSuspectedNoop: false,
+                requiredDeliveryMode: nil,
+                requiredDelivery: delivery,
+                dispatchedUnitCountRequirement: unitCount)
+        }
+
         public func accepts(_ outcome: DesktopActionOutcome) -> Bool {
             let acceptedState = switch outcome.state {
-            case .confirmedChange, .confirmedNoChange:
-                true
+            case .confirmedChange:
+                self.acceptsConfirmedChange
+            case .confirmedNoChange:
+                self.acceptsConfirmedNoChange
             case .dispatchedUnverified:
                 self.acceptsDispatchedUnverified
             case .suspectedNoop:
@@ -274,12 +335,26 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
                 false
             }
             guard acceptedState else { return false }
-            guard outcome.state != .confirmedNoChange,
-                  let requiredDeliveryMode = self.requiredDeliveryMode
-            else {
-                return true
+            guard outcome.state != .confirmedNoChange else {
+                return outcome.delivery == nil && outcome.dispatchState == .none
             }
-            return outcome.delivery?.mode == requiredDeliveryMode
+            if let requiredDelivery = self.requiredDelivery,
+               outcome.delivery != requiredDelivery
+            {
+                return false
+            }
+            if let requiredDeliveryMode = self.requiredDeliveryMode,
+               outcome.delivery?.mode != requiredDeliveryMode
+            {
+                return false
+            }
+            if outcome.state == .dispatchedUnverified,
+               let dispatchedUnitCountRequirement = self.dispatchedUnitCountRequirement,
+               !dispatchedUnitCountRequirement.accepts(outcome.dispatchState.unitCount)
+            {
+                return false
+            }
+            return true
         }
     }
 

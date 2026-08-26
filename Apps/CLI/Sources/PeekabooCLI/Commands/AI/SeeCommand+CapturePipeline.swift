@@ -35,7 +35,7 @@ extension SeeCommand {
                 message: "Element detection timed out after web-content focus may have been dispatched.",
                 hint: "Observe the target before retrying with --web-focus.",
                 causeDescription: CaptureError.detectionTimedOut(timeoutSeconds).localizedDescription
-            ).attributed(to: SeeExecutionReceipt.targetReceipt(from: windowContext))
+            ).attributed(to: windowContext?.windowMutationIdentity?.validActionTargetReceipt)
         } catch is TimeoutError {
             throw CaptureError.detectionTimedOut(timeoutSeconds)
         }

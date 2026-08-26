@@ -663,7 +663,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 causeDescription: error.causeDescription
             )
         }
-        return failure.attributed(to: Self.pasteTargetReceipt(for: target))
+        return failure.attributed(to: try? UIAutomationActionResultSemantics.actionTargetReceipt(for: target))
     }
 
     private func ensureForegroundFocus(

@@ -25,7 +25,7 @@ extension PeekabooBridgeServer {
             outcome: outcome,
             message: "The desktop observation provider reported a non-success action outcome.",
             hint: "Follow the canonical outcome before retrying.",
-            targetReceipt: self.observationTargetReceipt(result.targetIdentity))
+            targetReceipt: result.targetIdentity?.actionTargetReceipt)
     }
 
     static func observationFallbackTarget(
@@ -39,12 +39,6 @@ extension PeekabooBridgeServer {
         case .menubarPopover:
             .responseResolved
         }
-    }
-
-    static func observationTargetReceipt(
-        _ target: DesktopTargetIdentity?) -> DesktopActionTargetReceipt?
-    {
-        target?.actionTargetReceipt
     }
 
     static func validateAttestedWebFocusTarget(

@@ -78,7 +78,7 @@ extension PeekabooBridgeServer {
                     unitCount: result.outcome?.dispatchState.unitCount,
                     message: "Held pointer owner disconnected before its begin receipt could be delivered.",
                     hint: "Treat the hold as terminal and observe the target before retrying.")
-                    .attributed(to: Self.actionTargetReceipt(result.payload))
+                    .attributed(to: result.payload.windowIdentity.actionTargetReceipt)
             }
             binding.pendingBeginTarget = nil
             binding.activeReceipt = result.payload
@@ -125,7 +125,7 @@ extension PeekabooBridgeServer {
                 self.markHeldPointerOwnerClosed(payload.owner)
                 guard let operationTarget else { throw failure }
                 let routed = failure
-                    .attributed(to: Self.actionTargetReceipt(operationTarget))
+                    .attributed(to: operationTarget.actionTargetReceipt)
                     .routed(to: .bridge)
                 return PeekabooBridgeHandledResponse(
                     response: .error(.init(
@@ -279,24 +279,6 @@ extension PeekabooBridgeServer {
         for (owner, _) in closedOwners.dropLast(Self.heldPointerClosedOwnerCapacity) {
             self.heldPointerBridgeOwners.removeValue(forKey: owner)
         }
-    }
-
-    private static func actionTargetReceipt(
-        _ receipt: ExactWindowHeldPointerReceipt) -> DesktopActionTargetReceipt
-    {
-        DesktopActionTargetReceipt(
-            processIdentifier: receipt.windowIdentity.ownerProcessIdentifier,
-            processStartIdentity: receipt.windowIdentity.ownerProcessStartIdentity,
-            windowID: receipt.windowIdentity.windowID)
-    }
-
-    private static func actionTargetReceipt(
-        _ target: DesktopTargetIdentity) -> DesktopActionTargetReceipt
-    {
-        DesktopActionTargetReceipt(
-            processIdentifier: target.processIdentity.processIdentifier,
-            processStartIdentity: target.processIdentity.processStartIdentity,
-            windowID: target.exactWindow?.identity.windowID)
     }
 
     #if DEBUG

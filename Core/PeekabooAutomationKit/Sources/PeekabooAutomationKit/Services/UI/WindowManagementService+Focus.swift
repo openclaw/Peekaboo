@@ -28,10 +28,7 @@ extension WindowManagementService {
         }
         let exactWindow = try UIAutomationTarget.ExactWindow(identity: expectedIdentity, bounds: bounds)
         let targetIdentity = DesktopTargetIdentity(exactWindow: exactWindow)
-        let targetReceipt = DesktopActionTargetReceipt(
-            processIdentifier: expectedIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedIdentity.ownerProcessStartIdentity,
-            windowID: expectedIdentity.windowID)
+        let targetReceipt = expectedIdentity.actionTargetReceipt
         var sequence = DesktopActionSequenceAccumulator()
 
         do {

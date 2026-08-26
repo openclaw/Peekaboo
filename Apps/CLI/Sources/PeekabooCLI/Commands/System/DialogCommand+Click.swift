@@ -65,7 +65,7 @@ extension DialogCommand {
                     do {
                         outcome = try result.requiredPreparedOutcome(kind: .clickButton)
                     } catch let failure as DesktopActionFailure {
-                        throw failure.attributed(to: DialogCommand.targetReceipt(receipt.target))
+                        throw failure.attributed(to: receipt.target.actionTargetReceipt)
                     }
                     let resultTarget: DesktopTargetIdentity
                     do {

@@ -310,7 +310,8 @@ extension MenuServiceProtocol {
                 reason: .targetUnavailable,
                 message: "Application PID \(request.expectedIdentity.processIdentifier) changed generation " +
                     "while listing its menu.",
-                hint: "Refresh the application inventory before retrying.").attributed(to: request.expectedIdentity)
+                hint: "Refresh the application inventory before retrying.")
+                .attributed(to: request.expectedIdentity.actionTargetReceipt)
         }
         return structure
     }
@@ -320,9 +321,7 @@ extension MenuServiceProtocol {
         expectedIdentity: ApplicationProcessIdentity,
         operation: String) throws -> UIAutomationActionResult<Void>
     {
-        let receipt = DesktopActionTargetReceipt(
-            processIdentifier: expectedIdentity.processIdentifier,
-            processStartIdentity: expectedIdentity.processStartIdentity)
+        let receipt = expectedIdentity.actionTargetReceipt
         guard let outcome = result.outcome else {
             throw DesktopActionFailure.indeterminate(
                 evidence: .completionUnknown,

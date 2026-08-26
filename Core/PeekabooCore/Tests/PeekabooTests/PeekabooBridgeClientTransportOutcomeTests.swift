@@ -628,7 +628,7 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         profile: .linear))
 
     private static let browserConnectionReceipt = PeekabooBridgeBrowserConnectionReceipt(
-        channel: "chrome",
+        channel: "stable",
         processIdentifier: 42,
         processStartIdentity: 9001,
         bundleIdentifier: "com.google.Chrome")

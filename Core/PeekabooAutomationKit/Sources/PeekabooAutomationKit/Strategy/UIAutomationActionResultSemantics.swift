@@ -232,20 +232,6 @@ public enum UIAutomationActionResultSemantics {
     }
 }
 
-extension DesktopTargetIdentity {
-    public var actionTargetReceipt: DesktopActionTargetReceipt {
-        if let exactWindow = self.exactWindow {
-            return DesktopActionTargetReceipt(
-                processIdentifier: exactWindow.identity.ownerProcessIdentifier,
-                processStartIdentity: exactWindow.identity.ownerProcessStartIdentity,
-                windowID: exactWindow.identity.windowID)
-        }
-        return DesktopActionTargetReceipt(
-            processIdentifier: self.processIdentity.processIdentifier,
-            processStartIdentity: self.processIdentity.processStartIdentity)
-    }
-}
-
 extension UIAutomationActionResult {
     public var actionTargetReceipt: DesktopActionTargetReceipt? {
         self.targetIdentity?.actionTargetReceipt

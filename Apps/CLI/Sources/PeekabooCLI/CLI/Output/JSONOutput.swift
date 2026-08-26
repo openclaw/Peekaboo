@@ -431,24 +431,7 @@ func canonicalActionOutcomeAfterSuccessfulVerification(
     _ outcome: DesktopActionOutcome?,
     observedChange: Bool? = nil
 ) -> DesktopActionOutcome? {
-    guard let outcome else { return nil }
-    switch outcome.state {
-    case .dispatchedUnverified:
-        guard let observedChange else { return outcome }
-        guard let delivery = outcome.delivery else { return outcome }
-        if observedChange {
-            return .confirmedChange(
-                route: outcome.route,
-                delivery: delivery,
-                unitCount: outcome.dispatchState.unitCount
-            )
-        }
-        return .confirmedNoChange(route: outcome.route)
-    case .confirmedChange, .confirmedNoChange:
-        return outcome
-    case .refused, .partial, .suspectedNoop, .indeterminate:
-        return outcome
-    }
+    outcome?.confirmingDispatchedOutcome(observedChange: observedChange)
 }
 
 func postDispatchActionResultError(

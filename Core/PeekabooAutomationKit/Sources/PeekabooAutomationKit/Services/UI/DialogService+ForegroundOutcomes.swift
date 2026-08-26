@@ -35,7 +35,7 @@ extension DialogService {
         _ failure: DesktopActionFailure,
         target: UIAutomationTarget.ExactWindow) -> DesktopActionFailure
     {
-        failure.attributed(to: self.desktopActionTargetReceipt(target))
+        failure.attributed(to: target.actionTargetReceipt)
     }
 
     public func enterText(
@@ -340,7 +340,7 @@ extension DialogService {
             action: .enterText,
             details: details,
             outcome: outcome,
-            targetReceipt: Self.desktopActionTargetReceipt(plan.target),
+            targetReceipt: plan.target.actionTargetReceipt,
             targetWindowIdentity: plan.target.identity,
             targetWindowBounds: plan.target.bounds,
             focusedElement: plan.target.focusedElement,
@@ -508,7 +508,7 @@ extension DialogService {
                     valueVerified: false,
                     focusPolicy: focusPolicy),
                 outcome: .confirmedNoChange(),
-                targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil,
+                targetReceipt: execution.publishTargetReceipt ? plan.target.actionTargetReceipt : nil,
                 targetWindowIdentity: plan.target.identity,
                 targetWindowBounds: plan.target.bounds,
                 focusedElement: plan.target.focusedElement,
@@ -612,7 +612,7 @@ extension DialogService {
                 valueVerified: retainedValueMatchesRequest,
                 focusPolicy: focusPolicy),
             outcome: outcome,
-            targetReceipt: execution.publishTargetReceipt ? Self.desktopActionTargetReceipt(plan.target) : nil,
+            targetReceipt: execution.publishTargetReceipt ? plan.target.actionTargetReceipt : nil,
             targetWindowIdentity: plan.target.identity,
             targetWindowBounds: plan.target.bounds,
             focusedElement: plan.target.focusedElement,
@@ -754,7 +754,7 @@ extension DialogService {
                 action: .dismiss,
                 details: details,
                 outcome: outcome,
-                targetReceipt: Self.desktopActionTargetReceipt(plan.target),
+                targetReceipt: plan.target.actionTargetReceipt,
                 targetWindowIdentity: plan.target.identity,
                 targetWindowBounds: plan.target.bounds,
                 focusedElement: plan.target.focusedElement,

@@ -905,41 +905,7 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
         request: DesktopObservationRequest) -> DesktopActionOutcome
     {
         let delivery = self.pipelineDelivery(for: request)
-        switch outcome.state {
-        case .confirmedChange:
-            return .confirmedChange(
-                route: outcome.route,
-                delivery: delivery,
-                unitCount: outcome.dispatchState.unitCount)
-        case .confirmedNoChange:
-            return .confirmedNoChange(route: outcome.route)
-        case .partial:
-            return .partial(
-                route: outcome.route,
-                delivery: delivery,
-                unitCount: outcome.dispatchState.unitCount)
-        case .dispatchedUnverified:
-            return .dispatchedUnverified(
-                route: outcome.route,
-                delivery: delivery,
-                evidence: outcome.evidence == .operationStillRunning ? .operationStillRunning : .deliveryAccepted,
-                unitCount: outcome.dispatchState.unitCount)
-        case .suspectedNoop:
-            return .suspectedNoop(
-                route: outcome.route,
-                delivery: delivery,
-                unitCount: outcome.dispatchState.unitCount)
-        case .refused:
-            return .refused(
-                route: outcome.route,
-                reason: outcome.refusalReason ?? .operationUnsupported)
-        case .indeterminate:
-            return .indeterminate(
-                route: outcome.route,
-                delivery: outcome.delivery == nil ? nil : delivery,
-                evidence: outcome.evidence == .responseLost ? .responseLost : .completionUnknown,
-                unitCount: outcome.dispatchState.unitCount)
-        }
+        return outcome.reprojectingDelivery(delivery)
     }
 
     private static func projectingPipelineFailure(

@@ -192,7 +192,7 @@ extension MenuService {
                 press: { try refreshed.snapshot.element.performAction(.press) })
         } catch let failure as DesktopActionFailure {
             throw failure
-                .attributed(to: refreshed.snapshot.processIdentity)
+                .attributed(to: refreshed.snapshot.processIdentity.actionTargetReceipt)
                 .selectingLeaves([refreshed.evidence])
         }
         return refreshed
@@ -680,19 +680,19 @@ extension MenuService {
                 allowedWindowLayers: Self.menuBarRoutableWindowLayers)
         } catch let failure as DesktopActionFailure {
             throw failure
-                .attributed(to: route.identity)
+                .attributed(to: route.identity.actionTargetReceipt)
                 .selectingLeaves([resultEvidence])
         } catch let error as InputDeliveryIndeterminateError {
             throw error.desktopActionFailure(
                 delivery: .init(mechanism: .windowTargetedEvents, mode: .background))
-                .attributed(to: route.identity)
+                .attributed(to: route.identity.actionTargetReceipt)
                 .selectingLeaves([resultEvidence])
         } catch is CancellationError {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .requestCancelled,
                 message: "Menu bar click was cancelled before routed event submission.",
                 hint: "Submit a new request only if the menu bar action is still wanted.")
-                .attributed(to: route.identity)
+                .attributed(to: route.identity.actionTargetReceipt)
                 .selectingLeaves([resultEvidence])
         } catch let error as PeekabooError {
             let reason: DesktopActionOutcome.RefusalReason = switch error {
@@ -705,7 +705,7 @@ extension MenuService {
                 message: "Menu bar background routing refused before dispatch.",
                 hint: "Refresh the target or grant Event Synthesizing permission; global fallback is disabled.",
                 causeDescription: error.localizedDescription)
-                .attributed(to: route.identity)
+                .attributed(to: route.identity.actionTargetReceipt)
                 .selectingLeaves([resultEvidence])
         }
 

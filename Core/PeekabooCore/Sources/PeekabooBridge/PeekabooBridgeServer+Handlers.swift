@@ -538,7 +538,7 @@ extension PeekabooBridgeServer {
         _ result: UIAutomationActionResult<DesktopObservationResult>) -> DesktopActionFailure?
     {
         guard let outcome = result.outcome else { return nil }
-        let targetReceipt = self.observationTargetReceipt(result.targetIdentity)
+        let targetReceipt = result.targetIdentity?.actionTargetReceipt
         if outcome.state == .confirmedNoChange,
            outcome.delivery == nil,
            outcome.dispatchState == .none

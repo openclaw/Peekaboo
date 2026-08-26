@@ -556,10 +556,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
         var sequence = DesktopActionSequenceAccumulator()
         sequence.record(.outcome(connection))
-        let isSuccessfulExecution = switch execution.state {
-        case .confirmedChange, .confirmedNoChange, .dispatchedUnverified: true
-        case .partial, .suspectedNoop, .refused, .indeterminate: false
-        }
+        let isSuccessfulExecution = execution.isAccepted(by: .confirmedOrDispatched)
         if !isSuccessfulExecution,
            let failure = DesktopActionFailure(
                outcome: execution,

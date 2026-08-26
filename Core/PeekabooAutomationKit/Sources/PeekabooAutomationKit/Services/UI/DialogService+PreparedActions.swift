@@ -671,15 +671,6 @@ extension DialogService {
         ]
     }
 
-    static func desktopActionTargetReceipt(
-        _ target: UIAutomationTarget.ExactWindow) -> DesktopActionTargetReceipt
-    {
-        DesktopActionTargetReceipt(
-            processIdentifier: target.identity.ownerProcessIdentifier,
-            processStartIdentity: target.identity.ownerProcessStartIdentity,
-            windowID: target.identity.windowID)
-    }
-
     func dialogElements(
         for dialog: Element,
         resolvedTarget: ResolvedDialogTargetEvidence? = nil) -> DialogElements

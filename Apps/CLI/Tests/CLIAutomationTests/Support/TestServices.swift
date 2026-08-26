@@ -1383,7 +1383,7 @@ final class StubDialogService: DialogServiceProtocol {
                 delivery: .init(mechanism: .accessibilityAction, mode: .background),
                 unitCount: .one
             ),
-            targetReceipt: provided?.targetReceipt ?? DialogCommand.targetReceipt(receipt.target),
+            targetReceipt: provided?.targetReceipt ?? receipt.target.actionTargetReceipt,
             targetWindowIdentity: provided?.targetWindowIdentity ?? receipt.target.identity,
             targetWindowBounds: provided?.targetWindowBounds ?? receipt.target.bounds,
             focusedElement: provided?.focusedElement,

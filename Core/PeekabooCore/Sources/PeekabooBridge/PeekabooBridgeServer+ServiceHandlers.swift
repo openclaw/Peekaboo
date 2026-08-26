@@ -42,7 +42,7 @@ extension PeekabooBridgeServer {
                 resultAware: resultAware,
                 mode: .foreground,
                 operation: "Launch application",
-                targetReceipt: Self.applicationTargetReceipt(result.payload.processIdentity))
+                targetReceipt: result.payload.processIdentity?.actionTargetReceipt)
             return .init(
                 response: .application(result.payload),
                 mutation: .init(
@@ -67,7 +67,7 @@ extension PeekabooBridgeServer {
                 resultAware: self.services.applications is any ApplicationServiceActionResultProviding,
                 mode: payload.launchRequest.activates ? .foreground : .background,
                 operation: "Relaunch application",
-                targetReceipt: Self.applicationTargetReceipt(result.payload.processIdentity))
+                targetReceipt: result.payload.processIdentity?.actionTargetReceipt)
             try Self.validateRelaunchResponse(
                 result.payload,
                 differsFrom: expectedTargetIdentity,
@@ -102,7 +102,7 @@ extension PeekabooBridgeServer {
                     self.services.applications is any ApplicationServiceTargetedActionResultProviding,
                 mode: .foreground,
                 operation: "Activate application",
-                targetReceipt: Self.applicationTargetReceipt(result.targetIdentity?.processIdentity))
+                targetReceipt: result.targetIdentity?.processIdentity.actionTargetReceipt)
             let target = try Self.requireActionTarget(
                 result.targetIdentity,
                 outcome: outcome,
@@ -137,7 +137,7 @@ extension PeekabooBridgeServer {
                     resultAware: self.services.applications is any ApplicationServiceActionResultProviding,
                     mode: .background,
                     operation: "Quit application",
-                    targetReceipt: Self.applicationTargetReceipt(expectedIdentity))
+                    targetReceipt: expectedIdentity.actionTargetReceipt)
                 return .init(
                     response: .bool(result.payload),
                     mutation: .init(
@@ -222,7 +222,7 @@ extension PeekabooBridgeServer {
             resultAware: self.services.applications is any ApplicationServiceTargetedActionResultProviding,
             mode: .background,
             operation: "Hide application",
-            targetReceipt: Self.applicationTargetReceipt(result.targetIdentity?.processIdentity))
+            targetReceipt: result.targetIdentity?.processIdentity.actionTargetReceipt)
         let target = try Self.requireActionTarget(
             result.targetIdentity,
             outcome: outcome,
@@ -259,7 +259,7 @@ extension PeekabooBridgeServer {
             try Self.requireAttestedSafeBackgroundLaunchOutcome(
                 result.outcome,
                 resultAware: resultAware,
-                targetReceipt: Self.applicationTargetReceipt(result.payload.processIdentity))
+                targetReceipt: result.payload.processIdentity?.actionTargetReceipt)
             return .init(response: .application(result.payload))
         }
         let outcome = try Self.applicationMutationOutcome(
@@ -267,7 +267,7 @@ extension PeekabooBridgeServer {
             resultAware: resultAware,
             mode: request.activates ? .foreground : .background,
             operation: "Launch application",
-            targetReceipt: Self.applicationTargetReceipt(result.payload.processIdentity))
+            targetReceipt: result.payload.processIdentity?.actionTargetReceipt)
         return .init(
             response: .application(result.payload),
             mutation: .init(
@@ -365,15 +365,6 @@ extension PeekabooBridgeServer {
             message: "\(operation) result provider returned without a canonical outcome.",
             hint: "Observe the application before retrying and update the runtime host.")
             .attributed(to: targetReceipt)
-    }
-
-    private static func applicationTargetReceipt(
-        _ identity: ApplicationProcessIdentity?) -> DesktopActionTargetReceipt?
-    {
-        guard let identity else { return nil }
-        return DesktopActionTargetReceipt(
-            processIdentifier: identity.processIdentifier,
-            processStartIdentity: identity.processStartIdentity)
     }
 
     private static func requireRelaunchTargetIdentity(
@@ -986,15 +977,9 @@ extension PeekabooBridgeServer {
     }
 
     private static func isCanonicalBackgroundExactDialogInputOutcome(_ outcome: DesktopActionOutcome) -> Bool {
-        switch outcome.state {
-        case .confirmedNoChange:
-            outcome.delivery == nil && outcome.dispatchState == .none
-        case .dispatchedUnverified:
-            outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background) &&
-                outcome.dispatchState.unitCount != nil
-        case .confirmedChange, .partial, .suspectedNoop, .refused, .indeterminate:
-            false
-        }
+        outcome.isAccepted(by: .confirmedNoChangeOrDispatched(
+            requiring: .init(mechanism: .accessibilityValue, mode: .background),
+            unitCount: .required))
     }
 
     private static func throwExactDialogRefusalIfReported(

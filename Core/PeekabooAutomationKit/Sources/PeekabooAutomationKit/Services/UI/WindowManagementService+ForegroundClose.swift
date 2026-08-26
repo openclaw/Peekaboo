@@ -10,10 +10,7 @@ extension WindowManagementService {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> DesktopActionResult<Void>
     {
-        let targetReceipt = DesktopActionTargetReceipt(
-            processIdentifier: expectedIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedIdentity.ownerProcessStartIdentity,
-            windowID: expectedIdentity.windowID)
+        let targetReceipt = expectedIdentity.actionTargetReceipt
         var sequence = DesktopActionSequenceAccumulator()
 
         do {

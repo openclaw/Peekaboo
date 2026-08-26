@@ -271,7 +271,7 @@ extension DialogService {
                 "button": refreshed.button.title() ?? "Replace",
             ]) { _, new in new },
             outcome: outcome,
-            targetReceipt: Self.desktopActionTargetReceipt(refreshed.target),
+            targetReceipt: refreshed.target.actionTargetReceipt,
             targetWindowIdentity: refreshed.target.identity,
             targetWindowBounds: refreshed.target.bounds,
             focusedElement: nil)

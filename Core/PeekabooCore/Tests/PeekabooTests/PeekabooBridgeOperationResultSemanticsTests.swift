@@ -278,6 +278,8 @@ struct PeekabooBridgeOperationResultSemanticsTests {
             .typeActions,
             .targetedTypeActions,
             .exactWindowTargetedTypeActions,
+            .exactWindowPixelFocusType,
+            .foregroundModifierClick,
             .setValue,
             .performAction,
             .scroll,
@@ -333,10 +335,23 @@ struct PeekabooBridgeOperationResultSemanticsTests {
         let classified = Set(PeekabooBridgeOperation.allCases.filter(\.mutatesDesktop))
         #expect(classified == expected)
 
+        let exactContracts: [
+            PeekabooBridgeOperation: PeekabooBridgeOperationResultSemantics.Contract
+        ] = [
+            .exactWindowPixelFocusType: .init(
+                completion: .dispatchedUnverified(.init(mechanism: .composite, mode: .background)),
+                targetPolicy: .requestPinned),
+            .foregroundModifierClick: .init(
+                completion: .dispatchedUnverified(.init(mechanism: .composite, mode: .foreground)),
+                targetPolicy: .requestPinned),
+        ]
         for operation in expected {
             let contract = PeekabooBridgeOperationResultSemantics.contract(for: operation)
             #expect(contract.completion != .readOnly, "Missing completion contract for \(operation)")
             #expect(contract.targetPolicy != .notApplicable, "Missing target contract for \(operation)")
+            if let exactContract = exactContracts[operation] {
+                #expect(contract == exactContract, "Incorrect explicit result contract for \(operation)")
+            }
         }
     }
 

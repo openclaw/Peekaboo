@@ -327,10 +327,7 @@ public struct MenuTool: MCPTool {
                 message: "Foreground menu focus may have changed desktop state before failing.",
                 hint: "Observe the exact window before retrying foreground menu access.",
                 causeDescription: error.localizedDescription)
-                .attributed(to: DesktopActionTargetReceipt(
-                    processIdentifier: window.identity.ownerProcessIdentifier,
-                    processStartIdentity: window.identity.ownerProcessStartIdentity,
-                    windowID: window.identity.windowID))
+                .attributed(to: window.identity.actionTargetReceipt)
         }
     }
 

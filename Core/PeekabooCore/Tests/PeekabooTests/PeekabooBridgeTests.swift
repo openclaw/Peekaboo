@@ -1990,6 +1990,10 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserStatusError: (any Error)?
     var browserConnectFailure: DesktopActionFailure?
     var browserConnectError: (any Error)?
+    var browserConnectOutcome = DesktopActionOutcome.dispatchedUnverified(
+        delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+        evidence: .deliveryAccepted,
+        unitCount: .one)
     var browserExecutionError: (any Error)?
     var browserExecutionErrorAfterDispatch: (any Error)?
     var browserExecutionReceiptOverride: PeekabooBridgeBrowserConnectionReceipt?

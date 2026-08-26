@@ -272,10 +272,7 @@ enum SpaceWindowMutationDispatcher {
         window: UIAutomationTarget.ExactWindow,
         receipt: DesktopActionTargetReceipt)
     {
-        let receipt = DesktopActionTargetReceipt(
-            processIdentifier: expectedIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedIdentity.ownerProcessStartIdentity,
-            windowID: expectedIdentity.windowID)
+        let receipt = expectedIdentity.actionTargetReceipt
         guard expectedIdentity.windowID == Int(windowID),
               let capturedBounds = expectedIdentity.capturedBounds
         else {

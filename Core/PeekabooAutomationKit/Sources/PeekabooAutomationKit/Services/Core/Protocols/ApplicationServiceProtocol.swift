@@ -238,7 +238,7 @@ public enum ApplicationActionResultSemantics {
         do {
             try self.requireSuccessfulOutcome(outcome, operation: operation)
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: expectedIdentity)
+            throw failure.attributed(to: expectedIdentity.actionTargetReceipt)
         }
         guard result.targetIdentity?.processIdentity == expectedIdentity else {
             throw DesktopActionFailure.indeterminate(
@@ -265,7 +265,7 @@ public enum ApplicationActionResultSemantics {
                 evidence: .completionUnknown,
                 message: "\(operation) returned without a canonical outcome.",
                 hint: "Observe the pinned application before retrying and update the runtime host.")
-                .attributed(to: expectedIdentity)
+                .attributed(to: expectedIdentity.actionTargetReceipt)
         }
         if !result.payload, outcome.isAccepted(by: .confirmedOrDispatched) {
             throw DesktopActionFailure.indeterminate(
@@ -275,12 +275,12 @@ public enum ApplicationActionResultSemantics {
                 unitCount: outcome.dispatchState.unitCount,
                 message: "\(operation) returned false with a successful canonical outcome.",
                 hint: "Observe the pinned application before retrying and update the runtime host.")
-                .attributed(to: expectedIdentity)
+                .attributed(to: expectedIdentity.actionTargetReceipt)
         }
         do {
             try self.requireSuccessfulOutcome(outcome, operation: operation)
         } catch let failure as DesktopActionFailure {
-            throw failure.attributed(to: expectedIdentity)
+            throw failure.attributed(to: expectedIdentity.actionTargetReceipt)
         }
     }
 }
@@ -864,21 +864,6 @@ public struct WindowMutationIdentity: Sendable, Codable, Equatable {
         self.windowID == other.windowID &&
             self.processIdentity == other.processIdentity &&
             self.capturedBounds == other.capturedBounds
-    }
-}
-
-extension DesktopActionFailure {
-    func attributed(to processIdentity: ApplicationProcessIdentity) -> DesktopActionFailure {
-        self.attributed(to: DesktopActionTargetReceipt(
-            processIdentifier: processIdentity.processIdentifier,
-            processStartIdentity: processIdentity.processStartIdentity))
-    }
-
-    func attributed(to windowIdentity: WindowMutationIdentity) -> DesktopActionFailure {
-        self.attributed(to: DesktopActionTargetReceipt(
-            processIdentifier: windowIdentity.ownerProcessIdentifier,
-            processStartIdentity: windowIdentity.ownerProcessStartIdentity,
-            windowID: windowIdentity.windowID))
     }
 }
 

@@ -463,7 +463,7 @@ func validatedConfirmedForegroundFocusResult(
     _ result: UIAutomationActionResult<Void>,
     operation: String
 ) throws -> UIAutomationActionResult<Void> {
-    let targetReceipt = result.targetIdentity.flatMap(focusTargetReceipt)
+    let targetReceipt = result.targetIdentity?.actionTargetReceipt
     guard let targetIdentity = result.targetIdentity,
           targetIdentity.exactWindow != nil
     else {
@@ -481,14 +481,14 @@ func validatedConfirmedForegroundFocusResult(
             evidence: .completionUnknown,
             message: "\(operation) returned without a canonical focus outcome.",
             hint: "Observe the target before retrying and update the runtime host."
-        ).attributed(to: focusTargetReceipt(targetIdentity))
+        ).attributed(to: targetIdentity.actionTargetReceipt)
     }
     guard outcome.isConfirmed else {
         guard let failure = DesktopActionFailure(
             outcome: outcome,
             message: "\(operation) did not confirm exact foreground focus.",
             hint: "Do not send global input until the exact target focus is confirmed.",
-            targetReceipt: focusTargetReceipt(targetIdentity)
+            targetReceipt: targetIdentity.actionTargetReceipt
         ) else {
             preconditionFailure("A non-confirmed focus outcome must construct a failure")
         }
@@ -503,13 +503,9 @@ func validatedConfirmedForegroundFocusResult(
             unitCount: outcome.dispatchState.unitCount,
             message: "\(operation) confirmed a dispatched focus without foreground delivery.",
             hint: "Do not send global input until the exact target focus is confirmed in the foreground."
-        ).attributed(to: focusTargetReceipt(targetIdentity))
+        ).attributed(to: targetIdentity.actionTargetReceipt)
     }
     return result
-}
-
-private func focusTargetReceipt(_ identity: DesktopTargetIdentity) -> DesktopActionTargetReceipt {
-    identity.actionTargetReceipt
 }
 
 @MainActor
