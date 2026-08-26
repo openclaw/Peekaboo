@@ -319,10 +319,15 @@ enum BrowserToolCapabilityProjection {
     }
 
     private static func isProviderUID(_ value: String) -> Bool {
-        let components = value.split(separator: "_", omittingEmptySubsequences: false)
-        return components.count == 2 && components.allSatisfy { component in
-            !component.isEmpty && component.allSatisfy(\.isNumber)
+        if value.hasPrefix("stashed-") {
+            return self.isASCIIDigits(value.dropFirst("stashed-".count))
         }
+        let components = value.split(separator: "_", omittingEmptySubsequences: false)
+        return components.count == 2 && components.allSatisfy(self.isASCIIDigits)
+    }
+
+    private static func isASCIIDigits(_ value: Substring) -> Bool {
+        !value.isEmpty && value.utf8.allSatisfy { $0 >= 0x30 && $0 <= 0x39 }
     }
 
     static func projectingMetadata(

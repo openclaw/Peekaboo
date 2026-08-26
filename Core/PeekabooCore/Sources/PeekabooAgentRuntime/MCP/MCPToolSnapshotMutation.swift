@@ -116,6 +116,13 @@ struct MCPToolPendingSnapshotInvalidation: Sendable, Equatable {
     let scope: MCPToolSnapshotMutationScope
     let owner: MCPToolSnapshotOwner
     let usesCoordinatorBarrier: Bool
+    let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.scope == rhs.scope &&
+            lhs.owner == rhs.owner &&
+            lhs.usesCoordinatorBarrier == rhs.usesCoordinatorBarrier
+    }
 }
 
 public actor MCPToolSnapshotExecutionGate {
@@ -222,7 +229,8 @@ public actor MCPToolSnapshotExecutionGate {
     func recordPendingInvalidation(
         _ scope: MCPToolSnapshotMutationScope,
         owner: MCPToolSnapshotOwner,
-        usesCoordinatorBarrier: Bool)
+        usesCoordinatorBarrier: Bool,
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?)
     {
         if self.pendingInvalidationRecords[scope.id] == nil {
             self.pendingInvalidationOrder.append(scope.id)
@@ -230,7 +238,8 @@ public actor MCPToolSnapshotExecutionGate {
         self.pendingInvalidationRecords[scope.id] = MCPToolPendingSnapshotInvalidation(
             scope: scope,
             owner: owner,
-            usesCoordinatorBarrier: usesCoordinatorBarrier)
+            usesCoordinatorBarrier: usesCoordinatorBarrier,
+            snapshotMutationCoordinator: snapshotMutationCoordinator)
     }
 
     func clearPendingInvalidation(id: UUID) {

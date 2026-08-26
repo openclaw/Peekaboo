@@ -60,11 +60,13 @@ struct MCPToolSnapshotInvalidationLedgerTests {
         await gate.recordPendingInvalidation(
             sharedScope,
             owner: owner,
-            usesCoordinatorBarrier: true)
+            usesCoordinatorBarrier: true,
+            snapshotMutationCoordinator: nil)
         await gate.recordPendingInvalidation(
             browserScope,
             owner: owner,
-            usesCoordinatorBarrier: false)
+            usesCoordinatorBarrier: false,
+            snapshotMutationCoordinator: nil)
 
         let firstPending = await gate.pendingInvalidation()
         let first = try #require(firstPending)
@@ -91,7 +93,8 @@ struct MCPToolSnapshotInvalidationLedgerTests {
             MCPToolSnapshotMutationScope(toolName: "browser", effect: .mutation)
                 .completed(at: Date(), preserving: nil),
             owner: retiredOwner,
-            usesCoordinatorBarrier: false)
+            usesCoordinatorBarrier: false,
+            snapshotMutationCoordinator: nil)
 
         let services = PeekabooServices()
         let context = MCPToolContext(

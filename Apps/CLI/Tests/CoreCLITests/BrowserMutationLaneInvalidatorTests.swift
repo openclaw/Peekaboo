@@ -1,6 +1,9 @@
 import Foundation
+import MCP
 import PeekabooCore
+import TachikomaMCP
 import Testing
+@testable import PeekabooAgentRuntime
 @testable import PeekabooCLI
 
 @Suite(.tags(.safe), .serialized)
@@ -123,5 +126,101 @@ struct BrowserMutationLaneInvalidatorTests {
         #expect(tracker.mutationStartedAt == nil)
         #expect(!tracker.hasPendingDurableMutation)
         #expect(store.effectiveWatermark() == nil)
+    }
+
+    @Test
+    func `Session teardown recovers durable debt through its originating coordinator`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-cli-browser-teardown-debt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let watermarkURL = root.appendingPathComponent("desktop-mutation-watermark.json", isDirectory: false)
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let snapshots = InMemorySnapshotManager(desktopMutationWatermarkStore: store)
+        let tracker = InteractionMutationTracker(desktopMutationWatermarkStore: store)
+        let services = PeekabooServices(snapshotManager: snapshots)
+        let runtime = CommandRuntime(
+            configuration: .init(
+                verbose: false,
+                jsonOutput: false,
+                logLevel: nil,
+                captureEnginePreference: nil,
+                inputStrategy: nil
+            ),
+            services: services,
+            interactionMutationTracker: tracker
+        )
+        let sharedGate = MCPToolSnapshotExecutionGate()
+        let context = MCPToolContext(
+            services: services,
+            snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator,
+            snapshotExecutionGate: sharedGate,
+            browserMutationExecutionGate: MCPToolSnapshotExecutionGate(),
+            snapshotOwner: MCPToolSnapshotOwner(),
+            executionPolicy: .unrestricted
+        )
+        let response = try await context.execute(
+            tool: DurableBrowserMutationTool {
+                try FileManager.default.createDirectory(
+                    at: watermarkURL,
+                    withIntermediateDirectories: true
+                )
+            },
+            arguments: ToolArguments(raw: [
+                "action": "new_page",
+                "url": "https://example.test/",
+                "background": true,
+            ])
+        )
+
+        #expect(!response.isError)
+        #expect(tracker.hasPendingDurableMutation)
+        #expect(await sharedGate.pendingInvalidation()?.scope.toolName == "browser")
+        try FileManager.default.removeItem(at: watermarkURL)
+
+        await context.releaseSnapshotOwner()
+
+        #expect(!tracker.hasPendingDurableMutation)
+        #expect(await sharedGate.pendingInvalidation()?.scope == nil)
+        let followupContext = MCPToolContext(
+            services: services,
+            snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator,
+            snapshotExecutionGate: sharedGate,
+            snapshotOwner: MCPToolSnapshotOwner(),
+            executionPolicy: .unrestricted
+        )
+        let followup = try await followupContext.execute(
+            tool: DurableFollowupMutationTool(),
+            arguments: ToolArguments(raw: [:])
+        )
+        #expect(!followup.isError)
+        #expect(!tracker.hasPendingDurableMutation)
+    }
+}
+
+private struct DurableBrowserMutationTool: MCPTool {
+    let name = "browser"
+    let description = "Durable browser mutation failure fixture"
+    let inputSchema = SchemaBuilder.object(properties: [
+        "action": SchemaBuilder.string(),
+        "url": SchemaBuilder.string(),
+        "background": SchemaBuilder.boolean(),
+    ])
+    let onExecute: @MainActor @Sendable () throws -> Void
+
+    @MainActor
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        try self.onExecute()
+        return .text("ok")
+    }
+}
+
+private struct DurableFollowupMutationTool: MCPTool {
+    let name = "click"
+    let description = "Durable follow-up mutation fixture"
+    let inputSchema = SchemaBuilder.object(properties: [:])
+
+    @MainActor
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        .text("ok")
     }
 }
