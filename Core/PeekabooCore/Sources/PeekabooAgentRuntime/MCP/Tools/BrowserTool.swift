@@ -201,6 +201,10 @@ public struct BrowserTool: MCPTool {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as BrowserMCPUploadStagingError {
             return ToolResponse.error(error.localizedDescription)
+        } catch BrowserMCPConnectionError.targetLocked {
+            return try MCPToolResponseMetadataProjector.errorResponse(
+                for: self.targetLockedFailure(),
+                invalidatedSnapshotID: nil)
         } catch let failure as DesktopActionFailure
             where failure.outcome.state == .refused &&
             failure.outcome.refusalReason == .requestCancelled &&
@@ -466,6 +470,19 @@ public struct BrowserTool: MCPTool {
         var lines = ["Chrome DevTools MCP failed: \(error.localizedDescription)", ""]
         lines.append(contentsOf: self.permissionInstructions())
         return lines.joined(separator: "\n")
+    }
+
+    private func targetLockedFailure() -> DesktopActionFailure {
+        let hint = switch self.instructionAudience {
+        case .mcp:
+            "Run browser { \"action\": \"disconnect\" }, then connect to the intended channel or endpoint."
+        case .commandLine:
+            "Run `peekaboo browser disconnect`, then connect to the intended channel or endpoint."
+        }
+        return .preDispatchRefusal(
+            reason: .transportSessionUnavailable,
+            message: BrowserMCPConnectionError.targetLocked.localizedDescription,
+            hint: hint)
     }
 
     private func permissionInstructions() -> [String] {

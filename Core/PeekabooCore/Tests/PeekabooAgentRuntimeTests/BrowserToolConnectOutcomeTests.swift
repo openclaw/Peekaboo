@@ -48,6 +48,42 @@ struct BrowserToolConnectOutcomeTests {
     }
 
     @Test
+    func `Target lock projects exact session recovery without permission guidance`() async throws {
+        let cases: [(BrowserToolInstructionAudience, String)] = [
+            (.mcp, "Run browser { \"action\": \"disconnect\" }"),
+            (.commandLine, "Run `peekaboo browser disconnect`"),
+        ]
+
+        for (audience, expectedHint) in cases {
+            let client = ConnectOutcomeBrowserClient(error: BrowserMCPConnectionError.targetLocked)
+            let response = try await BrowserTool(
+                client: client,
+                executionPolicy: .unrestricted,
+                instructionAudience: audience).execute(
+                arguments: ToolArguments(raw: ["action": "connect", "channel": "canary"]))
+
+            #expect(response.isError)
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string("refused"))
+            #expect(meta["dispatch_state"] == .string("none"))
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["refusal_reason"] == .string("transport_session_unavailable"))
+            #expect(meta["escalation"] == .string("reconnect_session"))
+
+            guard case let .text(text: text, annotations: _, _meta: _) = response.content.first else {
+                Issue.record("Expected a text error response")
+                continue
+            }
+            #expect(text.contains(BrowserMCPConnectionError.targetLocked.localizedDescription))
+            #expect(text.contains(expectedHint))
+            #expect(!text.contains("enable remote debugging"))
+            #expect(!text.contains("Run browser { \"action\": \"connect\" }"))
+            #expect(client.connectCount == 1)
+        }
+    }
+
+    @Test
     func `Browser tool keeps uncancelled raw provider cancellation indeterminate`() async throws {
         let client = ConnectOutcomeBrowserClient(error: CancellationError())
 
