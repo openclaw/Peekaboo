@@ -1,4 +1,6 @@
+import Foundation
 import MCP
+import PeekabooAutomationKit
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -308,8 +310,126 @@ struct BrowserToolCapabilitySessionTests {
         }
     }
 
+    @Test
+    func `native window binding stays private and caller scoped until control death`() async throws {
+        let session = BrowserToolCapabilitySession()
+        let receipt = Self.nativeReceipt()
+        let sessionBinding = Self.binding(receipt)
+        let listed = try await session.project(
+            Self.pageResponse(id: 23, url: "https://example.test/"),
+            calls: Self.calls("list_pages"),
+            resolved: nil,
+            sessionBinding: sessionBinding)
+        let pageReference = try Self.pageReference(from: listed)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 900,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 456,
+            capturedBounds: CGRect(x: -1200, y: 80, width: 1000, height: 700))
+        let nativeWindowReceipt = try BrowserNativeWindowReceipt(
+            target: BrowserNativeWindowTarget(
+                processIdentifier: 123,
+                processStartIdentity: 456,
+                windowID: 900),
+            windowIdentity: windowIdentity,
+            bounds: #require(windowIdentity.capturedBounds))
+
+        try await session.bindNativeWindow(
+            pageReference: pageReference,
+            sessionBinding: sessionBinding,
+            privateTargetID: "private-target-a",
+            privateBrowserWindowID: BrowserMCPDevToolsWindowID(rawValue: 77),
+            nativeWindowReceipt: nativeWindowReceipt)
+
+        let binding = try await session.nativeWindowBinding(
+            pageReference: pageReference,
+            sessionBinding: sessionBinding)
+        #expect(binding == BrowserToolNativeWindowBinding(
+            privateTargetID: "private-target-a",
+            privateBrowserWindowID: BrowserMCPDevToolsWindowID(rawValue: 77),
+            nativeWindowReceipt: nativeWindowReceipt))
+        #expect(!Self.text(from: listed).contains("private-target-a"))
+        #expect(listed.structuredContent?.objectValue?["pages"]?.arrayValue?.first?.objectValue?["id"] ==
+            .string(pageReference))
+
+        await session.invalidateNativeWindowBindings()
+        await #expect(throws: BrowserToolNativeWindowBindingError.stalePageReference) {
+            _ = try await session.nativeWindowBinding(
+                pageReference: pageReference,
+                sessionBinding: sessionBinding)
+        }
+    }
+
+    @Test
+    func `native window binding rejects process or caller session substitution`() async throws {
+        let session = BrowserToolCapabilitySession()
+        let receipt = Self.nativeReceipt()
+        let sessionBinding = Self.binding(receipt)
+        let listed = try await session.project(
+            Self.pageResponse(id: 24, url: "https://example.test/"),
+            calls: Self.calls("list_pages"),
+            resolved: nil,
+            sessionBinding: sessionBinding)
+        let pageReference = try Self.pageReference(from: listed)
+        let wrongProcess = WindowMutationIdentity(
+            windowID: 901,
+            ownerProcessIdentifier: 124,
+            ownerProcessStartIdentity: 456,
+            capturedBounds: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let wrongProcessReceipt = try BrowserNativeWindowReceipt(
+            target: BrowserNativeWindowTarget(
+                processIdentifier: 124,
+                processStartIdentity: 456,
+                windowID: 901),
+            windowIdentity: wrongProcess,
+            bounds: #require(wrongProcess.capturedBounds))
+
+        await #expect(throws: BrowserToolNativeWindowBindingError.processMismatch) {
+            try await session.bindNativeWindow(
+                pageReference: pageReference,
+                sessionBinding: sessionBinding,
+                privateTargetID: "private-target-b",
+                privateBrowserWindowID: BrowserMCPDevToolsWindowID(rawValue: 78),
+                nativeWindowReceipt: wrongProcessReceipt)
+        }
+        let otherSession = BrowserMCPExecutionSessionBinding(
+            connectionReceipt: receipt,
+            providerSessionEpoch: BrowserMCPProviderSessionEpoch())
+        await #expect(throws: BrowserToolNativeWindowBindingError.connectionMismatch) {
+            try await session.bindNativeWindow(
+                pageReference: pageReference,
+                sessionBinding: otherSession,
+                privateTargetID: "private-target-b",
+                privateBrowserWindowID: BrowserMCPDevToolsWindowID(rawValue: 78),
+                nativeWindowReceipt: BrowserNativeWindowReceipt(
+                    target: BrowserNativeWindowTarget(
+                        processIdentifier: 123,
+                        processStartIdentity: 456,
+                        windowID: 901),
+                    windowIdentity: WindowMutationIdentity(
+                        windowID: 901,
+                        ownerProcessIdentifier: 123,
+                        ownerProcessStartIdentity: 456,
+                        capturedBounds: CGRect(x: 0, y: 0, width: 800, height: 600)),
+                    bounds: CGRect(x: 0, y: 0, width: 800, height: 600)))
+        }
+    }
+
     private static func receipt() -> BrowserMCPConnectionReceipt {
         BrowserMCPConnectionReceipt(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+            devToolsBrowserID: "browser-a",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+    }
+
+    private static func nativeReceipt() -> BrowserMCPConnectionReceipt {
+        BrowserMCPConnectionReceipt(
+            channel: .stable,
+            processIdentifier: 123,
+            processStartIdentity: 456,
+            bundleIdentifier: "com.google.Chrome",
             browserURL: "http://127.0.0.1:9222/",
             webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
             devToolsBrowserID: "browser-a",
@@ -361,6 +481,13 @@ struct BrowserToolCapabilitySessionTests {
         let pages = try #require(root["pages"]?.arrayValue)
         let page = try #require(pages.first?.objectValue)
         return try #require(page["id"]?.stringValue)
+    }
+
+    private static func text(from response: ToolResponse) -> String {
+        response.content.compactMap { content in
+            guard case let .text(text, _, _) = content else { return nil }
+            return text
+        }.joined(separator: "\n")
     }
 
     private static func elementReference(from response: ToolResponse) throws -> String {

@@ -58,6 +58,37 @@ struct BrowserMCPChannelEndpointResolverTests {
     }
 
     @Test
+    func `Native channel resolution retains the permission bearing control socket`() async throws {
+        let inspections = ListenerInspections([
+            Self.listener(socket: 100),
+            Self.listener(socket: 100),
+        ])
+        let transport = FakeControlTransport.respondingNormally
+        let opener = FakeControlTransportOpener(transport: transport)
+
+        let endpoint = try await BrowserMCPChannelEndpointResolver.resolveEndpointWithControl(
+            target: Self.target(),
+            activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
+            readActivePort: { _ in Self.activePortData() },
+            inspectListener: { _, _, _ in try inspections.next() },
+            connectControl: { url, browserID, deadline, onDispatch in
+                try await BrowserMCPDevToolsControlSession.connect(
+                    url,
+                    expectedBrowserID: browserID,
+                    deadline: deadline,
+                    onDispatch: onDispatch,
+                    transportFactory: opener.factory)
+            })
+
+        let control = try #require(endpoint.retainedControlSession)
+        #expect(await control.state() == .open)
+        #expect(opener.openCount == 1)
+        #expect(transport.sentCommands().count == 1)
+        #expect(inspections.remaining == 0)
+        await control.close()
+    }
+
+    @Test
     func `same port listener reopen is refused during later revalidation`() async throws {
         let initialInspections = ListenerInspections([
             Self.listener(socket: 100),

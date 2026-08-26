@@ -54,6 +54,7 @@ npx -y chrome-devtools-mcp@1.6.0 \
   --wsEndpoint=ws://127.0.0.1:<port>/devtools/browser/<id> \
   --experimentalPageIdRouting \
   --experimentalStructuredContent \
+  --experimentalInteropTools \
   --no-usage-statistics \
   --no-performance-crux
 ```
@@ -61,6 +62,10 @@ npx -y chrome-devtools-mcp@1.6.0 \
 Peekaboo pins the verified Chrome DevTools MCP version because direct page-ID routing and the structured response data
 used to mint opaque page/element capabilities are experimental upstream contracts. Upgrade the pin only after its
 page-scoped schemas, structured response surfaces, and routing behavior have been revalidated.
+
+The interop flag is enabled only so Peekaboo can privately map an opaque page capability to its CDP target during
+exact native-window binding. The provider's `get_tab_id` tool is excluded from raw public routing, and raw CDP target
+or browser-window IDs are never returned to callers.
 
 For deterministic local tests or custom Chrome endpoints:
 

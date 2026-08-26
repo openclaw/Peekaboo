@@ -81,6 +81,7 @@ private struct BrowserMCPResolvedTarget {
     let channelEndpoint: BrowserMCPDevToolsEndpoint?
     let codeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity?
     let targetKind: BrowserMCPConnectionTargetKind
+    let retainedControlSession: BrowserMCPDevToolsControlSession?
 }
 
 private struct BrowserMCPStatusInspection {
@@ -117,12 +118,13 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private let uploadStager: BrowserMCPUploadStager
     private let environmentOptions: BrowserMCPEnvironmentOptions
     private let executionGate = MCPToolSnapshotExecutionGate()
-    private var connectionReceipt: BrowserMCPConnectionReceipt?
-    private var providerSessionEpoch: BrowserMCPProviderSessionEpoch?
+    var connectionReceipt: BrowserMCPConnectionReceipt?
+    var providerSessionEpoch: BrowserMCPProviderSessionEpoch?
     private var connectionSupportsReceiptBoundExecution = false
     private var connectionChannelEndpoint: BrowserMCPDevToolsEndpoint?
     private var connectionCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity?
     private var connectionTargetKind: BrowserMCPConnectionTargetKind?
+    var connectionControlSession: BrowserMCPDevToolsControlSession?
     private var uploadWorkspace: BrowserMCPUploadWorkspace?
     private var activeUploadID: UUID?
     private var sessionEnded = false
@@ -331,24 +333,32 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             }
             return DesktopActionResult(payload: status, outcome: .confirmedNoChange())
         }
+        guard self.connectionControlSession == nil else {
+            await self.clearConnection()
+            throw BrowserMCPConnectionError.connectionLost(
+                "a retained native control session outlived its connection receipt")
+        }
 
         let target = try await self.resolveTarget(
             channel: channel,
             browserURL: browserURL,
             attempt: attempt,
             reserveTarget: reserveTarget)
-        try reserveTarget?(target.receipt)
-        if self.manager.hasServer(name: self.serverName) {
-            await self.manager.removeServer(name: self.serverName)
-        }
         var connectionAttemptDispatched = false
         do {
+            // Take ownership immediately: every fallible step after native endpoint resolution must close the
+            // permission-bearing control socket through `clearConnection()`.
+            self.connectionControlSession = target.retainedControlSession
+            try reserveTarget?(target.receipt)
+            if self.manager.hasServer(name: self.serverName) {
+                await self.manager.removeServer(name: self.serverName)
+            }
             let uploadWorkspace = try await self.uploadStager.createWorkspace()
             var config = target.config
             config.env["TMPDIR"] = uploadWorkspace.rootPath
             self.uploadWorkspace = uploadWorkspace
-            // Native channel setup has one owner-controlled identity probe, then this separately
-            // owned MCP child opens the session's execution WebSocket. Later validation never probes.
+            // Native channel setup retains the owner-controlled read-only browser session, then this separately
+            // owned MCP child opens the execution WebSocket. Later validation never reopens either connection.
             attempt.state.markConnectionDispatchStarted()
             connectionAttemptDispatched = true
             try await self.manager.addServer(name: self.serverName, config: config)
@@ -560,10 +570,16 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt?,
         expectedProviderSessionEpoch: BrowserMCPProviderSessionEpoch?,
-        connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> BrowserMCPExecutionResult
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy,
+        allowPrivateInterop: Bool = false) async throws -> BrowserMCPExecutionResult
     {
         guard !calls.isEmpty else {
             throw BrowserMCPConnectionError.connectionLost("the browser action sequence was empty")
+        }
+        guard allowPrivateInterop || calls.allSatisfy({
+            !BrowserMCPPageRoutingContract.internalOnlyToolNames.contains($0.toolName)
+        }) else {
+            throw BrowserMCPPrivateInteropError.publicDispatchRefused
         }
         let preparation = try await self.prepareExecutionReceipt(
             channel: channel,
@@ -1042,7 +1058,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 supportsReceiptBoundExecution: false,
                 channelEndpoint: nil,
                 codeSignatureIdentity: nil,
-                targetKind: .isolated)
+                targetKind: .isolated,
+                retainedControlSession: nil)
         }
         let candidates = self.detectedBrowsers(resolvedChannel)
         guard !candidates.isEmpty else {
@@ -1107,6 +1124,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   processStartIdentity,
                   channelIdentity) == codeSignatureIdentity
         else {
+            await endpoint.retainedControlSession?.close()
             throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
                 "the live Chrome bundle or signing identity changed during Browser.getVersion")
         }
@@ -1127,7 +1145,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             supportsReceiptBoundExecution: true,
             channelEndpoint: endpoint,
             codeSignatureIdentity: codeSignatureIdentity,
-            targetKind: .nativeChannel)
+            targetKind: .nativeChannel,
+            retainedControlSession: endpoint.retainedControlSession)
     }
 
     private func resolveExactEndpointTarget(
@@ -1158,7 +1177,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             supportsReceiptBoundExecution: true,
             channelEndpoint: nil,
             codeSignatureIdentity: nil,
-            targetKind: .external)
+            targetKind: .external,
+            retainedControlSession: nil)
     }
 
     private func validate(
@@ -1305,6 +1325,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.connectionChannelEndpoint = nil
         self.connectionCodeSignatureIdentity = nil
         self.connectionTargetKind = nil
+        let controlSession = self.connectionControlSession
+        self.connectionControlSession = nil
+        await controlSession?.close()
         self.activeUploadID = nil
         let uploadWorkspace = self.uploadWorkspace
         self.uploadWorkspace = nil
@@ -1334,6 +1357,94 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         } catch {
             await self.executionGate.release()
             throw error
+        }
+    }
+
+    func withPrivateTargetBindingAuthority<Result: Sendable>(
+        providerPageID: Int,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        deadline: ContinuousClock.Instant,
+        operation: @MainActor @Sendable (
+            BrowserMCPDevToolsControlSession,
+            String) async throws -> Result) async throws -> Result
+    {
+        try await self.withExecutionGate {
+            let control = try await self.nativeBindingControl(
+                expectedSessionBinding: expectedSessionBinding)
+            try Self.requireNativeBindingDeadline(deadline)
+            let result: BrowserMCPExecutionResult
+            do {
+                result = try await BrowserMCPConnectionDeadline.run(until: deadline) {
+                    try await self.executeSequenceUnlocked(
+                        [BrowserMCPPrivateInterop.targetIDCall(providerPageID: providerPageID)],
+                        channel: expectedSessionBinding.connectionReceipt.channel,
+                        expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
+                        expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
+                        connectionPolicy: .requireExistingLiveReceipt,
+                        allowPrivateInterop: true)
+                }
+            } catch BrowserMCPConnectionDeadlineError.timedOut {
+                throw BrowserMCPPrivateInteropError.deadlineExceeded
+            }
+            try Self.requireNativeBindingDeadline(deadline)
+            guard !result.response.isError,
+                  result.actionFailure == nil,
+                  result.completedCallCount == 1,
+                  result.dispatchedCallCount == 1
+            else {
+                throw BrowserMCPPrivateInteropError.providerError
+            }
+            let privateTargetID = try BrowserMCPPrivateInterop.targetID(from: result.response)
+            return try await operation(control, privateTargetID)
+        }
+    }
+
+    func withNativeBindingExecutionGate<Result: Sendable>(
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        operation: @MainActor @Sendable (BrowserMCPDevToolsControlSession) async throws -> Result)
+        async throws -> Result
+    {
+        try await self.withExecutionGate {
+            let control = try await self.nativeBindingControl(
+                expectedSessionBinding: expectedSessionBinding)
+            return try await operation(control)
+        }
+    }
+
+    func nativeBindingAuthorityIsLive(
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding) async -> Bool
+    {
+        do {
+            return try await self.withExecutionGate {
+                _ = try await self.nativeBindingControl(
+                    expectedSessionBinding: expectedSessionBinding)
+                return true
+            }
+        } catch {
+            return false
+        }
+    }
+
+    private func nativeBindingControl(
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding) async throws
+        -> BrowserMCPDevToolsControlSession
+    {
+        guard self.connectionReceipt == expectedSessionBinding.connectionReceipt,
+              self.providerSessionEpoch == expectedSessionBinding.providerSessionEpoch,
+              let control = self.connectionControlSession,
+              await control.state() == .open
+        else {
+            throw BrowserMCPPrivateInteropError.authorityUnavailable
+        }
+        return control
+    }
+
+    private static func requireNativeBindingDeadline(
+        _ deadline: ContinuousClock.Instant) throws
+    {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else {
+            throw BrowserMCPPrivateInteropError.deadlineExceeded
         }
     }
 }

@@ -939,6 +939,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         "chrome-devtools-mcp@1.6.0",
         "--experimentalPageIdRouting",
         "--experimentalStructuredContent",
+        "--experimentalInteropTools",
     ]
 
     static func chromeDevToolsConfig(browserURL: String, headless _: Bool) -> MCPServerConfig {

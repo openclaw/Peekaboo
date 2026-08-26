@@ -2,6 +2,22 @@ import Foundation
 import MCP
 import TachikomaMCP
 
+struct BrowserToolNativeWindowBinding: Sendable, Equatable {
+    let privateTargetID: String
+    let privateBrowserWindowID: BrowserMCPDevToolsWindowID
+    let nativeWindowReceipt: BrowserNativeWindowReceipt
+}
+
+enum BrowserToolNativeWindowBindingError: Error, Equatable {
+    case sessionEnded
+    case invalidPageReference
+    case stalePageReference
+    case connectionMismatch
+    case invalidPrivateTarget
+    case invalidNativeWindow
+    case processMismatch
+}
+
 /// One caller-owned namespace for browser page and element capabilities.
 ///
 /// Chrome DevTools MCP exposes process-local integers and snapshot-local UIDs. They are provider
@@ -41,6 +57,7 @@ actor BrowserToolCapabilitySession {
         var title: String?
         var navigationGeneration: UInt64
         var snapshotReferences: Set<String>
+        var nativeWindowBinding: BrowserToolNativeWindowBinding?
     }
 
     struct ResolvedArguments {
@@ -128,6 +145,73 @@ actor BrowserToolCapabilitySession {
             pageReference: pageReference,
             providerPageID: page.providerPageID,
             providerUIDs: providerUIDs)
+    }
+
+    func bindNativeWindow(
+        pageReference: String,
+        sessionBinding: BrowserMCPExecutionSessionBinding,
+        privateTargetID: String,
+        privateBrowserWindowID: BrowserMCPDevToolsWindowID,
+        nativeWindowReceipt: BrowserNativeWindowReceipt) throws
+    {
+        guard !self.ended else { throw BrowserToolNativeWindowBindingError.sessionEnded }
+        guard var page = self.pagesByReference[pageReference] else {
+            throw BrowserToolCapabilityReference.isValid(pageReference, prefix: "bp1")
+                ? BrowserToolNativeWindowBindingError.stalePageReference
+                : BrowserToolNativeWindowBindingError.invalidPageReference
+        }
+        guard page.connection == ConnectionBinding(sessionBinding: sessionBinding) else {
+            throw BrowserToolNativeWindowBindingError.connectionMismatch
+        }
+        guard !privateTargetID.isEmpty, privateBrowserWindowID.rawValue >= 0 else {
+            throw BrowserToolNativeWindowBindingError.invalidPrivateTarget
+        }
+        guard nativeWindowReceipt.windowIdentity.windowID > 0,
+              nativeWindowReceipt.windowIdentity.capturedBounds == nativeWindowReceipt.bounds
+        else {
+            throw BrowserToolNativeWindowBindingError.invalidNativeWindow
+        }
+        let receipt = sessionBinding.connectionReceipt
+        guard receipt.processIdentifier == nativeWindowReceipt.target.processIdentifier,
+              receipt.processStartIdentity == nativeWindowReceipt.target.processStartIdentity
+        else {
+            throw BrowserToolNativeWindowBindingError.processMismatch
+        }
+        page.nativeWindowBinding = BrowserToolNativeWindowBinding(
+            privateTargetID: privateTargetID,
+            privateBrowserWindowID: privateBrowserWindowID,
+            nativeWindowReceipt: nativeWindowReceipt)
+        self.pagesByReference[pageReference] = page
+    }
+
+    func nativeWindowBinding(
+        pageReference: String,
+        sessionBinding: BrowserMCPExecutionSessionBinding) throws -> BrowserToolNativeWindowBinding
+    {
+        guard !self.ended else { throw BrowserToolNativeWindowBindingError.sessionEnded }
+        guard let page = self.pagesByReference[pageReference] else {
+            throw BrowserToolCapabilityReference.isValid(pageReference, prefix: "bp1")
+                ? BrowserToolNativeWindowBindingError.stalePageReference
+                : BrowserToolNativeWindowBindingError.invalidPageReference
+        }
+        guard page.connection == ConnectionBinding(sessionBinding: sessionBinding) else {
+            throw BrowserToolNativeWindowBindingError.connectionMismatch
+        }
+        guard let binding = page.nativeWindowBinding else {
+            throw BrowserToolNativeWindowBindingError.stalePageReference
+        }
+        return binding
+    }
+
+    func invalidateNativeWindowBindings() {
+        let references = Array(self.pagesByReference.keys)
+        for reference in references {
+            self.pagesByReference[reference]?.nativeWindowBinding = nil
+        }
+    }
+
+    func invalidateNativeWindowBinding(pageReference: String) {
+        self.pagesByReference[pageReference]?.nativeWindowBinding = nil
     }
 
     func project(
@@ -521,7 +605,8 @@ actor BrowserToolCapabilitySession {
             url: url,
             title: title,
             navigationGeneration: 0,
-            snapshotReferences: [])
+            snapshotReferences: [],
+            nativeWindowBinding: nil)
         self.pageReferenceByProviderID[providerPageID] = reference
         return reference
     }
