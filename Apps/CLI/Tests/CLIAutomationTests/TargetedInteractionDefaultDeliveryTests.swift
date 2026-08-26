@@ -256,8 +256,14 @@ struct TargetedInteractionDefaultDeliveryTests {
             automation: automation
         )
 
+        let typeResult = try await InProcessCommandRunner.run(
+            ["type", "hello", "--foreground", "--no-remote"],
+            services: services
+        )
+        #expect(typeResult.exitStatus == 1)
+        #expect(typeResult.combinedOutput.contains("outcome is indeterminate"))
+
         for arguments in [
-            ["type", "hello", "--foreground"],
             ["press", "return", "--foreground"],
             ["paste", "--text", "hello", "--foreground", "--restore-delay", "0"],
         ] {
@@ -267,6 +273,7 @@ struct TargetedInteractionDefaultDeliveryTests {
 
         #expect(automation.targetedTypeActionsCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(automation.typeActionsCalls.count == 1)
         #expect(automation.hotkeyCalls.map(\.keys) == ["return", "cmd,v"])
     }
 
