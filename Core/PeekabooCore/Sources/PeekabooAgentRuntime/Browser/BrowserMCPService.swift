@@ -5,11 +5,43 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
+public struct BrowserMCPProviderSessionEpoch: Hashable, Sendable {
+    let rawValue: UUID
+
+    init(rawValue: UUID = UUID()) {
+        self.rawValue = rawValue
+    }
+}
+
+public struct BrowserMCPExecutionSessionBinding: Equatable, Sendable {
+    public let connectionReceipt: BrowserMCPConnectionReceipt
+    public let providerSessionEpoch: BrowserMCPProviderSessionEpoch
+
+    public init(
+        connectionReceipt: BrowserMCPConnectionReceipt,
+        providerSessionEpoch: BrowserMCPProviderSessionEpoch)
+    {
+        self.connectionReceipt = connectionReceipt
+        self.providerSessionEpoch = providerSessionEpoch
+    }
+}
+
+public struct BrowserMCPElementPreflight: Equatable, Sendable {
+    public let providerPageID: Int
+    public let providerUIDs: Set<String>
+
+    public init(providerPageID: Int, providerUIDs: Set<String>) {
+        self.providerPageID = providerPageID
+        self.providerUIDs = providerUIDs
+    }
+}
+
 public struct BrowserMCPStatus: Sendable {
     public let isConnected: Bool
     public let toolCount: Int
     public let detectedBrowsers: [DetectedBrowser]
     public let connectionReceipt: BrowserMCPConnectionReceipt?
+    public let providerSessionEpoch: BrowserMCPProviderSessionEpoch?
     public let error: String?
 
     public init(
@@ -17,12 +49,14 @@ public struct BrowserMCPStatus: Sendable {
         toolCount: Int,
         detectedBrowsers: [DetectedBrowser],
         connectionReceipt: BrowserMCPConnectionReceipt? = nil,
+        providerSessionEpoch: BrowserMCPProviderSessionEpoch? = nil,
         error: String? = nil)
     {
         self.isConnected = isConnected
         self.toolCount = toolCount
         self.detectedBrowsers = detectedBrowsers
         self.connectionReceipt = connectionReceipt
+        self.providerSessionEpoch = providerSessionEpoch
         self.error = error
     }
 }
@@ -52,7 +86,7 @@ public struct DetectedBrowser: Sendable, Equatable {
     }
 }
 
-public struct BrowserMCPConnectionReceipt: Sendable, Equatable {
+public struct BrowserMCPConnectionReceipt: Sendable, Hashable {
     public let channel: BrowserMCPChannel?
     public let processIdentifier: Int32?
     public let processStartIdentity: UInt64?
@@ -93,6 +127,7 @@ public struct BrowserMCPConnectionReceipt: Sendable, Equatable {
 public struct BrowserMCPExecutionResult: Sendable {
     public let response: ToolResponse
     public let connectionReceipt: BrowserMCPConnectionReceipt
+    public let providerSessionEpoch: BrowserMCPProviderSessionEpoch?
     /// Foreground setup performed implicitly before the requested calls.
     let connectionOutcome: DesktopActionOutcome?
     public let completedCallCount: Int
@@ -104,6 +139,7 @@ public struct BrowserMCPExecutionResult: Sendable {
     public init(
         response: ToolResponse,
         connectionReceipt: BrowserMCPConnectionReceipt,
+        providerSessionEpoch: BrowserMCPProviderSessionEpoch? = nil,
         completedCallCount: Int,
         dispatchedCallCount: Int,
         actionFailure: DesktopActionFailure? = nil)
@@ -112,6 +148,7 @@ public struct BrowserMCPExecutionResult: Sendable {
         precondition(dispatchedCallCount >= completedCallCount)
         self.response = response
         self.connectionReceipt = connectionReceipt
+        self.providerSessionEpoch = providerSessionEpoch
         self.connectionOutcome = nil
         self.completedCallCount = completedCallCount
         self.dispatchedCallCount = dispatchedCallCount
@@ -123,6 +160,7 @@ public struct BrowserMCPExecutionResult: Sendable {
     init(
         response: ToolResponse,
         connectionReceipt: BrowserMCPConnectionReceipt,
+        providerSessionEpoch: BrowserMCPProviderSessionEpoch?,
         connectionOutcome: DesktopActionOutcome? = nil,
         completedCallCount: Int,
         dispatchedCallCount: Int,
@@ -134,6 +172,7 @@ public struct BrowserMCPExecutionResult: Sendable {
         precondition(dispatchedCallCount >= completedCallCount)
         self.response = response
         self.connectionReceipt = connectionReceipt
+        self.providerSessionEpoch = providerSessionEpoch
         self.connectionOutcome = connectionOutcome
         self.completedCallCount = completedCallCount
         self.dispatchedCallCount = dispatchedCallCount
@@ -148,7 +187,7 @@ enum BrowserMCPExecutionFailureStage: Sendable, Equatable {
     case connectionValidation
 }
 
-public enum BrowserMCPChannel: String, Sendable, CaseIterable, Codable {
+public enum BrowserMCPChannel: String, Sendable, CaseIterable, Codable, Hashable {
     case stable
     case beta
     case dev
@@ -222,6 +261,22 @@ public protocol BrowserMCPConnectionResultProviding: BrowserMCPClientProviding {
         browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
 }
 
+/// Local provider surface that binds dispatch to one exact MCP child epoch as well as its browser target.
+/// Remote Bridge clients intentionally do not conform until their authenticated wire session carries this epoch.
+public protocol BrowserMCPAtomicSessionActionProviding: BrowserMCPActionResultProviding {
+    @MainActor
+    func executeSequenceWithOutcome(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        elementPreflight: BrowserMCPElementPreflight?) async throws -> DesktopActionResult<ToolResponse>
+}
+
+protocol BrowserMCPAuthenticatedSessionEnding: BrowserMCPClientProviding {
+    @MainActor
+    func endAuthenticatedBrowserSession() async
+}
+
 extension BrowserMCPActionResultProviding {
     @MainActor
     public func executeSequenceWithOutcome(
@@ -280,7 +335,8 @@ extension BrowserMCPClientProviding {
 }
 
 public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
-    BrowserMCPConnectionResultProviding, @unchecked Sendable
+    BrowserMCPAtomicSessionActionProviding,
+    BrowserMCPConnectionResultProviding, BrowserMCPAuthenticatedSessionEnding, @unchecked Sendable
 {
     public let supportsNativeBrowserConnectionBinding: Bool
 
@@ -288,14 +344,29 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
     @MainActor private var sessionManager: BrowserMCPSessionManager?
     @MainActor private var authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool?
+    private let sessionCapabilities: BrowserToolCapabilitySession?
+    @MainActor private var ownedSession: (
+        pool: BrowserMCPAuthenticatedSessionPool,
+        id: BrowserMCPAuthenticatedSessionPool.SessionID)?
 
     public init() {
         self.supportsNativeBrowserConnectionBinding = BrowserMCPEnvironmentOptions(
             environment: ProcessInfo.processInfo.environment).supportsNativeBrowserConnectionBinding
         self.sessionManager = nil
+        self.ownedSession = nil
+        self.sessionCapabilities = nil
         self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
             BrowserMCPSessionManager(serverName: serverName)
         }
+    }
+
+    @MainActor
+    init(authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool) {
+        self.supportsNativeBrowserConnectionBinding = true
+        self.sessionManager = nil
+        self.ownedSession = nil
+        self.sessionCapabilities = nil
+        self.authenticatedSessionPool = authenticatedSessionPool
     }
 
     @MainActor
@@ -303,16 +374,26 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         let sessionManager = BrowserMCPSessionManager(serverName: Self.serverName, manager: manager)
         self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
+        self.ownedSession = nil
+        self.sessionCapabilities = nil
         self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
             BrowserMCPSessionManager(serverName: serverName, manager: manager)
         }
     }
 
     @MainActor
-    init(sessionManager: BrowserMCPSessionManager) {
+    init(
+        sessionManager: BrowserMCPSessionManager,
+        ownedSession: (
+            pool: BrowserMCPAuthenticatedSessionPool,
+            id: BrowserMCPAuthenticatedSessionPool.SessionID)? = nil,
+        sessionCapabilities: BrowserToolCapabilitySession? = nil)
+    {
         self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
         self.authenticatedSessionPool = nil
+        self.ownedSession = ownedSession
+        self.sessionCapabilities = sessionCapabilities
     }
 
     /// Creates a version-neutral process-local browser service for one explicitly authenticated caller session.
@@ -321,8 +402,27 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     func authenticatedSession(
         _ sessionID: BrowserMCPAuthenticatedSessionPool.SessionID) -> BrowserMCPService?
     {
-        guard let manager = self.authenticatedSessionPool?.manager(for: sessionID) else { return nil }
-        return BrowserMCPService(sessionManager: manager)
+        guard let pool = self.authenticatedSessionPool,
+              let manager = pool.manager(for: sessionID),
+              let capabilities = pool.capabilities(for: sessionID)
+        else { return nil }
+        return BrowserMCPService(
+            sessionManager: manager,
+            ownedSession: (pool: pool, id: sessionID),
+            sessionCapabilities: capabilities)
+    }
+
+    @MainActor
+    func authenticatedSession(named name: String) -> BrowserMCPService? {
+        guard let pool = self.authenticatedSessionPool,
+              let sessionID = pool.sessionID(named: name),
+              let manager = pool.manager(for: sessionID),
+              let capabilities = pool.capabilities(for: sessionID)
+        else { return nil }
+        return BrowserMCPService(
+            sessionManager: manager,
+            ownedSession: (pool: pool, id: sessionID),
+            sessionCapabilities: capabilities)
     }
 
     @MainActor
@@ -331,8 +431,26 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     }
 
     @MainActor
+    func endAuthenticatedSession(named name: String) async {
+        await self.authenticatedSessionPool?.end(named: name)
+    }
+
+    @MainActor
+    func endAuthenticatedBrowserSession() async {
+        guard let ownedSession else { return }
+        self.ownedSession = nil
+        await ownedSession.pool.end(ownedSession.id)
+    }
+
+    var browserCapabilitySession: BrowserToolCapabilitySession? {
+        self.sessionCapabilities
+    }
+
+    @MainActor
     public func status(channel: BrowserMCPChannel? = nil) async -> BrowserMCPStatus {
-        await self.resolvedSessionManager().status(channel: channel)
+        let status = await self.resolvedSessionManager().status(channel: channel)
+        self.reconcileTargetOwnership(with: status)
+        return status
     }
 
     @MainActor
@@ -345,7 +463,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         channel: BrowserMCPChannel? = nil,
         browserURL: String?) async throws -> BrowserMCPStatus
     {
-        try await self.resolvedSessionManager().connect(channel: channel, browserURL: browserURL)
+        try await self.connectWithOutcome(channel: channel, browserURL: browserURL).payload
     }
 
     @MainActor
@@ -353,14 +471,48 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         channel: BrowserMCPChannel? = nil,
         browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
-        try await self.resolvedSessionManager().connectWithOutcome(
-            channel: channel,
-            browserURL: browserURL)
+        let manager = self.resolvedSessionManager()
+        let result: DesktopActionResult<BrowserMCPStatus>
+        do {
+            result = try await manager.connectWithOutcome(
+                channel: channel,
+                browserURL: browserURL)
+        } catch {
+            await self.reconcileTargetOwnership(with: manager.status(channel: nil))
+            throw error
+        }
+        if let ownedSession = self.ownedSession,
+           let receipt = result.payload.connectionReceipt
+        {
+            do {
+                try ownedSession.pool.bind(ownedSession.id, to: receipt)
+            } catch {
+                await self.resolvedSessionManager().disconnect()
+                ownedSession.pool.unbind(ownedSession.id)
+                throw error
+            }
+        } else if let pool = self.authenticatedSessionPool,
+                  let receipt = result.payload.connectionReceipt
+        {
+            do {
+                try pool.bindRoot(to: receipt)
+            } catch {
+                await self.resolvedSessionManager().disconnect()
+                pool.unbindRoot()
+                throw error
+            }
+        }
+        return result
     }
 
     @MainActor
     public func disconnect() async {
         await self.resolvedSessionManager().disconnect()
+        if let ownedSession = self.ownedSession {
+            ownedSession.pool.unbind(ownedSession.id)
+        } else {
+            self.authenticatedSessionPool?.unbindRoot()
+        }
     }
 
     @MainActor
@@ -369,7 +521,13 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         arguments: [String: Any],
         channel: BrowserMCPChannel? = nil) async throws -> ToolResponse
     {
-        try await self.resolvedSessionManager().execute(
+        if self.usesTargetOwnershipPool {
+            return try await self.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: toolName, arguments: arguments)],
+                channel: channel,
+                connectionPolicy: .requireExistingLiveReceipt).payload
+        }
+        return try await self.resolvedSessionManager().execute(
             toolName: toolName,
             arguments: arguments,
             channel: channel)
@@ -380,7 +538,13 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?) async throws -> ToolResponse
     {
-        try await self.resolvedSessionManager().executeSequence(calls, channel: channel)
+        if self.usesTargetOwnershipPool {
+            return try await self.executeSequenceWithOutcome(
+                calls,
+                channel: channel,
+                connectionPolicy: .requireExistingLiveReceipt).payload
+        }
+        return try await self.resolvedSessionManager().executeSequence(calls, channel: channel)
     }
 
     @MainActor
@@ -400,17 +564,88 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         channel: BrowserMCPChannel?,
         connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> DesktopActionResult<ToolResponse>
     {
+        do {
+            let result = try await self.executeSequenceWithOutcome(
+                calls,
+                channel: channel,
+                connectionPolicy: connectionPolicy,
+                expectedSessionBinding: nil)
+            if result.payload.isError {
+                await self.reconcileTargetOwnershipAfterExecutionFailure()
+            }
+            return result
+        } catch {
+            await self.reconcileTargetOwnershipAfterExecutionFailure()
+            throw error
+        }
+    }
+
+    @MainActor
+    public func executeSequenceWithOutcome(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        elementPreflight: BrowserMCPElementPreflight?) async throws -> DesktopActionResult<ToolResponse>
+    {
+        do {
+            let result = try await self.executeSequenceWithOutcome(
+                calls,
+                channel: channel,
+                connectionPolicy: .requireExistingLiveReceipt,
+                expectedSessionBinding: expectedSessionBinding,
+                elementPreflight: elementPreflight)
+            if result.payload.isError {
+                await self.reconcileTargetOwnershipAfterExecutionFailure()
+            }
+            return result
+        } catch {
+            await self.reconcileTargetOwnershipAfterExecutionFailure()
+            throw error
+        }
+    }
+
+    @MainActor
+    private func executeSequenceWithOutcome(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?,
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding?,
+        elementPreflight: BrowserMCPElementPreflight? = nil) async throws -> DesktopActionResult<ToolResponse>
+    {
         let manager = self.resolvedSessionManager()
+        let effectiveConnectionPolicy = self.usesTargetOwnershipPool
+            ? BrowserMCPExecutionConnectionPolicy.requireExistingLiveReceipt
+            : connectionPolicy
         let semantics = calls.map(Self.actionSemantics)
         let plannedMutationCount = semantics.count(where: { $0 == .mutating })
         let result: BrowserMCPExecutionResult
-        if plannedMutationCount == 0 {
+        if let expectedSessionBinding {
+            do {
+                result = try await manager.executeSequence(
+                    calls,
+                    channel: channel,
+                    expectedSessionBinding: expectedSessionBinding,
+                    elementPreflight: elementPreflight)
+            } catch BrowserMCPConnectionError.expectedConnectionReceiptMismatch,
+                BrowserMCPConnectionError.expectedProviderSessionEpochMismatch
+            {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The exact browser provider session changed before tool dispatch.",
+                    hint: "Refresh browser status and obtain new page and snapshot references.")
+            } catch BrowserMCPConnectionError.receiptBindingUnsupported {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .operationUnsupported,
+                    message: "The browser provider cannot atomically bind execution to its child session.",
+                    hint: "Update the runtime host before retrying capability-bound browser execution.")
+            }
+        } else if plannedMutationCount == 0 {
             result = try await manager.executeSequenceResult(
                 calls,
                 channel: channel,
-                connectionPolicy: connectionPolicy)
+                connectionPolicy: effectiveConnectionPolicy)
         } else {
-            switch connectionPolicy {
+            switch effectiveConnectionPolicy {
             case .allowAutoConnect:
                 let status = try await manager.statusForExecution(channel: channel)
                 if status.isConnected, let receipt = status.connectionReceipt {
@@ -485,6 +720,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             BrowserMCPExecutionEvidence.attaching(
                 to: projected.response,
                 connectionReceipt: projected.connectionReceipt,
+                providerSessionEpoch: result.providerSessionEpoch,
                 completedCallCount: plannedMutationCount == 0
                     ? result.completedCallCount
                     : projected.completedCallCount,
@@ -505,10 +741,41 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt) async throws -> BrowserMCPExecutionResult
     {
-        try await self.resolvedSessionManager().executeSequence(
-            calls,
-            channel: channel,
-            expectedConnectionReceipt: expectedConnectionReceipt)
+        do {
+            let result = try await self.resolvedSessionManager().executeSequence(
+                calls,
+                channel: channel,
+                expectedConnectionReceipt: expectedConnectionReceipt)
+            if result.response.isError || result.actionFailure != nil {
+                await self.reconcileTargetOwnershipAfterExecutionFailure()
+            }
+            return result
+        } catch {
+            await self.reconcileTargetOwnershipAfterExecutionFailure()
+            throw error
+        }
+    }
+
+    @MainActor
+    private var usesTargetOwnershipPool: Bool {
+        self.ownedSession != nil || self.authenticatedSessionPool != nil
+    }
+
+    @MainActor
+    private func reconcileTargetOwnership(with status: BrowserMCPStatus) {
+        guard self.usesTargetOwnershipPool, !status.isConnected else { return }
+        if let ownedSession = self.ownedSession {
+            ownedSession.pool.unbind(ownedSession.id)
+        } else {
+            self.authenticatedSessionPool?.unbindRoot()
+        }
+    }
+
+    @MainActor
+    private func reconcileTargetOwnershipAfterExecutionFailure() async {
+        guard self.usesTargetOwnershipPool else { return }
+        let status = await self.resolvedSessionManager().status(channel: nil)
+        self.reconcileTargetOwnership(with: status)
     }
 
     /// Legacy low-level configuration factory retained for source compatibility.
@@ -734,6 +1001,7 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case connectionProbeFailed(String)
     case connectionLost(String)
     case expectedConnectionReceiptMismatch
+    case expectedProviderSessionEpochMismatch
     case receiptBindingUnsupported
     case sessionEnded
     case targetLocked
@@ -766,6 +1034,8 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "The exact browser connection was lost or changed: \(reason). Disconnect and reconnect explicitly."
         case .expectedConnectionReceiptMismatch:
             "The expected browser connection changed before tool dispatch. Refresh browser status and retry."
+        case .expectedProviderSessionEpochMismatch:
+            "The expected Chrome DevTools MCP child changed before tool dispatch. Refresh browser status and retry."
         case .receiptBindingUnsupported:
             "This browser client cannot atomically bind execution to an exact connection receipt."
         case .sessionEnded:

@@ -16,7 +16,7 @@ protocol BrowserMCPManaging: AnyObject {
 }
 
 private struct BrowserMCPPreparedExecution {
-    let receipt: BrowserMCPConnectionReceipt
+    let sessionBinding: BrowserMCPExecutionSessionBinding
     let connectionOutcome: DesktopActionOutcome?
 }
 
@@ -109,6 +109,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private let environmentOptions: BrowserMCPEnvironmentOptions
     private let executionGate = MCPToolSnapshotExecutionGate()
     private var connectionReceipt: BrowserMCPConnectionReceipt?
+    private var providerSessionEpoch: BrowserMCPProviderSessionEpoch?
     private var connectionSupportsReceiptBoundExecution = false
     private var connectionChannelEndpoint: BrowserMCPDevToolsEndpoint?
     private var connectionCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity?
@@ -198,7 +199,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private func inspectStatusUnlocked(channel: BrowserMCPChannel?) async -> BrowserMCPStatusInspection {
         let browsers = self.detectedBrowsers(channel)
-        guard let receipt = self.connectionReceipt else {
+        guard let receipt = self.connectionReceipt,
+              let providerSessionEpoch = self.providerSessionEpoch
+        else {
             if await self.manager.isServerConnected(name: self.serverName) || self.manager
                 .hasServer(name: self.serverName)
             {
@@ -223,7 +226,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     isConnected: true,
                     toolCount: self.manager.serverToolCount(name: self.serverName),
                     detectedBrowsers: browsers,
-                    connectionReceipt: receipt),
+                    connectionReceipt: receipt,
+                    providerSessionEpoch: providerSessionEpoch),
                 wasCancelled: false)
         } catch is CancellationError {
             return BrowserMCPStatusInspection(
@@ -350,6 +354,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 codeSignatureIdentity: target.codeSignatureIdentity)
             try Task.checkCancellation()
             self.connectionReceipt = target.receipt
+            self.providerSessionEpoch = BrowserMCPProviderSessionEpoch()
             self.connectionSupportsReceiptBoundExecution = target.supportsReceiptBoundExecution
             self.connectionChannelEndpoint = target.channelEndpoint
             self.connectionCodeSignatureIdentity = target.codeSignatureIdentity
@@ -469,6 +474,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 calls,
                 channel: channel,
                 expectedConnectionReceipt: nil,
+                expectedProviderSessionEpoch: nil,
                 connectionPolicy: connectionPolicy)
         }
     }
@@ -484,6 +490,49 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     calls,
                     channel: channel,
                     expectedConnectionReceipt: expectedConnectionReceipt,
+                    expectedProviderSessionEpoch: nil,
+                    connectionPolicy: .requireExistingLiveReceipt)
+            }
+        } catch is CancellationError {
+            throw Self.preDispatchFailure(CancellationError())
+        }
+    }
+
+    func executeSequence(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        elementPreflight: BrowserMCPElementPreflight?) async throws -> BrowserMCPExecutionResult
+    {
+        do {
+            return try await self.withExecutionGate {
+                if let elementPreflight {
+                    let preflight = try await self.executeSequenceUnlocked(
+                        [BrowserMCPMappedCall(
+                            toolName: "take_snapshot",
+                            arguments: ["pageId": elementPreflight.providerPageID])],
+                        channel: channel,
+                        expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
+                        expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
+                        connectionPolicy: .requireExistingLiveReceipt)
+                    let currentUIDs = BrowserMCPProviderSnapshotParser.providerUIDs(in: preflight.response)
+                    // chrome-devtools-mcp v1.6.0 preserves a UID only for the same per-page
+                    // loaderId/backendNodeId pair. The pinned dependency contract checks that identity rule.
+                    guard !preflight.response.isError,
+                          preflight.actionFailure == nil,
+                          currentUIDs.isSuperset(of: elementPreflight.providerUIDs)
+                    else {
+                        throw DesktopActionFailure.preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Browser element references are stale in the current page document.",
+                            hint: "Take a fresh browser snapshot and retry with its new opaque element references.")
+                    }
+                }
+                return try await self.executeSequenceUnlocked(
+                    calls,
+                    channel: channel,
+                    expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
+                    expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
                     connectionPolicy: .requireExistingLiveReceipt)
             }
         } catch is CancellationError {
@@ -496,6 +545,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt?,
+        expectedProviderSessionEpoch: BrowserMCPProviderSessionEpoch?,
         connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> BrowserMCPExecutionResult
     {
         guard !calls.isEmpty else {
@@ -504,8 +554,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         let preparation = try await self.prepareExecutionReceipt(
             channel: channel,
             expectedConnectionReceipt: expectedConnectionReceipt,
+            expectedProviderSessionEpoch: expectedProviderSessionEpoch,
             connectionPolicy: connectionPolicy)
-        let receipt = preparation.receipt
+        let sessionBinding = preparation.sessionBinding
+        let receipt = sessionBinding.connectionReceipt
 
         var completedCallCount = 0
         var dispatchedCallCount = 0
@@ -576,9 +628,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         if shouldValidateConnection {
             do {
                 try await self.validate(receipt)
-                guard self.connectionReceipt == receipt else {
+                guard self.connectionReceipt == receipt,
+                      self.providerSessionEpoch == sessionBinding.providerSessionEpoch
+                else {
                     throw BrowserMCPConnectionError.connectionLost(
-                        "the connection receipt changed before the browser response completed")
+                        "the connection receipt or provider child epoch changed before the browser response completed")
                 }
             } catch {
                 failureStage = .connectionValidation
@@ -599,6 +653,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return BrowserMCPExecutionResult(
             response: response,
             connectionReceipt: receipt,
+            providerSessionEpoch: sessionBinding.providerSessionEpoch,
             connectionOutcome: preparation.connectionOutcome,
             completedCallCount: completedCallCount,
             dispatchedCallCount: dispatchedCallCount,
@@ -612,6 +667,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func prepareExecutionReceipt(
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt?,
+        expectedProviderSessionEpoch: BrowserMCPProviderSessionEpoch?,
         connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> BrowserMCPPreparedExecution
     {
         if self.connectionReceipt == nil, expectedConnectionReceipt == nil {
@@ -638,7 +694,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             }
             guard connection.payload.isConnected,
                   let receipt = connection.payload.connectionReceipt,
-                  self.connectionReceipt == receipt
+                  let providerSessionEpoch = connection.payload.providerSessionEpoch,
+                  self.connectionReceipt == receipt,
+                  self.providerSessionEpoch == providerSessionEpoch
             else {
                 throw DesktopActionFailure.indeterminate(
                     delivery: connection.outcome?.delivery ?? Self.connectionDelivery,
@@ -648,10 +706,14 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     hint: "Check browser status before deciding whether to reconnect.")
             }
             return BrowserMCPPreparedExecution(
-                receipt: receipt,
+                sessionBinding: .init(
+                    connectionReceipt: receipt,
+                    providerSessionEpoch: providerSessionEpoch),
                 connectionOutcome: connection.outcome)
         }
-        guard let receipt = self.connectionReceipt else {
+        guard let receipt = self.connectionReceipt,
+              let providerSessionEpoch = self.providerSessionEpoch
+        else {
             if expectedConnectionReceipt != nil {
                 throw BrowserMCPConnectionError.expectedConnectionReceiptMismatch
             }
@@ -662,6 +724,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         if let expectedConnectionReceipt, receipt != expectedConnectionReceipt {
             throw BrowserMCPConnectionError.expectedConnectionReceiptMismatch
+        }
+        if let expectedProviderSessionEpoch, providerSessionEpoch != expectedProviderSessionEpoch {
+            throw BrowserMCPConnectionError.expectedProviderSessionEpochMismatch
         }
         if expectedConnectionReceipt != nil, !self.connectionSupportsReceiptBoundExecution {
             throw BrowserMCPConnectionError.receiptBindingUnsupported
@@ -705,7 +770,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             }
             throw error
         }
-        guard self.connectionReceipt == receipt else {
+        guard self.connectionReceipt == receipt,
+              self.providerSessionEpoch == providerSessionEpoch
+        else {
             let error = BrowserMCPConnectionError.connectionLost(
                 "the connection receipt changed while checking the persistent MCP child")
             if expectedConnectionReceipt != nil {
@@ -717,7 +784,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             throw error
         }
         return BrowserMCPPreparedExecution(
-            receipt: receipt,
+            sessionBinding: .init(
+                connectionReceipt: receipt,
+                providerSessionEpoch: providerSessionEpoch),
             connectionOutcome: nil)
     }
 
@@ -1139,6 +1208,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private func clearConnection() async {
         self.connectionReceipt = nil
+        self.providerSessionEpoch = nil
         self.connectionSupportsReceiptBoundExecution = false
         self.connectionChannelEndpoint = nil
         self.connectionCodeSignatureIdentity = nil

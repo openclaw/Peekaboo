@@ -7,6 +7,22 @@ import Foundation
 /// authenticated session can continue through its separate manager and provider connection.
 @MainActor
 final class BrowserMCPAuthenticatedSessionPool {
+    private enum TargetKey: Hashable {
+        case process(processIdentifier: Int32, processStartIdentity: UInt64)
+        case devToolsBrowser(String)
+        case receipt(BrowserMCPConnectionReceipt)
+    }
+
+    private enum TargetOwner: Equatable {
+        case root
+        case session(SessionID)
+    }
+
+    private struct SessionState {
+        let manager: BrowserMCPSessionManager
+        let capabilities: BrowserToolCapabilitySession
+    }
+
     struct SessionID: Hashable, Sendable {
         fileprivate let rawValue: UUID
 
@@ -19,8 +35,11 @@ final class BrowserMCPAuthenticatedSessionPool {
 
     private let serverNamePrefix: String
     private let factory: Factory
-    private var sessions: [SessionID: BrowserMCPSessionManager] = [:]
+    private var sessions: [SessionID: SessionState] = [:]
     private var endedSessions = Set<SessionID>()
+    private var endingSessions: [SessionID: Task<Void, Never>] = [:]
+    private var namedSessions: [String: SessionID] = [:]
+    private var targetOwners: [TargetKey: TargetOwner] = [:]
 
     nonisolated init(
         serverNamePrefix: String = "chrome-devtools-session",
@@ -32,22 +51,119 @@ final class BrowserMCPAuthenticatedSessionPool {
 
     func manager(for sessionID: SessionID) -> BrowserMCPSessionManager? {
         guard !self.endedSessions.contains(sessionID) else { return nil }
-        if let manager = self.sessions[sessionID] {
-            return manager
+        if let state = self.sessions[sessionID] {
+            return state.manager
         }
         let name = "\(self.serverNamePrefix)-\(sessionID.rawValue.uuidString.lowercased())"
         let manager = self.factory(name)
-        self.sessions[sessionID] = manager
+        self.sessions[sessionID] = SessionState(
+            manager: manager,
+            capabilities: BrowserToolCapabilitySession())
         return manager
     }
 
+    func capabilities(for sessionID: SessionID) -> BrowserToolCapabilitySession? {
+        self.sessions[sessionID]?.capabilities
+    }
+
+    func sessionID(named name: String) -> SessionID? {
+        guard !name.isEmpty else { return nil }
+        if let sessionID = self.namedSessions[name] {
+            return sessionID
+        }
+        let sessionID = SessionID()
+        self.namedSessions[name] = sessionID
+        return sessionID
+    }
+
     func end(_ sessionID: SessionID) async {
+        if let ending = self.endingSessions[sessionID] {
+            await ending.value
+            return
+        }
         self.endedSessions.insert(sessionID)
-        guard let manager = self.sessions.removeValue(forKey: sessionID) else { return }
-        await manager.endSession()
+        self.namedSessions = self.namedSessions.filter { $0.value != sessionID }
+        guard let state = self.sessions.removeValue(forKey: sessionID) else {
+            self.targetOwners = self.targetOwners.filter { $0.value != .session(sessionID) }
+            return
+        }
+        let ending = Task { @MainActor in
+            await state.capabilities.end()
+            await state.manager.endSession()
+        }
+        self.endingSessions[sessionID] = ending
+        await ending.value
+        self.targetOwners = self.targetOwners.filter { $0.value != .session(sessionID) }
+        self.endingSessions.removeValue(forKey: sessionID)
+    }
+
+    func bind(_ sessionID: SessionID, to receipt: BrowserMCPConnectionReceipt) throws {
+        guard !self.endedSessions.contains(sessionID), self.sessions[sessionID] != nil else {
+            throw BrowserMCPConnectionError.sessionEnded
+        }
+        let keys = Self.targetKeys(for: receipt)
+        if keys.contains(where: { key in
+            self.targetOwners[key].map { $0 != .session(sessionID) } ?? false
+        }) {
+            throw BrowserMCPConnectionError.targetLocked
+        }
+        self.targetOwners = self.targetOwners.filter { $0.value != .session(sessionID) }
+        for key in keys {
+            self.targetOwners[key] = .session(sessionID)
+        }
+    }
+
+    func unbind(_ sessionID: SessionID) {
+        self.targetOwners = self.targetOwners.filter { $0.value != .session(sessionID) }
+    }
+
+    func bindRoot(to receipt: BrowserMCPConnectionReceipt) throws {
+        let keys = Self.targetKeys(for: receipt)
+        if keys.contains(where: { key in
+            self.targetOwners[key].map { $0 != .root } ?? false
+        }) {
+            throw BrowserMCPConnectionError.targetLocked
+        }
+        self.targetOwners = self.targetOwners.filter { $0.value != .root }
+        for key in keys {
+            self.targetOwners[key] = .root
+        }
+    }
+
+    func unbindRoot() {
+        self.targetOwners = self.targetOwners.filter { $0.value != .root }
+    }
+
+    func end(named name: String) async {
+        guard let sessionID = self.namedSessions[name] else { return }
+        await self.end(sessionID)
     }
 
     var count: Int {
         self.sessions.count
+    }
+
+    var isEmpty: Bool {
+        self.sessions.isEmpty
+    }
+
+    private static func targetKeys(for receipt: BrowserMCPConnectionReceipt) -> Set<TargetKey> {
+        var keys = Set<TargetKey>()
+        if let processIdentifier = receipt.processIdentifier,
+           let processStartIdentity = receipt.processStartIdentity
+        {
+            keys.insert(.process(
+                processIdentifier: processIdentifier,
+                processStartIdentity: processStartIdentity))
+        }
+        if let devToolsBrowserID = receipt.devToolsBrowserID,
+           !devToolsBrowserID.isEmpty
+        {
+            keys.insert(.devToolsBrowser(devToolsBrowserID))
+        }
+        if keys.isEmpty {
+            keys.insert(.receipt(receipt))
+        }
+        return keys
     }
 }

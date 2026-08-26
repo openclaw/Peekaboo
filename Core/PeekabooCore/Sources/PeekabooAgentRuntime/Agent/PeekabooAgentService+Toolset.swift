@@ -11,10 +11,12 @@ extension PeekabooAgentService {
     func buildToolset(
         for model: LanguageModel,
         snapshotOwner: MCPToolSnapshotOwner = MCPToolSnapshotOwner(),
+        browserClient: (any BrowserMCPClientProviding)? = nil,
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async -> [AgentTool]
     {
         let filtered = self.filteredAgentTools(
             snapshotOwner: snapshotOwner,
+            browserClient: browserClient,
             executionPolicy: executionPolicy)
 
         self.logToolsetDetails(filtered, model: model)
@@ -33,11 +35,14 @@ extension PeekabooAgentService {
 
     private func filteredAgentTools(
         snapshotOwner: MCPToolSnapshotOwner,
+        browserClient: (any BrowserMCPClientProviding)? = nil,
         executionPolicy: MCPToolExecutionPolicy) -> [AgentTool]
     {
         let tools = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
             Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
-                self.createAgentTools()
+                Self.$toolConstructionBrowserClient.withValue(browserClient) {
+                    self.createAgentTools()
+                }
             }
         }
         let authorityFiltered = tools.filter { executionPolicy.exposesToolInCatalog(named: $0.name) }

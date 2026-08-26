@@ -16,7 +16,7 @@ actor BrowserToolCapabilitySession {
     }
 
     private struct ConnectionBinding: Equatable {
-        let receipt: BrowserMCPConnectionReceipt
+        let sessionBinding: BrowserMCPExecutionSessionBinding
     }
 
     private struct ElementRecord {
@@ -47,19 +47,39 @@ actor BrowserToolCapabilitySession {
         let arguments: ToolArguments
         let pageReference: String?
         let providerPageID: Int?
-        let invalidatesNavigation: Bool
+        let providerUIDs: Set<String>
     }
 
     private var pagesByReference: [String: PageRecord] = [:]
     private var pageReferenceByProviderID: [Int: String] = [:]
     private var snapshotsByReference: [String: SnapshotRecord] = [:]
     private var elementsByReference: [String: ElementRecord] = [:]
+    private let operationGate = MCPToolSnapshotExecutionGate()
+    private var endTask: Task<Void, Never>?
     private var ended = false
+
+    func withExclusiveOperation<Result: Sendable>(
+        _ operation: @MainActor @Sendable () async throws -> Result) async throws -> Result
+    {
+        try await self.operationGate.acquire()
+        guard !self.ended else {
+            await self.operationGate.release()
+            throw BrowserToolCapabilityError.sessionEnded
+        }
+        do {
+            let result = try await operation()
+            await self.operationGate.release()
+            return result
+        } catch {
+            await self.operationGate.release()
+            throw error
+        }
+    }
 
     func resolve(
         action: BrowserAction,
         arguments: ToolArguments,
-        connectionReceipt: BrowserMCPConnectionReceipt?) throws -> ResolvedArguments
+        sessionBinding: BrowserMCPExecutionSessionBinding?) throws -> ResolvedArguments
     {
         guard !self.ended else { throw BrowserToolCapabilityError.sessionEnded }
         guard Self.actionUsesPage(action, arguments: arguments) else {
@@ -67,9 +87,9 @@ actor BrowserToolCapabilitySession {
                 arguments: arguments,
                 pageReference: nil,
                 providerPageID: nil,
-                invalidatesNavigation: false)
+                providerUIDs: [])
         }
-        guard let connectionReceipt else { throw BrowserToolCapabilityError.connectionUnavailable }
+        guard let sessionBinding else { throw BrowserToolCapabilityError.connectionUnavailable }
         guard let pageReference = arguments.getString("page_id") else {
             throw BrowserToolCapabilityError.invalidPageReference
         }
@@ -78,69 +98,76 @@ actor BrowserToolCapabilitySession {
                 ? BrowserToolCapabilityError.stalePageReference
                 : BrowserToolCapabilityError.invalidPageReference
         }
-        guard page.connection == ConnectionBinding(receipt: connectionReceipt) else {
+        guard page.connection == ConnectionBinding(sessionBinding: sessionBinding) else {
             throw BrowserToolCapabilityError.stalePageReference
         }
 
         var raw = arguments.rawDictionary
+        var providerUIDs = Set<String>()
         raw["page_id"] = page.providerPageID
-        try self.resolveElementArgument("uid", in: &raw, page: page)
-        try self.resolveElementArgument("to_uid", in: &raw, page: page)
+        if let providerUID = try self.resolveElementArgument("uid", in: &raw, page: page) {
+            providerUIDs.insert(providerUID)
+        }
+        if let providerUID = try self.resolveElementArgument("to_uid", in: &raw, page: page) {
+            providerUIDs.insert(providerUID)
+        }
         if let json = raw["mcp_args_json"] as? String {
-            raw["mcp_args_json"] = try self.resolvingElementReferences(inJSON: json, page: page)
+            let toolName = action == .call ? arguments.getString("mcp_tool") : action == .fillForm ? "fill_form" : nil
+            if let toolName,
+               let contract = BrowserMCPPageRoutingContract.capabilityContract(for: toolName)
+            {
+                raw["mcp_args_json"] = try self.resolvingElementReferences(
+                    inJSON: json,
+                    contract: contract,
+                    page: page,
+                    providerUIDs: &providerUIDs)
+            }
         }
         return ResolvedArguments(
             arguments: ToolArguments(raw: raw),
             pageReference: pageReference,
             providerPageID: page.providerPageID,
-            invalidatesNavigation: Self.actionInvalidatesNavigation(action, arguments: arguments))
+            providerUIDs: providerUIDs)
     }
 
     func project(
         _ response: ToolResponse,
-        action: BrowserAction,
+        calls: [BrowserMCPMappedCall],
         resolved: ResolvedArguments?,
-        connectionReceipt: BrowserMCPConnectionReceipt?) throws -> ToolResponse
+        sessionBinding: BrowserMCPExecutionSessionBinding?) throws -> ToolResponse
     {
         guard !self.ended else { throw BrowserToolCapabilityError.sessionEnded }
-        if action == .disconnect {
-            self.invalidateAll()
+        let contracts = calls.compactMap { call in
+            BrowserMCPPageRoutingContract.capabilityContract(for: call.toolName, arguments: call.arguments)
+        }
+        guard !response.isError, let sessionBinding else {
+            self.applyEffects(contracts, resolved: resolved)
             return response
         }
-        guard !response.isError, let connectionReceipt else {
-            self.invalidateAfterProviderEntry(action: action, resolved: resolved)
-            return response
-        }
-
-        if resolved?.invalidatesNavigation == true {
-            self.advanceNavigation(for: resolved?.pageReference)
-        } else if action == .closePage {
-            self.removePage(reference: resolved?.pageReference)
-        } else if Self.invalidatesSnapshotAfterProviderEntry(action) {
-            self.invalidateSnapshots(for: resolved?.pageReference)
-        }
-        if Self.responseCreatesSnapshot(action, arguments: resolved?.arguments) {
+        self.applyEffects(contracts, resolved: resolved)
+        let responseProjection = contracts.last?.responseProjection ?? .none
+        if Self.responseCreatesSnapshot(responseProjection, response: response) {
             self.invalidateSnapshots(for: resolved?.pageReference)
         }
 
         var structured = response.structuredContent
         var textMappings: [String: String] = [:]
-        if Self.responseMayListPages(action), var value = structured {
+        if responseProjection == .pages, var value = structured {
             textMappings = try self.projectPages(
                 in: &value,
-                connection: ConnectionBinding(receipt: connectionReceipt))
+                connection: ConnectionBinding(sessionBinding: sessionBinding))
             structured = value
         }
-        if Self.responseMayListPages(action), textMappings.isEmpty {
+        if responseProjection == .pages, textMappings.isEmpty {
             textMappings = self.projectPages(
                 inText: Self.textContent(response),
-                connection: ConnectionBinding(receipt: connectionReceipt))
+                connection: ConnectionBinding(sessionBinding: sessionBinding))
         }
 
         var snapshotReference: String?
         var elementMappings: [String: String] = [:]
         if let pageReference = resolved?.pageReference,
-           Self.responseMayContainSnapshot(action),
+           Self.responseMayContainSnapshot(responseProjection, response: response),
            var value = structured
         {
             (snapshotReference, elementMappings) = try self.projectSnapshot(
@@ -149,14 +176,17 @@ actor BrowserToolCapabilitySession {
             structured = value
         }
 
-        let content = response.content.map { item in
+        let content = try response.content.map { item in
             guard case let .text(text, annotations, metadata) = item else { return item }
             var projected = Self.replacingPageIDs(in: text, mappings: textMappings)
             if let pageReference = resolved?.pageReference,
-               Self.responseMayContainSnapshot(action)
+               Self.responseMayContainSnapshot(responseProjection, response: response)
             {
                 if snapshotReference == nil {
-                    let providerUIDs = Self.providerUIDs(in: projected)
+                    let snapshotText = responseProjection == .thirdPartySnapshot
+                        ? Self.thirdPartySnapshotSection(in: projected)
+                        : projected
+                    let providerUIDs = snapshotText.map(Self.providerUIDs(in:)) ?? []
                     if !providerUIDs.isEmpty {
                         let minted = self.mintSnapshot(
                             providerUIDs: providerUIDs,
@@ -166,7 +196,14 @@ actor BrowserToolCapabilitySession {
                         elementMappings = minted.elements
                     }
                 }
-                projected = Self.replacingElementUIDs(in: projected, mappings: elementMappings)
+                if responseProjection == .thirdPartySnapshot {
+                    projected = try Self.replacingSingletonObjectUIDs(in: projected, mappings: elementMappings)
+                    projected = Self.replacingElementUIDsInThirdPartySnapshot(
+                        in: projected,
+                        mappings: elementMappings)
+                } else {
+                    projected = Self.replacingElementUIDs(in: projected, mappings: elementMappings)
+                }
             }
             return .text(text: projected, annotations: annotations, _meta: metadata)
         }
@@ -189,11 +226,16 @@ actor BrowserToolCapabilitySession {
     }
 
     func observeStatus(_ status: BrowserMCPStatus) {
-        guard status.isConnected, let receipt = status.connectionReceipt else {
+        guard status.isConnected,
+              let receipt = status.connectionReceipt,
+              let providerSessionEpoch = status.providerSessionEpoch
+        else {
             self.invalidateAll()
             return
         }
-        let connection = ConnectionBinding(receipt: receipt)
+        let connection = ConnectionBinding(sessionBinding: .init(
+            connectionReceipt: receipt,
+            providerSessionEpoch: providerSessionEpoch))
         let stalePages = self.pagesByReference.values
             .filter { $0.connection != connection }
             .map(\.reference)
@@ -202,23 +244,36 @@ actor BrowserToolCapabilitySession {
         }
     }
 
-    func end() {
+    func end() async {
+        if let endTask = self.endTask {
+            await endTask.value
+            return
+        }
+        let endTask = Task { await self.finishEnd() }
+        self.endTask = endTask
+        await endTask.value
+    }
+
+    private func finishEnd() async {
+        do {
+            try await self.operationGate.acquire()
+        } catch {
+            return
+        }
         self.invalidateAll()
         self.ended = true
+        await self.operationGate.release()
     }
 
     func disconnect() {
         self.invalidateAll()
     }
 
-    func invalidateAfterProviderEntry(action: BrowserAction, resolved: ResolvedArguments?) {
-        if resolved?.invalidatesNavigation == true {
-            self.advanceNavigation(for: resolved?.pageReference)
-        } else if action == .closePage {
-            self.removePage(reference: resolved?.pageReference)
-        } else if Self.invalidatesSnapshotAfterProviderEntry(action) {
-            self.invalidateSnapshots(for: resolved?.pageReference)
+    func invalidateAfterProviderEntry(calls: [BrowserMCPMappedCall], resolved: ResolvedArguments?) {
+        let contracts = calls.compactMap { call in
+            BrowserMCPPageRoutingContract.capabilityContract(for: call.toolName, arguments: call.arguments)
         }
+        self.applyEffects(contracts, resolved: resolved)
     }
 
     func elementBinding(for reference: String) -> ElementBinding? {
@@ -228,10 +283,12 @@ actor BrowserToolCapabilitySession {
     private func resolveElementArgument(
         _ key: String,
         in raw: inout [String: Any],
-        page: PageRecord) throws
+        page: PageRecord) throws -> String?
     {
-        guard let reference = raw[key] as? String else { return }
-        raw[key] = try self.resolveElement(reference, page: page)
+        guard let reference = raw[key] as? String else { return nil }
+        let providerUID = try self.resolveElement(reference, page: page)
+        raw[key] = providerUID
+        return providerUID
     }
 
     private func resolveElement(_ reference: String, page: PageRecord) throws -> String {
@@ -251,38 +308,69 @@ actor BrowserToolCapabilitySession {
         return element.providerUID
     }
 
-    private func resolvingElementReferences(inJSON json: String, page: PageRecord) throws -> String {
+    private func resolvingElementReferences(
+        inJSON json: String,
+        contract: BrowserMCPToolCapabilityContract,
+        page: PageRecord,
+        providerUIDs: inout Set<String>) throws -> String
+    {
         guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data)
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             throw BrowserToolCapabilityError.invalidJSON
         }
-        let projected = try self.resolvingElementReferences(in: object, page: page, key: nil)
-        let encoded = try JSONSerialization.data(withJSONObject: projected, options: [.sortedKeys])
+        for input in contract.elementInputs {
+            switch input {
+            case let .direct(key):
+                if let reference = object[key] as? String {
+                    let providerUID = try self.resolveElement(reference, page: page)
+                    object[key] = providerUID
+                    providerUIDs.insert(providerUID)
+                }
+            case let .objectArray(arrayKey, elementKey):
+                guard var elements = object[arrayKey] as? [[String: Any]] else { continue }
+                for index in elements.indices {
+                    if let reference = elements[index][elementKey] as? String {
+                        let providerUID = try self.resolveElement(reference, page: page)
+                        elements[index][elementKey] = providerUID
+                        providerUIDs.insert(providerUID)
+                    }
+                }
+                object[arrayKey] = elements
+            case let .stringArray(key):
+                guard let references = object[key] as? [String] else { continue }
+                object[key] = try references.map { reference in
+                    let providerUID = try self.resolveElement(reference, page: page)
+                    providerUIDs.insert(providerUID)
+                    return providerUID
+                }
+            case let .decodedSingletonObjectValues(key):
+                guard let encodedParameters = object[key] as? String,
+                      let data = encodedParameters.data(using: .utf8),
+                      var parameters = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { continue }
+                for (parameterName, value) in parameters {
+                    guard var referenceObject = value as? [String: Any],
+                          referenceObject.count == 1,
+                          let reference = referenceObject["uid"] as? String
+                    else { continue }
+                    let providerUID = try self.resolveElement(reference, page: page)
+                    referenceObject["uid"] = providerUID
+                    providerUIDs.insert(providerUID)
+                    parameters[parameterName] = referenceObject
+                }
+                let encoded = try JSONSerialization.data(withJSONObject: parameters, options: [.sortedKeys])
+                guard let string = String(data: encoded, encoding: .utf8) else {
+                    throw BrowserToolCapabilityError.invalidJSON
+                }
+                object[key] = string
+            }
+        }
+        let encoded = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         guard let result = String(data: encoded, encoding: .utf8) else {
             throw BrowserToolCapabilityError.invalidJSON
         }
         return result
-    }
-
-    private func resolvingElementReferences(in value: Any, page: PageRecord, key: String?) throws -> Any {
-        if let dictionary = value as? [String: Any] {
-            var result: [String: Any] = [:]
-            for (childKey, childValue) in dictionary {
-                result[childKey] = try self.resolvingElementReferences(
-                    in: childValue,
-                    page: page,
-                    key: childKey)
-            }
-            return result
-        }
-        if let array = value as? [Any] {
-            return try array.map { try self.resolvingElementReferences(in: $0, page: page, key: key) }
-        }
-        if let string = value as? String, key?.lowercased().contains("uid") == true {
-            return try self.resolveElement(string, page: page)
-        }
-        return value
     }
 
     private func projectPages(
@@ -450,6 +538,7 @@ actor BrowserToolCapabilitySession {
         guard let pageReference, var page = self.pagesByReference[pageReference] else { return }
         self.invalidateSnapshots(for: pageReference)
         page.navigationGeneration &+= 1
+        page.url = nil
         self.pagesByReference[pageReference] = page
     }
 
@@ -482,6 +571,30 @@ actor BrowserToolCapabilitySession {
         self.elementsByReference.removeAll()
     }
 
+    private func applyEffects(
+        _ contracts: [BrowserMCPToolCapabilityContract],
+        resolved: ResolvedArguments?)
+    {
+        if contracts.contains(where: { $0.effect == .invalidateAllPages }) {
+            self.invalidateAll()
+            return
+        }
+        for contract in contracts {
+            switch contract.effect {
+            case .preserve:
+                break
+            case .invalidateSnapshot:
+                self.invalidateSnapshots(for: resolved?.pageReference)
+            case .navigate:
+                self.advanceNavigation(for: resolved?.pageReference)
+            case .removePage:
+                self.removePage(reference: resolved?.pageReference)
+            case .invalidateAllPages:
+                break
+            }
+        }
+    }
+
     private static func actionUsesPage(_ action: BrowserAction, arguments: ToolArguments) -> Bool {
         switch action {
         case .selectPage, .closePage, .navigate, .waitFor, .snapshot, .click, .fill, .fillForm, .drag, .hover,
@@ -494,64 +607,28 @@ actor BrowserToolCapabilitySession {
         }
     }
 
-    private static func invalidatesSnapshotAfterProviderEntry(_ action: BrowserAction) -> Bool {
-        switch action {
-        case .click, .fill, .fillForm, .drag, .type, .pressKey, .uploadFile, .handleDialog, .call:
-            true
-        case .status, .connect, .disconnect, .listPages, .selectPage, .closePage, .newPage, .navigate, .waitFor,
-             .snapshot, .hover, .console, .network, .screenshot, .performanceTrace:
-            false
-        }
-    }
-
-    private static func actionInvalidatesNavigation(
-        _ action: BrowserAction,
-        arguments: ToolArguments) -> Bool
+    private static func responseMayContainSnapshot(
+        _ projection: BrowserMCPToolCapabilityContract.ResponseProjection,
+        response: ToolResponse) -> Bool
     {
-        switch action {
-        case .navigate:
+        switch projection {
+        case .snapshotAlways:
             true
-        case .performanceTrace:
-            (arguments.getString("trace_action") ?? "start") == "start" &&
-                arguments.getBool("reload") != false
-        case .call:
-            arguments.getString("mcp_tool").map {
-                ["navigate_page", "performance_start_trace"].contains($0)
-            } ?? false
-        case .status, .connect, .disconnect, .listPages, .selectPage, .closePage, .newPage, .waitFor, .snapshot,
-             .click, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog, .console,
-             .network, .screenshot:
-            false
-        }
-    }
-
-    private static func responseMayListPages(_ action: BrowserAction) -> Bool {
-        [.listPages, .selectPage, .closePage, .newPage].contains(action)
-    }
-
-    private static func responseMayContainSnapshot(_ action: BrowserAction) -> Bool {
-        switch action {
-        case .snapshot, .waitFor, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile:
-            true
-        case .status, .connect, .disconnect, .listPages, .selectPage, .closePage, .newPage, .navigate,
-             .handleDialog, .console, .network, .screenshot, .performanceTrace, .call:
+        case let .snapshotWhen(enabled):
+            enabled
+        case .thirdPartySnapshot:
+            response.structuredContent?.objectValue?["snapshot"] != nil ||
+                self.thirdPartySnapshotSection(in: self.textContent(response)) != nil
+        case .none, .pages:
             false
         }
     }
 
     private static func responseCreatesSnapshot(
-        _ action: BrowserAction,
-        arguments: ToolArguments?) -> Bool
+        _ projection: BrowserMCPToolCapabilityContract.ResponseProjection,
+        response: ToolResponse) -> Bool
     {
-        switch action {
-        case .snapshot, .waitFor:
-            true
-        case .click, .fill, .fillForm, .drag, .hover, .pressKey, .uploadFile:
-            arguments?.getBool("include_snapshot") == true
-        case .status, .connect, .disconnect, .listPages, .selectPage, .closePage, .newPage, .navigate, .type,
-             .handleDialog, .console, .network, .screenshot, .performanceTrace, .call:
-            false
-        }
+        self.responseMayContainSnapshot(projection, response: response)
     }
 
     private static func collectProviderUIDsAndBindings(
@@ -627,13 +704,7 @@ actor BrowserToolCapabilitySession {
     }
 
     private static func providerUIDs(in text: String) -> [String] {
-        let pattern = #"uid=([^\s]+)"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return expression.matches(in: text, range: range).compactMap { match in
-            guard match.numberOfRanges == 2, let range = Range(match.range(at: 1), in: text) else { return nil }
-            return String(text[range])
-        }
+        Array(BrowserMCPProviderSnapshotParser.providerUIDs(in: text)).sorted()
     }
 
     private static func replacingElementUIDs(in text: String, mappings: [String: String]) -> String {
@@ -644,9 +715,109 @@ actor BrowserToolCapabilitySession {
         return result
     }
 
+    private static func replacingSingletonObjectUIDs(
+        in text: String,
+        mappings: [String: String]) throws -> String
+    {
+        let jsonText: String
+        let suffix: String
+        if let markerRange = text.range(of: self.thirdPartySnapshotMarker) {
+            jsonText = String(text[..<markerRange.lowerBound])
+            suffix = String(text[markerRange.lowerBound...])
+        } else {
+            jsonText = text
+            suffix = ""
+        }
+        guard let data = jsonText.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data)
+        else {
+            throw BrowserToolCapabilityError.invalidProviderResponse
+        }
+        func project(_ value: Any) throws -> Any {
+            if let dictionary = value as? [String: Any] {
+                if dictionary.count == 1, let providerUID = dictionary["uid"] as? String {
+                    return mappings[providerUID].map { ["uid": $0] } ?? dictionary
+                }
+                return try dictionary.mapValues(project)
+            }
+            if let array = value as? [Any] {
+                return try array.map(project)
+            }
+            return value
+        }
+        let encoded = try JSONSerialization.data(
+            withJSONObject: project(object),
+            options: [.prettyPrinted, .sortedKeys])
+        guard let projected = String(data: encoded, encoding: .utf8) else {
+            throw BrowserToolCapabilityError.invalidProviderResponse
+        }
+        return projected + suffix
+    }
+
+    private static let thirdPartySnapshotMarker = "\n## Latest page snapshot"
+
+    private static func thirdPartySnapshotSection(in text: String) -> String? {
+        guard let markerRange = text.range(of: self.thirdPartySnapshotMarker) else { return nil }
+        return String(text[markerRange.lowerBound...])
+    }
+
+    private static func replacingElementUIDsInThirdPartySnapshot(
+        in text: String,
+        mappings: [String: String]) -> String
+    {
+        guard let markerRange = text.range(of: self.thirdPartySnapshotMarker) else { return text }
+        let prefix = text[..<markerRange.lowerBound]
+        let snapshot = self.replacingElementUIDs(
+            in: String(text[markerRange.lowerBound...]),
+            mappings: mappings)
+        return String(prefix) + snapshot
+    }
+
     private static func reference(prefix: String) -> String {
         let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         return "\(prefix)_\(token)"
+    }
+}
+
+enum BrowserMCPProviderSnapshotParser {
+    static func providerUIDs(in response: ToolResponse) -> Set<String> {
+        var result = Set<String>()
+        if let structuredContent = response.structuredContent {
+            self.collectIDs(in: structuredContent, into: &result)
+        }
+        for item in response.content {
+            guard case let .text(text, _, _) = item else { continue }
+            result.formUnion(self.providerUIDs(in: text))
+        }
+        return result
+    }
+
+    static func providerUIDs(in text: String) -> Set<String> {
+        let pattern = #"uid=([^\s]+)"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return Set(expression.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges == 2, let range = Range(match.range(at: 1), in: text) else { return nil }
+            return String(text[range])
+        })
+    }
+
+    private static func collectIDs(in value: Value, into result: inout Set<String>) {
+        switch value {
+        case let .object(fields):
+            if let id = fields["id"]?.stringValue {
+                result.insert(id)
+            }
+            for child in fields.values {
+                self.collectIDs(in: child, into: &result)
+            }
+        case let .array(values):
+            for child in values {
+                self.collectIDs(in: child, into: &result)
+            }
+        case .string, .int, .double, .bool, .null, .data:
+            break
+        }
     }
 }
 
@@ -671,17 +842,18 @@ enum BrowserToolCapabilityError: LocalizedError, Equatable {
     case staleElementReference
     case invalidJSON
     case invalidProviderResponse
+    case snapshotArtifactUnsupported
 
     var errorDescription: String? {
         switch self {
         case .sessionEnded:
             "The browser capability session has ended. Start a new session and observe pages again."
         case .connectionUnavailable:
-            "Browser page capabilities require an existing exact connection receipt."
+            "Browser page capabilities require an existing exact connection receipt and provider child epoch."
         case .invalidPageReference:
             "page_id must be an opaque page reference returned by this session's latest list_pages or new_page."
         case .stalePageReference:
-            "The browser page reference belongs to another or expired connection. Refresh list_pages."
+            "The browser page reference belongs to another or expired provider session. Refresh list_pages."
         case .invalidElementReference:
             "uid must be an opaque element reference returned by this session's latest browser snapshot."
         case .staleElementReference:
@@ -690,6 +862,9 @@ enum BrowserToolCapabilityError: LocalizedError, Equatable {
             "Browser raw arguments must be a JSON object whose uid fields use current opaque element references."
         case .invalidProviderResponse:
             "Chrome DevTools MCP returned malformed structured page identity data."
+        case .snapshotArtifactUnsupported:
+            "Capability-scoped browser snapshots cannot write provider UIDs to a file. Omit path and save the " +
+                "projected response instead."
         }
     }
 }

@@ -42,9 +42,10 @@ fail and require an explicit reconnect.
 
 Browser `type` and `press-key` require `--uid` from a fresh snapshot. Peekaboo focuses that exact page element and sends
 the keyboard operation as one daemon-owned sequence rather than inheriting whichever control another caller focused.
-Persistent MCP and Agent callers receive opaque, session-owned page and element references instead of these raw CLI
-compatibility values. Those references cannot cross caller sessions and expire after a newer snapshot, navigation,
-disconnect, connection replacement, or session end.
+Process-local persistent MCP and Agent callers receive opaque, session-owned page and element references instead of
+these raw CLI compatibility values. Those references also bind the exact provider child, cannot cross caller sessions,
+and expire after a newer snapshot, navigation, disconnect, connection replacement, or session end. Bridge-backed
+opaque-reference sessions currently fail closed pending an authenticated browser-session wire namespace.
 
 `browser upload-file` requires `--page-id`, a fresh file-input `--uid`, and an absolute `--path` to a current-user
 regular file no larger than 100 MiB. Peekaboo never grants Chrome DevTools MCP unrestricted filesystem access. The daemon

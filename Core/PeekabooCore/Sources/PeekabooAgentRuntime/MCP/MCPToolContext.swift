@@ -178,7 +178,8 @@ public struct MCPToolContext: @unchecked Sendable {
         self.permissionsStatusProvider = permissionsStatusProvider ?? permissions
         self.clipboard = clipboard
         self.browser = browser
-        self.browserCapabilities = BrowserToolCapabilitySession()
+        self.browserCapabilities = (browser as? BrowserMCPService)?.browserCapabilitySession
+            ?? BrowserToolCapabilitySession()
         self.snapshotMutationCoordinator = snapshotMutationCoordinator
         self.snapshotExecutionGate = snapshotExecutionGate
             ?? (agent as? PeekabooAgentService)?.snapshotExecutionGate
@@ -191,6 +192,7 @@ public struct MCPToolContext: @unchecked Sendable {
     @MainActor
     public init(
         services: any PeekabooServiceProviding,
+        browser: (any BrowserMCPClientProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
@@ -214,7 +216,7 @@ public struct MCPToolContext: @unchecked Sendable {
             agent: services.agent,
             permissions: services.permissions,
             clipboard: services.clipboard,
-            browser: services.browser,
+            browser: browser ?? services.browser,
             permissionsStatusProvider: services,
             snapshotMutationCoordinator: snapshotMutationCoordinator,
             snapshotExecutionGate: resolvedSnapshotExecutionGate,
@@ -462,6 +464,9 @@ public struct MCPToolContext: @unchecked Sendable {
     func releaseSnapshotOwner() async {
         await self.uiSnapshots.removeOwner()
         await self.browserCapabilities.end()
+        if let ownedBrowser = self.browser as? any BrowserMCPAuthenticatedSessionEnding {
+            await ownedBrowser.endAuthenticatedBrowserSession()
+        }
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {
