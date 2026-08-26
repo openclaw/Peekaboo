@@ -103,6 +103,29 @@ public struct SnapshotTargetReceiptPlanner: Sendable {
             evidenceScope: .completeTarget)
     }
 
+    /// Assembles stable process identity without promoting partial window hints to mutation authority.
+    public static func assembleProcessIdentity(
+        snapshotID: String,
+        automationSnapshot: UIAutomationSnapshot? = nil,
+        detectionResult: ElementDetectionResult? = nil,
+        additionalEvidence: [DesktopTargetIdentity.Evidence] = [],
+        targetReceiptInvalidated: Bool = false,
+        applicationBundleIdentifier: String? = nil,
+        applicationName: String? = nil,
+        coordinateContext: CaptureCoordinateContext? = nil) throws -> SnapshotTargetReceiptPlan
+    {
+        try self.assemble(
+            snapshotID: snapshotID,
+            automationSnapshot: automationSnapshot,
+            detectionResult: detectionResult,
+            additionalEvidence: additionalEvidence,
+            targetReceiptInvalidated: targetReceiptInvalidated,
+            applicationBundleIdentifier: applicationBundleIdentifier,
+            applicationName: applicationName,
+            coordinateContext: coordinateContext,
+            evidenceScope: .processIdentity)
+    }
+
     private static func assemble(
         snapshotID: String,
         automationSnapshot: UIAutomationSnapshot?,

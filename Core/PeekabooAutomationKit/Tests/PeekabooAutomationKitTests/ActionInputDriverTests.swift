@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AXorcist
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import PeekabooFoundationTestSupport
 import Testing
@@ -587,6 +588,7 @@ struct ActionInputDriverTests {
     @Test
     func `element action facade normalizes stale action driver failures`() async throws {
         let snapshotID = SnapshotReferenceFixtures.first.rawValue
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
         let detected = DetectedElement(
             id: "B1",
             type: .button,
@@ -600,12 +602,15 @@ struct ActionInputDriverTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: getpid())))
+                windowContext: WindowContext(
+                    applicationProcessId: getpid(),
+                    applicationProcessStartIdentity: processStartIdentity)))
         let service = try await UIAutomationService(
             snapshotManager: InMemorySnapshotManager.containing(detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: RecordingActionInputDriver(elementActionError: .staleElement),
-            automationElementResolver: FixedActionAutomationElementResolver())
+            automationElementResolver: FixedActionAutomationElementResolver(),
+            processStartIdentityProvider: { _ in processStartIdentity })
 
         do {
             _ = try await service.setValue(target: "B1", value: .string("hello"), snapshotId: snapshotID)
@@ -620,6 +625,101 @@ struct ActionInputDriverTests {
         } catch let PeekabooError.snapshotStale(reason) {
             #expect(reason.contains("no longer available"))
         }
+    }
+
+    @MainActor
+    @Test
+    func `process scoped element mutations refuse missing or reused generations without dispatch`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.first.rawValue
+        let process = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 77)
+        let driver = RecordingActionInputDriver(allowsElementActions: true)
+        var resolutions = 0
+
+        func service(
+            capturedGeneration: UInt64?,
+            liveGeneration: UInt64?) async throws -> UIAutomationService
+        {
+            let detected = DetectedElement(
+                id: "T1",
+                type: .textField,
+                label: "Value",
+                bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
+            let detectionResult = AutomationTestFixtures.detectionResult(
+                snapshotID: snapshotID,
+                elements: DetectedElements(textFields: [detected]),
+                windowContext: WindowContext(
+                    applicationProcessId: process.processIdentifier,
+                    applicationProcessStartIdentity: capturedGeneration))
+            return try await UIAutomationService(
+                snapshotManager: InMemorySnapshotManager.containing(detectionResult),
+                inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+                actionInputDriver: driver,
+                automationElementResolver: FixedActionAutomationElementResolver {
+                    resolutions += 1
+                },
+                processStartIdentityProvider: { _ in liveGeneration })
+        }
+
+        let missingGeneration = try await service(capturedGeneration: nil, liveGeneration: process.processStartIdentity)
+        let reusedPID = try await service(
+            capturedGeneration: process.processStartIdentity,
+            liveGeneration: process.processStartIdentity + 1)
+
+        for automation in [missingGeneration, reusedPID] {
+            await #expect(throws: (any Error).self) {
+                _ = try await automation.setValue(
+                    target: "T1",
+                    value: .string("new"),
+                    snapshotId: snapshotID)
+            }
+            await #expect(throws: (any Error).self) {
+                _ = try await automation.performAction(
+                    target: "T1",
+                    actionName: "AXPress",
+                    snapshotId: snapshotID)
+            }
+        }
+
+        #expect(resolutions == 0)
+        #expect(driver.setValueCallCount == 0)
+        #expect(driver.performActionCallCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func `process scoped element action returns canonical outcome and target metadata`() async throws {
+        let snapshotID = SnapshotReferenceFixtures.second.rawValue
+        let process = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 78)
+        let detected = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            snapshotID: snapshotID,
+            elements: DetectedElements(buttons: [detected]),
+            windowContext: WindowContext(
+                applicationProcessId: process.processIdentifier,
+                applicationProcessStartIdentity: process.processStartIdentity))
+        let driver = RecordingActionInputDriver(allowsElementActions: true)
+        let service = try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: driver,
+            automationElementResolver: FixedActionAutomationElementResolver(),
+            processStartIdentityProvider: { _ in process.processStartIdentity })
+
+        let result = try await service.performActionWithOutcome(
+            target: "B1",
+            actionName: "AXPress",
+            snapshotId: snapshotID)
+
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        #expect(result.targetIdentity?.processIdentity == process)
+        #expect(result.targetIdentity?.exactWindow == nil)
+        #expect(result.actionTargetReceipt == process.actionTargetReceipt)
+        #expect(driver.performActionCallCount == 1)
     }
 
     @MainActor
@@ -1242,10 +1342,17 @@ private final class PhantomSuccessAutomationElement: AutomationElementRepresenti
 @MainActor
 private final class RecordingActionInputDriver: ActionInputDriving {
     private let elementActionError: ActionInputError?
+    private let allowsElementActions: Bool
     private(set) var clickCallCount = 0
+    private(set) var setValueCallCount = 0
+    private(set) var performActionCallCount = 0
 
-    init(elementActionError: ActionInputError? = nil) {
+    init(
+        elementActionError: ActionInputError? = nil,
+        allowsElementActions: Bool = false)
+    {
         self.elementActionError = elementActionError
+        self.allowsElementActions = allowsElementActions
     }
 
     func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
@@ -1282,8 +1389,15 @@ private final class RecordingActionInputDriver: ActionInputDriving {
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
     -> UIInputExecutionResult.Action {
+        self.setValueCallCount += 1
         if let elementActionError {
             throw elementActionError
+        }
+        if self.allowsElementActions {
+            return UIInputExecutionResult.Action(
+                outcome: .confirmedChange(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background)),
+                actionName: AXActionNames.kAXSetValueAction)
         }
         Issue.record("Action driver should not be called")
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
@@ -1291,8 +1405,15 @@ private final class RecordingActionInputDriver: ActionInputDriving {
 
     func tryPerformAction(element _: AutomationElement, actionName _: String) throws
     -> UIInputExecutionResult.Action {
+        self.performActionCallCount += 1
         if let elementActionError {
             throw elementActionError
+        }
+        if self.allowsElementActions {
+            return UIInputExecutionResult.Action(
+                outcome: .confirmedChange(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background)),
+                actionName: AXActionNames.kAXPressAction)
         }
         Issue.record("Action driver should not be called")
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())

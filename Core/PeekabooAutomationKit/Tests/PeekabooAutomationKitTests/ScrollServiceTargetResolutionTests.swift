@@ -507,9 +507,10 @@ struct ScrollServiceTargetResolutionTests {
             syntheticInputDriver: synthetic,
             automationElementResolver: ScrollFixedAutomationElementResolver())
 
-        await #expect(throws: PeekabooError.self) {
+        let error = await #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
             _ = try await service.scroll(Self.backgroundRequest())
         }
+        #expect(error?.receiptError == .missingProcessGeneration)
         #expect(action.scrollCalls.isEmpty)
         #expect(synthetic.events.isEmpty)
     }

@@ -22,8 +22,12 @@ MCP tool is `action`, whose background-only policy refuses foreground-exposing a
 
 Every action resolves through a current UI snapshot. Pass `--snapshot` explicitly, reuse the latest unmodified `see`
 snapshot, or supply app/PID/window target flags so Peekaboo captures a fresh targeted snapshot before dispatch. If no
-snapshot can be established, the command refuses rather than searching the user's frontmost app. Exact-window snapshots
-also pin the process generation, window identity, and bounds; drift before dispatch is refused.
+snapshot can be established, the command refuses rather than searching the user's frontmost app. Process-scoped
+snapshots pin the process generation; exact-window snapshots additionally pin window identity and bounds. Missing or
+changed generation evidence is refused before element resolution or dispatch.
+
+Successful JSON and MCP results include the canonical `target_identity` and `target_receipt`, including the process-start
+identity needed to distinguish a live process from PID reuse.
 
 When JSON reports `requires_fresh_observation: true`, or the host cannot return a canonical outcome, that snapshot
 remains readable for diagnostics but cannot drive another mutation. Run `peekaboo see` again and use its new snapshot

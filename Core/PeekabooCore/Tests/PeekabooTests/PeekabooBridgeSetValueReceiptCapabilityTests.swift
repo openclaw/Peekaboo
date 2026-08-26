@@ -81,16 +81,21 @@ struct PeekabooBridgeSetValueReceiptCapabilityTests {
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.setValueResultTargetBinding) == true)
 
-        let result = try await client.setValue(
+        let result = try await client.setValueWithOutcome(
             target: "T1",
             value: .string("updated"),
             snapshotId: "snapshot")
 
-        #expect(result.target == "T1")
+        let expectedTarget = try #require(services.automationStub.uiAutomationOutcomeTargetIdentity)
+        #expect(result.payload.target == "T1")
+        #expect(result.outcome?.route == .bridge)
+        #expect(result.targetIdentity == expectedTarget)
         #expect(services.automationStub.lastSetValue?.target == "T1")
         let bundle = try #require(await client.lastOperationReceiptBundle())
         try bundle.validate()
         #expect(bundle.receipt.payload.operation == .setValue)
+        #expect(bundle.receipt.payload.target == .process(expectedTarget.processIdentity))
+        #expect(bundle.receipt.payload.outcome == result.outcome?.projection)
         await host.stop()
     }
 

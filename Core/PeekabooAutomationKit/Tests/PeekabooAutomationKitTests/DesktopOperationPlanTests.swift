@@ -97,36 +97,135 @@ struct DesktopOperationPlanTests {
     }
 
     @Test
-    func `nonexact background receipt retains its process target`() throws {
-        let processIdentifier: pid_t = 321
+    func `nonexact background receipt retains its exact process generation`() throws {
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: 321,
+            processStartIdentity: 77)
         let detectionResult = AutomationTestFixtures.detectionResult(
             windowContext: WindowContext(
                 applicationBundleId: "com.example.TestApp",
-                applicationProcessId: processIdentifier))
+                applicationProcessId: processIdentity.processIdentifier,
+                applicationProcessStartIdentity: processIdentity.processStartIdentity))
 
         let receipt = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
             snapshotID: detectionResult.snapshotId,
             detectionResult: detectionResult,
             requireExactWindow: false,
-            processStartIdentityProvider: { _ in nil },
+            processStartIdentityProvider: { _ in processIdentity.processStartIdentity },
             exactWindowIdentityValidator: { _, _ in false })
 
-        #expect(try receipt.target == .process(UIAutomationTarget.Process(processIdentifier: processIdentifier)))
-        #expect(receipt.processIdentity == nil)
+        #expect(try receipt.target == .process(UIAutomationTarget.Process(
+            processIdentifier: processIdentity.processIdentifier,
+            identity: processIdentity)))
+        #expect(receipt.processIdentity == processIdentity)
+        #expect(receipt.exactWindow == nil)
     }
 
     @Test
-    func `nonexact background receipt rejects a missing process target`() {
-        let detectionResult = AutomationTestFixtures.detectionResult()
+    func `nonexact background receipt rejects missing generation before live validation`() {
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(applicationProcessId: 321))
+
+        let error = #expect(throws: SnapshotTargetReceiptPreDispatchError.self) {
+            _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+                snapshotID: detectionResult.snapshotId,
+                detectionResult: detectionResult,
+                requireExactWindow: false,
+                processStartIdentityProvider: { _ in
+                    Issue.record("Missing generation reached live process validation")
+                    return nil
+                },
+                exactWindowIdentityValidator: { _, _ in false })
+        }
+
+        #expect(error?.receiptError == .missingProcessGeneration)
+    }
+
+    @Test
+    func `nonexact background receipt rejects a substituted live generation`() {
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: 321,
+            processStartIdentity: 77)
+        let detectionResult = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(
+                applicationProcessId: processIdentity.processIdentifier,
+                applicationProcessStartIdentity: processIdentity.processStartIdentity))
 
         #expect(throws: (any Error).self) {
             _ = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
                 snapshotID: detectionResult.snapshotId,
                 detectionResult: detectionResult,
                 requireExactWindow: false,
-                processStartIdentityProvider: { _ in nil },
+                processStartIdentityProvider: { _ in processIdentity.processStartIdentity + 1 },
                 exactWindowIdentityValidator: { _, _ in false })
         }
+    }
+
+    @Test
+    func `process receipt revalidation rejects PID reuse and process substitution`() throws {
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: 321,
+            processStartIdentity: 77)
+        let receipt = try DesktopOperationPlan.CaptureReceipt(
+            target: .process(UIAutomationTarget.Process(
+                processIdentifier: processIdentity.processIdentifier,
+                identity: processIdentity)))
+        let reusedPID = WindowContext(
+            applicationProcessId: processIdentity.processIdentifier,
+            applicationProcessStartIdentity: processIdentity.processStartIdentity + 1)
+        let substitutedProcess = WindowContext(
+            applicationProcessId: processIdentity.processIdentifier + 1,
+            applicationProcessStartIdentity: processIdentity.processStartIdentity)
+
+        for context in [reusedPID, substitutedProcess] {
+            #expect(throws: (any Error).self) {
+                try DesktopOperationSnapshotReceiptValidator.validate(
+                    context: context,
+                    receipt: receipt,
+                    validateCurrentIdentity: false,
+                    processStartIdentityProvider: { _ in processIdentity.processStartIdentity },
+                    exactWindowIdentityValidator: { _, _ in false })
+            }
+        }
+    }
+
+    @Test
+    func `capture planner preserves process versus exact window scope`() throws {
+        let processIdentity = AutomationTestFixtures.processIdentity()
+        let processDetection = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(
+                applicationProcessId: processIdentity.processIdentifier,
+                applicationProcessStartIdentity: processIdentity.processStartIdentity))
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let windowIdentity = AutomationTestFixtures.windowIdentity(
+            processIdentity: processIdentity,
+            bounds: bounds)
+        let windowDetection = AutomationTestFixtures.detectionResult(
+            windowContext: WindowContext(
+                applicationProcessId: processIdentity.processIdentifier,
+                applicationProcessStartIdentity: processIdentity.processStartIdentity,
+                windowID: windowIdentity.windowID,
+                windowBounds: bounds,
+                windowMutationIdentity: windowIdentity))
+
+        let processReceipt = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+            snapshotID: processDetection.snapshotId,
+            detectionResult: processDetection,
+            requireExactWindow: false,
+            processStartIdentityProvider: { _ in processIdentity.processStartIdentity },
+            exactWindowIdentityValidator: { _, _ in false })
+        let windowReceipt = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+            snapshotID: windowDetection.snapshotId,
+            detectionResult: windowDetection,
+            requireExactWindow: false,
+            processStartIdentityProvider: { _ in processIdentity.processStartIdentity },
+            exactWindowIdentityValidator: { identity, actualBounds in
+                identity == windowIdentity && actualBounds == bounds
+            })
+
+        #expect(processReceipt.processIdentity == processIdentity)
+        #expect(processReceipt.exactWindow == nil)
+        #expect(windowReceipt.exactWindow?.identity == windowIdentity)
     }
 
     @Test

@@ -33,7 +33,8 @@ read_when:
   replay the write against the old snapshot.
 - Secure/password fields are rejected; use explicit typing flows for those contexts.
 - This is not a replacement for `peekaboo type` when the app needs observable keystrokes, IME handling, autocomplete, or undo grouping.
-- JSON output includes `target`, `actionName`, `oldValue`, `newValue`, and `executionTime`.
+- JSON and MCP output includes the canonical process-generation `target_identity` and `target_receipt` alongside
+  `target`, `actionName`, `oldValue`, `newValue`, and `executionTime`.
 
 ## Examples
 
