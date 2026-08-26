@@ -45,6 +45,8 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 - Candidate version and changelog sections may remain `Unreleased` only while running the deterministic preparation
   dry run. Date both changelogs before the publication commit and full release preflight.
 - Update user-facing docs and `release/release-notes.md`. Release notes contain only that version's changelog section.
+- The tracked release notes are publication authority: full preflight requires them to match the root changelog section,
+  and the GitHub draft body is created from those exact bytes.
 - Update submodule repositories first only when their code or release metadata changed, then commit the gitlink here.
 - Use the supported Xcode 26.x release toolchain; do not substitute an older SDK for publication builds.
 
@@ -183,7 +185,8 @@ Load release credentials through the maintainer 1Password workflow, then run int
 ```bash
 ./scripts/release-binaries.sh \
   --create-github-release \
-  --publish-npm
+  --publish-npm \
+  --proof-file /path/to/reviewed-release-proof.md
 ```
 
 The script runs release preparation, builds the universal CLI and npm package, signs/notarizes/staples the macOS app
@@ -204,12 +207,46 @@ avoid rebuilding it. Reuse fails closed unless the full Git porcelain status is 
 Foundation signer, safe entitlements, native-only surface, complete runtime libraries and architectures, online
 notarization, and an embedded source commit exactly equal to `HEAD`. All non-executing checks complete before the
 candidate's first `--version` invocation.
+Reuse is only a build optimization before any public action. GitHub draft creation and npm publication are one bound
+driver operation; separate invocations are refused because rebuilt archives cannot safely resume an existing draft.
+The npm confirmation happens before GitHub draft creation. If a failure still occurs after the first public action,
+leave the generated appcast and release directory intact, then run `./scripts/release-binaries.sh --resume-publication`.
+Resume accepts only the retained canonical plan, proof, checksums, exact artifact set, generated appcast, matching helper
+pin, and frozen source commit. It verifies the existing draft/tag/assets, skips an already-published identical npm
+tarball, repairs an interrupted expected-asset upload, and idempotently completes registry verification and the final
+draft body. A full `appcast.xml` snapshot is checksummed with the receipt so resume cannot bless unrelated feed drift.
+If npm accepted an upload but still returns E404, resume stops on its retained attempt marker; wait for propagation.
+Use `--retry-npm-publish` only after independently confirming the version truly was not accepted.
+Publication requires `NPM_TOKEN`; the driver writes an owner-only temporary npm config that pins both the default and
+`@steipete` registries to npmjs, passes the registry explicitly to every probe/publish, and pins every GitHub mutation
+and API check to `github.com/openclaw/Peekaboo` so ambient npm or `GH_REPO` settings cannot redirect a release.
+The default release output remains under `build/`. A custom existing `RELEASE_DIR` is accepted only when it retains the
+exact `.peekaboo-release-output` ownership marker created by the driver; symlinks, unmarked directories, and source-tree
+paths are refused before recursive cleanup.
+Reuse runs the full source preflight in no-build mode after that initial safety verification and rejects any candidate
+or checkout change before packaging. Public npm or GitHub actions always require full checks, universal CLI and app
+artifacts, notarization, and appcast generation; reduced-safety build flags are local-only.
+
+The driver freezes one `release-plan.json` containing the clean source commit, version, and exact external release-helper
+pin. The plan also records completed full preflight and explicit publication eligibility; proof files are refused on
+local-only builds, so resume cannot promote artifacts produced with reduced checks. It revalidates that plan around
+every CLI/app/DMG and publication boundary and uploads the plan with the release.
+Immediately before each GitHub action it also freezes a local publication receipt for the exact canonical body and
+artifact inventory, then verifies the local files, peeled remote tag commit, release body, and remote asset digests
+against that receipt.
+Before draft creation, the driver idempotently creates the official lightweight tag at the frozen source SHA through
+the pinned GitHub API, peels and verifies it, then creates the draft with `--verify-tag`. A lost response or interrupted
+draft creation therefore resumes against the same exact tag rather than the moving default branch.
+The pending receipt is immutable and remains the artifact/checksum authority across resume. npm publication derives a
+separate final-body receipt; it never replaces the pending receipt, and resume recomputes the original pending body and
+inventory before allowing either missing-action recovery or expected-asset repair.
 
 The app, every nested Mach-O payload, standalone CLI archive, npm CLI archive, and DMG must report the Foundation authority and Team ID `FWJYW4S8P8`. Online verification must pass `codesign --verify --strict --check-notarization -R=notarized` for the CLI, extracted app, and DMG.
 
-After npm verification, append a `Verification` section to the draft body with the npm version page, registry tarball
-URL, integrity value, publish time, and exact CI/test proof. Keep the changelog section intact, update the draft with
-`gh release edit v<version> --notes-file <reviewed-body-file>`, inspect the rendered body once more, then publish it:
+The proof file is bounded, retained, hashed into the release plan, and uploaded with the artifacts. The driver keeps
+the tracked changelog notes as the immutable body prefix, adds source/plan/checksum/proof authority, then updates the
+draft after npm verification with the exact registry tarball, integrity, and publish time. Inspect the rendered body
+once more, then publish it:
 
 ```bash
 gh release edit v<version> --draft=false
@@ -225,7 +262,11 @@ also run `npm dist-tag add @steipete/peekaboo@<version> latest` before publishin
 - Git tag and non-draft GitHub Release `v<version>` exist.
 - Release body contains the complete changelog section plus npm metadata and exact CI/test proof.
 - GitHub assets include the CLI archive, npm tarball, app zip, branded DMG, and checksums expected by the script.
-- `appcast.xml` is valid and its newest item points to the new GitHub app zip with matching length and signature.
+- GitHub draft body, exact asset inventory, sizes, and server-reported SHA-256 digests match the local release.
+- npm's published SRI integrity matches the exact local tarball.
+- `appcast.xml` is valid, strictly build-monotonic, and its newest item matches the app's build/minimum-system version,
+  GitHub app zip URL, length, and Sparkle signature.
+- The mounted DMG app tree is byte/mode/symlink-identical to the app zip and therefore carries the same source commit.
 - Extracted CLI, app, and mounted DMG report the new version; codesign, stapler, Gatekeeper, layout, background, and Applications-link verification pass.
 - A fresh temporary `npx @steipete/peekaboo@<version> --help` succeeds.
 - Release and Homebrew workflows complete successfully.

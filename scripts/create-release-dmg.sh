@@ -28,6 +28,7 @@ DMGBUILD_RUNNER="$ROOT_DIR/scripts/dmgbuild-runner.py"
 DMGBUILD_SETTINGS="$ROOT_DIR/scripts/dmgbuild-settings.py"
 NOTARIZE=true
 VERIFY_ONLY_DMG=""
+EXPECTED_APP_TREE_SHA256="${EXPECTED_APP_TREE_SHA256:-}"
 
 usage() {
   cat <<EOF
@@ -42,6 +43,8 @@ Options:
   --notary-profile <profile>   notarytool keychain profile.
   --no-notarize                Sign and verify without DMG notarization.
   --verify-only <dmg>          Verify an existing DMG, then exit.
+  --expected-app-tree-sha256 <sha256>
+                              Require the DMG app tree to equal the source app zip tree.
   --help                       Show this help.
 
 Notarization uses NOTARYTOOL_PROFILE when set, otherwise APP_STORE_CONNECT_KEY_ID,
@@ -82,6 +85,10 @@ while [[ $# -gt 0 ]]; do
     --verify-only)
       VERIFY_ONLY_DMG="$2"
       DMG_PATH="$2"
+      shift 2
+      ;;
+    --expected-app-tree-sha256)
+      EXPECTED_APP_TREE_SHA256="$2"
       shift 2
       ;;
     --help)
@@ -180,6 +187,14 @@ verify_app() {
     xcrun stapler validate "$app_path"
     spctl --assess --type exec --verbose=4 "$app_path"
   fi
+  if [[ -n "$EXPECTED_APP_TREE_SHA256" ]]; then
+    local tree_manifest observed_tree_sha256
+    tree_manifest="$(mktemp "$WORK_DIR/app-tree.XXXXXX")"
+    /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$app_path" > "$tree_manifest"
+    observed_tree_sha256="$(/usr/bin/shasum -a 256 "$tree_manifest" | /usr/bin/awk '{print $1}')"
+    [[ "$observed_tree_sha256" == "$EXPECTED_APP_TREE_SHA256" ]] ||
+      fail "DMG embedded app tree differs from the source app zip"
+  fi
 }
 
 detach_mount() {
@@ -272,6 +287,8 @@ EOF
 }
 
 if [[ -n "$VERIFY_ONLY_DMG" ]]; then
+  [[ "$EXPECTED_APP_TREE_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "--verify-only requires --expected-app-tree-sha256"
   log "Verifying existing DMG"
   verify_dmg "$VERIFY_ONLY_DMG"
   log "Done"
@@ -300,6 +317,9 @@ SOURCE_DIR="$WORK_DIR/source"
 mkdir -p "$SOURCE_DIR"
 ditto -x -k "$APP_ZIP" "$SOURCE_DIR"
 APP_BUNDLE="$SOURCE_DIR/$APP_NAME.app"
+SOURCE_TREE_MANIFEST="$WORK_DIR/source-app-tree.json"
+/usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$APP_BUNDLE" > "$SOURCE_TREE_MANIFEST"
+EXPECTED_APP_TREE_SHA256="$(/usr/bin/shasum -a 256 "$SOURCE_TREE_MANIFEST" | /usr/bin/awk '{print $1}')"
 verify_app "$APP_BUNDLE"
 
 VOLUME_ICON="$APP_BUNDLE/Contents/Resources/AppIcon.icns"

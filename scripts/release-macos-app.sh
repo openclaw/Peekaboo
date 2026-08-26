@@ -3,6 +3,8 @@
 
 set -euo pipefail
 
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="${ROOT:-$ROOT_DIR}"
 ROOT="$(cd "$ROOT" && pwd)"
@@ -26,6 +28,18 @@ for candidate in \
   "$ROOT/../agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh" \
   "$HOME/Projects/agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh"; do
   if [[ -n "$candidate" && -f "$candidate" ]]; then
+    if [[ -n "${MAC_RELEASE_EXPECTED_HELPER_COMMIT:-}" ]]; then
+      helper_repo="$(/usr/bin/git -C "$(/usr/bin/dirname "$candidate")" rev-parse --show-toplevel)" ||
+        fail "Release helper library is not in a Git checkout"
+      helper_executable="$(/usr/bin/dirname "$candidate")/../mac-release"
+      [[ "$(/usr/bin/git -C "$helper_repo" rev-parse HEAD)" == "$MAC_RELEASE_EXPECTED_HELPER_COMMIT" &&
+         -z "$(/usr/bin/git -C "$helper_repo" status --porcelain --untracked-files=no)" &&
+         "$(/usr/bin/shasum -a 256 "$candidate" | /usr/bin/awk '{print $1}')" ==
+           "${MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256:?}" &&
+         "$(/usr/bin/shasum -a 256 "$helper_executable" | /usr/bin/awk '{print $1}')" ==
+           "${MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256:?}" ]] ||
+        fail "Release helper library differs from the frozen release plan"
+    fi
     # shellcheck source=/Users/steipete/Projects/agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh
     source "$candidate"
     MAC_RELEASE_HELPER_LOADED=true
@@ -180,8 +194,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
+if [[ -n "${PEEKABOO_RELEASE_SOURCE_COMMIT:-}" ]]; then
+  SOURCE_COMMIT="$PEEKABOO_RELEASE_SOURCE_COMMIT"
+  [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ && "$(git -C "$ROOT" rev-parse HEAD)" == "$SOURCE_COMMIT" ]] ||
+    fail "Release source differs from the frozen release plan"
+  release_status="$(git -C "$ROOT" status --porcelain --untracked-files=all)"
+  if [[ -n "${PEEKABOO_RELEASE_APPCAST_SHA256:-}" ]]; then
+    [[ -z "$release_status" || "$release_status" == ' M appcast.xml' ]] ||
+      fail "Release checkout has changes outside the generated appcast"
+    observed_appcast_sha="$(shasum -a 256 "$ROOT/appcast.xml" | awk '{print $1}')"
+    [[ "$observed_appcast_sha" == "$PEEKABOO_RELEASE_APPCAST_SHA256" ]] ||
+      fail "Generated appcast differs from the release plan"
+  else
+    [[ -z "$release_status" ]] || fail "Release checkout changed before app generation"
+  fi
+else
   SOURCE_COMMIT="$(peekaboo_require_source_commit "$ROOT")"
+fi
+if [[ -n "${PEEKABOO_RELEASE_SOURCE_COMMIT:-}" &&
+      "$SOURCE_COMMIT" != "$PEEKABOO_RELEASE_SOURCE_COMMIT" ]]; then
+  fail "Release source differs from the frozen release plan"
+fi
+if [[ -n "${PEEKABOO_RELEASE_VERSION:-}" && "$VERSION" != "$PEEKABOO_RELEASE_VERSION" ]]; then
+  fail "Release version differs from the frozen release plan"
 fi
 
 if [[ "$DRY_RUN" == true ]]; then
@@ -220,15 +255,15 @@ cleanup() {
 trap cleanup EXIT
 
 log() { printf '==> %s\n' "$*"; }
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "$1 not found"; }
 
 require_command codesign
 require_command ditto
 require_command file
+require_command node
 require_command realpath
+require_command zipinfo
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
-  require_command node
   require_command xcodebuild
   require_command shasum
   require_command sign_update
@@ -259,6 +294,7 @@ verify_app_payload() {
   local provenance_status=0
   local source_commit
   local executable_name
+  local short_version bundle_version minimum_system_version
   executable_name="$(bundle_executable_name "$app_path")"
   local executable_path="$app_path/Contents/MacOS/$executable_name"
 
@@ -273,8 +309,12 @@ verify_app_payload() {
 
   source_commit="$(/usr/libexec/PlistBuddy -c 'Print :PeekabooSourceCommit' \
     "$app_path/Contents/Info.plist" 2>/dev/null || true)"
-  peekaboo_validate_artifact_source_commit "$ROOT" "$source_commit" "$SOURCE_COMMIT" ||
-    provenance_status=$?
+  if [[ -n "${PEEKABOO_RELEASE_SOURCE_COMMIT:-}" ]]; then
+    [[ "$source_commit" == "$SOURCE_COMMIT" ]] || provenance_status=5
+  else
+    peekaboo_validate_artifact_source_commit "$ROOT" "$source_commit" "$SOURCE_COMMIT" ||
+      provenance_status=$?
+  fi
   case "$provenance_status" in
     0) ;;
     2) fail "App has no exact 40-hex source commit: $app_path" ;;
@@ -283,6 +323,17 @@ verify_app_payload() {
     5) fail "App source commit does not match the release root: $app_path" ;;
     *) fail "App source provenance validation failed: $app_path" ;;
   esac
+
+  short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+    "$app_path/Contents/Info.plist")"
+  bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+    "$app_path/Contents/Info.plist")"
+  [[ "$short_version" == "$VERSION" && "$bundle_version" == "$BUILD_NUMBER" ]] ||
+    fail "App version/build differs from release plan: $short_version ($bundle_version)"
+  minimum_system_version="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' \
+    "$app_path/Contents/Info.plist")"
+  [[ "$minimum_system_version" == "$MINIMUM_SYSTEM_VERSION" ]] ||
+    fail "App minimum system version differs from release plan: $minimum_system_version"
 
   "$ROOT_DIR/scripts/verify-native-only-app.sh" --app "$app_path"
 
@@ -368,8 +419,28 @@ fi
 verify_zip() {
   local zip_path="$1"
   local verify_dir="$2"
+  local members_path
 
   [[ -f "$zip_path" ]] || fail "Zip not found: $zip_path"
+  members_path="$(mktemp "${TMPDIR:-/tmp}/peekaboo-app-zip-members.XXXXXX")"
+  if ! /usr/bin/zipinfo -1 "$zip_path" > "$members_path"; then
+    rm -f "$members_path"
+    fail "Could not inspect app zip members: $zip_path"
+  fi
+  if ! (
+    cd "$ROOT_DIR"
+    ZIP_MEMBERS_PATH="$members_path" APP_ROOT="$APP_NAME.app" node --input-type=module <<'NODE'
+import fs from 'node:fs';
+import { validateAppZipMembers } from './scripts/release-driver-contract.mjs';
+const members = fs.readFileSync(process.env.ZIP_MEMBERS_PATH, 'utf8').split(/\r?\n/);
+if (members.at(-1) === '') members.pop();
+validateAppZipMembers({ members, appRoot: process.env.APP_ROOT });
+NODE
+  ); then
+    rm -f "$members_path"
+    fail "App zip contains members outside the exact $APP_NAME.app root"
+  fi
+  rm -f "$members_path"
   rm -rf "$verify_dir"
   mkdir -p "$verify_dir"
   ditto -x -k "$zip_path" "$verify_dir"
@@ -544,6 +615,30 @@ if [[ "$UPDATE_APPCAST" == true ]]; then
   MINIMUM_SYSTEM_VERSION="$MINIMUM_SYSTEM_VERSION" \
   APPCAST_PATH="$APPCAST_PATH" \
   node "$ROOT_DIR/scripts/update-appcast-entry.mjs"
+  APPCAST_RECEIPT="$RELEASE_DIR/appcast-entry.json"
+  VERSION="$VERSION" RELEASE_URL="$RELEASE_URL" ASSET_URL="$ASSET_URL" \
+    BUILD_NUMBER="$BUILD_NUMBER" ZIP_LENGTH="$ZIP_LENGTH" ED_SIGNATURE="$ED_SIGNATURE" \
+    MINIMUM_SYSTEM_VERSION="$MINIMUM_SYSTEM_VERSION" node > "$APPCAST_RECEIPT" <<'NODE'
+const value = {
+  assetUrl: process.env.ASSET_URL,
+  buildNumber: process.env.BUILD_NUMBER,
+  edSignature: process.env.ED_SIGNATURE,
+  minimumSystemVersion: process.env.MINIMUM_SYSTEM_VERSION,
+  releaseUrl: process.env.RELEASE_URL,
+  version: process.env.VERSION,
+  zipLength: process.env.ZIP_LENGTH,
+};
+process.stdout.write(`${JSON.stringify(value)}\n`);
+NODE
+  chmod 0444 "$APPCAST_RECEIPT"
+  APPCAST_SNAPSHOT="$RELEASE_DIR/appcast.xml"
+  cp "$APPCAST_PATH" "$APPCAST_SNAPSHOT"
+  chmod 0444 "$APPCAST_SNAPSHOT"
+  grep -F -v -e "  appcast-entry.json" -e "  appcast.xml" \
+    "$CHECKSUMS_PATH" > "$CHECKSUMS_PATH.tmp" || true
+  mv "$CHECKSUMS_PATH.tmp" "$CHECKSUMS_PATH"
+  shasum -a 256 "$APPCAST_RECEIPT" | /usr/bin/awk '{print $1 "  appcast-entry.json"}' >> "$CHECKSUMS_PATH"
+  shasum -a 256 "$APPCAST_SNAPSHOT" | /usr/bin/awk '{print $1 "  appcast.xml"}' >> "$CHECKSUMS_PATH"
   if command -v xmllint >/dev/null 2>&1; then
     xmllint --noout "$APPCAST_PATH"
   fi

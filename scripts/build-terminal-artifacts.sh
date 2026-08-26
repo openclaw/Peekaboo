@@ -240,6 +240,8 @@ record_release_helper() {
   [[ "$helper_sha" == "$EXPECTED_RELEASE_HELPER_SHA" && "$helper_lib_sha" == "$EXPECTED_RELEASE_HELPER_LIB_SHA" ]] || \
     fail 'mac-release package-run contract hash mismatch'
   RELEASE_HELPER_COMMIT="$helper_commit"
+  RELEASE_HELPER_EXECUTABLE_SHA256="$helper_sha"
+  RELEASE_HELPER_LIBRARY_SHA256="$helper_lib_sha"
 }
 
 record_toolchain() {
@@ -1357,6 +1359,8 @@ case "$COMMAND" in
   check-helper)
     record_release_helper
     printf 'mac-release helper: %s\n' "$RELEASE_HELPER_COMMIT"
+    printf 'mac-release helper executable sha256: %s\n' "$RELEASE_HELPER_EXECUTABLE_SHA256"
+    printf 'mac-release helper library sha256: %s\n' "$RELEASE_HELPER_LIBRARY_SHA256"
     ;;
   all)
     case "${PEEKABOO_TERMINAL_TEST_MODE:-0}" in 0|false|no|off|'') ;; *) fail 'all refuses fixture mode' ;; esac

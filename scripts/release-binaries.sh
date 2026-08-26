@@ -12,24 +12,22 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Script directory and project root
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 # shellcheck source=scripts/native-only-policy.sh
 source "$SCRIPT_DIR/native-only-policy.sh"
 # shellcheck source=scripts/source-provenance.sh
 source "$SCRIPT_DIR/source-provenance.sh"
+# shellcheck source=scripts/release-version.sh
+source "$SCRIPT_DIR/release-version.sh"
 BUILD_DIR="$PROJECT_ROOT/build"
 RELEASE_DIR="${RELEASE_DIR:-$BUILD_DIR/release}"
 MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$PROJECT_ROOT/.mac-release.env}"
-if [ -f "$MAC_RELEASE_MANIFEST" ]; then
-    # shellcheck source=/Users/steipete/Projects/Peekaboo/.mac-release.env
-    source "$MAC_RELEASE_MANIFEST"
-fi
-CLI_SIGN_IDENTITY="${MAC_RELEASE_CLI_CODESIGN_IDENTITY:-Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)}"
-CLI_SIGN_TEAM_ID="${MAC_RELEASE_CLI_CODESIGN_TEAM_ID:-FWJYW4S8P8}"
-CLI_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$CLI_SIGN_TEAM_ID\""
-NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
-export NOTARYTOOL_PROFILE
+RELEASE_CONTRACT="$PROJECT_ROOT/scripts/release-driver-contract.mjs"
+GITHUB_HOST=github.com
+GITHUB_REPOSITORY=github.com/openclaw/Peekaboo
+GITHUB_API_REPOSITORY=openclaw/Peekaboo
+NPM_REGISTRY=https://registry.npmjs.org
 
 echo -e "${BLUE}🚀 Peekaboo Release Build Script${NC}"
 
@@ -38,8 +36,255 @@ fail() {
     exit 1
 }
 
+canonical_path_allow_missing() {
+    local candidate="$1" suffix="" component
+    [[ "$candidate" == /* ]] || candidate="$PROJECT_ROOT/$candidate"
+    [[ "/$candidate/" != */../* && "/$candidate/" != */./* ]] ||
+        fail "Release directory must not contain parent or current-directory components"
+    while [[ "$candidate" != / && "$candidate" == */ ]]; do
+        candidate=${candidate%/}
+    done
+    [[ ! -L "$candidate" ]] || fail "Release directory must not be a symlink"
+    while [[ ! -e "$candidate" ]]; do
+        component=$(basename "$candidate")
+        suffix="/$component$suffix"
+        candidate=$(dirname "$candidate")
+    done
+    [[ -d "$candidate" ]] || fail "Release path ancestor is not a directory: $candidate"
+    printf '%s%s\n' "$(cd "$candidate" && pwd -P)" "$suffix"
+}
+
+RELEASE_DIR=$(canonical_path_allow_missing "$RELEASE_DIR")
+USER_HOME_DIR=$(cd "${HOME:?}" && pwd -P)
+[[ "$RELEASE_DIR" != "/" && "$RELEASE_DIR" != "$PROJECT_ROOT" &&
+   "$PROJECT_ROOT" != "$RELEASE_DIR"/* && "$RELEASE_DIR" != "$USER_HOME_DIR" &&
+   "$USER_HOME_DIR" != "$RELEASE_DIR"/* ]] ||
+    fail "Release directory must be a dedicated narrow output path"
+RELEASE_OUTPUT_MARKER_CONTENT="peekaboo-release-output-v1:$PROJECT_ROOT:$RELEASE_DIR"
+
+release_dir_is_build_output() {
+    [[ "$RELEASE_DIR" == "$BUILD_DIR" || "$RELEASE_DIR" == "$BUILD_DIR"/* ]]
+}
+
+validate_release_output_directory() {
+    local marker="$RELEASE_DIR/.peekaboo-release-output" relative
+    local -a path_components
+    [[ ! -L "$RELEASE_DIR" ]] || fail "Release directory must not be a symlink"
+    if release_dir_is_build_output; then
+        return 0
+    fi
+    [[ "$RELEASE_DIR" != "$PROJECT_ROOT"/* ]] ||
+        fail "Custom release directory must be outside the source checkout"
+    relative=${RELEASE_DIR#/}
+    IFS=/ read -r -a path_components <<< "$relative"
+    [[ ${#path_components[@]} -ge 3 ]] ||
+        fail "Custom release directory is too broad for recursive cleanup"
+    [[ ! -e "$RELEASE_DIR" || -d "$RELEASE_DIR" ]] ||
+        fail "Custom release output exists and is not a directory"
+    if [[ -d "$RELEASE_DIR" ]]; then
+        [[ -f "$marker" && ! -L "$marker" && "$(<"$marker")" == "$RELEASE_OUTPUT_MARKER_CONTENT" ]] ||
+            fail "Existing custom release directory lacks the exact Peekaboo output marker"
+    fi
+}
+
+reset_release_output_directory() {
+    validate_release_output_directory
+    rm -rf "$RELEASE_DIR"
+    mkdir -p "$RELEASE_DIR"
+    if ! release_dir_is_build_output; then
+        printf '%s\n' "$RELEASE_OUTPUT_MARKER_CONTENT" > "$RELEASE_DIR/.peekaboo-release-output"
+        chmod 0444 "$RELEASE_DIR/.peekaboo-release-output"
+    fi
+}
+
+validate_release_output_directory
+
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "$1 not found"
+}
+
+sha256_file() {
+    /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'
+}
+
+release_helper_pin() {
+    local output commit executable_sha library_sha
+    output=$("$PROJECT_ROOT/scripts/build-terminal-artifacts.sh" check-helper) ||
+        fail "Trusted release helper verification failed"
+    commit=$(printf '%s\n' "$output" | /usr/bin/sed -n 's/^mac-release helper: //p')
+    executable_sha=$(printf '%s\n' "$output" |
+        /usr/bin/sed -n 's/^mac-release helper executable sha256: //p')
+    library_sha=$(printf '%s\n' "$output" |
+        /usr/bin/sed -n 's/^mac-release helper library sha256: //p')
+    [[ "$commit" =~ ^[0-9a-f]{40}$ && "$executable_sha" =~ ^[0-9a-f]{64}$ &&
+       "$library_sha" =~ ^[0-9a-f]{64}$ ]] ||
+        fail "Trusted release helper did not report one exact pin"
+    printf '%s\t%s\t%s\n' "$commit" "$executable_sha" "$library_sha"
+}
+
+verify_release_source_state() {
+    local observed_head status observed_appcast_sha
+    observed_head=$(git -C "$PROJECT_ROOT" rev-parse HEAD) || return 1
+    status=$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=all) || return 1
+    observed_appcast_sha=""
+    [[ -z "${RELEASE_APPCAST_SHA256:-}" ]] || observed_appcast_sha=$(sha256_file "$PROJECT_ROOT/appcast.xml")
+    EXPECTED_COMMIT="$RELEASE_SOURCE_COMMIT" OBSERVED_COMMIT="$observed_head" \
+      PORCELAIN="$status" EXPECTED_APPCAST_SHA256="${RELEASE_APPCAST_SHA256:-}" \
+      OBSERVED_APPCAST_SHA256="$observed_appcast_sha" node -e '
+const input = {
+  expectedCommit: process.env.EXPECTED_COMMIT,
+  observedCommit: process.env.OBSERVED_COMMIT,
+  porcelain: process.env.PORCELAIN,
+  expectedAppcastSHA256: process.env.EXPECTED_APPCAST_SHA256 || null,
+  observedAppcastSHA256: process.env.OBSERVED_APPCAST_SHA256 || null,
+};
+process.stdout.write(JSON.stringify(input));
+' | node "$RELEASE_CONTRACT" source-state
+}
+
+assert_release_plan() {
+    local observed_version observed_pin
+    verify_release_source_state ||
+        fail "Release checkout changed after the release plan was frozen"
+    observed_version=$(node -p "require('$PROJECT_ROOT/package.json').version")
+    [[ "$observed_version" == "$VERSION" ]] || fail "Release version changed after the release plan was frozen"
+    observed_pin=$(release_helper_pin)
+    [[ "$observed_pin" == "$RELEASE_HELPER_PIN" ]] ||
+        fail "Release helper changed after the release plan was frozen"
+    if [[ -n "${RELEASE_PLAN_SHA256:-}" ]]; then
+        [[ -f "$RELEASE_DIR/release-plan.json" && ! -L "$RELEASE_DIR/release-plan.json" &&
+           "$(sha256_file "$RELEASE_DIR/release-plan.json")" == "$RELEASE_PLAN_SHA256" ]] ||
+            fail "Release plan artifact changed after it was frozen"
+        if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
+            [[ -f "$RELEASE_DIR/release-proof.md" && ! -L "$RELEASE_DIR/release-proof.md" &&
+               "$(sha256_file "$RELEASE_DIR/release-proof.md")" == "$RELEASE_PROOF_SHA256" ]] ||
+                fail "Release proof artifact changed after it was frozen"
+        fi
+    fi
+}
+
+write_release_plan() {
+    local proof_json=null
+    [[ -z "$RELEASE_PROOF_SHA256" ]] || proof_json="\"$RELEASE_PROOF_SHA256\""
+    printf '{"sourceCommit":"%s","version":"%s","helperCommit":"%s","helperExecutableSHA256":"%s","helperLibrarySHA256":"%s","proofSHA256":%s,"preflightCompleted":%s,"publicationEligible":%s}\n' \
+        "$RELEASE_SOURCE_COMMIT" "$VERSION" "$RELEASE_HELPER_COMMIT" \
+        "$RELEASE_HELPER_EXECUTABLE_SHA256" "$RELEASE_HELPER_LIBRARY_SHA256" "$proof_json" \
+        "$RELEASE_PREFLIGHT_COMPLETED" "$RELEASE_PUBLICATION_ELIGIBLE" |
+    node "$RELEASE_CONTRACT" release-plan > "$RELEASE_DIR/release-plan.json"
+    chmod 0444 "$RELEASE_DIR/release-plan.json"
+    RELEASE_PLAN_SHA256=$(sha256_file "$RELEASE_DIR/release-plan.json")
+    if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
+        cp "$RELEASE_PROOF_FILE" "$RELEASE_DIR/release-proof.md"
+        chmod 0444 "$RELEASE_DIR/release-proof.md"
+        [[ "$(sha256_file "$RELEASE_DIR/release-proof.md")" == "$RELEASE_PROOF_SHA256" ]] ||
+            fail "Release proof changed while being retained"
+    fi
+}
+
+validate_tracked_release_notes() {
+    node "$RELEASE_CONTRACT" tracked-notes <<EOF >/dev/null
+{"changelog":$(node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(process.argv[1], "utf8")))' "$PROJECT_ROOT/CHANGELOG.md"),"notes":$(node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(process.argv[1], "utf8")))' "$PROJECT_ROOT/release/release-notes.md"),"version":"$VERSION"}
+EOF
+}
+
+validate_publication_options() {
+    node "$RELEASE_CONTRACT" publication-options <<EOF
+{"skipChecks":$SKIP_CHECKS,"createGithubRelease":$CREATE_GITHUB_RELEASE,"publishNpm":$PUBLISH_NPM,"resumePublication":$RESUME_PUBLICATION,"retryNpmPublish":$RETRY_NPM_PUBLISH,"reuseBuiltCLI":$REUSE_BUILT_CLI,"universal":$UNIVERSAL,"includeMacApp":$INCLUDE_MAC_APP,"notarize":$MAC_APP_NOTARIZE,"appcast":$MAC_APP_APPCAST,"proofProvided":$RELEASE_PROOF_PROVIDED}
+EOF
+}
+
+app_zip_tree_sha256() {
+    local zip_path="$1" verify_root manifest app_path
+    verify_root=$(mktemp -d /tmp/peekaboo-release-app-tree.XXXXXX)
+    manifest="$verify_root/tree.json"
+    /usr/bin/ditto -x -k "$zip_path" "$verify_root/extracted"
+    app_path="$verify_root/extracted/Peekaboo.app"
+    [[ -d "$app_path" && ! -L "$app_path" ]] || {
+        rm -rf "$verify_root"
+        fail "Release app zip has no exact Peekaboo.app root"
+    }
+    /usr/bin/ruby "$PROJECT_ROOT/scripts/artifact-tree-manifest.rb" "$app_path" > "$manifest"
+    sha256_file "$manifest"
+    rm -rf "$verify_root"
+}
+
+npm_package_integrity() {
+    node -e '
+const fs = require("fs");
+const crypto = require("crypto");
+const bytes = fs.readFileSync(process.argv[1]);
+process.stdout.write(`sha512-${crypto.createHash("sha512").update(bytes).digest("base64")}`);
+' "$1"
+}
+
+render_github_body() {
+    local npm_metadata_path="${1:-}" output_path="$2"
+    (
+      cd "$PROJECT_ROOT"
+      NOTES_PATH="$PROJECT_ROOT/release/release-notes.md" \
+      PROOF_PATH="$RELEASE_DIR/release-proof.md" \
+      PLAN_PATH="$RELEASE_DIR/release-plan.json" \
+      CHECKSUMS_PATH="$RELEASE_DIR/checksums.txt" \
+      NPM_METADATA_PATH="$npm_metadata_path" node --input-type=module <<'EOF'
+import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+import { composeGitHubBody } from './scripts/release-driver-contract.mjs';
+const npm = process.env.NPM_METADATA_PATH ?
+  JSON.parse(fs.readFileSync(process.env.NPM_METADATA_PATH, 'utf8')) : null;
+process.stdout.write(composeGitHubBody({
+  notes: fs.readFileSync(process.env.NOTES_PATH, 'utf8'),
+  proof: fs.readFileSync(process.env.PROOF_PATH, 'utf8'),
+  plan: JSON.parse(fs.readFileSync(process.env.PLAN_PATH, 'utf8')),
+  checksumsSHA256: createHash('sha256').update(fs.readFileSync(process.env.CHECKSUMS_PATH)).digest('hex'),
+  npm,
+}));
+EOF
+    ) > "$output_path"
+}
+
+compose_github_body() {
+    local npm_metadata_path="${1:-}" body_tmp
+    [[ -n "$RELEASE_PROOF_SHA256" ]] || fail "Public release requires one frozen proof file"
+    body_tmp=$(mktemp "$RELEASE_DIR/.github-release-body.XXXXXX")
+    if ! render_github_body "$npm_metadata_path" "$body_tmp"; then
+        rm -f "$body_tmp"
+        return 1
+    fi
+    chmod 0444 "$body_tmp"
+    mv -f "$body_tmp" "$RELEASE_DIR/github-release-body.md"
+    GITHUB_BODY_SHA256=$(sha256_file "$RELEASE_DIR/github-release-body.md")
+    GITHUB_BODY_NPM_METADATA_SHA256=""
+    [[ -z "$npm_metadata_path" ]] || GITHUB_BODY_NPM_METADATA_SHA256=$(sha256_file "$npm_metadata_path")
+}
+
+assert_frozen_release_artifacts() {
+    [[ -n "$RELEASE_CHECKSUMS_SHA256" &&
+       "$(sha256_file "$RELEASE_DIR/checksums.txt")" == "$RELEASE_CHECKSUMS_SHA256" ]] ||
+        fail "Release artifact manifest changed after verification"
+    verify_checksums_file
+}
+
+assert_canonical_github_body() {
+    local npm_metadata_path="${1:-}" expected_tmp
+    assert_release_plan
+    assert_frozen_release_artifacts
+    validate_tracked_release_notes || fail "Tracked release notes changed before publication"
+    [[ -f "$RELEASE_DIR/github-release-body.md" && ! -L "$RELEASE_DIR/github-release-body.md" &&
+       "$(sha256_file "$RELEASE_DIR/github-release-body.md")" == "$GITHUB_BODY_SHA256" ]] ||
+        fail "GitHub release body changed after composition"
+    if [[ -n "$npm_metadata_path" ]]; then
+        [[ "$(sha256_file "$npm_metadata_path")" == "$GITHUB_BODY_NPM_METADATA_SHA256" ]] ||
+            fail "npm publication metadata changed after verification"
+    else
+        [[ -z "$GITHUB_BODY_NPM_METADATA_SHA256" ]] || fail "GitHub release body stage is inconsistent"
+    fi
+    expected_tmp=$(mktemp "$RELEASE_DIR/.github-release-body-expected.XXXXXX")
+    if ! render_github_body "$npm_metadata_path" "$expected_tmp" ||
+       ! cmp -s "$expected_tmp" "$RELEASE_DIR/github-release-body.md"; then
+        rm -f "$expected_tmp"
+        fail "GitHub release body is not the canonical plan-derived body"
+    fi
+    rm -f "$expected_tmp"
 }
 
 verify_release_binary_entitlements() {
@@ -257,42 +502,36 @@ verify_appcast_entry() {
     [ "$INCLUDE_MAC_APP" = true ] || return 0
     [ "$MAC_APP_APPCAST" = true ] || return 0
 
-    local app_zip_name
-    local app_zip_length
-    app_zip_name=$(basename "$MAC_APP_ZIP_PATH")
-    app_zip_length=$(stat -f%z "$MAC_APP_ZIP_PATH")
-
-    VERSION="$VERSION" \
-    APPCAST_PATH="$PROJECT_ROOT/appcast.xml" \
-    APP_ZIP_NAME="$app_zip_name" \
-    APP_ZIP_LENGTH="$app_zip_length" \
-    node <<'EOF'
-const fs = require("node:fs");
-
-const xml = fs.readFileSync(process.env.APPCAST_PATH, "utf8");
-const version = process.env.VERSION;
-const items = xml.match(/    <item>[\s\S]*?    <\/item>/g) ?? [];
-const matches = items.filter((item) => item.includes(`sparkle:shortVersionString="${version}"`));
-
-if (matches.length !== 1) {
-  throw new Error(`Expected exactly one appcast item for ${version}, found ${matches.length}`);
+    [[ -f "$RELEASE_DIR/appcast-entry.json" && ! -L "$RELEASE_DIR/appcast-entry.json" ]] ||
+        fail "appcast-entry.json missing"
+    [[ -f "$RELEASE_DIR/appcast.xml" && ! -L "$RELEASE_DIR/appcast.xml" &&
+       "$(sha256_file "$RELEASE_DIR/appcast.xml")" == "$(sha256_file "$PROJECT_ROOT/appcast.xml")" ]] ||
+        fail "Generated appcast differs from the retained release snapshot"
+    (
+      cd "$PROJECT_ROOT"
+      APPCAST_PATH="$PROJECT_ROOT/appcast.xml" \
+      APPCAST_RECEIPT="$RELEASE_DIR/appcast-entry.json" \
+      APP_ZIP_LENGTH="$(stat -f%z "$MAC_APP_ZIP_PATH")" \
+      APPCAST_BUILD_NUMBER="$(peekaboo_release_build_number "$VERSION")" \
+      APPCAST_MINIMUM_SYSTEM_VERSION="15.0" \
+      APPCAST_ASSET_URL="https://github.com/openclaw/Peekaboo/releases/download/v${VERSION}/$(basename "$MAC_APP_ZIP_PATH")" \
+      APPCAST_RELEASE_URL="https://github.com/openclaw/Peekaboo/releases/tag/v${VERSION}" \
+      VERSION="$VERSION" node --input-type=module <<'EOF'
+import fs from 'node:fs';
+import { validateAppcast } from './scripts/update-appcast-entry.mjs';
+const xml = fs.readFileSync(process.env.APPCAST_PATH, 'utf8');
+const expected = JSON.parse(fs.readFileSync(process.env.APPCAST_RECEIPT, 'utf8'));
+if (expected.version !== process.env.VERSION || expected.zipLength !== process.env.APP_ZIP_LENGTH ||
+    expected.buildNumber !== process.env.APPCAST_BUILD_NUMBER ||
+    expected.minimumSystemVersion !== process.env.APPCAST_MINIMUM_SYSTEM_VERSION ||
+    expected.assetUrl !== process.env.APPCAST_ASSET_URL ||
+    expected.releaseUrl !== process.env.APPCAST_RELEASE_URL ||
+    typeof expected.edSignature !== 'string' || expected.edSignature.length < 40) {
+  throw new Error('Appcast receipt differs from the release app artifact');
 }
-
-const item = matches[0];
-const expectedUrl = `https://github.com/openclaw/Peekaboo/releases/download/v${version}/${process.env.APP_ZIP_NAME}`;
-const required = [
-  [`url="${expectedUrl}"`, "asset URL"],
-  [`length="${process.env.APP_ZIP_LENGTH}"`, "asset length"],
-  [`sparkle:shortVersionString="${version}"`, "short version"],
-  ["sparkle:edSignature=", "Sparkle EdDSA signature"],
-];
-
-for (const [needle, label] of required) {
-  if (!item.includes(needle)) {
-    throw new Error(`Appcast ${version} item missing ${label}: ${needle}`);
-  }
-}
+validateAppcast(xml, expected);
 EOF
+    )
 
     if command -v xmllint >/dev/null 2>&1; then
         xmllint --noout "$PROJECT_ROOT/appcast.xml"
@@ -308,20 +547,34 @@ verify_checksums_file() {
         fail "checksums.txt missing $CLI_TARBALL_NAME"
     grep -Fq "  $(basename "$NPM_PACKAGE_PATH")" "$checksum_path" ||
         fail "checksums.txt missing $(basename "$NPM_PACKAGE_PATH")"
+    grep -Fq "  release-plan.json" "$checksum_path" ||
+        fail "checksums.txt missing release-plan.json"
+    if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
+        grep -Fq "  release-proof.md" "$checksum_path" ||
+            fail "checksums.txt missing release-proof.md"
+    fi
     if [ "$INCLUDE_MAC_APP" = true ]; then
         grep -Fq "  $(basename "$MAC_APP_ZIP_PATH")" "$checksum_path" ||
             fail "checksums.txt missing $(basename "$MAC_APP_ZIP_PATH")"
         grep -Fq "  $(basename "$MAC_APP_DMG_PATH")" "$checksum_path" ||
             fail "checksums.txt missing $(basename "$MAC_APP_DMG_PATH")"
+        if [ "$MAC_APP_APPCAST" = true ]; then
+            grep -Fq "  appcast-entry.json" "$checksum_path" ||
+                fail "checksums.txt missing appcast-entry.json"
+            grep -Fq "  appcast.xml" "$checksum_path" ||
+                fail "checksums.txt missing appcast.xml"
+        fi
     fi
 }
 
 verify_release_artifacts() {
+    local APP_ZIP_TREE_SHA256
     echo -e "\n${BLUE}Verifying release artifacts...${NC}"
     require_command tar
     require_command shasum
     require_command file
     require_command codesign
+    assert_release_plan
 
     verify_cli_tarball "$RELEASE_DIR/$CLI_TARBALL_NAME"
     verify_npm_tarball "$NPM_PACKAGE_PATH"
@@ -332,8 +585,16 @@ verify_release_artifacts() {
         if [ "$MAC_APP_NOTARIZE" = false ]; then
             MAC_VERIFY_ARGS+=(--no-notarize)
         fi
-        "$PROJECT_ROOT/scripts/release-macos-app.sh" "${MAC_VERIFY_ARGS[@]}"
+        PEEKABOO_RELEASE_SOURCE_COMMIT="$RELEASE_SOURCE_COMMIT" \
+            PEEKABOO_RELEASE_VERSION="$VERSION" \
+            PEEKABOO_RELEASE_APPCAST_SHA256="${RELEASE_APPCAST_SHA256:-}" \
+            MAC_RELEASE_EXPECTED_HELPER_COMMIT="$RELEASE_HELPER_COMMIT" \
+            MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256="$RELEASE_HELPER_EXECUTABLE_SHA256" \
+            MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$RELEASE_HELPER_LIBRARY_SHA256" \
+            "$PROJECT_ROOT/scripts/release-macos-app.sh" "${MAC_VERIFY_ARGS[@]}"
+        APP_ZIP_TREE_SHA256=$(app_zip_tree_sha256 "$MAC_APP_ZIP_PATH")
         DMG_VERIFY_ARGS=(--version "$VERSION" --verify-only "$MAC_APP_DMG_PATH")
+        DMG_VERIFY_ARGS+=(--expected-app-tree-sha256 "$APP_ZIP_TREE_SHA256")
         if [ "$MAC_APP_NOTARIZE" = false ]; then
             DMG_VERIFY_ARGS+=(--no-notarize)
         fi
@@ -341,65 +602,493 @@ verify_release_artifacts() {
         verify_appcast_entry
     fi
 
+    RELEASE_CHECKSUMS_SHA256=$(sha256_file "$RELEASE_DIR/checksums.txt")
     echo -e "${GREEN}✅ Release artifact verification passed${NC}"
 }
 
-verify_github_release_assets() {
-    local expected_assets_json
-    local release_json
-    local expected_assets
-
-    echo -e "\n${BLUE}Verifying GitHub release assets...${NC}"
+expected_release_assets_json() {
+    local expected_assets expected_assets_json
     expected_assets=(
-        "$CLI_TARBALL_NAME=$(stat -f%z "$RELEASE_DIR/$CLI_TARBALL_NAME")"
-        "$(basename "$NPM_PACKAGE_PATH")=$(stat -f%z "$NPM_PACKAGE_PATH")"
-        "checksums.txt=$(stat -f%z "$RELEASE_DIR/checksums.txt")"
+        "$CLI_TARBALL_NAME=$(stat -f%z "$RELEASE_DIR/$CLI_TARBALL_NAME")=$(sha256_file "$RELEASE_DIR/$CLI_TARBALL_NAME")"
+        "$(basename "$NPM_PACKAGE_PATH")=$(stat -f%z "$NPM_PACKAGE_PATH")=$(sha256_file "$NPM_PACKAGE_PATH")"
+        "checksums.txt=$(stat -f%z "$RELEASE_DIR/checksums.txt")=$(sha256_file "$RELEASE_DIR/checksums.txt")"
+        "release-plan.json=$(stat -f%z "$RELEASE_DIR/release-plan.json")=$(sha256_file "$RELEASE_DIR/release-plan.json")"
     )
+    if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
+        expected_assets+=("release-proof.md=$(stat -f%z "$RELEASE_DIR/release-proof.md")=$(sha256_file "$RELEASE_DIR/release-proof.md")")
+    fi
     if [ -n "$MAC_APP_ZIP_PATH" ]; then
-        expected_assets+=("$(basename "$MAC_APP_ZIP_PATH")=$(stat -f%z "$MAC_APP_ZIP_PATH")")
-        expected_assets+=("$(basename "$MAC_APP_DMG_PATH")=$(stat -f%z "$MAC_APP_DMG_PATH")")
+        expected_assets+=("$(basename "$MAC_APP_ZIP_PATH")=$(stat -f%z "$MAC_APP_ZIP_PATH")=$(sha256_file "$MAC_APP_ZIP_PATH")")
+        expected_assets+=("$(basename "$MAC_APP_DMG_PATH")=$(stat -f%z "$MAC_APP_DMG_PATH")=$(sha256_file "$MAC_APP_DMG_PATH")")
+        expected_assets+=("appcast-entry.json=$(stat -f%z "$RELEASE_DIR/appcast-entry.json")=$(sha256_file "$RELEASE_DIR/appcast-entry.json")")
+        expected_assets+=("appcast.xml=$(stat -f%z "$RELEASE_DIR/appcast.xml")=$(sha256_file "$RELEASE_DIR/appcast.xml")")
     fi
     expected_assets_json=$(node -e '
 const assets = Object.fromEntries(process.argv.slice(1).map((entry) => {
-  const index = entry.lastIndexOf("=");
-  return [entry.slice(0, index), Number(entry.slice(index + 1))];
+  const parts = entry.split("=");
+  const sha256 = parts.pop();
+  const size = Number(parts.pop());
+  return [parts.join("="), {size, sha256}];
 }));
 console.log(JSON.stringify(assets));
 ' "${expected_assets[@]}")
-
-    release_json=$(gh release view "v${VERSION}" --json isDraft,tagName,assets)
-    VERSION="$VERSION" EXPECTED_ASSETS_JSON="$expected_assets_json" RELEASE_JSON="$release_json" node <<'EOF'
-const expected = JSON.parse(process.env.EXPECTED_ASSETS_JSON);
-const release = JSON.parse(process.env.RELEASE_JSON);
-
-if (release.tagName !== `v${process.env.VERSION}`) {
-  throw new Error(`Unexpected release tag: ${release.tagName}`);
+    printf '%s\n' "$expected_assets_json"
 }
 
-const assets = release.assets ?? [];
-for (const [name, size] of Object.entries(expected)) {
-  const asset = assets.find((entry) => entry.name === name);
-  if (!asset) {
-    throw new Error(`GitHub release asset missing: ${name}`);
-  }
-  if (asset.size !== size) {
-    throw new Error(`GitHub release asset size mismatch for ${name}: expected ${size}, got ${asset.size}`);
-  }
+render_publication_receipt() {
+    local output_path="$1" expected_assets_json
+    expected_assets_json=$(expected_release_assets_json)
+    printf '{"sourceCommit":"%s","version":"%s","checksumsSHA256":"%s","githubBodySHA256":"%s","assets":%s}\n' \
+      "$RELEASE_SOURCE_COMMIT" "$VERSION" "$RELEASE_CHECKSUMS_SHA256" "$GITHUB_BODY_SHA256" \
+      "$expected_assets_json" | node "$RELEASE_CONTRACT" publication-receipt > "$output_path"
 }
-EOF
+
+freeze_publication_receipt() {
+    local npm_metadata_path="${1:-}" receipt_tmp receipt_path
+    assert_canonical_github_body "$npm_metadata_path"
+    receipt_tmp=$(mktemp "$RELEASE_DIR/.publication-receipt.XXXXXX")
+    render_publication_receipt "$receipt_tmp"
+    chmod 0444 "$receipt_tmp"
+    if [[ -n "$npm_metadata_path" ]]; then
+        receipt_path="$RELEASE_DIR/publication-receipt.final.json"
+    else
+        receipt_path="$RELEASE_DIR/publication-receipt.pending.json"
+    fi
+    if /bin/ln "$receipt_tmp" "$receipt_path" 2>/dev/null; then
+        rm -f "$receipt_tmp"
+    else
+        [[ -f "$receipt_path" && ! -L "$receipt_path" ]] || {
+            rm -f "$receipt_tmp"
+            fail "Existing publication receipt is not one regular file"
+        }
+        if ! cmp -s "$receipt_tmp" "$receipt_path"; then
+            rm -f "$receipt_tmp"
+            fail "Existing publication receipt differs from the canonical stage"
+        fi
+        rm -f "$receipt_tmp"
+    fi
+    PUBLICATION_RECEIPT_PATH="$receipt_path"
+    PUBLICATION_RECEIPT_SHA256=$(sha256_file "$receipt_path")
+}
+
+assert_publication_receipt() {
+    local npm_metadata_path="${1:-}" expected_tmp receipt_path
+    assert_canonical_github_body "$npm_metadata_path"
+    if [[ -n "$npm_metadata_path" ]]; then
+        receipt_path="$RELEASE_DIR/publication-receipt.final.json"
+    else
+        receipt_path="$RELEASE_DIR/publication-receipt.pending.json"
+    fi
+    [[ "$PUBLICATION_RECEIPT_PATH" == "$receipt_path" && -f "$receipt_path" &&
+       ! -L "$receipt_path" && "$(sha256_file "$receipt_path")" == "$PUBLICATION_RECEIPT_SHA256" ]] ||
+        fail "Publication receipt changed after it was frozen"
+    expected_tmp=$(mktemp "$RELEASE_DIR/.publication-receipt-expected.XXXXXX")
+    render_publication_receipt "$expected_tmp"
+    if ! cmp -s "$expected_tmp" "$receipt_path"; then
+        rm -f "$expected_tmp"
+        fail "Publication receipt differs from the frozen local artifacts"
+    fi
+    rm -f "$expected_tmp"
+}
+
+validate_retained_pending_receipt() {
+    local pending_path="$RELEASE_DIR/publication-receipt.pending.json"
+    local body_tmp receipt_tmp saved_body_sha saved_npm_sha
+    [[ -f "$pending_path" && ! -L "$pending_path" ]] ||
+        fail "Retained pending publication receipt is missing"
+    body_tmp=$(mktemp "$RELEASE_DIR/.pending-body-expected.XXXXXX")
+    receipt_tmp=$(mktemp "$RELEASE_DIR/.pending-receipt-expected.XXXXXX")
+    render_github_body "" "$body_tmp"
+    saved_body_sha="$GITHUB_BODY_SHA256"
+    saved_npm_sha="$GITHUB_BODY_NPM_METADATA_SHA256"
+    GITHUB_BODY_SHA256=$(sha256_file "$body_tmp")
+    GITHUB_BODY_NPM_METADATA_SHA256=""
+    render_publication_receipt "$receipt_tmp"
+    GITHUB_BODY_SHA256="$saved_body_sha"
+    GITHUB_BODY_NPM_METADATA_SHA256="$saved_npm_sha"
+    if ! cmp -s "$receipt_tmp" "$pending_path"; then
+        rm -f "$body_tmp" "$receipt_tmp"
+        fail "Retained pending publication receipt differs from the original artifacts"
+    fi
+    RETAINED_PENDING_RECEIPT_SHA256=$(sha256_file "$pending_path")
+    rm -f "$body_tmp" "$receipt_tmp"
+}
+
+activate_retained_pending_receipt() {
+    PUBLICATION_RECEIPT_PATH="$RELEASE_DIR/publication-receipt.pending.json"
+    PUBLICATION_RECEIPT_SHA256="$RETAINED_PENDING_RECEIPT_SHA256"
+    assert_publication_receipt
+}
+
+github_tag_commit() {
+    local allow_missing="${1:-false}" refs tuple object_type object_sha depth=0
+    refs=$(gh api --hostname "$GITHUB_HOST" \
+      "repos/${GITHUB_API_REPOSITORY}/git/matching-refs/tags/v${VERSION}") ||
+        fail "Could not inspect the GitHub release tag"
+    tuple=$(REFS_JSON="$refs" TAG_REF="refs/tags/v${VERSION}" node -e '
+const refs = JSON.parse(process.env.REFS_JSON);
+const matches = refs.filter((entry) => entry?.ref === process.env.TAG_REF);
+if (matches.length > 1) throw new Error("duplicate exact tag refs");
+if (matches.length === 1) process.stdout.write(`${matches[0].object.type}\t${matches[0].object.sha}`);
+') || fail "GitHub returned an invalid release tag reference"
+    if [[ -z "$tuple" ]]; then
+        [[ "$allow_missing" == true ]] && return 2
+        fail "GitHub release tag is missing"
+    fi
+    IFS=$'\t' read -r object_type object_sha <<< "$tuple"
+    while [[ "$object_type" == tag ]]; do
+        (( depth < 8 )) || fail "GitHub release tag nesting is invalid"
+        tuple=$(gh api --hostname "$GITHUB_HOST" \
+          "repos/${GITHUB_API_REPOSITORY}/git/tags/${object_sha}" --jq \
+          '[.object.type, .object.sha] | @tsv') || fail "Could not peel the GitHub release tag"
+        IFS=$'\t' read -r object_type object_sha <<< "$tuple"
+        ((depth += 1))
+    done
+    [[ "$object_type" == commit && "$object_sha" =~ ^[0-9a-f]{40}$ ]] ||
+        fail "GitHub release tag does not resolve to a commit"
+    printf '%s\n' "$object_sha"
+}
+
+ensure_github_release_tag() {
+    local tag_commit result
+    if tag_commit=$(github_tag_commit true); then
+        [[ "$tag_commit" == "$RELEASE_SOURCE_COMMIT" ]] ||
+            fail "Existing GitHub release tag differs from the frozen source commit"
+    else
+        result=$?
+        [[ $result -eq 2 ]] || fail "Could not validate the GitHub release tag"
+        if ! gh api --hostname "$GITHUB_HOST" --method POST \
+          "repos/${GITHUB_API_REPOSITORY}/git/refs" \
+          -f "ref=refs/tags/v${VERSION}" -f "sha=${RELEASE_SOURCE_COMMIT}" >/dev/null; then
+            tag_commit=$(github_tag_commit false) || fail "Could not create the frozen GitHub release tag"
+            [[ "$tag_commit" == "$RELEASE_SOURCE_COMMIT" ]] ||
+                fail "Concurrent GitHub release tag differs from the frozen source commit"
+        fi
+    fi
+    tag_commit=$(github_tag_commit false)
+    [[ "$tag_commit" == "$RELEASE_SOURCE_COMMIT" ]] ||
+        fail "GitHub release tag differs from the frozen source commit"
+}
+
+verify_github_release_assets() {
+    local npm_metadata_path="${1:-}" allow_body_mismatch="${2:-false}"
+    local allow_asset_repair="${3:-false}"
+    local expected_assets_json expected_body_json release_json tag_commit
+
+    echo -e "\n${BLUE}Verifying GitHub release assets...${NC}"
+    assert_publication_receipt "$npm_metadata_path"
+    expected_assets_json=$(node -e '
+const receipt = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+process.stdout.write(JSON.stringify(receipt.assets));
+' "$PUBLICATION_RECEIPT_PATH")
+    tag_commit=$(github_tag_commit false)
+    if [[ "$allow_body_mismatch" == true ]]; then
+        expected_body_json=null
+    else
+        expected_body_json=$(node -e \
+          'process.stdout.write(JSON.stringify(require("fs").readFileSync(process.argv[1], "utf8")))' \
+          "$RELEASE_DIR/github-release-body.md")
+    fi
+
+    release_json=$(gh api --hostname "$GITHUB_HOST" \
+      "repos/${GITHUB_API_REPOSITORY}/releases/tags/v${VERSION}")
+    printf '{"release":%s,"version":"%s","sourceCommit":"%s","tagCommit":"%s","expectedAssets":%s,"expectedBody":%s,"expectDraft":true,"allowAssetRepair":%s}\n' \
+        "$release_json" "$VERSION" "$RELEASE_SOURCE_COMMIT" "$tag_commit" "$expected_assets_json" \
+        "$expected_body_json" "$allow_asset_repair" |
+        node "$RELEASE_CONTRACT" github-release
     echo -e "${GREEN}✅ GitHub release assets verified${NC}"
+}
+
+verify_npm_publication() {
+    local metadata package_name publish_times metadata_tmp
+    package_name=$(node -p "require('$PROJECT_ROOT/package.json').name")
+    [[ "$(npm_package_integrity "$NPM_PACKAGE_PATH")" == "$NPM_PACKAGE_INTEGRITY" ]] ||
+        fail "Local npm package changed after it was frozen"
+    metadata=$(npm view "$package_name@$VERSION" --registry "$NPM_REGISTRY" --json)
+    publish_times=$(npm view "$package_name" time --registry "$NPM_REGISTRY" --json)
+    metadata=$(NPM_METADATA="$metadata" NPM_TIMES="$publish_times" node -e '
+const metadata = JSON.parse(process.env.NPM_METADATA);
+metadata.time = JSON.parse(process.env.NPM_TIMES);
+process.stdout.write(JSON.stringify(metadata));
+')
+    metadata_tmp=$(mktemp "$RELEASE_DIR/.npm-publication.XXXXXX")
+    printf '%s\n' "$metadata" > "$metadata_tmp"
+    chmod 0444 "$metadata_tmp"
+    mv -f "$metadata_tmp" "$RELEASE_DIR/npm-publication.json"
+    printf '{"metadata":%s,"packageName":"%s","version":"%s","localIntegrity":"%s"}\n' \
+        "$metadata" "$package_name" "$VERSION" "$NPM_PACKAGE_INTEGRITY" |
+        node "$RELEASE_CONTRACT" npm-publication
+    echo -e "${GREEN}✅ npm publication integrity verified${NC}"
+}
+
+configure_npm_publication() {
+    set +x
+    [[ -n "${NPM_TOKEN:-}" ]] ||
+        fail "NPM_TOKEN is required for isolated registry-pinned publication"
+    NPM_USERCONFIG=$(mktemp "${TMPDIR:-/tmp}/peekaboo-npmrc.XXXXXX")
+    trap 'rm -f "${NPM_USERCONFIG:-}"' EXIT
+    chmod 600 "$NPM_USERCONFIG"
+    printf 'registry=%s/\n@steipete:registry=%s/\n//registry.npmjs.org/:_authToken=%s\n' \
+      "$NPM_REGISTRY" "$NPM_REGISTRY" "$NPM_TOKEN" > "$NPM_USERCONFIG"
+    export NPM_CONFIG_USERCONFIG="$NPM_USERCONFIG"
+    unset NPM_TOKEN
+    local publish_config_registry
+    publish_config_registry=$(node -p "require('$PROJECT_ROOT/package.json').publishConfig?.registry ?? ''")
+    [[ -z "$publish_config_registry" || "$publish_config_registry" == "$NPM_REGISTRY" ||
+       "$publish_config_registry" == "$NPM_REGISTRY/" ]] ||
+        fail "package publishConfig.registry conflicts with npmjs publication"
+    if ! npm whoami --registry "$NPM_REGISTRY" >/dev/null 2>&1; then
+        fail "npm authentication missing or invalid for $NPM_REGISTRY"
+    fi
+    NPM_TAG=""
+    if [[ "$VERSION" == *"-"* ]]; then
+        NPM_TAG=beta
+    fi
+}
+
+confirm_npm_publication() {
+    local reply
+    if [ -n "$NPM_TAG" ]; then
+        echo -e "${YELLOW}About to publish @steipete/peekaboo@${VERSION} to npm (tag: ${NPM_TAG})${NC}"
+    else
+        echo -e "${YELLOW}About to publish @steipete/peekaboo@${VERSION} to npm${NC}"
+    fi
+    if ! read -p "Continue? (y/N) " -n 1 -r reply; then
+        fail "npm confirmation input closed; no new public action was taken"
+    fi
+    echo
+    [[ $reply =~ ^[Yy]$ ]] || fail "npm publication declined; no new public action was taken"
+}
+
+validate_npm_publish_attempt() {
+    local marker="$RELEASE_DIR/npm-publish-attempt.json"
+    [[ -f "$marker" && ! -L "$marker" ]] || return 1
+    printf '{"marker":%s,"sourceCommit":"%s","version":"%s","npmIntegrity":"%s"}\n' \
+      "$(node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))))' \
+        "$marker")" "$RELEASE_SOURCE_COMMIT" "$VERSION" "$NPM_PACKAGE_INTEGRITY" |
+      node "$RELEASE_CONTRACT" npm-publish-attempt || fail "npm publish-attempt marker is invalid"
+}
+
+write_npm_publish_attempt() {
+    local marker_tmp
+    marker_tmp=$(mktemp "$RELEASE_DIR/.npm-publish-attempt.XXXXXX")
+    printf '{"source_commit":"%s","version":"%s","npm_integrity":"%s"}\n' \
+      "$RELEASE_SOURCE_COMMIT" "$VERSION" "$NPM_PACKAGE_INTEGRITY" > "$marker_tmp"
+    chmod 0444 "$marker_tmp"
+    mv -f "$marker_tmp" "$RELEASE_DIR/npm-publish-attempt.json"
+}
+
+publish_frozen_npm_package() {
+    assert_publication_receipt
+    [[ "$(npm_package_integrity "$NPM_PACKAGE_PATH")" == "$NPM_PACKAGE_INTEGRITY" ]] ||
+        fail "Local npm package changed before publication"
+    write_npm_publish_attempt
+    if [ -n "$NPM_TAG" ]; then
+        pnpm publish "$NPM_PACKAGE_PATH" --registry "$NPM_REGISTRY" --tag "$NPM_TAG" --no-git-checks
+    else
+        pnpm publish "$NPM_PACKAGE_PATH" --registry "$NPM_REGISTRY" --no-git-checks
+    fi
+}
+
+npm_publication_exists() {
+    local package_name observed error_path error_output result state
+    package_name=$(node -p "require('$PROJECT_ROOT/package.json').name")
+    error_path=$(mktemp "${TMPDIR:-/tmp}/peekaboo-npm-view.XXXXXX")
+    if observed=$(npm view "$package_name@$VERSION" version --registry "$NPM_REGISTRY" \
+      --json 2> "$error_path"); then
+        result=0
+    else
+        result=$?
+    fi
+    error_output=$(<"$error_path")
+    rm -f "$error_path"
+    state=$(NPM_VIEW_STDOUT="$observed" NPM_VIEW_STDERR="$error_output" \
+      NPM_VIEW_EXIT="$result" EXPECTED_VERSION="$VERSION" node -e '
+process.stdout.write(JSON.stringify({
+  exitCode: Number(process.env.NPM_VIEW_EXIT),
+  stdout: process.env.NPM_VIEW_STDOUT,
+  stderr: process.env.NPM_VIEW_STDERR,
+  expectedVersion: process.env.EXPECTED_VERSION,
+}));
+' | node "$RELEASE_CONTRACT" npm-view-state) ||
+        fail "Could not determine whether npm publication already exists"
+    [[ "$state" == published ]] && return 0
+    [[ "$state" == absent ]] && return 2
+    fail "npm publication probe returned an unknown state"
+}
+
+prepare_release_assets() {
+    RELEASE_ASSETS=(
+        "$RELEASE_DIR/$CLI_TARBALL_NAME"
+        "$NPM_PACKAGE_PATH"
+        "$RELEASE_DIR/release-plan.json"
+    )
+    if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
+        RELEASE_ASSETS+=("$RELEASE_DIR/release-proof.md")
+    fi
+    if [[ -n "$MAC_APP_ZIP_PATH" ]]; then
+        RELEASE_ASSETS+=("$MAC_APP_ZIP_PATH" "$MAC_APP_DMG_PATH" \
+          "$RELEASE_DIR/appcast-entry.json" "$RELEASE_DIR/appcast.xml")
+    fi
+    RELEASE_ASSETS+=("$RELEASE_DIR/checksums.txt")
+}
+
+github_release_exists() {
+    local error_path result
+    error_path=$(mktemp "${TMPDIR:-/tmp}/peekaboo-gh-release-view.XXXXXX")
+    if gh api --hostname "$GITHUB_HOST" \
+      "repos/${GITHUB_API_REPOSITORY}/releases/tags/v${VERSION}" >/dev/null 2> "$error_path"; then
+        rm -f "$error_path"
+        return 0
+    else
+        result=$?
+        if /usr/bin/grep -Eq 'HTTP 404|Not Found.*404' "$error_path"; then
+            rm -f "$error_path"
+            return 2
+        fi
+        rm -f "$error_path"
+        fail "Could not determine whether the GitHub release draft exists (gh exit $result)"
+    fi
+}
+
+create_github_release_draft() {
+    prepare_release_assets
+    assert_publication_receipt "${1:-}"
+    ensure_github_release_tag
+    gh release create "v${VERSION}" \
+        --repo "$GITHUB_REPOSITORY" \
+        --draft \
+        --verify-tag \
+        --title "v${VERSION}" \
+        --notes-file "$RELEASE_DIR/github-release-body.md" \
+        "${RELEASE_ASSETS[@]}"
+}
+
+load_retained_release_state() {
+    local plan_json fields status helper_pin retained_version
+    local -a npm_packages
+    [[ -f "$RELEASE_DIR/release-plan.json" && ! -L "$RELEASE_DIR/release-plan.json" ]] ||
+        fail "Retained release plan is missing"
+    plan_json=$(node "$RELEASE_CONTRACT" release-plan-file < "$RELEASE_DIR/release-plan.json") ||
+        fail "Retained release plan is invalid"
+    fields=$(PLAN_JSON="$plan_json" node -e '
+const plan = JSON.parse(process.env.PLAN_JSON);
+process.stdout.write([
+  plan.source_commit, plan.version, plan.helper.commit, plan.helper.executable_sha256,
+  plan.helper.library_sha256, plan.proof_sha256 ?? "", plan.preflight_completed,
+  plan.publication_eligible,
+].join("\t"));
+')
+    IFS=$'\t' read -r RELEASE_SOURCE_COMMIT retained_version RELEASE_HELPER_COMMIT \
+      RELEASE_HELPER_EXECUTABLE_SHA256 RELEASE_HELPER_LIBRARY_SHA256 RELEASE_PROOF_SHA256 \
+      RELEASE_PREFLIGHT_COMPLETED RELEASE_PUBLICATION_ELIGIBLE <<< "$fields"
+    [[ "$retained_version" == "$VERSION" && -n "$RELEASE_PROOF_SHA256" &&
+       "$RELEASE_PREFLIGHT_COMPLETED" == true && "$RELEASE_PUBLICATION_ELIGIBLE" == true ]] ||
+        fail "Retained release plan is not eligible for publication"
+    [[ "$(git -C "$PROJECT_ROOT" rev-parse HEAD)" == "$RELEASE_SOURCE_COMMIT" ]] ||
+        fail "Retained release plan differs from the current source commit"
+    status=$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=all)
+    [[ -z "$status" || "$status" == ' M appcast.xml' ]] ||
+        fail "Resume requires a clean checkout or the retained generated appcast as the only source change"
+    [[ -f "$RELEASE_DIR/appcast.xml" && ! -L "$RELEASE_DIR/appcast.xml" &&
+       "$(sha256_file "$RELEASE_DIR/appcast.xml")" == "$(sha256_file "$PROJECT_ROOT/appcast.xml")" ]] ||
+        fail "Current appcast differs from the retained release snapshot"
+    RELEASE_APPCAST_SHA256=$(sha256_file "$PROJECT_ROOT/appcast.xml")
+    RELEASE_PLAN_SHA256=$(sha256_file "$RELEASE_DIR/release-plan.json")
+    RELEASE_PROOF_FILE="$RELEASE_DIR/release-proof.md"
+    RELEASE_PROOF_PROVIDED=true
+    [[ -f "$RELEASE_PROOF_FILE" && ! -L "$RELEASE_PROOF_FILE" &&
+       "$(sha256_file "$RELEASE_PROOF_FILE")" == "$RELEASE_PROOF_SHA256" ]] ||
+        fail "Retained release proof differs from the release plan"
+    helper_pin=$(release_helper_pin)
+    [[ "$helper_pin" == "$RELEASE_HELPER_COMMIT"$'\t'"$RELEASE_HELPER_EXECUTABLE_SHA256"$'\t'"$RELEASE_HELPER_LIBRARY_SHA256" ]] ||
+        fail "Release helper differs from the retained release plan"
+    RELEASE_HELPER_PIN="$helper_pin"
+
+    CLI_ARTIFACT_DIR=peekaboo-macos-universal
+    CLI_TARBALL_NAME=peekaboo-macos-universal.tar.gz
+    MAC_APP_ZIP_PATH="$RELEASE_DIR/Peekaboo-${VERSION}.app.zip"
+    MAC_APP_DMG_PATH="$RELEASE_DIR/Peekaboo-${VERSION}.dmg"
+    shopt -s nullglob
+    npm_packages=("$RELEASE_DIR"/*.tgz)
+    shopt -u nullglob
+    [[ ${#npm_packages[@]} -eq 1 ]] || fail "Resume requires exactly one retained npm package"
+    NPM_PACKAGE_PATH=${npm_packages[0]}
+    NPM_PACKAGE_INTEGRITY=$(npm_package_integrity "$NPM_PACKAGE_PATH")
+    if [[ -e "$RELEASE_DIR/npm-publish-attempt.json" ]]; then
+        validate_npm_publish_attempt || fail "Retained npm publish-attempt marker is invalid"
+    fi
+    assert_release_plan
+    verify_appcast_entry
+    verify_release_artifacts
+    validate_retained_pending_receipt
+}
+
+resume_publication() {
+    local npm_already_published=false
+    echo -e "\n${BLUE}Resuming retained release publication...${NC}"
+    require_command gh
+    load_retained_release_state
+    if npm_publication_exists; then
+        npm_already_published=true
+        verify_npm_publication
+        compose_github_body "$RELEASE_DIR/npm-publication.json"
+        freeze_publication_receipt "$RELEASE_DIR/npm-publication.json"
+    else
+        if validate_npm_publish_attempt && [[ "$RETRY_NPM_PUBLISH" != true ]]; then
+            fail "npm publish was already attempted but the version is not visible; retry later or explicitly use --retry-npm-publish"
+        fi
+        compose_github_body
+        activate_retained_pending_receipt
+        configure_npm_publication
+        confirm_npm_publication
+    fi
+    prepare_release_assets
+    if github_release_exists; then
+        if [[ "$npm_already_published" == true ]]; then
+            verify_github_release_assets "$RELEASE_DIR/npm-publication.json" true true
+        else
+            verify_github_release_assets "" true true
+        fi
+        gh release upload "v${VERSION}" "${RELEASE_ASSETS[@]}" \
+          --repo "$GITHUB_REPOSITORY" --clobber
+    else
+        if [[ "$npm_already_published" == true ]]; then
+            create_github_release_draft "$RELEASE_DIR/npm-publication.json"
+        else
+            create_github_release_draft
+        fi
+    fi
+    if [[ "$npm_already_published" == true ]]; then
+        verify_github_release_assets "$RELEASE_DIR/npm-publication.json" true
+    else
+        verify_github_release_assets "" true
+        publish_frozen_npm_package
+        verify_npm_publication
+        compose_github_body "$RELEASE_DIR/npm-publication.json"
+        freeze_publication_receipt "$RELEASE_DIR/npm-publication.json"
+    fi
+    assert_publication_receipt "$RELEASE_DIR/npm-publication.json"
+    gh release edit "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+      --notes-file "$RELEASE_DIR/github-release-body.md"
+    assert_publication_receipt "$RELEASE_DIR/npm-publication.json"
+    verify_github_release_assets "$RELEASE_DIR/npm-publication.json"
+    echo -e "${GREEN}✅ Resumed npm publication and GitHub draft finalization${NC}"
 }
 
 # Parse command line arguments
 SKIP_CHECKS=false
 CREATE_GITHUB_RELEASE=false
 PUBLISH_NPM=false
+RESUME_PUBLICATION=false
+RETRY_NPM_PUBLISH=false
 UNIVERSAL=true
 INCLUDE_MAC_APP=true
 MAC_APP_NOTARIZE=true
 MAC_APP_APPCAST=true
 REUSE_BUILT_CLI=false
 EXPECTED_REUSE_SOURCE_COMMIT=""
+RELEASE_PROOF_FILE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -415,9 +1104,22 @@ while [[ $# -gt 0 ]]; do
             PUBLISH_NPM=true
             shift
             ;;
+        --resume-publication)
+            RESUME_PUBLICATION=true
+            shift
+            ;;
+        --retry-npm-publish)
+            RETRY_NPM_PUBLISH=true
+            shift
+            ;;
         --reuse-built-cli)
             REUSE_BUILT_CLI=true
             shift
+            ;;
+        --proof-file)
+            RELEASE_PROOF_FILE="${2:-}"
+            [[ -n "$RELEASE_PROOF_FILE" ]] || fail "--proof-file requires a path"
+            shift 2
             ;;
         --arm64-only)
             UNIVERSAL=false
@@ -445,12 +1147,17 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-checks          Skip pre-release checks"
             echo "  --create-github-release Create draft GitHub release"
             echo "  --publish-npm          Publish to npm after building"
+            echo "  --resume-publication   Resume a partial public release from retained verified artifacts"
+            echo "  --retry-npm-publish    With resume, explicitly retry an attempted npm publish still returning E404"
             echo "  --reuse-built-cli      Reuse an exact-HEAD signed/notarized CLI after full verification"
+            echo "  --proof-file PATH      CI/test proof appended to the source-bound GitHub release body"
             echo "  --arm64-only           Build arm64-only binary"
             echo "  --universal            Build universal (arm64+x86_64) binary (default)"
             echo "  --skip-mac-app         Skip Peekaboo.app zip/DMG, Sparkle appcast, and app checksums"
-            echo "  --no-notarize-mac-app  Build/sign app zip without Apple notarization"
+            echo "  --no-notarize-mac-app  Disable CLI/app/DMG notarization for local builds only"
             echo "  --no-appcast           Do not update appcast.xml"
+            echo "  Public GitHub and npm actions must be requested together with --proof-file."
+            echo "  After a partial public action, rerun with --resume-publication and the retained release directory."
             echo "  --help                 Show this help message"
             exit 0
             ;;
@@ -461,10 +1168,70 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+RELEASE_PROOF_PROVIDED=false
+RELEASE_PROOF_SHA256=""
+RELEASE_CHECKSUMS_SHA256=""
+GITHUB_BODY_SHA256=""
+GITHUB_BODY_NPM_METADATA_SHA256=""
+PUBLICATION_RECEIPT_SHA256=""
+PUBLICATION_RECEIPT_PATH=""
+RETAINED_PENDING_RECEIPT_SHA256=""
+RELEASE_PREFLIGHT_COMPLETED=false
+RELEASE_PUBLICATION_ELIGIBLE=false
+if [[ -n "$RELEASE_PROOF_FILE" ]]; then
+    [[ "$RELEASE_PROOF_FILE" == /* ]] || RELEASE_PROOF_FILE="$PROJECT_ROOT/$RELEASE_PROOF_FILE"
+    [[ -f "$RELEASE_PROOF_FILE" && ! -L "$RELEASE_PROOF_FILE" &&
+       "$(stat -f%l "$RELEASE_PROOF_FILE")" == 1 ]] || fail "Release proof must be one regular file"
+    RELEASE_PROOF_SIZE=$(stat -f%z "$RELEASE_PROOF_FILE")
+    (( RELEASE_PROOF_SIZE > 0 && RELEASE_PROOF_SIZE <= 65536 )) ||
+        fail "Release proof must be between 1 byte and 64 KiB"
+    RELEASE_PROOF_FILE="$(cd "$(dirname "$RELEASE_PROOF_FILE")" && pwd -P)/$(basename "$RELEASE_PROOF_FILE")"
+    case "$RELEASE_PROOF_FILE" in
+        "$BUILD_DIR"|"$BUILD_DIR"/*) fail "Release proof must be outside the disposable build directory" ;;
+        "$RELEASE_DIR"|"$RELEASE_DIR"/*) fail "Release proof must be outside the disposable release directory" ;;
+    esac
+    RELEASE_PROOF_SHA256=$(sha256_file "$RELEASE_PROOF_FILE")
+    RELEASE_PROOF_PROVIDED=true
+fi
+
+validate_publication_options
+RELEASE_OPTION_FINGERPRINT="$SKIP_CHECKS|$CREATE_GITHUB_RELEASE|$PUBLISH_NPM|$RESUME_PUBLICATION|$RETRY_NPM_PUBLISH|$UNIVERSAL|$INCLUDE_MAC_APP|$MAC_APP_NOTARIZE|$MAC_APP_APPCAST|$REUSE_BUILT_CLI|$RELEASE_PROOF_FILE|$RELEASE_PROOF_SHA256|$BUILD_DIR|$RELEASE_DIR"
+
+if [ -f "$MAC_RELEASE_MANIFEST" ]; then
+    # shellcheck source=/Users/steipete/Projects/Peekaboo/.mac-release.env
+    source "$MAC_RELEASE_MANIFEST"
+fi
+OBSERVED_RELEASE_OPTION_FINGERPRINT="$SKIP_CHECKS|$CREATE_GITHUB_RELEASE|$PUBLISH_NPM|$RESUME_PUBLICATION|$RETRY_NPM_PUBLISH|$UNIVERSAL|$INCLUDE_MAC_APP|$MAC_APP_NOTARIZE|$MAC_APP_APPCAST|$REUSE_BUILT_CLI|$RELEASE_PROOF_FILE|$RELEASE_PROOF_SHA256|$BUILD_DIR|$RELEASE_DIR"
+[[ "$RELEASE_OPTION_FINGERPRINT" == "$OBSERVED_RELEASE_OPTION_FINGERPRINT" ]] ||
+    fail "Release manifest changed command-line publication authority"
+validate_publication_options
+CLI_SIGN_IDENTITY="${MAC_RELEASE_CLI_CODESIGN_IDENTITY:-Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)}"
+CLI_SIGN_TEAM_ID="${MAC_RELEASE_CLI_CODESIGN_TEAM_ID:-FWJYW4S8P8}"
+CLI_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$CLI_SIGN_TEAM_ID\""
+NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
+export NOTARYTOOL_PROFILE
+
+require_command git
+require_command node
+VERSION=$(node -p "require('$PROJECT_ROOT/package.json').version")
+if [[ "$RESUME_PUBLICATION" == true ]]; then
+    resume_publication
+    exit 0
+fi
+RELEASE_SOURCE_COMMIT=$(peekaboo_require_source_commit "$PROJECT_ROOT") ||
+    fail "Release requires one clean exact source commit"
+RELEASE_HELPER_PIN=$(release_helper_pin)
+IFS=$'\t' read -r RELEASE_HELPER_COMMIT RELEASE_HELPER_EXECUTABLE_SHA256 \
+    RELEASE_HELPER_LIBRARY_SHA256 <<< "$RELEASE_HELPER_PIN"
+EXPECTED_REUSE_SOURCE_COMMIT="$RELEASE_SOURCE_COMMIT"
+REUSED_CLI_SHA256=""
+assert_release_plan
+
 if [ "$REUSE_BUILT_CLI" = true ]; then
-    require_command git
-    EXPECTED_REUSE_SOURCE_COMMIT=$(peekaboo_require_source_commit "$PROJECT_ROOT") ||
-        fail "Cannot reuse a CLI unless the full release checkout is clean"
+    echo -e "\n${BLUE}Verifying reusable CLI before any preflight execution...${NC}"
+    verify_binary_artifact \
+        "$PROJECT_ROOT/peekaboo" "Reused CLI" true "$RELEASE_SOURCE_COMMIT"
+    REUSED_CLI_SHA256=$(sha256_file "$PROJECT_ROOT/peekaboo")
 fi
 
 # Step 1: Run pre-release checks (unless skipped)
@@ -479,13 +1246,24 @@ if [ "$SKIP_CHECKS" = false ]; then
     # Pin the release identity for the precheck too. Without it, the signing
     # steps it exercises fall back to a bare SIGN_IDENTITY inherited from the
     # operator's login shell, which silently signs with the wrong certificate.
-    if ! env $PREP_ENV \
-        MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" \
-        node scripts/prepare-release.js; then
+    if [ "$REUSE_BUILT_CLI" = true ]; then
+        PREPARE_COMMAND=(node scripts/prepare-release.js --no-build --bin "$PROJECT_ROOT/peekaboo")
+    else
+        PREPARE_COMMAND=(node scripts/prepare-release.js)
+    fi
+    if ! env $PREP_ENV MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" \
+        "${PREPARE_COMMAND[@]}"; then
         echo -e "${RED}❌ Pre-release checks failed!${NC}"
         exit 1
     fi
     echo -e "${GREEN}✅ All checks passed${NC}"
+    RELEASE_PREFLIGHT_COMPLETED=true
+fi
+
+assert_release_plan
+if [ "$REUSE_BUILT_CLI" = true ]; then
+    [[ "$(sha256_file "$PROJECT_ROOT/peekaboo")" == "$REUSED_CLI_SHA256" ]] ||
+        fail "Reusable CLI changed during release preflight"
 fi
 
 # Step 2: Clean previous build outputs. Do not clear release/ until after
@@ -494,8 +1272,7 @@ echo -e "\n${BLUE}Cleaning previous builds...${NC}"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Step 3: Read version from package.json
-VERSION=$(node -p "require('$PROJECT_ROOT/package.json').version")
+# Step 3: Use the version frozen by the release plan
 echo -e "${BLUE}Building version: ${VERSION}${NC}"
 
 # Step 4: Build binary
@@ -521,6 +1298,7 @@ if [ "$REUSE_BUILT_CLI" = true ]; then
     verify_binary_artifact \
         "$PROJECT_ROOT/peekaboo" "Reused CLI" true "$EXPECTED_REUSE_SOURCE_COMMIT"
 else
+    assert_release_plan
     # Keep CLI signing inside the same managed Foundation keychain lane as the app and DMG.
     # A full release can already be inside codesign-run; avoid taking its release lock twice.
     if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
@@ -528,7 +1306,10 @@ else
     else
         BUILD_COMMAND=("$PROJECT_ROOT/scripts/mac-release" codesign-run -- pnpm run "$BUILD_SCRIPT")
     fi
-    if ! MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" "${BUILD_COMMAND[@]}"; then
+    if ! MAC_RELEASE_EXPECTED_HELPER_COMMIT="$RELEASE_HELPER_COMMIT" \
+        MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256="$RELEASE_HELPER_EXECUTABLE_SHA256" \
+        MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$RELEASE_HELPER_LIBRARY_SHA256" \
+        MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" "${BUILD_COMMAND[@]}"; then
         echo -e "${RED}❌ Swift build failed!${NC}"
         exit 1
     fi
@@ -537,13 +1318,18 @@ else
         echo -e "\n${BLUE}Submitting standalone CLI to Apple notarization...${NC}"
         notarize_cli_binary "$PROJECT_ROOT/peekaboo"
     fi
-    verify_binary_artifact "$PROJECT_ROOT/peekaboo" "Built CLI"
+    verify_binary_artifact "$PROJECT_ROOT/peekaboo" "Built CLI" "$MAC_APP_NOTARIZE" "$RELEASE_SOURCE_COMMIT"
+    assert_release_plan
 fi
 
 # Step 5: Create release artifacts
 echo -e "\n${BLUE}Creating release artifacts...${NC}"
-rm -rf "$RELEASE_DIR"
-mkdir -p "$RELEASE_DIR"
+reset_release_output_directory
+if [[ "$CREATE_GITHUB_RELEASE" == true && "$PUBLISH_NPM" == true &&
+      "$RELEASE_PREFLIGHT_COMPLETED" == true ]]; then
+    RELEASE_PUBLICATION_ELIGIBLE=true
+fi
+write_release_plan
 
 # Create CLI release directory
 CLI_RELEASE_DIR="$BUILD_DIR/$CLI_ARTIFACT_DIR"
@@ -615,6 +1401,7 @@ if [ -z "$NPM_PACKAGE" ]; then
     echo -e "${RED}❌ Failed to create npm package${NC}"
     exit 1
 fi
+NPM_PACKAGE_INTEGRITY=$(npm_package_integrity "$NPM_PACKAGE_PATH")
 
 # Step 6: Generate checksums
 echo -e "\n${BLUE}Generating checksums...${NC}"
@@ -624,6 +1411,10 @@ cd "$RELEASE_DIR"
 if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$CLI_TARBALL_NAME" > checksums.txt
     shasum -a 256 "$(basename "$NPM_PACKAGE")" >> checksums.txt
+    shasum -a 256 "release-plan.json" >> checksums.txt
+    if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
+        shasum -a 256 "release-proof.md" >> checksums.txt
+    fi
 else
     echo -e "${YELLOW}⚠️  shasum not found, skipping checksum generation${NC}"
 fi
@@ -633,6 +1424,7 @@ MAC_APP_ZIP_PATH=""
 MAC_APP_DMG_PATH=""
 if [ "$INCLUDE_MAC_APP" = true ]; then
     echo -e "\n${BLUE}Building Peekaboo.app release zip...${NC}"
+    assert_release_plan
     MAC_APP_ARGS=()
     if [ "$MAC_APP_NOTARIZE" = false ]; then
         MAC_APP_ARGS+=(--no-notarize)
@@ -641,12 +1433,24 @@ if [ "$INCLUDE_MAC_APP" = true ]; then
         MAC_APP_ARGS+=(--no-appcast)
     fi
     if [ ${#MAC_APP_ARGS[@]} -gt 0 ]; then
-        if ! RELEASE_DIR="$RELEASE_DIR" "$PROJECT_ROOT/scripts/release-macos-app.sh" "${MAC_APP_ARGS[@]}"; then
+        if ! RELEASE_DIR="$RELEASE_DIR" \
+            PEEKABOO_RELEASE_SOURCE_COMMIT="$RELEASE_SOURCE_COMMIT" \
+            PEEKABOO_RELEASE_VERSION="$VERSION" \
+            MAC_RELEASE_EXPECTED_HELPER_COMMIT="$RELEASE_HELPER_COMMIT" \
+            MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256="$RELEASE_HELPER_EXECUTABLE_SHA256" \
+            MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$RELEASE_HELPER_LIBRARY_SHA256" \
+            "$PROJECT_ROOT/scripts/release-macos-app.sh" "${MAC_APP_ARGS[@]}"; then
             echo -e "${RED}❌ macOS app release failed!${NC}"
             exit 1
         fi
     else
-        if ! RELEASE_DIR="$RELEASE_DIR" "$PROJECT_ROOT/scripts/release-macos-app.sh"; then
+        if ! RELEASE_DIR="$RELEASE_DIR" \
+            PEEKABOO_RELEASE_SOURCE_COMMIT="$RELEASE_SOURCE_COMMIT" \
+            PEEKABOO_RELEASE_VERSION="$VERSION" \
+            MAC_RELEASE_EXPECTED_HELPER_COMMIT="$RELEASE_HELPER_COMMIT" \
+            MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256="$RELEASE_HELPER_EXECUTABLE_SHA256" \
+            MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$RELEASE_HELPER_LIBRARY_SHA256" \
+            "$PROJECT_ROOT/scripts/release-macos-app.sh"; then
             echo -e "${RED}❌ macOS app release failed!${NC}"
             exit 1
         fi
@@ -661,42 +1465,34 @@ if [ "$INCLUDE_MAC_APP" = true ]; then
         echo -e "${RED}❌ Expected macOS DMG artifact missing: $MAC_APP_DMG_PATH${NC}"
         exit 1
     fi
+    if [[ "$MAC_APP_APPCAST" == true ]]; then
+        verify_appcast_entry
+        RELEASE_APPCAST_SHA256=$(sha256_file "$PROJECT_ROOT/appcast.xml")
+    fi
+    assert_release_plan
 fi
 
 # Step 8: Create release notes
 echo -e "\n${BLUE}Generating release notes...${NC}"
-if ! awk -v version="$VERSION" '
-    $0 ~ "^## \\[?" version "\\]?" {
-        in_section = 1
-        found = 1
-        print
-        next
-    }
-    in_section && /^## / {
-        exit
-    }
-    in_section {
-        print
-    }
-    END {
-        if (!found) {
-            exit 1
-        }
-    }
-' "$PROJECT_ROOT/CHANGELOG.md" > "$RELEASE_DIR/release-notes.md"; then
-    echo -e "${RED}❌ Could not extract v${VERSION} notes from CHANGELOG.md${NC}"
-    exit 1
-fi
-perl -0pi -e 's/\n+\z/\n/' "$RELEASE_DIR/release-notes.md"
+validate_tracked_release_notes || fail "Tracked release notes are stale"
+cp "$PROJECT_ROOT/release/release-notes.md" "$RELEASE_DIR/release-notes.md"
 
 # Step 9: Verify release artifacts before any publish/upload step
 verify_release_artifacts
+if [[ "$CREATE_GITHUB_RELEASE" == true || "$PUBLISH_NPM" == true ]]; then
+    compose_github_body
+    freeze_publication_receipt
+fi
 
 # Step 10: Display results
 echo -e "\n${GREEN}✅ Release artifacts created successfully!${NC}"
 echo -e "${BLUE}Release directory: ${RELEASE_DIR}${NC}"
 echo -e "${BLUE}Artifacts:${NC}"
 ls -la "$RELEASE_DIR"
+if [[ "$PUBLISH_NPM" == true ]]; then
+    configure_npm_publication
+    confirm_npm_publication
+fi
 
 # Step 11: Create GitHub release (if requested)
 if [ "$CREATE_GITHUB_RELEASE" = true ]; then
@@ -707,23 +1503,9 @@ if [ "$CREATE_GITHUB_RELEASE" = true ]; then
         exit 1
     fi
 
-    RELEASE_ASSETS=(
-        "$RELEASE_DIR/$CLI_TARBALL_NAME"
-        "$NPM_PACKAGE_PATH"
-    )
-    if [ -n "$MAC_APP_ZIP_PATH" ]; then
-        RELEASE_ASSETS+=("$MAC_APP_ZIP_PATH")
-        RELEASE_ASSETS+=("$MAC_APP_DMG_PATH")
-    fi
-    RELEASE_ASSETS+=("$RELEASE_DIR/checksums.txt")
+    create_github_release_draft
 
-    # Create release
-    gh release create "v${VERSION}" \
-        --draft \
-        --title "v${VERSION}" \
-        --notes-file "$RELEASE_DIR/release-notes.md" \
-        "${RELEASE_ASSETS[@]}"
-
+    assert_publication_receipt
     verify_github_release_assets
     
     echo -e "${GREEN}✅ GitHub release draft created!${NC}"
@@ -733,55 +1515,25 @@ fi
 # Step 12: Publish to npm (if requested)
 if [ "$PUBLISH_NPM" = true ]; then
     echo -e "\n${BLUE}Publishing to npm...${NC}"
-    NPM_TAG=""
-    if [[ "$VERSION" == *"-"* ]]; then
-        NPM_TAG="beta"
-    fi
-
-    # Never expose registry credentials if this script was invoked with xtrace enabled.
-    set +x
-    if [ -n "${NPM_TOKEN:-}" ]; then
-        NPM_USERCONFIG=$(mktemp "${TMPDIR:-/tmp}/peekaboo-npmrc.XXXXXX")
-        trap 'rm -f "${NPM_USERCONFIG:-}"' EXIT
-        chmod 600 "$NPM_USERCONFIG"
-        printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$NPM_USERCONFIG"
-        export NPM_CONFIG_USERCONFIG="$NPM_USERCONFIG"
-    fi
-    # Validate whichever auth is in effect (token npmrc or ambient session) before
-    # the interactive prompt, so a bad token fails here and not mid-publish.
-    if ! npm whoami --registry https://registry.npmjs.org >/dev/null 2>&1; then
-        fail "npm authentication missing or invalid. The maintainer release flow exports NPM_TOKEN automatically; otherwise set NPM_TOKEN or run 'npm login' first. A bare 404 on PUT to the registry means missing or invalid authentication, not a missing package."
-    fi
-
-    # Confirm before publishing
-    if [ -n "$NPM_TAG" ]; then
-        echo -e "${YELLOW}About to publish @steipete/peekaboo@${VERSION} to npm (tag: ${NPM_TAG})${NC}"
-    else
-        echo -e "${YELLOW}About to publish @steipete/peekaboo@${VERSION} to npm${NC}"
-    fi
-    read -p "Continue? (y/N) " -n 1 -r
-    echo
-    
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        if [ -n "$NPM_TAG" ]; then
-            pnpm publish "$NPM_PACKAGE_PATH" --tag "$NPM_TAG" --no-git-checks
-        else
-            pnpm publish "$NPM_PACKAGE_PATH" --no-git-checks
-        fi
-        echo -e "${GREEN}✅ Published to npm!${NC}"
-    else
-        echo -e "${YELLOW}Skipped npm publish${NC}"
-    fi
+    require_command gh
+    assert_publication_receipt
+    [[ "$REUSE_BUILT_CLI" != true || "$(sha256_file "$PROJECT_ROOT/peekaboo")" == "$REUSED_CLI_SHA256" ]] ||
+        fail "Reusable CLI changed while awaiting npm confirmation"
+    publish_frozen_npm_package
+    verify_npm_publication
+    compose_github_body "$RELEASE_DIR/npm-publication.json"
+    freeze_publication_receipt "$RELEASE_DIR/npm-publication.json"
+    assert_publication_receipt "$RELEASE_DIR/npm-publication.json"
+    gh release edit "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+      --notes-file "$RELEASE_DIR/github-release-body.md"
+    assert_publication_receipt "$RELEASE_DIR/npm-publication.json"
+    verify_github_release_assets "$RELEASE_DIR/npm-publication.json"
+    echo -e "${GREEN}✅ Published to npm!${NC}"
 fi
 
 echo -e "\n${GREEN}🎉 Release build complete!${NC}"
 echo -e "${BLUE}Next steps:${NC}"
 echo "1. Review artifacts in: $RELEASE_DIR"
 echo "2. Test the binary: tar -xzf $RELEASE_DIR/$CLI_TARBALL_NAME && ./$CLI_ARTIFACT_DIR/peekaboo --version"
-if [ "$CREATE_GITHUB_RELEASE" = false ]; then
-    echo "3. Create GitHub release: $0 --create-github-release"
-fi
-if [ "$PUBLISH_NPM" = false ]; then
-    echo "4. Publish to npm: $0 --publish-npm"
-fi
-echo "5. Update Homebrew formula with new version and SHA256"
+echo "3. Follow docs/RELEASING.md; use --resume-publication after any partial public action"
+echo "4. Update Homebrew formula with new version and SHA256"

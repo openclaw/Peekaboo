@@ -99,18 +99,31 @@ If both `history` and non-S3 `submit` fail, suspect wrong access level or stale 
 7. Push `main`.
 8. Run:
 
+Prepare a bounded reviewed Markdown proof file containing the exact hosted CI and local release-gate results, then set
+`RELEASE_PROOF_FILE` to its absolute path. The driver retains and hashes it into the release plan and GitHub body.
+
 ```bash
 op run --env-file "$ENVFILE" -- \
-  bash -c 'printf "y\n" | ./scripts/release-binaries.sh --create-github-release --publish-npm'
+  bash -c 'printf "y\n" | ./scripts/release-binaries.sh --create-github-release --publish-npm --proof-file "$RELEASE_PROOF_FILE"'
 ```
 
 The script builds universal CLI, npm package, signed/notarized app zip and branded DMG, appcast, checksums, draft GitHub release, and npm publish.
 Use a non-login shell: profile exports can replace current 1Password ASC IDs with stale values while leaving the current `.p8`, producing a misleading `401`.
 
-When resuming after a release interruption with a CLI already built from the same clean `HEAD`, add
+When resuming before any public action after a release interruption with a CLI already built from the same clean `HEAD`, add
 `--reuse-built-cli`. The script verifies the full signer, entitlement, native-only, runtime-library, architecture,
 online-notarization, version, and exact-source contract before packaging; it never executes the candidate before the
 non-executing safety checks finish.
+
+The npm confirmation occurs before GitHub draft creation. After any partial public action, preserve `build/release` and
+the generated `appcast.xml`, then rerun `./scripts/release-binaries.sh --resume-publication` inside the same credentialed
+shell. Resume verifies the retained source-bound plan, proof, checksums, artifacts, helper pin, remote tag/draft/assets,
+and npm integrity; it skips an already-published identical tarball and completes the final draft body idempotently.
+The retained checksummed full appcast prevents unrelated feed drift. An E404 after an attempted npm publish fails closed
+on the retained attempt marker; wait for registry propagation, and use `--retry-npm-publish` only after independently
+confirming the version was not accepted.
+The retained plan must record both completed full preflight and publication eligibility. The driver refuses proof files
+on local-only or reduced-check builds, preventing `--resume-publication` from promoting those artifacts.
 
 Every notarized release payload must sign with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`, not a personal or development identity. This includes Peekaboo.app, nested helpers and frameworks, the standalone and npm CLIs, and the DMG. The tracked release manifest resolves the shared passwordless signing keychain from the `OpenClaw-Core` vault; never copy the keychain path or signing material into the repository. Peekaboo 3.8+ bridge hosts keep accepting transition-era personal-team clients for staged upgrades, but Foundation-signed 3.9.6+ CLIs require a 3.8+ host.
 

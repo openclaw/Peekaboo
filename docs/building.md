@@ -53,5 +53,6 @@ pnpm run prepare-release
 pnpm run prepare-release -- --dry-run --bin Apps/CLI/.build/debug/peekaboo
 
 # Generate artifacts / publish
-./scripts/release-binaries.sh --create-github-release --publish-npm
+./scripts/release-binaries.sh --create-github-release --publish-npm \
+  --proof-file /path/to/reviewed-release-proof.md
 ```

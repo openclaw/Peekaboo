@@ -23,6 +23,7 @@ import {
   validateSourceDocumentationContracts,
   validateVersionConsistency
 } from './release-preflight-contract.mjs';
+import { validateTrackedReleaseNotes } from './release-driver-contract.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -31,6 +32,7 @@ const cliArguments = process.argv.slice(2);
 let dryRun = false;
 let force = false;
 let binaryOverride = null;
+let noBuild = false;
 
 for (let index = 0; index < cliArguments.length; index += 1) {
   const argument = cliArguments[index];
@@ -42,6 +44,9 @@ for (let index = 0; index < cliArguments.length; index += 1) {
       break;
     case '--force':
       force = true;
+      break;
+    case '--no-build':
+      noBuild = true;
       break;
     case '--bin': {
       const value = cliArguments[index + 1];
@@ -59,7 +64,8 @@ for (let index = 0; index < cliArguments.length; index += 1) {
 
 Options:
   --dry-run   Run deterministic preparation checks; changelogs may remain Unreleased
-  --bin PATH  CLI binary for --dry-run (default: repo debug binary, then ./peekaboo)
+  --bin PATH  CLI binary for --dry-run or --no-build (default: repo debug binary, then ./peekaboo)
+  --no-build  Run full publication preflight without replacing the supplied CLI binary
   --force     Allow a non-main branch during the publication-stage preflight
   -h, --help  Show this help`);
       process.exit(0);
@@ -68,6 +74,11 @@ Options:
       console.error(`Unknown option: ${argument}`);
       process.exit(2);
   }
+}
+
+if (noBuild && !binaryOverride) {
+  console.error('--no-build requires --bin PATH');
+  process.exit(2);
 }
 
 // ANSI color codes
@@ -352,6 +363,19 @@ function checkChangelog() {
     }
   }
 
+  if (!dryRun) {
+    try {
+      validateTrackedReleaseNotes({
+        changelog: readFileSync(join(projectRoot, 'CHANGELOG.md'), 'utf8'),
+        notes: readFileSync(join(projectRoot, 'release', 'release-notes.md'), 'utf8'),
+        version,
+      });
+    } catch (error) {
+      logError(`release/release-notes.md: ${error.message}`);
+      return false;
+    }
+  }
+
   if (dryRun) {
     logSuccess(`Both changelogs contain a preparation-stage entry for version ${version}`);
   } else {
@@ -587,12 +611,16 @@ function buildAndVerifyPackage() {
   const buildScript = requireUniversal ? './scripts/build-swift-universal.sh' : './scripts/build-swift-arm.sh';
   const buildLabel = requireUniversal ? 'Swift universal build' : 'Swift arm64 build';
 
-  // Build Swift binary (stamps Info.plist and writes ./peekaboo)
-  if (!execWithOutput(buildScript, buildLabel)) {
-    logError('Swift build failed');
-    return false;
+  if (noBuild) {
+    log(`Reusing source-identical CLI without rebuilding: ${binaryOverride}`, colors.cyan);
+  } else {
+    // Build Swift binary (stamps Info.plist and writes ./peekaboo)
+    if (!execWithOutput(buildScript, buildLabel)) {
+      logError('Swift build failed');
+      return false;
+    }
+    logSuccess('Swift build completed successfully');
   }
-  logSuccess('Swift build completed successfully');
 
   // Create package
   log('Creating npm package...', colors.cyan);
@@ -632,7 +660,7 @@ function buildAndVerifyPackage() {
 
   // Verify peekaboo binary
   log('Verifying peekaboo binary...', colors.cyan);
-  const binaryPath = join(projectRoot, 'peekaboo');
+  const binaryPath = binaryOverride ?? join(projectRoot, 'peekaboo');
   
   // Check if binary exists
   if (!existsSync(binaryPath)) {

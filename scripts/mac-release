@@ -59,12 +59,30 @@ ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 cd "$ROOT"
 
 exec_release_helper() {
+  candidate=$1
+  if [[ -n "${MAC_RELEASE_EXPECTED_HELPER_COMMIT:-}" ]]; then
+    helper_repo=$(/usr/bin/git -C "$(dirname "$candidate")" rev-parse --show-toplevel) || builtin exit 1
+    [[ "$(/usr/bin/git -C "$helper_repo" rev-parse HEAD)" == "$MAC_RELEASE_EXPECTED_HELPER_COMMIT" &&
+       -z "$(/usr/bin/git -C "$helper_repo" status --porcelain --untracked-files=no)" ]] || {
+      /bin/echo 'Release helper differs from the frozen release plan.' >&2
+      builtin exit 1
+    }
+    helper_executable_sha=$(/usr/bin/shasum -a 256 "$candidate" | /usr/bin/awk '{print $1}')
+    helper_library_sha=$(/usr/bin/shasum -a 256 "$(dirname "$candidate")/lib/mac_release.sh" |
+      /usr/bin/awk '{print $1}')
+    [[ "$helper_executable_sha" == "${MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256:?}" &&
+       "$helper_library_sha" == "${MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256:?}" ]] || {
+      /bin/echo 'Release helper hashes differ from the frozen release plan.' >&2
+      builtin exit 1
+    }
+  fi
   for raw_service_credential in OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
     if [[ -n "${!raw_service_credential+x}" ]]; then
       builtin export "$raw_service_credential"
     fi
   done
   builtin unset raw_service_credential
+  builtin unset candidate helper_repo helper_executable_sha helper_library_sha
   builtin exec "$@"
 }
 

@@ -25,6 +25,15 @@ APP_ZIP="$TEST_DIR/Peekaboo-3.9.5.app.zip"
 BACKGROUND="$TEST_DIR/dmg-background.png"
 mkdir -p "$FAKE_BIN"
 touch "$DMG_PATH" "$BAD_DMG_PATH" "$APP_ZIP" "$BACKGROUND"
+APP_TEMPLATE="$TEST_DIR/app-template/Peekaboo.app"
+mkdir -p "$APP_TEMPLATE/Contents/MacOS" "$APP_TEMPLATE/Contents/Resources"
+plutil -create xml1 "$APP_TEMPLATE/Contents/Info.plist"
+plutil -insert CFBundleShortVersionString -string 3.9.5 "$APP_TEMPLATE/Contents/Info.plist"
+touch "$APP_TEMPLATE/Contents/MacOS/Peekaboo" "$APP_TEMPLATE/Contents/Resources/AppIcon.icns"
+chmod 755 "$APP_TEMPLATE/Contents/MacOS/Peekaboo"
+APP_TREE_MANIFEST="$TEST_DIR/app-tree.json"
+/usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$APP_TEMPLATE" > "$APP_TREE_MANIFEST"
+APP_TREE_SHA256="$(shasum -a 256 "$APP_TREE_MANIFEST" | awk '{print $1}')"
 
 cat >"$FAKE_BIN/codesign" <<'EOF'
 #!/usr/bin/env bash
@@ -56,12 +65,7 @@ case "${1:-}" in
       shift
     done
     [[ -n "$mount_dir" ]]
-    mkdir -p "$mount_dir/Peekaboo.app/Contents/MacOS"
-    plutil -create xml1 "$mount_dir/Peekaboo.app/Contents/Info.plist"
-    plutil -insert CFBundleShortVersionString -string 3.9.5 \
-      "$mount_dir/Peekaboo.app/Contents/Info.plist"
-    touch "$mount_dir/Peekaboo.app/Contents/MacOS/Peekaboo"
-    chmod 755 "$mount_dir/Peekaboo.app/Contents/MacOS/Peekaboo"
+    cp -R "${PEEKABOO_TEST_APP_TEMPLATE:?}" "$mount_dir/Peekaboo.app"
     if [[ "${PEEKABOO_TEST_ATTACH_FINDERINFO:-}" == "1" ]]; then
       /usr/bin/SetFile -a E "$mount_dir/Peekaboo.app"
     fi
@@ -114,14 +118,8 @@ for argument in "$@"; do
   destination="$argument"
 done
 [[ -n "$destination" ]]
-mkdir -p "$destination/Peekaboo.app/Contents/MacOS" "$destination/Peekaboo.app/Contents/Resources"
-plutil -create xml1 "$destination/Peekaboo.app/Contents/Info.plist"
-plutil -insert CFBundleShortVersionString -string 3.9.5 \
-  "$destination/Peekaboo.app/Contents/Info.plist"
-touch \
-  "$destination/Peekaboo.app/Contents/MacOS/Peekaboo" \
-  "$destination/Peekaboo.app/Contents/Resources/AppIcon.icns"
-chmod 755 "$destination/Peekaboo.app/Contents/MacOS/Peekaboo"
+mkdir -p "$destination"
+cp -R "${PEEKABOO_TEST_APP_TEMPLATE:?}" "$destination/Peekaboo.app"
 EOF
 
 cat >"$FAKE_BIN/sips" <<'EOF'
@@ -180,11 +178,13 @@ EOF
 chmod +x "$FAKE_BIN"/*
 
 PEEKABOO_TEST_DETACH_COUNTER="$COUNTER_FILE" \
+PEEKABOO_TEST_APP_TEMPLATE="$APP_TEMPLATE" \
   PATH="$FAKE_BIN:$PATH" \
   "$ROOT_DIR/scripts/create-release-dmg.sh" \
   --version 3.9.5 \
   --background "$BACKGROUND" \
   --no-notarize \
+  --expected-app-tree-sha256 "$APP_TREE_SHA256" \
   --verify-only "$DMG_PATH" >/dev/null
 
 [[ "$(<"$COUNTER_FILE")" == "3" ]] || {
@@ -192,13 +192,31 @@ PEEKABOO_TEST_DETACH_COUNTER="$COUNTER_FILE" \
   exit 1
 }
 
+MUTATED_TEMPLATE="$TEST_DIR/mutated-template/Peekaboo.app"
+mkdir -p "$(dirname "$MUTATED_TEMPLATE")"
+cp -R "$APP_TEMPLATE" "$MUTATED_TEMPLATE"
+printf 'changed nested bytes\n' >> "$MUTATED_TEMPLATE/Contents/MacOS/Peekaboo"
+if PEEKABOO_TEST_DETACH_IMMEDIATE=1 \
+  PEEKABOO_TEST_APP_TEMPLATE="$MUTATED_TEMPLATE" \
+  PATH="$FAKE_BIN:$PATH" \
+  "$ROOT_DIR/scripts/create-release-dmg.sh" \
+  --version 3.9.5 --background "$BACKGROUND" --no-notarize \
+  --expected-app-tree-sha256 "$APP_TREE_SHA256" \
+  --verify-only "$DMG_PATH" >"$TEST_DIR/tree-mismatch.out" 2>&1; then
+  printf 'Expected DMG app tree mismatch to fail\n' >&2
+  exit 1
+fi
+rg -Fq 'DMG embedded app tree differs from the source app zip' "$TEST_DIR/tree-mismatch.out"
+
 if PEEKABOO_TEST_ATTACH_FINDERINFO=1 \
   PEEKABOO_TEST_DETACH_IMMEDIATE=1 \
+  PEEKABOO_TEST_APP_TEMPLATE="$APP_TEMPLATE" \
   PATH="$FAKE_BIN:$PATH" \
   "$ROOT_DIR/scripts/create-release-dmg.sh" \
   --version 3.9.5 \
   --background "$BACKGROUND" \
   --no-notarize \
+  --expected-app-tree-sha256 "$APP_TREE_SHA256" \
   --verify-only "$BAD_DMG_PATH" >"$BAD_DMG_OUTPUT" 2>&1; then
   printf 'Expected FinderInfo-contaminated app verification to fail\n' >&2
   exit 1
@@ -208,6 +226,7 @@ rg -Fq 'com.apple.FinderInfo' "$BAD_DMG_OUTPUT"
 
 PEEKABOO_TEST_DETACH_COUNTER="$COUNTER_FILE" \
 PEEKABOO_TEST_UV_ARGS="$UV_ARGS_FILE" \
+PEEKABOO_TEST_APP_TEMPLATE="$APP_TEMPLATE" \
 APP_STORE_CONNECT_API_KEY_P8=fixture-p8 \
 APP_STORE_CONNECT_KEY_ID=fixture-key-id \
 APP_STORE_CONNECT_ISSUER_ID=fixture-issuer \

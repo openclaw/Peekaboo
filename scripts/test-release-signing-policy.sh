@@ -65,6 +65,40 @@ rg -Fq "grep -Fq 'unknown'" "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--reuse-built-cli' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'peekaboo_validate_artifact_source_commit' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq "verify_binary_artifact \\" "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'release-driver-contract.mjs' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'release-plan.json' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'github-release' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'npm-publication' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq '"repos/${GITHUB_API_REPOSITORY}/releases/tags/v${VERSION}"' \
+  "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'ensure_github_release_tag' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--verify-tag' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '-f "sha=${RELEASE_SOURCE_COMMIT}"' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'publication-receipt.pending.json' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'publication-receipt.final.json' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'validate_retained_pending_receipt' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'github_tag_commit' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'GITHUB_REPOSITORY=github.com/openclaw/Peekaboo' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--repo "$GITHUB_REPOSITORY"' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'NPM_REGISTRY=https://registry.npmjs.org' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--registry "$NPM_REGISTRY"' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq '@steipete:registry=%s/' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--resume-publication' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'gh release upload "v${VERSION}" "${RELEASE_ASSETS[@]}"' \
+  "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'npm_publication_exists' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'validate_npm_publish_attempt' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--retry-npm-publish' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--proof-file /path/to/reviewed-release-proof.md' "$ROOT_DIR/docs/building.md"
+rg -Fq 'release/release-notes.md' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'PEEKABOO_RELEASE_SOURCE_COMMIT' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'PEEKABOO_RELEASE_SOURCE_COMMIT' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256' "$ROOT_DIR/scripts/mac-release"
+rg -Fq 'MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$RELEASE_HELPER_LIBRARY_SHA256"' \
+  "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'appcast-entry.json' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'APPCAST_SNAPSHOT="$RELEASE_DIR/appcast.xml"' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/package.json"
 rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/homebrew/peekaboo.rb"
 rg -Fq -- '--options runtime' "$ROOT_DIR/scripts/copy-swift-runtime-libraries.sh"
@@ -209,5 +243,37 @@ rg -Fq 'PRODUCT_BUNDLE_IDENTIFIER = boo.peekaboo.inspector;' \
   "$ROOT_DIR/Apps/PeekabooInspector/Inspector.xcodeproj/project.pbxproj"
 rg -Fq 'PRODUCT_BUNDLE_IDENTIFIER = boo.peekaboo.playground;' \
   "$ROOT_DIR/Apps/Playground/Playground.xcodeproj/project.pbxproj"
+
+helper_repo="$native_policy_test_dir/helper-repo"
+helper_path="$helper_repo/skills/release-mac-app/scripts/mac-release"
+helper_library="$helper_repo/skills/release-mac-app/scripts/lib/mac_release.sh"
+mkdir -p "$(dirname "$helper_library")"
+cat > "$helper_path" <<'EOF'
+#!/bin/bash
+printf 'fixture helper invoked\n'
+EOF
+printf 'fixture helper library\n' > "$helper_library"
+chmod +x "$helper_path"
+git -C "$helper_repo" init -q
+git -C "$helper_repo" add .
+git -C "$helper_repo" -c user.name=Peekaboo -c user.email=peekaboo@example.invalid \
+  -c commit.gpgSign=false commit -q --no-gpg-sign -m fixture
+helper_commit="$(git -C "$helper_repo" rev-parse HEAD)"
+helper_sha="$(shasum -a 256 "$helper_path" | awk '{print $1}')"
+helper_library_sha="$(shasum -a 256 "$helper_library" | awk '{print $1}')"
+helper_output="$(MAC_RELEASE_TOOL="$helper_path" \
+  MAC_RELEASE_EXPECTED_HELPER_COMMIT="$helper_commit" \
+  MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256="$helper_sha" \
+  MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$helper_library_sha" \
+  "$ROOT_DIR/scripts/mac-release" fixture)"
+[[ "$helper_output" == 'fixture helper invoked' ]]
+if MAC_RELEASE_TOOL="$helper_path" \
+  MAC_RELEASE_EXPECTED_HELPER_COMMIT="$helper_commit" \
+  MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256="$(printf '0%.0s' {1..64})" \
+  MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$helper_library_sha" \
+  "$ROOT_DIR/scripts/mac-release" fixture >/dev/null 2>&1; then
+  printf 'Release helper wrapper accepted a hash outside the frozen plan\n' >&2
+  exit 1
+fi
 
 printf 'test-release-signing-policy: ok\n'
