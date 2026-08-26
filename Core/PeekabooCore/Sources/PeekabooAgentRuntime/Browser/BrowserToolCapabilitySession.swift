@@ -140,28 +140,39 @@ actor BrowserToolCapabilitySession {
         let contracts = calls.compactMap { call in
             BrowserMCPPageRoutingContract.capabilityContract(for: call.toolName, arguments: call.arguments)
         }
-        guard !response.isError, let sessionBinding else {
+        guard let sessionBinding else {
             self.applyEffects(contracts, resolved: resolved)
             return response
         }
+        let selectedPageMappings = self.pageMappings().filter { $0.value == resolved?.pageReference }
+        let retainedElementMappings = self.elementMappings(for: resolved?.pageReference)
+        let inputElementMappings = retainedElementMappings.filter { resolved?.providerUIDs.contains($0.key) == true }
         self.applyEffects(contracts, resolved: resolved)
+        if response.isError {
+            return BrowserToolCapabilityProjection.sanitizingProviderError(response)
+        }
         let responseProjection = contracts.last?.responseProjection ?? .none
         if Self.responseCreatesSnapshot(responseProjection, response: response) {
             self.invalidateSnapshots(for: resolved?.pageReference)
         }
 
+        let rawStructuredMessage = response.structuredContent?.objectValue?["message"]?.stringValue
         var structured = response.structuredContent
-        var textMappings: [String: String] = [:]
-        if responseProjection == .pages, var value = structured {
-            textMappings = try self.projectPages(
-                in: &value,
-                connection: ConnectionBinding(sessionBinding: sessionBinding))
-            structured = value
-        }
-        if responseProjection == .pages, textMappings.isEmpty {
-            textMappings = self.projectPages(
-                inText: Self.textContent(response),
-                connection: ConnectionBinding(sessionBinding: sessionBinding))
+        var textMappings = selectedPageMappings
+        if responseProjection == .pages {
+            var currentPageMappings: [String: String] = [:]
+            if var value = structured {
+                currentPageMappings = try self.projectPages(
+                    in: &value,
+                    connection: ConnectionBinding(sessionBinding: sessionBinding))
+                structured = value
+            }
+            if currentPageMappings.isEmpty {
+                currentPageMappings = self.projectPages(
+                    inText: Self.textContent(response),
+                    connection: ConnectionBinding(sessionBinding: sessionBinding))
+            }
+            textMappings = currentPageMappings
         }
 
         var snapshotReference: String?
@@ -176,37 +187,86 @@ actor BrowserToolCapabilitySession {
             structured = value
         }
 
-        let content = try response.content.map { item in
-            guard case let .text(text, annotations, metadata) = item else { return item }
-            var projected = Self.replacingPageIDs(in: text, mappings: textMappings)
-            if let pageReference = resolved?.pageReference,
-               Self.responseMayContainSnapshot(responseProjection, response: response)
-            {
-                if snapshotReference == nil {
-                    let snapshotText = responseProjection == .thirdPartySnapshot
-                        ? Self.thirdPartySnapshotSection(in: projected)
-                        : projected
-                    let providerUIDs = snapshotText.map(Self.providerUIDs(in:)) ?? []
-                    if !providerUIDs.isEmpty {
-                        let minted = self.mintSnapshot(
-                            providerUIDs: providerUIDs,
-                            pageReference: pageReference,
-                            bindings: [:])
-                        snapshotReference = minted.reference
-                        elementMappings = minted.elements
-                    }
-                }
-                if responseProjection == .thirdPartySnapshot {
-                    projected = try Self.replacingSingletonObjectUIDs(in: projected, mappings: elementMappings)
-                    projected = Self.replacingElementUIDsInThirdPartySnapshot(
-                        in: projected,
-                        mappings: elementMappings)
-                } else {
-                    projected = Self.replacingElementUIDs(in: projected, mappings: elementMappings)
-                }
-            }
-            return .text(text: projected, annotations: annotations, _meta: metadata)
+        if snapshotReference == nil,
+           Self.responseMayContainSnapshot(responseProjection, response: response)
+        {
+            throw BrowserToolCapabilityError.invalidProviderResponse
         }
+        if snapshotReference != nil,
+           Self.responseMayContainSnapshot(responseProjection, response: response)
+        {
+            let snapshotText = responseProjection == .thirdPartySnapshot
+                ? BrowserToolCapabilityProjection.thirdPartySnapshotSection(in: Self.textContent(response)) ?? ""
+                : Self.textContent(response)
+            if !snapshotText.isEmpty,
+               !BrowserToolCapabilityProjection.snapshotRowsAreUnambiguous(
+                   in: snapshotText,
+                   mappings: elementMappings)
+            {
+                throw BrowserToolCapabilityError.invalidProviderResponse
+            }
+        }
+        if responseProjection == .thirdPartySnapshot,
+           ([rawStructuredMessage] + response.content.compactMap { item -> String? in
+               guard case let .text(text, _, _) = item else { return nil }
+               return text
+           }).compactMap(\.self).contains(where: { text in
+               BrowserToolCapabilityProjection.containsUnmappedThirdPartyProviderUID(
+                   text,
+                   mappings: elementMappings)
+           })
+        {
+            throw BrowserToolCapabilityError.invalidProviderResponse
+        }
+        if calls.contains(where: { $0.toolName == "get_console_message" }),
+           BrowserToolCapabilityProjection.containsUnmappedIssueResourceUID(
+               in: structured,
+               mappings: retainedElementMappings) ||
+           response.content.contains(where: { item in
+               guard case let .text(text, _, _) = item else { return false }
+               return BrowserToolCapabilityProjection.containsUnmappedIssueResourceUID(
+                   in: text,
+                   mappings: retainedElementMappings)
+           })
+        {
+            throw BrowserToolCapabilityError.invalidProviderResponse
+        }
+
+        let thirdPartyMessageProjection: (raw: String, projected: String)? = if
+            responseProjection == .thirdPartySnapshot,
+            let rawStructuredMessage,
+            let projected = BrowserToolCapabilityProjection.projectingThirdPartyJSON(
+                rawStructuredMessage,
+                mappings: elementMappings)
+        {
+            (rawStructuredMessage, projected)
+        } else {
+            nil
+        }
+        let providerProjection = BrowserToolCapabilityProjection.ProviderProjection(
+            pageMappings: responseProjection == .pages ? textMappings : [:],
+            structuralElementMappings: elementMappings,
+            issueElementMappings: calls.contains(where: { $0.toolName == "get_console_message" })
+                ? retainedElementMappings
+                : [:],
+            phraseElementMappings: calls.contains(where: { $0.toolName == "take_screenshot" })
+                ? inputElementMappings
+                : [:],
+            calls: calls,
+            thirdPartyMessage: thirdPartyMessageProjection)
+        structured = BrowserToolCapabilityProjection.projectingProviderMessages(
+            in: structured,
+            projection: providerProjection)
+
+        let projectedPageMappings = textMappings
+        let content = BrowserToolCapabilityProjection.projectingContent(
+            response.content,
+            projection: .init(
+                responseProjection: responseProjection,
+                provider: providerProjection,
+                thirdPartyElementMappings: elementMappings,
+                mayContainSnapshot: resolved?.pageReference != nil &&
+                    Self.responseMayContainSnapshot(responseProjection, response: response)))
 
         var meta = response.meta?.objectValue ?? [:]
         if let existing = response.meta, existing.objectValue == nil {
@@ -215,8 +275,14 @@ actor BrowserToolCapabilitySession {
         if let snapshotReference {
             meta["browser_snapshot_ref"] = .string(snapshotReference)
         }
-        if !textMappings.isEmpty {
-            meta["browser_page_refs"] = .array(textMappings.values.sorted().map(Value.string))
+        if !projectedPageMappings.isEmpty {
+            meta["browser_page_refs"] = .array(projectedPageMappings.values.sorted().map(Value.string))
+        }
+        if case let .object(projectedMeta) = BrowserToolCapabilityProjection.projectingProviderMessages(
+            in: .object(meta),
+            projection: providerProjection)
+        {
+            meta = projectedMeta
         }
         return ToolResponse(
             content: content,
@@ -278,6 +344,17 @@ actor BrowserToolCapabilitySession {
 
     func elementBinding(for reference: String) -> ElementBinding? {
         self.elementsByReference[reference]?.binding
+    }
+
+    private func pageMappings() -> [String: String] {
+        Dictionary(uniqueKeysWithValues: self.pageReferenceByProviderID.map { (String($0.key), $0.value) })
+    }
+
+    private func elementMappings(for pageReference: String?) -> [String: String] {
+        guard let pageReference else { return [:] }
+        return Dictionary(uniqueKeysWithValues: self.elementsByReference.compactMap { reference, record in
+            record.pageReference == pageReference ? (record.providerUID, reference) : nil
+        })
     }
 
     private func resolveElementArgument(
@@ -618,7 +695,7 @@ actor BrowserToolCapabilitySession {
             enabled
         case .thirdPartySnapshot:
             response.structuredContent?.objectValue?["snapshot"] != nil ||
-                self.thirdPartySnapshotSection(in: self.textContent(response)) != nil
+                BrowserToolCapabilityProjection.thirdPartySnapshotSection(in: self.textContent(response)) != nil
         case .none, .pages:
             false
         }
@@ -677,17 +754,6 @@ actor BrowserToolCapabilitySession {
         }
     }
 
-    private static func replacingPageIDs(in text: String, mappings: [String: String]) -> String {
-        guard !mappings.isEmpty else { return text }
-        return text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-            let value = String(line)
-            guard let separator = value.firstIndex(of: ":") else { return value }
-            let prefix = String(value[..<separator])
-            guard let replacement = mappings[prefix] else { return value }
-            return replacement + value[separator...]
-        }.joined(separator: "\n")
-    }
-
     private static func textContent(_ response: ToolResponse) -> String {
         response.content.compactMap { item in
             guard case let .text(text, _, _) = item else { return nil }
@@ -703,76 +769,6 @@ actor BrowserToolCapabilitySession {
         return value.contains("://") ? String(value) : nil
     }
 
-    private static func providerUIDs(in text: String) -> [String] {
-        Array(BrowserMCPProviderSnapshotParser.providerUIDs(in: text)).sorted()
-    }
-
-    private static func replacingElementUIDs(in text: String, mappings: [String: String]) -> String {
-        var result = text
-        for (providerUID, reference) in mappings.sorted(by: { $0.key.count > $1.key.count }) {
-            result = result.replacingOccurrences(of: "uid=\(providerUID)", with: "uid=\(reference)")
-        }
-        return result
-    }
-
-    private static func replacingSingletonObjectUIDs(
-        in text: String,
-        mappings: [String: String]) throws -> String
-    {
-        let jsonText: String
-        let suffix: String
-        if let markerRange = text.range(of: self.thirdPartySnapshotMarker) {
-            jsonText = String(text[..<markerRange.lowerBound])
-            suffix = String(text[markerRange.lowerBound...])
-        } else {
-            jsonText = text
-            suffix = ""
-        }
-        guard let data = jsonText.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data)
-        else {
-            throw BrowserToolCapabilityError.invalidProviderResponse
-        }
-        func project(_ value: Any) throws -> Any {
-            if let dictionary = value as? [String: Any] {
-                if dictionary.count == 1, let providerUID = dictionary["uid"] as? String {
-                    return mappings[providerUID].map { ["uid": $0] } ?? dictionary
-                }
-                return try dictionary.mapValues(project)
-            }
-            if let array = value as? [Any] {
-                return try array.map(project)
-            }
-            return value
-        }
-        let encoded = try JSONSerialization.data(
-            withJSONObject: project(object),
-            options: [.prettyPrinted, .sortedKeys])
-        guard let projected = String(data: encoded, encoding: .utf8) else {
-            throw BrowserToolCapabilityError.invalidProviderResponse
-        }
-        return projected + suffix
-    }
-
-    private static let thirdPartySnapshotMarker = "\n## Latest page snapshot"
-
-    private static func thirdPartySnapshotSection(in text: String) -> String? {
-        guard let markerRange = text.range(of: self.thirdPartySnapshotMarker) else { return nil }
-        return String(text[markerRange.lowerBound...])
-    }
-
-    private static func replacingElementUIDsInThirdPartySnapshot(
-        in text: String,
-        mappings: [String: String]) -> String
-    {
-        guard let markerRange = text.range(of: self.thirdPartySnapshotMarker) else { return text }
-        let prefix = text[..<markerRange.lowerBound]
-        let snapshot = self.replacingElementUIDs(
-            in: String(text[markerRange.lowerBound...]),
-            mappings: mappings)
-        return String(prefix) + snapshot
-    }
-
     private static func reference(prefix: String) -> String {
         let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         return "\(prefix)_\(token)"
@@ -785,21 +781,7 @@ enum BrowserMCPProviderSnapshotParser {
         if let structuredContent = response.structuredContent {
             self.collectIDs(in: structuredContent, into: &result)
         }
-        for item in response.content {
-            guard case let .text(text, _, _) = item else { continue }
-            result.formUnion(self.providerUIDs(in: text))
-        }
         return result
-    }
-
-    static func providerUIDs(in text: String) -> Set<String> {
-        let pattern = #"uid=([^\s]+)"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return Set(expression.matches(in: text, range: range).compactMap { match in
-            guard match.numberOfRanges == 2, let range = Range(match.range(at: 1), in: text) else { return nil }
-            return String(text[range])
-        })
     }
 
     private static func collectIDs(in value: Value, into result: inout Set<String>) {

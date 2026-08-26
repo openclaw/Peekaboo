@@ -31,6 +31,33 @@ struct BrowserMCPChannelEndpointResolverTests {
     }
 
     @Test
+    func `DevTools authority is reserved before permission bearing WebSocket probe`() async throws {
+        let order = EndpointReservationOrder()
+        let inspections = ListenerInspections([
+            Self.listener(socket: 100),
+            Self.listener(socket: 100),
+        ])
+
+        _ = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
+            target: Self.target(),
+            activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
+            readActivePort: { _ in Self.activePortData() },
+            inspectListener: { _, _, _ in try inspections.next() },
+            probeWebSocket: { _, _, _, onDispatch in
+                #expect(order.wasReserved)
+                onDispatch()
+                return Self.version()
+            },
+            reserveAuthority: { reservation in
+                #expect(reservation.browserID == "browser-a")
+                #expect(reservation.browserURL == "http://127.0.0.1:9222/")
+                order.recordReservation()
+            })
+
+        #expect(order.wasReserved)
+    }
+
+    @Test
     func `same port listener reopen is refused during later revalidation`() async throws {
         let initialInspections = ListenerInspections([
             Self.listener(socket: 100),
@@ -246,6 +273,19 @@ private final class InvocationCount: @unchecked Sendable {
 
     func increment() {
         self.lock.withLock { self.count += 1 }
+    }
+}
+
+private final class EndpointReservationOrder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reserved = false
+
+    var wasReserved: Bool {
+        self.lock.withLock { self.reserved }
+    }
+
+    func recordReservation() {
+        self.lock.withLock { self.reserved = true }
     }
 }
 

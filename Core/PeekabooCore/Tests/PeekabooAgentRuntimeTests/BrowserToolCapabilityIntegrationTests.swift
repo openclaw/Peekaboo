@@ -60,7 +60,7 @@ struct BrowserToolCapabilityIntegrationTests {
     }
 
     @Test
-    func `text only daemon responses still mint opaque page and element refs`() async throws {
+    func `text only daemon snapshot refuses instead of minting ambiguous element refs`() async throws {
         let client = CapabilityBrowserMCPClient(structuredResponses: false)
         let context = Self.context(client: client)
         let tool = BrowserTool(context: context)
@@ -77,16 +77,15 @@ struct BrowserToolCapabilityIntegrationTests {
                 "action": "snapshot",
                 "page_id": pageReference,
             ]))
-        let text = Self.text(from: snapshot)
-
-        #expect(text.contains("uid=be1_"))
-        #expect(!text.contains("uid=1_0"))
+        #expect(snapshot.isError)
+        #expect(!Self.allText(from: snapshot).contains("uid=1_0"))
     }
 
     @Test
     func `raw snapshot and evaluate script resolve only schema owned element positions`() async throws {
         let client = CapabilityBrowserMCPClient()
-        let context = Self.context(client: client)
+        let coordinator = CapabilityMutationCoordinator()
+        let context = Self.context(client: client, coordinator: coordinator)
         let tool = BrowserTool(context: context)
         let listed = try await context.execute(
             tool: tool,
@@ -120,6 +119,235 @@ struct BrowserToolCapabilityIntegrationTests {
         #expect(call.arguments["pageId"] as? Int == 7)
         #expect(call.arguments["args"] as? [String] == ["1_0"])
         #expect(call.arguments["uid"] as? String == "domain-value")
+        #expect(coordinator.sharedPrepareCount == 1)
+        #expect(coordinator.concurrentPrepareCount == 0)
+        #expect(coordinator.completionCount == 1)
+    }
+
+    @Test
+    func `evaluate script domain uid text is not rewritten as an element capability`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let pageReference = try await Self.pageReference(from: context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        let domainResult = "uid 1_0 active\n7: order\nNote: Page 7 domain"
+        client.executeHandler = { toolName in
+            toolName == "evaluate_script" ? .text(domainResult) : .text("ok")
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "call",
+                "mcp_tool": "evaluate_script",
+                "page_id": pageReference,
+                "mcp_args_json": #"{"function":"(el) => el","args":["\#(elementReference)"]}"#,
+            ]))
+
+        #expect(!response.isError)
+        #expect(Self.text(from: response) == domainResult)
+    }
+
+    @Test
+    func `third party singleton uid without a fresh snapshot fails closed`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let pageReference = try await Self.pageReference(from: context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        let providerResult = #"{"result":{"uid":"1_0"}}"#
+        client.executeHandler = { toolName in
+            guard toolName == "execute_3p_developer_tool" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(text: providerResult, annotations: nil, _meta: nil)],
+                structuredContent: .object(["message": .string(providerResult)]))
+        }
+        let params = #"{"target":{"uid":"\#(elementReference)"}}"#
+        let encodedArguments = try JSONSerialization.data(
+            withJSONObject: ["toolName": "fixture", "params": params],
+            options: [.sortedKeys])
+        let rawArguments = try #require(String(data: encodedArguments, encoding: .utf8))
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "call",
+                "mcp_tool": "execute_3p_developer_tool",
+                "page_id": pageReference,
+                "mcp_args_json": rawArguments,
+            ]))
+
+        #expect(response.isError)
+        #expect(!Self.allText(from: response).contains("1_0"))
+        #expect(!Self.allText(from: response).contains(elementReference))
+    }
+
+    @Test
+    func `third party singleton uid omitted from fresh snapshot fails closed`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let pageReference = try await Self.pageReference(from: context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        let providerResult = #"{"result":{"uid":"2_0"}}"#
+        client.executeHandler = { toolName in
+            guard toolName == "execute_3p_developer_tool" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(
+                    text: providerResult + "\n## Latest page snapshot\nuid=1_0 button \"Continue\"",
+                    annotations: nil,
+                    _meta: nil)],
+                structuredContent: .object([
+                    "message": .string(providerResult),
+                    "snapshot": .object([
+                        "id": .string("1_0"),
+                        "role": .string("button"),
+                        "name": .string("Continue"),
+                    ]),
+                ]))
+        }
+        let params = #"{"target":{"uid":"\#(elementReference)"}}"#
+        let encodedArguments = try JSONSerialization.data(
+            withJSONObject: ["toolName": "fixture", "params": params],
+            options: [.sortedKeys])
+        let rawArguments = try #require(String(data: encodedArguments, encoding: .utf8))
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "call",
+                "mcp_tool": "execute_3p_developer_tool",
+                "page_id": pageReference,
+                "mcp_args_json": rawArguments,
+            ]))
+
+        #expect(response.isError)
+        #expect(!Self.allText(from: response).contains("2_0"))
+    }
+
+    @Test
+    func `console domain uid line outside affected resources remains unchanged`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let pageReference = try await Self.pageReference(from: context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        client.executeHandler = { toolName in
+            guard toolName == "get_console_message" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(
+                    text: "Value:\nuid=1_0\n### Affected resources\nuid=1_0",
+                    annotations: nil,
+                    _meta: nil)],
+                structuredContent: .object([
+                    "consoleMessage": .object([
+                        "value": .string("uid=1_0"),
+                        "affectedResources": .array([.object([
+                            "uid": .string("1_0"),
+                            "label": .string("uid=1_0"),
+                        ])]),
+                    ]),
+                ]))
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "console",
+                "page_id": pageReference,
+                "message_id": 1,
+            ]))
+
+        #expect(!response.isError)
+        #expect(Self.text(from: response) == "Value:\nuid=1_0\n### Affected resources\nuid=\(elementReference)")
+        let consoleMessage = try #require(response.structuredContent?.objectValue?["consoleMessage"]?.objectValue)
+        #expect(consoleMessage["value"] == .string("uid=1_0"))
+        let affected = try #require(consoleMessage["affectedResources"]?.arrayValue?.first?.objectValue)
+        #expect(affected["uid"] == .string(elementReference))
+        #expect(affected["label"] == .string("uid=1_0"))
+    }
+
+    @Test
+    func `console affected resource without opaque snapshot mapping fails closed`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let pageReference = try await Self.pageReference(from: context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        client.executeHandler = { toolName in
+            guard toolName == "get_console_message" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(
+                    text: "### Affected resources\nuid=1_0",
+                    annotations: nil,
+                    _meta: nil)],
+                structuredContent: .object([
+                    "consoleMessage": .object([
+                        "affectedResources": .array([.object(["uid": .string("1_0")])]),
+                    ]),
+                ]))
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "console",
+                "page_id": pageReference,
+                "message_id": 1,
+            ]))
+
+        #expect(response.isError)
+        #expect(!Self.allText(from: response).contains("1_0"))
+    }
+
+    @Test
+    func `foreground capable browser connect retains the shared desktop mutation lane`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let coordinator = CapabilityMutationCoordinator()
+        let context = Self.context(client: client, coordinator: coordinator)
+
+        let response = try await context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: ["action": "connect"]))
+
+        #expect(response.isError)
+        #expect(coordinator.sharedPrepareCount == 1)
+        #expect(coordinator.concurrentPrepareCount == 0)
+        #expect(coordinator.completionCount == 0)
     }
 
     @Test
@@ -240,7 +468,9 @@ struct BrowserToolCapabilityIntegrationTests {
         #expect(refused.isError)
         #expect(client.sequences.count == beforeRefusal)
     }
+}
 
+extension BrowserToolCapabilityIntegrationTests {
     @Test
     func `third party raw params and returned DOM refs use exact singleton object paths`() async throws {
         let client = CapabilityBrowserMCPClient()
@@ -284,6 +514,11 @@ struct BrowserToolCapabilityIntegrationTests {
         #expect(!text.contains("\nuid=1_0"))
         #expect(!text.contains(#""uid" : "1_0""#))
         #expect(text.contains("be1_"))
+        #expect(text.contains("Emulating viewport: {\"width\":800}"))
+        let message = try #require(response.structuredContent?.objectValue?["message"]?.stringValue)
+        #expect(message.contains("be1_"))
+        #expect(!message.contains(#""uid" : "1_0""#))
+        #expect(response.meta?.objectValue?["state"] == .string("dispatched_unverified"))
     }
 
     @Test
@@ -313,7 +548,309 @@ struct BrowserToolCapabilityIntegrationTests {
         #expect(response.meta?.objectValue?["browser_snapshot_ref"] == nil)
     }
 
-    private static func context(client: any BrowserMCPClientProviding) -> MCPToolContext {
+    @Test
+    func `provider error projects existing opaque refs and preserves canonical outcome`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        let diagnostic = "Element with uid 1_0 no longer exists on the page."
+        client.executeHandler = { toolName in
+            guard toolName == "click" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(
+                    text: diagnostic,
+                    annotations: nil,
+                    _meta: Metadata(additionalFields: ["provider_diagnostic": .string(diagnostic)]))],
+                isError: true,
+                meta: .object([
+                    "provider_diagnostic": .string(diagnostic),
+                    "provider_page": .int(7),
+                ]),
+                structuredContent: .object([
+                    "message": .string(diagnostic),
+                    "snapshot": .object(["id": .string("1_0")]),
+                    "domain": .string("order uid 1_0 active"),
+                ]))
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": pageReference,
+                "uid": elementReference,
+            ]))
+        let allText = Self.allText(from: response)
+
+        #expect(response.isError)
+        #expect(!allText.contains("uid 1_0"))
+        #expect(!allText.contains(elementReference))
+        #expect(allText.contains("provider diagnostics were withheld"))
+        #expect(response.structuredContent == nil)
+        #expect(response.meta?.objectValue?["state"] == .string("indeterminate"))
+    }
+
+    @Test
+    func `non snapshot success projects echoed element uid across every result surface`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        let providerMessage = "Took a screenshot of node with uid \"1_0\"."
+        client.executeHandler = { toolName in
+            guard toolName == "take_screenshot" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(
+                    text: providerMessage,
+                    annotations: nil,
+                    _meta: Metadata(additionalFields: ["provider_message": .string(providerMessage)]))],
+                meta: .object(["provider_message": .string(providerMessage)]),
+                structuredContent: .object(["message": .string(providerMessage)]))
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "screenshot",
+                "page_id": pageReference,
+                "uid": elementReference,
+            ]))
+        let allText = Self.allText(from: response)
+
+        #expect(!response.isError)
+        #expect(!allText.contains("uid \"1_0\""))
+        #expect(allText.contains("uid \"\(elementReference)\""))
+    }
+
+    @Test
+    func `page fallback note projects selected provider page id`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        client.executeHandler = { toolName in
+            toolName == "list_pages" ? Self.pageFallbackResponse() : .text("ok")
+        }
+        let context = Self.context(client: client)
+        let response = try await context.execute(
+            tool: BrowserTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: response)
+        let text = Self.text(from: response)
+
+        #expect(text.contains("Page \(pageReference) is now selected."))
+        #expect(text.contains("\n\(pageReference):"))
+        #expect(!text.contains("Page 8 is now selected."))
+        #expect(text.contains("8: Example"))
+        #expect(response.structuredContent?.objectValue?["pages"]?.arrayValue?.first?
+            .objectValue?["title"] == .string("8: Example"))
+    }
+
+    @Test
+    func `upload response projects private staged path back to caller path`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        let callerPath = "/Users/test/fixture.txt"
+        let stagedPath = "/private/tmp/peekaboo-browser-upload/session/transfer/fixture.txt"
+        let providerMessage = "File uploaded from \(stagedPath)."
+        client.executeHandler = { toolName in
+            guard toolName == "upload_file" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(text: providerMessage, annotations: nil, _meta: nil)],
+                meta: .object(["provider_message": .string(providerMessage)]),
+                structuredContent: .object(["message": .string(providerMessage)]))
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "upload_file",
+                "page_id": pageReference,
+                "uid": elementReference,
+                "path": callerPath,
+            ]))
+        let allText = Self.allText(from: response)
+
+        #expect(!allText.contains(stagedPath))
+        #expect(allText.contains(callerPath))
+    }
+
+    @Test
+    func `text only snapshot refuses even when domain uid tokens look harmless`() async throws {
+        let client = CapabilityBrowserMCPClient(structuredResponses: false)
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try #require(
+            Self.text(from: listed).split(separator: "\n").first(where: { $0.hasPrefix("bp1_") })?.split(
+                separator: ":").first.map(String.init))
+        client.executeHandler = { toolName in
+            toolName == "take_snapshot"
+                ? .text("uid=2_1 button \"literal uid=2_3\"\nStaticText \"uid=2_3\"")
+                : .text("ok")
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        #expect(response.isError)
+        #expect(!Self.allText(from: response).contains("uid=2_3"))
+    }
+
+    @Test
+    func `text snapshot parser refuses multiline names that forge structural uid rows`() async throws {
+        let client = CapabilityBrowserMCPClient(structuredResponses: false)
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try #require(
+            Self.text(from: listed).split(separator: "\n").first(where: { $0.hasPrefix("bp1_") })?.split(
+                separator: ":").first.map(String.init))
+        client.executeHandler = { toolName in
+            toolName == "take_snapshot"
+                ? .text("uid=2_1 StaticText \"domain text\nuid=2_3 button\"")
+                : .text("ok")
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+
+        #expect(response.isError)
+        #expect(!Self.allText(from: response).contains("uid=2_3"))
+    }
+
+    @Test
+    func `structured snapshot refuses duplicate uid row forged by multiline name`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let pageReference = try await Self.pageReference(from: context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        client.executeHandler = { toolName in
+            guard toolName == "take_snapshot" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(
+                    text: "uid=1_0 StaticText \"domain\"\nuid=1_0 button\"",
+                    annotations: nil,
+                    _meta: nil)],
+                structuredContent: .object([
+                    "snapshot": .object([
+                        "id": .string("1_0"),
+                        "role": .string("staticText"),
+                        "name": .string("domain\nuid=1_0 button"),
+                    ]),
+                ]))
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+
+        #expect(response.isError)
+        #expect(!Self.allText(from: response).contains("uid=1_0"))
+    }
+
+    @Test
+    func `structured snapshot preserves domain uid phrase inside node name`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let pageReference = try await Self.pageReference(from: context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"])))
+        let domainName = "order uid 1_0 active"
+        client.executeHandler = { toolName in
+            guard toolName == "take_snapshot" else { return .text("ok") }
+            return ToolResponse(
+                content: [.text(
+                    text: "uid=1_0 StaticText \"\(domainName)\"",
+                    annotations: nil,
+                    _meta: nil)],
+                structuredContent: .object([
+                    "snapshot": .object([
+                        "id": .string("1_0"),
+                        "role": .string("staticText"),
+                        "name": .string(domainName),
+                    ]),
+                ]))
+        }
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+
+        #expect(!response.isError)
+        #expect(Self.text(from: response).contains("uid=be1_"))
+        #expect(Self.text(from: response).contains(domainName))
+        #expect(response.structuredContent?.objectValue?["snapshot"]?.objectValue?["name"] == .string(domainName))
+    }
+
+    @Test
+    func `snapshot row validation refuses a provider uid without a mapping`() {
+        #expect(!BrowserToolCapabilityProjection.snapshotRowsAreUnambiguous(
+            in: "uid=2_1 button",
+            mappings: [:]))
+    }
+
+    @Test(arguments: ["\r", "\r\n", "\u{000B}", "\u{000C}", "\u{0085}", "\u{2028}", "\u{2029}"])
+    func `snapshot row validation refuses non LF separators`(separator: String) {
+        #expect(!BrowserToolCapabilityProjection.snapshotRowsAreUnambiguous(
+            in: "uid=2_1 StaticText \"domain text\(separator)uid=2_1 button\"",
+            mappings: ["2_1": "be1_fixture"]))
+    }
+
+    private static func context(
+        client: any BrowserMCPClientProviding,
+        coordinator: (any MCPToolSnapshotMutationCoordinating)? = nil) -> MCPToolContext
+    {
         let services = PeekabooServices()
         return MCPToolContext(
             automation: services.automation,
@@ -330,6 +867,7 @@ struct BrowserToolCapabilityIntegrationTests {
             permissions: services.permissions,
             clipboard: services.clipboard,
             browser: client,
+            snapshotMutationCoordinator: coordinator,
             executionPolicy: .unrestricted)
     }
 
@@ -347,6 +885,54 @@ struct BrowserToolCapabilityIntegrationTests {
     private static func text(from response: ToolResponse) -> String {
         guard case let .text(text, _, _)? = response.content.first else { return "" }
         return text
+    }
+
+    private static func allText(from response: ToolResponse) -> String {
+        let content: [String] = response.content.flatMap { item -> [String] in
+            switch item {
+            case let .text(text, _, metadata):
+                return [text] + Self.strings(in: metadata.map { .object($0.fields) })
+            case let .image(_, _, _, metadata),
+                 let .audio(_, _, _, metadata),
+                 let .resource(_, _, metadata):
+                return Self.strings(in: metadata.map { .object($0.fields) })
+            case .resourceLink:
+                return []
+            }
+        }
+        return (content + Self.strings(in: response.meta) + Self.strings(in: response.structuredContent))
+            .joined(separator: "\n")
+    }
+
+    private static func strings(in value: Value?) -> [String] {
+        guard let value else { return [] }
+        switch value {
+        case let .object(fields):
+            return fields.values.flatMap { self.strings(in: $0) }
+        case let .array(values):
+            return values.flatMap { self.strings(in: $0) }
+        case let .string(string):
+            return [string]
+        case .int, .double, .bool, .null, .data:
+            return []
+        }
+    }
+
+    private static func pageFallbackResponse() -> ToolResponse {
+        ToolResponse(
+            content: [.text(
+                text: "Note: the previously selected page was closed. Page 8 is now selected.\n" +
+                    "## Pages\n8: 8: Example (https://example.test/) [selected]",
+                annotations: nil,
+                _meta: nil)],
+            structuredContent: .object([
+                "pages": .array([.object([
+                    "id": .int(8),
+                    "url": .string("https://example.test/"),
+                    "title": .string("8: Example"),
+                    "selected": .bool(true),
+                ])]),
+            ]))
     }
 
     private static func snapshotResponse(uid: String) -> ToolResponse {
@@ -416,10 +1002,10 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
         self.sequences.append(calls)
         if let executeHandler {
             let response = await executeHandler(calls.last?.toolName ?? "")
-            return DesktopActionResult(payload: response, outcome: self.outcome(for: calls))
+            return DesktopActionResult(payload: response, outcome: self.outcome(for: calls, response: response))
         }
         let response = self.response(for: calls.last?.toolName)
-        return DesktopActionResult(payload: response, outcome: self.outcome(for: calls))
+        return DesktopActionResult(payload: response, outcome: self.outcome(for: calls, response: response))
     }
 
     func executeSequenceWithOutcome(
@@ -447,13 +1033,22 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
         }
     }
 
-    private func outcome(for calls: [BrowserMCPMappedCall]) -> DesktopActionOutcome? {
+    private func outcome(
+        for calls: [BrowserMCPMappedCall],
+        response: ToolResponse) -> DesktopActionOutcome?
+    {
         let mutationCount = calls.count { call in
             BrowserMCPPageRoutingContract.actionSemantics(
                 for: call.toolName,
                 arguments: call.arguments) != .readOnly
         }
         guard let unitCount = DesktopActionOutcome.DispatchUnitCount(mutationCount) else { return nil }
+        if response.isError {
+            return .indeterminate(
+                delivery: .init(mechanism: .browserProtocol, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: unitCount)
+        }
         return .dispatchedUnverified(
             delivery: .init(mechanism: .browserProtocol, mode: .background),
             evidence: .deliveryAccepted,
@@ -497,30 +1092,56 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
     }
 
     private func thirdPartyResponse() -> ToolResponse {
-        ToolResponse(
+        let message = """
+        {
+          "result": {
+            "uid": "1_0"
+          },
+          "account": {
+            "uid": "customer-42"
+          },
+          "label": "uid=1_0"
+        }
+        """
+        return ToolResponse(
             content: [.text(
                 text: """
-                {
-                  "result": {
-                    "uid": "1_0"
-                  },
-                  "account": {
-                    "uid": "customer-42"
-                  },
-                  "label": "uid=1_0"
-                }
+                \(message)
+                Emulating viewport: {"width":800}
                 ## Latest page snapshot
                 uid=1_0 button "Continue"
                 """,
                 annotations: nil,
-                _meta: nil)],
+                _meta: Metadata(additionalFields: ["provider_message": .string(message)]))],
             structuredContent: .object([
+                "message": .string(message),
+                "viewport": .object(["width": .int(800)]),
                 "snapshot": .object([
                     "id": .string("1_0"),
                     "role": .string("button"),
                     "name": .string("Continue"),
                 ]),
             ]))
+    }
+}
+
+@MainActor
+private final class CapabilityMutationCoordinator: MCPToolSnapshotMutationCoordinating, @unchecked Sendable {
+    private(set) var sharedPrepareCount = 0
+    private(set) var concurrentPrepareCount = 0
+    private(set) var completionCount = 0
+
+    func prepareMutation(_: MCPToolSnapshotMutationScope) throws {
+        self.sharedPrepareCount += 1
+    }
+
+    func prepareConcurrentMutation(_: MCPToolSnapshotMutationScope) throws {
+        self.concurrentPrepareCount += 1
+    }
+
+    func completeMutation(_: MCPToolSnapshotMutationScope, succeeded _: Bool) async -> Bool {
+        self.completionCount += 1
+        return true
     }
 }
 

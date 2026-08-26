@@ -41,6 +41,14 @@ private enum BrowserMCPCallFailure: Error {
     case mayHaveDispatched(any Error)
 }
 
+private struct BrowserMCPProjectedProviderError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? {
+        self.message
+    }
+}
+
 struct BrowserMCPEnvironmentOptions: Sendable {
     let browserURL: String?
     let isolated: Bool
@@ -93,6 +101,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     typealias ConnectionAttemptProvider = @MainActor @Sendable () -> BrowserMCPConnectionAttempt
     typealias PreferredChannelProvider = @MainActor @Sendable () -> BrowserMCPChannel
     typealias IsolatedConnectionProvider = @MainActor @Sendable () -> Bool
+    typealias TargetReservation = @MainActor (BrowserMCPConnectionReceipt) throws -> Void
 
     private let serverName: String
     private let manager: any BrowserMCPManaging
@@ -257,7 +266,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     func connectWithOutcome(
         channel: BrowserMCPChannel?,
-        browserURL: String? = nil) async throws -> DesktopActionResult<BrowserMCPStatus>
+        browserURL: String? = nil,
+        reserveTarget: TargetReservation? = nil) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
         let attempt = self.connectionAttempt()
         do {
@@ -267,7 +277,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                         return try await self.connectUnlockedWithOutcome(
                             channel: channel,
                             browserURL: browserURL,
-                            attempt: attempt)
+                            attempt: attempt,
+                            reserveTarget: reserveTarget)
                     } catch is CancellationError where !attempt.state.didStartAnyDispatch {
                         throw Self.preDispatchConnectionFailure(CancellationError())
                     } catch BrowserMCPConnectionError.targetLocked {
@@ -301,7 +312,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func connectUnlockedWithOutcome(
         channel: BrowserMCPChannel?,
         browserURL: String? = nil,
-        attempt: BrowserMCPConnectionAttempt) async throws -> DesktopActionResult<BrowserMCPStatus>
+        attempt: BrowserMCPConnectionAttempt,
+        reserveTarget: TargetReservation? = nil) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
         if let existing = self.connectionReceipt {
             guard self.connectionReceipt(existing, matchesChannel: channel, browserURL: browserURL) else {
@@ -323,7 +335,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         let target = try await self.resolveTarget(
             channel: channel,
             browserURL: browserURL,
-            attempt: attempt)
+            attempt: attempt,
+            reserveTarget: reserveTarget)
+        try reserveTarget?(target.receipt)
         if self.manager.hasServer(name: self.serverName) {
             await self.manager.removeServer(name: self.serverName)
         }
@@ -939,14 +953,60 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 self.activeUploadID = nil
             }
             uploadWorkspace.retain(stagedUpload)
-            return response
+            return Self.projectUploadResponse(
+                response,
+                stagedPath: stagedUpload.filePath,
+                sourcePath: sourcePath)
         } catch {
             if self.activeUploadID == uploadID {
                 self.activeUploadID = nil
             }
             uploadWorkspace.retain(stagedUpload)
-            throw BrowserMCPCallFailure.mayHaveDispatched(error)
+            throw BrowserMCPCallFailure.mayHaveDispatched(Self.projectUploadError(
+                error,
+                stagedPath: stagedUpload.filePath,
+                sourcePath: sourcePath))
         }
+    }
+
+    private static func projectUploadResponse(
+        _ response: ToolResponse,
+        stagedPath: String,
+        sourcePath: String) -> ToolResponse
+    {
+        func project(_ text: String) -> String {
+            text.replacingOccurrences(of: stagedPath, with: sourcePath)
+        }
+        func project(_ value: Value) -> Value {
+            switch value {
+            case let .object(fields):
+                .object(fields.mapValues(project))
+            case let .array(values):
+                .array(values.map(project))
+            case let .string(string):
+                .string(project(string))
+            case .int, .double, .bool, .null, .data:
+                value
+            }
+        }
+        return ToolResponse(
+            content: response.content.map {
+                BrowserToolCapabilityProjection.projectingContentItem($0, transform: project)
+            },
+            isError: response.isError,
+            meta: response.meta.map(project),
+            structuredContent: response.structuredContent.map(project))
+    }
+
+    private static func projectUploadError(
+        _ error: any Error,
+        stagedPath: String,
+        sourcePath: String) -> any Error
+    {
+        let original = self.errorDescription(error)
+        let projected = original.replacingOccurrences(of: stagedPath, with: sourcePath)
+        guard projected != original else { return error }
+        return BrowserMCPProjectedProviderError(message: projected)
     }
 
     private func cancelUpload(id: UUID) async {
@@ -958,17 +1018,23 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func resolveTarget(
         channel: BrowserMCPChannel?,
         browserURL: String?,
-        attempt: BrowserMCPConnectionAttempt) async throws
+        attempt: BrowserMCPConnectionAttempt,
+        reserveTarget: TargetReservation? = nil) async throws
         -> BrowserMCPResolvedTarget
     {
         if let browserURL = browserURL ?? self.environmentOptions.browserURL {
-            return try await self.resolveExactEndpointTarget(browserURL: browserURL, channel: channel)
+            return try await self.resolveExactEndpointTarget(
+                browserURL: browserURL,
+                channel: channel,
+                reserveTarget: reserveTarget)
         }
 
         let resolvedChannel = channel ?? BrowserMCPService.preferredChannel()
         if self.isolatedConnectionRequested() {
+            let receipt = BrowserMCPConnectionReceipt(channel: resolvedChannel)
+            try reserveTarget?(receipt)
             return BrowserMCPResolvedTarget(
-                receipt: BrowserMCPConnectionReceipt(channel: resolvedChannel),
+                receipt: receipt,
                 config: BrowserMCPService.isolatedChromeDevToolsConfig(
                     channel: resolvedChannel,
                     headless: self.environmentOptions.headless),
@@ -1017,7 +1083,24 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             processIdentifier: browser.processIdentifier,
             processStartIdentity: processStartIdentity,
             bundleIdentifier: channelIdentity.bundleIdentifier)
-        let endpoint = try await self.channelEndpointResolver.resolve(processTarget, attempt: attempt)
+        try reserveTarget?(BrowserMCPConnectionReceipt(
+            channel: resolvedChannel,
+            processIdentifier: browser.processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: channelIdentity.bundleIdentifier))
+        let endpoint = try await self.channelEndpointResolver.resolve(
+            processTarget,
+            attempt: attempt,
+            reserveAuthority: { reservation in
+                try reserveTarget?(BrowserMCPConnectionReceipt(
+                    channel: resolvedChannel,
+                    processIdentifier: browser.processIdentifier,
+                    processStartIdentity: processStartIdentity,
+                    bundleIdentifier: channelIdentity.bundleIdentifier,
+                    browserURL: reservation.browserURL,
+                    webSocketDebuggerURL: reservation.webSocketDebuggerURL,
+                    devToolsBrowserID: reservation.browserID))
+            })
         guard channelIdentity.matches(bundleIdentifier: self.processBundleIdentifier(browser.processIdentifier)),
               self.processCodeSignatureValidator(
                   browser.processIdentifier,
@@ -1049,9 +1132,17 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private func resolveExactEndpointTarget(
         browserURL: String,
-        channel: BrowserMCPChannel?) async throws -> BrowserMCPResolvedTarget
+        channel: BrowserMCPChannel?,
+        reserveTarget: TargetReservation? = nil) async throws -> BrowserMCPResolvedTarget
     {
-        let endpoint = try await self.endpointResolver.resolve(browserURL)
+        guard let requestedEndpoint = BrowserLoopbackEndpoint(browserURL: browserURL) else {
+            throw BrowserMCPConnectionError.invalidEndpoint(
+                "browser_url must be an exact loopback HTTP origin with an explicit port")
+        }
+        try reserveTarget?(BrowserMCPConnectionReceipt(
+            channel: channel,
+            browserURL: requestedEndpoint.canonicalBrowserURL))
+        let endpoint = try await self.endpointResolver.resolve(requestedEndpoint.canonicalBrowserURL)
         let receipt = BrowserMCPConnectionReceipt(
             channel: channel,
             browserURL: endpoint.browserURL,
@@ -1059,6 +1150,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             devToolsBrowserID: endpoint.browserID,
             browserVersion: endpoint.browserVersion,
             protocolVersion: endpoint.protocolVersion)
+        try reserveTarget?(receipt)
         return BrowserMCPResolvedTarget(
             receipt: receipt,
             config: BrowserMCPService.chromeDevToolsConfig(

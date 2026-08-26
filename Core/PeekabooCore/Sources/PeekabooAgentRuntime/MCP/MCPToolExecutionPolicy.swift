@@ -135,6 +135,10 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
             toolName: toolName,
             arguments: ToolArguments(from: AgentToolArguments(agentArguments)))
     }
+
+    static func browserRequiresForegroundAuthority(_ arguments: ToolArguments) -> Bool {
+        BackgroundOnlyToolPolicy.browserRequiresForegroundAuthority(arguments)
+    }
 }
 
 private enum BackgroundOnlyToolPolicy {
@@ -468,6 +472,14 @@ private enum BackgroundOnlyToolPolicy {
             break
         }
         return nil
+    }
+
+    static func browserRequiresForegroundAuthority(_ arguments: ToolArguments) -> Bool {
+        guard let violation = self.browserViolation(arguments) else { return false }
+        if case .activation = violation {
+            return true
+        }
+        return false
     }
 
     private static func clipboardViolation(_ arguments: ToolArguments) -> Violation? {

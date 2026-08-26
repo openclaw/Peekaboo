@@ -130,8 +130,12 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   namespace. Before element dispatch, the same provider gate takes a fresh snapshot and proves every provider UID is
   still present in the current document. References copied into another caller session fail before Chrome dispatch.
 - Independently authenticated process-local browser sessions own separate Chrome DevTools MCP children and FIFO
-  execution gates, so one blocked session does not stall another while calls within each session remain ordered and
-  target-locked, and two sessions cannot own the same exact browser target concurrently. Bridge currently retains its one authenticated browser connection because its status/connect/
+  execution/mutation gates, so one blocked session does not stall another while calls within each session remain
+  ordered. Peekaboo reserves the canonical process/DevTools target before permission-bearing provider setup; two
+  sessions therefore cannot even transiently connect or probe the same exact target. Isolated sessions launch and own
+  distinct browser instances, so their intentionally receiptless children do not overlock one another. Foreground-capable
+  browser setup/activation remains on the shared desktop lane, and failed snapshot invalidation is kept in one ordered
+  cross-session ledger that every browser and desktop mutation must drain before dispatch. Bridge currently retains its one authenticated browser connection because its status/connect/
   disconnect wire shape has no caller-session namespace; transport multiplexing is deferred without claiming a new
   Bridge protocol version.
 - Each process-local `peekaboo mcp serve` session owns and tears down its own browser child. A daemon-backed MCP session
@@ -172,7 +176,14 @@ Advanced escape hatch:
   reject `page_id`. UID-bearing raw schemas are resolved only at their audited positions, including
   `evaluate_script.args`, form elements, and third-party singleton `{ "uid": ... }` parameters; unrelated domain
   fields named `uid` remain data. Raw page-list and snapshot responses receive the same opaque projection. Snapshot
-  file output is refused in capability sessions because the provider artifact would contain unprojected UIDs.
+  file output is refused in capability sessions because the provider artifact would contain unprojected UIDs. Error,
+  non-snapshot success, content-item metadata/resources, status-prefixed, structured-message, fallback-page-note, and
+  upload responses project their provider-owned fields too, without rewriting page titles, script values, or other
+  domain data. Provider page/UID tokens and private staging paths therefore never become caller authority or
+  diagnostics. Provider error payloads are reduced to a safe generic diagnostic while retaining Peekaboo's canonical
+  outcome metadata, because arbitrary error objects cannot distinguish provider identifiers from domain data.
+  Text-only snapshots never mint element capabilities: without a structured snapshot, page-controlled
+  multiline accessibility text makes line-leading `uid=` rows fundamentally ambiguous, so Peekaboo fails closed.
   `trigger_extension_action` is audited but blocked because upstream still resolves its
   shared selected page internally; Peekaboo will not forward it until upstream supports explicit `pageId` routing.
   Unknown raw tool names fail closed until the routing contract is audited and updated.

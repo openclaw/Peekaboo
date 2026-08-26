@@ -22,7 +22,8 @@ public struct BrowserTool: MCPTool {
             Controls and inspects Chrome web pages through one existing exact DevTools connection under immutable
             background-only authority. Use `status` to inspect its receipt, then page-scoped actions with explicit
             opaque page references. Connect is unavailable because Chrome may surface remote-debugging setup or approval
-            UI; use a human-authorized foreground-capable session or standalone CLI to establish the connection first.
+            UI. Restart this exact MCP server/session with explicit foreground authority, connect its scoped browser
+            child, then keep later page operations background-targeted; another CLI or daemon connection is not reused.
             """
         }
 
@@ -785,7 +786,7 @@ public enum BrowserMCPCallMapper {
         case .connect:
             return .mutating
         case .call:
-            calls = try? [self.mapRawCall(arguments: arguments)]
+            return self.rawCallActionSemantics(arguments)
         default:
             calls = try? self.mapSequence(action: action, arguments: arguments)
         }
@@ -815,12 +816,26 @@ public enum BrowserMCPCallMapper {
                 ? .mutating
                 : .readOnly
         case .call:
-            // Invalid/unknown raw calls are rejected by the audited catalog before provider dispatch.
-            .readOnly
+            // Invalid/unknown raw calls are rejected later; classify them conservatively until then.
+            .mutating
         case .closePage, .newPage, .navigate, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey,
              .uploadFile, .handleDialog:
             .mutating
         }
+    }
+
+    private static func rawCallActionSemantics(
+        _ arguments: ToolArguments) -> BrowserMCPPageRoutingContract.ActionSemantics
+    {
+        guard let toolName = arguments.getString("mcp_tool"),
+              BrowserMCPPageRoutingContract.routing(for: toolName) != nil,
+              let rawArguments = try? self.parseJSONObject(arguments.getString("mcp_args_json") ?? "{}")
+        else {
+            return .mutating
+        }
+        return BrowserMCPPageRoutingContract.actionSemantics(
+            for: toolName,
+            arguments: rawArguments) ?? .mutating
     }
 
     static func mapRawCall(arguments: ToolArguments) throws -> BrowserMCPMappedCall {

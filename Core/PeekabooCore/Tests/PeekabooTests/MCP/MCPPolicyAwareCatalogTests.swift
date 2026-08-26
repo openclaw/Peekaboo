@@ -138,6 +138,9 @@ struct MCPPolicyAwareCatalogTests {
         #expect(actions.contains(.string(BrowserAction.listPages.rawValue)))
         #expect(properties["browser_url"] == nil)
         #expect(tool.description.contains("Connect is unavailable"))
+        #expect(tool.description.contains("Restart this exact MCP server/session"))
+        #expect(tool.description.contains("another CLI or daemon connection is not reused"))
+        #expect(!tool.description.contains("standalone CLI"))
 
         let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
         let foregroundTool = BrowserTool(context: foregroundContext)
