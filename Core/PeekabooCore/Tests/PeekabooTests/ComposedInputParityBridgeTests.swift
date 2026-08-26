@@ -2,6 +2,7 @@ import CoreGraphics
 import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooBridgeTestSupport
 import PeekabooFoundation
 import Testing
@@ -143,7 +144,7 @@ struct ComposedInputParityBridgeTests {
             ownerProcessIdentifier: getpid(),
             ownerProcessStartIdentity: 9001,
             capturedBounds: bounds)
-        let automation = MockAutomationService(accessibilityGranted: true)
+        let automation = ComposedInputAutomationService(accessibilityGranted: true)
         let socketPath = "/tmp/peekaboo-composed-input-client-\(UUID().uuidString).sock"
         let server = PeekabooBridgeServer(
             services: StubServices(automation: automation),
@@ -167,6 +168,8 @@ struct ComposedInputParityBridgeTests {
             processIdentifier: getpid()))
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.foregroundModifierClickSnapshotLease) == true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.compositeTypeDelivery) == true)
 
         let pixel = try await client.typeActionsByFocusingPixelWithOutcome(.init(
             point: CGPoint(x: 20, y: 20),
@@ -190,4 +193,11 @@ struct ComposedInputParityBridgeTests {
         #expect(automation.foregroundModifierClickRequests.first?.snapshotID == "snapshot")
         await host.stop()
     }
+}
+
+@MainActor
+private final class ComposedInputAutomationService: MockAutomationService,
+    ScriptedUIAutomationActionOutcomeProviding
+{
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
 }
