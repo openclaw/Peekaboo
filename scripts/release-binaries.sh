@@ -28,6 +28,7 @@ GITHUB_HOST=github.com
 GITHUB_REPOSITORY=github.com/openclaw/Peekaboo
 GITHUB_API_REPOSITORY=openclaw/Peekaboo
 NPM_REGISTRY=https://registry.npmjs.org
+readonly GITHUB_HOST GITHUB_REPOSITORY GITHUB_API_REPOSITORY NPM_REGISTRY
 
 echo -e "${BLUE}🚀 Peekaboo Release Build Script${NC}"
 

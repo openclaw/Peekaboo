@@ -81,6 +81,8 @@ rg -Fq 'github_tag_commit' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'GITHUB_REPOSITORY=github.com/openclaw/Peekaboo' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--repo "$GITHUB_REPOSITORY"' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'NPM_REGISTRY=https://registry.npmjs.org' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'readonly GITHUB_HOST GITHUB_REPOSITORY GITHUB_API_REPOSITORY NPM_REGISTRY' \
+  "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--registry "$NPM_REGISTRY"' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq '@steipete:registry=%s/' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--resume-publication' "$ROOT_DIR/scripts/release-binaries.sh"

@@ -464,4 +464,19 @@ if (
 fi
 grep -Fq 'must not contain parent or current-directory components' "$TEST_ROOT/parent-release.out"
 
+redirect_manifest="$TEST_ROOT/redirect-release.env"
+printf 'NPM_REGISTRY=https://registry.example.invalid\n' > "$redirect_manifest"
+: >"$VERIFY_LOG"
+if (
+  cd "$FIXTURE_ROOT"
+  PATH="$FAKE_BIN:$PATH" PEEKABOO_REUSE_REAL_NODE="$REAL_NODE" \
+    PEEKABOO_REUSE_NODE_LOG="$NODE_LOG" PEEKABOO_REUSE_TEST_LOG="$VERIFY_LOG" \
+    MAC_RELEASE_MANIFEST="$redirect_manifest" ./scripts/release-binaries.sh
+) >"$TEST_ROOT/redirect-release.out" 2>&1; then
+  echo 'release manifest unexpectedly redirected a canonical publication endpoint' >&2
+  exit 1
+fi
+grep -Fq 'NPM_REGISTRY: readonly variable' "$TEST_ROOT/redirect-release.out"
+[[ ! -s "$VERIFY_LOG" ]]
+
 printf '%s\n' 'test-release-binary-reuse: ok'
