@@ -2309,7 +2309,11 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     },
   );
   assert.deepEqual(policyFindingsForFile('runtime/valid-code-directory', 0o755, signedMachO(codeDirectory())), []);
-  const versionedCodeDirectory = (version, mutate = () => {}) => {
+  const versionedCodeDirectory = (
+    version,
+    mutate = () => {},
+    { codeLimit = 1, codeSlotCount = 1 } = {},
+  ) => {
     const headerSize = version >= 0x20600 ? 108
       : version >= 0x20500 ? 96
         : version >= 0x20400 ? 88
@@ -2317,14 +2321,14 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
             : version >= 0x20200 ? 52 : 48;
     const identifier = Buffer.from('dev.peekaboo.versioned\0');
     const hashOffset = headerSize + identifier.length;
-    const payload = Buffer.alloc(hashOffset + 32);
+    const payload = Buffer.alloc(hashOffset + codeSlotCount * 32);
     payload.writeUInt32BE(0xfade0c02, 0);
     payload.writeUInt32BE(payload.length, 4);
     payload.writeUInt32BE(version, 8);
     payload.writeUInt32BE(hashOffset, 16);
     payload.writeUInt32BE(headerSize, 20);
-    payload.writeUInt32BE(1, 28);
-    payload.writeUInt32BE(1, 32);
+    payload.writeUInt32BE(codeSlotCount, 28);
+    payload.writeUInt32BE(codeLimit, 32);
     payload[36] = 32;
     payload[37] = 2;
     payload[39] = 12;
@@ -2342,9 +2346,12 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       [],
     );
   }
-  const platformCodeLimitDirectory = versionedCodeDirectory(0x20300, (payload) => {
-    payload.writeBigUInt64BE(0x2000n, 56);
-  });
+  const extendedCodeLimit = (payload) => payload.writeBigUInt64BE(0x2000n, 56);
+  const platformCodeLimitDirectory = versionedCodeDirectory(
+    0x20300,
+    extendedCodeLimit,
+    { codeLimit: 1, codeSlotCount: 2 },
+  );
   assert.deepEqual(
     policyFindingsForFile(
       'runtime/code-directory-platform-code-limit',
@@ -2352,6 +2359,19 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       signedMachO(platformCodeLimitDirectory),
     ),
     [],
+  );
+  const underCoveredCodeLimitDirectory = versionedCodeDirectory(
+    0x20300,
+    extendedCodeLimit,
+    { codeLimit: 1, codeSlotCount: 1 },
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/code-directory-under-covered-code-limit64',
+      0o755,
+      signedMachO(underCoveredCodeLimitDirectory),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
   );
   const malformedVersionedDirectories = [
     ['team-offset', 0x20200, (payload, layout) => payload.writeUInt32BE(layout.hashOffset, 48)],

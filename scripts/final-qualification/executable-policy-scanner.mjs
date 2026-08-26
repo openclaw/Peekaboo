@@ -202,10 +202,8 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     const codeLimit64 = version >= 0x20300 && start + 64 <= maximum
       ? Number(bytes.readBigUInt64BE(start + 56))
       : 0;
-    // XNU treats a nonzero 32-bit codeLimit as authoritative; zero selects the 64-bit extension.
-    const signingLimit = version >= 0x20300 && codeLimit === 0 && codeLimit64 > 0
-      ? codeLimit64
-      : codeLimit;
+    // Apple Security CodeDirectory::signingLimit gives any nonzero 64-bit extension precedence.
+    const signingLimit = version >= 0x20300 && codeLimit64 > 0 ? codeLimit64 : codeLimit;
     const requiredCodeSlots = pageSize === 0
       ? (signingLimit > 0 ? 1 : 0)
       : (signingLimit > 0 ? Math.ceil(signingLimit / (2 ** pageSize)) : -1);
