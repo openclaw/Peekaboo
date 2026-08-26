@@ -274,13 +274,27 @@ struct MCPBackgroundPolicyExecutionTests {
 
     @Test
     func `App tool lifecycle examples include required foreground consent`() async {
-        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
+        let backgroundContext = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
+        let backgroundDescription = AppTool(context: backgroundContext).description
+        let context = await MCPToolTestHelpers.makeContext(
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .foregroundAllowed)
         let description = AppTool(context: context).description
+        let backgroundOnlyProbeExample =
+            #"Already-running readiness probe: { "action": "launch", "name": "Finder" }"#
+        let backgroundProbeExample =
+            #"Already-running readiness probe: { "action": "launch", "name": "PID:1234" }"#
+        let coldLaunchExample =
+            #"Cold launch with foreground consent: { "action": "launch", "name": "Calendar", "foreground": true }"#
         let newInstanceExample =
             #"{ "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }"#
         let openExample =
             #"{ "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }"#
 
+        #expect(backgroundDescription.contains(backgroundOnlyProbeExample))
+        #expect(!backgroundDescription.contains("Cold launch with foreground consent"))
+        #expect(description.contains(backgroundProbeExample))
+        #expect(description.contains(coldLaunchExample))
         #expect(description.contains(newInstanceExample))
         #expect(description.contains(openExample))
     }

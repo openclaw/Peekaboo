@@ -26,7 +26,7 @@ public struct AppTool: MCPTool {
 
             Always include the `action` field in your JSON payload. Examples:
             - { "action": "list" }
-            - { "action": "launch", "name": "Finder" }
+            - Already-running readiness probe: { "action": "launch", "name": "Finder" }
             - { "action": "quit", "name": "Slack", "force": false }
             """
         }
@@ -39,7 +39,8 @@ public struct AppTool: MCPTool {
         `process_start_identity` field remains compatibility-only and can lose precision above 2^53.
 
         Always include the `action` field in your JSON payload. Examples:
-        - { "action": "launch", "name": "Finder" }
+        - Already-running readiness probe: { "action": "launch", "name": "PID:1234" }
+        - Cold launch with foreground consent: { "action": "launch", "name": "Calendar", "foreground": true }
         - { "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }
         - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }
         - { "action": "switch", "to": "Safari" }
