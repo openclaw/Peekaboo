@@ -451,6 +451,13 @@ extension PeekabooBridgeServer {
             operations.remove(.setValue)
             operations.remove(.performAction)
         }
+        operations = Set(operations.filter {
+            $0 != .setValue ||
+                self.supportedVersions.upperBound <
+                PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
+                (self.services.automation as? any ElementActionAutomationServiceProtocol)?
+                .supportsSetValueResultTargetBinding == true
+        })
         if self.services.automation as? any TargetedFocusedElementServiceProtocol == nil {
             operations.remove(.getFocusedElement)
         }

@@ -45,6 +45,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsForegroundModifierClickSnapshotLease: Bool
     public let foregroundModifierClickUnavailableReason: String?
     public let supportsExactWindowHeldPointerLifecycle: Bool
+    public let supportsSetValueResultTargetBinding: Bool
 
     public init(
         client: PeekabooBridgeClient,
@@ -75,7 +76,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         exactWindowPixelFocusTypingUnavailableReason: String? = nil,
         supportsForegroundModifierClick: Bool = false,
         foregroundModifierClickUnavailableReason: String? = nil,
-        supportsExactWindowHeldPointerLifecycle: Bool = false)
+        supportsExactWindowHeldPointerLifecycle: Bool = false,
+        supportsSetValueResultTargetBinding: Bool = false)
     {
         self.client = client
         self.supportsTargetedHotkeys = supportsTargetedHotkeys
@@ -107,6 +109,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsForegroundModifierClickSnapshotLease = supportsForegroundModifierClick
         self.foregroundModifierClickUnavailableReason = foregroundModifierClickUnavailableReason
         self.supportsExactWindowHeldPointerLifecycle = supportsExactWindowHeldPointerLifecycle
+        self.supportsSetValueResultTargetBinding = supportsSetValueResultTargetBinding
     }
 
     public func detectElements(

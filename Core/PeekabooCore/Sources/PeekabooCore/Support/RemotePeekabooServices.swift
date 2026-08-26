@@ -67,6 +67,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsExactWindowHeldPointerLifecycle: Bool = false,
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
+        supportsSetValueResultTargetBinding: Bool = false,
         supportsDesktopObservation: Bool = false,
         supportsDesktopObservationOCR: Bool = false,
         supportsDesktopObservationCaptureEngine: Bool = false,
@@ -137,7 +138,8 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 exactWindowPixelFocusTypingUnavailableReason: exactWindowPixelFocusTypingUnavailableReason,
                 supportsForegroundModifierClick: supportsForegroundModifierClick,
                 foregroundModifierClickUnavailableReason: foregroundModifierClickUnavailableReason,
-                supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle)
+                supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle,
+                supportsSetValueResultTargetBinding: supportsSetValueResultTargetBinding)
         } else {
             RemoteUIAutomationService(
                 client: client,

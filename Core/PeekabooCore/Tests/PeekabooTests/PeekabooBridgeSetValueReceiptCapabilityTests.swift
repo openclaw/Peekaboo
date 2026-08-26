@@ -339,6 +339,44 @@ struct PeekabooBridgeSetValueReceiptCapabilityTests {
     }
 
     @Test
+    func `current host keeps actions but prunes set value without result target binding`() async throws {
+        let services = try Self.services()
+        services.automationStub.supportsSetValueResultTargetBinding = false
+        let server = Self.currentServer(services: services)
+        let socketPath = "/tmp/peekaboo-set-value-unbound-result-\(UUID().uuidString).sock"
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let handshake = try await TrustedBridgeClientFixture.make(
+            socketPath: socketPath,
+            requestTimeoutSec: 2).handshake(client: Self.clientIdentity)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.processGenerationBoundElementMutations) == true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.setValueResultTargetBinding) == false)
+        #expect(!handshake.supportedOperations.contains(.setValue))
+        #expect(handshake.supportedOperations.contains(.performAction))
+        #expect(handshake.enabledOperations?.contains(.setValue) == false)
+        #expect(handshake.enabledOperations?.contains(.performAction) == true)
+        #expect(!server.allowedOperationsToAdvertise().contains(.setValue))
+        #expect(server.allowedOperationsToAdvertise().contains(.performAction))
+
+        let error = await Self.routeFailure(
+            .setValue(.init(target: "T1", value: .string("updated"), snapshotId: "snapshot")),
+            server: server,
+            capabilities: .current)
+        #expect(error?.actionOutcome?.state == .refused)
+        #expect(error?.actionOutcome?.dispatchState == .none)
+        #expect(services.automationStub.lastSetValue == nil)
+        await host.stop()
+    }
+
+    @Test
     func `current server refuses both element mutations when the negotiated provider capability is absent`() throws {
         let services = try Self.services()
         services.automationStub.supportsSetValueResultTargetBinding = true

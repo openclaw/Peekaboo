@@ -56,6 +56,12 @@ public struct SetValueTool: MCPTool {
                     errorCode: "RUNTIME_INCOMPATIBLE",
                     refusalReason: .runtimeIncompatible)
             }
+            guard automation.supportsSetValueResultTargetBinding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The automation host cannot return a verifiable set-value result.",
+                    hint: "Update the runtime host before retrying set-value.")
+            }
             guard automation.supportsProcessGenerationBoundElementMutations else {
                 throw DesktopActionFailure.preDispatchRefusal(
                     reason: .runtimeIncompatible,

@@ -1100,6 +1100,14 @@ public final class PeekabooBridgeServer {
         guard self.supportedVersions.upperBound >=
             PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion
         else { return }
+        if request.operation == .setValue,
+           (self.services.automation as? any ElementActionAutomationServiceProtocol)?
+               .supportsSetValueResultTargetBinding != true
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Operation setValue requires verifiable result target binding")
+        }
         guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
               Self.supportsProcessGenerationBoundElementMutationProvider(self.services.automation),
               let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities,

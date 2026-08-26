@@ -349,6 +349,33 @@ struct MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
+    func `set value refuses an outcome provider without result target binding before dispatch`() async throws {
+        let automation = StubAutomationService()
+        automation.supportsSetValueResultTargetBinding = false
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        await context.uiSnapshots.removeOwner()
+        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let snapshotID = await snapshot.id
+
+        let response = try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "value": "hello",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(response.isError)
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(
+            reason: .runtimeIncompatible,
+            in: response)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(automation.lastSetValue == nil)
+        #expect(await context.uiSnapshots.getSnapshot(id: snapshotID) != nil)
+    }
+
+    @Test
+    @MainActor
     func `element action tools project missing generation as a zero dispatch snapshot refusal`() async throws {
         let automation = StubAutomationService()
         let failure = DesktopActionFailure.preDispatchRefusal(

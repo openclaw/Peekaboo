@@ -867,6 +867,8 @@ enum RuntimeHostResolver {
                 for: handshake
             ),
             supportsElementActions: BridgeCapabilityPolicy.supportsElementActions(for: handshake),
+            supportsSetValueResultTargetBinding:
+            BridgeCapabilityPolicy.supportsElementAction(.setValue, for: handshake),
             supportsDesktopObservation: observationCapabilities.desktopObservation,
             supportsDesktopObservationOCR: observationCapabilities.desktopObservationOCR,
             supportsDesktopObservationCaptureEngine: observationCapabilities.desktopObservationCaptureEngine,

@@ -109,6 +109,34 @@ struct SetValueOutcomeCommandTests {
     }
 
     @Test
+    func `set value refuses an outcome provider without result target binding before dispatch`() async throws {
+        let automation = OutcomeStubAutomationService()
+        automation.setValueResultTargetBindingSupported = false
+        let snapshots = StubSnapshotManager()
+        let services = TestServicesFactory.makePeekabooServices(
+            snapshots: snapshots,
+            automation: automation
+        )
+        let snapshotID = try await ActionOutcomeCommandTests.storeExactWindowElementSnapshot(in: snapshots)
+
+        let result = try await InProcessCommandRunner.run([
+            "set-value", "updated", "--on", "elem_3", "--snapshot", snapshotID,
+            "--json", "--no-remote",
+        ], services: services)
+        let object = try Self.jsonObject(result.stdout)
+        let outcome = try #require(object["outcome"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(outcome["state"] as? String == "refused")
+        #expect(outcome["refusal_reason"] as? String == "runtime_incompatible")
+        #expect(outcome["mutation_dispatched"] as? Bool == false)
+        #expect(outcome["retry_safe"] as? Bool == true)
+        #expect(automation.uiAutomationOutcomeScript.callCount(for: .setValue) == 0)
+        #expect(automation.setValueCalls.isEmpty)
+        #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
+    }
+
+    @Test
     func `element action commands refuse receiptless legacy providers before dispatch`() async throws {
         for arguments in [
             ["set-value", "updated", "--on", "elem_3"],
