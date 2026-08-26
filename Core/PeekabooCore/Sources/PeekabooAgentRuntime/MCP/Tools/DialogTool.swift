@@ -21,7 +21,21 @@ public struct DialogTool: MCPTool {
     public let name = "dialog"
 
     public var description: String {
-        """
+        if self.context.executionPolicy == .backgroundOnly {
+            return """
+            Inspect and interact with system dialogs under immutable background-only authority. Available actions are
+            `list`, targeted `click`, targeted `input`, and targeted non-forced `dismiss`. Every mutation requires an
+            explicit app, PID, or exact window target. File-dialog keyboard navigation, forced dismissal, targetless
+            input, and foreground fallback are unavailable; use a human-authorized foreground-capable session or CLI.
+
+            Examples:
+            - Click OK: { "action": "click", "button": "OK", "app": "TextEdit" }
+            - Background input: { "action": "input", "text": "hello", "field": "Name", "app": "TextEdit" }
+            - Dismiss: { "action": "dismiss", "app": "TextEdit" }
+            """
+        }
+
+        return """
         Interact with system dialogs and alerts (alerts, sheets, NSSavePanel/NSOpenPanel).
 
         Actions:
@@ -49,46 +63,43 @@ public struct DialogTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: "Action to perform",
-                    enum: DialogToolAction.allCases.map(\.rawValue)),
-
-                // Targeting
-                "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
-                "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
-                "window_id": SchemaBuilder.integer(description: "Window ID (preferred stable selector)."),
-                "window_title": SchemaBuilder.string(description: "Window title (substring match)."),
-                "window_index": SchemaBuilder.integer(description: "Window index (0-based); requires app/pid."),
-                "foreground": SchemaBuilder.boolean(
-                    description: "Allow focus/global input. Required for targetless input, file, and forced dismiss.",
-                    default: false),
-
-                // click
-                "button": SchemaBuilder.string(description: "Button text to click. Use 'default' to click OKButton."),
-
-                // input
-                "text": SchemaBuilder.string(description: "Text to input (for input action)."),
-                "field": SchemaBuilder.string(description: "Field label/placeholder to target (for input action)."),
-                "field_index": SchemaBuilder.integer(
-                    description: "Field index (0-based) to target (for input action)."),
-                "clear": SchemaBuilder.boolean(description: "Clear existing text first.", default: false),
-
-                // file
-                "path": SchemaBuilder.string(description: "Directory (or full path) to navigate to (for file action)."),
-                "name": SchemaBuilder.string(description: "Filename to enter (for save dialogs)."),
-                "select": SchemaBuilder.string(
-                    description: """
-                    Button to click after setting path/name. Omit (or pass 'default') to click OKButton.
-                    """),
-                "ensure_expanded": SchemaBuilder.boolean(
-                    description: "Ensure file dialogs are expanded (Show Details) before applying path navigation.",
-                    default: false),
-
-                // dismiss
-                "force": SchemaBuilder.boolean(description: "Force dismiss (sends Escape).", default: false),
-            ],
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let actions = foregroundCapable
+            ? DialogToolAction.allCases.map(\.rawValue)
+            : [DialogToolAction.list, .click, .input, .dismiss].map(\.rawValue)
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "Action to perform"
+                    : "Background-safe dialog action; file and global input are unavailable",
+                enum: actions),
+            "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
+            "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
+            "window_id": SchemaBuilder.integer(description: "Window ID (preferred stable selector)."),
+            "window_title": SchemaBuilder.string(description: "Window title (substring match)."),
+            "window_index": SchemaBuilder.integer(description: "Window index (0-based); requires app/pid."),
+            "button": SchemaBuilder.string(description: "Button text to click. Use 'default' to click OKButton."),
+            "text": SchemaBuilder.string(description: "Text to input (for input action)."),
+            "field": SchemaBuilder.string(description: "Field label/placeholder to target (for input action)."),
+            "field_index": SchemaBuilder.integer(description: "Field index (0-based) to target (for input action)."),
+            "clear": SchemaBuilder.boolean(description: "Clear existing text first.", default: false),
+        ]
+        if foregroundCapable {
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Allow focus/global input. Required for targetless input, file, and forced dismiss.",
+                default: false)
+            properties["path"] = SchemaBuilder.string(
+                description: "Directory (or full path) to navigate to (for file action).")
+            properties["name"] = SchemaBuilder.string(description: "Filename to enter (for save dialogs).")
+            properties["select"] = SchemaBuilder.string(
+                description: "Button to click after setting path/name; default clicks OKButton.")
+            properties["ensure_expanded"] = SchemaBuilder.boolean(
+                description: "Ensure file dialogs are expanded (Show Details) before applying path navigation.",
+                default: false)
+            properties["force"] = SchemaBuilder.boolean(description: "Force dismiss (sends Escape).", default: false)
+        }
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 

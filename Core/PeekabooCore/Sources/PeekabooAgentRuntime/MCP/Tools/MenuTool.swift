@@ -25,7 +25,20 @@ public struct MenuTool: MCPTool {
     private let context: MCPToolContext
 
     public var description: String {
-        """
+        if self.context.executionPolicy == .backgroundOnly {
+            return """
+            Inspect or click application menu items under immutable background-only authority. Available actions are
+            `list` and `click`; neither activates the application. Click requires an exact app name, bundle ID, or PID,
+            while read-only list retains fuzzy name matching. Foreground menu expansion is unavailable in this session.
+
+            Examples:
+            - List Chrome menus: { "action": "list", "app": "Google Chrome" }
+            - Save document: { "action": "click", "app": "TextEdit", "path": "File > Save" }
+            \(PeekabooMCPVersion.banner)
+            """
+        }
+
+        return """
         Interact with application menu bars - list available menus and menu items
         for an application, or click on a specific menu item using path notation.
 
@@ -47,25 +60,25 @@ public struct MenuTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
-            properties: [
-                "action": SchemaBuilder.string(
-                    description: """
-                    Action to perform. Use 'list' to discover menus or 'click' to
-                    interact with menu items.
-                    """.trimmingCharacters(in: .whitespacesAndNewlines),
-                    enum: ["list", "click"]),
-                "app": SchemaBuilder.string(
-                    description: "Target application name, bundle ID, or process ID. Click and foreground list " +
-                        "require an exact selector; background list permits fuzzy names."),
-                "path": SchemaBuilder.string(
-                    description: "Menu path for nested items (e.g., 'File > Save As...' or 'Edit > Copy')"),
-                "item": SchemaBuilder.string(
-                    description: "Simple menu item to click (for non-nested items)"),
-                "foreground": SchemaBuilder.boolean(
-                    description: "Focus the target before list/click. Defaults to background AX access.",
-                    default: false),
-            ],
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        var properties: [String: Value] = [
+            "action": SchemaBuilder.string(
+                description: "Use 'list' to discover menus or 'click' to interact with menu items.",
+                enum: ["list", "click"]),
+            "app": SchemaBuilder.string(
+                description: "Target application name, bundle ID, or process ID. Click and foreground list " +
+                    "require an exact selector; background list permits fuzzy names."),
+            "path": SchemaBuilder.string(
+                description: "Menu path for nested items (e.g., 'File > Save As...' or 'Edit > Copy')"),
+            "item": SchemaBuilder.string(description: "Simple menu item to click (for non-nested items)"),
+        ]
+        if foregroundCapable {
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Focus the target before list/click. Defaults to background AX access.",
+                default: false)
+        }
+        return SchemaBuilder.object(
+            properties: properties,
             required: ["action"])
     }
 

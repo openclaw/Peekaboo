@@ -19,7 +19,7 @@ public struct DockTool: MCPTool {
             Inspect the macOS Dock under immutable background-only authority. The available action is `list`.
             Dock launch, context menus, hide, and show mutate shared desktop UI and require a human-authorized
             foreground-capable Agent session or the standalone CLI.
-            \(PeekabooMCPVersion.banner) using openai/gpt-5.6 and anthropic/claude-opus-5
+            \(PeekabooMCPVersion.banner)
             """
         }
 

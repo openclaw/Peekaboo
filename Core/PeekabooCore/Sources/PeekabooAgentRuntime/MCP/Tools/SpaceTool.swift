@@ -50,7 +50,7 @@ public struct SpaceTool: MCPTool {
             - List spaces: { "action": "list" }
             - Move window to space 3: { "action": "move-window", "app": "Safari", "to": 3 }
             - Move window to current space: { "action": "move-window", "app": "TextEdit", "to_current": true }
-            \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
+            \(PeekabooMCPVersion.banner)
             """
         }
 

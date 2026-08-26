@@ -5,6 +5,79 @@ import Testing
 
 struct MCPPolicyAwareCatalogTests {
     @Test
+    func `Dialog tool omits foreground-only actions and inputs under background authority`() async {
+        let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
+        let tool = DialogTool(context: backgroundContext)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(action)? = properties["action"],
+              case let .array(actions)? = action["enum"]
+        else {
+            Issue.record("Expected background-only Dialog schema")
+            return
+        }
+        #expect(actions == ["list", "click", "input", "dismiss"].map(Value.string))
+        #expect(properties["button"] != nil)
+        #expect(properties["text"] != nil)
+        #expect(properties["field"] != nil)
+        #expect(properties["path"] == nil)
+        #expect(properties["name"] == nil)
+        #expect(properties["select"] == nil)
+        #expect(properties["ensure_expanded"] == nil)
+        #expect(properties["force"] == nil)
+        #expect(properties["foreground"] == nil)
+        #expect(tool.description.contains("targeted non-forced `dismiss`"))
+
+        let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
+        let foregroundTool = DialogTool(context: foregroundContext)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProperties)? = foregroundSchema["properties"],
+              case let .object(foregroundAction)? = foregroundProperties["action"],
+              case let .array(foregroundActions)? = foregroundAction["enum"]
+        else {
+            Issue.record("Expected foreground-capable Dialog schema")
+            return
+        }
+        #expect(foregroundActions == DialogToolAction.allCases.map { Value.string($0.rawValue) })
+        #expect(foregroundProperties["path"] != nil)
+        #expect(foregroundProperties["name"] != nil)
+        #expect(foregroundProperties["select"] != nil)
+        #expect(foregroundProperties["ensure_expanded"] != nil)
+        #expect(foregroundProperties["force"] != nil)
+        #expect(foregroundProperties["foreground"] != nil)
+        #expect(foregroundTool.description.contains("targeted input defaults to background AXValue"))
+        #expect(foregroundTool.description.contains(#""foreground": true"#))
+    }
+
+    @Test
+    func `Menu tool omits impossible foreground control under background authority`() async {
+        let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
+        let tool = MenuTool(context: backgroundContext)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(path)? = properties["path"],
+              case let .string(pathDescription)? = path["description"]
+        else {
+            Issue.record("Expected background-only Menu schema")
+            return
+        }
+        #expect(properties["foreground"] == nil)
+        #expect(pathDescription.contains(">"))
+        #expect(tool.description.contains("Foreground menu expansion is unavailable"))
+
+        let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
+        let foregroundTool = MenuTool(context: foregroundContext)
+        guard case let .object(foregroundSchema) = foregroundTool.inputSchema,
+              case let .object(foregroundProperties)? = foregroundSchema["properties"]
+        else {
+            Issue.record("Expected foreground-capable Menu schema")
+            return
+        }
+        #expect(foregroundProperties["foreground"] != nil)
+        #expect(foregroundTool.description.contains("foreground-list actions require an exact"))
+    }
+
+    @Test
     func `Space tool schema advertises only policy reachable actions`() async {
         let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
         let tool = SpaceTool(context: backgroundContext)

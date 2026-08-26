@@ -212,49 +212,6 @@ struct MCPSpecificToolTests {
     // MARK: - Dialog Tool Tests
 
     @Test
-    func `Dialog tool schema validation`() {
-        let tool = makeTestTool(DialogTool.init)
-
-        guard case let .object(schema) = tool.inputSchema,
-              let properties = schema["properties"],
-              case let .object(props) = properties
-        else {
-            Issue.record("Expected object schema with properties")
-            return
-        }
-
-        // Dialog tool should have action and optional parameters
-        #expect(props["action"] != nil)
-        #expect(props["button"] != nil)
-        #expect(props["text"] != nil)
-        #expect(props["field"] != nil)
-        #expect(props["clear"] != nil)
-        #expect(props["path"] != nil)
-        #expect(props["select"] != nil)
-        #expect(props["window_title"] != nil)
-        #expect(props["window_index"] != nil)
-        #expect(props["window_id"] != nil)
-        #expect(props["name"] != nil)
-        #expect(props["force"] != nil)
-        #expect(props["field_index"] != nil)
-        #expect(props["foreground"] != nil)
-        #expect(tool.description.contains("targeted input defaults to background AXValue"))
-        #expect(tool.description.contains(#""action": "input""#))
-        #expect(tool.description.contains(#""foreground": true"#))
-
-        // Check action enum values
-        if let actionSchema = props["action"],
-           case let .object(actionDict) = actionSchema,
-           let enumValue = actionDict["enum"],
-           case let .array(actions) = enumValue
-        {
-            #expect(actions.contains(.string("list")))
-            #expect(actions.contains(.string("click")))
-            #expect(actions.contains(.string("input")))
-        }
-    }
-
-    @Test
     func `Dialog tool requires foreground for global input paths`() async throws {
         let tool = makeTestTool(DialogTool.init)
         let requests: [([String: Any], String)] = [
@@ -289,35 +246,6 @@ struct MCPSpecificToolTests {
             return
         }
         #expect(text.contains("always read-only/background"))
-    }
-
-    // MARK: - Menu Tool Tests
-
-    @Test
-    func `Menu tool schema includes path format`() {
-        let tool = makeTestTool(MenuTool.init)
-
-        guard case let .object(schema) = tool.inputSchema,
-              let properties = schema["properties"],
-              case let .object(props) = properties
-        else {
-            Issue.record("Expected object schema with properties")
-            return
-        }
-
-        #expect(props["action"] != nil)
-        #expect(props["path"] != nil)
-        #expect(props["app"] != nil)
-        #expect(props["foreground"] != nil)
-
-        // Verify path description includes format examples
-        if let pathSchema = props["path"],
-           case let .object(pathDict) = pathSchema,
-           let description = pathDict["description"],
-           case let .string(desc) = description
-        {
-            #expect(desc.contains(">") || desc.contains("separator"))
-        }
     }
 
     // MARK: - Drag Tool Tests
