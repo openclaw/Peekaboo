@@ -113,6 +113,10 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 @MainActor
 class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
 ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol {
+    var supportsSetValueResultTargetBinding: Bool {
+        false
+    }
+
     var supportsProcessGenerationBoundElementMutations: Bool {
         false
     }
