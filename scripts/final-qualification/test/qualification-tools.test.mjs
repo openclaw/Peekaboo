@@ -2357,6 +2357,42 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     ),
     [],
   );
+  const adjacentSignatureBlobs = signatureSuperBlob([
+    { type: 5, blob: genericSignatureBlob },
+    { type: 0, blob: codeDirectory() },
+  ]);
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/adjacent-signature-blobs',
+      0o755,
+      signedMachO(adjacentSignatureBlobs),
+    ),
+    [],
+  );
+  const partialOverlapSignatureBlobs = Buffer.from(adjacentSignatureBlobs);
+  const firstSignatureBlobOffset = partialOverlapSignatureBlobs.readUInt32BE(16);
+  partialOverlapSignatureBlobs.writeUInt32BE(12, firstSignatureBlobOffset + 4);
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/partially-overlapping-signature-blobs',
+      0o755,
+      signedMachO(partialOverlapSignatureBlobs),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  const nestedSignatureBlobs = Buffer.from(adjacentSignatureBlobs);
+  nestedSignatureBlobs.writeUInt32BE(
+    nestedSignatureBlobs.length - firstSignatureBlobOffset,
+    firstSignatureBlobOffset + 4,
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/nested-signature-blobs',
+      0o755,
+      signedMachO(nestedSignatureBlobs),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
   const aliasedCodeDirectorySlots = signatureSuperBlob([
     { type: 0, blob: codeDirectory() },
     { type: 0x1000, blob: codeDirectory() },

@@ -303,6 +303,7 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
   }
   const slotTypes = new Set();
   const blobOffsets = new Set();
+  const blobRanges = [];
   let authorizedCodeDirectories = 0;
   for (let index = 0; index < count; index += 1) {
     const slotType = bytes.readUInt32BE(offset + 12 + index * 8);
@@ -316,6 +317,7 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     const blobMagic = bytes.readUInt32BE(offset + blobOffset);
     const blobLength = bytes.readUInt32BE(offset + blobOffset + 4);
     if (blobLength < 8 || blobOffset + blobLength > length) return null;
+    blobRanges.push({ start: blobOffset, end: blobOffset + blobLength });
     const codeDirectorySlot = slotType === 0 || (slotType >= 0x1000 && slotType <= 0x1004);
     if (codeDirectorySlot) {
       if (blobMagic !== CODE_DIRECTORY_MAGIC
@@ -324,6 +326,10 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     } else if (blobMagic === CODE_DIRECTORY_MAGIC) {
       return null;
     }
+  }
+  blobRanges.sort((left, right) => left.start - right.start);
+  for (let index = 1; index < blobRanges.length; index += 1) {
+    if (blobRanges[index - 1].end > blobRanges[index].start) return null;
   }
   return authorizedCodeDirectories > 0 && identifiers.length > 0
     ? { identifiers, validatedSize: length }
