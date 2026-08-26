@@ -2342,6 +2342,17 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       [],
     );
   }
+  const platformCodeLimitDirectory = versionedCodeDirectory(0x20300, (payload) => {
+    payload.writeBigUInt64BE(0x2000n, 56);
+  });
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/code-directory-platform-code-limit',
+      0o755,
+      signedMachO(platformCodeLimitDirectory),
+    ),
+    [],
+  );
   const malformedVersionedDirectories = [
     ['team-offset', 0x20200, (payload, layout) => payload.writeUInt32BE(layout.hashOffset, 48)],
     ['spare3', 0x20300, (payload) => payload.writeUInt32BE(1, 52)],
@@ -2516,6 +2527,14 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       chainedMachO([0], Buffer.from('_OBJC_CLASS_$_OSAScript\0'), 1),
     ),
     [{ family: 'apple-script' }],
+  );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/empty-chained-import-table',
+      0o755,
+      chainedMachO([], Buffer.alloc(0)),
+    ),
+    [],
   );
   const invalidPageStarts = Buffer.alloc(32);
   invalidPageStarts.writeUInt32LE(1, 0);

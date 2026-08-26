@@ -202,7 +202,10 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     const codeLimit64 = version >= 0x20300 && start + 64 <= maximum
       ? Number(bytes.readBigUInt64BE(start + 56))
       : 0;
-    const signingLimit = codeLimit64 > 0 ? codeLimit64 : codeLimit;
+    // XNU treats a nonzero 32-bit codeLimit as authoritative; zero selects the 64-bit extension.
+    const signingLimit = version >= 0x20300 && codeLimit === 0 && codeLimit64 > 0
+      ? codeLimit64
+      : codeLimit;
     const requiredCodeSlots = pageSize === 0
       ? (signingLimit > 0 ? 1 : 0)
       : (signingLimit > 0 ? Math.ceil(signingLimit / (2 ** pageSize)) : -1);
@@ -705,9 +708,10 @@ function chainedFixupPolicyImports(bytes, offset, size, endian) {
   const importsFormat = read32(20);
   const symbolsFormat = read32(24);
   if (version !== 0 || startsOffset === null || startsOffset < 28 || startsOffset >= size
-    || importsOffset === null || importsOffset < 28 || importsOffset >= size
-    || symbolsOffset === null || symbolsOffset < 28 || symbolsOffset >= size
+    || importsOffset === null || importsOffset < 28 || importsOffset > size
+    || symbolsOffset === null || symbolsOffset < 28 || symbolsOffset > size
     || importsCount === null || importsCount > 2_000_000
+    || (importsCount > 0 && (importsOffset === size || symbolsOffset === size))
     || ![1, 2, 3].includes(importsFormat) || ![0, 1].includes(symbolsFormat)) return null;
   const starts = chainedStartsSegmentCount(bytes, offset, startsOffset, importsOffset, endian);
   if (!starts) return null;
