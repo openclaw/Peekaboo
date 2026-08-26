@@ -122,15 +122,16 @@ enum BrowserNativeWindowBindingCoordinator {
         pageReference: String,
         context: Context,
         receiptProviders: BrowserNativeWindowReceiptResolver.Providers,
-        mutation: @MainActor @Sendable () async throws -> Result) async throws -> Result
+        mutation: @MainActor @Sendable (BrowserNativeWindowReceipt) async throws -> Result) async throws -> Result
     {
         try await context.capabilities.withExclusiveOperation {
             do {
                 return try await context.manager.withNativeBindingExecutionGate(
                     expectedSessionBinding: context.sessionBinding)
                 { control in
+                    let revalidatedReceipt: BrowserNativeWindowReceipt
                     do {
-                        try await self.revalidateUnderAuthority(
+                        revalidatedReceipt = try await self.revalidateUnderAuthority(
                             pageReference: pageReference,
                             context: context,
                             control: control,
@@ -144,7 +145,7 @@ enum BrowserNativeWindowBindingCoordinator {
                             deadline: context.deadline)
                     }
                     try self.requireAuthorizationDeadline(context)
-                    return try await mutation()
+                    return try await mutation(revalidatedReceipt)
                 }
             } catch is CancellationError {
                 throw CancellationError()
@@ -213,6 +214,7 @@ enum BrowserNativeWindowBindingCoordinator {
         context: Context,
         control: BrowserMCPDevToolsControlSession,
         receiptProviders: BrowserNativeWindowReceiptResolver.Providers) async throws
+        -> BrowserNativeWindowReceipt
     {
         let binding = try await context.capabilities.nativeWindowBinding(
             pageReference: pageReference,
@@ -233,7 +235,7 @@ enum BrowserNativeWindowBindingCoordinator {
         let finalWindowID = try await control.getWindowForTarget(
             targetID: binding.privateTargetID,
             deadline: context.deadline)
-        _ = try BrowserNativeWindowReceiptResolver.revalidate(
+        let finalReceipt = try BrowserNativeWindowReceiptResolver.revalidate(
             currentReceipt,
             providers: receiptProviders).get()
         guard correlation.browserWindowID == binding.privateBrowserWindowID,
@@ -242,6 +244,7 @@ enum BrowserNativeWindowBindingCoordinator {
         else {
             throw BrowserNativeWindowBindingCoordinatorError.correlationRefused
         }
+        return finalReceipt
     }
 
     @MainActor
@@ -333,9 +336,14 @@ enum BrowserNativeWindowBindingCoordinator {
         var targetIDsByWindow: [BrowserMCPDevToolsWindowID: Set<String>] = [:]
         var titlesByWindow: [BrowserMCPDevToolsWindowID: Set<String>] = [:]
         for target in targets {
-            let windowID = try await control.getWindowForTarget(
-                targetID: target.targetID,
-                deadline: deadline)
+            let windowID: BrowserMCPDevToolsWindowID
+            do {
+                windowID = try await control.getWindowForTarget(
+                    targetID: target.targetID,
+                    deadline: deadline)
+            } catch BrowserMCPDevToolsControlError.staleTarget where target.targetID != requestedTargetID {
+                continue
+            }
             targetIDsByWindow[windowID, default: []].insert(target.targetID)
             if !target.title.isEmpty {
                 titlesByWindow[windowID, default: []].insert(target.title)
@@ -351,7 +359,12 @@ enum BrowserNativeWindowBindingCoordinator {
 
         var candidates: [CDPBrowserWindowCandidate] = []
         for windowID in targetIDsByWindow.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
-            let bounds = try await control.getWindowBounds(windowID: windowID, deadline: deadline)
+            let bounds: BrowserMCPDevToolsWindowBounds
+            do {
+                bounds = try await control.getWindowBounds(windowID: windowID, deadline: deadline)
+            } catch BrowserMCPDevToolsControlError.staleWindow where windowID != requestedWindowID {
+                continue
+            }
             guard let left = bounds.left,
                   let top = bounds.top,
                   let width = bounds.width,

@@ -44,8 +44,31 @@ struct BrowserNativeWindowBindingCoordinatorTests {
             pageReference: fixture.pageReference,
             context: fixture.context,
             receiptProviders: Self.providers(),
-            mutation: {})
+            mutation: { receipt in
+                #expect(receipt == proof.nativeWindowReceipt)
+            })
         #expect(fixture.opener.openCount == 1)
+        await fixture.control.close()
+    }
+
+    @Test
+    func `Unrelated stale page and window candidates do not revoke exact binding`() async throws {
+        let fixture = try await Self.fixture(includeStaleUnrelatedCandidates: true)
+        let proof = try await BrowserNativeWindowBindingCoordinator.bind(
+            pageReference: fixture.pageReference,
+            nativeTarget: Self.nativeTarget,
+            context: fixture.context,
+            dependencies: Self.dependencies())
+
+        try await BrowserNativeWindowBindingCoordinator.withRevalidatedMutation(
+            pageReference: fixture.pageReference,
+            context: fixture.context,
+            receiptProviders: Self.providers(),
+            mutation: { receipt in
+                #expect(receipt == proof.nativeWindowReceipt)
+            })
+
+        #expect(await fixture.control.state() == .open)
         await fixture.control.close()
     }
 
@@ -64,7 +87,7 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 pageReference: fixture.pageReference,
                 context: fixture.context,
                 receiptProviders: Self.providers())
-            {
+            { _ in
                 await barrier.block()
                 mutationRan.value = true
             }
@@ -114,7 +137,7 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 pageReference: fixture.pageReference,
                 context: fixture.context,
                 receiptProviders: Self.providers(),
-                mutation: { mutationRan.value = true })
+                mutation: { _ in mutationRan.value = true })
         }
         #expect(!mutationRan.value)
         await #expect(throws: BrowserToolNativeWindowBindingError.stalePageReference) {
@@ -145,7 +168,7 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 pageReference: fixture.pageReference,
                 context: fixture.context,
                 receiptProviders: Self.providers(),
-                mutation: { mutationRan.value = true })
+                mutation: { _ in mutationRan.value = true })
         }
 
         #expect(!mutationRan.value)
@@ -269,7 +292,7 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 pageReference: fixture.pageReference,
                 context: deadlineContext,
                 receiptProviders: Self.providers(),
-                mutation: { mutationRan.value = true })
+                mutation: { _ in mutationRan.value = true })
         }
 
         #expect(!mutationRan.value)
@@ -298,7 +321,7 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 pageReference: fixture.pageReference,
                 context: fixture.context,
                 receiptProviders: Self.providers(),
-                mutation: { mutationRan.value = true })
+                mutation: { _ in mutationRan.value = true })
         }
         #expect(!mutationRan.value)
         await #expect(throws: BrowserToolNativeWindowBindingError.stalePageReference) {
@@ -330,7 +353,8 @@ struct BrowserNativeWindowBindingCoordinatorTests {
 
     private static func fixture(
         windowID: @escaping @Sendable () -> Int = { 41 },
-        stallTargets: LockedBoolean? = nil) async throws -> Fixture
+        stallTargets: LockedBoolean? = nil,
+        includeStaleUnrelatedCandidates: Bool = false) async throws -> Fixture
     {
         let nativeBounds = self.nativeBounds
         let transport = FakeControlTransport { command in
@@ -344,19 +368,52 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 if stallTargets?.value == true {
                     return []
                 }
+                var targetInfos: [[String: Any]] = [[
+                    "targetId": "page-a",
+                    "type": "page",
+                    "title": "Example",
+                    "url": "https://example.test/",
+                ]]
+                if includeStaleUnrelatedCandidates {
+                    targetInfos.append([
+                        "targetId": "page-dead-target",
+                        "type": "page",
+                        "title": "Closed target",
+                        "url": "https://closed-target.test/",
+                    ])
+                    targetInfos.append([
+                        "targetId": "page-dead-window",
+                        "type": "page",
+                        "title": "Closed window",
+                        "url": "https://closed-window.test/",
+                    ])
+                }
                 return [.success(BrowserMCPDevToolsControlSessionTests.response(
                     id: request.id,
-                    result: ["targetInfos": [[
-                        "targetId": "page-a",
-                        "type": "page",
-                        "title": "Example",
-                        "url": "https://example.test/",
-                    ]]]))]
+                    result: ["targetInfos": targetInfos]))]
             case "Browser.getWindowForTarget":
+                let targetID = request.params["targetId"] as? String
+                if targetID == "page-dead-target" {
+                    return [.success(BrowserMCPDevToolsControlSessionTests.errorResponse(
+                        id: request.id,
+                        code: -32000,
+                        message: "No target with given id"))]
+                }
+                if targetID == "page-dead-window" {
+                    return [.success(BrowserMCPDevToolsControlSessionTests.response(
+                        id: request.id,
+                        result: ["windowId": 99]))]
+                }
                 return [.success(BrowserMCPDevToolsControlSessionTests.response(
                     id: request.id,
                     result: ["windowId": windowID()]))]
             case "Browser.getWindowBounds":
+                if request.params["windowId"] as? Int == 99 {
+                    return [.success(BrowserMCPDevToolsControlSessionTests.errorResponse(
+                        id: request.id,
+                        code: -32000,
+                        message: "Browser window not found"))]
+                }
                 return [.success(BrowserMCPDevToolsControlSessionTests.response(
                     id: request.id,
                     result: ["bounds": [
