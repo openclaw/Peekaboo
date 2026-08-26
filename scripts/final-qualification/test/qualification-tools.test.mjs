@@ -2327,6 +2327,58 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
   const genericSignatureBlob = Buffer.alloc(8);
   genericSignatureBlob.writeUInt32BE(0xfade0b01, 0);
   genericSignatureBlob.writeUInt32BE(8, 4);
+  const signatureBlobWithMagic = (magic) => {
+    const blob = Buffer.alloc(8);
+    blob.writeUInt32BE(magic, 0);
+    blob.writeUInt32BE(8, 4);
+    return blob;
+  };
+  for (const [type, magic] of [
+    [2, 0xfade0c01],
+    [5, 0xfade7171],
+    [7, 0xfade7172],
+    [8, 0xfade8181],
+    [9, 0xfade8181],
+    [10, 0xfade8181],
+    [11, 0xfade8181],
+    [0x10000, 0xfade0b01],
+  ]) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/known-signature-slot-${type}`,
+        0o755,
+        signedMachO(signatureSuperBlob([
+          { type: 0, blob: codeDirectory() },
+          { type, blob: signatureBlobWithMagic(magic) },
+        ])),
+      ),
+      [],
+    );
+  }
+  for (const type of [5, 7, 8, 11]) {
+    assert.deepEqual(
+      policyFindingsForFile(
+        `runtime/mismatched-known-signature-slot-${type}`,
+        0o755,
+        signedMachO(signatureSuperBlob([
+          { type: 0, blob: codeDirectory() },
+          { type, blob: genericSignatureBlob },
+        ])),
+      ),
+      [{ family: 'uninspectable-native-executable' }],
+    );
+  }
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/unknown-generic-signature-slot',
+      0o755,
+      signedMachO(signatureSuperBlob([
+        { type: 0, blob: codeDirectory() },
+        { type: 0x4242, blob: genericSignatureBlob },
+      ])),
+    ),
+    [],
+  );
   assert.deepEqual(
     policyFindingsForFile(
       'runtime/unauthorized-code-directory-slot',
@@ -2351,14 +2403,28 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
       0o755,
       signedMachO(signatureSuperBlob([
         { type: 0, blob: codeDirectory() },
-        { type: 0x1000, blob: codeDirectory() },
-        { type: 5, blob: genericSignatureBlob },
+        { type: 0x1000, blob: codeDirectory((payload) => {
+          payload[36] = 20;
+          payload[37] = 1;
+        }) },
+        { type: 0x4242, blob: genericSignatureBlob },
       ])),
     ),
     [],
   );
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/duplicate-code-directory-hash-type',
+      0o755,
+      signedMachO(signatureSuperBlob([
+        { type: 0, blob: codeDirectory() },
+        { type: 0x1000, blob: codeDirectory() },
+      ])),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
   const adjacentSignatureBlobs = signatureSuperBlob([
-    { type: 5, blob: genericSignatureBlob },
+    { type: 0x4242, blob: genericSignatureBlob },
     { type: 0, blob: codeDirectory() },
   ]);
   assert.deepEqual(
@@ -2408,8 +2474,8 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
   );
   const distinctGenericSlots = signatureSuperBlob([
     { type: 0, blob: codeDirectory() },
-    { type: 5, blob: genericSignatureBlob },
-    { type: 7, blob: genericSignatureBlob },
+    { type: 0x4242, blob: genericSignatureBlob },
+    { type: 0x4243, blob: genericSignatureBlob },
   ]);
   assert.deepEqual(
     policyFindingsForFile(

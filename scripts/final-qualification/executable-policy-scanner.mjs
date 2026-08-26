@@ -59,6 +59,16 @@ const LOAD_COMMAND_DYLIBS = new Set([0x0c, 0x0d, 0x18, 0x1f, 0x20, 0x23]);
 const MACH_O_CPU_TYPES = new Set([0x00000007, 0x01000007, 0x0000000c, 0x0100000c]);
 const CODE_DIRECTORY_MAGIC = 0xfade0c02;
 const CODE_DIRECTORY_HASH_SIZES = new Map([[1, 20], [2, 32], [3, 20], [4, 48]]);
+const SUPERBLOB_SLOT_MAGICS = new Map([
+  [2, 0xfade0c01],
+  [5, 0xfade7171],
+  [7, 0xfade7172],
+  [8, 0xfade8181],
+  [9, 0xfade8181],
+  [10, 0xfade8181],
+  [11, 0xfade8181],
+  [0x10000, 0xfade0b01],
+]);
 // macOS 26's fixup-chains.h defines contiguous DYLD_CHAINED_PTR_* values 1 through 16.
 const CHAINED_POINTER_FORMATS = new Set([
   1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
@@ -285,7 +295,7 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     const identifier = cString(bytes, start + identifierOffset, start + length);
     if (!identifier || identifierOffset + identifier.length + 1 > hashStart) return false;
     identifiers.push(identifier);
-    return true;
+    return hashType;
   };
   if (offset < 0 || size < 8 || offset + size > bytes.length) return null;
   const magic = bytes.readUInt32BE(offset);
@@ -304,6 +314,7 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
   const slotTypes = new Set();
   const blobOffsets = new Set();
   const blobRanges = [];
+  const codeDirectoryHashTypes = new Set();
   let authorizedCodeDirectories = 0;
   for (let index = 0; index < count; index += 1) {
     const slotType = bytes.readUInt32BE(offset + 12 + index * 8);
@@ -320,10 +331,15 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     blobRanges.push({ start: blobOffset, end: blobOffset + blobLength });
     const codeDirectorySlot = slotType === 0 || (slotType >= 0x1000 && slotType <= 0x1004);
     if (codeDirectorySlot) {
-      if (blobMagic !== CODE_DIRECTORY_MAGIC
-        || !parseCodeDirectory(offset + blobOffset, offset + blobOffset + blobLength)) return null;
+      if (blobMagic !== CODE_DIRECTORY_MAGIC) return null;
+      const hashType = parseCodeDirectory(offset + blobOffset, offset + blobOffset + blobLength);
+      if (!hashType || codeDirectoryHashTypes.has(hashType)) return null;
+      codeDirectoryHashTypes.add(hashType);
       authorizedCodeDirectories += 1;
     } else if (blobMagic === CODE_DIRECTORY_MAGIC) {
+      return null;
+    } else if (SUPERBLOB_SLOT_MAGICS.has(slotType)
+      && SUPERBLOB_SLOT_MAGICS.get(slotType) !== blobMagic) {
       return null;
     }
   }
