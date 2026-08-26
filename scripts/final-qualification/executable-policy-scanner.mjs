@@ -302,14 +302,17 @@ function codeDirectoryIdentifiers(bytes, offset, size) {
     return null;
   }
   const slotTypes = new Set();
+  const blobOffsets = new Set();
   let authorizedCodeDirectories = 0;
   for (let index = 0; index < count; index += 1) {
     const slotType = bytes.readUInt32BE(offset + 12 + index * 8);
     const blobOffset = bytes.readUInt32BE(offset + 12 + index * 8 + 4);
-    if (slotTypes.has(slotType) || blobOffset < 12 + count * 8 || blobOffset + 8 > length) {
+    if (slotTypes.has(slotType) || blobOffsets.has(blobOffset)
+      || blobOffset < 12 + count * 8 || blobOffset + 8 > length) {
       return null;
     }
     slotTypes.add(slotType);
+    blobOffsets.add(blobOffset);
     const blobMagic = bytes.readUInt32BE(offset + blobOffset);
     const blobLength = bytes.readUInt32BE(offset + blobOffset + 4);
     if (blobLength < 8 || blobOffset + blobLength > length) return null;

@@ -2357,6 +2357,42 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     ),
     [],
   );
+  const aliasedCodeDirectorySlots = signatureSuperBlob([
+    { type: 0, blob: codeDirectory() },
+    { type: 0x1000, blob: codeDirectory() },
+  ]);
+  aliasedCodeDirectorySlots.writeUInt32BE(aliasedCodeDirectorySlots.readUInt32BE(16), 24);
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/aliased-code-directory-slots',
+      0o755,
+      signedMachO(aliasedCodeDirectorySlots),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
+  const distinctGenericSlots = signatureSuperBlob([
+    { type: 0, blob: codeDirectory() },
+    { type: 5, blob: genericSignatureBlob },
+    { type: 7, blob: genericSignatureBlob },
+  ]);
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/distinct-generic-slots',
+      0o755,
+      signedMachO(distinctGenericSlots),
+    ),
+    [],
+  );
+  const aliasedGenericSlots = Buffer.from(distinctGenericSlots);
+  aliasedGenericSlots.writeUInt32BE(aliasedGenericSlots.readUInt32BE(24), 32);
+  assert.deepEqual(
+    policyFindingsForFile(
+      'runtime/aliased-generic-slots',
+      0o755,
+      signedMachO(aliasedGenericSlots),
+    ),
+    [{ family: 'uninspectable-native-executable' }],
+  );
   assert.deepEqual(
     policyFindingsForFile(
       'runtime/mismatched-primary-slot',
