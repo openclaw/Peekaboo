@@ -1,4 +1,5 @@
 import Foundation
+import MCP
 import os.log
 import PeekabooAutomationKit
 import PeekabooFoundation
@@ -29,16 +30,61 @@ struct MCPAppToolOutcomeTests {
         for response in responses {
             let meta = try #require(response.meta?.objectValue)
             let target = try #require(meta["target_identity"]?.objectValue)
+            let identity = try DesktopTargetIdentity(processIdentity: .init(
+                processIdentifier: app.processIdentifier,
+                processStartIdentity: generation))
+            let projectedIdentity = try Value(identity.projection)
+            let projectedReceipt = try Value(identity.actionTargetReceipt)
             #expect(meta["process_start_identity"] == .double(Double(generation)))
             #expect(meta["process_start_identity_decimal"] == .string(String(generation)))
-            #expect(target["kind"] == .string("process"))
-            #expect(target["pid"] == .int(4242))
-            #expect(target["process_start_identity_decimal"] == .string(String(generation)))
+            #expect(meta["target_identity"] == projectedIdentity)
+            #expect(meta["target_receipt"] == projectedReceipt)
 
             let external = MCPToolResponseMetadataProjector.externalFields(from: response.meta, toolName: "app")
             #expect(external["process_start_identity"] == nil)
             #expect(external["target_identity"] == .object(target))
+            #expect(external["target_receipt"] == meta["target_receipt"])
         }
+    }
+
+    @Test
+    @MainActor
+    func `app lifecycle canonical target metadata cannot be spoofed by extra metadata`() throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 4242,
+            processStartIdentity: 77,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            name: "Fixture")
+        let actions = AppToolActions(
+            service: StubApplicationService(),
+            automation: MockAutomationService(accessibilityGranted: true),
+            logger: Logger(subsystem: "boo.peekaboo.tests", category: "MCPAppToolOutcome"))
+        let response = try actions.buildResponse(
+            message: "✅ Launched Fixture",
+            app: app,
+            startTime: Date(),
+            extraMeta: [
+                "target_identity": .object([
+                    "kind": .string("window"),
+                    "pid": .int(1),
+                    "process_start_identity_decimal": .string("2"),
+                    "window_id": .int(3),
+                ]),
+                "target_receipt": .object([
+                    "pid": .int(1),
+                    "process_start_identity_decimal": .string("2"),
+                    "window_id": .int(3),
+                ]),
+            ])
+        let identity = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: app.processIdentifier,
+            processStartIdentity: 77))
+        let projectedIdentity = try Value(identity.projection)
+        let projectedReceipt = try Value(identity.actionTargetReceipt)
+        let meta = try #require(response.meta?.objectValue)
+
+        #expect(meta["target_identity"] == projectedIdentity)
+        #expect(meta["target_receipt"] == projectedReceipt)
     }
 
     @Test

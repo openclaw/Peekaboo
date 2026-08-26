@@ -290,15 +290,6 @@ extension AppToolActions {
         let actionResult = try await self.service.hideApplicationTargetedResult(request: .init(
             identifier: "PID:\(expectedIdentity.processIdentifier)",
             expectedIdentity: expectedIdentity))
-        let returnedExactTarget = actionResult.targetIdentity?.processIdentity == expectedIdentity
-        let targetMetadata: [String: Value] = returnedExactTarget ? [
-            "process_start_identity_decimal": .string(String(expectedIdentity.processStartIdentity)),
-            "target_identity": .object([
-                "kind": .string("process"),
-                "pid": .int(Int(expectedIdentity.processIdentifier)),
-                "process_start_identity_decimal": .string(String(expectedIdentity.processStartIdentity)),
-            ]),
-        ] : [:]
         try ApplicationActionResultSemantics.requireSuccessfulExactProcessResult(
             actionResult,
             expectedIdentity: expectedIdentity,
@@ -310,7 +301,6 @@ extension AppToolActions {
             message: message,
             app: app,
             startTime: request.startTime,
-            extraMeta: targetMetadata,
             outcome: outcome)
     }
 

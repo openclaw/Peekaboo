@@ -178,8 +178,8 @@ struct PasteCommandTests {
         #expect(payload.outcome?.deliveryMechanism == .processTargetedEvents)
         #expect(payload.outcome?.deliveryMode == .background)
         #expect(payload.target_identity?.kind == .process)
-        #expect(payload.target_identity?.pid == 2468)
-        #expect(payload.target_identity?.process_start_identity_decimal == "71")
+        #expect(payload.target_identity?.processIdentifier == 2468)
+        #expect(payload.target_identity?.processStartIdentityDecimal == "71")
     }
 
     @Test

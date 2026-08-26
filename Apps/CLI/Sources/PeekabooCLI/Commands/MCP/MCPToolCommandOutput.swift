@@ -17,7 +17,7 @@ struct MCPToolCommandPayload: Codable {
 enum MCPToolCommandOutput {
     private struct EnvelopeMetadata {
         let outcome: DesktopActionOutcome.Projection?
-        let targetIdentity: DesktopTargetIdentityProjection?
+        let targetIdentity: DesktopTargetIdentity.Projection?
         let targetReceipt: DesktopActionTargetReceipt?
         let errorCode: String?
 
@@ -30,7 +30,7 @@ enum MCPToolCommandOutput {
                 return
             }
             self.targetIdentity = Self.decode(
-                DesktopTargetIdentityProjection.self,
+                DesktopTargetIdentity.Projection.self,
                 from: fields["target_identity"]
             )
             self.targetReceipt = Self.decode(

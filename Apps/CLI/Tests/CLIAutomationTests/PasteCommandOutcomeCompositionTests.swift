@@ -29,7 +29,7 @@ extension PasteCommandTests {
         #expect(payload.outcome?.deliveryMechanism == .windowTargetedEvents)
         #expect(payload.outcome?.deliveryMode == .background)
         #expect(payload.target_identity?.kind == .window)
-        #expect(payload.target_identity?.window_id == ExactBackgroundTextPasteFixture.windowID)
+        #expect(payload.target_identity?.windowID == ExactBackgroundTextPasteFixture.windowID)
         #expect(payload.target_receipt?.windowID == ExactBackgroundTextPasteFixture.windowID)
     }
 

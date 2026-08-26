@@ -46,9 +46,9 @@ struct SpaceCommandSelectedHostTests {
             windowID: 99
         ))
         #expect(response.target_identity?.kind == .window)
-        #expect(response.target_identity?.pid == 777)
-        #expect(response.target_identity?.process_start_identity_decimal == "70")
-        #expect(response.target_identity?.window_id == 99)
+        #expect(response.target_identity?.processIdentifier == 777)
+        #expect(response.target_identity?.processStartIdentityDecimal == "70")
+        #expect(response.target_identity?.windowID == 99)
         #expect(spaceService.moveToCurrentCalls == [99])
     }
 

@@ -190,6 +190,20 @@ struct ResultEnvelopeTests {
 
         #expect(success.target_receipt == expectedReceipt)
         #expect(failure.target_receipt == expectedReceipt)
+        #expect(success.target_identity == targetIdentity.projection)
+        #expect(failure.target_identity == targetIdentity.projection)
+
+        let encoded = try JSONEncoder().encode(success)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let projectedTarget = try #require(object["target_identity"] as? [String: Any])
+        #expect(projectedTarget["kind"] as? String == "process")
+        #expect(projectedTarget["pid"] as? Int == 42)
+        #expect(projectedTarget["process_start_identity_decimal"] as? String == "9007199254740993")
+        #expect(projectedTarget["window_id"] == nil)
+
+        let decoded = try JSONDecoder().decode(ResultEnvelope<Payload>.self, from: encoded)
+        #expect(decoded.target_identity == targetIdentity.projection)
+        #expect(decoded.target_receipt == expectedReceipt)
     }
 
     @Test func `post-result processing preserves every accepted outcome and raw target receipt`() throws {

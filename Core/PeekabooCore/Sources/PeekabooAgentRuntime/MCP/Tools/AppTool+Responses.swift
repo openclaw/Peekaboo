@@ -26,10 +26,11 @@ extension AppToolActions {
             "bundle_id": app.bundleIdentifier != nil ? .string(app.bundleIdentifier!) : .null,
             "execution_time": .double(self.executionTime(since: startTime)),
         ]
-        if let processIdentity = app.processIdentity {
-            meta["target_identity"] = Self.processTargetIdentityMetadata(processIdentity)
-        }
         meta.merge(extraMeta) { $1 }
+        if let processIdentity = app.processIdentity {
+            let targetIdentity = try DesktopTargetIdentity(processIdentity: processIdentity)
+            meta = try MCPDesktopTargetMetadataProjector.fields(targetIdentity, merging: meta)
+        }
 
         let summary = self.makeSummary(for: app, action: self.actionDescription(from: message), notes: nil)
         return try ToolResponse(
@@ -57,7 +58,8 @@ extension AppToolActions {
             "execution_time": .double(self.executionTime(since: startTime)),
         ]
         if let processIdentity = app.processIdentity {
-            baseMeta["target_identity"] = Self.processTargetIdentityMetadata(processIdentity)
+            let targetIdentity = try DesktopTargetIdentity(processIdentity: processIdentity)
+            baseMeta = try MCPDesktopTargetMetadataProjector.fields(targetIdentity, merging: baseMeta)
         }
         let summary = self.makeSummary(for: app, action: verb, notes: nil)
         return try ToolResponse(
@@ -99,13 +101,5 @@ extension AppToolActions {
             return "App"
         }
         return String(token)
-    }
-
-    private static func processTargetIdentityMetadata(_ identity: ApplicationProcessIdentity) -> Value {
-        .object([
-            "kind": .string("process"),
-            "pid": .int(Int(identity.processIdentifier)),
-            "process_start_identity_decimal": .string(String(identity.processStartIdentity)),
-        ])
     }
 }

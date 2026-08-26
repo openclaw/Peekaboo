@@ -248,7 +248,7 @@ struct ResultEnvelope<Payload> {
     var effect: ActionEffect?
     var outcome: DesktopActionOutcome.Projection?
     let data: Payload
-    var target_identity: DesktopTargetIdentityProjection?
+    var target_identity: DesktopTargetIdentity.Projection?
     var target_receipt: DesktopActionTargetReceipt?
     var messages: [String]?
     var debug_logs: [String] = []
@@ -260,26 +260,6 @@ extension ResultEnvelope: Decodable where Payload: Decodable {}
 
 typealias JSONResponse = ResultEnvelope<Empty?>
 typealias CodableJSONResponse<Payload: Codable> = ResultEnvelope<Payload>
-
-struct DesktopTargetIdentityProjection: Codable, Equatable {
-    enum Kind: String, Codable {
-        case process
-        case window
-    }
-
-    let kind: Kind
-    let pid: Int32
-    let process_start_identity_decimal: String
-    let window_id: Int?
-
-    init(_ identity: DesktopTargetIdentity) {
-        let processIdentity = identity.processIdentity
-        self.kind = identity.exactWindow == nil ? .process : .window
-        self.pid = processIdentity.processIdentifier
-        self.process_start_identity_decimal = String(processIdentity.processStartIdentity)
-        self.window_id = identity.exactWindow?.identity.windowID
-    }
-}
 
 struct ErrorInfo: Codable {
     let code: String
@@ -387,7 +367,7 @@ func makeSuccessEnvelope<Payload>(
         effect: projection?.effect ?? effect,
         outcome: projection,
         data: data,
-        target_identity: targetIdentity.map(DesktopTargetIdentityProjection.init),
+        target_identity: targetIdentity.map(\.projection),
         target_receipt: targetIdentity?.actionTargetReceipt,
         messages: messages,
         debug_logs: debugLogs
@@ -634,7 +614,7 @@ func makeErrorEnvelope(
         effect: resolvedOutcome?.effect ?? resolvedEffect,
         outcome: resolvedOutcome,
         data: nil,
-        target_identity: targetIdentity.map(DesktopTargetIdentityProjection.init),
+        target_identity: targetIdentity.map(\.projection),
         target_receipt: actionFailure?.targetReceipt ?? targetReceipt ??
             targetIdentity?.actionTargetReceipt,
         debug_logs: debugLogs,
