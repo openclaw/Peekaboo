@@ -39,6 +39,7 @@ public struct MCPToolContext: @unchecked Sendable {
     public let permissionsStatusProvider: any PermissionsStatusProviding
     public let clipboard: any ClipboardServiceProtocol
     public let browser: any BrowserMCPClientProviding
+    let browserCapabilities: BrowserToolCapabilitySession
     public let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     public let executionPolicy: MCPToolExecutionPolicy
@@ -177,6 +178,7 @@ public struct MCPToolContext: @unchecked Sendable {
         self.permissionsStatusProvider = permissionsStatusProvider ?? permissions
         self.clipboard = clipboard
         self.browser = browser
+        self.browserCapabilities = BrowserToolCapabilitySession()
         self.snapshotMutationCoordinator = snapshotMutationCoordinator
         self.snapshotExecutionGate = snapshotExecutionGate
             ?? (agent as? PeekabooAgentService)?.snapshotExecutionGate
@@ -459,6 +461,7 @@ public struct MCPToolContext: @unchecked Sendable {
 
     func releaseSnapshotOwner() async {
         await self.uiSnapshots.removeOwner()
+        await self.browserCapabilities.end()
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {

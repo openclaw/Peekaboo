@@ -120,6 +120,17 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   routed directly to that page instead of relying on the process-global selected page. The upstream MCP server
   serializes calls with its FIFO tool mutex, so concurrent agents cannot redirect one another between selection
   and execution.
+- MCP and Agent sessions never receive Chrome's process-local page integers or snapshot-local UIDs as mutation
+  authority. `list_pages` and `new_page` project opaque caller-owned page references, and browser snapshots project
+  opaque element references bound to the exact connection, backend page, navigation generation, and provider node,
+  frame, loader, or navigation identity when Chrome supplies it. A newer snapshot invalidates prior element refs;
+  navigation, disconnect, connection replacement, and MCP-session teardown invalidate their complete subordinate
+  namespace. References copied into another caller session fail before Chrome dispatch.
+- Independently authenticated process-local browser sessions own separate Chrome DevTools MCP children and FIFO
+  execution gates, so one blocked session does not stall another while calls within each session remain ordered and
+  target-locked. Bridge currently retains its one authenticated browser connection because its status/connect/
+  disconnect wire shape has no caller-session namespace; transport multiplexing is deferred without claiming a new
+  Bridge protocol version.
 - Separate `peekaboo mcp serve` stdio sessions reuse one browser connection only when each server is explicitly routed
   to the same reusable daemon Bridge socket. A process-local MCP server has its own browser state.
 
@@ -156,11 +167,13 @@ Advanced escape hatch:
   shared selected page internally; Peekaboo will not forward it until upstream supports explicit `pageId` routing.
   Unknown raw tool names fail closed until the routing contract is audited and updated.
 
-Start page work with `list_pages` or `new_page`, retain the returned page ID, and include it in every later
-page-scoped action. `select_page` and `new_page` stay in the background by default. Use `bring_to_front: true` or
+Start MCP or Agent page work with `list_pages` or `new_page`, retain the returned opaque page reference, and include it
+as `page_id` in every later page-scoped action. Retain element references only from the newest snapshot for that page.
+The standalone CLI continues to expose the provider page integer because each CLI invocation is an explicit
+compatibility boundary rather than a persistent caller capability namespace. `select_page` and `new_page` stay in the background by default. Use `bring_to_front: true` or
 `background: false` only when foreground interaction is intentional.
 
-`type` and `press_key` also require a fresh snapshot `uid`. Peekaboo holds one browser execution gate while it
+`type` and `press_key` also require an opaque element reference from the newest snapshot as `uid`. Peekaboo holds one browser execution gate while it
 focuses that exact uid and sends the keyboard operation; concurrent page work cannot interleave between those leaves.
 
 ## Examples
@@ -201,17 +214,17 @@ peekaboo mcp serve \
 A default process-local `peekaboo mcp serve` cannot reuse browser state created by a separate CLI process.
 
 ```json
-{ "action": "snapshot", "page_id": 2 }
+{ "action": "snapshot", "page_id": "bp1_<opaque>" }
 ```
 
 ```json
-{ "action": "fill", "page_id": 2, "uid": "1_7", "value": "peter@example.com", "include_snapshot": true }
+{ "action": "fill", "page_id": "bp1_<opaque>", "uid": "be1_<opaque>", "value": "peter@example.com", "include_snapshot": true }
 ```
 
 ```json
-{ "action": "network", "page_id": 2, "page_size": 20, "resource_types": ["xhr", "fetch"] }
+{ "action": "network", "page_id": "bp1_<opaque>", "page_size": 20, "resource_types": ["xhr", "fetch"] }
 ```
 
 ```json
-{ "action": "performance_trace", "page_id": 2, "trace_action": "start", "reload": true, "auto_stop": true }
+{ "action": "performance_trace", "page_id": "bp1_<opaque>", "trace_action": "start", "reload": true, "auto_stop": true }
 ```

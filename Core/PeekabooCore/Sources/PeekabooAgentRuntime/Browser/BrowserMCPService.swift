@@ -287,11 +287,15 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     private static let serverName = "chrome-devtools"
 
     @MainActor private var sessionManager: BrowserMCPSessionManager?
+    @MainActor private var authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool?
 
     public init() {
         self.supportsNativeBrowserConnectionBinding = BrowserMCPEnvironmentOptions(
             environment: ProcessInfo.processInfo.environment).supportsNativeBrowserConnectionBinding
         self.sessionManager = nil
+        self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
+            BrowserMCPSessionManager(serverName: serverName)
+        }
     }
 
     @MainActor
@@ -299,12 +303,31 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         let sessionManager = BrowserMCPSessionManager(serverName: Self.serverName, manager: manager)
         self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
+        self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
+            BrowserMCPSessionManager(serverName: serverName, manager: manager)
+        }
     }
 
     @MainActor
     init(sessionManager: BrowserMCPSessionManager) {
         self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
+        self.authenticatedSessionPool = nil
+    }
+
+    /// Creates a version-neutral process-local browser service for one explicitly authenticated caller session.
+    /// Bridge transport does not invoke this API until it can carry an authenticated caller/session namespace.
+    @MainActor
+    func authenticatedSession(
+        _ sessionID: BrowserMCPAuthenticatedSessionPool.SessionID) -> BrowserMCPService?
+    {
+        guard let manager = self.authenticatedSessionPool?.manager(for: sessionID) else { return nil }
+        return BrowserMCPService(sessionManager: manager)
+    }
+
+    @MainActor
+    func endAuthenticatedSession(_ sessionID: BrowserMCPAuthenticatedSessionPool.SessionID) async {
+        await self.authenticatedSessionPool?.end(sessionID)
     }
 
     @MainActor
@@ -712,6 +735,7 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case connectionLost(String)
     case expectedConnectionReceiptMismatch
     case receiptBindingUnsupported
+    case sessionEnded
     case targetLocked
 
     public var errorDescription: String? {
@@ -744,6 +768,8 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "The expected browser connection changed before tool dispatch. Refresh browser status and retry."
         case .receiptBindingUnsupported:
             "This browser client cannot atomically bind execution to an exact connection receipt."
+        case .sessionEnded:
+            "This authenticated browser session has ended and cannot be reused. Start a new session."
         case .targetLocked:
             "A different browser target is already connected. " +
                 "Disconnect it before selecting another channel or endpoint."

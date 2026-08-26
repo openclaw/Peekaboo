@@ -30,7 +30,8 @@ public enum BrowserMCPExecutionEvidence {
         return ToolResponse(
             content: response.content,
             isError: response.isError,
-            meta: .object(fields))
+            meta: .object(fields),
+            structuredContent: response.structuredContent)
     }
 
     static func split(
