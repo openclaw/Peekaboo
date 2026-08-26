@@ -88,6 +88,7 @@ public final class TypeService {
     private let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity)
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
+    private let effectConfirmationTiming: ExactLiteralTypingEffectConfirmationTiming
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -165,7 +166,8 @@ public final class TypeService {
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {},
         pixelFocusReceiptPlanner: (@MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan)? = nil,
-        pixelFocusPlanEntryHook: @escaping @MainActor @Sendable () async throws -> Void = {})
+        pixelFocusPlanEntryHook: @escaping @MainActor @Sendable () async throws -> Void = {},
+        effectConfirmationTiming: ExactLiteralTypingEffectConfirmationTiming = .live)
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -195,6 +197,7 @@ public final class TypeService {
             try await SnapshotTargetReceiptPlanner(snapshots: manager).plan(snapshotID: snapshotID)
         }
         self.pixelFocusPlanEntryHook = pixelFocusPlanEntryHook
+        self.effectConfirmationTiming = effectConfirmationTiming
     }
 
     /// Type text with optional target and settings
@@ -502,8 +505,10 @@ public final class TypeService {
     }
 
     func exactFocusedValue(
-        for confirmation: ExactLiteralTypingEffectConfirmation) async -> String?
+        for confirmation: ExactLiteralTypingEffectConfirmation,
+        timeout: Duration = .milliseconds(200)) async -> String?
     {
+        guard timeout > .zero else { return nil }
         let reader = self.exactFocusedElementValueReader
         let processStartIdentityProvider = self.processStartIdentityProvider
         let focusedElement = confirmation.focusedElement
@@ -511,7 +516,7 @@ public final class TypeService {
         let observation = try? await ElementDetectionTimeoutRunner.runDetached(
             targetProcessIdentifier: focusedElement.processIdentifier,
             targetProcessStartIdentity: expectedGeneration,
-            seconds: 0.2)
+            seconds: Self.timeInterval(timeout))
         {
             guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
                 return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
@@ -1263,12 +1268,42 @@ extension TypeService {
     {
         guard let confirmation,
               let preflightValue,
-              let observedValue = await self.exactFocusedValue(for: confirmation)
+              !confirmation.expectedValueMatches(preflightValue)
         else { return outcome }
-        return confirmation.confirmedOutcome(
-            from: outcome,
-            previousValue: preflightValue,
-            observedValue: observedValue)
+        let timing = self.effectConfirmationTiming
+        let deadline = timing.now().advanced(by: timing.timeout)
+        var sampleCount = 0
+        while !Task.isCancelled, sampleCount < timing.maximumSampleCount {
+            let sampleStart = timing.now()
+            guard sampleStart < deadline else { return outcome }
+            sampleCount += 1
+            let sampleTimeout = min(.milliseconds(200), sampleStart.duration(to: deadline))
+            guard let observedValue = await self.exactFocusedValue(
+                for: confirmation,
+                timeout: sampleTimeout),
+                !Task.isCancelled
+            else { return outcome }
+            if confirmation.expectedValueMatches(observedValue) {
+                return confirmation.confirmedOutcome(
+                    from: outcome,
+                    previousValue: preflightValue,
+                    observedValue: observedValue)
+            }
+            let now = timing.now()
+            guard now < deadline else { return outcome }
+            do {
+                try await timing.sleep(min(timing.interval, now.duration(to: deadline)))
+            } catch {
+                return outcome
+            }
+        }
+        return outcome
+    }
+
+    private static func timeInterval(_ duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) +
+            TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
     }
 
     private static func plannedKeyPressCount(_ actions: [TypeAction]) -> Int {

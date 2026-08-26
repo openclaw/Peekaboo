@@ -127,11 +127,21 @@ extension UIAutomationService {
               focused.windowID == expectedWindowIdentity.windowID,
               let keyWindow,
               keyWindow.processIdentifier == targetProcessIdentifier,
-              keyWindow.windowID == expectedWindowIdentity.windowID,
-              !focused.frame.isEmpty,
-              expectedWindowBounds.contains(CGPoint(x: focused.frame.midX, y: focused.frame.midY)),
-              Self.focusedElementMatches(focused, expected: expectedFocusedElement),
-              identityValidator(expectedWindowIdentity, expectedWindowBounds)
+              keyWindow.windowID == expectedWindowIdentity.windowID
+        else {
+            throw self.exactWindowKeyboardFocusChangedError()
+        }
+        guard !keyWindow.hasSheet else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "The exact parent window has an attached sheet at dispatch. " +
+                    "Use the sheet-aware dialog commands or dismiss the sheet before typing.")
+        }
+        guard
+            !focused.frame.isEmpty,
+            expectedWindowBounds.contains(CGPoint(x: focused.frame.midX, y: focused.frame.midY)),
+            Self.focusedElementMatches(focused, expected: expectedFocusedElement),
+            identityValidator(expectedWindowIdentity, expectedWindowBounds)
         else {
             throw self.exactWindowKeyboardFocusChangedError()
         }

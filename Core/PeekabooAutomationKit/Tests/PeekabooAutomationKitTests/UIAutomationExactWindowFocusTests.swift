@@ -357,6 +357,53 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         }
     }
 
+    func testAttachedSheetOnExpectedParentRefusesBeforeKeyboardDispatch() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_010,
+            ownerProcessStartIdentity: 95,
+            capturedBounds: bounds)
+        let automation = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowFocusReader: { processIdentifier in
+                ExactWindowFocusSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: identity.windowID,
+                    frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+            },
+            exactKeyWindowReader: { processIdentifier in
+                ExactKeyWindowSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: identity.windowID,
+                    hasSheet: true)
+            },
+            exactWindowIdentityValidator: { _, _ in true })
+        var postedEventCount = 0
+        let hotkey = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 })
+
+        do {
+            _ = try await hotkey.hotkey(
+                keys: "cmd,a",
+                holdDuration: 0,
+                targetProcessIdentifier: identity.ownerProcessIdentifier,
+                deliveryValidator: {
+                    try await automation.requireExactWindowKeyboardFocus(
+                        expectedWindowIdentity: identity,
+                        expectedWindowBounds: bounds)
+                })
+            XCTFail("Expected an attached sheet to invalidate the parent keyboard target")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("attached sheet"), message)
+        }
+
+        XCTAssertEqual(postedEventCount, 0)
+    }
+
     func testExactReceiptMismatchReturnsTypedPreDispatchRefusal() async throws {
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
         let identity = WindowMutationIdentity(

@@ -123,6 +123,7 @@ struct TypeServicePixelFocusTests {
         let executor = DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
             coordinationRootURL: self.temporaryRoot()))
         let value = PixelFocusLockedValue("before")
+        let clock = PixelFocusPollClock { value.set("ok") }
         let click = ClickService(
             snapshotManager: manager,
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
@@ -136,11 +137,8 @@ struct TypeServicePixelFocusTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedCharacterTyper: { character, _, _ in
-                value.set(value.get() + String(character))
-                return .dispatched(
-                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                    keyPressCount: 0)
+            targetedCharacterTyper: { _, _, delivery in
+                .dispatched(delivery: delivery, keyPressCount: 1)
             },
             targetedTextReplacer: { text, _ in
                 value.set(text)
@@ -150,7 +148,8 @@ struct TypeServicePixelFocusTests {
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             processStartIdentityProvider: { _ in 42 },
-            desktopOperationExecutor: executor)
+            desktopOperationExecutor: executor,
+            effectConfirmationTiming: clock.timing())
         let exactWindow = try #require(fixture.targetIdentity.exactWindow)
 
         let result = try await service.typeActionsByFocusingPixel(
@@ -165,8 +164,9 @@ struct TypeServicePixelFocusTests {
 
         #expect(value.get() == "ok")
         #expect(result.outcome?.state == .confirmedChange)
-        #expect(result.outcome?.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+        #expect(result.outcome?.delivery == .init(mechanism: .composite, mode: .background))
         #expect(result.outcome?.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(4))
+        #expect(clock.sleepCount == 1)
     }
 
     @Test
@@ -940,6 +940,30 @@ private final class PixelFocusLockedValue: @unchecked Sendable {
 
     func set(_ value: String) {
         self.lock.withLock { self.value = value }
+    }
+}
+
+@MainActor
+private final class PixelFocusPollClock {
+    private var instant = ContinuousClock.now
+    private let onSleep: @MainActor () -> Void
+    private(set) var sleepCount = 0
+
+    init(onSleep: @escaping @MainActor () -> Void) {
+        self.onSleep = onSleep
+    }
+
+    func timing() -> ExactLiteralTypingEffectConfirmationTiming {
+        .init(
+            timeout: .milliseconds(60),
+            interval: .milliseconds(20),
+            maximumSampleCount: 8,
+            now: { self.instant },
+            sleep: { duration in
+                self.sleepCount += 1
+                self.instant = self.instant.advanced(by: duration)
+                self.onSleep()
+            })
     }
 }
 

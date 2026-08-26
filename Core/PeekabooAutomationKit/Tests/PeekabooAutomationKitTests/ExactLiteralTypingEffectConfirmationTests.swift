@@ -233,6 +233,183 @@ struct ExactLiteralTypingEffectConfirmationTests {
 
     @Test
     @MainActor
+    func `delayed event settlement confirms within the bounded readback window`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("before")
+        let clock = TypingEffectPollClock { sleepCount in
+            if sleepCount == 1 {
+                value.set("safe")
+            }
+        }
+        let service = self.eventFallbackService(
+            value: value,
+            timing: clock.timing(),
+            valueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {})
+
+        #expect(summary.executionResult.outcome.state == .confirmedChange)
+        #expect(summary.executionResult.outcome.delivery == .init(
+            mechanism: .composite,
+            mode: .background))
+        #expect(clock.sleepCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `mismatched event readback stops at the monotonic deadline`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("before")
+        let clock = TypingEffectPollClock()
+        let service = self.eventFallbackService(
+            value: value,
+            timing: clock.timing(),
+            valueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {})
+
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(clock.sleepCount == 3)
+        #expect(clock.elapsed == .milliseconds(60))
+    }
+
+    @Test
+    @MainActor
+    func `slow AX sample cannot overrun the remaining settlement budget`() async throws {
+        let target = try self.target(processIdentifier: 334)
+        let value = TypingLockedValue("before")
+        let readCount = TypingLockedCounter()
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let timing = ExactLiteralTypingEffectConfirmationTiming(
+            timeout: .milliseconds(40),
+            interval: .milliseconds(10),
+            maximumSampleCount: 4,
+            now: { ContinuousClock.now },
+            sleep: { try await ContinuousClock().sleep(for: $0) })
+        let service = self.eventFallbackService(
+            value: value,
+            timing: timing,
+            valueReader: { focusedElement in
+                if readCount.next() > 1 {
+                    release.wait()
+                }
+                return .success(Self.focusSnapshot(focusedElement, value: "before"))
+            })
+        let start = ContinuousClock.now
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {})
+
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(start.duration(to: .now) < .milliseconds(150))
+        #expect(readCount.value == 2)
+    }
+
+    @Test
+    @MainActor
+    func `generation drift during event settlement stops polling without promotion`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("before")
+        let clock = TypingEffectPollClock()
+        let generations = TypingGenerationSequence([33, 33, 33, 33, 34])
+        let service = self.eventFallbackService(
+            value: value,
+            timing: clock.timing(),
+            valueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            },
+            processStartIdentityProvider: { _ in generations.next() })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {})
+
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(clock.sleepCount == 1)
+        #expect(generations.readCount == 5)
+    }
+
+    @Test
+    @MainActor
+    func `focused element drift during event settlement stops polling without promotion`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("before")
+        let clock = TypingEffectPollClock()
+        let readCount = TypingLockedCounter()
+        let service = self.eventFallbackService(
+            value: value,
+            timing: clock.timing(),
+            valueReader: { focusedElement in
+                switch readCount.next() {
+                case 1:
+                    .success(Self.focusSnapshot(focusedElement, value: "before"))
+                case 2:
+                    .success(Self.focusSnapshot(focusedElement, value: "mismatch"))
+                default:
+                    .failure(.identifierMismatch)
+                }
+            })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {})
+
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(clock.sleepCount == 1)
+        #expect(readCount.value == 3)
+    }
+
+    @Test
+    @MainActor
+    func `cancelled event settlement never promotes a matching future value`() async throws {
+        let target = try self.target()
+        let value = TypingLockedValue("before")
+        let clock = TypingEffectPollClock { _ in throw CancellationError() }
+        let service = self.eventFallbackService(
+            value: value,
+            timing: clock.timing(),
+            valueReader: { focusedElement in
+                .success(Self.focusSnapshot(focusedElement, value: value.get()))
+            })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {})
+
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(clock.sleepCount == 1)
+    }
+
+    @Test
+    @MainActor
     func `full exact literal pipeline confirms only the typing leaf value transition`() async throws {
         let target = try self.target()
         let value = TypingLockedValue("before preparation")
@@ -414,22 +591,48 @@ struct ExactLiteralTypingEffectConfirmationTests {
         #expect(summary.result.specialKeyPresses == 0)
     }
 
-    private func target(role: String = "AXTextField") throws -> UIAutomationTarget.ExactWindow {
+    private func target(
+        role: String = "AXTextField",
+        processIdentifier: pid_t = 333) throws -> UIAutomationTarget.ExactWindow
+    {
         let bounds = CGRect(x: 0, y: 0, width: 500, height: 400)
         let identity = WindowMutationIdentity(
             windowID: 42,
-            ownerProcessIdentifier: 333,
+            ownerProcessIdentifier: processIdentifier,
             ownerProcessStartIdentity: 33,
             capturedBounds: bounds)
         return try UIAutomationTarget.ExactWindow(
             identity: identity,
             bounds: bounds,
             focusedElement: FocusedElementIdentity(
-                processIdentifier: 333,
+                processIdentifier: processIdentifier,
                 windowID: 42,
                 role: role,
                 identifier: "editor",
                 frame: CGRect(x: 20, y: 20, width: 200, height: 30)))
+    }
+
+    @MainActor
+    private func eventFallbackService(
+        value: TypingLockedValue<String>,
+        timing: ExactLiteralTypingEffectConfirmationTiming,
+        valueReader: @escaping @Sendable (FocusedElementIdentity)
+            -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>,
+        processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? = { _ in 33 }) -> TypeService
+    {
+        TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { _, _, delivery in
+                .dispatched(delivery: delivery, keyPressCount: 1)
+            },
+            targetedTextReplacer: { text, _ in
+                value.set(text)
+                return true
+            },
+            exactFocusedElementValueReader: valueReader,
+            processStartIdentityProvider: processStartIdentityProvider,
+            effectConfirmationTiming: timing)
     }
 
     private static func focusSnapshot(
@@ -487,5 +690,51 @@ private final class TypingLockedValue<Value: Sendable>: @unchecked Sendable {
 
     func set(_ value: Value) {
         self.lock.withLock { self.value = value }
+    }
+}
+
+private final class TypingLockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue = 0
+
+    var value: Int {
+        self.lock.withLock { self.storedValue }
+    }
+
+    func next() -> Int {
+        self.lock.withLock {
+            self.storedValue += 1
+            return self.storedValue
+        }
+    }
+}
+
+@MainActor
+private final class TypingEffectPollClock {
+    private let start = ContinuousClock.now
+    private var instant: ContinuousClock.Instant
+    private let onSleep: @MainActor (Int) throws -> Void
+    private(set) var sleepCount = 0
+
+    var elapsed: Duration {
+        self.start.duration(to: self.instant)
+    }
+
+    init(onSleep: @escaping @MainActor (Int) throws -> Void = { _ in }) {
+        self.instant = self.start
+        self.onSleep = onSleep
+    }
+
+    func timing() -> ExactLiteralTypingEffectConfirmationTiming {
+        .init(
+            timeout: .milliseconds(60),
+            interval: .milliseconds(20),
+            maximumSampleCount: 8,
+            now: { self.instant },
+            sleep: { duration in
+                self.sleepCount += 1
+                self.instant = self.instant.advanced(by: duration)
+                try self.onSleep(self.sleepCount)
+            })
     }
 }

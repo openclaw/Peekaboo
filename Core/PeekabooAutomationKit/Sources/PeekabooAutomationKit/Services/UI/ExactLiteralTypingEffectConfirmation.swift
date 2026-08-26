@@ -1,6 +1,38 @@
 import Foundation
 import PeekabooFoundation
 
+struct ExactLiteralTypingEffectConfirmationTiming: Sendable {
+    static let live = Self(
+        timeout: .milliseconds(250),
+        interval: .milliseconds(20),
+        maximumSampleCount: 32,
+        now: { ContinuousClock.now },
+        sleep: { try await ContinuousClock().sleep(for: $0) })
+
+    let timeout: Duration
+    let interval: Duration
+    let maximumSampleCount: Int
+    let now: @MainActor @Sendable () -> ContinuousClock.Instant
+    let sleep: @MainActor @Sendable (Duration) async throws -> Void
+
+    init(
+        timeout: Duration,
+        interval: Duration,
+        maximumSampleCount: Int = 32,
+        now: @escaping @MainActor @Sendable () -> ContinuousClock.Instant,
+        sleep: @escaping @MainActor @Sendable (Duration) async throws -> Void)
+    {
+        precondition(timeout > .zero)
+        precondition(interval > .zero)
+        precondition(maximumSampleCount > 0)
+        self.timeout = timeout
+        self.interval = interval
+        self.maximumSampleCount = maximumSampleCount
+        self.now = now
+        self.sleep = sleep
+    }
+}
+
 /// Internal postcondition for the one exact typing shape whose final value is deterministic.
 /// Text values stay inside the operation lane and are never added to public results or logs.
 struct ExactLiteralTypingEffectConfirmation {
@@ -56,6 +88,10 @@ struct ExactLiteralTypingEffectConfirmation {
             route: outcome.route,
             delivery: delivery,
             unitCount: outcome.dispatchState.unitCount)
+    }
+
+    func expectedValueMatches(_ value: String) -> Bool {
+        value.utf8.elementsEqual(self.expectedValue.utf8)
     }
 
     private static func supportsExactBackgroundDelivery(_ delivery: DesktopActionOutcome.Delivery) -> Bool {
