@@ -105,6 +105,100 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `authenticated session pool preserves ordering within one session`() async throws {
+        let provider = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: provider)
+        }
+        let session = try #require(pool.manager(for: .init()))
+        _ = try await session.connect(channel: .stable)
+        provider.executedTools.removeAll()
+        let barrier = SequenceBarrier()
+        provider.executeHandler = { _, _ in
+            await barrier.block()
+            return .text("ok")
+        }
+
+        let first = Task { @MainActor in
+            try await session.execute(toolName: "take_snapshot", arguments: [:], channel: nil)
+        }
+        await barrier.waitUntilBlocked()
+        let second = Task { @MainActor in
+            try await session.execute(toolName: "list_pages", arguments: [:], channel: nil)
+        }
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(provider.executedTools == ["take_snapshot"])
+        await barrier.release()
+        _ = try await first.value
+        _ = try await second.value
+        #expect(provider.executedTools == ["take_snapshot", "list_pages"])
+    }
+
+    @Test
+    func `independently authenticated browser sessions overlap`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        var serverNames: [String] = []
+        let pool = BrowserMCPAuthenticatedSessionPool { serverName in
+            serverNames.append(serverName)
+            return Self.exactSession(manager: providers.removeFirst())
+        }
+        let firstSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        let secondSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        let firstSession = try #require(pool.manager(for: firstSessionID))
+        let secondSession = try #require(pool.manager(for: secondSessionID))
+        #expect(Set(serverNames).count == 2)
+        _ = try await firstSession.connect(channel: .stable)
+        _ = try await secondSession.connect(channel: .stable)
+        firstProvider.executedTools.removeAll()
+        secondProvider.executedTools.removeAll()
+        let firstBarrier = SequenceBarrier()
+        let secondBarrier = SequenceBarrier()
+        firstProvider.executeHandler = { _, _ in
+            await firstBarrier.block()
+            return .text("first")
+        }
+        secondProvider.executeHandler = { _, _ in
+            await secondBarrier.block()
+            return .text("second")
+        }
+
+        let first = Task { @MainActor in
+            try await firstSession.execute(toolName: "take_snapshot", arguments: [:], channel: nil)
+        }
+        await firstBarrier.waitUntilBlocked()
+        let second = Task { @MainActor in
+            try await secondSession.execute(toolName: "list_pages", arguments: [:], channel: nil)
+        }
+        await secondBarrier.waitUntilBlocked()
+
+        #expect(firstProvider.executedTools == ["take_snapshot"])
+        #expect(secondProvider.executedTools == ["list_pages"])
+        await firstBarrier.release()
+        await secondBarrier.release()
+        _ = try await first.value
+        _ = try await second.value
+
+        await pool.end(firstSessionID)
+        #expect(pool.count == 1)
+        #expect(firstProvider.removeCount == 1)
+        #expect(secondProvider.removeCount == 0)
+        #expect(pool.manager(for: firstSessionID) == nil)
+        do {
+            _ = try await firstSession.connect(channel: .stable)
+            Issue.record("Expected ended browser session to refuse reuse")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.causeDescription?.contains("session has ended") == true)
+        } catch {
+            Issue.record("Expected canonical ended-session refusal, got \(error)")
+        }
+    }
+
+    @Test
     func `failed connection probe reports indeterminate foreground dispatch and clears child`() async {
         let manager = MockBrowserMCPManager()
         manager.executeError = MockBrowserError.probe

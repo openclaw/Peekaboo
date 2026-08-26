@@ -115,6 +115,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private var connectionTargetKind: BrowserMCPConnectionTargetKind?
     private var uploadWorkspace: BrowserMCPUploadWorkspace?
     private var activeUploadID: UUID?
+    private var sessionEnded = false
 
     private static let connectionDelivery = DesktopActionOutcome.Delivery(
         mechanism: .browserProtocol,
@@ -415,6 +416,22 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         try? await self.withExecutionGate {
             await self.clearConnection()
         }
+    }
+
+    func endSession() async {
+        guard !self.sessionEnded else { return }
+        self.sessionEnded = true
+        let cleanup = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.executionGate.acquire()
+            } catch {
+                return
+            }
+            await self.clearConnection()
+            await self.executionGate.release()
+        }
+        await cleanup.value
     }
 
     func execute(
@@ -1142,7 +1159,12 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func withExecutionGate<Result>(
         _ operation: @MainActor () async throws -> Result) async throws -> Result
     {
+        guard !self.sessionEnded else { throw BrowserMCPConnectionError.sessionEnded }
         try await self.executionGate.acquire()
+        guard !self.sessionEnded else {
+            await self.executionGate.release()
+            throw BrowserMCPConnectionError.sessionEnded
+        }
         do {
             let result = try await operation()
             await self.executionGate.release()

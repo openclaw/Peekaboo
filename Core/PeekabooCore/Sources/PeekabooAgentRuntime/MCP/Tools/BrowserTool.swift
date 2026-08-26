@@ -13,6 +13,7 @@ public struct BrowserTool: MCPTool {
     private let connectionPolicy: BrowserMCPExecutionConnectionPolicy
     private let executionPolicy: MCPToolExecutionPolicy
     private let instructionAudience: BrowserToolInstructionAudience
+    private let capabilitySession: BrowserToolCapabilitySession?
 
     public let name = "browser"
     public var description: String {
@@ -20,8 +21,8 @@ public struct BrowserTool: MCPTool {
             return """
             Controls and inspects Chrome web pages through one existing exact DevTools connection under immutable
             background-only authority. Use `status` to inspect its receipt, then page-scoped actions with explicit
-            page IDs. Connect is unavailable because Chrome may surface remote-debugging setup or approval UI; use a
-            human-authorized foreground-capable session or standalone CLI to establish the connection first.
+            opaque page references. Connect is unavailable because Chrome may surface remote-debugging setup or approval
+            UI; use a human-authorized foreground-capable session or standalone CLI to establish the connection first.
             """
         }
 
@@ -53,17 +54,22 @@ public struct BrowserTool: MCPTool {
                 Other actions never auto-connect in a background-only context.
                 """,
                 enum: BrowserMCPChannel.allCases.map(\.rawValue)),
-            "page_id": SchemaBuilder.integer(description: """
-            Chrome DevTools page ID. Required for every page-scoped action so concurrent clients cannot
-            redirect one another by changing the shared selected page. Use list_pages to discover IDs.
-            """, minimum: 0),
+            "page_id": self.capabilitySession == nil
+                ? SchemaBuilder.integer(description: """
+                Chrome DevTools page ID. Required for every page-scoped action so concurrent clients cannot
+                redirect one another by changing the shared selected page. Use list_pages to discover IDs.
+                """, minimum: 0)
+                : SchemaBuilder.string(description: """
+                Opaque page capability from this session's latest list_pages or new_page response. Raw Chrome page
+                integers and references from another caller or expired connection are refused before dispatch.
+                """),
             "url": SchemaBuilder.string(description: "URL for navigate/new_page."),
             "navigation_type": SchemaBuilder.string(
                 description: "Navigation type for navigate.",
                 enum: ["url", "back", "forward", "reload"]),
             "uid": SchemaBuilder.string(description: """
-            Element uid from the latest browser snapshot. Required for element actions, including type and
-            press_key so keyboard input cannot inherit an unrelated focused element.
+            Opaque element capability from this session's latest browser snapshot. It is bound to the exact page,
+            connection, snapshot, and navigation generation and becomes stale after a newer snapshot or navigation.
             """),
             "to_uid": SchemaBuilder.string(description: "Drop target uid for drag."),
             "text": SchemaBuilder.string(description: "Text for type or wait_for."),
@@ -134,6 +140,7 @@ public struct BrowserTool: MCPTool {
         self.client = client ?? context.browser
         self.executionPolicy = context.executionPolicy
         self.instructionAudience = instructionAudience
+        self.capabilitySession = instructionAudience == .mcp ? context.browserCapabilities : nil
         self.connectionPolicy = context.executionPolicy == .backgroundOnly
             ? .requireExistingLiveReceipt
             : .allowAutoConnect
@@ -147,6 +154,7 @@ public struct BrowserTool: MCPTool {
         self.client = client
         self.executionPolicy = executionPolicy
         self.instructionAudience = instructionAudience
+        self.capabilitySession = nil
         self.connectionPolicy = executionPolicy == .backgroundOnly
             ? .requireExistingLiveReceipt
             : .allowAutoConnect
@@ -193,20 +201,29 @@ public struct BrowserTool: MCPTool {
                 let result = try await resultClient.connectWithOutcome(
                     channel: channel,
                     browserURL: browserURL)
+                await self.capabilitySession?.observeStatus(result.payload)
                 let outcome = try Self.validatedConnectOutcome(result.outcome)
                 return try self.formatStatus(
                     result.payload,
                     headline: "Connected Chrome DevTools MCP",
                     outcome: outcome)
             case .disconnect:
+                await self.capabilitySession?.disconnect()
                 await self.client.disconnect()
                 return ToolResponse.text("Disconnected Chrome DevTools MCP.")
             case .call:
-                return try await self.executeRawCall(arguments: arguments, channel: channel)
+                return try await self.executeCapabilityBound(
+                    action: action,
+                    arguments: arguments,
+                    channel: channel)
             default:
-                let calls = try BrowserMCPCallMapper.mapSequence(action: action, arguments: arguments)
-                return try await self.executeSequence(calls, channel: channel)
+                return try await self.executeCapabilityBound(
+                    action: action,
+                    arguments: arguments,
+                    channel: channel)
             }
+        } catch let error as BrowserToolCapabilityError {
+            return ToolResponse.error(error.localizedDescription)
         } catch let error as BrowserToolError {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as MCPToolArgumentValueError {
@@ -245,13 +262,50 @@ public struct BrowserTool: MCPTool {
     @MainActor
     private func statusResponse(channel: BrowserMCPChannel?) async throws -> ToolResponse {
         let status = await self.client.status(channel: channel)
+        await self.capabilitySession?.observeStatus(status)
         return try self.formatStatus(status, headline: "Chrome DevTools MCP Status")
     }
 
-    private func executeRawCall(arguments: ToolArguments, channel: BrowserMCPChannel?) async throws -> ToolResponse {
-        try await self.executeSequence(
-            [BrowserMCPCallMapper.mapRawCall(arguments: arguments)],
-            channel: channel)
+    @MainActor
+    private func executeCapabilityBound(
+        action: BrowserAction,
+        arguments: ToolArguments,
+        channel: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        let resolved: BrowserToolCapabilitySession.ResolvedArguments?
+        let connectionReceipt: BrowserMCPConnectionReceipt?
+        if let capabilitySession = self.capabilitySession {
+            let status = await self.client.status(channel: channel)
+            await capabilitySession.observeStatus(status)
+            connectionReceipt = status.connectionReceipt
+            resolved = try await capabilitySession.resolve(
+                action: action,
+                arguments: arguments,
+                connectionReceipt: connectionReceipt)
+        } else {
+            connectionReceipt = nil
+            resolved = nil
+        }
+        let providerArguments = resolved?.arguments ?? arguments
+        let calls = if action == .call {
+            try [BrowserMCPCallMapper.mapRawCall(arguments: providerArguments)]
+        } else {
+            try BrowserMCPCallMapper.mapSequence(
+                action: action,
+                arguments: providerArguments)
+        }
+        do {
+            let response = try await self.executeSequence(calls, channel: channel)
+            guard let capabilitySession = self.capabilitySession else { return response }
+            return try await capabilitySession.project(
+                response,
+                action: action,
+                resolved: resolved,
+                connectionReceipt: connectionReceipt)
+        } catch {
+            await self.capabilitySession?.invalidateAfterProviderEntry(action: action, resolved: resolved)
+            throw error
+        }
     }
 
     @MainActor
@@ -305,7 +359,8 @@ public struct BrowserTool: MCPTool {
             isError: result.payload.isError,
             meta: MCPToolResponseMetadataProjector.metadata(
                 merging: providerFields,
-                outcome: outcome))
+                outcome: outcome),
+            structuredContent: result.payload.structuredContent)
     }
 
     private static func checkCancellationBeforeProviderEntry() throws {
@@ -529,15 +584,35 @@ extension BrowserTool: MCPToolArgumentSemanticValidating {
         else {
             throw BrowserToolError.missingParameter("action")
         }
+        let providerArguments = try self.capabilityValidationArguments(arguments)
 
         switch action {
         case .status, .connect, .disconnect:
             return
         case .call:
-            _ = try BrowserMCPCallMapper.mapRawCall(arguments: arguments)
+            _ = try BrowserMCPCallMapper.mapRawCall(arguments: providerArguments)
         default:
-            _ = try BrowserMCPCallMapper.mapSequence(action: action, arguments: arguments)
+            _ = try BrowserMCPCallMapper.mapSequence(action: action, arguments: providerArguments)
         }
+    }
+
+    private func capabilityValidationArguments(_ arguments: ToolArguments) throws -> ToolArguments {
+        guard self.capabilitySession != nil else { return arguments }
+        var raw = arguments.rawDictionary
+        if let pageReference = arguments.getString("page_id") {
+            guard BrowserToolCapabilityReference.isValid(pageReference, prefix: "bp1") else {
+                throw BrowserToolCapabilityError.invalidPageReference
+            }
+            raw["page_id"] = 0
+        }
+        for key in ["uid", "to_uid"] {
+            guard let elementReference = arguments.getString(key) else { continue }
+            guard BrowserToolCapabilityReference.isValid(elementReference, prefix: "be1") else {
+                throw BrowserToolCapabilityError.invalidElementReference
+            }
+            raw[key] = "0_0"
+        }
+        return ToolArguments(raw: raw)
     }
 }
 
