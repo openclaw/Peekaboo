@@ -1761,11 +1761,14 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     'osascript script.scpt argument',
     'osascript ./script argument',
     'osascript payload argument',
+    'OsaScript payload argument',
     '/usr/bin/osascript',
     '/usr/bin/osascript -e return 1',
     '/usr/bin/osascript /tmp/script argument',
     '/usr/bin/osascript payload argument',
     '/usr/bin/osascript is unavailable',
+    '/USR/BIN/OSASCRIPT -e return 1',
+    '/usr/bin/OsaScript payload argument',
     'osascript documentation unavailable',
     'osascript command is unavailable',
     'osascript support is disabled',
@@ -1773,6 +1776,7 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript',
     '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript -e return 1',
     '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScript is unavailable',
+    '/sYsTeM/lIbRaRy/CoMpOnEnTs/aPpLeScRiPt.CoMpOnEnT/Contents/MacOS/AppleScript -e return 1',
   ].entries()) {
     assert.deepEqual(
       policyFindingsForFile(
@@ -1788,7 +1792,11 @@ test('policy scanner recognizes native class symbols and bounds chained symbol d
     'prefix /usr/bin/osascript -e return 1',
     '/usr/bin/osascripter -e return 1',
     '/usr/bin/osascript-helper',
+    '/USR/BIN/OSASCRIPTER -e return 1',
+    '/usr/bin/OsaScript-Helper',
     '/System/Library/Components/AppleScript.component.backup',
+    '/SYSTEM/LIBRARY/COMPONENTS/APPLESCRIPT.COMPONENT/CONTENTS/MACOS/APPLESCRIPTER',
+    '/SYSTEM/LIBRARY/COMPONENTS/APPLESCRIPT.COMPONENT.BACKUP',
     '/System/Library/Components/AppleScript.component/Contents/MacOS/AppleScripter',
     'AppleScript component support is disabled',
   ].entries()) {
