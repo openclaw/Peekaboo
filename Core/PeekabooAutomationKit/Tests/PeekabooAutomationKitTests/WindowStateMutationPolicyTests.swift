@@ -431,7 +431,8 @@ struct WindowStateMutationPolicyTests {
             keyWindow: ExactKeyWindowSnapshot(
                 processIdentifier: 42,
                 windowID: 925,
-                hasSheet: false))
+                isSheet: false,
+                hasAttachedSheet: false))
 
         #expect(readiness == .wrongKeyWindow(actualWindowID: 925))
     }
@@ -446,7 +447,24 @@ struct WindowStateMutationPolicyTests {
             keyWindow: ExactKeyWindowSnapshot(
                 processIdentifier: 42,
                 windowID: 924,
-                hasSheet: true))
+                isSheet: false,
+                hasAttachedSheet: true))
+
+        #expect(readiness == .sheetPresented)
+    }
+
+    @Test
+    func `foreground close rejects a pinned key window that is itself a sheet`() {
+        let readiness = pinnedForegroundCloseReadiness(
+            focusSucceeded: true,
+            expectedIdentity: self.identity,
+            currentProcessStartIdentity: 7,
+            frontmostProcessIdentifier: 42,
+            keyWindow: ExactKeyWindowSnapshot(
+                processIdentifier: 42,
+                windowID: 924,
+                isSheet: true,
+                hasAttachedSheet: false))
 
         #expect(readiness == .sheetPresented)
     }
@@ -465,7 +483,8 @@ struct WindowStateMutationPolicyTests {
                     return ExactKeyWindowSnapshot(
                         processIdentifier: 42,
                         windowID: 924,
-                        hasSheet: false)
+                        isSheet: false,
+                        hasAttachedSheet: false)
                 }.value
             },
             processStartIdentityReader: {
@@ -560,7 +579,8 @@ struct WindowStateMutationPolicyTests {
             keyWindow: ExactKeyWindowSnapshot(
                 processIdentifier: 42,
                 windowID: 924,
-                hasSheet: true))
+                isSheet: false,
+                hasAttachedSheet: true))
 
         await #expect(throws: ForegroundCloseTestError.self) {
             try await withMinimizedWindowFailureRecovery(

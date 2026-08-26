@@ -503,7 +503,8 @@ struct UIAutomationActionOutcomeProvidingTests {
                 ExactKeyWindowSnapshot(
                     processIdentifier: processIdentifier,
                     windowID: focused.windowID,
-                    hasSheet: false)
+                    isSheet: false,
+                    hasAttachedSheet: false)
             },
             exactWindowIdentityValidator: { identity, bounds in
                 identity == windowIdentity && bounds == windowIdentity.capturedBounds

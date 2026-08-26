@@ -36,7 +36,12 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
 struct ExactKeyWindowSnapshot: Sendable, Equatable {
     let processIdentifier: pid_t
     let windowID: Int?
-    let hasSheet: Bool
+    let isSheet: Bool
+    let hasAttachedSheet: Bool
+
+    var hasSheet: Bool {
+        self.isSheet || self.hasAttachedSheet
+    }
 }
 
 enum DetachedExactWindowFocusReader {
@@ -176,12 +181,11 @@ enum DetachedExactWindowFocusReader {
         }
 
         let role = self.stringAttribute(kAXRoleAttribute, of: focusedWindow)
-        let hasSheet = role == (kAXSheetRole as String) ||
-            !self.elementArrayAttribute("AXSheets", of: focusedWindow).isEmpty
         return ExactKeyWindowSnapshot(
             processIdentifier: focusedProcessIdentifier,
             windowID: AXWindowIDResolver.windowID(of: focusedWindow).map(Int.init),
-            hasSheet: hasSheet)
+            isSheet: role == (kAXSheetRole as String),
+            hasAttachedSheet: !self.elementArrayAttribute("AXSheets", of: focusedWindow).isEmpty)
     }
 
     private static func elementAttribute(_ name: String, of element: AXUIElement) -> AXUIElement? {

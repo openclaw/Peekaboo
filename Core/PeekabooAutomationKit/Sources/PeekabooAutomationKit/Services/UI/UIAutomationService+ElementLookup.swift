@@ -131,7 +131,7 @@ extension UIAutomationService {
         else {
             throw self.exactWindowKeyboardFocusChangedError()
         }
-        guard !keyWindow.hasSheet else {
+        guard !keyWindow.hasAttachedSheet else {
             throw PeekabooError.invalidInput(
                 field: "target",
                 reason: "The exact parent window has an attached sheet at dispatch. " +
