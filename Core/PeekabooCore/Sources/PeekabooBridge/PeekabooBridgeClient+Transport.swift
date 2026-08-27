@@ -189,6 +189,24 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.requiresBrowserCapabilityNamespaces,
+           !self.browserCapabilityNamespacesEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host did not negotiate a caller-owned browser capability namespace.",
+                hint: "Use a current local on-demand Peekaboo host and complete a fresh handshake.")
+        }
+        if request.requiresNativeBrowserWindowBinding,
+           !self.nativeBrowserWindowBindingEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge namespace cannot bind browser pages to exact native windows.",
+                hint: "Update the local on-demand Peekaboo host and create a new namespace.")
+        }
         if request.createsOrPublishesSnapshotState || request.requiresProducerBoundSnapshotReferences,
            !self.producerBoundSnapshotReferencesEnabled
         {

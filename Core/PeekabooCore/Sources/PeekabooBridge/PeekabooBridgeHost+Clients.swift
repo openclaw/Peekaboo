@@ -98,10 +98,14 @@ extension PeekabooBridgeHost {
                     return
                 }
                 defer { context.admissionRefusalLimiter.finish() }
-                let responseData = await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(
-                    context.operationReceiptAuthority)
+                let responseData = await PeekabooBridgeRequestContext.$browserCapabilityNamespaceAuthority.withValue(
+                    context.browserCapabilityNamespaceAuthority)
                 {
-                    await context.server.encodeAdmissionRefusal(request, peer: peer)
+                    await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(
+                        context.operationReceiptAuthority)
+                    {
+                        await context.server.encodeAdmissionRefusal(request, peer: peer)
+                    }
                 }
                 try PeekabooBridgeSocketIO.writeAll(
                     fd: fd,
@@ -127,6 +131,7 @@ extension PeekabooBridgeHost {
                     connection: connection,
                     requestTracker: context.requestTracker,
                     operationReceiptAuthority: context.operationReceiptAuthority,
+                    browserCapabilityNamespaceAuthority: context.browserCapabilityNamespaceAuthority,
                     operationSessionAuthorizationPin: authorizationPin))
             else {
                 return

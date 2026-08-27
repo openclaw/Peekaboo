@@ -1077,6 +1077,20 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `sequential authenticated sessions retain no ended identities`() async {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        for index in 1...96 {
+            let sessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+            _ = pool.manager(for: sessionID)
+            await pool.end(sessionID)
+            #expect(pool.retainedSessionIdentityCount == 0, "retained session at cycle \(index)")
+            #expect(pool.manager(for: sessionID) == nil)
+        }
+    }
+
+    @Test
     func `root and scoped sessions cannot claim the same exact target in either order`() throws {
         let pool = BrowserMCPAuthenticatedSessionPool { _ in
             Self.exactSession(manager: MockBrowserMCPManager())
@@ -1365,6 +1379,119 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `failed provider probe closes retained native control`() async throws {
+        let transport = FakeControlTransport.respondingNormally
+        let opener = FakeControlTransportOpener(transport: transport)
+        let connection = try await BrowserMCPDevToolsControlSession.connect(
+            BrowserMCPDevToolsControlSessionTests.webSocketURL,
+            expectedBrowserID: "browser-a",
+            deadline: ContinuousClock.now.advanced(by: .seconds(2)),
+            transportFactory: opener.factory)
+        let endpointResolver = BrowserMCPChannelEndpointResolver(
+            resolveInitial: { _, _ in
+                BrowserMCPDevToolsEndpoint(
+                    browserURL: "http://127.0.0.1:9222/",
+                    webSocketDebuggerURL: BrowserMCPDevToolsControlSessionTests.webSocketURL.absoluteString,
+                    browserID: "browser-a",
+                    browserVersion: connection.version.browserVersion,
+                    protocolVersion: connection.version.protocolVersion,
+                    retainedControlSession: connection.session)
+            },
+            revalidate: { _, _ in })
+        let manager = MockBrowserMCPManager()
+        manager.executeError = MockBrowserError.probe
+        let session = Self.session(
+            manager: manager,
+            browsers: [Self.browser(pid: 62, generation: 3062)],
+            channelEndpointResolver: endpointResolver)
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await session.connectWithOutcome(channel: .stable)
+        }
+
+        #expect(await connection.session.state() == .closed)
+        #expect(transport.cancelCount == 1)
+        #expect(opener.openCount == 1)
+    }
+
+    @Test
+    func `orphaned retained control is closed before replacement resolution`() async throws {
+        let transport = FakeControlTransport.respondingNormally
+        let opener = FakeControlTransportOpener(transport: transport)
+        let connection = try await BrowserMCPDevToolsControlSession.connect(
+            BrowserMCPDevToolsControlSessionTests.webSocketURL,
+            expectedBrowserID: "browser-a",
+            deadline: ContinuousClock.now.advanced(by: .seconds(2)),
+            transportFactory: opener.factory)
+        let resolutionCount = GenerationBox(0)
+        let endpointResolver = BrowserMCPChannelEndpointResolver(
+            resolveInitial: { _, _ in
+                resolutionCount.set((resolutionCount.get() ?? 0) + 1)
+                throw MockBrowserError.probe
+            },
+            revalidate: { _, _ in })
+        let session = Self.session(
+            manager: MockBrowserMCPManager(),
+            browsers: [Self.browser(pid: 64, generation: 3064)],
+            channelEndpointResolver: endpointResolver)
+        session.connectionControlSession = connection.session
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await session.connectWithOutcome(channel: .stable)
+        }
+
+        #expect(resolutionCount.get() == 0)
+        #expect(await connection.session.state() == .closed)
+        #expect(transport.cancelCount == 1)
+    }
+
+    @Test
+    func `post probe signer drift closes retained native control`() async throws {
+        let transport = FakeControlTransport.respondingNormally
+        let opener = FakeControlTransportOpener(transport: transport)
+        let connection = try await BrowserMCPDevToolsControlSession.connect(
+            BrowserMCPDevToolsControlSessionTests.webSocketURL,
+            expectedBrowserID: "browser-a",
+            deadline: ContinuousClock.now.advanced(by: .seconds(2)),
+            transportFactory: opener.factory)
+        let endpointResolver = BrowserMCPChannelEndpointResolver(
+            resolveInitial: { _, _ in
+                BrowserMCPDevToolsEndpoint(
+                    browserURL: "http://127.0.0.1:9222/",
+                    webSocketDebuggerURL: BrowserMCPDevToolsControlSessionTests.webSocketURL.absoluteString,
+                    browserID: "browser-a",
+                    browserVersion: connection.version.browserVersion,
+                    protocolVersion: connection.version.protocolVersion,
+                    retainedControlSession: connection.session)
+            },
+            revalidate: { _, _ in })
+        let signatureChecks = GenerationBox(0)
+        let browser = Self.browser(pid: 63, generation: 3063)
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: MockBrowserMCPManager(),
+            detectedBrowsers: { _ in [browser] },
+            processStartIdentity: { _ in 3063 },
+            processBundleIdentifier: { _ in "com.google.Chrome" },
+            processCodeSignatureValidator: { _, _, channel in
+                let check = signatureChecks.get() ?? 0
+                signatureChecks.set(check + 1)
+                return check == 0 ? .browserTestIdentity(channel: channel) : nil
+            },
+            endpointResolver: Self.endpointResolver(),
+            channelEndpointResolver: endpointResolver,
+            environment: [:])
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await session.connect(channel: .stable)
+        }
+
+        #expect(await connection.session.state() == .closed)
+        #expect(transport.cancelCount == 1)
+        #expect(opener.openCount == 1)
+    }
+
+    @Test
     func `lost MCP child refuses without implicit reconnect`() async throws {
         let manager = MockBrowserMCPManager()
         let session = Self.session(manager: manager, browsers: [Self.browser(pid: 71, generation: 4071)])
@@ -1632,6 +1759,23 @@ extension BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `generic execution cannot dispatch private tab target lookup`() async throws {
+        let provider = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: provider)
+        _ = try await session.connect(channel: nil, browserURL: nil)
+        provider.executedTools.removeAll()
+
+        await #expect(throws: BrowserMCPPrivateInteropError.publicDispatchRefused) {
+            _ = try await session.execute(
+                toolName: "get_tab_id",
+                arguments: ["pageId": 7],
+                channel: nil)
+        }
+
+        #expect(provider.executedTools.isEmpty)
+    }
+
+    @Test
     func `action result service omits mutation outcome for failed read sequence`() async throws {
         let manager = MockBrowserMCPManager()
         let session = Self.exactSession(manager: manager)
@@ -1688,8 +1832,40 @@ extension BrowserMCPSessionManagerTests {
             channel: .stable)
 
         #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .background))
         #expect(result.outcome?.dispatchState.unitCount?.rawValue == 2)
         #expect(manager.executedTools == ["click", "type_text"])
+    }
+
+    @Test
+    func `page fronting mutations report foreground provider delivery`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+        let calls = [
+            BrowserMCPMappedCall(
+                toolName: "select_page",
+                arguments: ["pageId": 7, "bringToFront": true]),
+            BrowserMCPMappedCall(
+                toolName: "new_page",
+                arguments: ["url": "https://example.test/", "background": false]),
+        ]
+
+        for call in calls {
+            let result = try await service.executeSequenceWithOutcome([call], channel: .stable)
+            #expect(result.outcome?.state == .dispatchedUnverified)
+            #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+            #expect(result.outcome?.dispatchState.unitCount == .one)
+        }
+
+        #expect(manager.executedTools == ["select_page", "new_page"])
+
+        manager.executeHandler = { _, _ in ToolResponse.error("provider refused after entry") }
+        let failed = try await service.executeSequenceWithOutcome([calls[0]], channel: .stable)
+        #expect(failed.outcome?.state == .indeterminate)
+        #expect(failed.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
     }
 
     @Test
@@ -2923,7 +3099,7 @@ extension BrowserMCPSessionManagerTests {
 }
 
 @MainActor
-private final class MockBrowserMCPManager: BrowserMCPManaging {
+final class MockBrowserMCPManager: BrowserMCPManaging {
     var connected = false
     var hasConfiguredServer = false
     var addedConfigs: [MCPServerConfig] = []

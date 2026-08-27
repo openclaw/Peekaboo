@@ -31,6 +31,7 @@ function namesInContractSection(name, source = routingContract) {
 
 const swiftVersion = routingContract.match(/dependencyVersion\s*=\s*"([^"]+)"/)?.[1];
 const expectedPageScopedNames = namesInContractSection("page-scoped");
+const expectedInternalOnlyNames = namesInContractSection("internal-only");
 const expectedExplicitPageTargetNames = namesInContractSection("explicit-page-target");
 const expectedGlobalNames = namesInContractSection("global");
 const expectedBlockedSelectedPageNames = namesInContractSection("blocked-selected-page");
@@ -55,6 +56,7 @@ const { createTools } = await import(
 const serverArgs = {
   experimentalPageIdRouting: true,
   experimentalStructuredContent: true,
+  experimentalInteropTools: true,
   slim: false,
   viaCli: false,
 };
@@ -168,6 +170,10 @@ const issueFormatterSource = readFileSync(
   new URL("../node_modules/chrome-devtools-mcp/build/src/formatters/IssueFormatter.js", import.meta.url),
   "utf8",
 );
+const pageToolsSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/pages.js", import.meta.url),
+  "utf8",
+);
 assert.match(mcpPageSource, /Object\.values\(params\)/, "third-party parameter traversal changed");
 assert.match(mcpPageSource, /Object\.keys\(value\)\.length === 1/, "third-party singleton UID rule changed");
 assert.match(
@@ -245,6 +251,21 @@ assert.match(
   "provider issue affected-resource section changed",
 );
 assert.match(
+  pageToolsSource,
+  /name: 'get_tab_id'[\s\S]*conditions: \['experimentalInteropTools'\]/,
+  "private tab-target lookup is no longer guarded by the interop flag",
+);
+assert.match(
+  pageToolsSource,
+  /const tabId = page\.pptrPage\._tabId;[\s\S]*response\.setTabId\(tabId\)/,
+  "private tab-target lookup no longer returns Puppeteer's target identity",
+);
+assert.match(
+  mcpResponseSource,
+  /structuredContent\.tabId = this\.#tabId/,
+  "private tab-target identity is no longer available in structured content",
+);
+assert.match(
   issueFormatterSource,
   /details\.push\(`uid=\$\{item\.uid\}`\)/,
   "provider issue resource identifier shape changed",
@@ -261,13 +282,19 @@ const explicitPageTargetNames = pageTargetedNames.filter((name) => !pageScopedNa
 const globalNames = tools.map((tool) => tool.name).filter((name) => !pageTargetedNames.includes(name)).sort();
 const auditedNames = [
   ...expectedPageScopedNames,
+  ...expectedInternalOnlyNames,
   ...expectedExplicitPageTargetNames,
   ...expectedGlobalNames,
   ...expectedBlockedSelectedPageNames,
 ].sort();
 
 assert.equal(pageScopedTools.length, 32, "the pinned dependency page-scoped contract changed");
-assert.deepEqual(pageScopedNames, expectedPageScopedNames, "Swift page-scoped raw-tool catalog drifted");
+assert.deepEqual(
+  pageScopedNames,
+  [...expectedPageScopedNames, ...expectedInternalOnlyNames].sort(),
+  "Swift public/internal page-scoped catalogs drifted from the provider",
+);
+assert.deepEqual(expectedInternalOnlyNames, ["get_tab_id"], "re-audit private provider tools before exposure");
 assert.deepEqual(
   explicitPageTargetNames,
   expectedExplicitPageTargetNames,

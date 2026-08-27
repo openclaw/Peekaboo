@@ -23,6 +23,27 @@ private enum OperationReceiptRequestCarriage {
     case invalidProjected(any Error)
 }
 
+extension PeekabooBridgeHandledResponse {
+    fileprivate func validatedOpaqueTarget(
+        for plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
+        -> PeekabooBridgeOperationTargetReceipt?
+    {
+        if let browserReceipt = self.externalBrowserTarget {
+            guard browserReceipt.isCanonicalExternalTarget,
+                  self.response.browserExecutionConnectionReceipt == browserReceipt
+            else { throw DesktopTargetIdentityError.incompleteExactWindow }
+            return .browser(browserReceipt)
+        }
+        guard let namespaceTarget = self.browserCapabilityNamespaceTarget,
+              namespaceTarget.isCanonical,
+              case let .browserCapabilityNamespace(namespaceRequest) = plan.request.unwrappedOperationRequest,
+              namespaceRequest.namespaceReceipt.payload.namespaceID == namespaceTarget.namespaceID,
+              namespaceRequest.namespaceReceipt.payload.registryGenerationID == namespaceTarget.registryGenerationID
+        else { return nil }
+        return .browserCapabilityNamespace(namespaceTarget)
+    }
+}
+
 @MainActor
 extension PeekabooBridgeServer {
     func handleAttestedOperation(
@@ -137,16 +158,11 @@ extension PeekabooBridgeServer {
                 response = handled.response
                 target = nil
                 focusedElement = nil
-            } else if let browserReceipt = handled.externalBrowserTarget,
+            } else if let opaqueTarget = try handled.validatedOpaqueTarget(for: plan),
                       !PeekabooBridgeOperationResultSemantics.isNoDispatchFailure(handled.response)
             {
-                guard browserReceipt.isCanonicalExternalTarget,
-                      handled.response.browserExecutionConnectionReceipt == browserReceipt
-                else {
-                    throw DesktopTargetIdentityError.incompleteExactWindow
-                }
                 response = handled.response
-                target = .browser(browserReceipt)
+                target = opaqueTarget
                 focusedElement = nil
             } else {
                 let resolved = try PeekabooBridgeOperationTargetAttribution.resolve(

@@ -272,6 +272,36 @@ public protocol BrowserMCPAtomicSessionActionProviding: BrowserMCPActionResultPr
         elementPreflight: BrowserMCPElementPreflight?) async throws -> DesktopActionResult<ToolResponse>
 }
 
+struct BrowserMCPNativeWindowBoundActionResult: Sendable {
+    let actionResult: DesktopActionResult<ToolResponse>
+    let nativeWindowReceipt: BrowserNativeWindowReceipt
+}
+
+struct BrowserMCPNativeWindowBoundExecutionRequest: Sendable {
+    let calls: [BrowserMCPMappedCall]
+    let channel: BrowserMCPChannel?
+    let sessionBinding: BrowserMCPExecutionSessionBinding
+    let elementPreflight: BrowserMCPElementPreflight?
+    let pageReference: String
+    let deadline: ContinuousClock.Instant
+}
+
+protocol BrowserMCPNativeWindowBindingProviding: BrowserMCPAtomicSessionActionProviding {
+    var nativeWindowBindingCapabilitySession: BrowserToolCapabilitySession? { get }
+
+    @MainActor
+    func bindNativeWindowHoldingCapabilityGate(
+        pageReference: String,
+        target: BrowserNativeWindowTarget,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        deadline: ContinuousClock.Instant) async throws -> BrowserNativeWindowBindingProof
+
+    @MainActor
+    func executeNativeWindowBoundSequenceWithOutcomeHoldingCapabilityGate(
+        _ request: BrowserMCPNativeWindowBoundExecutionRequest) async throws
+        -> BrowserMCPNativeWindowBoundActionResult
+}
+
 protocol BrowserMCPAuthenticatedSessionEnding: BrowserMCPClientProviding {
     @MainActor
     func endAuthenticatedBrowserSession() async
@@ -336,7 +366,8 @@ extension BrowserMCPClientProviding {
 
 public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
     BrowserMCPAtomicSessionActionProviding,
-    BrowserMCPConnectionResultProviding, BrowserMCPAuthenticatedSessionEnding, @unchecked Sendable
+    BrowserMCPConnectionResultProviding, BrowserMCPAuthenticatedSessionEnding,
+    BrowserMCPNativeWindowBindingProviding, @unchecked Sendable
 {
     public let supportsNativeBrowserConnectionBinding: Bool
 
@@ -346,6 +377,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @MainActor private var authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool?
     private let sessionCapabilities: BrowserToolCapabilitySession?
     private let sessionMutationGate: MCPToolSnapshotExecutionGate?
+    private let nativeWindowBindingDependencies: BrowserNativeWindowBindingCoordinator.Dependencies
     @MainActor private var ownedSession: (
         pool: BrowserMCPAuthenticatedSessionPool,
         id: BrowserMCPAuthenticatedSessionPool.SessionID)?
@@ -357,6 +389,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.ownedSession = nil
         self.sessionCapabilities = nil
         self.sessionMutationGate = nil
+        self.nativeWindowBindingDependencies = .live
         self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
             BrowserMCPSessionManager(serverName: serverName)
         }
@@ -369,6 +402,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.ownedSession = nil
         self.sessionCapabilities = nil
         self.sessionMutationGate = nil
+        self.nativeWindowBindingDependencies = .live
         self.authenticatedSessionPool = authenticatedSessionPool
     }
 
@@ -380,6 +414,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.ownedSession = nil
         self.sessionCapabilities = nil
         self.sessionMutationGate = nil
+        self.nativeWindowBindingDependencies = .live
         self.authenticatedSessionPool = BrowserMCPAuthenticatedSessionPool { serverName in
             BrowserMCPSessionManager(serverName: serverName, manager: manager)
         }
@@ -392,7 +427,8 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             pool: BrowserMCPAuthenticatedSessionPool,
             id: BrowserMCPAuthenticatedSessionPool.SessionID)? = nil,
         sessionCapabilities: BrowserToolCapabilitySession? = nil,
-        sessionMutationGate: MCPToolSnapshotExecutionGate? = nil)
+        sessionMutationGate: MCPToolSnapshotExecutionGate? = nil,
+        nativeWindowBindingDependencies: BrowserNativeWindowBindingCoordinator.Dependencies = .live)
     {
         self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
@@ -400,6 +436,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.ownedSession = ownedSession
         self.sessionCapabilities = sessionCapabilities
         self.sessionMutationGate = sessionMutationGate
+        self.nativeWindowBindingDependencies = nativeWindowBindingDependencies
     }
 
     /// Creates a version-neutral process-local browser service for one explicitly authenticated caller session.
@@ -458,8 +495,69 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         self.sessionCapabilities
     }
 
+    var nativeWindowBindingCapabilitySession: BrowserToolCapabilitySession? {
+        self.supportsNativeBrowserConnectionBinding ? self.sessionCapabilities : nil
+    }
+
     var browserMutationExecutionGate: MCPToolSnapshotExecutionGate? {
         self.sessionMutationGate
+    }
+
+    @MainActor
+    func bindNativeWindowHoldingCapabilityGate(
+        pageReference: String,
+        target: BrowserNativeWindowTarget,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        deadline: ContinuousClock.Instant) async throws -> BrowserNativeWindowBindingProof
+    {
+        guard let capabilities = self.nativeWindowBindingCapabilitySession else {
+            throw BrowserNativeWindowBindingCoordinatorError.controlUnavailable
+        }
+        return try await BrowserNativeWindowBindingCoordinator.bindHoldingCapabilityGate(
+            pageReference: pageReference,
+            nativeTarget: target,
+            context: .init(
+                sessionBinding: expectedSessionBinding,
+                capabilities: capabilities,
+                manager: self.resolvedSessionManager(),
+                deadline: deadline),
+            dependencies: self.nativeWindowBindingDependencies)
+    }
+
+    @MainActor
+    func executeNativeWindowBoundSequenceWithOutcomeHoldingCapabilityGate(
+        _ request: BrowserMCPNativeWindowBoundExecutionRequest) async throws
+        -> BrowserMCPNativeWindowBoundActionResult
+    {
+        guard let capabilities = self.nativeWindowBindingCapabilitySession else {
+            throw BrowserNativeWindowBindingCoordinatorError.controlUnavailable
+        }
+        do {
+            let bound = try await self.resolvedSessionManager().executeNativeWindowBoundSequence(
+                request,
+                capabilities: capabilities,
+                receiptProviders: self.nativeWindowBindingDependencies.receiptProviders)
+            let projected = try Self.projectExecutionResult(bound.result, calls: request.calls)
+            return BrowserMCPNativeWindowBoundActionResult(
+                actionResult: DesktopActionResult(
+                    payload: BrowserMCPExecutionEvidence.attachingNativeWindowReceipt(
+                        to: projected.payload,
+                        receipt: bound.nativeWindowReceipt),
+                    outcome: projected.outcome),
+                nativeWindowReceipt: bound.nativeWindowReceipt)
+        } catch BrowserMCPConnectionError.expectedConnectionReceiptMismatch,
+            BrowserMCPConnectionError.expectedProviderSessionEpochMismatch
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The exact browser provider session changed before bound tool dispatch.",
+                hint: "Refresh browser status and bind the page to its native window again.")
+        } catch BrowserMCPConnectionError.receiptBindingUnsupported {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The browser provider cannot atomically execute a native-window-bound action.",
+                hint: "Update the runtime host before retrying native browser window binding.")
+        }
     }
 
     @MainActor
@@ -726,9 +824,19 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
                 }
             }
         }
+        return try Self.projectExecutionResult(result, calls: calls)
+    }
+
+    private static func projectExecutionResult(
+        _ result: BrowserMCPExecutionResult,
+        calls: [BrowserMCPMappedCall]) throws -> DesktopActionResult<ToolResponse>
+    {
+        let semantics = calls.map(Self.actionSemantics)
+        let plannedMutationCount = semantics.count(where: { $0 == .mutating })
         let projected = try result.projectingMutationProgress(for: calls)
         let executionOutcome: DesktopActionOutcome? = if plannedMutationCount > 0 {
             projected.actionFailure?.outcome ?? Self.successOutcome(
+                calls: calls,
                 dispatchedCallCount: plannedMutationCount)
         } else if projected.connectionOutcome != nil {
             projected.actionFailure?.outcome
@@ -851,12 +959,15 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             headless: headless)
     }
 
-    private static func successOutcome(dispatchedCallCount: Int) -> DesktopActionOutcome {
+    private static func successOutcome(
+        calls: [BrowserMCPMappedCall],
+        dispatchedCallCount: Int) -> DesktopActionOutcome
+    {
         guard let unitCount = DesktopActionOutcome.DispatchUnitCount(dispatchedCallCount) else {
             preconditionFailure("A successful browser execution must dispatch at least one call")
         }
         return .dispatchedUnverified(
-            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls),
             evidence: .deliveryAccepted,
             unitCount: unitCount)
     }
@@ -939,6 +1050,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         "chrome-devtools-mcp@1.6.0",
         "--experimentalPageIdRouting",
         "--experimentalStructuredContent",
+        "--experimentalInteropTools",
     ]
 
     static func chromeDevToolsConfig(browserURL: String, headless _: Bool) -> MCPServerConfig {

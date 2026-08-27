@@ -136,6 +136,9 @@ struct MCPPolicyAwareCatalogTests {
         #expect(!actions.contains(.string(BrowserAction.connect.rawValue)))
         #expect(actions.contains(.string(BrowserAction.status.rawValue)))
         #expect(actions.contains(.string(BrowserAction.listPages.rawValue)))
+        #expect(!actions.contains(.string(BrowserProcessLocalAction.bindWindow)))
+        #expect(properties["pid"] == nil)
+        #expect(properties["window_id"] == nil)
         #expect(properties["browser_url"] == nil)
         #expect(tool.description.contains("Connect is unavailable"))
         #expect(tool.description.contains("Restart this exact MCP server/session"))
@@ -153,6 +156,7 @@ struct MCPPolicyAwareCatalogTests {
             return
         }
         #expect(foregroundActions.contains(.string(BrowserAction.connect.rawValue)))
+        #expect(!foregroundActions.contains(.string(BrowserProcessLocalAction.bindWindow)))
         #expect(foregroundProperties["browser_url"] != nil)
         #expect(foregroundTool.description.contains("accept Chrome's remote debugging prompt"))
     }

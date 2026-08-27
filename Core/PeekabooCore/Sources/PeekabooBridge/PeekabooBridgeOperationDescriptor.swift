@@ -106,6 +106,21 @@ extension PeekabooBridgeOperationResultSemantics {
                 targetPolicy: .external,
                 responseFamilies: [.browserToolResponse],
                 responseTargetEvidence: .browserConnection)
+        case .browserCreateCapabilityNamespace:
+            descriptor(
+                completion: .readOnly,
+                targetPolicy: .notApplicable,
+                responseFamilies: [.browserCapabilityNamespaceReceipt])
+        case .browserCapabilityNamespace:
+            descriptor(
+                completion: .dispatchedUnverified(browserBackground),
+                targetPolicy: .external,
+                responseFamilies: [.browserCapabilityNamespaceAction])
+        case .browserCloseCapabilityNamespace:
+            descriptor(
+                completion: .readOnly,
+                targetPolicy: .notApplicable,
+                responseFamilies: [.browserCapabilityNamespaceClose])
         case .captureScreen, .captureFrontmost, .captureArea:
             descriptor(
                 read: .globalExclusive,

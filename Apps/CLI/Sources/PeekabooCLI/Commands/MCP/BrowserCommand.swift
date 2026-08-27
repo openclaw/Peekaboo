@@ -31,6 +31,14 @@ private struct BrowserCommandInputError: LocalizedError, ResultEnvelopeError {
             envelopeHint: "Run `peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground`."
         )
     }
+
+    static func nativeWindowBindingRequiresNamespace() -> Self {
+        Self(
+            errorDescription: "browser bind-window is not available to standalone CLI invocations.",
+            envelopeHint: "Use one process-local MCP or Agent browser session. Durable CLI binding requires an " +
+                "authenticated Bridge 1.38 browser namespace receipt."
+        )
+    }
 }
 
 @MainActor
@@ -39,7 +47,10 @@ InjectedRuntimeBackedCommand {
     var action = "status"
     var channel: String?
     var browserUrl: String?
-    var pageId: Int?
+    var pageId: String?
+    var pid: Int?
+    var windowId: Int?
+    var namespaceFile: String?
     var url: String?
     var navigationType: String?
     var uid: String?
@@ -98,15 +109,31 @@ InjectedRuntimeBackedCommand {
           peekaboo browser connect --channel stable --foreground
           peekaboo browser new-page --url https://example.com
           peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
+          peekaboo browser namespace-create --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
+          peekaboo browser list-pages --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
+          peekaboo browser bind-window --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock" \
+            --page-id bp1_0123456789abcdef0123456789abcdef --pid 123 --window-id 456
+          peekaboo browser namespace-close --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
 
         Browser actions reuse an existing exact connection by default and never auto-connect.
         Connecting or allowing any foreground browser effect requires explicit --foreground.
+        Durable namespace actions require an explicit owner-only receipt file and the same issuing Bridge 1.38 socket
+        on every invocation.
         """
     )
 
     mutating func setRuntimeOptions(_ options: CommandRuntimeOptions) {
         var options = options
-        options.requiresBrowserMCP = true
+        // A durable bind-window request is owned exclusively by the authenticated Bridge
+        // namespace adapter. It must never make the legacy browser service eligible.
+        let usesNamespace = self.usesBrowserCapabilityNamespace
+        options.requiresBrowserMCP = !usesNamespace
+        options.requiresBrowserCapabilityNamespace = usesNamespace
+        options.ignoresCaptureEnginePreference = usesNamespace
         self.runtimeOptions = options
     }
 
@@ -115,6 +142,10 @@ InjectedRuntimeBackedCommand {
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         do {
+            if self.usesBrowserCapabilityNamespace {
+                try await self.runBrowserCapabilityNamespaceAction()
+                return
+            }
             let arguments = try self.arguments()
             if Self.actionMayMutate(self.action) {
                 self.resolvedRuntime.beginInteractionMutation()
@@ -143,6 +174,11 @@ InjectedRuntimeBackedCommand {
         let normalized = rawAction
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "-", with: "_")
+        // Binding mutates only the Bridge-owned capability namespace, not the desktop.
+        if normalized == BrowserProcessLocalAction.bindWindow ||
+            BrowserCLINamespaceControlAction(rawValue: normalized) != nil {
+            return false
+        }
         guard let action = BrowserAction(rawValue: normalized) else { return false }
         switch action {
         case .status, .disconnect, .listPages, .waitFor, .snapshot, .console, .network, .screenshot:
@@ -158,15 +194,29 @@ InjectedRuntimeBackedCommand {
     }
 
     func validateBeforeRuntime() throws {
+        if self.usesBrowserCapabilityNamespace {
+            try self.validateBrowserCapabilityNamespaceActionBeforeRuntime()
+            return
+        }
         _ = try self.arguments()
     }
 
-    private func arguments() throws -> [String: Any] {
-        let normalizedAction = self.action
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "-", with: "_")
+    func arguments() throws -> [String: Any] {
+        let normalizedAction = self.normalizedAction
+        if normalizedAction == BrowserProcessLocalAction.bindWindow {
+            throw BrowserCommandInputError.nativeWindowBindingRequiresNamespace()
+        }
+        if BrowserCLINamespaceControlAction(rawValue: normalizedAction) != nil {
+            throw ValidationError("Browser namespace lifecycle actions require the Bridge namespace adapter")
+        }
         guard BrowserAction(rawValue: normalizedAction) != nil else {
             throw ValidationError("Unsupported browser action '\(self.action)'")
+        }
+        if self.namespaceFile != nil, normalizedAction == BrowserAction.call.rawValue {
+            throw ValidationError("--namespace-file does not support the raw browser call action")
+        }
+        if self.pid != nil || self.windowId != nil {
+            throw ValidationError("--pid and --window-id are supported only by browser bind-window")
         }
         if let channel, BrowserMCPChannel(rawValue: channel) == nil {
             let choices = BrowserMCPChannel.allCases.map(\.rawValue).joined(separator: "|")
@@ -181,9 +231,10 @@ InjectedRuntimeBackedCommand {
         var arguments: [String: Any] = ["action": normalizedAction]
         self.add(self.channel, as: "channel", to: &arguments)
         self.add(self.browserUrl, as: "browser_url", to: &arguments)
-        self.add(self.pageId, as: "page_id", to: &arguments)
+        try self.addPageID(to: &arguments)
         self.add(self.url, as: "url", to: &arguments)
         self.add(self.navigationType, as: "navigation_type", to: &arguments)
+        try self.validateNamespaceElementReferences()
         self.add(self.uid, as: "uid", to: &arguments)
         self.add(self.toUid, as: "to_uid", to: &arguments)
         self.add(self.text, as: "text", to: &arguments)
@@ -242,6 +293,37 @@ InjectedRuntimeBackedCommand {
         return arguments
     }
 
+    private func addPageID(to arguments: inout [String: Any]) throws {
+        guard let pageId = self.pageId else { return }
+        if self.namespaceFile != nil {
+            guard Self.isOpaqueBrowserPageReference(pageId) else {
+                throw BrowserCLINamespaceCommandError.invalidPageReference
+            }
+            self.add(pageId, as: "page_id", to: &arguments)
+            return
+        }
+        guard let legacyPageID = Int(pageId) else {
+            throw ValidationError("--page-id must be an integer for browser action '\(self.action)'")
+        }
+        self.add(legacyPageID, as: "page_id", to: &arguments)
+    }
+
+    private func validateNamespaceElementReferences() throws {
+        guard self.namespaceFile != nil else { return }
+        if let uid = self.uid, !Self.isOpaqueBrowserElementReference(uid) {
+            throw ValidationError("--uid must be an opaque be1 capability from this browser namespace")
+        }
+        if let toUid = self.toUid, !Self.isOpaqueBrowserElementReference(toUid) {
+            throw ValidationError("--to-uid must be an opaque be1 capability from this browser namespace")
+        }
+    }
+
+    var normalizedAction: String {
+        self.action
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "_")
+    }
+
     private func add(_ value: String?, as key: String, to arguments: inout [String: Any]) {
         guard let value, !value.isEmpty else { return }
         arguments[key] = value
@@ -280,7 +362,18 @@ extension BrowserCommand: CommanderSignatureProviding {
                     help: "Exact loopback DevTools HTTP endpoint for connect",
                     long: "browser-url"
                 ),
-                .commandOption("pageId", help: "Chrome DevTools page ID", long: "page-id"),
+                .commandOption(
+                    "pageId",
+                    help: "Page ID; bind-window requires an opaque bp1 capability",
+                    long: "page-id"
+                ),
+                .commandOption("pid", help: "Exact Chrome PID for bind-window", long: "pid"),
+                .commandOption("windowId", help: "Exact WindowServer ID for bind-window", long: "window-id"),
+                .commandOption(
+                    "namespaceFile",
+                    help: "Absolute owner-only Bridge browser namespace receipt file (mode 0600)",
+                    long: "namespace-file"
+                ),
                 .commandOption("url", help: "URL for navigate/new-page", long: "url"),
                 .commandOption(
                     "navigationType",
@@ -371,7 +464,10 @@ extension BrowserCommand: CommanderBindableCommand {
         self.action = values.positionalValue(at: 0) ?? "status"
         self.channel = values.singleOption("channel")
         self.browserUrl = values.singleOption("browserUrl")
-        self.pageId = try values.decodeOption("pageId", as: Int.self)
+        self.pageId = values.singleOption("pageId")
+        self.pid = try values.decodeOption("pid", as: Int.self)
+        self.windowId = try values.decodeOption("windowId", as: Int.self)
+        self.namespaceFile = values.singleOption("namespaceFile")
         self.url = values.singleOption("url")
         self.navigationType = values.singleOption("navigationType")
         self.uid = values.singleOption("uid")

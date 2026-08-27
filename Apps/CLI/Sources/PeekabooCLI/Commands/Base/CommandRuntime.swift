@@ -48,6 +48,9 @@ struct CommandRuntimeOptions {
     var requiredElementActionOperations: Set<PeekabooBridgeOperation> = []
     var requiresInspectAccessibilityTree = false
     var requiresBrowserMCP = false
+    /// Protocol 1.38 durable browser capability namespaces require a negotiated remote Bridge owner.
+    /// They must never fall back to the caller-local or legacy raw browser provider.
+    var requiresBrowserCapabilityNamespace = false
     var requiresApplicationLaunchOptions = false
     var requiresSafeBackgroundApplicationLaunchNoOp = false
     var requiresNewApplicationInstanceLaunch = false

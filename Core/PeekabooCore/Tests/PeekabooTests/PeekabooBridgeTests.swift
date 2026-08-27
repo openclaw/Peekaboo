@@ -2026,6 +2026,18 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserCompletedCallCount: Int?
     var browserDispatchedCallCount: Int?
     var preservesBrowserReceiptChannel = false
+    var browserNamespacePrepareCount = 0
+    var browserNamespacePrepareError: (any Error)?
+    var browserNamespaceOpenedIDs: Set<UUID> = []
+    var browserNamespaceExecutedIDs: [UUID] = []
+    var browserNamespaceClosedIDs: [UUID] = []
+    var browserNamespaceCloseAllCount = 0
+    var browserNamespaceCloseAllHandler: (@MainActor @Sendable () async -> Void)?
+    var browserNamespaceOpenError: (any Error)?
+    var browserNamespaceOpenHandler: (@MainActor @Sendable () async -> Void)?
+    var browserNamespaceRuntimeAccepting = false
+    var browserNamespaceOutcome: DesktopActionOutcome?
+    var browserNamespaceTargetIdentity: DesktopTargetIdentity?
     private let ownedDesktopOperationLanes: Set<PeekabooBridgeOperation>
     var browserResponseContent: [PeekabooBridgeJSONValue] = [
         .object([

@@ -112,6 +112,10 @@ public final class PeekabooServices {
     /// Browser MCP client for Chrome DevTools automation
     public let browser: any BrowserMCPClientProviding
 
+    /// Listener-generation owner of caller-scoped Bridge 1.38 browser children.
+    /// Bridge start prepares it after listener authentication exists; stop detaches it before draining.
+    var browserCapabilityNamespaceRuntime: BrowserMCPScopedNamespaceRuntime?
+
     /// Operations whose concrete native service owns the desktop lane at its dispatch leaf.
     private let nativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation>
 

@@ -697,33 +697,22 @@ struct BrowserToolTests {
     }
 
     @Test
-    func `Audited browser routing contract partitions pinned tool catalog`() {
-        #expect(BrowserMCPPageRoutingContract.dependencyVersion == "1.6.0")
-        #expect(BrowserMCPPageRoutingContract.pageScopedToolNames.count == 32)
-        #expect(BrowserMCPPageRoutingContract.explicitPageTargetToolNames.count == 3)
-        #expect(BrowserMCPPageRoutingContract.globalToolNames.count == 16)
-        #expect(BrowserMCPPageRoutingContract.blockedSelectedPageToolNames == ["trigger_extension_action"])
-        #expect(BrowserMCPPageRoutingContract.allToolNames.count == 52)
-        #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
-            with: BrowserMCPPageRoutingContract.globalToolNames))
-        #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
-            with: BrowserMCPPageRoutingContract.blockedSelectedPageToolNames))
-        #expect(BrowserMCPPageRoutingContract.globalToolNames.isDisjoint(
-            with: BrowserMCPPageRoutingContract.blockedSelectedPageToolNames))
-        #expect(BrowserMCPPageRoutingContract.routing(for: "trigger_extension_action") == .blockedSelectedPage)
-        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 27)
-        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.count == 23)
-        #expect(BrowserMCPPageRoutingContract.argumentDependentToolNames == [
-            "performance_start_trace",
-            "select_page",
-        ])
-        #expect(BrowserMCPPageRoutingContract.allSemanticToolNames == BrowserMCPPageRoutingContract.allToolNames)
-        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.isDisjoint(
-            with: BrowserMCPPageRoutingContract.mutatingToolNames))
-        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.isDisjoint(
-            with: BrowserMCPPageRoutingContract.argumentDependentToolNames))
-        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.isDisjoint(
-            with: BrowserMCPPageRoutingContract.argumentDependentToolNames))
+    func `Browser raw call cannot expose private tab target identity`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: true,
+            toolCount: 31,
+            detectedBrowsers: []))
+        let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "call",
+            "mcp_tool": "get_tab_id",
+            "page_id": 12,
+        ]))
+
+        #expect(response.isError == true)
+        #expect(Self.text(from: response).contains("Unsupported raw Chrome DevTools MCP tool"))
+        #expect(client.executedTools.isEmpty)
     }
 
     @Test

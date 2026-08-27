@@ -5,6 +5,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let statelessClickVariants: Bool
     let exactWindowHeldPointerLifecycle: Bool
     let nativeBrowserConnectionBinding: Bool
+    let browserCapabilityNamespaces: Bool
+    let nativeBrowserWindowBinding: Bool
     let producerBoundSnapshotReferences: Bool
     let targetedClickAccessibilityValueDelivery: Bool
     let requestPinnedExactWindowScrollReceipt: Bool
@@ -17,6 +19,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         statelessClickVariants: true,
         exactWindowHeldPointerLifecycle: true,
         nativeBrowserConnectionBinding: true,
+        browserCapabilityNamespaces: true,
+        nativeBrowserWindowBinding: true,
         producerBoundSnapshotReferences: true,
         targetedClickAccessibilityValueDelivery: true,
         requestPinnedExactWindowScrollReceipt: true,
@@ -29,6 +33,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         statelessClickVariants: Bool,
         exactWindowHeldPointerLifecycle: Bool,
         nativeBrowserConnectionBinding: Bool = false,
+        browserCapabilityNamespaces: Bool = false,
+        nativeBrowserWindowBinding: Bool = false,
         producerBoundSnapshotReferences: Bool = false,
         targetedClickAccessibilityValueDelivery: Bool = false,
         requestPinnedExactWindowScrollReceipt: Bool = false,
@@ -40,6 +46,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.statelessClickVariants = statelessClickVariants
         self.exactWindowHeldPointerLifecycle = exactWindowHeldPointerLifecycle
         self.nativeBrowserConnectionBinding = nativeBrowserConnectionBinding
+        self.browserCapabilityNamespaces = browserCapabilityNamespaces
+        self.nativeBrowserWindowBinding = nativeBrowserWindowBinding
         self.producerBoundSnapshotReferences = producerBoundSnapshotReferences
         self.targetedClickAccessibilityValueDelivery = targetedClickAccessibilityValueDelivery
         self.requestPinnedExactWindowScrollReceipt = requestPinnedExactWindowScrollReceipt

@@ -355,6 +355,9 @@ public struct AgentSystemPrompt {
         - Start each Chrome flow with `list_pages` or `new_page`, retain its opaque page reference, and include it as
           `page_id` in every later page-scoped browser action. Use element references only from that page's newest
           snapshot. Never copy page or element references across Agent sessions.
+        - When browser page work must stay inside one exact native Chrome window, call `bind_window` with that opaque
+          page reference plus the exact Chrome PID and WindowServer window ID. Rebind after any refusal; never retry a
+          bound mutation through an unbound page or a raw provider ID.
         - Foreground-capable sessions may use `bring_to_front: true` or `background: false` only when the task
           explicitly requires foreground Chrome; background-only sessions must never emit either form.
         - If `browser` fails or is unavailable, fall back to native Peekaboo screen/AX tools.

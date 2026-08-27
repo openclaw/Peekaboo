@@ -50,6 +50,21 @@ extension PeekabooBridgeServer {
                 return try await .init(response: self.handleBrowserRequest(request))
             }
             return try await self.handleBrowserExecute(payload)
+        case .browserCreateCapabilityNamespace:
+            guard case let .browserCreateCapabilityNamespace(payload) = request else {
+                throw Self.invalidRequest(for: request)
+            }
+            return try await self.handleBrowserCapabilityNamespaceCreate(payload, peer: peer)
+        case .browserCapabilityNamespace:
+            guard case let .browserCapabilityNamespace(payload) = request else {
+                throw Self.invalidRequest(for: request)
+            }
+            return try await self.handleBrowserCapabilityNamespaceAction(payload, peer: peer)
+        case .browserCloseCapabilityNamespace:
+            guard case let .browserCloseCapabilityNamespace(payload) = request else {
+                throw Self.invalidRequest(for: request)
+            }
+            return try await self.handleBrowserCapabilityNamespaceClose(payload, peer: peer)
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
             return try await .init(response: self.handleCaptureRequest(request))
         case .desktopObservation:

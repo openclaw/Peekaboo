@@ -100,7 +100,6 @@ enum BrowserMCPPageRoutingContract {
         "fill_form",
         "get_console_message",
         "get_network_request",
-        "get_tab_id",
         "handle_dialog",
         "hover",
         "lighthouse_audit",
@@ -124,6 +123,14 @@ enum BrowserMCPPageRoutingContract {
         "wait_for",
     ]
     // chrome-devtools-mcp-contract:page-scoped-end
+
+    // Provider tools used only by Peekaboo's host-owned binding implementation. They are deliberately absent from
+    // raw public routing because their responses contain private CDP authority.
+    // chrome-devtools-mcp-contract:internal-only-begin
+    static let internalOnlyToolNames: Set<String> = [
+        "get_tab_id",
+    ]
+    // chrome-devtools-mcp-contract:internal-only-end
 
     // These upstream tools are not marked `pageScoped`, but their v1.6.0 schemas still require `pageId`.
     // chrome-devtools-mcp-contract:explicit-page-target-begin
@@ -166,6 +173,7 @@ enum BrowserMCPPageRoutingContract {
     static let allToolNames = pageTargetedToolNames
         .union(globalToolNames)
         .union(blockedSelectedPageToolNames)
+        .union(internalOnlyToolNames)
     static let readOnlyToolNames = BrowserToolActionSemantics.readOnlyToolNames
     static let mutatingToolNames = BrowserToolActionSemantics.mutatingToolNames
     static let argumentDependentToolNames = BrowserToolActionSemantics.argumentDependentToolNames
@@ -191,6 +199,19 @@ enum BrowserMCPPageRoutingContract {
         BrowserToolActionSemantics.classify(toolName: toolName) { name in
             arguments[name] as? Bool
         }
+    }
+
+    static func executionDelivery(
+        for calls: some Collection<BrowserMCPMappedCall>) -> DesktopActionOutcome.Delivery
+    {
+        let foreground = calls.contains { call in
+            BrowserToolActionSemantics.requestsForegroundDelivery(toolName: call.toolName) { name in
+                call.arguments[name] as? Bool
+            }
+        }
+        return .init(
+            mechanism: .browserProtocol,
+            mode: foreground ? .foreground : .background)
     }
 
     static func capabilityContract(

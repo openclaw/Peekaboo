@@ -62,6 +62,9 @@ enum PeekabooBridgeOperationResultSemantics {
         case bool
         case browserStatus
         case browserToolResponse
+        case browserCapabilityNamespaceReceipt
+        case browserCapabilityNamespaceAction
+        case browserCapabilityNamespaceClose
         case capture
         case clickResult
         case daemonStatus
@@ -841,9 +844,8 @@ extension PeekabooBridgeOperationResultSemantics {
             // Only invalid carriage remains wrapped after canonical unwrapping. It must not be
             // granted the inner operation's mutation semantics.
             return .init(completion: .readOnly, targetPolicy: .notApplicable)
-        case let .browserExecute(payload):
-            guard payload.isReadOnly else { return self.contract(for: request.operation) }
-            return .init(completion: .readOnly, targetPolicy: .notApplicable)
+        case .browserExecute, .browserCapabilityNamespace:
+            return self.browserContract(for: request)
         case let .click(payload):
             let delivery: DesktopActionOutcome.Delivery
             let targetPolicy: TargetPolicy
@@ -973,6 +975,25 @@ extension PeekabooBridgeOperationResultSemantics {
                 targetPolicy: payload.windowContext == nil ? .global : .responseResolved)
         default:
             return self.contract(for: request.operation)
+        }
+    }
+
+    private static func browserContract(for request: PeekabooBridgeRequest) -> Contract {
+        switch request {
+        case let .browserExecute(payload):
+            guard payload.isReadOnly else { return self.contract(for: request.operation) }
+            return .init(completion: .readOnly, targetPolicy: .notApplicable)
+        case let .browserCapabilityNamespace(payload):
+            guard !payload.isReadOnly else {
+                return .init(completion: .readOnly, targetPolicy: .notApplicable)
+            }
+            let mode: DesktopActionOutcome.Delivery.Mode =
+                payload.requestsForegroundDelivery ? .foreground : .background
+            return .init(
+                completion: .dispatchedUnverified(.init(mechanism: .browserProtocol, mode: mode)),
+                targetPolicy: .external)
+        default:
+            preconditionFailure("Browser contract requested for non-browser operation")
         }
     }
 
@@ -1286,6 +1307,9 @@ extension PeekabooBridgeOperationResultSemantics {
              .browserConnect,
              .browserDisconnect,
              .browserExecute,
+             .browserCreateCapabilityNamespace,
+             .browserCapabilityNamespace,
+             .browserCloseCapabilityNamespace,
              .captureScreen,
              .captureWindow,
              .captureFrontmost,
@@ -1417,9 +1441,10 @@ extension PeekabooBridgeOperationResultSemantics {
             .suspectedNoop,
         ]
         switch request.operation {
-        case .agentExecutionTrace:
-            return [.dispatchedUnverified]
-        case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse,
+        case .agentExecutionTrace, .browserCapabilityNamespace:
+            return self.closedProtocolAllowedSuccessStates(for: request)
+        case .requestPostEventPermission, .browserExecute,
+             .swipe, .drag, .moveMouse,
              .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
              .launchDockItem, .rightClickDockItem,
@@ -1473,6 +1498,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .createExactWindowHeldPointerOwner,
              .daemonStatus, .daemonStop, .browserStatus,
              .browserDisconnect,
+             .browserCreateCapabilityNamespace, .browserCloseCapabilityNamespace,
              .getFocusedElement, .waitForElement, .listWindows, .getFocusedWindow,
              .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
              .listMenus, .listFrontmostMenus, .listMenuExtras, .menuExtraOpenMenuFrame,
@@ -1485,6 +1511,19 @@ extension PeekabooBridgeOperationResultSemantics {
              .cleanSnapshot, .cleanSnapshotsOlderThan, .cleanAllSnapshots, ._appleScriptProbe:
             return []
         }
+    }
+
+    private static func closedProtocolAllowedSuccessStates(
+        for request: PeekabooBridgeRequest) -> [DesktopActionOutcome.State]
+    {
+        guard request.operation == .browserCapabilityNamespace else {
+            return [.dispatchedUnverified]
+        }
+        guard case let .browserCapabilityNamespace(namespace) = request.unwrappedOperationRequest,
+              case let .executeAction(action) = namespace.action,
+              action.action == .connect
+        else { return [.dispatchedUnverified] }
+        return [.confirmedNoChange, .dispatchedUnverified]
     }
 
     private static func successResponsePolicy(for request: PeekabooBridgeRequest) -> SuccessResponsePolicy {
@@ -1802,6 +1841,10 @@ extension PeekabooBridgeOperationResultSemantics {
             return [rule(browserForeground, .exact(1))]
         case .browserExecute:
             return [rule(browserBackground, .variable)]
+        case .browserCapabilityNamespace:
+            guard case .dispatchedUnverified = contract.completion else { return [] }
+            let delivery = contract.completion.fixedDelivery ?? browserBackground
+            return [rule(delivery, .variable)]
         default:
             guard let delivery = contract.completion.fixedDelivery else { return [] }
             return [rule(delivery, .exact(1))]
@@ -2284,12 +2327,13 @@ extension PeekabooBridgeOperationResultSemantics {
             mutation.outcome.state == .confirmedNoChange &&
                 mutation.outcome.dispatchState == .none &&
                 mutation.outcome.delivery == nil
-        case (.external, .handlerResolved), (.external, .responseResolved), (.external, .externalBrowser):
+        case (.external, .handlerResolved), (.external, .responseResolved), (.external, .externalBrowser),
+             (.external, .browserCapabilityNamespace):
             // A process/window identity is an accepted conservative target for an external
             // object. Bare `.external` only names the need and is not itself target evidence.
             true
         case (.notApplicable, _), (.requestDependent, _), (.handlerResolvedOrGlobal, _),
-             (_, .external), (_, .externalBrowser),
+             (_, .external), (_, .externalBrowser), (_, .browserCapabilityNamespace),
              (_, .global), (_, .requestPinned), (_, .responseResolved),
              (_, .handlerResolved):
             false

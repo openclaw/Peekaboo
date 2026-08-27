@@ -74,6 +74,22 @@ extension PeekabooBridgeServer {
         var advertisedOps = compatibleOperations.advertised.sorted { $0.rawValue < $1.rawValue }
         var enabledOps = compatibleOperations.enabled
         let clientCapabilities = Set(payload.clientCapabilities ?? [])
+        let browserNamespaceOperations = PeekabooBridgeOperation.browserCapabilityNamespaceOperations
+        let supportsBrowserCapabilityNamespaces =
+            PeekabooBridgeBrowserCapabilityNamespaceNegotiation.sessionCanNegotiateCapabilities(.init(
+                host: .init(
+                    hostKind: self.hostKind,
+                    maximumProtocolVersion: negotiated,
+                    allowedOperations: Set(advertisedOps).intersection(enabledOps),
+                    supportsBrowserCapabilityNamespaces: self.browserCapabilityNamespacesAvailable,
+                    supportsNativeBrowserWindowBinding: self.hostCapabilities.contains(
+                        PeekabooBridgeHostCapability.nativeBrowserWindowBinding)),
+                usesAttestedOperationReceipts: supportsAttestedOperationReceipts,
+                clientCapabilities: clientCapabilities))
+        if !supportsBrowserCapabilityNamespaces {
+            advertisedOps.removeAll { browserNamespaceOperations.contains($0) }
+            enabledOps.subtract(browserNamespaceOperations)
+        }
         if !clientCapabilities.contains(PeekabooBridgeClientCapability.producerBoundSnapshotReferences) {
             advertisedOps.removeAll { $0 == .ownsSnapshot }
             enabledOps.remove(.ownsSnapshot)
@@ -145,6 +161,10 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
+        if !supportsBrowserCapabilityNamespaces {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.browserCapabilityNamespaces)
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.nativeBrowserWindowBinding)
+        }
         let browserOperations: Set<PeekabooBridgeOperation> = [
             .browserStatus,
             .browserConnect,
@@ -293,6 +313,10 @@ extension PeekabooBridgeServer {
                             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle),
                         nativeBrowserConnectionBinding: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.nativeBrowserConnectionBinding),
+                        browserCapabilityNamespaces: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.browserCapabilityNamespaces),
+                        nativeBrowserWindowBinding: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.nativeBrowserWindowBinding),
                         producerBoundSnapshotReferences: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.producerBoundSnapshotReferences),
                         targetedClickAccessibilityValueDelivery: advertisedCapabilities.contains(
@@ -433,6 +457,9 @@ extension PeekabooBridgeServer {
         var operations = self.allowedOperations
         // Retain the wire enum for old-client decoding, but current hosts never advertise or execute the probe.
         operations.remove(._appleScriptProbe)
+        if !self.browserCapabilityNamespacesAvailable {
+            operations.subtract(PeekabooBridgeOperation.browserCapabilityNamespaceOperations)
+        }
         if self.daemonControl == nil {
             operations.remove(.daemonStatus)
             operations.remove(.daemonStop)

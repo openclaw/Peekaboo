@@ -113,6 +113,7 @@ public final class PeekabooBridgeServer {
     let allowedOperations: Set<PeekabooBridgeOperation>
     let hostIdentity: PeekabooBridgeHostIdentity?
     private(set) var hostCapabilities: Set<String>
+    nonisolated let browserCapabilityNamespacesAvailable: Bool
     let servingSocketPath: String?
     var agentExecutionRunner: (any PeekabooBridgeAgentExecutionRunning)?
     let daemonControl: (any PeekabooDaemonControlProviding)?
@@ -219,6 +220,20 @@ public final class PeekabooBridgeServer {
         {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
         }
+        let browserNamespaceService = services as? any PeekabooBridgeBrowserCapabilityNamespaceProviding
+        let browserNamespaceRuntimePrepared = Self.prepareBrowserCapabilityNamespaceRuntime(
+            browserNamespaceService,
+            hostKind: hostKind)
+        resolvedHostCapabilities = protocolBrowserNamespaceCapabilities(
+            resolvedHostCapabilities,
+            support: .init(
+                hostKind: hostKind,
+                maximumProtocolVersion: supportedVersions.upperBound,
+                allowedOperations: self.allowedOperations,
+                supportsBrowserCapabilityNamespaces:
+                browserNamespaceRuntimePrepared,
+                supportsNativeBrowserWindowBinding:
+                browserNamespaceRuntimePrepared))
         if supportedVersions.upperBound >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion,
            services.snapshots.supportsProducerBoundSnapshotReferences,
            self.allowedOperations.contains(.ownsSnapshot)
@@ -347,6 +362,8 @@ public final class PeekabooBridgeServer {
             resolvedHostCapabilities.insert(
                 PeekabooBridgeHostCapability.processGenerationPinnedApplicationHide)
         }
+        self.browserCapabilityNamespacesAvailable = resolvedHostCapabilities.contains(
+            PeekabooBridgeHostCapability.browserCapabilityNamespaces)
         self.hostCapabilities = resolvedHostCapabilities
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
@@ -459,6 +476,23 @@ public final class PeekabooBridgeServer {
         }
     }
 
+    private static func prepareBrowserCapabilityNamespaceRuntime(
+        _ service: (any PeekabooBridgeBrowserCapabilityNamespaceProviding)?,
+        hostKind: PeekabooBridgeHostKind) -> Bool
+    {
+        guard hostKind == .onDemand,
+              let service,
+              service.supportsBrowserCapabilityNamespaces,
+              service.supportsNativeBrowserWindowBinding
+        else { return false }
+        do {
+            try service.prepareBrowserCapabilityNamespaceRuntime()
+            return true
+        } catch {
+            return false
+        }
+    }
+
     #if DEBUG
     func setAgentExecutionRunnerForTesting(_ runner: (any PeekabooBridgeAgentExecutionRunning)?) {
         self.agentExecutionRunner = runner
@@ -476,6 +510,16 @@ public final class PeekabooBridgeServer {
         self.admissionRefusalObserverForTesting = observer
     }
     #endif
+
+    func closeAllBrowserCapabilityNamespaces() async {
+        await (self.services as? any PeekabooBridgeBrowserCapabilityNamespaceProviding)?
+            .closeAllBrowserCapabilityNamespaces()
+    }
+
+    func beginNextBrowserCapabilityNamespaceGeneration() {
+        (self.services as? any PeekabooBridgeBrowserCapabilityNamespaceProviding)?
+            .beginNextBrowserCapabilityNamespaceGeneration()
+    }
 
     func handleProjectedAction(
         _ payload: PeekabooBridgeProjectedActionRequest,
@@ -1092,6 +1136,7 @@ public final class PeekabooBridgeServer {
                     message: "Certification operations require a signed Bridge operation receipt")
             }
         }
+        try request.validateBrowserCapabilityExecutionMode()
         if request.requiresRequestPinnedExactWindowScrollReceipt {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
             let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
@@ -1117,6 +1162,11 @@ public final class PeekabooBridgeServer {
             guard (negotiatedVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
                   !request.requiresNativeBrowserConnectionBinding ||
                   session?.nativeBrowserConnectionBinding == true,
+                  !request.requiresBrowserCapabilityNamespaces ||
+                  (PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics &&
+                      session?.browserCapabilityNamespaces == true),
+                  !request.requiresNativeBrowserWindowBinding ||
+                  session?.nativeBrowserWindowBinding == true,
                   !request.requiresProducerBoundSnapshotReferences ||
                   session?.producerBoundSnapshotReferences == true,
                   !request.requiresTargetedClickAccessibilityValueDelivery ||
@@ -1321,6 +1371,21 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion {
         capabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
+    }
+    return capabilities
+}
+
+private func protocolBrowserNamespaceCapabilities(
+    _ declaredCapabilities: Set<String>,
+    support: PeekabooBridgeBrowserCapabilityNamespaceNegotiation.HostSupport) -> Set<String>
+{
+    var capabilities = declaredCapabilities
+    if PeekabooBridgeBrowserCapabilityNamespaceNegotiation.hostCanDeclareCapabilities(support) {
+        capabilities.insert(PeekabooBridgeHostCapability.browserCapabilityNamespaces)
+        capabilities.insert(PeekabooBridgeHostCapability.nativeBrowserWindowBinding)
+    } else {
+        capabilities.remove(PeekabooBridgeHostCapability.browserCapabilityNamespaces)
+        capabilities.remove(PeekabooBridgeHostCapability.nativeBrowserWindowBinding)
     }
     return capabilities
 }

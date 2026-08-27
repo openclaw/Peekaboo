@@ -122,6 +122,12 @@ struct InvalidInputOrderingCLITests {
             hint: nil
         ),
         JSONCase(
+            arguments: ["browser", "bind-window", "--json"],
+            code: "VALIDATION_ERROR",
+            message: "Browser namespace actions require an explicit --namespace-file.",
+            hint: "Pass the exact owner-private receipt file created for this authenticated Bridge namespace."
+        ),
+        JSONCase(
             arguments: [
                 "browser", "connect", "--browser-url", "ftp://127.0.0.1:1", "--json",
             ],

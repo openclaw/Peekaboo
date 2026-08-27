@@ -40,6 +40,21 @@ public enum BrowserMCPExecutionEvidence {
             structuredContent: response.structuredContent)
     }
 
+    static func attachingNativeWindowReceipt(
+        to response: ToolResponse,
+        receipt: BrowserNativeWindowReceipt) -> ToolResponse
+    {
+        var fields = response.meta?.objectValue ?? [:]
+        var evidenceFields = fields[self.metadataKey]?.objectValue ?? [:]
+        evidenceFields["native_window_receipt"] = .object(self.nativeWindowReceiptFields(receipt))
+        fields[self.metadataKey] = .object(evidenceFields)
+        return ToolResponse(
+            content: response.content,
+            isError: response.isError,
+            meta: .object(fields),
+            structuredContent: response.structuredContent)
+    }
+
     static func split(
         _ meta: Value?) -> (evidence: Value?, providerMeta: Value?)
     {
@@ -85,5 +100,22 @@ public enum BrowserMCPExecutionEvidence {
             fields["protocol_version"] = .string(protocolVersion)
         }
         return fields
+    }
+
+    static func nativeWindowReceiptFields(
+        _ receipt: BrowserNativeWindowReceipt) -> [String: Value]
+    {
+        [
+            "pid": .int(Int(receipt.target.processIdentifier)),
+            "process_start_identity_decimal": .string(String(receipt.target.processStartIdentity)),
+            "window_id": .int(Int(receipt.target.windowID)),
+            "bounds": .object([
+                "x": .double(Double(receipt.bounds.origin.x)),
+                "y": .double(Double(receipt.bounds.origin.y)),
+                "width": .double(Double(receipt.bounds.width)),
+                "height": .double(Double(receipt.bounds.height)),
+            ]),
+            "quality": .string(BrowserNativeWindowBindingProof.Quality.exact.rawValue),
+        ]
     }
 }

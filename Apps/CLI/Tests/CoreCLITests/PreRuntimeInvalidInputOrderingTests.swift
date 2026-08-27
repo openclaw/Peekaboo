@@ -16,6 +16,10 @@ struct PreRuntimeInvalidInputOrderingTests {
             "Unsupported browser action 'frobnicate'"
         ),
         (
+            ["peekaboo", "browser", "bind-window", "--json"],
+            "Browser namespace actions require an explicit --namespace-file."
+        ),
+        (
             [
                 "peekaboo", "browser", "connect", "--browser-url", "ftp://127.0.0.1:1", "--json",
             ],

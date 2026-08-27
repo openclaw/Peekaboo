@@ -1,3 +1,4 @@
+import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
 
@@ -43,6 +44,83 @@ public protocol PeekabooBridgeBrowserConnectionResultProviding: PeekabooBridgeSe
     func browserConnectResult(
         channel: String?,
         browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
+}
+
+/// Capability declaration for the protocol-1.38 caller-owned browser namespace runtime.
+///
+/// Conformance alone grants nothing: current hosts must explicitly override both defaults before the on-demand
+/// handshake can advertise the closed namespace operations.
+@MainActor
+public protocol PeekabooBridgeBrowserCapabilityNamespaceProviding: PeekabooBridgeServiceProviding {
+    var supportsBrowserCapabilityNamespaces: Bool { get }
+    var supportsNativeBrowserWindowBinding: Bool { get }
+
+    func prepareBrowserCapabilityNamespaceRuntime() throws
+    func openBrowserCapabilityNamespace(namespaceID: UUID) async throws
+    func executeBrowserCapabilityNamespace(
+        namespaceID: UUID,
+        request: PeekabooBridgeBrowserCapabilityNamespaceRequest) async throws
+        -> PeekabooBridgeBrowserCapabilityNamespaceServiceResult
+    func closeBrowserCapabilityNamespace(namespaceID: UUID) async throws
+    func closeAllBrowserCapabilityNamespaces() async
+    func beginNextBrowserCapabilityNamespaceGeneration()
+}
+
+public struct PeekabooBridgeBrowserCapabilityNamespaceServiceResult: Sendable {
+    public let response: PeekabooBridgeBrowserCapabilityNamespaceActionResponse
+    public let targetIdentity: DesktopTargetIdentity?
+    public let browserTargetReceipt: PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt?
+    public let outcome: DesktopActionOutcome?
+
+    public init(
+        response: PeekabooBridgeBrowserCapabilityNamespaceActionResponse,
+        targetIdentity: DesktopTargetIdentity? = nil,
+        browserTargetReceipt: PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt? = nil,
+        outcome: DesktopActionOutcome? = nil)
+    {
+        self.response = response
+        self.targetIdentity = targetIdentity
+        self.browserTargetReceipt = browserTargetReceipt
+        self.outcome = outcome
+    }
+}
+
+extension PeekabooBridgeBrowserCapabilityNamespaceProviding {
+    public var supportsBrowserCapabilityNamespaces: Bool {
+        false
+    }
+
+    public var supportsNativeBrowserWindowBinding: Bool {
+        false
+    }
+
+    public func prepareBrowserCapabilityNamespaceRuntime() throws {
+        throw PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: "Browser capability namespaces are unavailable on this host")
+    }
+
+    public func openBrowserCapabilityNamespace(namespaceID _: UUID) async throws {
+        throw PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: "Browser capability namespaces are unavailable on this host")
+    }
+
+    public func executeBrowserCapabilityNamespace(
+        namespaceID _: UUID,
+        request _: PeekabooBridgeBrowserCapabilityNamespaceRequest) async throws
+        -> PeekabooBridgeBrowserCapabilityNamespaceServiceResult
+    {
+        throw PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: "Browser capability namespaces are unavailable on this host")
+    }
+
+    public func closeBrowserCapabilityNamespace(namespaceID _: UUID) async throws {}
+
+    public func closeAllBrowserCapabilityNamespaces() async {}
+
+    public func beginNextBrowserCapabilityNamespaceGeneration() {}
 }
 
 extension PeekabooBridgeBrowserConnectionResultProviding {

@@ -56,7 +56,7 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresBrowserMCP, !self.supportsBrowserMCP(for: handshake) {
+        if !self.supportsBrowserRequirements(for: handshake, options: options) {
             return false
         }
 
@@ -126,6 +126,20 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        return true
+    }
+
+    private static func supportsBrowserRequirements(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        if options.requiresBrowserMCP, !self.supportsBrowserMCP(for: handshake) {
+            return false
+        }
+        if options.requiresBrowserCapabilityNamespace,
+           !PeekabooBridgeClient.supportsBrowserCapabilityNamespaces(handshake) {
+            return false
+        }
         return true
     }
 

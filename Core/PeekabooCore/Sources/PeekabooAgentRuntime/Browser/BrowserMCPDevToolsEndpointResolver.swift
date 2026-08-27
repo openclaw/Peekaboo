@@ -9,6 +9,7 @@ struct BrowserMCPDevToolsEndpoint: Sendable, Equatable {
     let browserVersion: String
     let protocolVersion: String
     let listenerIdentity: DarwinProcessLoopbackListenerIdentity?
+    let retainedControlSession: BrowserMCPDevToolsControlSession?
 
     init(
         browserURL: String,
@@ -16,7 +17,8 @@ struct BrowserMCPDevToolsEndpoint: Sendable, Equatable {
         browserID: String,
         browserVersion: String,
         protocolVersion: String,
-        listenerIdentity: DarwinProcessLoopbackListenerIdentity? = nil)
+        listenerIdentity: DarwinProcessLoopbackListenerIdentity? = nil,
+        retainedControlSession: BrowserMCPDevToolsControlSession? = nil)
     {
         self.browserURL = browserURL
         self.webSocketDebuggerURL = webSocketDebuggerURL
@@ -24,6 +26,16 @@ struct BrowserMCPDevToolsEndpoint: Sendable, Equatable {
         self.browserVersion = browserVersion
         self.protocolVersion = protocolVersion
         self.listenerIdentity = listenerIdentity
+        self.retainedControlSession = retainedControlSession
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.browserURL == rhs.browserURL &&
+            lhs.webSocketDebuggerURL == rhs.webSocketDebuggerURL &&
+            lhs.browserID == rhs.browserID &&
+            lhs.browserVersion == rhs.browserVersion &&
+            lhs.protocolVersion == rhs.protocolVersion &&
+            lhs.listenerIdentity == rhs.listenerIdentity
     }
 }
 

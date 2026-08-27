@@ -62,6 +62,8 @@ public actor PeekabooBridgeClient {
     var processGenerationBoundElementMutationsEnabled = false
     var foregroundModifierClickSnapshotLeaseEnabled = false
     var nativeBrowserConnectionBindingEnabled = false
+    var browserCapabilityNamespacesEnabled = false
+    var nativeBrowserWindowBindingEnabled = false
     var producerBoundSnapshotReferencesEnabled = false
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
@@ -465,6 +467,8 @@ public actor PeekabooBridgeClient {
         self.processGenerationBoundElementMutationsEnabled = false
         self.foregroundModifierClickSnapshotLeaseEnabled = false
         self.nativeBrowserConnectionBindingEnabled = false
+        self.browserCapabilityNamespacesEnabled = false
+        self.nativeBrowserWindowBindingEnabled = false
         self.producerBoundSnapshotReferencesEnabled = false
         self.targetedClickAccessibilityValueDeliveryEnabled = false
         self.requestPinnedExactWindowScrollReceiptEnabled = false
@@ -721,13 +725,7 @@ public actor PeekabooBridgeClient {
             requestedHostKind: inputs.requestedHost,
             operationClientInstanceID: self.operationClientInstanceID,
             replacingOperationSessionID: replacingOperationSessionID,
-            clientCapabilities: protocolVersion >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion
-                ? [
-                    PeekabooBridgeClientCapability.producerBoundSnapshotReferences,
-                    PeekabooBridgeClientCapability.targetedClickAccessibilityValueDelivery,
-                    PeekabooBridgeClientCapability.installedApplicationCatalog,
-                ]
-                : nil)
+            clientCapabilities: Self.handshakeClientCapabilities(protocolVersion: protocolVersion))
         let reply = try await self.sendCarryingActionOutcome(.handshake(payload), timeoutSec: timeoutSec)
         try self.validateTrustedConnectedHost(reply.connectedHost)
         let response = reply.response
@@ -923,6 +921,10 @@ public actor PeekabooBridgeClient {
             Self.supportsForegroundModifierClickSnapshotLease(handshake),
             nativeBrowserConnectionBindingEnabled:
             Self.supportsNativeBrowserConnectionBinding(handshake),
+            browserCapabilityNamespacesEnabled:
+            Self.supportsBrowserCapabilityNamespaces(handshake),
+            nativeBrowserWindowBindingEnabled:
+            Self.supportsNativeBrowserWindowBinding(handshake),
             producerBoundSnapshotReferencesEnabled:
             Self.supportsProducerBoundSnapshotReferences(handshake),
             targetedClickAccessibilityValueDeliveryEnabled:
@@ -1079,6 +1081,44 @@ public actor PeekabooBridgeClient {
             operations.isSubset(of: Set(handshake.supportedOperations))
     }
 
+    public static func supportsBrowserCapabilityNamespaces(
+        _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
+    {
+        let operations = PeekabooBridgeOperation.browserCapabilityNamespaceOperations
+        return handshake.negotiatedVersion >= PeekabooBridgeConstants.browserCapabilityNamespaceVersion &&
+            handshake.hostKind == .onDemand &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.browserCapabilityNamespaces) == true &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.nativeBrowserWindowBinding) == true &&
+            operations.isSubset(of: Set(handshake.supportedOperations)) &&
+            operations.isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations))
+    }
+
+    static func supportsNativeBrowserWindowBinding(
+        _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
+    {
+        self.supportsBrowserCapabilityNamespaces(handshake) &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.nativeBrowserWindowBinding) == true
+    }
+
+    private static func handshakeClientCapabilities(
+        protocolVersion: PeekabooBridgeProtocolVersion) -> [String]?
+    {
+        guard protocolVersion >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion else { return nil }
+        var capabilities = [
+            PeekabooBridgeClientCapability.producerBoundSnapshotReferences,
+            PeekabooBridgeClientCapability.targetedClickAccessibilityValueDelivery,
+        ]
+        if protocolVersion >= PeekabooBridgeConstants.installedApplicationCatalogVersion {
+            capabilities.append(PeekabooBridgeClientCapability.installedApplicationCatalog)
+        }
+        if protocolVersion >= PeekabooBridgeConstants.browserCapabilityNamespaceVersion {
+            capabilities.append(PeekabooBridgeClientCapability.browserCapabilityNamespaces)
+            capabilities.append(PeekabooBridgeClientCapability.nativeBrowserWindowBinding)
+        }
+        return capabilities
+    }
+
     private static func supportsRequestPinnedExactWindowScrollReceipt(
         _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
     {
@@ -1141,6 +1181,8 @@ public actor PeekabooBridgeClient {
         self.foregroundModifierClickSnapshotLeaseEnabled =
             candidate.foregroundModifierClickSnapshotLeaseEnabled
         self.nativeBrowserConnectionBindingEnabled = candidate.nativeBrowserConnectionBindingEnabled
+        self.browserCapabilityNamespacesEnabled = candidate.browserCapabilityNamespacesEnabled
+        self.nativeBrowserWindowBindingEnabled = candidate.nativeBrowserWindowBindingEnabled
         self.producerBoundSnapshotReferencesEnabled = candidate.producerBoundSnapshotReferencesEnabled
         self.targetedClickAccessibilityValueDeliveryEnabled =
             candidate.targetedClickAccessibilityValueDeliveryEnabled
@@ -1443,6 +1485,8 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let processGenerationBoundElementMutationsEnabled: Bool
     let foregroundModifierClickSnapshotLeaseEnabled: Bool
     let nativeBrowserConnectionBindingEnabled: Bool
+    let browserCapabilityNamespacesEnabled: Bool
+    let nativeBrowserWindowBindingEnabled: Bool
     let producerBoundSnapshotReferencesEnabled: Bool
     let targetedClickAccessibilityValueDeliveryEnabled: Bool
     let requestPinnedExactWindowScrollReceiptEnabled: Bool

@@ -102,4 +102,23 @@ public enum BrowserToolActionSemantics: Equatable, Sendable {
             return nil
         }
     }
+
+    /// Whether this mapped provider call is allowed to change the user's visible browser focus.
+    ///
+    /// This is derived from the provider-facing argument shape so result producers and transport
+    /// attestation describe the same leaf that was dispatched. An omitted `new_page` background
+    /// value stays conservative because the provider default may create a foreground page.
+    public static func requestsForegroundDelivery(
+        toolName: String,
+        booleanArgument: (String) -> Bool?) -> Bool
+    {
+        switch toolName {
+        case "select_page":
+            booleanArgument("bringToFront") == true
+        case "new_page":
+            booleanArgument("background") != true
+        default:
+            false
+        }
+    }
 }

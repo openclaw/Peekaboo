@@ -37,8 +37,9 @@ automatically. Once Chrome publishes
 exact loopback listener belongs to the detected Chrome PID and process generation, and opens the exact published
 WebSocket. That native connection remains
 pending while Chrome shows its approval prompt, has a bounded 60-second wait, sends CDP `Browser.getVersion`, and then
-revalidates the process-owned listener. Peekaboo then closes the native probe and passes its exact WebSocket URL identity
-as `--wsEndpoint` to Chrome DevTools MCP; the separately owned MCP child opens the second and final WebSocket used for
+revalidates the process-owned listener. Peekaboo retains that first WebSocket as a read-only, host-owned control session
+and passes its exact URL identity as `--wsEndpoint` to Chrome DevTools MCP; the separately owned MCP child opens the
+second and final WebSocket used for
 execution. A new explicit foreground channel connect therefore creates exactly two legitimate WebSocket connections,
 and Chrome may show one approval dialog for each. Once the child is connected, status, repeated connect, and browser
 execution revalidate the active-port file, kernel listener, PID generation, and bundle without opening another native
@@ -54,6 +55,7 @@ npx -y chrome-devtools-mcp@1.6.0 \
   --wsEndpoint=ws://127.0.0.1:<port>/devtools/browser/<id> \
   --experimentalPageIdRouting \
   --experimentalStructuredContent \
+  --experimentalInteropTools \
   --no-usage-statistics \
   --no-performance-crux
 ```
@@ -61,6 +63,10 @@ npx -y chrome-devtools-mcp@1.6.0 \
 Peekaboo pins the verified Chrome DevTools MCP version because direct page-ID routing and the structured response data
 used to mint opaque page/element capabilities are experimental upstream contracts. Upgrade the pin only after its
 page-scoped schemas, structured response surfaces, and routing behavior have been revalidated.
+
+The interop flag is enabled only so Peekaboo can privately map an opaque page capability to its CDP target during
+exact native-window binding. The provider's `get_tab_id` tool is excluded from raw public routing, and raw CDP target
+or browser-window IDs are never returned to callers.
 
 For deterministic local tests or custom Chrome endpoints:
 
@@ -98,10 +104,11 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`. Public MCP and
   standalone Browser contexts default to background-only and require an existing live exact connection receipt;
-  they never auto-connect implicitly.
-- In daemon-backed mode, `RemotePeekabooServices` can forward legacy CLI browser status/connect/execute calls over the
-  Bridge socket. Persistent opaque-reference Agent/MCP execution fails closed until Bridge can authenticate and carry
-  a caller-owned provider-child epoch.
+  they never auto-connect implicitly. Durable CLI calls can instead opt into one authenticated Bridge 1.38 namespace
+  by repeating its owner-private namespace file and exact issuing socket.
+- In daemon-backed mode, `RemotePeekabooServices` forwards legacy CLI browser calls separately from explicit Bridge
+  1.38 namespaces. Generic Bridge calls never gain opaque-reference authority; a namespace authenticates one
+  caller-owned provider-child epoch and closed high-level action surface.
 - The daemon owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
 - Separate CLI invocations require the same current-build reusable daemon. Peekaboo.app and older Bridge hosts are not
   eligible for browser session routing because they cannot attest the exact persistent connection receipt.
@@ -131,15 +138,24 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   navigation, disconnect, connection replacement, and MCP-session teardown invalidate their complete subordinate
   namespace. Before element dispatch, the same provider gate takes a fresh snapshot and proves every provider UID is
   still present in the current document. References copied into another caller session fail before Chrome dispatch.
+- Process-local MCP/Agent sessions and authenticated Bridge 1.38 namespaces with one native-channel Chrome receipt can
+  bind an opaque page to an exact native
+  window using `{ "action": "bind_window", "page_id": "bp1_...", "pid": 123, "window_id": 456 }`. All three
+  selectors are required; the process generation comes only from the exact connection receipt. Peekaboo privately
+  correlates the page target and Chrome window geometry, then revalidates the native receipt, tab membership, retained
+  control session, and provider child immediately before every bound mutation. A moved tab, resized/replaced window,
+  restarted process/provider, or dead control session invalidates the binding and never falls back to unbound dispatch.
+  Explicit URLs and isolated profiles cannot bind. Standalone CLI can bind only through its explicit namespace file and
+  exact issuing `--bridge-socket`.
 - Independently authenticated process-local browser sessions own separate Chrome DevTools MCP children and FIFO
   execution/mutation gates, so one blocked session does not stall another while calls within each session remain
   ordered. Peekaboo reserves the canonical process/DevTools target before permission-bearing provider setup; two
   sessions therefore cannot even transiently connect or probe the same exact target. Isolated sessions launch and own
   distinct browser instances, so their intentionally receiptless children do not overlock one another. Foreground-capable
   browser setup/activation remains on the shared desktop lane, and failed snapshot invalidation is kept in one ordered
-  cross-session ledger that every browser and desktop mutation must drain before dispatch. Bridge currently retains its one authenticated browser connection because its status/connect/
-  disconnect wire shape has no caller-session namespace; transport multiplexing is deferred without claiming a new
-  Bridge protocol version.
+  cross-session ledger that every browser and desktop mutation must drain before dispatch. Bridge 1.38 gives each
+  authenticated namespace its own runtime and provider-child epoch; legacy Bridge status/connect/disconnect remains a
+  separate compatibility surface and cannot mint or consume namespace capabilities.
 - Each process-local `peekaboo mcp serve` session owns and tears down its own browser child. A daemon-backed MCP session
   does not borrow the daemon's shared legacy browser connection or its raw page/element IDs. The background-only default
   therefore starts disconnected and cannot bootstrap browser control. To authorize setup for that exact scoped child,
@@ -161,6 +177,7 @@ Common actions:
 - `navigate`
 - `wait_for`
 - `snapshot`
+- `bind_window` (process-local MCP/Agent sessions or an authenticated Bridge 1.38 namespace)
 - `click`
 - `fill`
 - `type`
@@ -198,6 +215,10 @@ compatibility boundary rather than a persistent caller capability namespace. `se
 
 `type` and `press_key` also require an opaque element reference from the newest snapshot as `uid`. Peekaboo holds one browser execution gate while it
 focuses that exact uid and sends the keyboard operation; concurrent page work cannot interleave between those leaves.
+
+After `bind_window` succeeds, every mutation result carries a fresh sanitized native receipt with PID, decimal process
+generation, WindowServer ID, bounds, and `quality: exact`. Provider page integers, CDP target IDs, CDP browser-window
+IDs, and the private `get_tab_id` result never cross the public tool boundary.
 
 ## Examples
 

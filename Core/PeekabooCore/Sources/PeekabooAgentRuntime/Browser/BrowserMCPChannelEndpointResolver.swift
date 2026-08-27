@@ -22,6 +22,15 @@ private struct BrowserMCPChannelEndpointAuthority: Sendable, Equatable {
     let listener: DarwinProcessLoopbackListenerIdentity
 }
 
+private struct BrowserMCPChannelEndpointResolutionPlan: Sendable {
+    let target: BrowserMCPChannelProcessTarget
+    let attempt: BrowserMCPConnectionAttempt
+    let activePortURL: URL
+    let readActivePort: @Sendable (URL) throws -> Data
+    let inspectListener: DarwinProcessLoopbackListenerInspector.Inspect
+    let reserveAuthority: (@MainActor @Sendable (BrowserMCPChannelEndpointReservation) throws -> Void)?
+}
+
 struct BrowserMCPChannelEndpointResolver: Sendable {
     typealias Resolve = @Sendable (BrowserMCPChannelProcessTarget) async throws -> BrowserMCPDevToolsEndpoint
     typealias ResolveInitial = @Sendable (
@@ -74,7 +83,7 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
 
     static let live = BrowserMCPChannelEndpointResolver(
         resolveInitialWithReservation: { target, attempt, reserveAuthority in
-            try await Self.resolveEndpoint(
+            try await Self.resolveEndpointWithControl(
                 target: target,
                 attempt: attempt,
                 activePortURL: Self.activePortURL(
@@ -84,7 +93,13 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                     try StableRegularFileReader.live.read(url, 1024)
                 },
                 inspectListener: DarwinProcessLoopbackListenerInspector.live.inspect,
-                probeWebSocket: BrowserMCPDevToolsWebSocketProber.live.probe,
+                connectControl: { url, browserID, deadline, onDispatch in
+                    try await BrowserMCPDevToolsControlSession.connect(
+                        url,
+                        expectedBrowserID: browserID,
+                        deadline: deadline,
+                        onDispatch: onDispatch)
+                },
                 reserveAuthority: reserveAuthority)
         },
         revalidate: { target, expected in
@@ -104,55 +119,114 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
         target: BrowserMCPChannelProcessTarget,
         attempt: BrowserMCPConnectionAttempt = .standalone(),
         activePortURL: URL,
-        readActivePort: @Sendable (URL) throws -> Data,
-        inspectListener: DarwinProcessLoopbackListenerInspector.Inspect,
-        probeWebSocket: BrowserMCPDevToolsWebSocketProber.Probe,
+        readActivePort: @escaping @Sendable (URL) throws -> Data,
+        inspectListener: @escaping DarwinProcessLoopbackListenerInspector.Inspect,
+        probeWebSocket: @escaping BrowserMCPDevToolsWebSocketProber.Probe,
         reserveAuthority: (@MainActor @Sendable (BrowserMCPChannelEndpointReservation) throws -> Void)? = nil)
         async throws
         -> BrowserMCPDevToolsEndpoint
     {
+        try await self.resolveEndpoint(
+            plan: .init(
+                target: target,
+                attempt: attempt,
+                activePortURL: activePortURL,
+                readActivePort: readActivePort,
+                inspectListener: inspectListener,
+                reserveAuthority: reserveAuthority),
+            establishControl: { url, browserID, deadline, onDispatch in
+                let version = try await probeWebSocket(url, browserID, deadline, onDispatch)
+                return (version, nil)
+            })
+    }
+
+    static func resolveEndpointWithControl(
+        target: BrowserMCPChannelProcessTarget,
+        attempt: BrowserMCPConnectionAttempt = .standalone(),
+        activePortURL: URL,
+        readActivePort: @escaping @Sendable (URL) throws -> Data,
+        inspectListener: @escaping DarwinProcessLoopbackListenerInspector.Inspect,
+        connectControl: @escaping @Sendable (
+            URL,
+            String,
+            ContinuousClock.Instant,
+            @escaping @Sendable () -> Void) async throws -> BrowserMCPDevToolsControlConnection,
+        reserveAuthority: (@MainActor @Sendable (BrowserMCPChannelEndpointReservation) throws -> Void)? = nil)
+        async throws -> BrowserMCPDevToolsEndpoint
+    {
+        try await self.resolveEndpoint(
+            plan: .init(
+                target: target,
+                attempt: attempt,
+                activePortURL: activePortURL,
+                readActivePort: readActivePort,
+                inspectListener: inspectListener,
+                reserveAuthority: reserveAuthority),
+            establishControl: { url, browserID, deadline, onDispatch in
+                let connection = try await connectControl(url, browserID, deadline, onDispatch)
+                return (connection.version, connection.session)
+            })
+    }
+
+    private static func resolveEndpoint(
+        plan: BrowserMCPChannelEndpointResolutionPlan,
+        establishControl: @escaping @Sendable (
+            URL,
+            String,
+            ContinuousClock.Instant,
+            @escaping @Sendable () -> Void) async throws
+            -> (BrowserMCPDevToolsVersion, BrowserMCPDevToolsControlSession?))
+        async throws -> BrowserMCPDevToolsEndpoint
+    {
         let before = try self.resolveAuthority(
-            target: target,
-            activePortURL: activePortURL,
-            readActivePort: readActivePort,
-            inspectListener: inspectListener)
+            target: plan.target,
+            activePortURL: plan.activePortURL,
+            readActivePort: plan.readActivePort,
+            inspectListener: plan.inspectListener)
 
         guard let webSocketURL = URL(string: before.webSocketDebuggerURL),
               webSocketURL.absoluteString == before.webSocketDebuggerURL
         else {
             throw BrowserMCPConnectionError.channelEndpointUnavailable(
-                target.channel,
+                plan.target.channel,
                 "Chrome's DevToolsActivePort published a malformed WebSocket identity")
         }
-        try await reserveAuthority?(BrowserMCPChannelEndpointReservation(
+        try await plan.reserveAuthority?(BrowserMCPChannelEndpointReservation(
             browserURL: before.browserURL,
             webSocketDebuggerURL: before.webSocketDebuggerURL,
             browserID: before.browserID))
         let version: BrowserMCPDevToolsVersion
+        let retainedControlSession: BrowserMCPDevToolsControlSession?
         do {
-            version = try await probeWebSocket(
+            (version, retainedControlSession) = try await establishControl(
                 webSocketURL,
                 before.browserID,
-                attempt.deadline,
-                attempt.state.markPermissionDispatchStarted)
+                plan.attempt.deadline,
+                plan.attempt.state.markPermissionDispatchStarted)
         } catch BrowserMCPDevToolsWebSocketProbeFailure.cancelled {
             throw BrowserMCPConnectionError.permissionBearingConnectionCancelled
         } catch let BrowserMCPDevToolsWebSocketProbeFailure.failed(error) {
+            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(error.localizedDescription)
+        } catch BrowserMCPDevToolsControlError.cancelled {
+            throw BrowserMCPConnectionError.permissionBearingConnectionCancelled
+        } catch let error as BrowserMCPDevToolsControlError {
             throw BrowserMCPConnectionError.permissionBearingConnectionFailed(error.localizedDescription)
         }
 
         let after: BrowserMCPChannelEndpointAuthority
         do {
             after = try self.resolveAuthority(
-                target: target,
-                activePortURL: activePortURL,
-                readActivePort: readActivePort,
-                inspectListener: inspectListener)
+                target: plan.target,
+                activePortURL: plan.activePortURL,
+                readActivePort: plan.readActivePort,
+                inspectListener: plan.inspectListener)
         } catch {
+            await retainedControlSession?.close()
             throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
                 "Chrome's DevTools authority changed after Browser.getVersion: \(error.localizedDescription)")
         }
         guard after == before else {
+            await retainedControlSession?.close()
             throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
                 "Chrome's DevTools authority changed during Browser.getVersion")
         }
@@ -162,7 +236,8 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
             browserID: before.browserID,
             browserVersion: version.browserVersion,
             protocolVersion: version.protocolVersion,
-            listenerIdentity: before.listener)
+            listenerIdentity: before.listener,
+            retainedControlSession: retainedControlSession)
     }
 
     static func revalidateEndpoint(

@@ -45,6 +45,7 @@ struct PeekabooBridgeClientContext: @unchecked Sendable {
     let admissionRefusalLimiter: PeekabooBridgeCapacityLimiter
     let acceptedConnectionLimiter: PeekabooBridgeCapacityLimiter
     let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
+    let browserCapabilityNamespaceAuthority: PeekabooBridgeBrowserCapabilityNamespaceAuthority?
     let authentication: PeekabooBridgeHostAuthentication
 }
 
@@ -97,10 +98,11 @@ actor PeekabooBridgeConnectionTracker {
 
 private func waitForPeekabooBridgeRequestsToDrain(
     _ tracker: PeekabooBridgeRequestTracker,
+    additionalCondition: @escaping @Sendable () -> Bool = { true },
     timeoutSeconds: TimeInterval) async -> Bool
 {
     let deadline = ContinuousClock.now.advanced(by: .seconds(timeoutSeconds))
-    while tracker.activeCount > 0 {
+    while tracker.activeCount > 0 || !additionalCondition() {
         guard ContinuousClock.now < deadline else { return false }
         await withCheckedContinuation { continuation in
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) {
@@ -109,6 +111,19 @@ private func waitForPeekabooBridgeRequestsToDrain(
         }
     }
     return true
+}
+
+private final class PeekabooBridgeNamespaceRetirementState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished = false
+
+    var isFinished: Bool {
+        self.lock.withLock { self.finished }
+    }
+
+    func finish() {
+        self.lock.withLock { self.finished = true }
+    }
 }
 
 /// Converts listener readability into a coalesced async sequence.
@@ -444,6 +459,7 @@ public final actor PeekabooBridgeHost {
     private var ownershipCleanupTask: Task<Void, Never>?
     private var operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
     private var lifecycleGeneration: UInt64 = 0
+    private var browserCapabilityNamespaceAuthority: PeekabooBridgeBrowserCapabilityNamespaceAuthority?
     private let connectionTracker = PeekabooBridgeConnectionTracker()
     private let requestTracker: PeekabooBridgeRequestTracker
     private let bodyReadLimiter: PeekabooBridgeCapacityLimiter
@@ -527,7 +543,8 @@ public final actor PeekabooBridgeHost {
         guard self.ownershipCleanupTask == nil,
               self.leaseFD == -1,
               self.requestTracker.activeCount == 0,
-              self.operationReceiptAuthority == nil
+              self.operationReceiptAuthority == nil,
+              self.browserCapabilityNamespaceAuthority == nil
         else {
             throw PeekabooBridgeHostError.requestsStillDraining(
                 path: self.socketPath,
@@ -572,6 +589,17 @@ public final actor PeekabooBridgeHost {
         } else {
             operationReceiptAuthority = nil
         }
+        if self.server.browserCapabilityNamespacesAvailable, let operationReceiptAuthority {
+            do {
+                self.browserCapabilityNamespaceAuthority = try PeekabooBridgeBrowserCapabilityNamespaceAuthority(
+                    signingContext: operationReceiptAuthority.browserCapabilityNamespaceSigningContext())
+            } catch {
+                close(self.listenFD)
+                self.listenFD = -1
+                self.releaseOwnership()
+                throw error
+            }
+        }
 
         let fd = self.listenFD
         let listenerReadiness = PeekabooBridgeListenerReadiness(fileDescriptor: fd)
@@ -589,6 +617,7 @@ public final actor PeekabooBridgeHost {
             admissionRefusalLimiter: self.admissionRefusalLimiter,
             acceptedConnectionLimiter: self.acceptedConnectionLimiter,
             operationReceiptAuthority: operationReceiptAuthority,
+            browserCapabilityNamespaceAuthority: self.browserCapabilityNamespaceAuthority,
             authentication: self.authentication)
 
         self.acceptTask = Task.detached(priority: .userInitiated) {
@@ -637,7 +666,16 @@ public final actor PeekabooBridgeHost {
                 pendingRequestCount: snapshot.count,
                 oldestRequestAgeSeconds: snapshot.oldestAgeSeconds)
         }
+        let namespaceAuthority = self.browserCapabilityNamespaceAuthority
+        try? await namespaceAuthority?.beginDrainingAll()
         self.requestTracker.stopAcceptingAndCancelAll()
+        let namespaceRetirementState = PeekabooBridgeNamespaceRetirementState()
+        let namespaceRetirementTask = Task {
+            await self.server.closeAllBrowserCapabilityNamespaces()
+            try? await namespaceAuthority?.drainAll()
+            _ = await namespaceAuthority?.invalidateForRestart()
+            namespaceRetirementState.finish()
+        }
         let acceptTask = self.acceptTask
         acceptTask?.cancel()
         self.acceptTask = nil
@@ -657,6 +695,7 @@ public final actor PeekabooBridgeHost {
         await self.connectionTracker.waitForIdle()
         guard await waitForPeekabooBridgeRequestsToDrain(
             self.requestTracker,
+            additionalCondition: { namespaceRetirementState.isFinished },
             timeoutSeconds: self.requestDrainTimeoutSec)
         else {
             let snapshot = self.requestTracker.drainSnapshot
@@ -665,12 +704,18 @@ public final actor PeekabooBridgeHost {
             Self.logger.error("\(message, privacy: .public)")
             self.ownershipCleanupTask = Task { [self] in
                 await self.requestTracker.waitForIdle()
+                await namespaceRetirementTask.value
+                await self.server.beginNextBrowserCapabilityNamespaceGeneration()
+                self.browserCapabilityNamespaceAuthority = nil
                 self.releaseRetainedOwnership()
             }
             return .ownershipRetained(
                 pendingRequestCount: snapshot.count,
                 oldestRequestAgeSeconds: snapshot.oldestAgeSeconds)
         }
+        await namespaceRetirementTask.value
+        await self.server.beginNextBrowserCapabilityNamespaceGeneration()
+        self.browserCapabilityNamespaceAuthority = nil
         self.releaseOwnership()
         return .stopped
     }
@@ -698,6 +743,7 @@ public final actor PeekabooBridgeHost {
         }
         self.socketIdentity = nil
         self.operationReceiptAuthority = nil
+        self.browserCapabilityNamespaceAuthority = nil
         if self.leaseFD != -1 {
             if canClearLeaseIdentity {
                 do {

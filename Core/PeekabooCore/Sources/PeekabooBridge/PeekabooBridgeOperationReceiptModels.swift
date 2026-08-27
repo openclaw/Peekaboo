@@ -224,6 +224,13 @@ public struct PeekabooBridgeOperationReceiptPayload: Codable, Equatable, Sendabl
             }
             return
         }
+        if case let .browserCapabilityNamespace(receipt) = target {
+            guard self.focusedElement == nil, receipt.isCanonical else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "browser capability namespace target identity")
+            }
+            return
+        }
         let identity = try self.resolvedTargetIdentity()
         if target != .global, identity == nil {
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("stable target identity")
@@ -275,7 +282,7 @@ public struct PeekabooBridgeOperationReceiptPayload: Codable, Equatable, Sendabl
                     bounds: window.capturedBounds ?? .null,
                     focusedElement: self.focusedElement),
             ])
-        case .browser:
+        case .browser, .browserCapabilityNamespace:
             guard self.focusedElement == nil else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch("browser target focus")
             }
@@ -805,7 +812,7 @@ enum PeekabooBridgeOperationReceiptSemantics {
         case let .window(window):
             expectedProcess = window.processIdentity
             expectedWindow = window
-        case .global, .browser, nil:
+        case .global, .browser, .browserCapabilityNamespace, nil:
             throw PeekabooBridgeOperationReceiptError.receiptMismatch("selected-leaf target attribution")
         }
         guard evidence.allSatisfy({ $0.selectedProcessIdentity == expectedProcess }),
@@ -879,11 +886,13 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 return
             }
         }
-        if case .browser = payload.target,
-           ![PeekabooBridgeOperation.browserConnect, .browserExecute].contains(request.operation)
-        {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                "browser target used outside external browser execution")
+        try PeekabooBridgeBrowserCapabilityNamespaceReceiptValidation.validateNativeTarget(
+            payload,
+            request: request,
+            response: response,
+            plan: plan)
+        if try self.validateOpaqueBrowserTarget(payload.target, operation: request.operation) {
+            return
         }
         let signedIdentity = try payload.resolvedTargetIdentity()
         let targetPolicy = plan.target.policy

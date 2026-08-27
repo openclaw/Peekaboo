@@ -60,6 +60,113 @@ struct BrowserToolCapabilityIntegrationTests {
     }
 
     @Test
+    func `process local bind window is opaque and invalidation never falls back`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        client.nativeWindowBindingCapabilitySession = context.browserCapabilities
+        let tool = BrowserTool(context: context)
+        let schema = try #require(tool.inputSchema.objectValue)
+        let properties = try #require(schema["properties"]?.objectValue)
+        let actions = try #require(properties["action"]?.objectValue?["enum"]?.arrayValue)
+        #expect(actions.contains(.string(BrowserProcessLocalAction.bindWindow)))
+        #expect(properties["pid"] != nil)
+        #expect(properties["window_id"] != nil)
+
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let mismatchedPID = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": BrowserProcessLocalAction.bindWindow,
+                "page_id": pageReference,
+                "pid": 43,
+                "window_id": 313,
+            ]))
+        #expect(mismatchedPID.isError)
+        #expect(client.nativeBindCount == 0)
+
+        let bound = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": BrowserProcessLocalAction.bindWindow,
+                "page_id": pageReference,
+                "pid": 42,
+                "window_id": 313,
+            ]))
+
+        #expect(!bound.isError)
+        #expect(client.nativeBindCount == 1)
+        let boundText = Self.allText(from: bound)
+        #expect(boundText.contains(pageReference))
+        #expect(!boundText.contains("private-target-a"))
+        #expect(!boundText.contains("provider_session_epoch"))
+        let binding = bound.meta?.objectValue?["browser_window_binding"]?.objectValue
+        #expect(binding?["process_start_identity_decimal"] == .string("1001"))
+
+        let normalDispatchCount = client.sequences.count
+        let navigated = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "navigate",
+                "page_id": pageReference,
+                "url": "https://next.test/",
+            ]))
+        #expect(!navigated.isError)
+        #expect(client.nativeBoundSequences.count == 1)
+        #expect(client.sequences.count == normalDispatchCount)
+        let nativeEvidence = navigated.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?
+            .objectValue?["native_window_receipt"]?.objectValue
+        #expect(nativeEvidence?["window_id"] == .int(313))
+
+        await context.browserCapabilities.invalidateNativeWindowBinding(pageReference: pageReference)
+        let refused = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "navigate",
+                "page_id": pageReference,
+                "url": "https://refused.test/",
+            ]))
+        #expect(refused.isError)
+        #expect(client.nativeBoundSequences.count == 1)
+        #expect(client.sequences.count == normalDispatchCount)
+    }
+
+    @Test
+    func `provider child replacement rejects old opaque refs before tool dispatch`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let snapshotted = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshotted)
+        let dispatchCount = client.sequences.count
+
+        client.restartProviderChild()
+        let rejected = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": pageReference,
+                "uid": elementReference,
+            ]))
+
+        #expect(rejected.isError)
+        #expect(Self.text(from: rejected).contains("another or expired provider session"))
+        #expect(client.sequences.count == dispatchCount)
+    }
+
+    @Test
     func `text only daemon snapshot refuses instead of minting ambiguous element refs`() async throws {
         let client = CapabilityBrowserMCPClient(structuredResponses: false)
         let context = Self.context(client: client)
@@ -958,19 +1065,27 @@ extension BrowserToolCapabilityIntegrationTests {
 
 @MainActor
 private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
-    BrowserMCPAtomicSessionActionProviding,
+    BrowserMCPAtomicSessionActionProviding, BrowserMCPNativeWindowBindingProviding,
     @unchecked Sendable
 {
+    let supportsNativeBrowserConnectionBinding = true
     let structuredResponses: Bool
     let providesEpoch: Bool
-    let providerSessionEpoch = BrowserMCPProviderSessionEpoch()
+    private(set) var providerSessionEpoch = BrowserMCPProviderSessionEpoch()
     private(set) var sequences: [[BrowserMCPMappedCall]] = []
     private(set) var elementPreflights: [BrowserMCPElementPreflight?] = []
+    private(set) var nativeBindCount = 0
+    private(set) var nativeBoundSequences: [[BrowserMCPMappedCall]] = []
+    nonisolated(unsafe) var nativeWindowBindingCapabilitySession: BrowserToolCapabilitySession?
     var executeHandler: (@MainActor (String) async -> ToolResponse)?
 
     init(structuredResponses: Bool = true, providesEpoch: Bool = true) {
         self.structuredResponses = structuredResponses
         self.providesEpoch = providesEpoch
+    }
+
+    func restartProviderChild() {
+        self.providerSessionEpoch = BrowserMCPProviderSessionEpoch()
     }
 
     func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
@@ -979,6 +1094,10 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
             toolCount: 52,
             detectedBrowsers: [],
             connectionReceipt: BrowserMCPConnectionReceipt(
+                channel: .stable,
+                processIdentifier: 42,
+                processStartIdentity: 1001,
+                bundleIdentifier: "com.google.Chrome",
                 browserURL: "http://127.0.0.1:9222/",
                 webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
                 devToolsBrowserID: "browser-a",
@@ -1030,6 +1149,56 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
         }
         self.elementPreflights.append(elementPreflight)
         return try await self.executeSequenceWithOutcome(calls, channel: channel)
+    }
+
+    func bindNativeWindowHoldingCapabilityGate(
+        pageReference: String,
+        target: BrowserNativeWindowTarget,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        deadline _: ContinuousClock.Instant) async throws -> BrowserNativeWindowBindingProof
+    {
+        let capabilities = try #require(self.nativeWindowBindingCapabilitySession)
+        let bounds = CGRect(x: -1200, y: 80, width: 1200, height: 800)
+        let identity = WindowMutationIdentity(
+            windowID: Int(target.windowID),
+            ownerProcessIdentifier: target.processIdentifier,
+            ownerProcessStartIdentity: target.processStartIdentity,
+            capturedBounds: bounds)
+        let receipt = BrowserNativeWindowReceipt(
+            target: target,
+            windowIdentity: identity,
+            bounds: bounds)
+        self.nativeBindCount += 1
+        try await capabilities.bindNativeWindow(
+            pageReference: pageReference,
+            sessionBinding: expectedSessionBinding,
+            privateTargetID: "private-target-a",
+            privateBrowserWindowID: .init(rawValue: 41),
+            nativeWindowReceipt: receipt)
+        return BrowserNativeWindowBindingProof(
+            pageReference: pageReference,
+            nativeWindowReceipt: receipt,
+            quality: .exact)
+    }
+
+    func executeNativeWindowBoundSequenceWithOutcomeHoldingCapabilityGate(
+        _ request: BrowserMCPNativeWindowBoundExecutionRequest) async throws
+        -> BrowserMCPNativeWindowBoundActionResult
+    {
+        self.nativeBoundSequences.append(request.calls)
+        let response = self.response(for: request.calls.last?.toolName)
+        let outcome = self.outcome(for: request.calls, response: response)
+        let capabilities = try #require(self.nativeWindowBindingCapabilitySession)
+        let receipt = try await capabilities.nativeWindowBinding(
+            pageReference: request.pageReference,
+            sessionBinding: request.sessionBinding).nativeWindowReceipt
+        return BrowserMCPNativeWindowBoundActionResult(
+            actionResult: DesktopActionResult(
+                payload: BrowserMCPExecutionEvidence.attachingNativeWindowReceipt(
+                    to: response,
+                    receipt: receipt),
+                outcome: outcome),
+            nativeWindowReceipt: receipt)
     }
 
     private func response(for toolName: String?) -> ToolResponse {
