@@ -73,6 +73,7 @@ struct CaptureActionCommandEndToEndTests {
     func `Capture action runs child and publishes validated artifacts without live screen capture`() async throws {
         let outputDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-capture-action-e2e-\(UUID().uuidString)", isDirectory: true)
+        let videoOutput = outputDirectory.appendingPathComponent("action.mp4")
         var needsCleanup = true
         defer {
             if needsCleanup {
@@ -93,6 +94,7 @@ struct CaptureActionCommandEndToEndTests {
         command.heartbeat = CLIDuration(argument: "100ms")
         command.maxFrames = 20
         command.path = outputDirectory.path
+        command.videoOut = videoOutput.path
         command.command = [
             "/bin/sh",
             "-c",
@@ -152,8 +154,11 @@ struct CaptureActionCommandEndToEndTests {
         #expect(envelope.data.capture.frames.allSatisfy { frame in
             envelope.data.validation.checked.contains(frame.path)
         })
+        #expect(envelope.data.capture.videoOut == videoOutput.standardizedFileURL.path)
+        #expect(envelope.data.capture.videoArtifactCustody?.path == videoOutput.standardizedFileURL.path)
         #expect(Self.isNonemptyFile(envelope.data.capture.contactSheet.path))
         #expect(Self.isNonemptyFile(envelope.data.capture.metadataFile))
+        #expect(Self.isNonemptyFile(videoOutput.path))
         #expect(envelope.data.capture.frames.allSatisfy { Self.isNonemptyFile($0.path) })
         #expect(command.captureMutationDispatched)
         #expect(frameSource.captureCount >= 1)
@@ -600,7 +605,9 @@ struct CaptureActionCommandEndToEndTests {
         #expect(manifest.capture.hostIdentity.teamIdentifier == "Y5PE65HELJ")
         #expect(manifest.capture.hostIdentity.codeSignatureHash == String(repeating: "a", count: 40))
         #expect(manifest.capture.hostIdentity.sourceCommit == String(repeating: "b", count: 40))
-        #expect(manifest.artifacts.count == result.capture.frames.count + 2)
+        let videoArtifactCount = result.capture.videoOut == nil ? 0 : 1
+        #expect(manifest.artifacts.count == result.capture.frames.count + 2 + videoArtifactCount)
+        #expect(manifest.artifacts.contains { $0.role == .video } == (videoArtifactCount == 1))
         #expect(manifest.result.success)
         #expect(manifest.result.effect == .unverifiable)
         #expect(manifest.result.mutationDispatched)
@@ -1063,6 +1070,118 @@ extension CaptureActionCommandEndToEndTests {
             $0.contains("video output aliases a capture-owned artifact")
         })
         #expect(Set(validation.checked).count == validation.checked.count)
+    }
+}
+
+extension CaptureActionCommandEndToEndTests {
+    @Test
+    func `Capture action rejects reserved video output before child dispatch`() async throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-capture-action-video-conflict-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let reservedOutputs = [
+            outputDirectory,
+            outputDirectory.appendingPathComponent(CaptureActionManifestWriter.fileName),
+            outputDirectory.appendingPathComponent("contact.png"),
+            outputDirectory.appendingPathComponent("CONTACT.PNG"),
+            outputDirectory.appendingPathComponent("metadata.json"),
+            outputDirectory.appendingPathComponent("Metadata.JSON"),
+            outputDirectory.appendingPathComponent("keep-0001.png"),
+            outputDirectory.appendingPathComponent("KEEP-0002.PNG"),
+        ]
+
+        for reservedOutput in reservedOutputs {
+            let childMarker = outputDirectory.appendingPathComponent("child-ran")
+            let processRecorder = CaptureActionProcessRecorder()
+            var command = CaptureActionCommand()
+            command.mode = "frontmost"
+            command.path = outputDirectory.path
+            command.videoOut = reservedOutput.path
+            command.command = ["/usr/bin/touch", childMarker.path]
+            command.executionDependencies = CaptureActionExecutionDependencies(
+                frameSourceFactory: { _ in DeterministicCaptureActionFrameSource() },
+                processRunner: { childCommand, timeoutSeconds, onLaunch in
+                    let startedAt = Date()
+                    let result = try await CaptureActionProcessRunner.run(
+                        command: childCommand,
+                        timeoutSeconds: timeoutSeconds,
+                        onLaunch: onLaunch
+                    )
+                    processRecorder.invocations.append(.init(
+                        command: childCommand,
+                        timeoutSeconds: timeoutSeconds,
+                        startedAt: startedAt,
+                        finishedAt: Date()
+                    ))
+                    return result
+                },
+                hostIdentityProvider: { Self.authenticatedHostIdentity() }
+            )
+            command.runtime = self.makeRuntime()
+
+            let thrown = await #expect(throws: (any Error).self) {
+                _ = try await command.executeActionCapture()
+            }
+
+            #expect(try #require(thrown).localizedDescription.contains(
+                "--video-out must not resolve to a capture-owned artifact"
+            ))
+            #expect(processRecorder.invocations.isEmpty)
+            #expect(!command.captureMutationDispatched)
+            #expect(!FileManager.default.fileExists(atPath: childMarker.path))
+        }
+    }
+
+    @Test
+    func `Capture action preflights atomic no-replace publication`() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-capture-action-rename-preflight-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+        let thrown = #expect(throws: (any Error).self) {
+            try CaptureActionCommand.validateExclusiveRenameSupport(
+                in: outputDirectory,
+                renameExclusively: { _, _ in
+                    errno = ENOTSUP
+                    return -1
+                }
+            )
+        }
+        #expect(try #require(thrown).localizedDescription.contains("atomic no-replace publication"))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outputDirectory.path).isEmpty)
+    }
+
+    @Test
+    func `Capture action preflight preserves a failed-rename destination`() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-capture-action-rename-race-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let replacement = Data("replacement".utf8)
+
+        _ = #expect(throws: (any Error).self) {
+            try CaptureActionCommand.validateExclusiveRenameSupport(
+                in: outputDirectory,
+                renameExclusively: { _, destination in
+                    try? replacement.write(to: destination, options: .withoutOverwriting)
+                    errno = EEXIST
+                    return -1
+                }
+            )
+        }
+
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: outputDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(entries.count == 1)
+        let probeDirectory = try #require(entries.first)
+        let preserved = probeDirectory.appendingPathComponent("destination")
+        var directoryInformation = stat()
+        #expect(probeDirectory.path.withCString { lstat($0, &directoryInformation) } == 0)
+        #expect((directoryInformation.st_mode & 0o777) == S_IRWXU)
+        #expect(try Data(contentsOf: preserved) == replacement)
     }
 }
 
