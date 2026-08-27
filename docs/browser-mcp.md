@@ -62,9 +62,11 @@ Peekaboo pins the verified Chrome DevTools MCP version because direct page-ID ro
 used to mint opaque page/element capabilities are experimental upstream contracts. Upgrade the pin only after its
 page-scoped schemas, structured response surfaces, and routing behavior have been revalidated.
 
-For deterministic local tests or custom Chrome endpoints:
+For deterministic legacy CLI tests or custom Chrome endpoints:
 
-- `PEEKABOO_BROWSER_MCP_ISOLATED=1` lets Chrome DevTools MCP launch a temporary Chrome profile.
+- `PEEKABOO_BROWSER_MCP_ISOLATED=1` lets the standalone browser CLI launch a temporary Chrome profile. Authenticated
+  MCP and Agent capability sessions reject this mode before provider startup because the child does not expose a
+  browser identity that Peekaboo can bind to caller-owned opaque references.
 - `PEEKABOO_BROWSER_MCP_HEADLESS=1` makes that launched browser headless.
 - `PEEKABOO_BROWSER_MCP_BROWSER_URL=http://127.0.0.1:9222` connects to an explicit debuggable Chrome endpoint instead of auto-connect.
 
@@ -134,8 +136,10 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 - Independently authenticated process-local browser sessions own separate Chrome DevTools MCP children and FIFO
   execution/mutation gates, so one blocked session does not stall another while calls within each session remain
   ordered. Peekaboo reserves the canonical process/DevTools target before permission-bearing provider setup; two
-  sessions therefore cannot even transiently connect or probe the same exact target. Isolated sessions launch and own
-  distinct browser instances, so their intentionally receiptless children do not overlock one another. Foreground-capable
+  sessions therefore cannot even transiently connect or probe the same exact target. Authenticated sessions refuse
+  isolated-profile children before provider startup because their intentionally receiptless browser identity cannot
+  support caller-owned opaque references. Launch a separate headless Chrome and connect through its exact loopback
+  `browser_url` when a non-GUI browser is required. Foreground-capable
   browser setup/activation remains on the shared desktop lane, and failed snapshot invalidation is kept in one ordered
   cross-session ledger that every browser and desktop mutation must drain before dispatch. Bridge currently retains its one authenticated browser connection because its status/connect/
   disconnect wire shape has no caller-session namespace; transport multiplexing is deferred without claiming a new
@@ -144,7 +148,8 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   does not borrow the daemon's shared legacy browser connection or its raw page/element IDs. The background-only default
   therefore starts disconnected and cannot bootstrap browser control. To authorize setup for that exact scoped child,
   start `peekaboo mcp serve --allow-foreground` and invoke its `browser` `connect` action; subsequent page operations use
-  the resulting caller-owned connection.
+  the resulting caller-owned connection. This scoped connection must use a native Chrome channel or an exact loopback
+  `browser_url`; isolated mode is reserved for legacy standalone CLI sessions.
 
 Use `peekaboo daemon status` to see browser connection state, tool count, and detected Chrome channels.
 

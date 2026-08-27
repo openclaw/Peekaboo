@@ -1417,6 +1417,31 @@ extension CommanderBinderTests {
     }
 
     @Test
+    func `Browser-only MCP allow-list keeps dynamic gates without ScreenCaptureKit startup`() throws {
+        let browserOnly = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: MCPCommand.Serve.self,
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser"]
+        )
+        let withCapture = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: MCPCommand.Serve.self,
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser,see"]
+        )
+
+        #expect(browserOnly.usesPerToolSnapshotInvalidation)
+        #expect(browserOnly.requiresProducerBoundSnapshotReferences)
+        #expect(!browserOnly.dynamicToolScreenCaptureReachable)
+        #expect(!browserOnly.usesPersistentDynamicCaptureRuntime)
+        #expect(!browserOnly.requiresSilentCapture)
+
+        #expect(withCapture.usesPerToolSnapshotInvalidation)
+        #expect(withCapture.dynamicToolScreenCaptureReachable)
+        #expect(withCapture.usesPersistentDynamicCaptureRuntime)
+        #expect(withCapture.requiresSilentCapture)
+    }
+
+    @Test
     func `Automation runtime keeps remote daemon mode by default`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: SeeCommand.self)

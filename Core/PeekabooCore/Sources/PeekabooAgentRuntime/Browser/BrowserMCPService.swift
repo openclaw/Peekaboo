@@ -490,6 +490,9 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         let manager = self.resolvedSessionManager()
         let result: DesktopActionResult<BrowserMCPStatus>
         do {
+            if self.sessionCapabilities != nil {
+                try manager.preflightAuthenticatedCapabilityConnect(browserURL: browserURL)
+            }
             let reservation: BrowserMCPSessionManager.TargetReservation? = if let ownedSession = self.ownedSession {
                 { receipt in try ownedSession.pool.bind(ownedSession.id, to: receipt) }
             } else if let pool = self.authenticatedSessionPool {

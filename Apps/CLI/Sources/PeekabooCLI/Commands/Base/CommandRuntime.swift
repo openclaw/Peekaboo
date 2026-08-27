@@ -77,10 +77,17 @@ struct CommandRuntimeOptions {
     var requiresExplicitSnapshotPublication = false
     var requiresCallerDesktopMutationBarrier = false
     var usesPerToolSnapshotInvalidation = false
+    /// Defaults conservative. Only an explicit immutable MCP env allow-list can prove that the
+    /// persistent tool runtime exposes no path to ScreenCaptureKit.
+    var dynamicToolScreenCaptureReachable = true
     /// MCP and Agent keep one dynamic tool runtime alive across multiple calls. An explicit
     /// Bridge route therefore owns capture preflight for that runtime's authenticated generation.
     var usesPersistentDynamicToolRuntime: Bool {
         self.requiresAgentService && self.usesPerToolSnapshotInvalidation
+    }
+
+    var usesPersistentDynamicCaptureRuntime: Bool {
+        self.usesPersistentDynamicToolRuntime && self.dynamicToolScreenCaptureReachable
     }
 
     var requiresExactWindowTargetedClicks = false

@@ -1,5 +1,6 @@
 import Commander
 import Foundation
+import PeekabooAgentRuntime
 import PeekabooAutomationKit
 import PeekabooFoundation
 
@@ -154,6 +155,11 @@ enum CommanderCLIBinder {
         options.usesPerToolSnapshotInvalidation = Self.isAgentExecutionCommand(commandType) ||
             commandType == MCPCommand.Serve.self ||
             commandType == VerifyCommand.self
+        if commandType == MCPCommand.Serve.self,
+           MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(environment: environment) {
+            options.dynamicToolScreenCaptureReachable = false
+            options.requiresSilentCapture = false
+        }
         options.requiresProducerBoundSnapshotReferences = commandType == SeeCommand.self ||
             options.requiresSilentCapture ||
             options.usesPerToolSnapshotInvalidation

@@ -2217,6 +2217,71 @@ extension BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `authenticated capability session refuses isolated browser before provider dispatch`() async throws {
+        let manager = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            BrowserMCPSessionManager(
+                serverName: "test-browser",
+                manager: manager,
+                detectedBrowsers: { _ in [] },
+                processStartIdentity: { _ in nil },
+                environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .foregroundAllowed)
+            .scopingBrowserSession(named: "mcp:isolated-refusal")
+
+        let response = try await BrowserTool(context: context).execute(
+            arguments: ToolArguments(raw: ["action": "connect", "channel": "stable"]))
+
+        #expect(response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("refused"))
+        #expect(metadata["refusal_reason"] == .string("operation_unsupported"))
+        #expect(metadata["dispatch_state"] == .string("none"))
+        #expect(metadata["retry_safe"] == .bool(true))
+        #expect(manager.addedConfigs.isEmpty)
+        #expect(manager.executedTools.isEmpty)
+        #expect(manager.removeCount == 0)
+        await root.endAuthenticatedSession(named: "mcp:isolated-refusal")
+    }
+
+    @Test
+    func `authenticated capability session prefers explicit browser URL over isolated environment`() async throws {
+        let manager = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            BrowserMCPSessionManager(
+                serverName: "test-browser",
+                manager: manager,
+                detectedBrowsers: { _ in [] },
+                processStartIdentity: { _ in nil },
+                endpointResolver: Self.endpointResolver(),
+                environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .foregroundAllowed)
+            .scopingBrowserSession(named: "mcp:explicit-endpoint")
+
+        let response = try await BrowserTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "connect",
+            "channel": "stable",
+            "browser_url": "http://127.0.0.1:9222",
+        ]))
+
+        #expect(!response.isError)
+        #expect(manager.addedConfigs.count == 1)
+        #expect(manager.addedConfigs[0].args.contains(
+            "--wsEndpoint=ws://127.0.0.1:9222/devtools/browser/browser-a"))
+        #expect(!manager.addedConfigs[0].args.contains("--isolated"))
+        #expect(manager.executedTools == ["list_pages"])
+        await root.endAuthenticatedSession(named: "mcp:explicit-endpoint")
+    }
+
+    @Test
     func `concurrent reconnect refuses an old receipt before read-only dispatch`() async throws {
         let manager = MockBrowserMCPManager()
         let stable = Self.browser(pid: 83, generation: 5083)

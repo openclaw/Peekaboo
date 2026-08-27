@@ -264,6 +264,20 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         try await self.connectWithOutcome(channel: channel, browserURL: browserURL).payload
     }
 
+    func preflightAuthenticatedCapabilityConnect(browserURL: String?) throws {
+        // Request and environment endpoints take precedence over isolated mode in resolveTarget.
+        guard browserURL == nil,
+              self.environmentOptions.browserURL == nil,
+              self.isolatedConnectionRequested()
+        else { return }
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: "Authenticated browser capability sessions cannot use an isolated Chrome child because " +
+                "the launched browser has no pinnable identity.",
+            hint: "Use a native Chrome channel, or launch headless Chrome separately and connect with its exact " +
+                "loopback browser_url.")
+    }
+
     func connectWithOutcome(
         channel: BrowserMCPChannel?,
         browserURL: String? = nil,

@@ -4,6 +4,24 @@ import TachikomaMCP
 /// Canonical catalog of native MCP tools exposed by Peekaboo.
 @MainActor
 public enum MCPToolCatalog {
+    /// An explicit environment allow-list is immutable for the server process and replaces the
+    /// configured allow-list. It can therefore prove that no registered tool can reach SCK.
+    /// Missing allow-lists, nested Agent execution, and unknown future tools stay fail-closed.
+    public nonisolated static func explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(
+        environment: [String: String]) -> Bool
+    {
+        let filters = ToolFiltering.filters(config: nil, environment: environment)
+        guard case .env = filters.allowSource, !filters.allow.isEmpty else { return false }
+
+        return filters.allow.subtracting(filters.deny).allSatisfy { toolName in
+            if toolName == "agent" {
+                return false
+            }
+            guard let profile = MCPToolCaptureRequirement.profile(toolName: toolName) else { return false }
+            return profile == .never
+        }
+    }
+
     public static func tools(
         context: MCPToolContext,
         inputPolicy: UIInputPolicy,

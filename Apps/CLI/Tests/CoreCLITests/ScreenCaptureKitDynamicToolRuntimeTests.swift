@@ -10,6 +10,135 @@ import Testing
 
 extension ScreenCaptureKitOwnerRuntimeTests {
     @Test
+    func `browser-only MCP runtime never consults an unrelated ScreenCaptureKit owner`() async throws {
+        let buildScopedSocket = "/tmp/peekaboo-browser-only-build-\(UUID().uuidString).sock"
+        var options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: MCPCommand.Serve.self,
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser"]
+        )
+        options.autoStartDaemon = false
+        var claimCalls = 0
+        var inspectOwnerCalls = 0
+        var inspectSafetyCalls = 0
+        var localFactoryCalls = 0
+
+        let resolution = try await RuntimeHostResolver.resolveServices(
+            options: options,
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser"],
+            configurationInput: nil,
+            dependencies: .init(
+                makeLocalServices: { _ in
+                    localFactoryCalls += 1
+                    return PeekabooServices()
+                },
+                claimScreenCaptureKitOwner: {
+                    claimCalls += 1
+                    return Self.ownerReceipt()
+                },
+                inspectScreenCaptureKitOwner: {
+                    inspectOwnerCalls += 1
+                    return Self.ownerReceipt()
+                },
+                inspectScreenCaptureKitSafety: { _, _, _, _ in
+                    inspectSafetyCalls += 1
+                    return RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
+                        socketPath: "/tmp/unrelated-old-owner.sock",
+                        processIdentifier: 28611,
+                        processStartIdentity: 1_787_493_920_650_462,
+                        buildIdentity: "unrelated-old-build"
+                    )
+                },
+                remoteCandidatePlan: { _, _ in
+                    RuntimeHostResolver.RemoteCandidatePlan(
+                        explicitSocket: nil,
+                        daemonSocketPath: "/tmp/peekaboo-browser-only-daemon.sock",
+                        runtimeBuildIdentity: "browser-only-build",
+                        buildScopedDaemonSocketPath: buildScopedSocket,
+                        historicalBuildScopedDaemonSocketPaths: [],
+                        candidates: [.init(
+                            socketPath: buildScopedSocket,
+                            requireReusableDaemon: true,
+                            requiredHostKind: .onDemand,
+                            requiresValidatedHistoricalDaemon: false
+                        )]
+                    )
+                }
+            )
+        )
+
+        #expect(resolution.selectedRemoteSocketPath == nil)
+        #expect(resolution.toolCapturePreflightRefusal == nil)
+        #expect(claimCalls == 0)
+        #expect(inspectOwnerCalls == 0)
+        #expect(inspectSafetyCalls == 0)
+        #expect(localFactoryCalls == 1)
+    }
+
+    @Test
+    func `capture-capable MCP runtime remains bound to the exact ScreenCaptureKit owner`() async throws {
+        let buildScopedSocket = "/tmp/peekaboo-browser-capture-build-\(UUID().uuidString).sock"
+        var options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: MCPCommand.Serve.self,
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser,see"]
+        )
+        options.autoStartDaemon = false
+        var claimCalls = 0
+        var inspectOwnerCalls = 0
+        var inspectSafetyCalls = 0
+        var localFactoryCalls = 0
+
+        let error = await #expect(throws: PreDispatchActionError.self) {
+            _ = try await RuntimeHostResolver.resolveServices(
+                options: options,
+                environment: ["PEEKABOO_ALLOW_TOOLS": "browser,see"],
+                configurationInput: nil,
+                dependencies: .init(
+                    makeLocalServices: { _ in
+                        localFactoryCalls += 1
+                        return PeekabooServices()
+                    },
+                    claimScreenCaptureKitOwner: {
+                        claimCalls += 1
+                        return Self.ownerReceipt()
+                    },
+                    inspectScreenCaptureKitOwner: {
+                        inspectOwnerCalls += 1
+                        return Self.ownerReceipt()
+                    },
+                    inspectScreenCaptureKitSafety: { _, _, _, _ in
+                        inspectSafetyCalls += 1
+                        return nil
+                    },
+                    remoteCandidatePlan: { _, _ in
+                        RuntimeHostResolver.RemoteCandidatePlan(
+                            explicitSocket: nil,
+                            daemonSocketPath: "/tmp/peekaboo-browser-capture-daemon.sock",
+                            runtimeBuildIdentity: "browser-capture-build",
+                            buildScopedDaemonSocketPath: buildScopedSocket,
+                            historicalBuildScopedDaemonSocketPaths: [],
+                            candidates: [.init(
+                                socketPath: buildScopedSocket,
+                                requireReusableDaemon: true,
+                                requiredHostKind: .onDemand,
+                                requiresValidatedHistoricalDaemon: false
+                            )]
+                        )
+                    }
+                )
+            )
+        }
+
+        #expect(error?.code == .CAPTURE_FAILED)
+        #expect(error?.localizedDescription.contains(buildScopedSocket) == true)
+        #expect(claimCalls == 0)
+        #expect(inspectOwnerCalls == 1)
+        #expect(inspectSafetyCalls == 1)
+        #expect(localFactoryCalls == 0)
+    }
+
+    @Test
     func `explicit persistent capture safety is scoped to its selected socket`() {
         let selectedSocket = "/tmp/persistent-selected.sock"
         let plan = RuntimeHostResolver.RemoteCandidatePlan(
