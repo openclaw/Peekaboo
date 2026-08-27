@@ -114,7 +114,8 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
             socketPath: socketPath,
             allowlistedTeams: ["TEAMID"],
             allowlistedBundles: ["com.example.client"],
-            screenCaptureKitProcessCapabilityRegistrar: { throw RegistrationFailure() })
+            screenCaptureKitProcessCapabilityRegistrar: { throw RegistrationFailure() },
+            screenCaptureKitOwnershipPreparer: {})
         let runtime = PeekabooEmbeddedBridgeRuntime(
             configuration: configuration,
             services: services)
@@ -190,7 +191,9 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
             configuration: .init(
                 socketPath: socketPath,
                 allowlistedTeams: ["TEAMID"],
-                allowlistedBundles: ["com.example.client"]),
+                allowlistedBundles: ["com.example.client"],
+                screenCaptureKitProcessCapabilityRegistrar: {},
+                screenCaptureKitOwnershipPreparer: {}),
             services: PeekabooEmbeddedBridgeServices(),
             lifecycleHooks: .init(
                 didEnqueueStop: { stopJoinedStart.signal() },
@@ -223,7 +226,9 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
             configuration: .init(
                 socketPath: socketPath,
                 allowlistedTeams: ["TEAMID"],
-                allowlistedBundles: ["com.example.client"]),
+                allowlistedBundles: ["com.example.client"],
+                screenCaptureKitProcessCapabilityRegistrar: {},
+                screenCaptureKitOwnershipPreparer: {}),
             services: PeekabooEmbeddedBridgeServices(),
             lifecycleHooks: .init(
                 didEnqueueStart: { startEnqueued.signal() },
@@ -358,7 +363,9 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
             configuration: .init(
                 socketPath: socketPath,
                 allowlistedTeams: ["TEAMID"],
-                allowlistedBundles: ["com.example.client"]),
+                allowlistedBundles: ["com.example.client"],
+                screenCaptureKitProcessCapabilityRegistrar: {},
+                screenCaptureKitOwnershipPreparer: {}),
             services: PeekabooEmbeddedBridgeServices())
     }
 

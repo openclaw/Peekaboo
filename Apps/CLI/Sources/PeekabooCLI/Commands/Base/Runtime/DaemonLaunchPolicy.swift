@@ -1,9 +1,13 @@
 import Darwin
 import Foundation
 import MachO
+import PeekabooAutomationKit
 import PeekabooBridge
 
 enum DaemonLaunchPolicy {
+    static let defaultLaunchTimeoutSeconds =
+        ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 2
+
     /// Retains the Foundation process until its termination source has reaped the child.
     private final nonisolated class ProcessExitObserver: @unchecked Sendable {
         private let lock = NSLock()
@@ -742,7 +746,7 @@ enum DaemonLaunchPolicy {
     static func launchDaemon(
         socketPath: String,
         arguments: [String],
-        timeout: TimeInterval = 3,
+        timeout: TimeInterval = Self.defaultLaunchTimeoutSeconds,
         executableURL: URL? = nil,
         logHandle: FileHandle? = nil,
         environment: [String: String]? = nil

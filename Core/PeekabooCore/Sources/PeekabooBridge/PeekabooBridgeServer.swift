@@ -65,6 +65,45 @@ struct PeekabooBridgeReceiptlessNegotiation {
 @MainActor
 // swiftlint:disable:next type_body_length
 public final class PeekabooBridgeServer {
+    private enum ScreenCaptureKitOwnershipPreparationOutcome: Sendable {
+        case available
+        case unavailable(String)
+    }
+
+    private final class ScreenCaptureKitOwnershipPreparationWaiter: @unchecked Sendable {
+        typealias PreparationResult = Result<ScreenCaptureKitOwnershipPreparationOutcome, any Error>
+
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<ScreenCaptureKitOwnershipPreparationOutcome, any Error>?
+        private var result: PreparationResult?
+
+        func install(
+            _ continuation: CheckedContinuation<ScreenCaptureKitOwnershipPreparationOutcome, any Error>)
+        {
+            self.lock.lock()
+            if let result = self.result {
+                self.lock.unlock()
+                continuation.resume(with: result)
+                return
+            }
+            self.continuation = continuation
+            self.lock.unlock()
+        }
+
+        func finish(_ result: PreparationResult) {
+            self.lock.lock()
+            guard self.result == nil else {
+                self.lock.unlock()
+                return
+            }
+            self.result = result
+            let continuation = self.continuation
+            self.continuation = nil
+            self.lock.unlock()
+            continuation?.resume(with: result)
+        }
+    }
+
     let services: any PeekabooBridgeServiceProviding
     let hostKind: PeekabooBridgeHostKind
     let allowlistedTeams: Set<String>
@@ -73,7 +112,7 @@ public final class PeekabooBridgeServer {
     nonisolated let operationReceiptSessionCapacity: Int
     let allowedOperations: Set<PeekabooBridgeOperation>
     let hostIdentity: PeekabooBridgeHostIdentity?
-    let hostCapabilities: Set<String>
+    private(set) var hostCapabilities: Set<String>
     let servingSocketPath: String?
     var agentExecutionRunner: (any PeekabooBridgeAgentExecutionRunning)?
     let daemonControl: (any PeekabooDaemonControlProviding)?
@@ -86,6 +125,10 @@ public final class PeekabooBridgeServer {
     let processPresenceProvider: @Sendable (pid_t) -> Bool?
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     let desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator
+    private let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
+    private let screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval
+    private var screenCaptureKitOwnershipPreparationTask:
+        Task<ScreenCaptureKitOwnershipPreparationOutcome, Never>?
     let automationActivityObserver: (@Sendable (pid_t) -> Void)?
     let encoder: JSONEncoder
     let decoder: JSONDecoder
@@ -115,6 +158,11 @@ public final class PeekabooBridgeServer {
         screenCaptureKitProcessCapabilityRegistrar: @MainActor @Sendable () throws -> Void = {
             try ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
         },
+        screenCaptureKitOwnershipPreparer: @escaping @Sendable () async throws -> Void = {
+            try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
+        },
+        screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval = ScreenCaptureKitOwnerLease
+            .defaultProcessCapabilityPreparationTimeoutSeconds,
         postEventAccessEvaluator: (@MainActor @Sendable () -> Bool)? = nil,
         postEventAccessRequester: (@MainActor @Sendable () -> Bool)? = nil,
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
@@ -299,6 +347,9 @@ public final class PeekabooBridgeServer {
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
         self.desktopOperationLaneCoordinator = desktopOperationLaneCoordinator
+        self.screenCaptureKitOwnershipPreparer = screenCaptureKitOwnershipPreparer
+        self.screenCaptureKitOwnershipPreparationTimeoutSeconds =
+            screenCaptureKitOwnershipPreparationTimeoutSeconds
         self.automationActivityObserver = automationActivityObserver
         self.windowOwnerProcessIdentifierProvider = windowOwnerProcessIdentifierProvider
         self.windowBoundsProvider = windowBoundsProvider
@@ -329,6 +380,79 @@ public final class PeekabooBridgeServer {
         }
         self.encoder = encoder
         self.decoder = decoder
+    }
+
+    func prepareScreenCaptureKitOwnershipForServing() async throws {
+        try Task.checkCancellation()
+        guard self.hostCapabilities.contains(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership) else {
+            return
+        }
+        let task: Task<ScreenCaptureKitOwnershipPreparationOutcome, Never>
+        if let existing = self.screenCaptureKitOwnershipPreparationTask {
+            task = existing
+        } else {
+            let prepare = self.screenCaptureKitOwnershipPreparer
+            let created = Task<ScreenCaptureKitOwnershipPreparationOutcome, Never> {
+                do {
+                    try await prepare()
+                    return .available
+                } catch {
+                    return .unavailable(error.localizedDescription)
+                }
+            }
+            self.screenCaptureKitOwnershipPreparationTask = created
+            task = created
+        }
+        let outcome: ScreenCaptureKitOwnershipPreparationOutcome
+        do {
+            outcome = try await Self.awaitScreenCaptureKitOwnershipPreparation(
+                task,
+                timeoutSeconds: self.screenCaptureKitOwnershipPreparationTimeoutSeconds)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            outcome = .unavailable(error.localizedDescription)
+        }
+        try Task.checkCancellation()
+        if case let .unavailable(reason) = outcome {
+            self.hostCapabilities.remove(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
+            self.logger.warning(
+                """
+                ScreenCaptureKit ownership preparation failed; serving without ownership capability: \
+                \(reason, privacy: .public)
+                """)
+        }
+    }
+
+    private nonisolated static func awaitScreenCaptureKitOwnershipPreparation(
+        _ task: Task<ScreenCaptureKitOwnershipPreparationOutcome, Never>,
+        timeoutSeconds: TimeInterval) async throws -> ScreenCaptureKitOwnershipPreparationOutcome
+    {
+        guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
+            throw ScreenCaptureKitOwnerLease.LeaseError.preparationTimedOut(
+                seconds: max(timeoutSeconds, 0))
+        }
+        let waiter = ScreenCaptureKitOwnershipPreparationWaiter()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiter.install(continuation)
+                Task {
+                    await waiter.finish(.success(task.value))
+                }
+                Task {
+                    do {
+                        try await Task.sleep(for: .seconds(timeoutSeconds))
+                        waiter.finish(.failure(
+                            ScreenCaptureKitOwnerLease.LeaseError.preparationTimedOut(
+                                seconds: timeoutSeconds)))
+                    } catch {
+                        // Caller cancellation is delivered by the handler below.
+                    }
+                }
+            }
+        } onCancel: {
+            waiter.finish(.failure(CancellationError()))
+        }
     }
 
     #if DEBUG

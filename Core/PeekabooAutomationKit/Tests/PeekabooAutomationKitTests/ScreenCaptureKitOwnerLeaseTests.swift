@@ -351,6 +351,54 @@ struct ScreenCaptureKitOwnerLeaseTests {
     }
 
     @Test
+    func `Process capability preparation wait is bounded without cancelling its scan`() async throws {
+        let gate = OwnerPreparationAsyncGate()
+        let task = Task { () async throws in
+            await gate.wait()
+            try Task.checkCancellation()
+        }
+        await gate.waitUntilStarted()
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+
+        let error = await #expect(throws: ScreenCaptureKitOwnerLease.LeaseError.self) {
+            try await ScreenCaptureKitOwnerLease.waitForProcessCapabilityPreparation(
+                task,
+                timeoutSeconds: 0.02)
+        }
+
+        #expect(error == .preparationTimedOut(seconds: 0.02))
+        #expect(clock.now - startedAt < .seconds(1))
+        await gate.release()
+        try await task.value
+    }
+
+    @Test
+    func `Process capability preparation warms validation without claiming and leaf rescans`() throws {
+        let fixture = try LeaseFixture(name: "preparation-does-not-claim")
+        defer { fixture.removeLockPath() }
+        let scanCount = OwnerLeaseScanCounter()
+        let lease = ScreenCaptureKitOwnerLease(
+            lockURL: fixture.lockURL,
+            ownerIdentity: .init(
+                processIdentifier: getpid(),
+                processStartIdentity: fixture.processStartIdentity,
+                buildIdentity: "current-build"),
+            uncoordinatedProcesses: {
+                scanCount.increment()
+                return []
+            })
+
+        try lease.prepareForClaim()
+
+        #expect(scanCount.value == 1)
+        #expect(try ScreenCaptureKitOwnerLease.currentOwnerReceiptIfHeld(lockURL: fixture.lockURL) == nil)
+        _ = try lease.claim()
+        #expect(scanCount.value == 2)
+        #expect(try ScreenCaptureKitOwnerLease.currentOwnerReceiptIfHeld(lockURL: fixture.lockURL) != nil)
+    }
+
+    @Test
     func `Same-process reentry fails closed if the lock path no longer names the held inode`() throws {
         let fixture = try LeaseFixture(name: "replaced-path")
         defer { fixture.removeLockPath() }
@@ -701,6 +749,36 @@ private final class OwnerLeaseScanCounter: @unchecked Sendable {
         self.lock.withLock {
             self.count += 1
         }
+    }
+}
+
+private actor OwnerPreparationAsyncGate {
+    private var didStart = false
+    private var didRelease = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        self.didStart = true
+        self.startWaiters.forEach { $0.resume() }
+        self.startWaiters.removeAll()
+        guard !self.didRelease else { return }
+        await withCheckedContinuation { continuation in
+            self.releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !self.didStart else { return }
+        await withCheckedContinuation { continuation in
+            self.startWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        self.didRelease = true
+        self.releaseWaiters.forEach { $0.resume() }
+        self.releaseWaiters.removeAll()
     }
 }
 

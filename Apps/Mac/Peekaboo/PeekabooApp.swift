@@ -254,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
+        ScreenCaptureKitOwnerLease.beginCurrentProcessCapabilityPreparation()
         let launchPolicy = PeekabooAppLaunchPolicy.current
         self.launchPolicy = launchPolicy
         self.updaterController = makeUpdaterController(launchPolicy: launchPolicy)
