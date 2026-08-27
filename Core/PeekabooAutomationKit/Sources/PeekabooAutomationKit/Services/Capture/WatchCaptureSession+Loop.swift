@@ -62,8 +62,13 @@ extension WatchCaptureSession {
         case stopRequested
     }
 
+    struct CaptureAttemptCompletion: @unchecked Sendable {
+        let result: Result<CaptureAttemptResult, any Error>
+        let finishedAtNs: UInt64
+    }
+
     enum CaptureAttemptRaceResult: @unchecked Sendable {
-        case capture(Result<CaptureAttemptResult, any Error>)
+        case capture(CaptureAttemptCompletion)
         case stop(Result<CaptureAttemptResult, any Error>)
         case deadline(Result<CaptureAttemptResult, any Error>)
     }
@@ -338,20 +343,44 @@ extension WatchCaptureSession {
         guard deadlineNs > now else { return .stopRequested }
         try self.requireNoRetiringCaptureTask()
         let provider = self.frameProvider
-        let captureTask = Task<CaptureAttemptResult, any Error> { @MainActor in
-            let output = try await provider.captureFrame()
-            return .frame(output.frame, warning: output.warning)
+        let clock = self.clock
+        let gate = WatchCaptureAttemptContinuation()
+        let captureTask = Task<CaptureAttemptCompletion, Never> { @MainActor in
+            let result: Result<CaptureAttemptResult, any Error>
+            do {
+                let output = try await provider.captureFrame()
+                result = .success(.frame(output.frame, warning: output.warning))
+            } catch {
+                result = .failure(error)
+            }
+            let completion = CaptureAttemptCompletion(result: result, finishedAtNs: clock.nowNanoseconds())
+            gate.resume(with: .capture(completion))
+            return completion
         }
         var captureResultReturned = false
         let stopTask = Task<CaptureAttemptResult, any Error> { [weak self] in
-            await self?.waitForStopRequest()
-            try Task.checkCancellation()
-            return .stopRequested
+            let result: Result<CaptureAttemptResult, any Error>
+            do {
+                await self?.waitForStopRequest()
+                try Task.checkCancellation()
+                result = .success(.stopRequested)
+            } catch {
+                result = .failure(error)
+            }
+            gate.resume(with: .stop(result))
+            return try result.get()
         }
         let deadlineTask = Task<CaptureAttemptResult, any Error> {
-            try await self.clock.sleep(nanoseconds: deadlineNs - now)
-            try Task.checkCancellation()
-            return .stopRequested
+            let result: Result<CaptureAttemptResult, any Error>
+            do {
+                try await clock.sleep(nanoseconds: deadlineNs - now)
+                try Task.checkCancellation()
+                result = .success(.stopRequested)
+            } catch {
+                result = .failure(error)
+            }
+            gate.resume(with: .deadline(result))
+            return try result.get()
         }
         defer {
             captureTask.cancel()
@@ -362,26 +391,13 @@ extension WatchCaptureSession {
             }
         }
         return try await withTaskCancellationHandler {
-            let race = await withCheckedContinuation { continuation in
-                let gate = WatchCaptureAttemptContinuation(continuation: continuation)
-                Task {
-                    let result = await captureTask.result
-                    gate.resume(with: .capture(result))
-                }
-                Task {
-                    let result = await stopTask.result
-                    gate.resume(with: .stop(result))
-                }
-                Task {
-                    let result = await deadlineTask.result
-                    gate.resume(with: .deadline(result))
-                }
-            }
+            let race = await gate.wait()
             try Task.checkCancellation()
             switch race {
-            case let .capture(result):
+            case let .capture(completion):
                 captureResultReturned = true
-                return try result.get()
+                guard completion.finishedAtNs < deadlineNs else { return .stopRequested }
+                return try completion.result.get()
             case let .stop(result), let .deadline(result):
                 _ = try result.get()
                 return .stopRequested
@@ -608,16 +624,32 @@ extension WatchCaptureSession {
     }
 }
 
-private final class WatchCaptureAttemptContinuation: @unchecked Sendable {
+final class WatchCaptureAttemptContinuation: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptRaceResult, Never>?
+    private var result: WatchCaptureSession.CaptureAttemptRaceResult?
 
-    init(continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptRaceResult, Never>) {
-        self.continuation = continuation
+    func wait() async -> WatchCaptureSession.CaptureAttemptRaceResult {
+        await withCheckedContinuation { continuation in
+            self.lock.lock()
+            if let result = self.result {
+                self.lock.unlock()
+                continuation.resume(returning: result)
+            } else {
+                precondition(self.continuation == nil)
+                self.continuation = continuation
+                self.lock.unlock()
+            }
+        }
     }
 
     func resume(with result: WatchCaptureSession.CaptureAttemptRaceResult) {
         self.lock.lock()
+        guard self.result == nil else {
+            self.lock.unlock()
+            return
+        }
+        self.result = result
         let continuation = self.continuation
         self.continuation = nil
         self.lock.unlock()

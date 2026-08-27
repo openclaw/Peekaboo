@@ -130,9 +130,9 @@ private final class WatchCaptureStopSignal: @unchecked Sendable {
 /// Adaptive PNG capture session for agents.
 @MainActor
 public final class WatchCaptureSession {
-    private static var retiringCaptureTasks: [UUID: Task<CaptureAttemptResult, any Error>] = [:]
+    private var retiringCaptureTasks: [UUID: Task<CaptureAttemptCompletion, Never>] = [:]
 
-    static var retiringCaptureTaskCount: Int {
+    var retiringCaptureTaskCount: Int {
         self.retiringCaptureTasks.count
     }
 
@@ -293,18 +293,18 @@ public final class WatchCaptureSession {
     }
 
     func requireNoRetiringCaptureTask() throws {
-        guard Self.retiringCaptureTasks.isEmpty else {
+        guard self.retiringCaptureTasks.isEmpty else {
             throw PeekabooError.captureFailed(
                 reason: "A previous capture request is still retiring after cancellation")
         }
     }
 
-    func retireCaptureTask(_ task: Task<CaptureAttemptResult, any Error>) {
+    func retireCaptureTask(_ task: Task<CaptureAttemptCompletion, Never>) {
         let identifier = UUID()
-        Self.retiringCaptureTasks[identifier] = task
+        self.retiringCaptureTasks[identifier] = task
         Task { @MainActor in
-            _ = await task.result
-            Self.retiringCaptureTasks.removeValue(forKey: identifier)
+            _ = await task.value
+            self.retiringCaptureTasks.removeValue(forKey: identifier)
         }
     }
 

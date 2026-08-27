@@ -665,10 +665,10 @@ struct WatchCaptureSessionTests {
 
         #expect(result.frames.count == 1)
         #expect(elapsed < .milliseconds(150))
-        #expect(WatchCaptureSession.retiringCaptureTaskCount == 1)
+        #expect(session.retiringCaptureTaskCount == 1)
         await releaseTask.value
-        await Self.waitForCaptureTaskRetirement()
-        #expect(WatchCaptureSession.retiringCaptureTaskCount == 0)
+        await Self.waitForCaptureTaskRetirement(session)
+        #expect(session.retiringCaptureTaskCount == 0)
     }
 
     @Test
@@ -722,20 +722,94 @@ struct WatchCaptureSessionTests {
         #expect(result.frames.count == 1)
         #expect(elapsed >= .milliseconds(100))
         #expect(elapsed < .milliseconds(300))
-        #expect(WatchCaptureSession.retiringCaptureTaskCount == 1)
+        #expect(session.retiringCaptureTaskCount == 1)
         await #expect(throws: PeekabooError.self) {
             _ = try await session.captureFrameOrStop(deadlineNs: UInt64.max)
         }
+
+        let independentOutput = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watch-independent-retirement-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: independentOutput) }
+        let independentSession = WatchCaptureSession(
+            dependencies: WatchCaptureDependencies(
+                screenCapture: StubScreenCaptureService(
+                    result: Self.makePNG(size: CGSize(width: 20, height: 20)),
+                    size: CGSize(width: 20, height: 20)),
+                screenService: StubScreenService()),
+            configuration: WatchCaptureConfiguration(
+                scope: CaptureScope(kind: .frontmost),
+                options: Self.defaultWatchOptions(),
+                outputRoot: independentOutput,
+                autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
+        let independentResult = try await independentSession.run()
+        #expect(independentResult.frames.count == 1)
+        #expect(independentSession.retiringCaptureTaskCount == 0)
+
         await releaseTask.value
-        await Self.waitForCaptureTaskRetirement()
-        #expect(WatchCaptureSession.retiringCaptureTaskCount == 0)
+        await Self.waitForCaptureTaskRetirement(session)
+        #expect(session.retiringCaptureTaskCount == 0)
     }
 
     @MainActor
-    private static func waitForCaptureTaskRetirement() async {
-        for _ in 0..<100 where WatchCaptureSession.retiringCaptureTaskCount > 0 {
+    private static func waitForCaptureTaskRetirement(_ session: WatchCaptureSession) async {
+        for _ in 0..<100 where session.retiringCaptureTaskCount > 0 {
             try? await Task.sleep(for: .milliseconds(5))
         }
+    }
+
+    @Test
+    @MainActor
+    func `Frames finishing at or after the absolute deadline are not admitted`() async throws {
+        let image = try #require(WatchCaptureArtifactWriter.makeCGImage(from: Self.makePNG(
+            size: CGSize(width: 20, height: 20))))
+
+        for completionNs in [UInt64(50), 51] {
+            let clock = DeadlineEdgeWatchCaptureClock()
+            let source = DeadlineEdgeCaptureFrameSource(
+                image: image,
+                clock: clock,
+                completionNs: completionNs)
+            let session = WatchCaptureSession(
+                dependencies: WatchCaptureDependencies(
+                    screenCapture: StubScreenCaptureService(
+                        result: Self.makePNG(size: CGSize(width: 20, height: 20)),
+                        size: CGSize(width: 20, height: 20)),
+                    screenService: StubScreenService(),
+                    frameSource: source,
+                    clock: clock),
+                configuration: WatchCaptureConfiguration(
+                    scope: CaptureScope(kind: .frontmost),
+                    options: Self.defaultWatchOptions(),
+                    outputRoot: FileManager.default.temporaryDirectory,
+                    autoclean: WatchAutocleanConfig(minutes: 1, managed: false),
+                    sourceKind: .live,
+                    keepAllFrames: true))
+
+            let result = try await session.captureFrameOrStop(deadlineNs: 50)
+            guard case .stopRequested = result else {
+                Issue.record("Expected a frame completing at \(completionNs)ns to lose the 50ns deadline")
+                continue
+            }
+            #expect(session.retiringCaptureTaskCount == 0)
+        }
+    }
+
+    @Test
+    func `Capture completion registers before a later deadline observer`() async {
+        let gate = WatchCaptureAttemptContinuation()
+        let completion = WatchCaptureSession.CaptureAttemptCompletion(
+            result: .success(.frame(nil, warning: nil)),
+            finishedAtNs: 49)
+
+        gate.resume(with: .capture(completion))
+        gate.resume(with: .deadline(.success(.stopRequested)))
+
+        let result = await gate.wait()
+        guard case let .capture(observed) = result else {
+            Issue.record("Expected the already-registered capture completion to win")
+            return
+        }
+        #expect(observed.finishedAtNs == 49)
     }
 
     @Test
@@ -1024,6 +1098,49 @@ struct WatchCaptureSessionTests {
 }
 
 // MARK: - Stubs
+
+private final class DeadlineEdgeWatchCaptureClock: WatchCaptureMonotonicClock, @unchecked Sendable {
+    private let lock = NSLock()
+    private var now: UInt64 = 0
+
+    func nowNanoseconds() -> UInt64 {
+        self.lock.withLock { self.now }
+    }
+
+    func advance(to nanoseconds: UInt64) {
+        self.lock.withLock {
+            self.now = nanoseconds
+        }
+    }
+
+    func sleep(nanoseconds _: UInt64) async throws {
+        // Keep the deadline observer pending so the test deterministically exercises late-result admission.
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+    }
+}
+
+@MainActor
+private final class DeadlineEdgeCaptureFrameSource: CaptureFrameSource {
+    private let image: CGImage
+    private let clock: DeadlineEdgeWatchCaptureClock
+    private let completionNs: UInt64
+
+    init(image: CGImage, clock: DeadlineEdgeWatchCaptureClock, completionNs: UInt64) {
+        self.image = image
+        self.clock = clock
+        self.completionNs = completionNs
+    }
+
+    func nextFrame() async throws -> (cgImage: CGImage?, metadata: CaptureMetadata)? {
+        self.clock.advance(to: self.completionNs)
+        return (
+            self.image,
+            CaptureMetadata(
+                size: CGSize(width: self.image.width, height: self.image.height),
+                mode: .screen,
+                timestamp: Date()))
+    }
+}
 
 private final class NoncooperativeVideoFrameDecoder: @unchecked Sendable, VideoFrameDecoding {
     private let lock = NSLock()

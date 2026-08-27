@@ -135,9 +135,45 @@ struct VideoWriterTests {
     }
 
     @Test
-    func `video writer refuses a replaced output path without deleting the replacement`() async throws {
+    func `video writer refuses a public output that exists before initialization`() throws {
         let outputDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-video-replacement-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("peekaboo-video-preexisting-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        let output = outputDir.appendingPathComponent("capture.mp4")
+        let replacement = Data("preexisting".utf8)
+        try replacement.write(to: output, options: .withoutOverwriting)
+
+        #expect(throws: PeekabooError.self) {
+            _ = try VideoWriter(outputPath: output.path, width: 20, height: 20, fps: 2)
+        }
+        #expect(try Data(contentsOf: output) == replacement)
+    }
+
+    @Test
+    func `video writer staging name stays bounded for a long public basename`() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-video-long-name-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        let output = outputDir.appendingPathComponent(String(repeating: "v", count: 220) + ".mp4")
+        let writer = try VideoWriter(outputPath: output.path, width: 20, height: 20, fps: 2)
+        let stagingDirectory = writer.stagingURL.deletingLastPathComponent()
+        let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
+
+        try await writer.append(image: image)
+        let custody = try await writer.finish()
+
+        #expect(writer.stagingURL.lastPathComponent == "video.mp4")
+        #expect(custody.path == output.standardizedFileURL.path)
+        #expect(FileManager.default.fileExists(atPath: output.path))
+        #expect(!FileManager.default.fileExists(atPath: stagingDirectory.path))
+    }
+
+    @Test
+    func `video writer refuses a public output created while staging`() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-video-public-race-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outputDir) }
         let output = outputDir.appendingPathComponent("capture.mp4")
@@ -145,16 +181,71 @@ struct VideoWriterTests {
         let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
         try await writer.append(image: image)
         let replacement = Data("replacement".utf8)
+        let stagingDirectory = writer.stagingURL.deletingLastPathComponent()
+        var stagingInformation = stat()
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+        #expect(FileManager.default.fileExists(atPath: writer.stagingURL.path))
+        #expect(stagingDirectory.path.withCString { lstat($0, &stagingInformation) } == 0)
+        #expect(stagingInformation.st_mode & S_IFMT == S_IFDIR)
+        #expect((stagingInformation.st_mode & 0o777) == S_IRWXU)
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await writer.finish(beforeCustodyValidation: {
+                try replacement.write(to: output, options: .withoutOverwriting)
+            })
+        }
+        #expect(!FileManager.default.fileExists(atPath: writer.stagingURL.path))
+        #expect(!FileManager.default.fileExists(atPath: stagingDirectory.path))
+        #expect(try Data(contentsOf: output) == replacement)
+    }
+
+    @Test
+    func `video writer refuses a replaced staging path without deleting the replacement`() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-video-staging-race-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        let output = outputDir.appendingPathComponent("capture.mp4")
+        let writer = try VideoWriter(outputPath: output.path, width: 20, height: 20, fps: 2)
+        let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
+        try await writer.append(image: image)
+        let replacement = Data("staging-replacement".utf8)
 
         await #expect(throws: CaptureArtifactIntegrityError.self) {
-            _ = try await writer.finish {
-                try FileManager.default.removeItem(at: output)
-                try replacement.write(to: output, options: .withoutOverwriting)
-            }
+            _ = try await writer.finish(beforeCustodyValidation: {
+                try FileManager.default.removeItem(at: writer.stagingURL)
+                try replacement.write(to: writer.stagingURL, options: .withoutOverwriting)
+            })
         }
         #expect(throws: PeekabooError.self) {
             try writer.abortAndRemovePartialOutput()
         }
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+        #expect(try Data(contentsOf: writer.stagingURL) == replacement)
+    }
+
+    @Test
+    func `video writer refuses a replaced published path without deleting the replacement`() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-video-published-race-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        let output = outputDir.appendingPathComponent("capture.mp4")
+        let writer = try VideoWriter(outputPath: output.path, width: 20, height: 20, fps: 2)
+        let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
+        try await writer.append(image: image)
+        let replacement = Data("published-replacement".utf8)
+
+        await #expect(throws: CaptureArtifactIntegrityError.self) {
+            _ = try await writer.finish(afterPublication: {
+                try FileManager.default.removeItem(at: output)
+                try replacement.write(to: output, options: .withoutOverwriting)
+            })
+        }
+        #expect(throws: PeekabooError.self) {
+            try writer.abortAndRemovePartialOutput()
+        }
+        #expect(!FileManager.default.fileExists(atPath: writer.stagingURL.path))
         #expect(try Data(contentsOf: output) == replacement)
     }
 
@@ -165,21 +256,28 @@ struct VideoWriterTests {
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outputDir) }
         let output = outputDir.appendingPathComponent("capture.mp4")
+        var openerWasCalled = false
         let writer = try VideoWriter(
             outputPath: output.path,
             width: 20,
             height: 20,
             fps: 2,
             custodyDescriptorOpener: { _ in
+                openerWasCalled = true
                 errno = EMFILE
                 return -1
             })
+        #expect(!openerWasCalled)
+        let stagingDirectory = writer.stagingURL.deletingLastPathComponent()
         let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
 
         await #expect(throws: PeekabooError.self) {
             try await writer.append(image: image)
         }
+        #expect(openerWasCalled)
         #expect(!FileManager.default.fileExists(atPath: output.path))
+        #expect(!FileManager.default.fileExists(atPath: writer.stagingURL.path))
+        #expect(!FileManager.default.fileExists(atPath: stagingDirectory.path))
     }
 
     @Test

@@ -1,10 +1,21 @@
 import Commander
 import CoreGraphics
+import Darwin
 import Dispatch
 import Foundation
 import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
+
+private struct CaptureActionPublicationIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+}
+
+private struct CaptureActionPublicationProbeDirectory {
+    let url: URL
+    let identity: CaptureActionPublicationIdentity
+}
 
 @MainActor
 struct CaptureActionExecutionDependencies {
@@ -149,6 +160,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         let options = try buildOptions()
         let timing = try resolveActionTiming(durationLimit: options.duration)
         let requestedEngine = liveCaptureEnginePreference(for: scope)
+        let (outputDir, resolvedVideoOut) = try self.resolveOutputPathsBeforeDispatch()
         let captureHostIdentity = try await captureHostIdentity()
         let runID = UUID().uuidString
         if scope.kind == .window, let identifier = scope.applicationIdentifier {
@@ -160,7 +172,6 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             self.recordCaptureFocusOutcome(focusOutcome)
         }
 
-        let outputDir = try resolveOutputDirectory()
         let deps = WatchCaptureDependencies(
             screenCapture: services.screenCapture,
             screenService: self.services.screens,
@@ -176,7 +187,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             ),
             sourceKind: .live,
             videoIn: nil,
-            videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),
+            videoOut: resolvedVideoOut,
             keepAllFrames: false
         )
         let session = WatchCaptureSession(dependencies: deps, configuration: config)
@@ -494,6 +505,206 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
 
     private func resolveOutputDirectory() throws -> URL {
         CaptureCommandPathResolver.outputDirectory(from: self.path)
+    }
+
+    private func resolveOutputPathsBeforeDispatch() throws -> (URL, String?) {
+        let outputDirectory = try self.resolveOutputDirectory()
+        let videoOut = CaptureCommandPathResolver.filePath(from: self.videoOut)
+        try self.validateOutputPathsBeforeDispatch(outputDirectory: outputDirectory, videoOut: videoOut)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        try Self.validateExclusiveRenameSupport(in: outputDirectory)
+        if let videoOut {
+            let videoDirectory = URL(fileURLWithPath: videoOut).deletingLastPathComponent()
+            try Self.validateExclusiveRenameSupport(in: videoDirectory)
+        }
+        return (outputDirectory, videoOut)
+    }
+
+    private func validateOutputPathsBeforeDispatch(
+        outputDirectory: URL,
+        videoOut: String?
+    ) throws {
+        guard let videoOut else { return }
+        let outputRoot = outputDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let videoURL = URL(fileURLWithPath: videoOut).standardizedFileURL.resolvingSymlinksInPath()
+        let reservedNames = [
+            CaptureActionManifestWriter.fileName,
+            "contact.png",
+            "metadata.json",
+        ]
+        let aliasesReservedPath = reservedNames.contains { name in
+            Self.pathsMayAlias(outputRoot.appendingPathComponent(name), videoURL)
+        }
+        let aliasesFramePath = Self.pathsMayAlias(videoURL.deletingLastPathComponent(), outputRoot) &&
+            videoURL.lastPathComponent.lowercased().hasPrefix("keep-") &&
+            videoURL.pathExtension.lowercased() == "png"
+        guard !Self.pathsMayAlias(videoURL, outputRoot), !aliasesReservedPath, !aliasesFramePath else {
+            throw ValidationError(
+                "--video-out must not resolve to a capture-owned artifact under --path: \(videoOut)"
+            )
+        }
+    }
+
+    static func validateExclusiveRenameSupport(
+        in directory: URL,
+        renameExclusively: (URL, URL) -> Int32 = Self.renameExclusively
+    ) throws {
+        let parent = directory.standardizedFileURL.resolvingSymlinksInPath()
+        let probeDirectory = try Self.createPublicationProbeDirectory(in: parent)
+        let source = probeDirectory.url.appendingPathComponent("source")
+        let destination = probeDirectory.url.appendingPathComponent("destination")
+        let descriptor = source.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return open(path, O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        }
+        guard descriptor >= 0 else {
+            _ = Self.removePublicationProbeDirectoryIfEmpty(probeDirectory)
+            throw ValidationError(
+                "Capture output directory must exist and support private temporary files: \(parent.path)"
+            )
+        }
+        var sourceInformation = stat()
+        let sourceIdentity = fstat(descriptor, &sourceInformation) == 0
+            ? CaptureActionPublicationIdentity(device: sourceInformation.st_dev, inode: sourceInformation.st_ino)
+            : nil
+        close(descriptor)
+        guard let sourceIdentity else {
+            _ = Self.removePublicationProbeDirectoryIfEmpty(probeDirectory)
+            throw ValidationError("Capture output publication probe could not retain file identity: \(parent.path)")
+        }
+
+        guard renameExclusively(source, destination) == 0 else {
+            let code = errno
+            _ = Self.removePublicationProbeFile(at: source, expected: sourceIdentity)
+            _ = Self.removePublicationProbeDirectoryIfEmpty(probeDirectory)
+            throw ValidationError(
+                "Capture output filesystem must support atomic no-replace publication (errno \(code)): " +
+                    parent.path
+            )
+        }
+        guard Self.removePublicationProbeFile(at: destination, expected: sourceIdentity),
+              Self.removePublicationProbeDirectoryIfEmpty(probeDirectory)
+        else {
+            throw ValidationError("Capture output publication preflight cleanup failed: \(parent.path)")
+        }
+    }
+
+    private static func createPublicationProbeDirectory(
+        in parent: URL
+    ) throws -> CaptureActionPublicationProbeDirectory {
+        for _ in 0..<4 {
+            let url = parent.appendingPathComponent(
+                ".peekaboo-rename-probe-\(UUID().uuidString.lowercased())",
+                isDirectory: true
+            )
+            let created = url.withUnsafeFileSystemRepresentation { path in
+                guard let path else { return Int32(-1) }
+                return mkdir(path, S_IRWXU)
+            }
+            if created == 0 {
+                var information = stat()
+                let inspected = url.withUnsafeFileSystemRepresentation { path in
+                    guard let path else { return Int32(-1) }
+                    return lstat(path, &information)
+                }
+                guard inspected == 0,
+                      information.st_mode & S_IFMT == S_IFDIR,
+                      information.st_uid == geteuid(),
+                      information.st_mode & (S_IRWXG | S_IRWXO) == 0
+                else {
+                    _ = url.withUnsafeFileSystemRepresentation { path in
+                        guard let path else { return Int32(-1) }
+                        return rmdir(path)
+                    }
+                    throw ValidationError("Capture output publication probe is not owner-private: \(url.path)")
+                }
+                return CaptureActionPublicationProbeDirectory(
+                    url: url,
+                    identity: CaptureActionPublicationIdentity(
+                        device: information.st_dev,
+                        inode: information.st_ino
+                    )
+                )
+            }
+            guard errno == EEXIST else {
+                throw ValidationError("Capture output publication probe could not be created: \(parent.path)")
+            }
+        }
+        throw ValidationError("Capture output publication probe name could not be reserved: \(parent.path)")
+    }
+
+    private static func removePublicationProbeFile(
+        at url: URL,
+        expected: CaptureActionPublicationIdentity?
+    ) -> Bool {
+        var information = stat()
+        let inspected = url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return lstat(path, &information)
+        }
+        if inspected != 0 {
+            return errno == ENOENT
+        }
+        guard information.st_mode & S_IFMT == S_IFREG,
+              expected == nil || expected == CaptureActionPublicationIdentity(
+                  device: information.st_dev,
+                  inode: information.st_ino
+              )
+        else {
+            return false
+        }
+        let removed = url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return unlink(path)
+        }
+        return removed == 0 || errno == ENOENT
+    }
+
+    private static func removePublicationProbeDirectoryIfEmpty(
+        _ directory: CaptureActionPublicationProbeDirectory
+    ) -> Bool {
+        var information = stat()
+        let inspected = directory.url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return lstat(path, &information)
+        }
+        if inspected != 0 {
+            return errno == ENOENT
+        }
+        guard information.st_mode & S_IFMT == S_IFDIR,
+              directory.identity == CaptureActionPublicationIdentity(
+                  device: information.st_dev,
+                  inode: information.st_ino
+              )
+        else {
+            return false
+        }
+        let removed = directory.url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return rmdir(path)
+        }
+        return removed == 0 || errno == ENOENT
+    }
+
+    private static func pathsMayAlias(_ lhs: URL, _ rhs: URL) -> Bool {
+        let left = lhs.standardizedFileURL.resolvingSymlinksInPath().path
+        let right = rhs.standardizedFileURL.resolvingSymlinksInPath().path
+        return left.compare(right, options: [.caseInsensitive]) == .orderedSame
+    }
+
+    private nonisolated static func renameExclusively(_ source: URL, _ destination: URL) -> Int32 {
+        source.withUnsafeFileSystemRepresentation { sourcePath in
+            destination.withUnsafeFileSystemRepresentation { destinationPath in
+                guard let sourcePath, let destinationPath else { return Int32(-1) }
+                return renameatx_np(
+                    AT_FDCWD,
+                    sourcePath,
+                    AT_FDCWD,
+                    destinationPath,
+                    UInt32(RENAME_EXCL)
+                )
+            }
+        }
     }
 
     private static func sleep(milliseconds: Int) async throws {
