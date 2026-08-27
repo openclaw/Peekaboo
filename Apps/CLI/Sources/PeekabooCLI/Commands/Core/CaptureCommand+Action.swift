@@ -13,7 +13,8 @@ struct CaptureActionExecutionDependencies {
     typealias ProcessRunner = @MainActor (
         [String],
         TimeInterval,
-        @escaping @Sendable (UInt64) -> Void) async throws -> CaptureActionProcessResult
+        @escaping @Sendable (UInt64) -> Void
+    ) async throws -> CaptureActionProcessResult
 
     static let live = CaptureActionExecutionDependencies(
         frameSourceFactory: { _ in nil },
@@ -21,9 +22,11 @@ struct CaptureActionExecutionDependencies {
             try await CaptureActionProcessRunner.run(
                 command: command,
                 timeoutSeconds: timeoutSeconds,
-                onLaunch: onLaunch)
+                onLaunch: onLaunch
+            )
         },
-        hostIdentityProvider: nil)
+        hostIdentityProvider: nil
+    )
 
     let frameSourceFactory: FrameSourceFactory
     let processRunner: ProcessRunner
@@ -32,8 +35,8 @@ struct CaptureActionExecutionDependencies {
     init(
         frameSourceFactory: @escaping FrameSourceFactory,
         processRunner: @escaping ProcessRunner,
-        hostIdentityProvider: HostIdentityProvider? = nil)
-    {
+        hostIdentityProvider: HostIdentityProvider? = nil
+    ) {
         self.frameSourceFactory = frameSourceFactory
         self.processRunner = processRunner
         self.hostIdentityProvider = hostIdentityProvider
@@ -95,7 +98,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                   peekaboo capture action --duration-limit 10s -- echo smoke
                   peekaboo capture action --mode area --region 0,0,640,360 -- ./test-flow.sh
                 """,
-                version: "1.0.0")
+                version: "1.0.0"
+            )
         }
     }
 
@@ -114,7 +118,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             self.logger.operationComplete(
                 "capture_action",
                 success: result.success,
-                metadata: ["frames_kept": result.capture.stats.framesKept])
+                metadata: ["frames_kept": result.capture.stats.framesKept]
+            )
             if !result.success {
                 throw ExitCode(1)
             }
@@ -126,7 +131,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             self.logger.operationComplete(
                 "capture_action",
                 success: false,
-                metadata: ["error": reportedError.localizedDescription])
+                metadata: ["error": reportedError.localizedDescription]
+            )
             throw ExitCode(1)
         }
     }
@@ -149,7 +155,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             let focusOutcome = try await focusIfNeeded(
                 appIdentifier: identifier,
                 windowID: scope.windowId,
-                windowMutationIdentity: scope.windowMutationIdentity)
+                windowMutationIdentity: scope.windowMutationIdentity
+            )
             self.recordCaptureFocusOutcome(focusOutcome)
         }
 
@@ -157,31 +164,35 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         let deps = WatchCaptureDependencies(
             screenCapture: services.screenCapture,
             screenService: self.services.screens,
-            frameSource: self.executionDependencies.frameSourceFactory(scope))
+            frameSource: self.executionDependencies.frameSourceFactory(scope)
+        )
         let config = WatchCaptureConfiguration(
             scope: scope,
             options: options,
             outputRoot: outputDir,
             autoclean: WatchAutocleanConfig(
                 minutes: self.autoclean.map { Int(($0.seconds / 60).rounded()) } ?? 120,
-                managed: self.path == nil),
+                managed: self.path == nil
+            ),
             sourceKind: .live,
             videoIn: nil,
             videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),
-            keepAllFrames: false)
+            keepAllFrames: false
+        )
         let session = WatchCaptureSession(dependencies: deps, configuration: config)
         let captureStartedAtUnixMs = Int64(Date().timeIntervalSince1970 * 1000)
         let captureStartedNs = DispatchTime.now().uptimeNanoseconds
         let captureTask = self.startCaptureTask(
             session: session,
             enginePreference: requestedEngine,
-            captureStartedNs: captureStartedNs)
+            captureStartedNs: captureStartedNs
+        )
 
         do {
             if try await Self.waitForPreRollOrCaptureEnd(
                 milliseconds: timing.startupGateMs,
-                captureTask: captureTask) != nil
-            {
+                captureTask: captureTask
+            ) != nil {
                 throw ValidationError("Capture ended before action started")
             }
             self.resolvedRuntime.beginInteractionMutation()
@@ -190,7 +201,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             do {
                 action = try await self.executionDependencies.processRunner(
                     self.command,
-                    timing.actionTimeout) { dispatchState.markDispatched(at: $0) }
+                    timing.actionTimeout
+                ) { dispatchState.markDispatched(at: $0) }
                 self.captureMutationDispatched = self.captureMutationDispatched || dispatchState.wasDispatched
                 self.childCommandDispatched = self.childCommandDispatched || dispatchState.wasDispatched
                 self.childCommandCompleted = true
@@ -201,11 +213,13 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             }
             guard let actionStartedNs = dispatchState.dispatchedAtMonotonicNanoseconds else {
                 throw CaptureActionProcessLaunchError(
-                    message: "Action runner returned without admitting child dispatch")
+                    message: "Action runner returned without admitting child dispatch"
+                )
             }
             let actionStartedMs = Self.elapsedMilliseconds(
                 since: captureStartedNs,
-                endingAt: actionStartedNs)
+                endingAt: actionStartedNs
+            )
             let actionCompletedMs = Self.elapsedMilliseconds(since: captureStartedNs)
             try await Self.sleep(milliseconds: timing.postRollMs)
             session.requestStop()
@@ -221,16 +235,19 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             var validationFailures = artifactValidation.missing
             if samplingCompletedMs < requiredCaptureCompletedMs {
                 validationFailures.append(
-                    "capture ended before the action and requested post-roll completed")
+                    "capture ended before the action and requested post-roll completed"
+                )
             }
             let validation = CaptureActionArtifactValidation(
                 ok: validationFailures.isEmpty,
                 checked: artifactValidation.checked,
-                missing: validationFailures)
+                missing: validationFailures
+            )
             let childOutcome = CaptureActionOutcomeSemantics.completedChildOutcome
             let outcome = CaptureActionOutcomeSemantics.aggregate(
                 focusOutcome: self.captureFocusOutcome,
-                childOutcome: childOutcome)
+                childOutcome: childOutcome
+            )
             let commandSucceeded = action.succeeded && validation.ok
             var manifestReceipt: CaptureActionManifestReceipt?
             if artifactValidation.ok {
@@ -253,7 +270,9 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                         validation: validation,
                         focusOutcome: self.captureFocusOutcome,
                         childOutcome: childOutcome,
-                        outcome: outcome))
+                        outcome: outcome
+                    )
+                )
             }
             return CaptureActionCommandResult(
                 commandSucceeded: commandSucceeded,
@@ -263,7 +282,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 action: action,
                 capture: capture,
                 validation: validation,
-                manifest: manifestReceipt)
+                manifest: manifestReceipt
+            )
         } catch {
             session.requestStop()
             captureTask.cancel()
@@ -273,14 +293,15 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     }
 
     private func publishActionManifest(
-        _ context: CaptureActionManifestContext) throws -> CaptureActionManifestReceipt
-    {
+        _ context: CaptureActionManifestContext
+    ) throws -> CaptureActionManifestReceipt {
         let integrityReceipt = try CaptureArtifactIntegrityValidator.validate(context.capture)
         try Task.checkCancellation()
         let artifacts = try CaptureActionManifestWriter.makeArtifacts(
             capture: context.capture,
             outputRoot: context.outputRoot,
-            metadataSHA256: integrityReceipt.metadataSHA256)
+            metadataSHA256: integrityReceipt.metadataSHA256
+        )
         try Task.checkCancellation()
         let manifest = try CaptureActionManifest(
             schemaVersion: 1,
@@ -290,7 +311,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 actionStartedMs: context.actionStartedMs,
                 actionCompletedMs: context.actionCompletedMs,
                 samplingCompletedMs: context.samplingCompletedMs,
-                captureCompletedMs: context.captureCompletedMs),
+                captureCompletedMs: context.captureCompletedMs
+            ),
             request: .init(
                 commandSHA256: CaptureActionManifestWriter.commandSHA256(self.command),
                 commandArgumentCount: self.command.count,
@@ -299,7 +321,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 actionTimeoutSeconds: context.timing.actionTimeout,
                 captureDurationLimitSeconds: context.options.duration,
                 captureFocus: context.options.captureFocus,
-                requestedCaptureEngine: context.requestedEngine),
+                requestedCaptureEngine: context.requestedEngine
+            ),
             action: .init(
                 containmentScope: .processGroup,
                 processIdentifier: context.action.processIdentifier,
@@ -311,39 +334,44 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 durationMs: context.action.durationMs,
                 stdout: CaptureActionManifestWriter.stream(
                     context.action.stdout,
-                    truncated: context.action.stdoutTruncated),
+                    truncated: context.action.stdoutTruncated
+                ),
                 stderr: CaptureActionManifestWriter.stream(
                     context.action.stderr,
-                    truncated: context.action.stderrTruncated)),
+                    truncated: context.action.stderrTruncated
+                )
+            ),
             capture: .init(
                 scope: context.capture.scope,
                 executionRoute: self.services.executionHost,
                 hostDescription: self.resolvedRuntime.hostDescription,
                 remoteSocketPath: self.resolvedRuntime.selectedRemoteSocketPath,
                 hostIdentity: context.captureHostIdentity,
-                observedCaptureEngines: Array(Set(context.capture.frames.compactMap(\.captureEngine))).sorted()),
+                observedCaptureEngines: Array(Set(context.capture.frames.compactMap(\.captureEngine))).sorted()
+            ),
             artifacts: artifacts,
             result: .init(
                 commandSucceeded: context.commandSucceeded,
                 validation: context.validation,
                 focusOutcome: context.focusOutcome,
                 childOutcome: context.childOutcome,
-                outcome: context.outcome))
+                outcome: context.outcome
+            )
+        )
         return try CaptureActionManifestWriter.write(manifest, outputRoot: context.outputRoot)
     }
 
     private func startCaptureTask(
         session: WatchCaptureSession,
         enginePreference: CaptureEnginePreference,
-        captureStartedNs: UInt64) -> Task<CaptureActionCaptureCompletion, any Error>
-    {
+        captureStartedNs: UInt64
+    ) -> Task<CaptureActionCaptureCompletion, any Error> {
         let runSession: @MainActor @Sendable () async throws -> CaptureSessionResult = {
             try await session.run()
         }
         return Task { @MainActor in
             let result: CaptureSessionResult = if let engineAware = services
-                .screenCapture as? any EngineAwareScreenCaptureServiceProtocol
-            {
+                .screenCapture as? any EngineAwareScreenCaptureServiceProtocol {
                 try await engineAware.withCaptureEngine(enginePreference, operation: runSession)
             } else {
                 try await runSession()
@@ -355,8 +383,10 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 result: result,
                 samplingCompletedMs: Self.elapsedMilliseconds(
                     since: captureStartedNs,
-                    endingAt: samplingEndedNs),
-                completedMs: Self.elapsedMilliseconds(since: captureStartedNs))
+                    endingAt: samplingEndedNs
+                ),
+                completedMs: Self.elapsedMilliseconds(since: captureStartedNs)
+            )
         }
     }
 
@@ -370,7 +400,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             "capture(action) sampled \(result.capture.stats.framesSampled) frames at " +
                 "\(String(format: "%.2f", result.capture.stats.sampledFps)) FPS; " +
                 "kept \(result.capture.stats.framesKept) at " +
-                "\(String(format: "%.2f", result.capture.stats.keptFps)) FPS")
+                "\(String(format: "%.2f", result.capture.stats.keptFps)) FPS"
+        )
         print("contact sheet: \(result.capture.contactSheet.path)")
         print("metadata: \(result.capture.metadataFile)")
         if let manifest = result.manifest {
@@ -399,7 +430,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 message: result.failureMessage,
                 code: .VALIDATION_ERROR,
                 retrySafe: projection?.retrySafe ?? false,
-                mutationDispatched: projection?.mutationDispatched ?? true)
+                mutationDispatched: projection?.mutationDispatched ?? true
+            )
         return ResultEnvelope(
             success: result.success,
             effect: projection?.effect ?? .unverifiable,
@@ -407,7 +439,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             data: result,
             messages: nil,
             debug_logs: self.outputLogger.getDebugLogs(),
-            error: error)
+            error: error
+        )
     }
 
     private func buildOptions() throws -> CaptureOptions {
@@ -435,7 +468,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             captureFocus: self.captureFocus,
             resolutionCap: resolutionCap,
             diffStrategy: diffStrategy,
-            diffBudgetMs: diffBudgetMs)
+            diffBudgetMs: diffBudgetMs
+        )
     }
 
     private func resolveActionTiming(durationLimit: TimeInterval) throws -> CaptureActionTiming {
@@ -448,12 +482,14 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         let defaultActionTimeout = max(0.1, durationLimit - rollSeconds)
         let actionTimeout = max(
             0.1,
-            min(actionTimeout?.seconds ?? defaultActionTimeout, durationLimit - rollSeconds))
+            min(actionTimeout?.seconds ?? defaultActionTimeout, durationLimit - rollSeconds)
+        )
         return CaptureActionTiming(
             preRollMs: preRoll,
             postRollMs: postRoll,
             startupGateMs: max(preRoll, 100),
-            actionTimeout: actionTimeout)
+            actionTimeout: actionTimeout
+        )
     }
 
     private func resolveOutputDirectory() throws -> URL {
@@ -481,21 +517,22 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             identity = try provider()
         } else if self.services.executionHost == .remote {
             let selectedIdentity = if let provider = self.resolvedRuntime
-                .selectedRemoteAuthenticatedHostIdentityProvider
-            {
+                .selectedRemoteAuthenticatedHostIdentityProvider {
                 await provider()
             } else {
                 self.resolvedRuntime.selectedRemoteAuthenticatedHostIdentity
             }
             guard let selectedIdentity else {
                 throw CaptureActionHostProvenanceError(
-                    message: "capture action requires an authenticated identity from the selected remote capture host")
+                    message: "capture action requires an authenticated identity from the selected remote capture host"
+                )
             }
             identity = selectedIdentity
         } else {
             guard let currentIdentity = PeekabooBridgeAuthenticatedHostIdentity.current() else {
                 throw CaptureActionHostProvenanceError(
-                    message: "capture action requires an Apple-anchored, source-stamped Peekaboo executable")
+                    message: "capture action requires an Apple-anchored, source-stamped Peekaboo executable"
+                )
             }
             identity = currentIdentity
         }
@@ -503,11 +540,12 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     }
 
     private func revalidateCaptureHostIdentity(
-        _ expected: CaptureActionManifest.AuthenticatedHostIdentity) async throws
-    {
+        _ expected: CaptureActionManifest.AuthenticatedHostIdentity
+    ) async throws {
         guard try await self.captureHostIdentity() == expected else {
             throw CaptureActionHostProvenanceError(
-                message: "capture action host identity changed while capture was active")
+                message: "capture action host identity changed while capture was active"
+            )
         }
     }
 
@@ -538,10 +576,10 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 : CaptureActionOutcomeSemantics.uncertainChildOutcome
             outcome = CaptureActionOutcomeSemantics.failureAggregate(
                 focusOutcome: self.captureFocusOutcome,
-                childOutcome: childOutcome)
+                childOutcome: childOutcome
+            )
         } else if let focusOutcome = self.captureFocusOutcome,
-                  focusOutcome.dispatchState.mutationDispatched
-        {
+                  focusOutcome.dispatchState.mutationDispatched {
             outcome = CaptureActionOutcomeSemantics.focusOnlyFailureOutcome(focusOutcome)
         } else {
             return self.preDispatchActionError(for: error, reason: .invalidRequest)
@@ -552,7 +590,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 ? "Capture action failed after its child command was released."
                 : "Capture action failed after foreground focus changed desktop state.",
             hint: "Observe the affected target before deciding whether to retry.",
-            causeDescription: error.localizedDescription)
+            causeDescription: error.localizedDescription
+        )
         else {
             preconditionFailure("Capture action failure outcome must be non-confirmed")
         }
@@ -561,8 +600,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
 
     private static func waitForPreRollOrCaptureEnd(
         milliseconds: Int,
-        captureTask: Task<CaptureActionCaptureCompletion, any Error>) async throws -> CaptureActionCaptureCompletion?
-    {
+        captureTask: Task<CaptureActionCaptureCompletion, any Error>
+    ) async throws -> CaptureActionCaptureCompletion? {
         let race = CaptureActionStartupRace()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -702,14 +741,16 @@ private final nonisolated class CaptureActionStartupRace: @unchecked Sendable {
 enum CaptureActionOutcomeSemantics {
     static let childDelivery = DesktopActionOutcome.Delivery(
         mechanism: .capturePipeline,
-        mode: .background)
+        mode: .background
+    )
 
     static var completedChildOutcome: DesktopActionOutcome {
         .dispatchedUnverified(
             route: .local,
             delivery: self.childDelivery,
             evidence: .deliveryAccepted,
-            unitCount: .one)
+            unitCount: .one
+        )
     }
 
     static var uncertainChildOutcome: DesktopActionOutcome {
@@ -717,13 +758,14 @@ enum CaptureActionOutcomeSemantics {
             route: .local,
             delivery: self.childDelivery,
             evidence: .completionUnknown,
-            unitCount: .one)
+            unitCount: .one
+        )
     }
 
     static func aggregate(
         focusOutcome: DesktopActionOutcome?,
-        childOutcome: DesktopActionOutcome) -> DesktopActionOutcome?
-    {
+        childOutcome: DesktopActionOutcome
+    ) -> DesktopActionOutcome? {
         var sequence = DesktopActionSequenceAccumulator()
         if let focusOutcome {
             sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
@@ -741,13 +783,14 @@ enum CaptureActionOutcomeSemantics {
             route: focusOutcome.route,
             delivery: focusOutcome.delivery,
             evidence: .completionUnknown,
-            unitCount: focusOutcome.dispatchState.unitCount ?? .one)
+            unitCount: focusOutcome.dispatchState.unitCount ?? .one
+        )
     }
 
     static func failureAggregate(
         focusOutcome: DesktopActionOutcome?,
-        childOutcome: DesktopActionOutcome) -> DesktopActionOutcome
-    {
+        childOutcome: DesktopActionOutcome
+    ) -> DesktopActionOutcome {
         if let aggregate = self.aggregate(focusOutcome: focusOutcome, childOutcome: childOutcome) {
             return aggregate
         }
@@ -760,13 +803,15 @@ enum CaptureActionOutcomeSemantics {
             mechanism: .composite,
             mode: focusOutcome.delivery?.mode == .foreground || childOutcome.delivery?.mode == .foreground
                 ? .foreground
-                : .background)
+                : .background
+        )
         let hasSingleRoute = focusOutcome.route == childOutcome.route
         return .indeterminate(
             route: childOutcome.route,
             delivery: hasSingleRoute ? delivery : nil,
             evidence: .completionUnknown,
-            unitCount: unitCount)
+            unitCount: unitCount
+        )
     }
 
     static func isCanonicalChildOutcome(_ outcome: DesktopActionOutcome) -> Bool {
@@ -777,8 +822,8 @@ enum CaptureActionOutcomeSemantics {
     static func isCanonicalAggregate(
         _ outcome: DesktopActionOutcome?,
         focusOutcome: DesktopActionOutcome?,
-        childOutcome: DesktopActionOutcome) -> Bool
-    {
+        childOutcome: DesktopActionOutcome
+    ) -> Bool {
         self.isCanonicalChildOutcome(childOutcome) &&
             outcome == self.aggregate(focusOutcome: focusOutcome, childOutcome: childOutcome)
     }
@@ -806,20 +851,23 @@ struct CaptureActionCommandResult: Codable {
         action: CaptureActionProcessResult,
         capture: CaptureSessionResult,
         validation: CaptureActionArtifactValidation,
-        manifest: CaptureActionManifestReceipt?)
-    {
+        manifest: CaptureActionManifestReceipt?
+    ) {
         precondition(
             CaptureActionOutcomeSemantics.isCanonicalAggregate(
                 outcome,
                 focusOutcome: focusOutcome,
-                childOutcome: childOutcome),
-            "Capture action results require canonical focus and child outcomes")
+                childOutcome: childOutcome
+            ),
+            "Capture action results require canonical focus and child outcomes"
+        )
         precondition(childOutcome == CaptureActionOutcomeSemantics.completedChildOutcome)
         precondition(capture.options.captureFocus != .background || focusOutcome == nil)
         precondition(validation.isCanonical)
         precondition(
             commandSucceeded == (action.succeeded && validation.ok && manifest != nil),
-            "Capture action success must match action, validation, and manifest state")
+            "Capture action success must match action, validation, and manifest state"
+        )
         self.commandSucceeded = commandSucceeded
         self.focusOutcome = focusOutcome
         self.childOutcome = childOutcome
@@ -856,7 +904,8 @@ struct CaptureActionCommandResult: Codable {
               CaptureActionOutcomeSemantics.isCanonicalAggregate(
                   self.outcome,
                   focusOutcome: self.focusOutcome,
-                  childOutcome: self.childOutcome),
+                  childOutcome: self.childOutcome
+              ),
               self.childOutcome == CaptureActionOutcomeSemantics.completedChildOutcome,
               self.capture.options.captureFocus != .background || self.focusOutcome == nil,
               encodedSuccess == expectedSuccess
@@ -864,7 +913,8 @@ struct CaptureActionCommandResult: Codable {
             throw DecodingError.dataCorruptedError(
                 forKey: .outcome,
                 in: container,
-                debugDescription: "Capture action fields contradict canonical result semantics")
+                debugDescription: "Capture action fields contradict canonical result semantics"
+            )
         }
         self.commandSucceeded = encodedSuccess
     }
@@ -937,8 +987,8 @@ nonisolated struct CaptureActionProcessResult: Codable, Sendable {
         stdout: String,
         stderr: String,
         stdoutTruncated: Bool,
-        stderrTruncated: Bool)
-    {
+        stderrTruncated: Bool
+    ) {
         precondition(processIdentifier > 0 && processStartIdentity > 0)
         self.command = command
         self.processIdentifier = processIdentifier
@@ -977,7 +1027,8 @@ nonisolated struct CaptureActionProcessResult: Codable, Sendable {
         let processStartIdentity = try container.decode(UInt64.self, forKey: .processStartIdentity)
         let processStartIdentityDecimal = try container.decode(
             String.self,
-            forKey: .processStartIdentityDecimal)
+            forKey: .processStartIdentityDecimal
+        )
         let timeoutSeconds = try container.decode(TimeInterval.self, forKey: .timeoutSeconds)
         let durationMs = try container.decode(Int.self, forKey: .durationMs)
         guard processIdentifier > 0,
@@ -990,7 +1041,8 @@ nonisolated struct CaptureActionProcessResult: Codable, Sendable {
             throw DecodingError.dataCorruptedError(
                 forKey: .processStartIdentity,
                 in: container,
-                debugDescription: "Capture action process result has invalid custody fields")
+                debugDescription: "Capture action process result has invalid custody fields"
+            )
         }
         self.command = try container.decode([String].self, forKey: .command)
         self.processIdentifier = processIdentifier
@@ -1088,7 +1140,8 @@ extension CaptureActionCommand {
                 windowId: nil,
                 applicationIdentifier: nil,
                 windowIndex: nil,
-                region: nil)
+                region: nil
+            )
         case .frontmost:
             return CaptureScope(kind: .frontmost)
         case .window:
@@ -1100,7 +1153,8 @@ extension CaptureActionCommand {
                 selector: selector,
                 applicationIdentifier: identifier,
                 services: self.services,
-                operation: "Capture action")
+                operation: "Capture action"
+            )
             return CaptureScope(
                 kind: .window,
                 screenIndex: nil,
@@ -1109,7 +1163,8 @@ extension CaptureActionCommand {
                 windowMutationIdentity: windowReference.identity,
                 applicationIdentifier: identifier,
                 windowIndex: windowReference.windowIndex,
-                region: nil)
+                region: nil
+            )
         case .area:
             let rect = try parseRegion()
             return CaptureScope(kind: .region, region: rect)
@@ -1126,7 +1181,8 @@ extension CaptureActionCommand {
             }
             guard let mode = LiveCaptureMode(rawValue: normalized) else {
                 throw ValidationError(
-                    "Unsupported capture action mode '\(explicit)'. Use screen, window, frontmost, or area.")
+                    "Unsupported capture action mode '\(explicit)'. Use screen, window, frontmost, or area."
+                )
             }
             return mode
         }
@@ -1197,18 +1253,21 @@ extension CaptureActionCommand: CommanderSignatureProviding {
             .commandOption(
                 "durationLimit",
                 help: "Hard capture limit; bare values are milliseconds (default 60s, max 180s)",
-                long: "duration-limit"),
+                long: "duration-limit"
+            ),
             .commandOption("preRoll", help: "Capture time before running the action", long: "pre-roll"),
             .commandOption("postRoll", help: "Capture time after the action exits", long: "post-roll"),
             .commandOption(
                 "actionTimeout",
                 help: "Action timeout; bare values are milliseconds (defaults to remaining duration)",
-                long: "action-timeout"),
+                long: "action-timeout"
+            ),
             .commandOption(
                 "command",
                 help: "Command to run; usually pass after --",
                 long: "command",
-                parsing: .remaining),
+                parsing: .remaining
+            ),
         ]
         return CommandSignature(
             arguments: live.arguments + [
@@ -1216,11 +1275,13 @@ extension CaptureActionCommand: CommanderSignatureProviding {
                     label: "command...",
                     help: "Command to run; usually pass after --",
                     isOptional: true,
-                    parsing: .remaining),
+                    parsing: .remaining
+                ),
             ],
             options: options,
             flags: live.flags,
-            optionGroups: live.optionGroups)
+            optionGroups: live.optionGroups
+        )
     }
 }
 
