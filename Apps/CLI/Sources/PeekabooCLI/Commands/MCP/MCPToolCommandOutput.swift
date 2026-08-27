@@ -108,7 +108,8 @@ enum MCPToolCommandOutput {
         tool: String,
         response: ToolResponse,
         jsonOutput: Bool,
-        logger: Logger
+        logger: Logger,
+        errorExitCode: ExitCode = ExitCode(1)
     ) throws {
         let payload = self.payload(tool: tool, response: response)
         if jsonOutput {
@@ -123,7 +124,7 @@ enum MCPToolCommandOutput {
         }
 
         if response.isError {
-            throw ExitCode(1)
+            throw errorExitCode
         }
     }
 

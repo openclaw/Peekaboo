@@ -48,9 +48,10 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
                     tool: tool.name,
                     response: response,
                     jsonOutput: self.jsonOutput,
-                    logger: self.outputLogger
+                    logger: self.outputLogger,
+                    errorExitCode: ExitCode(2)
                 )
-                return
+                throw ExitCode(2)
             }
 
             let screenshotPath = try self.saveScreenshot(from: response)

@@ -1,3 +1,6 @@
+import Commander
+import PeekabooAgentRuntime
+import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
@@ -46,5 +49,22 @@ struct VerifyCommandTests {
             category = entry.category
         }
         #expect(category == .vision)
+    }
+
+    @Test
+    func `tool failure exits with unknown error status`() async throws {
+        var command = try VerifyCommand.parse([
+            "--app", "Fixture", "--window-exists", "--screenshot", "/tmp/unused-verify-state.png",
+        ])
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: PeekabooServices(initializeAgentService: false),
+            toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal(message: "fixture capture refusal")
+        )
+
+        let exitCode = await #expect(throws: ExitCode.self) {
+            try await command.run(using: runtime)
+        }
+        #expect(exitCode == ExitCode(2))
     }
 }
