@@ -285,9 +285,15 @@ public final class WatchCaptureSession {
     nonisolated static func performFinalArtifactValidation(
         _ operation: @escaping @Sendable () throws -> Void) async throws
     {
-        try await Task.detached(priority: .utility) {
+        let validationTask = Task.detached(priority: .utility) {
             try operation()
-        }.value
+        }
+        try await withTaskCancellationHandler {
+            try await validationTask.value
+        } onCancel: {
+            validationTask.cancel()
+        }
+        try Task.checkCancellation()
     }
 
     public func requestStop() {

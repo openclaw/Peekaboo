@@ -74,7 +74,7 @@ struct WatchCaptureSessionTests {
         let gate = BlockingCaptureArtifactValidationGate()
         let validationTask = Task { @MainActor in
             try await WatchCaptureSession.performFinalArtifactValidation {
-                gate.block()
+                try gate.block()
             }
         }
 
@@ -84,6 +84,26 @@ struct WatchCaptureSessionTests {
         try await validationTask.value
 
         #expect(mainActorRemainedResponsive)
+    }
+
+    @Test
+    @MainActor
+    func `final artifact validation forwards parent cancellation`() async throws {
+        let gate = BlockingCaptureArtifactValidationGate()
+        let validationTask = Task { @MainActor in
+            try await WatchCaptureSession.performFinalArtifactValidation {
+                try gate.block()
+            }
+        }
+
+        await gate.waitUntilEntered()
+        validationTask.cancel()
+        gate.release()
+
+        await #expect(throws: CancellationError.self) {
+            try await validationTask.value
+        }
+        #expect(gate.didObserveCancellation)
     }
 
     @Test
@@ -1283,10 +1303,22 @@ private actor ControlledVideoFrameDecoder: VideoFrameDecoding {
 private final class BlockingCaptureArtifactValidationGate: @unchecked Sendable {
     private let entered = DispatchSemaphore(value: 0)
     private let released = DispatchSemaphore(value: 0)
+    private let stateLock = NSLock()
+    private nonisolated(unsafe) var observedCancellation = false
 
-    func block() {
+    var didObserveCancellation: Bool {
+        self.stateLock.withLock { self.observedCancellation }
+    }
+
+    func block() throws {
         self.entered.signal()
         self.released.wait()
+        do {
+            try Task.checkCancellation()
+        } catch {
+            self.stateLock.withLock { self.observedCancellation = true }
+            throw error
+        }
     }
 
     func waitUntilEntered() async {
