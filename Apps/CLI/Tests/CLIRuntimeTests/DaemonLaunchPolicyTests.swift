@@ -1,9 +1,19 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKit
 import Testing
 @testable import PeekabooCLI
 
 struct DaemonLaunchPolicyTests {
+    @Test
+    func `daemon readiness budget contains ScreenCaptureKit owner preparation`() {
+        #expect(
+            DaemonLaunchPolicy.defaultLaunchTimeoutSeconds >=
+                ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1
+        )
+        #expect(DaemonLaunchPolicy.defaultLaunchTimeoutSeconds < 12)
+    }
+
     /// Shell snippet that writes the child's PID via an atomic rename, so the PID file
     /// never exists in a created-but-not-yet-written state.
     private static func writePIDCommand(to pidURL: URL) -> String {

@@ -17,6 +17,7 @@ public enum PeekabooBridgeBootstrap {
         let maxMessageBytes: Int
         let requestTimeoutSec: TimeInterval
         let requestDrainTimeoutSec: TimeInterval
+        let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
     }
 
     @discardableResult
@@ -49,7 +50,10 @@ public enum PeekabooBridgeBootstrap {
                 desktopMutationWatermarkStore: DesktopMutationWatermarkStore(),
                 maxMessageBytes: maxMessageBytes,
                 requestTimeoutSec: requestTimeoutSec,
-                requestDrainTimeoutSec: 1.0)).host
+                requestDrainTimeoutSec: 1.0,
+                screenCaptureKitOwnershipPreparer: {
+                    try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
+                })).host
         Task {
             await host.start()
         }
@@ -86,7 +90,10 @@ public enum PeekabooBridgeBootstrap {
                 desktopMutationWatermarkStore: DesktopMutationWatermarkStore(),
                 maxMessageBytes: maxMessageBytes,
                 requestTimeoutSec: requestTimeoutSec,
-                requestDrainTimeoutSec: 1.0)).host
+                requestDrainTimeoutSec: 1.0,
+                screenCaptureKitOwnershipPreparer: {
+                    try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
+                })).host
         try await host.startChecked()
         return host
     }
@@ -106,6 +113,7 @@ public enum PeekabooBridgeBootstrap {
             servingSocketPath: configuration.socketPath,
             daemonControl: configuration.daemonControl,
             desktopMutationWatermarkStore: configuration.desktopMutationWatermarkStore,
+            screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer,
             automationActivityObserver: configuration.automationActivityObserver)
         let host = PeekabooBridgeHost(
             socketPath: configuration.socketPath,

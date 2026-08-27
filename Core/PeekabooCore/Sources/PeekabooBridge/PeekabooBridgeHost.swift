@@ -443,6 +443,7 @@ public final actor PeekabooBridgeHost {
     private var stopTask: Task<PeekabooBridgeHostStopOutcome, Never>?
     private var ownershipCleanupTask: Task<Void, Never>?
     private var operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
+    private var lifecycleGeneration: UInt64 = 0
     private let connectionTracker = PeekabooBridgeConnectionTracker()
     private let requestTracker: PeekabooBridgeRequestTracker
     private let bodyReadLimiter: PeekabooBridgeCapacityLimiter
@@ -492,9 +493,9 @@ public final actor PeekabooBridgeHost {
     }
     #endif
 
-    public func start() {
+    public func start() async {
         do {
-            try self.startChecked()
+            try await self.startChecked()
         } catch {
             Self.logger.error(
                 """
@@ -504,13 +505,25 @@ public final actor PeekabooBridgeHost {
         }
     }
 
-    public func startChecked() throws {
+    public func startChecked() async throws {
         guard self.stopTask == nil else {
             throw PeekabooBridgeHostError.requestsStillDraining(
                 path: self.socketPath,
                 pendingCount: self.requestTracker.activeCount)
         }
         guard self.listenFD == -1 else { return }
+        let startGeneration = self.lifecycleGeneration
+        try await self.server.prepareScreenCaptureKitOwnershipForServing()
+        try Task.checkCancellation()
+        guard self.lifecycleGeneration == startGeneration else {
+            throw CancellationError()
+        }
+        guard self.listenFD == -1 else { return }
+        guard self.stopTask == nil else {
+            throw PeekabooBridgeHostError.requestsStillDraining(
+                path: self.socketPath,
+                pendingCount: self.requestTracker.activeCount)
+        }
         guard self.ownershipCleanupTask == nil,
               self.leaseFD == -1,
               self.requestTracker.activeCount == 0,
@@ -592,8 +605,13 @@ public final actor PeekabooBridgeHost {
         }
     }
 
+    func advertisedHostCapabilities() async -> Set<String> {
+        await MainActor.run { self.server.hostCapabilities }
+    }
+
     @discardableResult
     public func stop() async -> PeekabooBridgeHostStopOutcome {
+        self.lifecycleGeneration &+= 1
         if let stopTask = self.stopTask {
             return await stopTask.value
         }

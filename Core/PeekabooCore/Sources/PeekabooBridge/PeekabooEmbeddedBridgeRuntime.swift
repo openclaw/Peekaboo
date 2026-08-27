@@ -152,6 +152,7 @@ public actor PeekabooEmbeddedBridgeRuntime {
         public let requestDrainTimeoutSeconds: TimeInterval
 
         let screenCaptureKitProcessCapabilityRegistrar: @Sendable () throws -> Void
+        let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
 
         public init(
             socketPath: String,
@@ -176,6 +177,9 @@ public actor PeekabooEmbeddedBridgeRuntime {
                 requestDrainTimeoutSeconds: requestDrainTimeoutSeconds,
                 screenCaptureKitProcessCapabilityRegistrar: {
                     try ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
+                },
+                screenCaptureKitOwnershipPreparer: {
+                    try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
                 })
         }
 
@@ -189,7 +193,8 @@ public actor PeekabooEmbeddedBridgeRuntime {
             maxMessageBytes: Int = 64 * 1024 * 1024,
             requestTimeoutSeconds: TimeInterval = PeekabooBridgeConstants.defaultRequestTimeoutSeconds,
             requestDrainTimeoutSeconds: TimeInterval = 1.0,
-            screenCaptureKitProcessCapabilityRegistrar: @escaping @Sendable () throws -> Void)
+            screenCaptureKitProcessCapabilityRegistrar: @escaping @Sendable () throws -> Void,
+            screenCaptureKitOwnershipPreparer: @escaping @Sendable () async throws -> Void)
         {
             self.socketPath = socketPath
             self.allowlistedTeams = allowlistedTeams
@@ -205,6 +210,7 @@ public actor PeekabooEmbeddedBridgeRuntime {
             self.requestTimeoutSeconds = requestTimeoutSeconds
             self.requestDrainTimeoutSeconds = requestDrainTimeoutSeconds
             self.screenCaptureKitProcessCapabilityRegistrar = screenCaptureKitProcessCapabilityRegistrar
+            self.screenCaptureKitOwnershipPreparer = screenCaptureKitOwnershipPreparer
         }
 
         func validate() throws {
@@ -376,13 +382,16 @@ public actor PeekabooEmbeddedBridgeRuntime {
                     desktopMutationWatermarkStore: services.desktopMutationWatermarkStore,
                     maxMessageBytes: configuration.maxMessageBytes,
                     requestTimeoutSec: configuration.requestTimeoutSeconds,
-                    requestDrainTimeoutSec: configuration.requestDrainTimeoutSeconds))
+                    requestDrainTimeoutSec: configuration.requestDrainTimeoutSeconds,
+                    screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer))
         }
         let host = preparedHost.host
 
         do {
             try await host.startChecked()
-            return StartedHost(host: host, capabilities: preparedHost.capabilities)
+            return await StartedHost(
+                host: host,
+                capabilities: host.advertisedHostCapabilities())
         } catch {
             _ = await host.stop()
             await host.waitUntilFullyStopped()

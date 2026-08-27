@@ -8,6 +8,8 @@ import Security
 /// A successful descriptor is intentionally retained in static storage. The lock is released only
 /// when the process exits, so rebuilding a capture service cannot create a second SCK owner.
 public final class ScreenCaptureKitOwnerLease: Sendable {
+    public static let defaultProcessCapabilityPreparationTimeoutSeconds: TimeInterval = 8
+
     struct OwnerIdentity: Equatable, Sendable {
         let processIdentifier: pid_t
         let processStartIdentity: UInt64
@@ -138,6 +140,7 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
         case ownedByAnotherProcess(path: String, receipt: OwnerReceipt)
         case uncoordinatedProcesses([UncoordinatedProcess])
         case uncoordinatedHosts([UncoordinatedHost])
+        case preparationTimedOut(seconds: TimeInterval)
 
         public var errorDescription: String? {
             switch self {
@@ -177,6 +180,8 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
                 }.joined(separator: ", ") +
                     ". Update or relaunch those hosts, then restart this process before retrying SCK. " +
                     "Do not stop a process unless its exact PID and process generation are known and revalidated"
+            case let .preparationTimedOut(seconds):
+                "ScreenCaptureKit owner preparation timed out after \(seconds) seconds"
             }
         }
     }
@@ -203,9 +208,16 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
     }()
 
     private static let registryLock = NSLock()
+    private static let preparationLock = NSLock()
     private nonisolated(unsafe) static var heldDescriptorsByPath: [String: HeldDescriptor] = [:]
     private nonisolated(unsafe) static var cachedOwnerIdentity: OwnerIdentity?
     private nonisolated(unsafe) static var registeredUncoordinatedHostsBySocket: [String: UncoordinatedHost] = [:]
+    private nonisolated(unsafe) static var processCapabilityPreparation: ProcessCapabilityPreparation?
+
+    private struct ProcessCapabilityPreparation {
+        let ownerIdentity: OwnerIdentity
+        let task: Task<Void, any Error>
+    }
 
     private let lockPath: String
     private let ownerIdentity: OwnerIdentity
@@ -301,6 +313,53 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
         try ScreenCaptureKitProcessCapabilityRegistry.register(ownerIdentity: self.currentOwnerIdentity())
     }
 
+    /// Starts the expensive first owner-safety scan before a Bridge request can inherit its latency.
+    /// Preparation does not claim the process-lifetime owner lease, so runtime routing remains free to
+    /// select a newer exact-build host. Every actual ScreenCaptureKit leaf still rescans before dispatch.
+    public static func beginCurrentProcessCapabilityPreparation() {
+        _ = try? self.currentProcessCapabilityPreparationTask()
+    }
+
+    /// Waits a bounded amount of time for the first owner-safety scan. A Bridge host must suppress
+    /// ScreenCaptureKit ownership capability publication if this throws. The single detached scan may
+    /// finish warming its cache after a caller timeout, but it never acquires the owner lease or enters SCK.
+    public static func prepareCurrentProcessCapability(
+        timeoutSeconds: TimeInterval = ScreenCaptureKitOwnerLease
+            .defaultProcessCapabilityPreparationTimeoutSeconds) async throws
+    {
+        let task = try self.currentProcessCapabilityPreparationTask()
+        try await self.waitForProcessCapabilityPreparation(task, timeoutSeconds: timeoutSeconds)
+    }
+
+    static func waitForProcessCapabilityPreparation(
+        _ task: Task<Void, any Error>,
+        timeoutSeconds: TimeInterval) async throws
+    {
+        guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
+            throw LeaseError.preparationTimedOut(seconds: max(timeoutSeconds, 0))
+        }
+        let race = ScreenCaptureKitTimeoutRace<Void>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard race.setContinuation(continuation) else { return }
+                Task.detached {
+                    await race.resume(task.result)
+                }
+                let timeoutTask = Task {
+                    do {
+                        try await Task.sleep(for: .seconds(timeoutSeconds))
+                    } catch {
+                        return
+                    }
+                    race.resume(.failure(LeaseError.preparationTimedOut(seconds: timeoutSeconds)))
+                }
+                race.setTimeoutTask(timeoutTask)
+            }
+        } onCancel: {
+            race.cancel()
+        }
+    }
+
     /// Keeps dynamic local runtimes useful while making every later SCK leaf fail closed if an
     /// owner-unaware Bridge was discovered. The tombstone is intentionally irreversible for this
     /// process lifetime so transient PID lookup failures, multiple old hosts, and socket reuse cannot
@@ -325,14 +384,7 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
 
     /// Makes exactly one nonblocking `flock` attempt. A live contender is reported immediately.
     public func claim() throws -> ClaimResult {
-        let uncoordinatedHosts = self.uncoordinatedHosts()
-        guard uncoordinatedHosts.isEmpty else {
-            throw LeaseError.uncoordinatedHosts(uncoordinatedHosts)
-        }
-        let uncoordinatedProcesses = try self.uncoordinatedProcesses()
-        guard uncoordinatedProcesses.isEmpty else {
-            throw LeaseError.uncoordinatedProcesses(uncoordinatedProcesses)
-        }
+        try self.validateNoUncoordinatedOwners()
         if let receipt = try Self.currentProcessHeldReceipt(path: self.lockPath) {
             return .alreadyOwnedByCurrentProcess(receipt)
         }
@@ -396,6 +448,40 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
                 _ = flock(descriptor, LOCK_UN)
                 throw error
             }
+        }
+    }
+
+    func prepareForClaim() throws {
+        try self.validateNoUncoordinatedOwners()
+    }
+
+    private func validateNoUncoordinatedOwners() throws {
+        let uncoordinatedHosts = self.uncoordinatedHosts()
+        guard uncoordinatedHosts.isEmpty else {
+            throw LeaseError.uncoordinatedHosts(uncoordinatedHosts)
+        }
+        let uncoordinatedProcesses = try self.uncoordinatedProcesses()
+        guard uncoordinatedProcesses.isEmpty else {
+            throw LeaseError.uncoordinatedProcesses(uncoordinatedProcesses)
+        }
+    }
+
+    private static func currentProcessCapabilityPreparationTask() throws -> Task<Void, any Error> {
+        let ownerIdentity = try self.currentOwnerIdentity()
+        return self.preparationLock.withLock {
+            if let preparation = self.processCapabilityPreparation,
+               preparation.ownerIdentity == ownerIdentity
+            {
+                return preparation.task
+            }
+            let task = Task.detached(priority: .userInitiated) {
+                try self.registerCurrentProcessCapability()
+                try ScreenCaptureKitOwnerLease().prepareForClaim()
+            }
+            self.processCapabilityPreparation = ProcessCapabilityPreparation(
+                ownerIdentity: ownerIdentity,
+                task: task)
+            return task
         }
     }
 
