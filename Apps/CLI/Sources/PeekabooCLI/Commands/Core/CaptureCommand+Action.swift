@@ -258,14 +258,22 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 since: captureStartedNs,
                 endingAt: actionStartedNs
             )
-            let actionCompletedMs = Self.elapsedMilliseconds(since: captureStartedNs)
-            guard timing.postRollFits(
-                startingAtNs: DispatchTime.now().uptimeNanoseconds,
-                captureDeadlineNs: captureDeadlineNs
-            ) else {
+            let resumedAtNs = DispatchTime.now().uptimeNanoseconds
+            let actionCompletedNs = action.completedAtMonotonicNanoseconds ?? resumedAtNs
+            guard actionCompletedNs >= actionStartedNs, actionCompletedNs <= resumedAtNs else {
+                throw CaptureActionProcessLaunchError(
+                    message: "Action runner returned an invalid completion boundary"
+                )
+            }
+            let actionCompletedMs = Self.elapsedMilliseconds(
+                since: captureStartedNs,
+                endingAt: actionCompletedNs
+            )
+            let postRollDeadlineNs = try timing.postRollDeadline(startingAtNs: actionCompletedNs)
+            guard postRollDeadlineNs <= captureDeadlineNs else {
                 throw ValidationError("Action completion left insufficient time for the requested post-roll")
             }
-            try await Self.sleep(milliseconds: timing.postRollMs)
+            try await Self.sleep(untilMonotonicNanoseconds: postRollDeadlineNs)
             session.requestStop()
 
             let captureCompletion = try await captureTask.value
@@ -757,6 +765,15 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         try Task.checkCancellation()
     }
 
+    private static func sleep(untilMonotonicNanoseconds deadlineNs: UInt64) async throws {
+        try Task.checkCancellation()
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        if deadlineNs > nowNs {
+            try await Task.sleep(nanoseconds: deadlineNs - nowNs)
+        }
+        try Task.checkCancellation()
+    }
+
     private static func elapsedMilliseconds(since start: UInt64) -> Int {
         self.elapsedMilliseconds(since: start, endingAt: DispatchTime.now().uptimeNanoseconds)
     }
@@ -939,9 +956,17 @@ struct CaptureActionTiming {
     }
 
     func postRollFits(startingAtNs: UInt64, captureDeadlineNs: UInt64) -> Bool {
-        guard let postRollNs = try? Self.nanoseconds(milliseconds: self.postRollMs) else { return false }
-        let (requiredCompletionNs, overflowed) = startingAtNs.addingReportingOverflow(postRollNs)
-        return !overflowed && requiredCompletionNs <= captureDeadlineNs
+        guard let deadlineNs = try? self.postRollDeadline(startingAtNs: startingAtNs) else { return false }
+        return deadlineNs <= captureDeadlineNs
+    }
+
+    func postRollDeadline(startingAtNs: UInt64) throws -> UInt64 {
+        let postRollNs = try Self.nanoseconds(milliseconds: self.postRollMs)
+        let (deadlineNs, overflowed) = startingAtNs.addingReportingOverflow(postRollNs)
+        guard !overflowed else {
+            throw ValidationError("--post-roll overflowed the capture deadline")
+        }
+        return deadlineNs
     }
 
     private static func nanoseconds(seconds: TimeInterval) throws -> UInt64 {
@@ -1300,6 +1325,8 @@ nonisolated struct CaptureActionProcessResult: Codable, Sendable {
     let stderr: String
     let stdoutTruncated: Bool
     let stderrTruncated: Bool
+    /// Process-local scheduling boundary used by `capture action`; deliberately omitted from Codable output.
+    let completedAtMonotonicNanoseconds: UInt64?
 
     init(
         command: [String],
@@ -1313,9 +1340,13 @@ nonisolated struct CaptureActionProcessResult: Codable, Sendable {
         stdout: String,
         stderr: String,
         stdoutTruncated: Bool,
-        stderrTruncated: Bool
+        stderrTruncated: Bool,
+        completedAtMonotonicNanoseconds: UInt64? = nil
     ) {
-        precondition(processIdentifier > 0 && processStartIdentity > 0)
+        precondition(
+            processIdentifier > 0 && processStartIdentity > 0 &&
+                completedAtMonotonicNanoseconds.map { $0 > 0 } != false
+        )
         self.command = command
         self.processIdentifier = processIdentifier
         self.processStartIdentity = processStartIdentity
@@ -1329,6 +1360,7 @@ nonisolated struct CaptureActionProcessResult: Codable, Sendable {
         self.stderr = stderr
         self.stdoutTruncated = stdoutTruncated
         self.stderrTruncated = stderrTruncated
+        self.completedAtMonotonicNanoseconds = completedAtMonotonicNanoseconds
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1383,6 +1415,7 @@ nonisolated struct CaptureActionProcessResult: Codable, Sendable {
         self.stderr = try container.decode(String.self, forKey: .stderr)
         self.stdoutTruncated = try container.decode(Bool.self, forKey: .stdoutTruncated)
         self.stderrTruncated = try container.decode(Bool.self, forKey: .stderrTruncated)
+        self.completedAtMonotonicNanoseconds = nil
     }
 
     func encode(to encoder: any Encoder) throws {

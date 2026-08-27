@@ -950,6 +950,64 @@ extension CaptureActionCommandEndToEndTests {
     }
 
     @Test
+    func `Capture action admits post roll from the runner completion boundary`() async throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "peekaboo-capture-action-post-roll-boundary-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        var command = CaptureActionCommand()
+        command.mode = "frontmost"
+        command.durationLimit = CLIDuration(argument: "2500ms")
+        command.preRoll = CLIDuration(argument: "100ms")
+        command.postRoll = CLIDuration(argument: "100ms")
+        command.path = outputDirectory.path
+        command.command = ["/usr/bin/true"]
+        command.executionDependencies = CaptureActionExecutionDependencies(
+            frameSourceFactory: { _ in DeterministicCaptureActionFrameSource() },
+            deadlineProcessRunner: { childCommand, timeoutSeconds, completionDeadlineNs, onLaunch in
+                let actionStartedNs = DispatchTime.now().uptimeNanoseconds
+                onLaunch(actionStartedNs)
+                let completedAtNs = completionDeadlineNs - 50_000_000
+                let delayedReturnNs = completionDeadlineNs + 20_000_000
+                let nowNs = DispatchTime.now().uptimeNanoseconds
+                if delayedReturnNs > nowNs {
+                    try await Task.sleep(nanoseconds: delayedReturnNs - nowNs)
+                }
+                return CaptureActionProcessResult(
+                    command: childCommand,
+                    processIdentifier: getpid(),
+                    processStartIdentity: processStartIdentity,
+                    exitCode: 0,
+                    timedOut: false,
+                    processGroupCleaned: true,
+                    timeoutSeconds: timeoutSeconds,
+                    durationMs: Int((completedAtNs - actionStartedNs) / 1_000_000),
+                    stdout: "",
+                    stderr: "",
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                    completedAtMonotonicNanoseconds: completedAtNs
+                )
+            },
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
+        command.runtime = self.makeRuntime()
+
+        let result = try await command.executeActionCapture()
+        let receipt = try #require(result.manifest)
+        let manifest = try JSONDecoder().decode(
+            CaptureActionManifest.self,
+            from: Data(contentsOf: URL(fileURLWithPath: receipt.path))
+        )
+
+        #expect(result.success)
+        #expect(manifest.timeline.samplingCompletedMs >= manifest.timeline.actionCompletedMs + 100)
+    }
+
+    @Test
     func `Capture action refuses host provenance drift before publication`() async throws {
         let outputDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-capture-action-host-drift-\(UUID().uuidString)", isDirectory: true)

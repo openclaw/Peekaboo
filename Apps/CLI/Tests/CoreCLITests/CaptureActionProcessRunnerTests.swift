@@ -43,17 +43,17 @@ struct CaptureActionProcessRunnerTests {
     }
 
     @Test
-    func `blocking waiter times out a late exit when timeout task is delayed`() async throws {
+    func `blocking waiter owns timeout when its start is delayed`() async throws {
         let result = try await CaptureActionProcessRunner.run(
-            command: ["/bin/sleep", "0.15"],
+            command: ["/bin/sleep", "30"],
             timeoutSeconds: 0.05,
             signalProcessGroup: { pid, signal in
                 _ = Darwin.kill(-pid, signal)
             },
-            timeoutTaskDelayNanoseconds: 1_000_000_000
+            blockingWaitStartDelayNanoseconds: 1_000_000_000
         )
 
-        #expect(result.exitCode == 0)
+        #expect(result.exitCode == 128 + SIGTERM)
         #expect(result.timedOut)
         #expect(result.processGroupCleaned)
         #expect(!result.succeeded)
@@ -105,6 +105,21 @@ struct CaptureActionProcessRunnerTests {
     }
 
     @Test
+    func `runner completion boundary excludes continuation delay`() async throws {
+        let result = try await CaptureActionProcessRunner.run(
+            command: ["/usr/bin/true"],
+            timeoutSeconds: 2,
+            signalProcessGroup: { pid, signal in
+                _ = Darwin.kill(-pid, signal)
+            },
+            completionResumeDelayNanoseconds: 500_000_000
+        )
+
+        #expect(result.succeeded)
+        #expect(result.durationMs < 250)
+    }
+
+    @Test
     func `runner escalates timeout for TERM ignoring child`() async throws {
         let started = Date()
         let result = try await CaptureActionProcessRunner.run(
@@ -121,7 +136,11 @@ struct CaptureActionProcessRunnerTests {
     func `spawn restores default TERM handling after coordinator installation`() async throws {
         let result = try await CaptureActionProcessRunner.run(
             command: ["/bin/sleep", "30"],
-            timeoutSeconds: 0.1
+            timeoutSeconds: 0.1,
+            signalProcessGroup: { pid, signal in
+                _ = Darwin.kill(-pid, signal)
+            },
+            blockTerminationSignalsBeforeSpawnForTesting: true
         )
 
         #expect(result.timedOut)
@@ -150,7 +169,11 @@ struct CaptureActionProcessRunnerTests {
                 marker.path,
                 ready.path,
             ],
-            timeoutSeconds: 0.5
+            timeoutSeconds: 0.5,
+            signalProcessGroup: { pid, signal in
+                _ = Darwin.kill(-pid, signal)
+            },
+            blockingWaitStartDelayNanoseconds: 1_000_000_000
         )
 
         let elapsed = Date().timeIntervalSince(started)

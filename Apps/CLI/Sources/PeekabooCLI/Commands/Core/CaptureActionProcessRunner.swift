@@ -33,6 +33,7 @@ enum CaptureActionProcessDeadline {
 }
 
 private struct CaptureActionBlockingCompletion: Sendable {
+    let completedAtMonotonicNanoseconds: UInt64
     let processGroupCleaned: Bool
     let exitCode: Int32?
     let stdout: String
@@ -188,6 +189,8 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
     private nonisolated(unsafe) var timedOut = false
     private nonisolated(unsafe) var forceStop = false
     private nonisolated(unsafe) var forceStopRequestedAtNs: UInt64?
+    private nonisolated(unsafe) var terminationRequestedAtNs: UInt64?
+    private nonisolated(unsafe) var terminationKillSent = false
     private nonisolated(unsafe) var didFinishWaiting = false
     private nonisolated(unsafe) var outputFinished = false
 
@@ -295,18 +298,16 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
     /// Uses `WNOHANG` so timeout/cancellation can observe progress. The deadline is
     /// the final abandon time, not the first SIGKILL time.
     ///
-    /// Timeout and cancellation send `SIGTERM` and schedule `SIGKILL` after 500 ms
-    /// (`terminateAfterTimeout` / `terminateProcessGroupForCancellation`). The wait
-    /// loop must not race that grace. For cancellation, the final deadline is also
-    /// capped to cancelTime + ~1.6s so a long configured timeout cannot leave the
-    /// caller blocked near the original deadline if the child survives signals.
+    /// This blocking waiter owns timeout and cancellation escalation so cooperative
+    /// executor load cannot let a detached SIGKILL overtake SIGTERM. The 500 ms grace
+    /// starts when TERM is actually dispatched and remains capped by the one absolute
+    /// completion deadline. Cancellation also shrinks that deadline to ~1.6 seconds.
     nonisolated func waitUntilExit(
         timeoutDeadlineNs: UInt64,
         abandonDeadlineNs: UInt64
     ) -> CaptureActionLeaderWaitOutcome {
         guard let pid = self.currentProcessIdentifier() else { return .abandoned }
 
-        var didSendWaitLoopKill = false
         while true {
             var information = siginfo_t()
             let result = Darwin.waitid(P_PID, id_t(pid), &information, WEXITED | WNOHANG | WNOWAIT)
@@ -326,16 +327,14 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
             }
 
             let nowNs = DispatchTime.now().uptimeNanoseconds
-            // Preserve TERM grace. The timeout/cancellation tasks send the normal SIGKILL
-            // after 500 ms; this is only a redundant last-chance kill before giving up.
             let effectiveDeadlineNs = self.effectiveWaitAbandonDeadline(originalNs: abandonDeadlineNs)
-            let waitLoopKillDeadlineNs = effectiveDeadlineNs > 1_000_000_000
-                ? effectiveDeadlineNs - 1_000_000_000
-                : 0
-            if !didSendWaitLoopKill, nowNs >= waitLoopKillDeadlineNs {
-                didSendWaitLoopKill = true
-                self.killProcessGroup(pid: pid, signal: SIGKILL)
+            if nowNs >= timeoutDeadlineNs {
+                self.requestTimeoutTermination(observedAtNs: nowNs)
             }
+            self.sendTerminationKillIfDue(
+                observedAtNs: nowNs,
+                abandonDeadlineNs: effectiveDeadlineNs
+            )
             if nowNs >= effectiveDeadlineNs {
                 // Child ignored or survived SIGKILL (or is stuck in uninterruptible sleep).
                 // Transfer reaping to an asynchronous poller before unblocking the caller.
@@ -346,26 +345,6 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
 
             usleep(10000)
         }
-    }
-
-    nonisolated func terminateAfterTimeout(deadlineNs: UInt64, abandonDeadlineNs: UInt64) async {
-        do {
-            let nowNs = DispatchTime.now().uptimeNanoseconds
-            try await Task.sleep(nanoseconds: deadlineNs > nowNs ? deadlineNs - nowNs : 0)
-        } catch {
-            return
-        }
-        guard self.requestTimeoutTermination() else { return }
-        let graceNs = UInt64(CaptureActionProcessRunner.processGroupTerminationGraceSeconds * 1_000_000_000)
-        let (unboundedKillDeadlineNs, overflowed) = deadlineNs.addingReportingOverflow(graceNs)
-        let killDeadlineNs = min(overflowed ? UInt64.max : unboundedKillDeadlineNs, abandonDeadlineNs)
-        do {
-            let nowNs = DispatchTime.now().uptimeNanoseconds
-            try await Task.sleep(nanoseconds: killDeadlineNs > nowNs ? killDeadlineNs - nowNs : 0)
-        } catch {
-            return
-        }
-        self.killTimedOutProcessGroup()
     }
 
     nonisolated func wasTimedOut() -> Bool {
@@ -414,11 +393,11 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         timeoutDeadlineNs: UInt64,
         abandonDeadlineNs: UInt64
     ) -> CaptureActionBlockingCompletion {
-        let effectiveAbandonDeadlineNs = self.effectiveWaitAbandonDeadline(originalNs: abandonDeadlineNs)
         let waitOutcome = self.waitUntilExit(
             timeoutDeadlineNs: timeoutDeadlineNs,
-            abandonDeadlineNs: effectiveAbandonDeadlineNs
+            abandonDeadlineNs: abandonDeadlineNs
         )
+        let effectiveAbandonDeadlineNs = self.effectiveWaitAbandonDeadline(originalNs: abandonDeadlineNs)
         let processGroupCleaned: Bool
         let exitCode: Int32?
         switch waitOutcome {
@@ -433,6 +412,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         }
         let output = self.finishOutput()
         return CaptureActionBlockingCompletion(
+            completedAtMonotonicNanoseconds: DispatchTime.now().uptimeNanoseconds,
             processGroupCleaned: processGroupCleaned,
             exitCode: exitCode,
             stdout: output.stdout.0,
@@ -440,20 +420,6 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
             stdoutTruncated: output.stdout.1,
             stderrTruncated: output.stderr.1
         )
-    }
-
-    nonisolated func killTimedOutProcessGroup() {
-        self.lock.lock()
-        guard self.timedOut,
-              !self.didFinishWaiting,
-              self.processReleased,
-              let pid = self.processIdentifier
-        else {
-            self.lock.unlock()
-            return
-        }
-        self.killProcessGroup(pid: pid, signal: SIGKILL)
-        self.lock.unlock()
     }
 
     /// A successful direct child is not a complete action while members of its process group
@@ -500,34 +466,18 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
             return
         }
         self.forceStop = true
-        if self.forceStopRequestedAtNs == nil {
-            self.forceStopRequestedAtNs = DispatchTime.now().uptimeNanoseconds
-        }
+        let requestedAtNs = DispatchTime.now().uptimeNanoseconds
+        self.forceStopRequestedAtNs = self.forceStopRequestedAtNs ?? requestedAtNs
         let pid = self.processIdentifier
         let processReleased = self.processReleased
         guard processReleased, let pid else {
             self.lock.unlock()
             return
         }
-        self.killProcessGroup(pid: pid, signal: SIGTERM)
-        self.lock.unlock()
-        Task.detached {
-            do {
-                try await Task.sleep(nanoseconds: 500_000_000)
-            } catch {
-                return
-            }
-            self.killCancelledProcessGroupIfActive(pid: pid)
+        if self.terminationRequestedAtNs == nil {
+            self.terminationRequestedAtNs = requestedAtNs
+            self.killProcessGroup(pid: pid, signal: SIGTERM)
         }
-    }
-
-    private nonisolated func killCancelledProcessGroupIfActive(pid: pid_t) {
-        self.lock.lock()
-        guard !self.didFinishWaiting, self.processIdentifier == pid else {
-            self.lock.unlock()
-            return
-        }
-        self.killProcessGroup(pid: pid, signal: SIGKILL)
         self.lock.unlock()
     }
 
@@ -597,7 +547,12 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
             posix_spawnattr_setsigdefault(&attributes, &defaultSignals),
             "set child default signals"
         )
-        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_SETSIGDEF)
+        var emptySignalMask = sigset_t()
+        try Self.check(sigemptyset(&emptySignalMask), "initialize child signal mask")
+        try Self.check(posix_spawnattr_setsigmask(&attributes, &emptySignalMask), "clear child signal mask")
+        let flags = Int16(
+            POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
+        )
         try Self.check(posix_spawnattr_setflags(&attributes, flags), "set spawn flags")
         try Self.check(posix_spawnattr_setpgroup(&attributes, 0), "set process group")
 
@@ -678,16 +633,38 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         }
     }
 
-    private nonisolated func requestTimeoutTermination() -> Bool {
+    private nonisolated func requestTimeoutTermination(observedAtNs: UInt64) {
         self.lock.lock()
         defer { self.lock.unlock() }
-        // `markFinishedWaiting()` takes this same lock before the leader can be reaped.
-        // Keep the first timeout signal under it so a delayed timeout task either signals
-        // the still-custodied generation or observes the terminal latch and does nothing.
-        guard let pid = self.processIdentifier, !self.didFinishWaiting else { return false }
+        guard !self.forceStop,
+              !self.timedOut,
+              let pid = self.processIdentifier,
+              self.processReleased,
+              !self.didFinishWaiting
+        else { return }
         self.timedOut = true
+        self.terminationRequestedAtNs = observedAtNs
         self.killProcessGroup(pid: pid, signal: SIGTERM)
-        return true
+    }
+
+    private nonisolated func sendTerminationKillIfDue(
+        observedAtNs: UInt64,
+        abandonDeadlineNs: UInt64
+    ) {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        guard !self.terminationKillSent,
+              let requestedAtNs = self.terminationRequestedAtNs,
+              let pid = self.processIdentifier,
+              self.processReleased,
+              !self.didFinishWaiting
+        else { return }
+        let graceNs = UInt64(CaptureActionProcessRunner.processGroupTerminationGraceSeconds * 1_000_000_000)
+        let (unboundedKillDeadlineNs, overflowed) = requestedAtNs.addingReportingOverflow(graceNs)
+        let killDeadlineNs = min(overflowed ? UInt64.max : unboundedKillDeadlineNs, abandonDeadlineNs)
+        guard observedAtNs >= killDeadlineNs else { return }
+        self.terminationKillSent = true
+        self.killProcessGroup(pid: pid, signal: SIGKILL)
     }
 
     private nonisolated func currentProcessIdentifier() -> pid_t? {
@@ -879,7 +856,9 @@ enum CaptureActionProcessRunner {
         processStartIdentity: @escaping @Sendable (pid_t) -> UInt64? = {
             SystemIdentityResolver.processStartIdentity($0)
         },
-        timeoutTaskDelayNanoseconds: UInt64 = 0
+        blockingWaitStartDelayNanoseconds: UInt64 = 0,
+        blockTerminationSignalsBeforeSpawnForTesting: Bool = false,
+        completionResumeDelayNanoseconds: UInt64 = 0
     ) async throws -> CaptureActionProcessResult {
         guard timeoutSeconds.isFinite,
               timeoutSeconds >= 0,
@@ -929,34 +908,24 @@ enum CaptureActionProcessRunner {
 
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            try box.start(command: command)
+            try self.startProcessBox(
+                box,
+                command: command,
+                blockTerminationSignalsForTesting: blockTerminationSignalsBeforeSpawnForTesting
+            )
             defer { box.terminateUnreleasedIfNeeded() }
             try Task.checkCancellation()
             let startedNs = try box.release(before: effectiveTimeoutDeadlineNs)
             onLaunch(startedNs)
 
-            let timeoutTask = Task.detached {
-                if timeoutTaskDelayNanoseconds > 0 {
-                    do {
-                        try await Task.sleep(nanoseconds: timeoutTaskDelayNanoseconds)
-                    } catch {
-                        return
-                    }
-                }
-                await box.terminateAfterTimeout(
-                    deadlineNs: effectiveTimeoutDeadlineNs,
-                    abandonDeadlineNs: effectiveCompletionDeadlineNs
-                )
-            }
-
             let completion = await self.completeBlockingLifecycle(
                 box: box,
                 timeoutDeadlineNs: effectiveTimeoutDeadlineNs,
-                abandonDeadlineNs: effectiveCompletionDeadlineNs
+                abandonDeadlineNs: effectiveCompletionDeadlineNs,
+                startDelayNanoseconds: blockingWaitStartDelayNanoseconds,
+                resumeDelayNanoseconds: completionResumeDelayNanoseconds
             )
-            timeoutTask.cancel()
-            await timeoutTask.value
-            let completedNs = DispatchTime.now().uptimeNanoseconds
+            let completedNs = completion.completedAtMonotonicNanoseconds
             let durationMs = Int(completedNs >= startedNs ? (completedNs - startedNs) / 1_000_000 : 0)
             let launchIdentity = box.launchIdentity()
 
@@ -983,7 +952,8 @@ enum CaptureActionProcessRunner {
                 stdout: completion.stdout,
                 stderr: completion.stderr,
                 stdoutTruncated: completion.stdoutTruncated,
-                stderrTruncated: completion.stderrTruncated
+                stderrTruncated: completion.stderrTruncated,
+                completedAtMonotonicNanoseconds: completedNs
             )
         } onCancel: {
             box.terminateProcessGroupForCancellation()
@@ -993,15 +963,55 @@ enum CaptureActionProcessRunner {
     private nonisolated static func completeBlockingLifecycle(
         box: CaptureActionProcessBox,
         timeoutDeadlineNs: UInt64,
-        abandonDeadlineNs: UInt64
+        abandonDeadlineNs: UInt64,
+        startDelayNanoseconds: UInt64,
+        resumeDelayNanoseconds: UInt64
     ) async -> CaptureActionBlockingCompletion {
         await withCheckedContinuation { continuation in
             self.leaderWaitQueue.async {
-                continuation.resume(returning: box.completeBlockingLifecycle(
+                if startDelayNanoseconds > 0 {
+                    usleep(useconds_t(min(startDelayNanoseconds / 1000, UInt64(useconds_t.max))))
+                }
+                let completion = box.completeBlockingLifecycle(
                     timeoutDeadlineNs: timeoutDeadlineNs,
                     abandonDeadlineNs: abandonDeadlineNs
-                ))
+                )
+                if resumeDelayNanoseconds > 0 {
+                    usleep(useconds_t(min(resumeDelayNanoseconds / 1000, UInt64(useconds_t.max))))
+                }
+                continuation.resume(returning: completion)
             }
+        }
+    }
+
+    private nonisolated static func startProcessBox(
+        _ box: CaptureActionProcessBox,
+        command: [String],
+        blockTerminationSignalsForTesting: Bool
+    ) throws {
+        guard blockTerminationSignalsForTesting else {
+            try box.start(command: command)
+            return
+        }
+
+        var blockedSignals = sigset_t()
+        var previousSignals = sigset_t()
+        try self.checkPOSIX(sigemptyset(&blockedSignals), "initialize test signal mask")
+        try self.checkPOSIX(sigaddset(&blockedSignals, SIGINT), "add test SIGINT mask")
+        try self.checkPOSIX(sigaddset(&blockedSignals, SIGTERM), "add test SIGTERM mask")
+        try self.checkPOSIX(
+            pthread_sigmask(SIG_BLOCK, &blockedSignals, &previousSignals),
+            "block parent termination signals for testing"
+        )
+        defer { _ = pthread_sigmask(SIG_SETMASK, &previousSignals, nil) }
+        try box.start(command: command)
+    }
+
+    private nonisolated static func checkPOSIX(_ code: Int32, _ operation: String) throws {
+        guard code == 0 else {
+            throw CaptureActionProcessLaunchError(
+                message: "\(operation) failed: \(String(cString: strerror(code)))"
+            )
         }
     }
 }

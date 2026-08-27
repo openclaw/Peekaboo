@@ -81,12 +81,14 @@ long-running session task. A live capture deadline can also end an in-flight fra
 cancellation-insensitive capture call cannot defer the action until after the requested session duration.
 
 Peekaboo starts the process-group leader suspended, captures and revalidates its exact process generation, installs signal
-forwarding, and only then releases command code. If generation evidence is unavailable, no child code runs. Blocking
+forwarding, clears inherited termination-signal masks, restores default SIGINT/SIGTERM dispositions, and only then
+releases command code. If generation evidence is unavailable, no child code runs. Blocking
 leader observation runs outside Swift's cooperative executor so concurrent actions cannot starve cancellation or timeout
 work. After the direct child exits Peekaboo gives remaining members a bounded TERM grace,
 escalates to KILL, and verifies that the group is gone before post-roll completion, artifact validation, or manifest
 publication. Startup, child timeout, TERM/KILL escalation, and descendant drain share the capture's one absolute
-deadline; no cleanup phase creates a fresh relative wait. A requested `--video-out` must be absent before the child can
+deadline; one blocking waiter owns escalation, and post-roll uses its recorded completion boundary so actor scheduling
+does not create or discard capture time. No cleanup phase creates a fresh relative wait. A requested `--video-out` must be absent before the child can
 run, and final publication still uses an exclusive no-replace operation to close the later race. `action.json` then binds
 the command digest and argument count without persisting raw child arguments,
 along with monotonic action offsets, separate focus/child receipts and their canonical aggregate when representable,

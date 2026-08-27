@@ -56,6 +56,10 @@ include immutable provenance. Dirty or unverifiable debug builds remain availabl
 release builds and debug builds with `PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1` refuse that source state.
 `peekaboo --version --json` exposes the canonical 40-hex `sourceCommit`; background certification requires it and
 pins one exact Bridge socket for remote execution, requiring that host to advertise the same source commit.
+Raw builds remain available for ordinary CLI development, but `capture action` is deliberately stricter because its
+manifest claims end-to-end artifact and execution-host provenance around an arbitrary child command. That subcommand
+requires either an Apple-anchored, source-stamped local executable or an authenticated selected Bridge host; an
+unstamped local build refuses before focus or child dispatch instead of publishing a non-certified manifest.
 
 ## Verify
 
