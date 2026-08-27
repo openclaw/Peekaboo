@@ -43,6 +43,7 @@ public struct BrowserMCPStatus: Sendable {
     public let connectionReceipt: BrowserMCPConnectionReceipt?
     public let providerSessionEpoch: BrowserMCPProviderSessionEpoch?
     public let error: String?
+    public let observation: BrowserMCPStatusObservation
 
     public init(
         isConnected: Bool,
@@ -50,7 +51,8 @@ public struct BrowserMCPStatus: Sendable {
         detectedBrowsers: [DetectedBrowser],
         connectionReceipt: BrowserMCPConnectionReceipt? = nil,
         providerSessionEpoch: BrowserMCPProviderSessionEpoch? = nil,
-        error: String? = nil)
+        error: String? = nil,
+        observation: BrowserMCPStatusObservation = .confirmed)
     {
         self.isConnected = isConnected
         self.toolCount = toolCount
@@ -58,7 +60,13 @@ public struct BrowserMCPStatus: Sendable {
         self.connectionReceipt = connectionReceipt
         self.providerSessionEpoch = providerSessionEpoch
         self.error = error
+        self.observation = observation
     }
+}
+
+public enum BrowserMCPStatusObservation: String, Sendable {
+    case confirmed
+    case indeterminate
 }
 
 public struct DetectedBrowser: Sendable, Equatable {

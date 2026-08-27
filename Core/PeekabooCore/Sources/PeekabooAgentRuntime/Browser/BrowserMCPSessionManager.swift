@@ -195,6 +195,15 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 }
                 return inspection.status
             }
+        } catch let error where Self.isCancellation(error) {
+            return BrowserMCPStatus(
+                isConnected: false,
+                toolCount: 0,
+                detectedBrowsers: self.detectedBrowsers(channel),
+                connectionReceipt: self.connectionReceipt,
+                providerSessionEpoch: self.providerSessionEpoch,
+                error: CancellationError().localizedDescription,
+                observation: .indeterminate)
         } catch {
             return BrowserMCPStatus(
                 isConnected: false,
@@ -246,14 +255,16 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     connectionReceipt: receipt,
                     providerSessionEpoch: providerSessionEpoch),
                 wasCancelled: false)
-        } catch is CancellationError {
+        } catch let error where Self.isCancellation(error) {
             return BrowserMCPStatusInspection(
                 status: BrowserMCPStatus(
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
-                    connectionReceipt: nil,
-                    error: CancellationError().localizedDescription),
+                    connectionReceipt: receipt,
+                    providerSessionEpoch: providerSessionEpoch,
+                    error: CancellationError().localizedDescription,
+                    observation: .indeterminate),
                 wasCancelled: true)
         } catch {
             await self.clearConnection()
@@ -301,7 +312,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                             browserURL: browserURL,
                             attempt: attempt,
                             reserveTarget: reserveTarget)
-                    } catch is CancellationError where !attempt.state.didStartAnyDispatch {
+                    } catch let error where Self.isCancellation(error) && !attempt.state.didStartAnyDispatch {
                         throw Self.preDispatchConnectionFailure(CancellationError())
                     } catch BrowserMCPConnectionError.targetLocked {
                         throw BrowserMCPConnectionError.targetLocked
@@ -319,7 +330,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             }
         } catch let failure as DesktopActionFailure {
             throw failure
-        } catch is CancellationError where !attempt.state.didStartAnyDispatch {
+        } catch let error where Self.isCancellation(error) && !attempt.state.didStartAnyDispatch {
             throw Self.preDispatchConnectionFailure(CancellationError())
         } catch BrowserMCPConnectionError.targetLocked {
             throw BrowserMCPConnectionError.targetLocked
@@ -420,7 +431,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             throw error
         } catch {
             await self.clearConnection()
-            if error is CancellationError, !attempt.state.didStartAnyDispatch {
+            if Self.isCancellation(error), !attempt.state.didStartAnyDispatch {
                 throw Self.preDispatchConnectionFailure(CancellationError())
             }
             if attempt.state.didStartPermissionDispatch || connectionAttemptDispatched {
@@ -530,7 +541,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     expectedProviderSessionEpoch: nil,
                     connectionPolicy: .requireExistingLiveReceipt)
             }
-        } catch is CancellationError {
+        } catch let error where Self.isCancellation(error) {
             throw Self.preDispatchFailure(CancellationError())
         }
     }
@@ -575,7 +586,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
                     connectionPolicy: .requireExistingLiveReceipt)
             }
-        } catch is CancellationError {
+        } catch let error where Self.isCancellation(error) {
             throw Self.preDispatchFailure(CancellationError())
         }
     }
@@ -924,6 +935,17 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private static func errorDescription(_ error: any Error) -> String {
         (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    private static func isCancellation(_ error: any Error) -> Bool {
+        if Task.isCancelled || error is CancellationError {
+            return true
+        }
+        if (error as? URLError)?.code == .cancelled {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     private func execute(_ call: BrowserMCPMappedCall) async throws -> ToolResponse {

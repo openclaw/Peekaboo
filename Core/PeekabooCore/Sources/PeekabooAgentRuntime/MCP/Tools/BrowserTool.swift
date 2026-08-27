@@ -575,8 +575,15 @@ public struct BrowserTool: MCPTool {
         outcome: DesktopActionOutcome? = nil) throws -> ToolResponse
     {
         var lines = [headline, ""]
-        lines.append("Connected: \(status.isConnected ? "yes" : "no")")
-        lines.append("Tools: \(status.toolCount)")
+        let connected = switch status.observation {
+        case .confirmed: status.isConnected ? "yes" : "no"
+        case .indeterminate: "unknown"
+        }
+        lines.append("Connected: \(connected)")
+        if status.observation == .indeterminate {
+            lines.append("Observation: indeterminate; exact connection fields are last-confirmed identity only.")
+        }
+        lines.append("Tools: \(status.observation == .confirmed ? String(status.toolCount) : "unknown")")
 
         if status.detectedBrowsers.isEmpty {
             lines.append("Detected Chrome: none")
@@ -607,7 +614,7 @@ public struct BrowserTool: MCPTool {
             }
         }
 
-        if !status.isConnected {
+        if status.observation == .confirmed, !status.isConnected {
             lines.append("")
             lines.append(contentsOf: self.permissionInstructions())
         }
@@ -621,8 +628,9 @@ public struct BrowserTool: MCPTool {
 
     private func statusMetaFields(_ status: BrowserMCPStatus) -> [String: Value] {
         var meta: [String: Value] = [
-            "connected": .bool(status.isConnected),
-            "tool_count": .int(status.toolCount),
+            "connected": status.observation == .confirmed ? .bool(status.isConnected) : .null,
+            "status_observation": .string(status.observation.rawValue),
+            "tool_count": status.observation == .confirmed ? .int(status.toolCount) : .null,
             "browser_count": .int(status.detectedBrowsers.count),
             "channels": .array(status.detectedBrowsers.map { .string($0.channel.rawValue) }),
         ]

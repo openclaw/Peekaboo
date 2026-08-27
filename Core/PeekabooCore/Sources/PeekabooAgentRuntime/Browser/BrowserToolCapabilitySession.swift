@@ -292,8 +292,11 @@ actor BrowserToolCapabilitySession {
     }
 
     func observeStatus(_ status: BrowserMCPStatus) {
-        guard status.isConnected,
-              let receipt = status.connectionReceipt,
+        if status.observation == .confirmed, !status.isConnected {
+            self.invalidateAll()
+            return
+        }
+        guard let receipt = status.connectionReceipt,
               let providerSessionEpoch = status.providerSessionEpoch
         else {
             self.invalidateAll()

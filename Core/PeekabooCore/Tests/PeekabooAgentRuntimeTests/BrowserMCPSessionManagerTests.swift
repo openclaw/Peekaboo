@@ -1046,8 +1046,8 @@ struct BrowserMCPSessionManagerTests {
         await root.endAuthenticatedSession(named: "agent:second")
     }
 
-    @Test
-    func `cancelled status inspection retains live target ownership`() async throws {
+    @Test(arguments: [false, true])
+    func `cancelled status inspection retains live target ownership`(transportCancellation: Bool) async throws {
         let firstProvider = MockBrowserMCPManager()
         let secondProvider = MockBrowserMCPManager()
         let endpoints = EndpointMap()
@@ -1063,12 +1063,15 @@ struct BrowserMCPSessionManagerTests {
         let root = BrowserMCPService(authenticatedSessionPool: pool)
         let first = try #require(root.authenticatedSession(named: "agent:first"))
         let second = try #require(root.authenticatedSession(named: "agent:second"))
-        _ = try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
-        await endpoints.cancelResolution()
+        let connected = try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        await endpoints.cancelResolution(asTransportError: transportCancellation)
 
         let cancelledStatus = await first.status(channel: nil)
 
         #expect(!cancelledStatus.isConnected)
+        #expect(cancelledStatus.connectionReceipt == connected.connectionReceipt)
+        #expect(cancelledStatus.providerSessionEpoch == connected.providerSessionEpoch)
+        #expect(cancelledStatus.observation == .indeterminate)
         await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await second.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
         }
@@ -3329,17 +3332,22 @@ private final class BrowserListBox: @unchecked Sendable {
 private actor EndpointMap {
     private var endpoints: [Int: String] = [:]
     private var shouldCancelResolution = false
+    private var shouldUseTransportCancellation = false
 
     func set(_ browserID: String, port: Int) {
         self.endpoints[port] = browserID
     }
 
-    func cancelResolution() {
+    func cancelResolution(asTransportError: Bool = false) {
         self.shouldCancelResolution = true
+        self.shouldUseTransportCancellation = asTransportError
     }
 
     func resolve(_ url: String) throws -> BrowserMCPDevToolsEndpoint {
         if self.shouldCancelResolution {
+            if self.shouldUseTransportCancellation {
+                throw URLError(.cancelled)
+            }
             throw CancellationError()
         }
         guard let port = URL(string: url)?.port,

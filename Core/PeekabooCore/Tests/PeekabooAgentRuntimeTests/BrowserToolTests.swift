@@ -1079,7 +1079,7 @@ private final class ConnectionPolicyBrowserMCPClient: BrowserMCPClientProviding,
 }
 
 @MainActor
-private final class MockBrowserMCPClient: BrowserMCPClientProviding, @unchecked Sendable {
+final class MockBrowserMCPClient: BrowserMCPClientProviding, @unchecked Sendable {
     struct ExecutedTool {
         let toolName: String
         let arguments: [String: Any]

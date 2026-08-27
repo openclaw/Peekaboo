@@ -190,6 +190,44 @@ struct BrowserToolCapabilitySessionTests {
     }
 
     @Test
+    func `indeterminate status invalidates refs when exact binding is missing or changed`() async throws {
+        let receipt = Self.receipt()
+        let statuses = [
+            BrowserMCPStatus(
+                isConnected: false,
+                toolCount: 0,
+                detectedBrowsers: [],
+                observation: .indeterminate),
+            BrowserMCPStatus(
+                isConnected: false,
+                toolCount: 0,
+                detectedBrowsers: [],
+                connectionReceipt: receipt,
+                providerSessionEpoch: BrowserMCPProviderSessionEpoch(),
+                observation: .indeterminate),
+        ]
+
+        for status in statuses {
+            let session = BrowserToolCapabilitySession()
+            let listed = try await session.project(
+                Self.pageResponse(id: 17, url: "https://example.test/"),
+                calls: Self.calls("list_pages"),
+                resolved: nil,
+                sessionBinding: Self.binding(receipt))
+            let pageReference = try Self.pageReference(from: listed)
+
+            await session.observeStatus(status)
+
+            await #expect(throws: BrowserToolCapabilityError.stalePageReference) {
+                _ = try await session.resolve(
+                    action: .snapshot,
+                    arguments: ToolArguments(raw: ["page_id": pageReference]),
+                    sessionBinding: Self.binding(receipt))
+            }
+        }
+    }
+
+    @Test
     func `hover invalidates the snapshot namespace after provider entry`() async throws {
         let session = BrowserToolCapabilitySession()
         let receipt = Self.receipt()

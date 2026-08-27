@@ -60,6 +60,66 @@ struct BrowserToolCapabilityIntegrationTests {
     }
 
     @Test
+    func `indeterminate status retains opaque refs until confirmed disconnect`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let snapshot = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try Self.elementReference(from: snapshot)
+        let connected = await client.status(channel: nil)
+        client.statusResponses = [BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: [],
+            connectionReceipt: connected.connectionReceipt,
+            providerSessionEpoch: connected.providerSessionEpoch,
+            error: CancellationError().localizedDescription,
+            observation: .indeterminate)]
+        let sequencesBeforeClick = client.sequences.count
+
+        let clicked = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": pageReference,
+                "uid": elementReference,
+            ]))
+
+        #expect(!clicked.isError)
+        #expect(client.sequences.count == sequencesBeforeClick + 1)
+        #expect(client.sequences.last?.last?.toolName == "click")
+        let recordedPreflight = try #require(client.elementPreflights.last)
+        let preflight = try #require(recordedPreflight)
+        #expect(preflight.providerUIDs == ["1_0"])
+
+        client.statusResponses = [BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: [])]
+        _ = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "status"]))
+        let sequencesBeforeStalePage = client.sequences.count
+        let stalePage = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        #expect(stalePage.isError)
+        #expect(client.sequences.count == sequencesBeforeStalePage)
+    }
+
+    @Test
     func `text only daemon snapshot refuses instead of minting ambiguous element refs`() async throws {
         let client = CapabilityBrowserMCPClient(structuredResponses: false)
         let context = Self.context(client: client)
@@ -966,6 +1026,7 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
     let providerSessionEpoch = BrowserMCPProviderSessionEpoch()
     private(set) var sequences: [[BrowserMCPMappedCall]] = []
     private(set) var elementPreflights: [BrowserMCPElementPreflight?] = []
+    var statusResponses: [BrowserMCPStatus] = []
     var executeHandler: (@MainActor (String) async -> ToolResponse)?
 
     init(structuredResponses: Bool = true, providesEpoch: Bool = true) {
@@ -974,6 +1035,13 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
     }
 
     func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        if !self.statusResponses.isEmpty {
+            return self.statusResponses.removeFirst()
+        }
+        return self.connectedStatus()
+    }
+
+    private func connectedStatus() -> BrowserMCPStatus {
         BrowserMCPStatus(
             isConnected: true,
             toolCount: 52,
