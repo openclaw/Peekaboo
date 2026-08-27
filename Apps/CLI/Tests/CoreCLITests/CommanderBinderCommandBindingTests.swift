@@ -159,7 +159,7 @@ struct CommanderBinderCommandBindingTests {
             options: [
                 "to": ["Safari"],
             ],
-            flags: ["verify"]
+            flags: ["verify", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.SwitchSubcommand.self,
@@ -168,6 +168,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.to == "Safari")
         #expect(command.verify == true)
         #expect(command.cycle == false)
+        #expect(command.foreground == true)
     }
 
     @Test

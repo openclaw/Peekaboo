@@ -270,24 +270,26 @@ struct CommanderBinderAppConfigTests {
         let parsed = ParsedValues(
             positional: ["Slack"],
             options: [:],
-            flags: ["cycle"]
+            flags: ["foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.SwitchSubcommand.self,
             parsedValues: parsed
         )
         #expect(command.to == "Slack")
-        #expect(command.cycle == true)
+        #expect(command.cycle == false)
+        #expect(command.foreground == true)
     }
 
     @Test
     func `App focus accepts positional app`() throws {
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.FocusSubcommand.self,
-            parsedValues: ParsedValues(positional: ["Safari"], options: [:], flags: [])
+            parsedValues: ParsedValues(positional: ["Safari"], options: [:], flags: ["foreground"])
         )
         #expect(command.app == "Safari")
         #expect(command.pid == nil)
+        #expect(command.foreground == true)
     }
 
     @Test
