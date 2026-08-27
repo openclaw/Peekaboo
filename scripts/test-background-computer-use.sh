@@ -513,6 +513,38 @@ certification_phase_identity() {
     printf '%s\n' "background"
 }
 
+resolve_delivery_mode() {
+    local result_file="$1"
+    jq -c '
+        (.outcome? // null) as $outcome |
+        (.data? // null) as $data |
+        (($outcome | type) == "object" and ($outcome | has("delivery_mode"))) as $canonicalPresent |
+        (if $canonicalPresent then $outcome.delivery_mode else null end) as $canonical |
+        ([
+            if (($data | type) == "object" and ($data | has("deliveryMode"))) then
+                $data.deliveryMode
+            else empty end,
+            if (($data | type) == "object" and ($data | has("delivery_mode"))) then
+                $data.delivery_mode
+            else empty end
+        ]) as $legacy |
+        if (
+            ($outcome == null or ($outcome | type) == "object") and
+            (if $canonicalPresent then
+                ($canonical == "background" or $canonical == "foreground")
+            else true end) and
+            all($legacy[]; . == "background" or . == "foreground") and
+            (($legacy | unique | length) <= 1) and
+            (($legacy | length) == 0 or
+                ($canonicalPresent and all($legacy[]; . == $canonical)))
+        ) then
+            $canonical
+        else
+            error("conflicting or invalid canonical and legacy delivery modes")
+        end
+    ' "$result_file"
+}
+
 monitor_sequence() {
     jq -er '
         .sequence |
@@ -949,6 +981,36 @@ if $SELF_TEST_ONLY; then
        [[ "$(certification_phase_identity click --on B1 --foreground)" != "foreground" ]] || \
        [[ "$(certification_phase_identity click --foreground=true --on B1)" != "foreground" ]]; then
         echo "Certification phase identity self-test failed." >&2
+        exit 1
+    fi
+    DELIVERY_CANONICAL_SELF_TEST="$ARTIFACT_ROOT/delivery-canonical-self-test.json"
+    DELIVERY_MATCHING_SELF_TEST="$ARTIFACT_ROOT/delivery-matching-self-test.json"
+    DELIVERY_CONFLICT_SELF_TEST="$ARTIFACT_ROOT/delivery-conflict-self-test.json"
+    DELIVERY_NULL_CONFLICT_SELF_TEST="$ARTIFACT_ROOT/delivery-null-conflict-self-test.json"
+    DELIVERY_LEGACY_ONLY_SELF_TEST="$ARTIFACT_ROOT/delivery-legacy-only-self-test.json"
+    DELIVERY_LEGACY_CONFLICT_SELF_TEST="$ARTIFACT_ROOT/delivery-legacy-conflict-self-test.json"
+    printf '%s\n' '{"outcome":{"delivery_mode":"background"},"data":{}}' \
+        > "$DELIVERY_CANONICAL_SELF_TEST"
+    printf '%s\n' \
+        '{"outcome":{"delivery_mode":"background"},"data":{"deliveryMode":"background","delivery_mode":"background"}}' \
+        > "$DELIVERY_MATCHING_SELF_TEST"
+    printf '%s\n' \
+        '{"outcome":{"delivery_mode":"background"},"data":{"deliveryMode":"foreground"}}' \
+        > "$DELIVERY_CONFLICT_SELF_TEST"
+    printf '%s\n' \
+        '{"outcome":{"delivery_mode":"background"},"data":{"deliveryMode":null}}' \
+        > "$DELIVERY_NULL_CONFLICT_SELF_TEST"
+    printf '%s\n' '{"data":{"deliveryMode":"background"}}' > "$DELIVERY_LEGACY_ONLY_SELF_TEST"
+    printf '%s\n' \
+        '{"data":{"deliveryMode":"background","delivery_mode":"foreground"}}' \
+        > "$DELIVERY_LEGACY_CONFLICT_SELF_TEST"
+    if [[ "$(resolve_delivery_mode "$DELIVERY_CANONICAL_SELF_TEST")" != '"background"' ]] || \
+       [[ "$(resolve_delivery_mode "$DELIVERY_MATCHING_SELF_TEST")" != '"background"' ]] || \
+       resolve_delivery_mode "$DELIVERY_CONFLICT_SELF_TEST" >/dev/null 2>&1 || \
+       resolve_delivery_mode "$DELIVERY_NULL_CONFLICT_SELF_TEST" >/dev/null 2>&1 || \
+       resolve_delivery_mode "$DELIVERY_LEGACY_ONLY_SELF_TEST" >/dev/null 2>&1 || \
+       resolve_delivery_mode "$DELIVERY_LEGACY_CONFLICT_SELF_TEST" >/dev/null 2>&1; then
+        echo "Canonical delivery-mode resolution self-test failed." >&2
         exit 1
     fi
     APPLICATIONS_BEFORE_SELF_TEST="$ARTIFACT_ROOT/applications-before-self-test.json"
@@ -2296,7 +2358,12 @@ run_case() {
     if jq -e 'type == "object"' "$result" >/dev/null 2>&1; then
         result_success="$(jq -c 'if has("success") then .success else null end' "$result")"
         effect="$(jq -c '.effect // null' "$result")"
-        delivery_mode="$(jq -c '.data.deliveryMode // .data.delivery_mode // null' "$result")"
+        if ! delivery_mode="$(resolve_delivery_mode "$result" 2>/dev/null)"; then
+            result_contract=false
+            delivery_mode=null
+            record_failure "$name result carried conflicting canonical and legacy delivery modes"
+            failed=true
+        fi
         error_code="$(jq -c '.error.code // null' "$result")"
     else
         result_contract=false
@@ -2560,15 +2627,37 @@ assert_case_result_contains() {
     record_case_oracle "$case_name" "$oracle" true
 }
 
+assert_predispatch_foreground_refusal() {
+    local case_name="$1"
+    local result_file="$2"
+    if ! jq -e '
+        .success == false and
+        .effect == "refused" and
+        .error.code == "VALIDATION_ERROR" and
+        .outcome.state == "refused" and
+        .outcome.effect == "refused" and
+        .outcome.dispatch_state == "none" and
+        .outcome.refusal_reason == "foreground_consent_required" and
+        (.outcome.delivery_mode // null) == null
+    ' "$result_file" >/dev/null; then
+        record_case_oracle "$case_name" predispatch_refusal false || true
+        record_failure "$case_name did not expose a canonical zero-dispatch foreground-consent refusal"
+        return 1
+    fi
+    record_case_oracle "$case_name" predispatch_refusal true
+}
+
 assert_background_delivery() {
     local name="$1"
     local result_file="$2"
-    if ! jq -e '.data.deliveryMode == "background"' "$result_file" >/dev/null; then
-        record_last_case_oracle background_delivery false || true
+    local delivery_mode
+    if ! delivery_mode="$(resolve_delivery_mode "$result_file" 2>/dev/null)" || \
+       [[ "$delivery_mode" != '"background"' ]]; then
+        record_case_oracle "$name" background_delivery false || true
         record_failure "$name did not report background delivery"
         return 1
     fi
-    record_last_case_oracle background_delivery true
+    record_case_oracle "$name" background_delivery true
 }
 
 assert_case_artifacts() {
@@ -2753,6 +2842,23 @@ assert_playground_log_delta() {
         return 1
     fi
     record_case_oracle "$case_name" playground_log_delta true
+}
+
+assert_playground_log_unchanged() {
+    local case_name="$1"
+    local before="$2"
+    local after="$3"
+    local expected="$4"
+    local before_count
+    local after_count
+    before_count="$(playground_log_count "$before" "$expected")"
+    after_count="$(playground_log_count "$after" "$expected")"
+    if [[ "$after_count" -ne "$before_count" ]]; then
+        record_case_oracle "$case_name" playground_log_unchanged false || true
+        record_failure "$case_name changed the PID-scoped Playground log despite pre-dispatch refusal"
+        return 1
+    fi
+    record_case_oracle "$case_name" playground_log_unchanged true
 }
 
 last_playground_scroll_offset() {
@@ -3093,23 +3199,26 @@ capture_playground_log "$CLICK_LOG_AFTER_QUERY"
 assert_playground_log_delta click-query "$CLICK_LOG_AFTER_ID" "$CLICK_LOG_AFTER_QUERY" \
     "Clicked 'Secondary Button'" || true
 
-run_checked_case action unchanged success \
+run_checked_case action unchanged failure \
     action AXPress --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" || true
-run_checked_case see-click-after-action unchanged success \
+assert_predispatch_foreground_refusal action "$LAST_RESULT" || true
+assert_result_contains refusal_guidance "$LAST_RESULT" "requires --foreground" || true
+run_checked_case see-click-after-action-refusal unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$CLICK_WINDOW_ID" \
-    --path "$ARTIFACT_ROOT/click-after-action.png" || true
-assert_case_artifacts see-click-after-action "$ARTIFACT_ROOT/click-after-action.png" || true
-assert_case_result_contains action action_readback "$LAST_RESULT" "2 total clicks" || true
-assert_semantic_witness action single_click_witness "$LAST_RESULT" single-click-count "2" || true
-CLICK_LOG_AFTER_ACTION="$ARTIFACT_ROOT/playground-click-after-action.json"
-capture_playground_log "$CLICK_LOG_AFTER_ACTION"
-assert_playground_log_delta action "$CLICK_LOG_AFTER_QUERY" "$CLICK_LOG_AFTER_ACTION" \
+    --path "$ARTIFACT_ROOT/click-after-action-refusal.png" || true
+assert_case_artifacts \
+    see-click-after-action-refusal "$ARTIFACT_ROOT/click-after-action-refusal.png" || true
+assert_case_result_contains action action_no_effect_readback "$LAST_RESULT" "1 total clicks" || true
+assert_semantic_witness action single_click_witness "$LAST_RESULT" single-click-count "1" || true
+CLICK_LOG_AFTER_ACTION_REFUSAL="$ARTIFACT_ROOT/playground-click-after-action-refusal.json"
+capture_playground_log "$CLICK_LOG_AFTER_ACTION_REFUSAL"
+assert_playground_log_unchanged action "$CLICK_LOG_AFTER_QUERY" "$CLICK_LOG_AFTER_ACTION_REFUSAL" \
     "Single click on 'Single Click' button" || true
 
 CLICK_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 SINGLE_CLICK_ID="$(element_id_from_result "$LAST_RESULT" single-click-button)"
 run_checked_case unsupported-action unchanged failure \
-    action AXDefinitelyUnsupported --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" || true
+    action AXIncrement --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" || true
 assert_result_contains refusal_guidance "$LAST_RESULT" "is not supported" || true
 
 run_checked_case see-scroll unchanged success \

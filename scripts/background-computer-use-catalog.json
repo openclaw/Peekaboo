@@ -40,9 +40,9 @@
     "activity-monitor": "Activity Monitor"
   },
   "cases": [
-    {"id":"lifecycle-maximize","surface":"cli","command":"window maximize","phase":"background","expected_exit":"success","expected_effect":"confirmed","contamination_retry_safe":true,"required_oracles":["nonmaximized_precondition","verified_bounds"]},
-    {"id":"lifecycle-close","surface":"cli","command":"window close","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":[]},
-    {"id":"lifecycle-quit","surface":"cli","command":"app quit","phase":"background","expected_exit":"either","allowed_outcomes":[{"exit":"success","effect":"confirmed","error_code":null},{"exit":"failure","effect":"suspected_noop","error_code":"INTERACTION_FAILED"}],"required_oracles":["process_exit_truth"]},
+    {"id":"lifecycle-maximize","surface":"cli","command":"window maximize","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","contamination_retry_safe":true,"required_oracles":["nonmaximized_precondition","verified_bounds"]},
+    {"id":"lifecycle-close","surface":"cli","command":"window close","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":[]},
+    {"id":"lifecycle-quit","surface":"cli","command":"app quit","phase":"background","expected_exit":"either","expected_delivery":"background","allowed_outcomes":[{"exit":"success","effect":"confirmed","error_code":null},{"exit":"failure","effect":"suspected_noop","error_code":"INTERACTION_FAILED"}],"required_oracles":["process_exit_truth"]},
     {"id":"physical-playground","surface":"cli","command":"see --no-elements","phase":"background","physical_app":"playground","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact","physical_target"]},
     {"id":"physical-textedit","surface":"cli","command":"see --no-elements","phase":"background","physical_app":"textedit","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact","physical_target"]},
     {"id":"physical-safari","surface":"cli","command":"see --no-elements","phase":"background","physical_app":"safari","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact","physical_target"]},
@@ -66,7 +66,7 @@
     {"id":"press-app-refused","surface":"cli","command":"press","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"INTERACTION_FAILED","contamination_retry_safe":true,"required_oracles":["refusal_guidance"]},
     {"id":"paste-text","surface":"cli","command":"paste","phase":"background","expected_exit":"success","expected_effect":"unverifiable","expected_delivery":"background","required_oracles":["background_delivery","playground_log"]},
     {"id":"see-text-after-paste","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["paste_readback","artifact"]},
-    {"id":"set-value","surface":"cli","command":"set-value","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":["playground_log"]},
+    {"id":"set-value","surface":"cli","command":"set-value","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["playground_log"]},
     {"id":"see-text-after-set-value","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["set_value_readback","artifact"]},
     {"id":"menu-open-click","surface":"cli","command":"menu click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":[]},
     {"id":"list-window-click","surface":"cli","command":"window list","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["window_discovery"]},
@@ -77,10 +77,10 @@
     {"id":"see-click-after-id","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact"]},
     {"id":"click-query","surface":"cli","command":"click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["background_delivery","playground_log_delta","secondary_click_witness"]},
     {"id":"see-click-for-action","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["snapshot_identifiers","artifact"]},
-    {"id":"action","surface":"cli","command":"action","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":["action_readback","playground_log_delta","single_click_witness"]},
-    {"id":"see-click-after-action","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact"]},
+    {"id":"action","surface":"cli","command":"action","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"VALIDATION_ERROR","contamination_retry_safe":true,"required_oracles":["predispatch_refusal","refusal_guidance","action_no_effect_readback","playground_log_unchanged","single_click_witness"]},
+    {"id":"see-click-after-action-refusal","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["artifact"]},
     {"id":"unsupported-action","surface":"cli","command":"action","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"INVALID_INPUT","contamination_retry_safe":true,"required_oracles":["refusal_guidance"]},
     {"id":"see-scroll","surface":"cli","command":"see","phase":"background","expected_exit":"success","contamination_retry_safe":true,"required_oracles":["snapshot_identifiers","artifact"]},
-    {"id":"scroll-action-background","surface":"cli","command":"scroll","phase":"background","expected_exit":"success","expected_effect":"confirmed","required_oracles":["confirmed_scroll","scroll_offset_changed","scroll_witness_changed"]}
+    {"id":"scroll-action-background","surface":"cli","command":"scroll","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["confirmed_scroll","scroll_offset_changed","scroll_witness_changed"]}
   ]
 }

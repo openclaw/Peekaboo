@@ -24,6 +24,27 @@ function duplicateValues(values) {
   return [...duplicates].sort();
 }
 
+const mutationCommands = new Set([
+  "action",
+  "app quit",
+  "click",
+  "menu click",
+  "paste",
+  "press",
+  "scroll",
+  "set-value",
+  "type",
+  "window close",
+  "window maximize",
+]);
+
+function allowsSuccessfulMutation(entry) {
+  const declaredSuccess = entry?.expected_exit === "success" || entry?.expected_exit === "either";
+  const conditionalSuccess = Array.isArray(entry?.allowed_outcomes)
+    && entry.allowed_outcomes.some((outcome) => outcome?.exit === "success");
+  return mutationCommands.has(entry?.command) && (declaredSuccess || conditionalSuccess);
+}
+
 function validateCatalog(catalog) {
   const failures = [];
   if (!catalog || catalog.version !== 2 || !Array.isArray(catalog.cases)) {
@@ -100,6 +121,17 @@ function validateCatalog(catalog) {
     }
     if (!entry || !["success", "failure", "either"].includes(entry.expected_exit)) {
       failures.push(failure(entry?.id ?? "catalog", "schema", "Invalid expected_exit"));
+    }
+    if (entry?.expected_delivery !== undefined
+        && !["background", "foreground"].includes(entry.expected_delivery)) {
+      failures.push(failure(entry?.id ?? "catalog", "schema", "Invalid expected_delivery"));
+    }
+    if (allowsSuccessfulMutation(entry) && entry.expected_delivery !== "background") {
+      failures.push(failure(
+        entry?.id ?? "catalog",
+        "mutation_delivery",
+        "Every successful cataloged mutation must explicitly require background delivery",
+      ));
     }
     if (!Array.isArray(entry?.required_oracles)) {
       failures.push(failure(entry?.id ?? "catalog", "schema", "required_oracles must be an array"));
@@ -586,7 +618,9 @@ export function validateCertification(catalog, report, trustedSourceArtifacts = 
         `Expected effect '${expected.expected_effect}', observed '${observed.effect ?? "missing"}'`,
       ));
     }
-    if (expected.expected_delivery !== undefined && observed.delivery_mode !== expected.expected_delivery) {
+    if (expected.expected_delivery !== undefined
+        && observed.result_success === true
+        && observed.delivery_mode !== expected.expected_delivery) {
       failures.push(failure(
         expected.id,
         "delivery",

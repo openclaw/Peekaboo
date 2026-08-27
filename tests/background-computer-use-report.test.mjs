@@ -64,6 +64,107 @@ test("passing report covers the complete 42-case catalog", () => {
   assert.deepEqual(result.failures, []);
 });
 
+test("generic AXPress is certified as a foreground-consent refusal with no-effect readback", () => {
+  const actionIndex = catalog.cases.findIndex((entry) => entry.id === "action");
+  const action = catalog.cases[actionIndex];
+
+  assert.deepEqual(
+    {
+      command: action.command,
+      phase: action.phase,
+      exit: action.expected_exit,
+      effect: action.expected_effect,
+      error: action.expected_error_code,
+    },
+    {
+      command: "action",
+      phase: "background",
+      exit: "failure",
+      effect: "refused",
+      error: "VALIDATION_ERROR",
+    },
+  );
+  assert.deepEqual(action.required_oracles, [
+    "predispatch_refusal",
+    "refusal_guidance",
+    "action_no_effect_readback",
+    "playground_log_unchanged",
+    "single_click_witness",
+  ]);
+  assert.equal(catalog.cases[actionIndex + 1]?.id, "see-click-after-action-refusal");
+  assert.equal(catalog.cases.some((entry) => entry.id === "see-click-after-action"), false);
+
+  const forgedSuccess = makePassingReport(catalog);
+  const forgedAction = caseById(forgedSuccess, "action");
+  forgedAction.exit_code = 0;
+  forgedAction.result_success = true;
+  forgedAction.effect = "confirmed";
+  forgedAction.error_code = null;
+  const forgedResult = validateCertification(catalog, forgedSuccess);
+  assert.equal(forgedResult.success, false);
+  assert.ok(rules(forgedResult).has("exit_contract"));
+  assert.ok(rules(forgedResult).has("effect"));
+  assert.ok(rules(forgedResult).has("refusal_code"));
+});
+
+test("every successful cataloged mutation explicitly requires background delivery", () => {
+  const mutationCommands = new Set([
+    "action",
+    "app quit",
+    "click",
+    "menu click",
+    "paste",
+    "press",
+    "scroll",
+    "set-value",
+    "type",
+    "window close",
+    "window maximize",
+  ]);
+  const successfulMutations = catalog.cases.filter((entry) => (
+    mutationCommands.has(entry.command)
+      && (entry.expected_exit === "success"
+        || entry.expected_exit === "either"
+        || entry.allowed_outcomes?.some((outcome) => outcome.exit === "success"))
+  ));
+
+  assert.ok(successfulMutations.length > 0);
+  assert.ok(successfulMutations.every((entry) => entry.expected_delivery === "background"));
+
+  for (const entry of successfulMutations) {
+    const missingReceipt = makePassingReport(catalog);
+    caseById(missingReceipt, entry.id).delivery_mode = null;
+    const result = validateCertification(catalog, missingReceipt);
+    assert.equal(result.success, false, `Expected ${entry.id} to require a delivery receipt`);
+    assert.ok(rules(result).has("delivery"));
+  }
+
+  for (const expectedDelivery of [undefined, "foreground"]) {
+    const corruptCatalog = structuredClone(catalog);
+    const maximize = corruptCatalog.cases.find((entry) => entry.id === "lifecycle-maximize");
+    if (expectedDelivery === undefined) {
+      delete maximize.expected_delivery;
+    } else {
+      maximize.expected_delivery = expectedDelivery;
+    }
+    const result = validateCertification(corruptCatalog, makePassingReport(catalog));
+    assert.equal(result.success, false);
+    assert.ok(rules(result).has("mutation_delivery"));
+  }
+});
+
+test("failed conditional mutation outcomes do not forge a delivery receipt", () => {
+  const report = makePassingReport(catalog);
+  const quit = caseById(report, "lifecycle-quit");
+  quit.exit_code = 1;
+  quit.result_success = false;
+  quit.effect = "suspected_noop";
+  quit.error_code = "INTERACTION_FAILED";
+  quit.delivery_mode = null;
+
+  assert.equal(validateCertification(catalog, report).success, true);
+});
+
 test("source artifact provenance is closed and exact", () => {
   const extra = makePassingReport(catalog);
   extra.provenance.source_artifacts.ignored = "0".repeat(64);
