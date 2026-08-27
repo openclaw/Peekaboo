@@ -77,9 +77,7 @@ enum ScreenCaptureKitCaptureGate {
 
         // Hold a broader cross-process lock for the capture transaction. Per-call SCK locks are not enough
         // because interleaving shareable-content reads and screenshot calls can leave replayd/SCK wedged.
-        let path = (NSTemporaryDirectory() as NSString)
-            .appendingPathComponent("boo.peekaboo.sckit-operation.lock")
-        let fd = open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        let fd = self.openExclusiveOperationLockDescriptor()
         guard fd >= 0 else {
             return try await operation()
         }
@@ -114,6 +112,14 @@ enum ScreenCaptureKitCaptureGate {
                 }
             }
         }
+    }
+
+    static func openExclusiveOperationLockDescriptor() -> Int32 {
+        let path = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("boo.peekaboo.sckit-operation.lock")
+        // Agent actions can spawn long-lived children while this lock is held. Set close-on-exec atomically so an
+        // abrupt owner exit cannot leave its capture transaction pinned by an inherited child descriptor.
+        return open(path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
     }
 
     @MainActor
