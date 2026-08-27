@@ -112,6 +112,9 @@ public final class PeekabooBridgeServer {
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
         desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
+        screenCaptureKitProcessCapabilityRegistrar: @MainActor @Sendable () throws -> Void = {
+            try ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
+        },
         postEventAccessEvaluator: (@MainActor @Sendable () -> Bool)? = nil,
         postEventAccessRequester: (@MainActor @Sendable () -> Bool)? = nil,
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
@@ -201,7 +204,8 @@ public final class PeekabooBridgeServer {
                 PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
         }
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
-            (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
+            (try? screenCaptureKitProcessCapabilityRegistrar()) != nil
+        resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
         if hostIdentity?.processStartIdentity != nil {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.hostGenerationIdentity)
         }
