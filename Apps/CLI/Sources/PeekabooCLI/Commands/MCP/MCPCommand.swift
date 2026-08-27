@@ -20,7 +20,7 @@ struct MCPCommand: ParsableCommand {
         EXAMPLES:
           peekaboo mcp                          # Start MCP server on stdio
           peekaboo mcp serve                     # Explicitly start MCP server
-          peekaboo mcp serve --transport http    # HTTP transport (future)
+          peekaboo mcp serve --transport stdio   # Explicitly select stdio transport
         """,
         subcommands: [
             Serve.self,
