@@ -69,22 +69,26 @@ add another sleep or extend the session beyond its deadline.
 
 ## `capture action` flags
 - Targeting/focus/cadence/caps/output: same as `capture live`, except `--duration` is replaced by `--duration-limit` (default `60s`, max `180s`; bare values are milliseconds).
-- Action timing: `--pre-roll` (default `250ms`), `--post-roll` (default `500ms`), `--action-timeout` (defaults to the remaining duration after roll time).
+- Action timing: `--pre-roll` (default `250ms`), `--post-roll` (default `500ms`), `--action-timeout` (defaults to the remaining duration after the startup gate, post-roll, and bounded process-group cleanup reserve).
 - Command: pass the child command after `--`, e.g. `peekaboo capture action -- echo smoke`. This keeps child flags separate from Peekaboo options.
 
 The command exits non-zero if the child command exits non-zero, times out, leaves a process-group descendant that Peekaboo cannot terminate, or required capture artifacts fail custody or semantic validation. JSON output includes the child command exit code/stdout/stderr, the normal `CaptureResult`, artifact validation details, the canonical `outcome`, and the SHA-256 receipt for `action.json`. Command success is cross-checked against the child, validation, and manifest receipt; effect/dispatch/retry fields are derived from the canonical outcome. A released child reports dispatched-unverified evidence rather than claiming a verified partial desktop change. Failures before focus or child release report a canonical refused, retry-safe, not-dispatched outcome.
 
 The child starts after the requested pre-roll while capture remains active, and capture continues through the full
-post-roll. The pre-roll race does not join the long-running session task. A live capture deadline can also end an
-in-flight frame attempt, so one slow or cancellation-insensitive capture call cannot defer the action until after the
-requested session duration.
+post-roll. Suspended spawn and process-generation attribution consume the action timeout before `SIGCONT`; Peekaboo
+reports the effective timeout after the outer capture and cleanup deadline caps it. The pre-roll race does not join the
+long-running session task. A live capture deadline can also end an in-flight frame attempt, so one slow or
+cancellation-insensitive capture call cannot defer the action until after the requested session duration.
 
 Peekaboo starts the process-group leader suspended, captures and revalidates its exact process generation, installs signal
 forwarding, and only then releases command code. If generation evidence is unavailable, no child code runs. Blocking
 leader observation runs outside Swift's cooperative executor so concurrent actions cannot starve cancellation or timeout
 work. After the direct child exits Peekaboo gives remaining members a bounded TERM grace,
 escalates to KILL, and verifies that the group is gone before post-roll completion, artifact validation, or manifest
-publication. `action.json` then binds the command digest and argument count without persisting raw child arguments,
+publication. Startup, child timeout, TERM/KILL escalation, and descendant drain share the capture's one absolute
+deadline; no cleanup phase creates a fresh relative wait. A requested `--video-out` must be absent before the child can
+run, and final publication still uses an exclusive no-replace operation to close the later race. `action.json` then binds
+the command digest and argument count without persisting raw child arguments,
 along with monotonic action offsets, separate focus/child receipts and their canonical aggregate when representable,
 capture engines, selected execution route, an Apple-anchored signing identifier, trusted Team ID, live CDHash, source
 commit, and exact process generation, plus the exact frame/contact/metadata/video bytes. `capture action` therefore

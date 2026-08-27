@@ -60,6 +60,51 @@ struct CaptureActionProcessRunnerTests {
     }
 
     @Test
+    func `absolute completion deadline charges suspended startup before release`() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-startup-deadline-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("child-ran")
+        let launchRecorder = CaptureActionLaunchRecorder()
+        let completionDeadlineNs = DispatchTime.now().uptimeNanoseconds + 2_200_000_000
+
+        let thrown = await #expect(throws: (any Error).self) {
+            _ = try await CaptureActionProcessRunner.run(
+                command: ["/usr/bin/touch", marker.path],
+                timeoutSeconds: 5,
+                completionDeadlineNanoseconds: completionDeadlineNs,
+                onLaunch: { _ in launchRecorder.record() },
+                signalProcessGroup: { pid, signal in
+                    _ = Darwin.kill(-pid, signal)
+                },
+                processStartIdentity: { pid in
+                    usleep(300_000)
+                    return SystemIdentityResolver.processStartIdentity(pid)
+                }
+            )
+        }
+
+        #expect(try #require(thrown).localizedDescription.contains("before process release"))
+        #expect(!launchRecorder.wasRecorded)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test
+    func `result reports the effective absolute timeout budget`() async throws {
+        let completionDeadlineNs = DispatchTime.now().uptimeNanoseconds + 2_300_000_000
+        let result = try await CaptureActionProcessRunner.run(
+            command: ["/usr/bin/true"],
+            timeoutSeconds: 5,
+            completionDeadlineNanoseconds: completionDeadlineNs
+        )
+
+        #expect(result.succeeded)
+        #expect(result.timeoutSeconds > 0.1)
+        #expect(result.timeoutSeconds <= 0.3)
+    }
+
+    @Test
     func `runner escalates timeout for TERM ignoring child`() async throws {
         let started = Date()
         let result = try await CaptureActionProcessRunner.run(
@@ -213,6 +258,47 @@ struct CaptureActionProcessRunnerTests {
         let pid = try #require(ignoredSignals.processIdentifier)
         _ = Darwin.kill(-pid, SIGKILL)
         try await Self.waitUntilProcessIsGone(pid)
+    }
+
+    @Test
+    func `late leader exit cannot grant descendants a fresh drain deadline`() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-shared-drain-deadline-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let descendantPIDFile = root.appendingPathComponent("descendant-pid")
+        let ignoredSignals = IgnoredProcessGroupSignals()
+        let started = Date()
+        let completionDeadlineNs = DispatchTime.now().uptimeNanoseconds + 2_300_000_000
+
+        let thrown = await #expect(throws: (any Error).self) {
+            _ = try await CaptureActionProcessRunner.run(
+                command: [
+                    "/usr/bin/perl",
+                    "-e",
+                    "if (fork() == 0) { open(my $p, '>', $ARGV[0]) or die $!; " +
+                        "print $p \"$$\\n\"; close($p); sleep 30; exit 0; } " +
+                        "select undef, undef, undef, 2.1; exit 0;",
+                    descendantPIDFile.path,
+                ],
+                timeoutSeconds: 10,
+                completionDeadlineNanoseconds: completionDeadlineNs,
+                signalProcessGroup: { pid, signal in
+                    ignoredSignals.record(pid: pid, signal: signal)
+                }
+            )
+        }
+
+        let elapsed = Date().timeIntervalSince(started)
+        #expect(try #require(thrown).localizedDescription == "Action process group could not be fully terminated")
+        #expect(elapsed >= 2.1)
+        #expect(elapsed < 2.8)
+        let descendantPID = try #require(pid_t(
+            String(contentsOf: descendantPIDFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+        _ = Darwin.kill(descendantPID, SIGKILL)
+        try await Self.waitUntilProcessIsGone(descendantPID)
     }
 
     @Test

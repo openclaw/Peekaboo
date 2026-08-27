@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import CoreGraphics
 import Darwin
+import Dispatch
 import Foundation
 import ImageIO
 import PeekabooFoundation
@@ -65,6 +66,24 @@ struct WatchCaptureSessionTests {
         #expect(mainActorRemainedResponsive)
         await decoder.release()
         #expect(try await frameTask.value?.cgImage != nil)
+    }
+
+    @Test
+    @MainActor
+    func `final artifact validation releases MainActor`() async throws {
+        let gate = BlockingCaptureArtifactValidationGate()
+        let validationTask = Task { @MainActor in
+            try await WatchCaptureSession.performFinalArtifactValidation {
+                gate.block()
+            }
+        }
+
+        await gate.waitUntilEntered()
+        let mainActorRemainedResponsive = await MainActor.run { true }
+        gate.release()
+        try await validationTask.value
+
+        #expect(mainActorRemainedResponsive)
     }
 
     @Test
@@ -1258,6 +1277,29 @@ private actor ControlledVideoFrameDecoder: VideoFrameDecoding {
     func release() {
         self.releaseContinuation?.resume()
         self.releaseContinuation = nil
+    }
+}
+
+private final class BlockingCaptureArtifactValidationGate: @unchecked Sendable {
+    private let entered = DispatchSemaphore(value: 0)
+    private let released = DispatchSemaphore(value: 0)
+
+    func block() {
+        self.entered.signal()
+        self.released.wait()
+    }
+
+    func waitUntilEntered() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                self.entered.wait()
+                continuation.resume()
+            }
+        }
+    }
+
+    func release() {
+        self.released.signal()
     }
 }
 

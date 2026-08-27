@@ -85,7 +85,7 @@ struct CaptureActionCommandEndToEndTests {
         let processRecorder = CaptureActionProcessRecorder()
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "2500ms")
+        command.durationLimit = CLIDuration(argument: "4s")
         command.preRoll = CLIDuration(argument: "300ms")
         command.postRoll = CLIDuration(argument: "400ms")
         command.idleFps = 5
@@ -105,11 +105,12 @@ struct CaptureActionCommandEndToEndTests {
                 frameSource.resolvedScopes.append(scope)
                 return frameSource
             },
-            processRunner: { childCommand, timeoutSeconds, onLaunch in
+            deadlineProcessRunner: { childCommand, timeoutSeconds, completionDeadlineNs, onLaunch in
                 let startedAt = Date()
                 let result = try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
+                    completionDeadlineNanoseconds: completionDeadlineNs,
                     onLaunch: onLaunch
                 )
                 processRecorder.invocations.append(.init(
@@ -191,7 +192,7 @@ struct CaptureActionCommandEndToEndTests {
         let frameSource = DeterministicCaptureActionFrameSource()
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "2s")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "250ms")
         command.postRoll = CLIDuration(argument: "100ms")
         command.idleFps = 5
@@ -245,7 +246,7 @@ struct CaptureActionCommandEndToEndTests {
         let frameSource = DeterministicCaptureActionFrameSource()
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "2s")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "150ms")
         command.postRoll = CLIDuration(argument: "100ms")
         command.idleFps = 5
@@ -319,7 +320,7 @@ struct CaptureActionCommandEndToEndTests {
         let frameSource = DeterministicCaptureActionFrameSource()
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "2s")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "60ms")
         command.postRoll = CLIDuration(argument: "100ms")
         command.idleFps = 5
@@ -433,7 +434,7 @@ struct CaptureActionCommandEndToEndTests {
         let frameSource = DeterministicCaptureActionFrameSource()
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "2s")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "100ms")
         command.postRoll = CLIDuration(argument: "100ms")
         command.idleFps = 5
@@ -479,7 +480,7 @@ struct CaptureActionCommandEndToEndTests {
         let frameSource = DeterministicCaptureActionFrameSource()
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "2s")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "100ms")
         command.postRoll = CLIDuration(argument: "100ms")
         command.idleFps = 5
@@ -524,7 +525,7 @@ struct CaptureActionCommandEndToEndTests {
         let frameSource = DeterministicCaptureActionFrameSource()
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "2s")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.path = outputDirectory.path
         command.command = ["/usr/bin/touch", marker.path]
         command.executionDependencies = CaptureActionExecutionDependencies(
@@ -860,7 +861,7 @@ extension CaptureActionCommandEndToEndTests {
         let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "1500ms")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "100ms")
         command.postRoll = CLIDuration(argument: "0ms")
         command.path = outputDirectory.path
@@ -910,7 +911,7 @@ extension CaptureActionCommandEndToEndTests {
         let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "1500ms")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "100ms")
         command.postRoll = CLIDuration(argument: "100ms")
         command.path = outputDirectory.path
@@ -956,7 +957,7 @@ extension CaptureActionCommandEndToEndTests {
         var identityCallCount: UInt64 = 0
         var command = CaptureActionCommand()
         command.mode = "frontmost"
-        command.durationLimit = CLIDuration(argument: "1500ms")
+        command.durationLimit = CLIDuration(argument: "3s")
         command.preRoll = CLIDuration(argument: "100ms")
         command.postRoll = CLIDuration(argument: "100ms")
         command.path = outputDirectory.path
@@ -1075,6 +1076,44 @@ extension CaptureActionCommandEndToEndTests {
 
 extension CaptureActionCommandEndToEndTests {
     @Test
+    func `Capture action timing reserves startup and descendant drain before post roll`() throws {
+        let timing = try CaptureActionTiming.resolve(
+            durationLimit: 2.5,
+            preRollMs: 0,
+            postRollMs: 200,
+            requestedActionTimeout: 2.5
+        )
+
+        #expect(timing.startupGateMs == 100)
+        #expect(abs(timing.actionTimeout - 0.2) < 0.0001)
+        let captureStartedNs: UInt64 = 1_000_000_000
+        let captureDeadlineNs = try CaptureActionTiming.captureDeadline(
+            captureStartedNs: captureStartedNs,
+            durationLimit: 2.5
+        )
+        let actionCompletionDeadlineNs = try timing.actionCompletionDeadline(
+            captureDeadlineNs: captureDeadlineNs
+        )
+        #expect(actionCompletionDeadlineNs == captureStartedNs + 2_300_000_000)
+        #expect(timing.postRollFits(
+            startingAtNs: actionCompletionDeadlineNs,
+            captureDeadlineNs: captureDeadlineNs
+        ))
+        #expect(!timing.postRollFits(
+            startingAtNs: actionCompletionDeadlineNs + 1,
+            captureDeadlineNs: captureDeadlineNs
+        ))
+        #expect(throws: (any Error).self) {
+            _ = try CaptureActionTiming.resolve(
+                durationLimit: 1.7,
+                preRollMs: 100,
+                postRollMs: 100,
+                requestedActionTimeout: nil
+            )
+        }
+    }
+
+    @Test
     func `Capture action rejects reserved video output before child dispatch`() async throws {
         let outputDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-capture-action-video-conflict-\(UUID().uuidString)", isDirectory: true)
@@ -1130,6 +1169,54 @@ extension CaptureActionCommandEndToEndTests {
             #expect(!command.captureMutationDispatched)
             #expect(!FileManager.default.fileExists(atPath: childMarker.path))
         }
+    }
+
+    @Test
+    func `Capture action rejects existing video output before child dispatch`() async throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-capture-action-existing-video-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let videoOutput = outputDirectory.appendingPathComponent("action.mp4")
+        let retained = Data("existing-video".utf8)
+        try retained.write(to: videoOutput)
+        let childMarker = outputDirectory.appendingPathComponent("child-ran")
+        let processRecorder = CaptureActionProcessRecorder()
+        var command = CaptureActionCommand()
+        command.mode = "frontmost"
+        command.path = outputDirectory.path
+        command.videoOut = videoOutput.path
+        command.command = ["/usr/bin/touch", childMarker.path]
+        command.executionDependencies = CaptureActionExecutionDependencies(
+            frameSourceFactory: { _ in DeterministicCaptureActionFrameSource() },
+            processRunner: { childCommand, timeoutSeconds, onLaunch in
+                let startedAt = Date()
+                let result = try await CaptureActionProcessRunner.run(
+                    command: childCommand,
+                    timeoutSeconds: timeoutSeconds,
+                    onLaunch: onLaunch
+                )
+                processRecorder.invocations.append(.init(
+                    command: childCommand,
+                    timeoutSeconds: timeoutSeconds,
+                    startedAt: startedAt,
+                    finishedAt: Date()
+                ))
+                return result
+            },
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
+        command.runtime = self.makeRuntime()
+
+        let thrown = await #expect(throws: (any Error).self) {
+            _ = try await command.executeActionCapture()
+        }
+
+        #expect(try #require(thrown).localizedDescription.contains("--video-out must not already exist"))
+        #expect(processRecorder.invocations.isEmpty)
+        #expect(!command.captureMutationDispatched)
+        #expect(!FileManager.default.fileExists(atPath: childMarker.path))
+        #expect(try Data(contentsOf: videoOutput) == retained)
     }
 
     @Test

@@ -20,19 +20,26 @@ private struct CaptureActionPublicationProbeDirectory {
 @MainActor
 struct CaptureActionExecutionDependencies {
     typealias FrameSourceFactory = @MainActor (CaptureScope) -> (any CaptureFrameSource)?
+    typealias LegacyProcessRunner = @MainActor (
+        [String],
+        TimeInterval,
+        @escaping @Sendable (UInt64) -> Void
+    ) async throws -> CaptureActionProcessResult
     typealias HostIdentityProvider = @MainActor () throws -> PeekabooBridgeAuthenticatedHostIdentity
     typealias ProcessRunner = @MainActor (
         [String],
         TimeInterval,
+        UInt64,
         @escaping @Sendable (UInt64) -> Void
     ) async throws -> CaptureActionProcessResult
 
     static let live = CaptureActionExecutionDependencies(
         frameSourceFactory: { _ in nil },
-        processRunner: { command, timeoutSeconds, onLaunch in
+        deadlineProcessRunner: { command, timeoutSeconds, completionDeadlineNanoseconds, onLaunch in
             try await CaptureActionProcessRunner.run(
                 command: command,
                 timeoutSeconds: timeoutSeconds,
+                completionDeadlineNanoseconds: completionDeadlineNanoseconds,
                 onLaunch: onLaunch
             )
         },
@@ -45,11 +52,23 @@ struct CaptureActionExecutionDependencies {
 
     init(
         frameSourceFactory: @escaping FrameSourceFactory,
-        processRunner: @escaping ProcessRunner,
+        processRunner: @escaping LegacyProcessRunner,
         hostIdentityProvider: HostIdentityProvider? = nil
     ) {
         self.frameSourceFactory = frameSourceFactory
-        self.processRunner = processRunner
+        self.processRunner = { command, timeoutSeconds, _, onLaunch in
+            try await processRunner(command, timeoutSeconds, onLaunch)
+        }
+        self.hostIdentityProvider = hostIdentityProvider
+    }
+
+    init(
+        frameSourceFactory: @escaping FrameSourceFactory,
+        deadlineProcessRunner: @escaping ProcessRunner,
+        hostIdentityProvider: HostIdentityProvider? = nil
+    ) {
+        self.frameSourceFactory = frameSourceFactory
+        self.processRunner = deadlineProcessRunner
         self.hostIdentityProvider = hostIdentityProvider
     }
 }
@@ -193,6 +212,13 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         let session = WatchCaptureSession(dependencies: deps, configuration: config)
         let captureStartedAtUnixMs = Int64(Date().timeIntervalSince1970 * 1000)
         let captureStartedNs = DispatchTime.now().uptimeNanoseconds
+        let captureDeadlineNs = try CaptureActionTiming.captureDeadline(
+            captureStartedNs: captureStartedNs,
+            durationLimit: options.duration
+        )
+        let actionCompletionDeadlineNs = try timing.actionCompletionDeadline(
+            captureDeadlineNs: captureDeadlineNs
+        )
         let captureTask = self.startCaptureTask(
             session: session,
             enginePreference: requestedEngine,
@@ -212,7 +238,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             do {
                 action = try await self.executionDependencies.processRunner(
                     self.command,
-                    timing.actionTimeout
+                    timing.actionTimeout,
+                    actionCompletionDeadlineNs
                 ) { dispatchState.markDispatched(at: $0) }
                 self.captureMutationDispatched = self.captureMutationDispatched || dispatchState.wasDispatched
                 self.childCommandDispatched = self.childCommandDispatched || dispatchState.wasDispatched
@@ -232,6 +259,12 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 endingAt: actionStartedNs
             )
             let actionCompletedMs = Self.elapsedMilliseconds(since: captureStartedNs)
+            guard timing.postRollFits(
+                startingAtNs: DispatchTime.now().uptimeNanoseconds,
+                captureDeadlineNs: captureDeadlineNs
+            ) else {
+                throw ValidationError("Action completion left insufficient time for the requested post-roll")
+            }
             try await Self.sleep(milliseconds: timing.postRollMs)
             session.requestStop()
 
@@ -486,20 +519,11 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     private func resolveActionTiming(durationLimit: TimeInterval) throws -> CaptureActionTiming {
         let preRoll = max(preRoll?.roundedMilliseconds ?? 250, 0)
         let postRoll = max(postRoll?.roundedMilliseconds ?? 500, 0)
-        let rollSeconds = Double(preRoll + postRoll) / 1000.0
-        guard rollSeconds < durationLimit else {
-            throw ValidationError("--pre-roll + --post-roll must be less than --duration-limit")
-        }
-        let defaultActionTimeout = max(0.1, durationLimit - rollSeconds)
-        let actionTimeout = max(
-            0.1,
-            min(actionTimeout?.seconds ?? defaultActionTimeout, durationLimit - rollSeconds)
-        )
-        return CaptureActionTiming(
+        return try CaptureActionTiming.resolve(
+            durationLimit: durationLimit,
             preRollMs: preRoll,
             postRollMs: postRoll,
-            startupGateMs: max(preRoll, 100),
-            actionTimeout: actionTimeout
+            requestedActionTimeout: self.actionTimeout?.seconds
         )
     }
 
@@ -516,8 +540,27 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         if let videoOut {
             let videoDirectory = URL(fileURLWithPath: videoOut).deletingLastPathComponent()
             try Self.validateExclusiveRenameSupport(in: videoDirectory)
+            try Self.validateVideoOutputIsAbsent(videoOut)
         }
         return (outputDirectory, videoOut)
+    }
+
+    static func validateVideoOutputIsAbsent(_ path: String) throws {
+        var information = stat()
+        let result = URL(fileURLWithPath: path).withUnsafeFileSystemRepresentation { representation in
+            guard let representation else {
+                errno = EINVAL
+                return Int32(-1)
+            }
+            return lstat(representation, &information)
+        }
+        let failure = errno
+        guard result != 0 else {
+            throw ValidationError("--video-out must not already exist before capture starts: \(path)")
+        }
+        guard failure == ENOENT else {
+            throw ValidationError("Could not preflight --video-out before capture starts: \(path)")
+        }
     }
 
     private func validateOutputPathsBeforeDispatch(
@@ -844,11 +887,83 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     }
 }
 
-private struct CaptureActionTiming {
+struct CaptureActionTiming {
     let preRollMs: Int
     let postRollMs: Int
     let startupGateMs: Int
     let actionTimeout: TimeInterval
+
+    static func resolve(
+        durationLimit: TimeInterval,
+        preRollMs: Int,
+        postRollMs: Int,
+        requestedActionTimeout: TimeInterval?
+    ) throws -> Self {
+        let startupGateMs = max(preRollMs, 100)
+        let (fixedMilliseconds, overflowed) = startupGateMs.addingReportingOverflow(postRollMs)
+        let fixedSeconds = Double(fixedMilliseconds) / 1000.0 +
+            CaptureActionProcessRunner.completionReserveSeconds
+        let availableActionSeconds = durationLimit - fixedSeconds
+        guard !overflowed,
+              durationLimit.isFinite,
+              availableActionSeconds >= 0.1,
+              requestedActionTimeout?.isFinite != false
+        else {
+            throw ValidationError(
+                "--duration-limit must reserve startup/pre-roll, post-roll, and child process-group cleanup"
+            )
+        }
+        return Self(
+            preRollMs: preRollMs,
+            postRollMs: postRollMs,
+            startupGateMs: startupGateMs,
+            actionTimeout: max(0.1, min(requestedActionTimeout ?? availableActionSeconds, availableActionSeconds))
+        )
+    }
+
+    static func captureDeadline(captureStartedNs: UInt64, durationLimit: TimeInterval) throws -> UInt64 {
+        let durationNs = try self.nanoseconds(seconds: durationLimit)
+        let (deadlineNs, overflowed) = captureStartedNs.addingReportingOverflow(durationNs)
+        guard !overflowed else {
+            throw ValidationError("--duration-limit overflowed the capture deadline")
+        }
+        return deadlineNs
+    }
+
+    func actionCompletionDeadline(captureDeadlineNs: UInt64) throws -> UInt64 {
+        let postRollNs = try Self.nanoseconds(milliseconds: self.postRollMs)
+        guard captureDeadlineNs > postRollNs else {
+            throw ValidationError("--post-roll exceeds the capture deadline")
+        }
+        return captureDeadlineNs - postRollNs
+    }
+
+    func postRollFits(startingAtNs: UInt64, captureDeadlineNs: UInt64) -> Bool {
+        guard let postRollNs = try? Self.nanoseconds(milliseconds: self.postRollMs) else { return false }
+        let (requiredCompletionNs, overflowed) = startingAtNs.addingReportingOverflow(postRollNs)
+        return !overflowed && requiredCompletionNs <= captureDeadlineNs
+    }
+
+    private static func nanoseconds(seconds: TimeInterval) throws -> UInt64 {
+        guard seconds.isFinite,
+              seconds >= 0,
+              seconds <= Double(UInt64.max) / 1_000_000_000.0
+        else {
+            throw ValidationError("Capture timing cannot be represented as a monotonic deadline")
+        }
+        return UInt64((seconds * 1_000_000_000.0).rounded(.down))
+    }
+
+    private static func nanoseconds(milliseconds: Int) throws -> UInt64 {
+        guard milliseconds >= 0 else {
+            throw ValidationError("Capture timing cannot be negative")
+        }
+        let (value, overflowed) = UInt64(milliseconds).multipliedReportingOverflow(by: 1_000_000)
+        guard !overflowed else {
+            throw ValidationError("Capture timing overflowed its monotonic deadline")
+        }
+        return value
+    }
 }
 
 private struct CaptureActionCaptureCompletion: Sendable {
@@ -1470,7 +1585,7 @@ extension CaptureActionCommand: CommanderSignatureProviding {
             .commandOption("postRoll", help: "Capture time after the action exits", long: "post-roll"),
             .commandOption(
                 "actionTimeout",
-                help: "Action timeout; bare values are milliseconds (defaults to remaining duration)",
+                help: "Action timeout within the capture/cleanup budget; bare values are milliseconds",
                 long: "action-timeout"
             ),
             .commandOption(

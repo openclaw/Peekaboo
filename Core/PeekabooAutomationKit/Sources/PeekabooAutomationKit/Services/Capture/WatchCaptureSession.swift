@@ -260,7 +260,9 @@ public final class WatchCaptureSession {
                     sourceDiagnostics: sourceDiagnostics))
 
             try self.store.writeJSON(metadata, to: metadataURL)
-            try CaptureArtifactIntegrityValidator.validate(metadata)
+            try await Self.performFinalArtifactValidation {
+                try CaptureArtifactIntegrityValidator.validate(metadata)
+            }
             return metadata
         } catch {
             let primaryError = error
@@ -278,6 +280,14 @@ public final class WatchCaptureSession {
             self.videoWriter = nil
             throw primaryError
         }
+    }
+
+    nonisolated static func performFinalArtifactValidation(
+        _ operation: @escaping @Sendable () throws -> Void) async throws
+    {
+        try await Task.detached(priority: .utility) {
+            try operation()
+        }.value
     }
 
     public func requestStop() {

@@ -210,7 +210,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
     /// Releases the already-attributed child only after signal forwarding is installed.
     /// `POSIX_SPAWN_START_SUSPENDED` prevents command code from running before the
     /// process-generation receipt exists.
-    nonisolated func release() throws -> UInt64 {
+    nonisolated func release(before deadlineNs: UInt64) throws -> UInt64 {
         self.lock.lock()
         guard !self.processReleased,
               let pid = self.processIdentifier,
@@ -258,9 +258,17 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
                 message: "Action process received signal \(signalNumber ?? 0) before release"
             )
         }
+        let startedNs = DispatchTime.now().uptimeNanoseconds
+        guard startedNs < deadlineNs else {
+            self.lock.unlock()
+            self.terminateUnreleasedProcess(pid: pid)
+            throw CaptureActionProcessLaunchError(
+                message: "Action completion deadline elapsed before process release",
+                refusalReason: .invalidRequest
+            )
+        }
         self.processReleased = true
         self.lock.unlock()
-        let startedNs = DispatchTime.now().uptimeNanoseconds
         guard Darwin.kill(pid, SIGCONT) == 0 else {
             let releaseError = errno
             self.terminateUnreleasedProcess(pid: pid, allowingCommittedRelease: true)
@@ -340,7 +348,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         }
     }
 
-    nonisolated func terminateAfterTimeout(deadlineNs: UInt64) async {
+    nonisolated func terminateAfterTimeout(deadlineNs: UInt64, abandonDeadlineNs: UInt64) async {
         do {
             let nowNs = DispatchTime.now().uptimeNanoseconds
             try await Task.sleep(nanoseconds: deadlineNs > nowNs ? deadlineNs - nowNs : 0)
@@ -348,8 +356,12 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
             return
         }
         guard self.requestTimeoutTermination() else { return }
+        let graceNs = UInt64(CaptureActionProcessRunner.processGroupTerminationGraceSeconds * 1_000_000_000)
+        let (unboundedKillDeadlineNs, overflowed) = deadlineNs.addingReportingOverflow(graceNs)
+        let killDeadlineNs = min(overflowed ? UInt64.max : unboundedKillDeadlineNs, abandonDeadlineNs)
         do {
-            try await Task.sleep(nanoseconds: 500_000_000)
+            let nowNs = DispatchTime.now().uptimeNanoseconds
+            try await Task.sleep(nanoseconds: killDeadlineNs > nowNs ? killDeadlineNs - nowNs : 0)
         } catch {
             return
         }
@@ -402,15 +414,18 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         timeoutDeadlineNs: UInt64,
         abandonDeadlineNs: UInt64
     ) -> CaptureActionBlockingCompletion {
+        let effectiveAbandonDeadlineNs = self.effectiveWaitAbandonDeadline(originalNs: abandonDeadlineNs)
         let waitOutcome = self.waitUntilExit(
             timeoutDeadlineNs: timeoutDeadlineNs,
-            abandonDeadlineNs: abandonDeadlineNs
+            abandonDeadlineNs: effectiveAbandonDeadlineNs
         )
         let processGroupCleaned: Bool
         let exitCode: Int32?
         switch waitOutcome {
         case .exited:
-            processGroupCleaned = self.terminateRemainingProcessGroup()
+            processGroupCleaned = self.terminateRemainingProcessGroup(
+                abandonDeadlineNs: effectiveAbandonDeadlineNs
+            )
             exitCode = self.reapObservedLeader()
         case .abandoned:
             processGroupCleaned = false
@@ -445,7 +460,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
     /// remain able to mutate the capture directory. Drain the group before returning so the
     /// caller's later artifact validation is a real post-action boundary. This deliberately
     /// owns one process group, not a hostile-process sandbox for children that call `setsid`.
-    nonisolated func terminateRemainingProcessGroup() -> Bool {
+    nonisolated func terminateRemainingProcessGroup(abandonDeadlineNs: UInt64) -> Bool {
         guard let pid = self.currentProcessIdentifier() else { return false }
         if let remaining = self.processGroupMembersExcludingLeader(pid: pid), remaining.isEmpty {
             return true
@@ -455,16 +470,21 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         // Reassert KILL and verify briefly without extending that hard ceiling by another cycle.
         if self.terminationWasRequested() {
             self.killProcessGroup(pid: pid, signal: SIGKILL)
-            return self.waitForProcessGroupExit(pid: pid, timeoutSeconds: 1.0)
+            return self.waitForProcessGroupExit(pid: pid, deadlineNs: abandonDeadlineNs)
         }
 
         self.killProcessGroup(pid: pid, signal: SIGTERM)
-        if self.waitForProcessGroupExit(pid: pid, timeoutSeconds: 0.5) {
+        let termGraceNs = UInt64(CaptureActionProcessRunner.processGroupTerminationGraceSeconds * 1_000_000_000)
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        let (unboundedTermDeadlineNs, overflowed) = nowNs.addingReportingOverflow(termGraceNs)
+        let termDeadlineNs = min(overflowed ? UInt64.max : unboundedTermDeadlineNs, abandonDeadlineNs)
+        if self.waitForProcessGroupExit(pid: pid, deadlineNs: termDeadlineNs) {
             return true
         }
 
+        guard DispatchTime.now().uptimeNanoseconds < abandonDeadlineNs else { return false }
         self.killProcessGroup(pid: pid, signal: SIGKILL)
-        return self.waitForProcessGroupExit(pid: pid, timeoutSeconds: 1.0)
+        return self.waitForProcessGroupExit(pid: pid, deadlineNs: abandonDeadlineNs)
     }
 
     private nonisolated func terminationWasRequested() -> Bool {
@@ -698,11 +718,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         self.signalProcessGroup(pid, signal)
     }
 
-    private nonisolated func waitForProcessGroupExit(pid: pid_t, timeoutSeconds: TimeInterval) -> Bool {
-        let nowNs = DispatchTime.now().uptimeNanoseconds
-        let timeoutNs = UInt64(max(0, timeoutSeconds) * 1_000_000_000)
-        let (deadlineNs, overflow) = nowNs.addingReportingOverflow(timeoutNs)
-        let effectiveDeadlineNs = overflow ? UInt64.max : deadlineNs
+    private nonisolated func waitForProcessGroupExit(pid: pid_t, deadlineNs: UInt64) -> Bool {
         repeat {
             guard let members = self.processGroupMembersExcludingLeader(pid: pid) else {
                 return false
@@ -711,7 +727,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
                 return true
             }
             usleep(10000)
-        } while DispatchTime.now().uptimeNanoseconds < effectiveDeadlineNs
+        } while DispatchTime.now().uptimeNanoseconds < deadlineNs
         return self.processGroupMembersExcludingLeader(pid: pid)?.isEmpty == true
     }
 
@@ -822,6 +838,14 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
 }
 
 enum CaptureActionProcessRunner {
+    nonisolated static let processGroupTerminationGraceSeconds: TimeInterval = 0.5
+    nonisolated static let processGroupKillGraceSeconds: TimeInterval = 1.0
+    nonisolated static let processGroupDeadlineMarginSeconds: TimeInterval = 0.5
+    nonisolated static let completionReserveSeconds =
+        CaptureActionProcessRunner.processGroupTerminationGraceSeconds +
+        CaptureActionProcessRunner.processGroupKillGraceSeconds +
+        CaptureActionProcessRunner.processGroupDeadlineMarginSeconds
+
     private nonisolated static let leaderWaitQueue = DispatchQueue(
         label: "boo.peekaboo.capture-action.wait",
         qos: .userInitiated,
@@ -831,11 +855,13 @@ enum CaptureActionProcessRunner {
     nonisolated static func run(
         command: [String],
         timeoutSeconds: TimeInterval,
+        completionDeadlineNanoseconds: UInt64? = nil,
         onLaunch: @escaping @Sendable (UInt64) -> Void = { _ in }
     ) async throws -> CaptureActionProcessResult {
         try await self.run(
             command: command,
             timeoutSeconds: timeoutSeconds,
+            completionDeadlineNanoseconds: completionDeadlineNanoseconds,
             onLaunch: onLaunch,
             signalProcessGroup: { pid, signal in
                 _ = Darwin.kill(-pid, signal)
@@ -847,6 +873,7 @@ enum CaptureActionProcessRunner {
     nonisolated static func run(
         command: [String],
         timeoutSeconds: TimeInterval,
+        completionDeadlineNanoseconds: UInt64? = nil,
         onLaunch: @escaping @Sendable (UInt64) -> Void = { _ in },
         signalProcessGroup: @escaping @Sendable (pid_t, Int32) -> Void,
         processStartIdentity: @escaping @Sendable (pid_t) -> UInt64? = {
@@ -854,6 +881,43 @@ enum CaptureActionProcessRunner {
         },
         timeoutTaskDelayNanoseconds: UInt64 = 0
     ) async throws -> CaptureActionProcessResult {
+        guard timeoutSeconds.isFinite,
+              timeoutSeconds >= 0,
+              timeoutSeconds <= Double(UInt64.max) / 1_000_000_000.0
+        else {
+            throw CaptureActionProcessLaunchError(
+                message: "Action timeout cannot be represented as a monotonic deadline",
+                refusalReason: .invalidRequest
+            )
+        }
+        // Start the budget before suspended spawn/identity work and cap every later TERM/KILL wait
+        // to the caller's one completion deadline; no cleanup phase receives a fresh escape window.
+        let invokedNs = DispatchTime.now().uptimeNanoseconds
+        let timeoutNs = UInt64((timeoutSeconds * 1_000_000_000.0).rounded(.down))
+        let reserveNs = UInt64(self.completionReserveSeconds * 1_000_000_000.0)
+        let (configuredTimeoutDeadlineNs, timeoutOverflow) = invokedNs.addingReportingOverflow(timeoutNs)
+        let (derivedCompletionDeadlineNs, completionOverflow) =
+            (timeoutOverflow ? UInt64.max : configuredTimeoutDeadlineNs).addingReportingOverflow(reserveNs)
+        let effectiveCompletionDeadlineNs = completionDeadlineNanoseconds ??
+            (completionOverflow ? UInt64.max : derivedCompletionDeadlineNs)
+        guard effectiveCompletionDeadlineNs > reserveNs else {
+            throw CaptureActionProcessLaunchError(
+                message: "Action completion deadline leaves no process cleanup budget",
+                refusalReason: .invalidRequest
+            )
+        }
+        let latestTimeoutDeadlineNs = effectiveCompletionDeadlineNs - reserveNs
+        let effectiveTimeoutDeadlineNs = min(
+            timeoutOverflow ? UInt64.max : configuredTimeoutDeadlineNs,
+            latestTimeoutDeadlineNs
+        )
+        guard invokedNs < effectiveTimeoutDeadlineNs else {
+            throw CaptureActionProcessLaunchError(
+                message: "Action completion deadline elapsed before process preparation",
+                refusalReason: .invalidRequest
+            )
+        }
+
         let box = CaptureActionProcessBox(
             signalProcessGroup: signalProcessGroup,
             processStartIdentityProvider: processStartIdentity
@@ -868,16 +932,9 @@ enum CaptureActionProcessRunner {
             try box.start(command: command)
             defer { box.terminateUnreleasedIfNeeded() }
             try Task.checkCancellation()
-            let startedNs = try box.release()
+            let startedNs = try box.release(before: effectiveTimeoutDeadlineNs)
             onLaunch(startedNs)
 
-            // Hard ceiling: configured timeout + TERM grace (0.5s) + SIGKILL grace (1s) + margin.
-            // Prevents indefinite hang if the child survives kill attempts.
-            let timeoutNs = UInt64(max(0, timeoutSeconds) * 1_000_000_000)
-            let (timeoutDeadlineNs, timeoutOverflow) = startedNs.addingReportingOverflow(timeoutNs)
-            let effectiveTimeoutDeadlineNs = timeoutOverflow ? UInt64.max : timeoutDeadlineNs
-            let (deadlineNs, deadlineOverflow) = effectiveTimeoutDeadlineNs.addingReportingOverflow(2_000_000_000)
-            let effectiveDeadlineNs = deadlineOverflow ? UInt64.max : deadlineNs
             let timeoutTask = Task.detached {
                 if timeoutTaskDelayNanoseconds > 0 {
                     do {
@@ -886,13 +943,16 @@ enum CaptureActionProcessRunner {
                         return
                     }
                 }
-                await box.terminateAfterTimeout(deadlineNs: effectiveTimeoutDeadlineNs)
+                await box.terminateAfterTimeout(
+                    deadlineNs: effectiveTimeoutDeadlineNs,
+                    abandonDeadlineNs: effectiveCompletionDeadlineNs
+                )
             }
 
             let completion = await self.completeBlockingLifecycle(
                 box: box,
                 timeoutDeadlineNs: effectiveTimeoutDeadlineNs,
-                abandonDeadlineNs: effectiveDeadlineNs
+                abandonDeadlineNs: effectiveCompletionDeadlineNs
             )
             timeoutTask.cancel()
             await timeoutTask.value
@@ -900,7 +960,8 @@ enum CaptureActionProcessRunner {
             let durationMs = Int(completedNs >= startedNs ? (completedNs - startedNs) / 1_000_000 : 0)
             let launchIdentity = box.launchIdentity()
 
-            guard completion.processGroupCleaned,
+            guard completedNs <= effectiveCompletionDeadlineNs,
+                  completion.processGroupCleaned,
                   let exitCode = completion.exitCode,
                   let launchIdentity
             else {
@@ -909,6 +970,7 @@ enum CaptureActionProcessRunner {
                 )
             }
 
+            let effectiveTimeoutSeconds = Double(effectiveTimeoutDeadlineNs - invokedNs) / 1_000_000_000.0
             return CaptureActionProcessResult(
                 command: command,
                 processIdentifier: launchIdentity.processIdentifier,
@@ -916,7 +978,7 @@ enum CaptureActionProcessRunner {
                 exitCode: exitCode,
                 timedOut: box.wasTimedOut(),
                 processGroupCleaned: completion.processGroupCleaned,
-                timeoutSeconds: timeoutSeconds,
+                timeoutSeconds: effectiveTimeoutSeconds,
                 durationMs: durationMs,
                 stdout: completion.stdout,
                 stderr: completion.stderr,
