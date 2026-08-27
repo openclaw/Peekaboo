@@ -8,12 +8,17 @@ public enum BrowserToolInstructionAudience: Sendable {
     case commandLine
 }
 
+public enum BrowserProcessLocalAction {
+    public static let bindWindow = "bind_window"
+}
+
 public struct BrowserTool: MCPTool {
-    private let client: any BrowserMCPClientProviding
+    let client: any BrowserMCPClientProviding
     private let connectionPolicy: BrowserMCPExecutionConnectionPolicy
     private let executionPolicy: MCPToolExecutionPolicy
     private let instructionAudience: BrowserToolInstructionAudience
-    private let capabilitySession: BrowserToolCapabilitySession?
+    let capabilitySession: BrowserToolCapabilitySession?
+    let nativeWindowBindingProvider: (any BrowserMCPNativeWindowBindingProviding)?
 
     public let name = "browser"
     public var description: String {
@@ -42,13 +47,18 @@ public struct BrowserTool: MCPTool {
 
     public var inputSchema: Value {
         let foregroundCapable = self.executionPolicy != .backgroundOnly
-        let actions = BrowserAction.allCases.filter { foregroundCapable || $0 != .connect }
+        var actions = BrowserAction.allCases
+            .filter { foregroundCapable || $0 != .connect }
+            .map(\.rawValue)
+        if self.nativeWindowBindingProvider != nil {
+            actions.append(BrowserProcessLocalAction.bindWindow)
+        }
         var properties: [String: Value] = [
             "action": SchemaBuilder.string(
                 description: foregroundCapable
                     ? "Browser action. Use status before explicit connect; connect may present Chrome approval UI."
                     : "Background-safe action against an existing exact connection; connect is unavailable.",
-                enum: actions.map(\.rawValue)),
+                enum: actions),
             "channel": SchemaBuilder.string(
                 description: """
                 Chrome channel selected by explicit connect. Defaults to the running Chrome channel, then stable.
@@ -121,6 +131,14 @@ public struct BrowserTool: MCPTool {
             "mcp_args_json": SchemaBuilder.string(description: "Advanced: JSON object args for raw MCP call. " +
                 "Page-targeted tools require top-level page_id; nested pageId cannot select the page."),
         ]
+        if self.nativeWindowBindingProvider != nil {
+            properties["pid"] = SchemaBuilder.integer(
+                description: "Exact Chrome PID for bind_window; must match the connection receipt.",
+                minimum: 1)
+            properties["window_id"] = SchemaBuilder.integer(
+                description: "Exact WindowServer ID for bind_window.",
+                minimum: 1)
+        }
         if foregroundCapable {
             properties["browser_url"] = SchemaBuilder.string(description: """
             Exact loopback DevTools HTTP endpoint for connect, for example http://127.0.0.1:9222.
@@ -138,10 +156,22 @@ public struct BrowserTool: MCPTool {
         client: (any BrowserMCPClientProviding)? = nil,
         instructionAudience: BrowserToolInstructionAudience = .mcp)
     {
-        self.client = client ?? context.browser
+        let resolvedClient = client ?? context.browser
+        let capabilitySession = instructionAudience == .mcp ? context.browserCapabilities : nil
+        let nativeProvider = resolvedClient as? any BrowserMCPNativeWindowBindingProviding
+        self.client = resolvedClient
         self.executionPolicy = context.executionPolicy
         self.instructionAudience = instructionAudience
-        self.capabilitySession = instructionAudience == .mcp ? context.browserCapabilities : nil
+        self.capabilitySession = capabilitySession
+        if context.executionHost == .local,
+           let capabilitySession,
+           let nativeProvider,
+           nativeProvider.nativeWindowBindingCapabilitySession === capabilitySession
+        {
+            self.nativeWindowBindingProvider = nativeProvider
+        } else {
+            self.nativeWindowBindingProvider = nil
+        }
         self.connectionPolicy = context.executionPolicy == .backgroundOnly
             ? .requireExistingLiveReceipt
             : .allowAutoConnect
@@ -156,6 +186,7 @@ public struct BrowserTool: MCPTool {
         self.executionPolicy = executionPolicy
         self.instructionAudience = instructionAudience
         self.capabilitySession = nil
+        self.nativeWindowBindingProvider = nil
         self.connectionPolicy = executionPolicy == .backgroundOnly
             ? .requireExistingLiveReceipt
             : .allowAutoConnect
@@ -166,9 +197,13 @@ public struct BrowserTool: MCPTool {
         if let rejection = self.executionPolicy.rejection(toolName: self.name, arguments: arguments) {
             return rejection
         }
-        guard let actionName = arguments.getString("action"),
-              let action = BrowserAction(rawValue: actionName)
-        else {
+        guard let actionName = arguments.getString("action") else {
+            return ToolResponse.error("Missing or invalid required parameter: action")
+        }
+        if actionName == BrowserProcessLocalAction.bindWindow {
+            return try await self.executeNativeWindowBindingResponse(arguments: arguments)
+        }
+        guard let action = BrowserAction(rawValue: actionName) else {
             return ToolResponse.error("Missing or invalid required parameter: action")
         }
 
@@ -204,6 +239,14 @@ public struct BrowserTool: MCPTool {
                 browserURL: browserURL)
         } catch let error as BrowserToolCapabilityError {
             return ToolResponse.error(error.localizedDescription)
+        } catch let error as BrowserToolNativeWindowBindingError {
+            return try MCPToolResponseMetadataProjector.errorResponse(
+                for: Self.nativeWindowBindingFailure(error),
+                invalidatedSnapshotID: nil)
+        } catch let error as BrowserNativeWindowBindingCoordinatorError {
+            return try MCPToolResponseMetadataProjector.errorResponse(
+                for: Self.nativeWindowBindingFailure(error),
+                invalidatedSnapshotID: nil)
         } catch let error as BrowserToolError {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as MCPToolArgumentValueError {
@@ -359,11 +402,24 @@ public struct BrowserTool: MCPTool {
             } else {
                 nil
             }
+            let nativeBoundPageReference: String? = if Self.sequenceSemantics(calls) == .mutating,
+                                                       let pageReference = resolved?.pageReference,
+                                                       let capabilitySession,
+                                                       let sessionBinding,
+                                                       try await capabilitySession.hasNativeWindowBinding(
+                                                           pageReference: pageReference,
+                                                           sessionBinding: sessionBinding)
+            {
+                pageReference
+            } else {
+                nil
+            }
             let response = try await self.executeSequence(
                 calls,
                 channel: channel,
                 expectedSessionBinding: sessionBinding,
-                elementPreflight: elementPreflight)
+                elementPreflight: elementPreflight,
+                nativeBoundPageReference: nativeBoundPageReference)
             guard let capabilitySession = self.capabilitySession else { return response }
             do {
                 return try await capabilitySession.project(
@@ -421,7 +477,8 @@ public struct BrowserTool: MCPTool {
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?,
         expectedSessionBinding: BrowserMCPExecutionSessionBinding? = nil,
-        elementPreflight: BrowserMCPElementPreflight? = nil) async throws -> ToolResponse
+        elementPreflight: BrowserMCPElementPreflight? = nil,
+        nativeBoundPageReference: String? = nil) async throws -> ToolResponse
     {
         let semantics = Self.sequenceSemantics(calls)
         guard let resultClient = self.client as? any BrowserMCPActionResultProviding else {
@@ -447,7 +504,26 @@ public struct BrowserTool: MCPTool {
         try Self.checkCancellationBeforeProviderEntry()
         let result: DesktopActionResult<ToolResponse>
         do {
-            if let expectedSessionBinding {
+            if let nativeBoundPageReference {
+                guard let expectedSessionBinding,
+                      let nativeWindowBindingProvider = self.nativeWindowBindingProvider
+                else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .operationUnsupported,
+                        message: "The bound browser page has no process-local native execution authority.",
+                        hint: "Use the same scoped MCP or Agent session that created the binding.")
+                }
+                result = try await nativeWindowBindingProvider
+                    .executeNativeWindowBoundSequenceWithOutcomeHoldingCapabilityGate(
+                        .init(
+                            calls: calls,
+                            channel: channel,
+                            sessionBinding: expectedSessionBinding,
+                            elementPreflight: elementPreflight,
+                            pageReference: nativeBoundPageReference,
+                            deadline: ContinuousClock.now.advanced(by: .seconds(10))))
+                    .actionResult
+            } else if let expectedSessionBinding {
                 guard let atomicClient = self.client as? any BrowserMCPAtomicSessionActionProviding else {
                     throw DesktopActionFailure.preDispatchRefusal(
                         reason: .operationUnsupported,
@@ -709,10 +785,15 @@ public struct BrowserTool: MCPTool {
 
 extension BrowserTool: MCPToolArgumentSemanticValidating {
     func validateArgumentSemantics(_ arguments: ToolArguments) throws {
-        guard let actionName = arguments.getString("action"),
-              let action = BrowserAction(rawValue: actionName)
-        else {
+        guard let actionName = arguments.getString("action") else {
             throw BrowserToolError.missingParameter("action")
+        }
+        if actionName == BrowserProcessLocalAction.bindWindow {
+            try self.validateNativeWindowBindingArguments(arguments)
+            return
+        }
+        guard let action = BrowserAction(rawValue: actionName) else {
+            throw BrowserToolError.invalidAction(actionName)
         }
         let providerArguments = try self.capabilityValidationArguments(arguments)
 
@@ -723,6 +804,34 @@ extension BrowserTool: MCPToolArgumentSemanticValidating {
             _ = try BrowserMCPCallMapper.mapRawCall(arguments: providerArguments)
         default:
             _ = try BrowserMCPCallMapper.mapSequence(action: action, arguments: providerArguments)
+        }
+    }
+
+    private func validateNativeWindowBindingArguments(_ arguments: ToolArguments) throws {
+        guard self.nativeWindowBindingProvider != nil else {
+            throw BrowserToolError.invalidAction(BrowserProcessLocalAction.bindWindow)
+        }
+        let allowedKeys: Set = ["action", "page_id", "pid", "window_id"]
+        if let unexpected = Set(arguments.rawDictionary.keys).subtracting(allowedKeys).min() {
+            throw BrowserToolError.unsupportedBindingParameter(unexpected)
+        }
+        guard let pageReference = arguments.getString("page_id") else {
+            throw BrowserToolError.missingParameter("page_id")
+        }
+        guard BrowserToolCapabilityReference.isValid(pageReference, prefix: "bp1") else {
+            throw BrowserToolCapabilityError.invalidPageReference
+        }
+        guard let rawPID = try arguments.validatedInt("pid") else {
+            throw BrowserToolError.missingParameter("pid")
+        }
+        guard Int32(exactly: rawPID).map({ $0 > 0 }) == true else {
+            throw BrowserToolError.invalidProcessIdentifier
+        }
+        guard let rawWindowID = try arguments.validatedInt("window_id") else {
+            throw BrowserToolError.missingParameter("window_id")
+        }
+        guard UInt32(exactly: rawWindowID).map({ $0 > 0 }) == true else {
+            throw BrowserToolError.invalidWindowIdentifier
         }
     }
 
@@ -754,6 +863,9 @@ private enum BrowserToolError: LocalizedError {
     case unsupportedRawTool(String)
     case selectedPageRoutingUnsupported(String)
     case globalPageReferenceUnsupported(String)
+    case unsupportedBindingParameter(String)
+    case invalidProcessIdentifier
+    case invalidWindowIdentifier
 
     var errorDescription: String? {
         switch self {
@@ -773,6 +885,12 @@ private enum BrowserToolError: LocalizedError {
                 "until upstream adds explicit pageId routing"
         case let .globalPageReferenceUnsupported(toolName):
             "Raw global Chrome DevTools MCP tool '\(toolName)' does not accept page_id"
+        case let .unsupportedBindingParameter(name):
+            "bind_window does not accept \(name); pass exactly page_id, pid, and window_id"
+        case .invalidProcessIdentifier:
+            "pid must be a positive Int32"
+        case .invalidWindowIdentifier:
+            "window_id must be a positive UInt32"
         }
     }
 }

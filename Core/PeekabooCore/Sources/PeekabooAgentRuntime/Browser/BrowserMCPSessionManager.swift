@@ -18,6 +18,7 @@ protocol BrowserMCPManaging: AnyObject {
 private struct BrowserMCPPreparedExecution {
     let sessionBinding: BrowserMCPExecutionSessionBinding
     let connectionOutcome: DesktopActionOutcome?
+    let receiptBound: Bool
 }
 
 private enum BrowserMCPConnectionTargetKind: Sendable, Equatable {
@@ -503,6 +504,48 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
     }
 
+    func executeNativeWindowBoundSequence(
+        _ request: BrowserMCPNativeWindowBoundExecutionRequest,
+        capabilities: BrowserToolCapabilitySession,
+        receiptProviders: BrowserNativeWindowReceiptResolver.Providers) async throws
+        -> BrowserNativeWindowBoundExecution
+    {
+        do {
+            return try await self.withExecutionGate {
+                let preparation = try await self.prepareExecutionReceipt(
+                    channel: request.channel,
+                    expectedConnectionReceipt: request.sessionBinding.connectionReceipt,
+                    expectedProviderSessionEpoch: request.sessionBinding.providerSessionEpoch,
+                    connectionPolicy: .requireExistingLiveReceipt)
+                try await self.requireElementPreflightUnlocked(
+                    request.elementPreflight,
+                    preparation: preparation)
+                let control = try await self.nativeBindingControl(
+                    expectedSessionBinding: request.sessionBinding)
+                let context = BrowserNativeWindowBindingCoordinator.Context(
+                    sessionBinding: request.sessionBinding,
+                    capabilities: capabilities,
+                    manager: self,
+                    deadline: request.deadline)
+                let nativeWindowReceipt = try await BrowserNativeWindowBindingCoordinator
+                    .revalidateHoldingAuthorities(
+                        pageReference: request.pageReference,
+                        context: context,
+                        control: control,
+                        receiptProviders: receiptProviders)
+                try Self.requireNativeBindingDeadline(request.deadline)
+                let result = try await self.executePreparedSequenceUnlocked(
+                    request.calls,
+                    preparation: preparation)
+                return BrowserNativeWindowBoundExecution(
+                    result: result,
+                    nativeWindowReceipt: nativeWindowReceipt)
+            }
+        } catch is CancellationError {
+            throw Self.preDispatchFailure(CancellationError())
+        }
+    }
+
     func executeSequence(
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?,
@@ -530,34 +573,17 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     {
         do {
             return try await self.withExecutionGate {
-                if let elementPreflight {
-                    let preflight = try await self.executeSequenceUnlocked(
-                        [BrowserMCPMappedCall(
-                            toolName: "take_snapshot",
-                            arguments: ["pageId": elementPreflight.providerPageID])],
-                        channel: channel,
-                        expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
-                        expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
-                        connectionPolicy: .requireExistingLiveReceipt)
-                    let currentUIDs = BrowserMCPProviderSnapshotParser.providerUIDs(in: preflight.response)
-                    // chrome-devtools-mcp v1.6.0 preserves a UID only for the same per-page
-                    // loaderId/backendNodeId pair. The pinned dependency contract checks that identity rule.
-                    guard !preflight.response.isError,
-                          preflight.actionFailure == nil,
-                          currentUIDs.isSuperset(of: elementPreflight.providerUIDs)
-                    else {
-                        throw DesktopActionFailure.preDispatchRefusal(
-                            reason: .targetUnavailable,
-                            message: "Browser element references are stale in the current page document.",
-                            hint: "Take a fresh browser snapshot and retry with its new opaque element references.")
-                    }
-                }
-                return try await self.executeSequenceUnlocked(
-                    calls,
+                let preparation = try await self.prepareExecutionReceipt(
                     channel: channel,
                     expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
                     expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
                     connectionPolicy: .requireExistingLiveReceipt)
+                try await self.requireElementPreflightUnlocked(
+                    elementPreflight,
+                    preparation: preparation)
+                return try await self.executePreparedSequenceUnlocked(
+                    calls,
+                    preparation: preparation)
             }
         } catch is CancellationError {
             throw Self.preDispatchFailure(CancellationError())
@@ -586,6 +612,15 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             expectedConnectionReceipt: expectedConnectionReceipt,
             expectedProviderSessionEpoch: expectedProviderSessionEpoch,
             connectionPolicy: connectionPolicy)
+        return try await self.executePreparedSequenceUnlocked(
+            calls,
+            preparation: preparation)
+    }
+
+    private func executePreparedSequenceUnlocked(
+        _ calls: [BrowserMCPMappedCall],
+        preparation: BrowserMCPPreparedExecution) async throws -> BrowserMCPExecutionResult
+    {
         let sessionBinding = preparation.sessionBinding
         let receipt = sessionBinding.connectionReceipt
 
@@ -610,7 +645,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                             response = .error(actionFailure?.message ?? "Browser sequence stopped")
                             break
                         }
-                        if expectedConnectionReceipt != nil {
+                        if preparation.receiptBound {
                             throw Self.preDispatchFailure(cause)
                         }
                         throw cause
@@ -692,6 +727,30 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             providerReturnedError: providerReturnedError)
     }
 
+    private func requireElementPreflightUnlocked(
+        _ elementPreflight: BrowserMCPElementPreflight?,
+        preparation: BrowserMCPPreparedExecution) async throws
+    {
+        guard let elementPreflight else { return }
+        let preflight = try await self.executePreparedSequenceUnlocked(
+            [BrowserMCPMappedCall(
+                toolName: "take_snapshot",
+                arguments: ["pageId": elementPreflight.providerPageID])],
+            preparation: preparation)
+        let currentUIDs = BrowserMCPProviderSnapshotParser.providerUIDs(in: preflight.response)
+        // chrome-devtools-mcp v1.6.0 preserves a UID only for the same per-page
+        // loaderId/backendNodeId pair. The pinned dependency contract checks that identity rule.
+        guard !preflight.response.isError,
+              preflight.actionFailure == nil,
+              currentUIDs.isSuperset(of: elementPreflight.providerUIDs)
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Browser element references are stale in the current page document.",
+                hint: "Take a fresh browser snapshot and retry with its new opaque element references.")
+        }
+    }
+
     // Connection authority, target locking, and live-receipt validation stay in one pre-dispatch control flow.
     // swiftlint:disable:next cyclomatic_complexity
     private func prepareExecutionReceipt(
@@ -739,7 +798,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 sessionBinding: .init(
                     connectionReceipt: receipt,
                     providerSessionEpoch: providerSessionEpoch),
-                connectionOutcome: connection.outcome)
+                connectionOutcome: connection.outcome,
+                receiptBound: false)
         }
         guard let receipt = self.connectionReceipt,
               let providerSessionEpoch = self.providerSessionEpoch
@@ -817,7 +877,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             sessionBinding: .init(
                 connectionReceipt: receipt,
                 providerSessionEpoch: providerSessionEpoch),
-            connectionOutcome: nil)
+            connectionOutcome: nil,
+            receiptBound: expectedConnectionReceipt != nil)
     }
 
     private static func partialSequenceFailure(

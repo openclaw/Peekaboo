@@ -47,7 +47,6 @@ enum NativeBrowserWindowCorrelator {
     static func correlate(
         expectedNativeWindow: WindowMutationIdentity,
         currentNativeWindow: WindowMutationIdentity?,
-        nativeTitle: String?,
         requestedTargetID: String,
         candidates: [CDPBrowserWindowCandidate]) throws -> NativeBrowserWindowCorrelation
     {
@@ -69,20 +68,8 @@ enum NativeBrowserWindowCorrelator {
             throw NativeBrowserWindowCorrelationError.noGeometryMatch
         }
 
-        let selected: CDPBrowserWindowCandidate
-        if geometryCandidates.count == 1 {
-            selected = geometryCandidates[0]
-        } else {
-            guard let nativeTitle,
-                  !nativeTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            else {
-                throw NativeBrowserWindowCorrelationError.ambiguousGeometry
-            }
-            let titleMatches = geometryCandidates.filter { $0.titles.contains(nativeTitle) }
-            guard titleMatches.count == 1, let titleMatch = titleMatches.first else {
-                throw NativeBrowserWindowCorrelationError.ambiguousGeometry
-            }
-            selected = titleMatch
+        guard geometryCandidates.count == 1, let selected = geometryCandidates.first else {
+            throw NativeBrowserWindowCorrelationError.ambiguousGeometry
         }
 
         guard !requestedTargetID.isEmpty else {

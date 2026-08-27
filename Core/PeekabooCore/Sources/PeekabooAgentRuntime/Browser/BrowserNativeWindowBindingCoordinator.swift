@@ -12,6 +12,11 @@ struct BrowserNativeWindowBindingProof: Sendable, Equatable {
     let quality: Quality
 }
 
+struct BrowserNativeWindowBoundExecution: Sendable {
+    let result: BrowserMCPExecutionResult
+    let nativeWindowReceipt: BrowserNativeWindowReceipt
+}
+
 enum BrowserNativeWindowBindingCoordinatorError: Error, Equatable {
     case invalidPageCapability
     case invalidNativeWindow
@@ -38,6 +43,7 @@ enum BrowserNativeWindowBindingCoordinator {
     private struct BindAuthorityRequest: Sendable {
         let pageReference: String
         let nativeTarget: BrowserNativeWindowTarget
+        let capturedReceipt: BrowserNativeWindowReceipt
         let privateTargetID: String
         let context: Context
         let receiptProviders: BrowserNativeWindowReceiptResolver.Providers
@@ -51,69 +57,98 @@ enum BrowserNativeWindowBindingCoordinator {
         dependencies: Dependencies) async throws -> BrowserNativeWindowBindingProof
     {
         try await context.capabilities.withExclusiveOperation {
-            let resolved: BrowserToolCapabilitySession.ResolvedArguments
-            do {
-                resolved = try await context.capabilities.resolve(
-                    action: .snapshot,
-                    arguments: ToolArguments(raw: ["page_id": pageReference]),
-                    sessionBinding: context.sessionBinding)
-            } catch {
-                throw BrowserNativeWindowBindingCoordinatorError.invalidPageCapability
-            }
-            guard let providerPageID = resolved.providerPageID else {
-                throw BrowserNativeWindowBindingCoordinatorError.invalidPageCapability
-            }
+            try await self.bindHoldingCapabilityGate(
+                pageReference: pageReference,
+                nativeTarget: nativeTarget,
+                context: context,
+                dependencies: dependencies)
+        }
+    }
 
-            do {
-                return try await context.manager.withPrivateTargetBindingAuthority(
-                    providerPageID: providerPageID,
-                    expectedSessionBinding: context.sessionBinding,
-                    deadline: context.deadline)
-                { control, privateTargetID in
-                    do {
-                        return try await self.bindUnderAuthority(
-                            .init(
-                                pageReference: pageReference,
-                                nativeTarget: nativeTarget,
-                                privateTargetID: privateTargetID,
-                                context: context,
-                                receiptProviders: dependencies.receiptProviders),
-                            control: control)
-                    } catch {
-                        throw await self.validationError(
-                            error,
+    @MainActor
+    static func bindHoldingCapabilityGate(
+        pageReference: String,
+        nativeTarget: BrowserNativeWindowTarget,
+        context: Context,
+        dependencies: Dependencies) async throws -> BrowserNativeWindowBindingProof
+    {
+        let connectionReceipt = context.sessionBinding.connectionReceipt
+        guard connectionReceipt.processIdentifier == nativeTarget.processIdentifier,
+              connectionReceipt.processStartIdentity == nativeTarget.processStartIdentity
+        else {
+            throw BrowserNativeWindowBindingCoordinatorError.invalidNativeWindow
+        }
+        let resolved: BrowserToolCapabilitySession.ResolvedArguments
+        do {
+            resolved = try await context.capabilities.resolve(
+                action: .snapshot,
+                arguments: ToolArguments(raw: ["page_id": pageReference]),
+                sessionBinding: context.sessionBinding)
+        } catch {
+            throw BrowserNativeWindowBindingCoordinatorError.invalidPageCapability
+        }
+        guard let providerPageID = resolved.providerPageID else {
+            throw BrowserNativeWindowBindingCoordinatorError.invalidPageCapability
+        }
+        let capturedReceipt: BrowserNativeWindowReceipt
+        do {
+            capturedReceipt = try BrowserNativeWindowReceiptResolver.capture(
+                target: nativeTarget,
+                providers: dependencies.receiptProviders).get()
+        } catch {
+            throw BrowserNativeWindowBindingCoordinatorError.invalidNativeWindow
+        }
+
+        do {
+            return try await context.manager.withPrivateTargetBindingAuthority(
+                providerPageID: providerPageID,
+                expectedSessionBinding: context.sessionBinding,
+                deadline: context.deadline)
+            { control, privateTargetID in
+                do {
+                    return try await self.bindUnderAuthority(
+                        .init(
                             pageReference: pageReference,
-                            capabilities: context.capabilities,
-                            control: control,
-                            deadline: context.deadline)
-                    }
+                            nativeTarget: nativeTarget,
+                            capturedReceipt: capturedReceipt,
+                            privateTargetID: privateTargetID,
+                            context: context,
+                            receiptProviders: dependencies.receiptProviders),
+                        control: control)
+                } catch {
+                    throw await self.validationError(
+                        error,
+                        pageReference: pageReference,
+                        capabilities: context.capabilities,
+                        control: control,
+                        deadline: context.deadline)
                 }
-            } catch is CancellationError {
-                await self.invalidateAfterPrivateLookupFailure(
-                    pageReference: pageReference,
-                    context: context)
-                throw CancellationError()
-            } catch BrowserMCPPrivateInteropError.authorityUnavailable {
-                await context.capabilities.invalidateNativeWindowBindings()
-                throw BrowserNativeWindowBindingCoordinatorError.controlUnavailable
-            } catch BrowserMCPPrivateInteropError.deadlineExceeded {
-                await self.invalidateAfterPrivateLookupFailure(
-                    pageReference: pageReference,
-                    context: context)
-                throw BrowserNativeWindowBindingCoordinatorError.deadlineExceeded
-            } catch is BrowserMCPPrivateInteropError {
-                await self.invalidateAfterPrivateLookupFailure(
-                    pageReference: pageReference,
-                    context: context)
-                throw BrowserNativeWindowBindingCoordinatorError.privateTargetUnavailable
-            } catch let error as BrowserNativeWindowBindingCoordinatorError {
-                throw error
-            } catch {
-                await self.invalidateAfterPrivateLookupFailure(
-                    pageReference: pageReference,
-                    context: context)
-                throw BrowserNativeWindowBindingCoordinatorError.privateTargetUnavailable
             }
+        } catch is CancellationError {
+            await self.invalidateAfterPrivateLookupFailure(
+                pageReference: pageReference,
+                context: context)
+            throw CancellationError()
+        } catch BrowserMCPPrivateInteropError.authorityUnavailable {
+            await context.capabilities.invalidateNativeWindowBindings()
+            throw BrowserNativeWindowBindingCoordinatorError.controlUnavailable
+        } catch BrowserMCPPrivateInteropError.deadlineExceeded {
+            await self.invalidateAfterPrivateLookupFailure(
+                pageReference: pageReference,
+                context: context)
+            throw BrowserNativeWindowBindingCoordinatorError.deadlineExceeded
+        } catch is BrowserMCPPrivateInteropError {
+            await self.invalidateAfterPrivateLookupFailure(
+                pageReference: pageReference,
+                context: context)
+            throw BrowserNativeWindowBindingCoordinatorError.privateTargetUnavailable
+        } catch let error as BrowserNativeWindowBindingCoordinatorError {
+            throw error
+        } catch {
+            await self.invalidateAfterPrivateLookupFailure(
+                pageReference: pageReference,
+                context: context)
+            throw BrowserNativeWindowBindingCoordinatorError.privateTargetUnavailable
         }
     }
 
@@ -129,21 +164,11 @@ enum BrowserNativeWindowBindingCoordinator {
                 return try await context.manager.withNativeBindingExecutionGate(
                     expectedSessionBinding: context.sessionBinding)
                 { control in
-                    let revalidatedReceipt: BrowserNativeWindowReceipt
-                    do {
-                        revalidatedReceipt = try await self.revalidateUnderAuthority(
-                            pageReference: pageReference,
-                            context: context,
-                            control: control,
-                            receiptProviders: receiptProviders)
-                    } catch {
-                        throw await self.validationError(
-                            error,
-                            pageReference: pageReference,
-                            capabilities: context.capabilities,
-                            control: control,
-                            deadline: context.deadline)
-                    }
+                    let revalidatedReceipt = try await self.revalidateHoldingAuthorities(
+                        pageReference: pageReference,
+                        context: context,
+                        control: control,
+                        receiptProviders: receiptProviders)
                     try self.requireAuthorizationDeadline(context)
                     return try await mutation(revalidatedReceipt)
                 }
@@ -162,26 +187,16 @@ enum BrowserNativeWindowBindingCoordinator {
         control: BrowserMCPDevToolsControlSession) async throws
         -> BrowserNativeWindowBindingProof
     {
-        let receipt: BrowserNativeWindowReceipt
-        do {
-            receipt = try BrowserNativeWindowReceiptResolver.capture(
-                target: request.nativeTarget,
-                providers: request.receiptProviders).get()
-        } catch {
-            throw BrowserNativeWindowBindingCoordinatorError.invalidNativeWindow
-        }
-
         let candidates = try await self.candidates(
             control: control,
             requestedTargetID: request.privateTargetID,
             deadline: request.context.deadline)
         let currentReceipt = try BrowserNativeWindowReceiptResolver.revalidate(
-            receipt,
+            request.capturedReceipt,
             providers: request.receiptProviders).get()
         let correlation = try NativeBrowserWindowCorrelator.correlate(
-            expectedNativeWindow: receipt.windowIdentity,
+            expectedNativeWindow: request.capturedReceipt.windowIdentity,
             currentNativeWindow: currentReceipt.windowIdentity,
-            nativeTitle: nil,
             requestedTargetID: request.privateTargetID,
             candidates: candidates)
         let finalWindowID = try await control.getWindowForTarget(
@@ -209,7 +224,7 @@ enum BrowserNativeWindowBindingCoordinator {
     }
 
     @MainActor
-    private static func revalidateUnderAuthority(
+    static func revalidateUnderAuthority(
         pageReference: String,
         context: Context,
         control: BrowserMCPDevToolsControlSession,
@@ -229,7 +244,6 @@ enum BrowserNativeWindowBindingCoordinator {
         let correlation = try NativeBrowserWindowCorrelator.correlate(
             expectedNativeWindow: binding.nativeWindowReceipt.windowIdentity,
             currentNativeWindow: currentReceipt.windowIdentity,
-            nativeTitle: nil,
             requestedTargetID: binding.privateTargetID,
             candidates: candidates)
         let finalWindowID = try await control.getWindowForTarget(
@@ -245,6 +259,30 @@ enum BrowserNativeWindowBindingCoordinator {
             throw BrowserNativeWindowBindingCoordinatorError.correlationRefused
         }
         return finalReceipt
+    }
+
+    @MainActor
+    static func revalidateHoldingAuthorities(
+        pageReference: String,
+        context: Context,
+        control: BrowserMCPDevToolsControlSession,
+        receiptProviders: BrowserNativeWindowReceiptResolver.Providers) async throws
+        -> BrowserNativeWindowReceipt
+    {
+        do {
+            return try await self.revalidateUnderAuthority(
+                pageReference: pageReference,
+                context: context,
+                control: control,
+                receiptProviders: receiptProviders)
+        } catch {
+            throw await self.validationError(
+                error,
+                pageReference: pageReference,
+                capabilities: context.capabilities,
+                control: control,
+                deadline: context.deadline)
+        }
     }
 
     @MainActor

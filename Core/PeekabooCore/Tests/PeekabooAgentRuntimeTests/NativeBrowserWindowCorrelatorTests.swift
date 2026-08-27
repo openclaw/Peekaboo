@@ -10,7 +10,6 @@ struct NativeBrowserWindowCorrelatorTests {
         let result = try NativeBrowserWindowCorrelator.correlate(
             expectedNativeWindow: identity,
             currentNativeWindow: identity,
-            nativeTitle: nil,
             requestedTargetID: "target-a",
             candidates: [Self.candidate(
                 windowID: 91,
@@ -35,7 +34,6 @@ struct NativeBrowserWindowCorrelatorTests {
         let result = try NativeBrowserWindowCorrelator.correlate(
             expectedNativeWindow: identity,
             currentNativeWindow: identity,
-            nativeTitle: nil,
             requestedTargetID: "target-a",
             candidates: [atBoundary])
         #expect(result.browserWindowID.rawValue == 91)
@@ -48,7 +46,6 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: identity,
                 currentNativeWindow: identity,
-                nativeTitle: nil,
                 requestedTargetID: "target-a",
                 candidates: [outsideBoundary])
         }
@@ -61,7 +58,6 @@ struct NativeBrowserWindowCorrelatorTests {
         let result = try NativeBrowserWindowCorrelator.correlate(
             expectedNativeWindow: identity,
             currentNativeWindow: identity,
-            nativeTitle: nil,
             requestedTargetID: "target-negative",
             candidates: [
                 Self.candidate(
@@ -78,44 +74,19 @@ struct NativeBrowserWindowCorrelatorTests {
     }
 
     @Test
-    func `exact title breaks only a geometry tie`() throws {
-        let bounds = CGRect(x: 20, y: 30, width: 1100, height: 800)
-        let identity = Self.identity(bounds: bounds)
-        let result = try NativeBrowserWindowCorrelator.correlate(
-            expectedNativeWindow: identity,
-            currentNativeWindow: identity,
-            nativeTitle: "Peekaboo - Background",
-            requestedTargetID: "target-b",
-            candidates: [
-                Self.candidate(
-                    windowID: 21,
-                    bounds: bounds,
-                    titles: ["Other", "Background Tab"],
-                    targetIDs: ["target-a"]),
-                Self.candidate(
-                    windowID: 22,
-                    bounds: bounds,
-                    titles: ["Peekaboo - Background", "Inactive Tab"],
-                    targetIDs: ["target-b"]),
-            ])
-
-        #expect(result.browserWindowID.rawValue == 22)
-    }
-
-    @Test
-    func `title comparison is exact and duplicate title matches remain ambiguous`() {
+    func `title metadata cannot break a geometry tie`() {
         let bounds = CGRect(x: 20, y: 30, width: 1100, height: 800)
         let identity = Self.identity(bounds: bounds)
         let candidates = [
             Self.candidate(
                 windowID: 21,
                 bounds: bounds,
-                titles: ["Peekaboo"],
+                titles: ["Other", "Background Tab"],
                 targetIDs: ["target-a"]),
             Self.candidate(
                 windowID: 22,
                 bounds: bounds,
-                titles: ["peekaboo"],
+                titles: ["Peekaboo - Background", "Inactive Tab"],
                 targetIDs: ["target-b"]),
         ]
 
@@ -123,25 +94,8 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: identity,
                 currentNativeWindow: identity,
-                nativeTitle: " PEEKABOO ",
-                requestedTargetID: "target-a",
+                requestedTargetID: "target-b",
                 candidates: candidates)
-        }
-
-        let duplicateTitles = candidates.map {
-            Self.candidate(
-                windowID: $0.windowID.rawValue,
-                bounds: $0.bounds,
-                titles: ["Peekaboo"],
-                targetIDs: $0.targetIDs)
-        }
-        #expect(throws: NativeBrowserWindowCorrelationError.ambiguousGeometry) {
-            try NativeBrowserWindowCorrelator.correlate(
-                expectedNativeWindow: identity,
-                currentNativeWindow: identity,
-                nativeTitle: "Peekaboo",
-                requestedTargetID: "target-a",
-                candidates: duplicateTitles)
         }
     }
 
@@ -158,7 +112,6 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: identity,
                 currentNativeWindow: identity,
-                nativeTitle: "Exact Title",
                 requestedTargetID: "target-a",
                 candidates: [titleOnly])
         }
@@ -181,7 +134,6 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: identity,
                 currentNativeWindow: identity,
-                nativeTitle: "Exact Title",
                 requestedTargetID: "requested-target",
                 candidates: candidates)
         }
@@ -203,7 +155,6 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: identity,
                 currentNativeWindow: identity,
-                nativeTitle: nil,
                 requestedTargetID: "target-a",
                 candidates: candidates)
         }
@@ -211,7 +162,6 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: identity,
                 currentNativeWindow: identity,
-                nativeTitle: nil,
                 requestedTargetID: "",
                 candidates: [candidates[0]])
         }
@@ -234,7 +184,6 @@ struct NativeBrowserWindowCorrelatorTests {
                 try NativeBrowserWindowCorrelator.correlate(
                     expectedNativeWindow: expected,
                     currentNativeWindow: current,
-                    nativeTitle: nil,
                     requestedTargetID: "target-a",
                     candidates: [candidate])
             }
@@ -248,7 +197,6 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: missingBounds,
                 currentNativeWindow: missingBounds,
-                nativeTitle: "Exact Title",
                 requestedTargetID: "target-a",
                 candidates: [Self.candidate(
                     windowID: 21,
@@ -263,7 +211,6 @@ struct NativeBrowserWindowCorrelatorTests {
             try NativeBrowserWindowCorrelator.correlate(
                 expectedNativeWindow: identity,
                 currentNativeWindow: identity,
-                nativeTitle: "Exact Title",
                 requestedTargetID: "target-a",
                 candidates: [Self.candidate(
                     windowID: 21,

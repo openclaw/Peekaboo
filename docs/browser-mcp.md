@@ -37,8 +37,9 @@ automatically. Once Chrome publishes
 exact loopback listener belongs to the detected Chrome PID and process generation, and opens the exact published
 WebSocket. That native connection remains
 pending while Chrome shows its approval prompt, has a bounded 60-second wait, sends CDP `Browser.getVersion`, and then
-revalidates the process-owned listener. Peekaboo then closes the native probe and passes its exact WebSocket URL identity
-as `--wsEndpoint` to Chrome DevTools MCP; the separately owned MCP child opens the second and final WebSocket used for
+revalidates the process-owned listener. Peekaboo retains that first WebSocket as a read-only, host-owned control session
+and passes its exact URL identity as `--wsEndpoint` to Chrome DevTools MCP; the separately owned MCP child opens the
+second and final WebSocket used for
 execution. A new explicit foreground channel connect therefore creates exactly two legitimate WebSocket connections,
 and Chrome may show one approval dialog for each. Once the child is connected, status, repeated connect, and browser
 execution revalidate the active-port file, kernel listener, PID generation, and bundle without opening another native
@@ -136,6 +137,13 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   navigation, disconnect, connection replacement, and MCP-session teardown invalidate their complete subordinate
   namespace. Before element dispatch, the same provider gate takes a fresh snapshot and proves every provider UID is
   still present in the current document. References copied into another caller session fail before Chrome dispatch.
+- Process-local MCP and Agent sessions with one native-channel Chrome receipt can bind an opaque page to an exact native
+  window using `{ "action": "bind_window", "page_id": "bp1_...", "pid": 123, "window_id": 456 }`. All three
+  selectors are required; the process generation comes only from the exact connection receipt. Peekaboo privately
+  correlates the page target and Chrome window geometry, then revalidates the native receipt, tab membership, retained
+  control session, and provider child immediately before every bound mutation. A moved tab, resized/replaced window,
+  restarted process/provider, or dead control session invalidates the binding and never falls back to unbound dispatch.
+  Explicit URLs, isolated profiles, remote/custom providers, and standalone CLI sessions cannot bind.
 - Independently authenticated process-local browser sessions own separate Chrome DevTools MCP children and FIFO
   execution/mutation gates, so one blocked session does not stall another while calls within each session remain
   ordered. Peekaboo reserves the canonical process/DevTools target before permission-bearing provider setup; two
@@ -166,6 +174,7 @@ Common actions:
 - `navigate`
 - `wait_for`
 - `snapshot`
+- `bind_window` (process-local MCP/Agent sessions only)
 - `click`
 - `fill`
 - `type`
@@ -203,6 +212,10 @@ compatibility boundary rather than a persistent caller capability namespace. `se
 
 `type` and `press_key` also require an opaque element reference from the newest snapshot as `uid`. Peekaboo holds one browser execution gate while it
 focuses that exact uid and sends the keyboard operation; concurrent page work cannot interleave between those leaves.
+
+After `bind_window` succeeds, every mutation result carries a fresh sanitized native receipt with PID, decimal process
+generation, WindowServer ID, bounds, and `quality: exact`. Provider page integers, CDP target IDs, CDP browser-window
+IDs, and the private `get_tab_id` result never cross the public tool boundary.
 
 ## Examples
 

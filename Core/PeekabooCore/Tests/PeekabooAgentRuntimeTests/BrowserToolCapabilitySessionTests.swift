@@ -334,12 +334,20 @@ struct BrowserToolCapabilitySessionTests {
             windowIdentity: windowIdentity,
             bounds: #require(windowIdentity.capturedBounds))
 
+        #expect(try await !session.hasNativeWindowBinding(
+            pageReference: pageReference,
+            sessionBinding: sessionBinding))
+
         try await session.bindNativeWindow(
             pageReference: pageReference,
             sessionBinding: sessionBinding,
             privateTargetID: "private-target-a",
             privateBrowserWindowID: BrowserMCPDevToolsWindowID(rawValue: 77),
             nativeWindowReceipt: nativeWindowReceipt)
+
+        #expect(try await session.hasNativeWindowBinding(
+            pageReference: pageReference,
+            sessionBinding: sessionBinding))
 
         let binding = try await session.nativeWindowBinding(
             pageReference: pageReference,
@@ -353,6 +361,11 @@ struct BrowserToolCapabilitySessionTests {
             .string(pageReference))
 
         await session.invalidateNativeWindowBindings()
+        await #expect(throws: BrowserToolNativeWindowBindingError.stalePageReference) {
+            _ = try await session.hasNativeWindowBinding(
+                pageReference: pageReference,
+                sessionBinding: sessionBinding)
+        }
         await #expect(throws: BrowserToolNativeWindowBindingError.stalePageReference) {
             _ = try await session.nativeWindowBinding(
                 pageReference: pageReference,

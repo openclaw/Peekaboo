@@ -11,6 +11,7 @@
 
 ### Added
 - Add opt-in native installed-application inventory to CLI and MCP as a PID-free sidecar, with declared UI/background classification and no Spotlight, AppleScript, or private APIs.
+- Add process-local MCP and Agent binding between opaque Chrome page capabilities and exact native PID-generation/window receipts, with final tab/window revalidation before every bound mutation and no raw CDP ID disclosure.
 - Let trusted MCP hosts explicitly authorize foreground UI for one server process while keeping background-only as the default. Thanks @Austin1serb for #612.
 - Report per-window `combined_eligible`, `pixels_only`, or `unknown` observation eligibility in CLI and MCP, including screenshot-only recovery.
 - Add an embedding-only Bridge protocol 1.32 API for signed, process-generation-bound observation.

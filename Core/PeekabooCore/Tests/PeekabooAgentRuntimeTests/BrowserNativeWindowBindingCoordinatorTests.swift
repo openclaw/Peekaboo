@@ -52,6 +52,92 @@ struct BrowserNativeWindowBindingCoordinatorTests {
     }
 
     @Test
+    func `manager owned bound mutation uses one capability and execution gate`() async throws {
+        let fixture = try await Self.fixture()
+        let proof = try await BrowserNativeWindowBindingCoordinator.bind(
+            pageReference: fixture.pageReference,
+            nativeTarget: Self.nativeTarget,
+            context: fixture.context,
+            dependencies: Self.dependencies())
+        fixture.provider.executeHandler = { toolName, _ in
+            switch toolName {
+            case "take_snapshot":
+                ToolResponse(
+                    content: [.text(
+                        text: "uid=1_0 button \"Continue\"",
+                        annotations: nil,
+                        _meta: nil)],
+                    structuredContent: .object([
+                        "snapshot": .object([
+                            "id": .string("1_0"),
+                            "role": .string("button"),
+                            "name": .string("Continue"),
+                        ]),
+                    ]))
+            case "click":
+                ToolResponse.text("clicked")
+            default:
+                ToolResponse.error("unexpected bound tool")
+            }
+        }
+
+        let execution = try await fixture.capabilities.withExclusiveOperation {
+            try await fixture.manager.executeNativeWindowBoundSequence(
+                .init(
+                    calls: [BrowserMCPMappedCall(
+                        toolName: "click",
+                        arguments: ["pageId": 7, "uid": "1_0"])],
+                    channel: .stable,
+                    sessionBinding: fixture.sessionBinding,
+                    elementPreflight: .init(providerPageID: 7, providerUIDs: ["1_0"]),
+                    pageReference: fixture.pageReference,
+                    deadline: Self.deadline),
+                capabilities: fixture.capabilities,
+                receiptProviders: Self.providers())
+        }
+
+        #expect(!execution.result.response.isError)
+        #expect(execution.nativeWindowReceipt == proof.nativeWindowReceipt)
+        #expect(fixture.provider.executedTools.suffix(2) == ["take_snapshot", "click"])
+        await fixture.control.close()
+    }
+
+    @Test
+    func `bound provider cancellation remains indeterminate after dispatch`() async throws {
+        let fixture = try await Self.fixture()
+        let proof = try await BrowserNativeWindowBindingCoordinator.bind(
+            pageReference: fixture.pageReference,
+            nativeTarget: Self.nativeTarget,
+            context: fixture.context,
+            dependencies: Self.dependencies())
+        fixture.provider.executeHandler = { toolName, _ in
+            #expect(toolName == "navigate_page")
+            throw CancellationError()
+        }
+
+        let execution = try await fixture.capabilities.withExclusiveOperation {
+            try await fixture.manager.executeNativeWindowBoundSequence(
+                .init(
+                    calls: [BrowserMCPMappedCall(
+                        toolName: "navigate_page",
+                        arguments: ["pageId": 7, "type": "url", "url": "https://next.test/"])],
+                    channel: .stable,
+                    sessionBinding: fixture.sessionBinding,
+                    elementPreflight: nil,
+                    pageReference: fixture.pageReference,
+                    deadline: Self.deadline),
+                capabilities: fixture.capabilities,
+                receiptProviders: Self.providers())
+        }
+
+        #expect(execution.result.completedCallCount == 0)
+        #expect(execution.result.dispatchedCallCount == 1)
+        #expect(execution.result.actionFailure?.outcome.state == .indeterminate)
+        #expect(execution.result.actionFailure?.outcome.retrySafety == .unsafe)
+        #expect(execution.nativeWindowReceipt == proof.nativeWindowReceipt)
+    }
+
+    @Test
     func `Unrelated stale page and window candidates do not revoke exact binding`() async throws {
         let fixture = try await Self.fixture(includeStaleUnrelatedCandidates: true)
         let proof = try await BrowserNativeWindowBindingCoordinator.bind(
@@ -214,7 +300,7 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 dependencies: .init(receiptProviders: invalidProviders))
         }
 
-        #expect(fixture.provider.executedTools.suffix(1) == ["get_tab_id"])
+        #expect(fixture.provider.executedTools == ["list_pages"])
         await fixture.control.close()
     }
 
