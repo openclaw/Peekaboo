@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 enum PlaygroundSemanticWitnessIdentifier: String, CaseIterable, Sendable {
+    case actionStepperValue = "action-stepper-value"
     case basicTextLastSubmitted = "basic-text-last-submitted"
     case secondaryClickCount = "secondary-click-count"
     case singleClickCount = "single-click-count"
@@ -9,6 +10,7 @@ enum PlaygroundSemanticWitnessIdentifier: String, CaseIterable, Sendable {
 
     var label: String {
         switch self {
+        case .actionStepperValue: "Action Stepper Value"
         case .basicTextLastSubmitted: "Basic Text Last Submitted"
         case .secondaryClickCount: "Secondary Click Count"
         case .singleClickCount: "Single Click Count"

@@ -6,6 +6,7 @@ import Testing
 struct PlaygroundSemanticWitnessTests {
     @Test
     func `semantic witness identifiers are stable and unique`() {
+        #expect(PlaygroundSemanticWitnessIdentifier.actionStepperValue.rawValue == "action-stepper-value")
         #expect(PlaygroundSemanticWitnessIdentifier.basicTextLastSubmitted.rawValue == "basic-text-last-submitted")
         #expect(PlaygroundSemanticWitnessIdentifier.secondaryClickCount.rawValue == "secondary-click-count")
         #expect(PlaygroundSemanticWitnessIdentifier.singleClickCount.rawValue == "single-click-count")

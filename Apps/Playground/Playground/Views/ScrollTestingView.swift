@@ -11,6 +11,7 @@ struct ScrollTestingView: View {
     @State private var lastHorizontalOffset: CGFloat?
     @State private var lastNestedInnerOffset: CGFloat?
     @State private var lastNestedOuterOffset: CGFloat?
+    @State private var actionValue = 0
     @State private var semanticState = ScrollTestingSemanticState()
 
     var body: some View {
@@ -132,6 +133,23 @@ struct ScrollTestingView: View {
                     }
                 }
             }
+
+            GroupBox("Accessibility Actions") {
+                Stepper("Action value: \(self.actionValue)", value: self.$actionValue, in: -10...10)
+                    .accessibilityIdentifier("action-stepper")
+                    .accessibilityLabel("Action Stepper")
+                    .accessibilityValue(String(self.actionValue))
+                    .onChange(of: self.actionValue) { oldValue, newValue in
+                        let direction = newValue > oldValue ? "incremented" : "decremented"
+                        self.actionLogger.log(
+                            .control,
+                            "Action stepper \(direction)",
+                            details: "Value: \(oldValue) → \(newValue)")
+                    }
+            }
+            .playgroundSemanticWitness(
+                .actionStepperValue,
+                value: String(self.actionValue))
 
             // Gesture testing area
             GroupBox("Gesture Testing") {
