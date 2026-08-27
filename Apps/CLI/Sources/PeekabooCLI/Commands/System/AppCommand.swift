@@ -338,12 +338,21 @@ struct AppCommand: ParsableCommand {
         }
 
         func validateRequest() throws {
-            let hasTarget = self.to?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            guard hasTarget != self.cycle else {
+            let hasSuppliedTarget = self.to != nil
+            guard hasSuppliedTarget != self.cycle else {
                 throw PreDispatchActionError(
                     message: "Application switch requires exactly one target or --cycle.",
                     code: .VALIDATION_ERROR,
                     hint: "Provide an application target or --cycle, but not both.",
+                    reason: .invalidRequest
+                )
+            }
+            if let target = self.to,
+               target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw PreDispatchActionError(
+                    message: "Application switch target cannot be blank.",
+                    code: .VALIDATION_ERROR,
+                    hint: "Provide a non-empty application target or use --cycle by itself.",
                     reason: .invalidRequest
                 )
             }

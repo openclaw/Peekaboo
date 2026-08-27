@@ -75,6 +75,8 @@ struct AppCommandBindingTests {
 
         for rejected in [
             ParsedValues(positional: ["Preview"], options: [:], flags: ["cycle", "foreground"]),
+            ParsedValues(positional: [" "], options: [:], flags: ["cycle", "foreground"]),
+            ParsedValues(positional: [" "], options: [:], flags: ["foreground"]),
             ParsedValues(positional: [], options: [:], flags: ["cycle", "verify", "foreground"]),
             ParsedValues(positional: [], options: [:], flags: ["cycle"]),
         ] {
