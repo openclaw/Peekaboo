@@ -17,7 +17,7 @@ struct PreRuntimeInvalidInputOrderingTests {
         ),
         (
             ["peekaboo", "browser", "bind-window", "--json"],
-            "browser bind-window is not available to standalone CLI invocations."
+            "Browser namespace actions require an explicit --namespace-file."
         ),
         (
             [

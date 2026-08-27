@@ -124,9 +124,8 @@ struct InvalidInputOrderingCLITests {
         JSONCase(
             arguments: ["browser", "bind-window", "--json"],
             code: "VALIDATION_ERROR",
-            message: "browser bind-window is not available to standalone CLI invocations.",
-            hint: "Use one process-local MCP or Agent browser session. Durable CLI binding requires an " +
-                "authenticated Bridge 1.38 browser namespace receipt."
+            message: "Browser namespace actions require an explicit --namespace-file.",
+            hint: "Pass the exact owner-private receipt file created for this authenticated Bridge namespace."
         ),
         JSONCase(
             arguments: [
