@@ -1,9 +1,64 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKit
 import Testing
 @testable import PeekabooCLI
 
+@Suite(.serialized)
 struct CaptureActionProcessRunnerTests {
+    @Test
+    func `stale signal source generation cannot reach a replacement runner`() throws {
+        let coordinator = CaptureActionSignalCoordinator()
+        let oldRecorder = CaptureActionSignalRecorder()
+        let oldRegistration = coordinator.register { oldRecorder.record($0) }
+        let oldGeneration = try #require(coordinator.activeGenerationForTesting)
+        coordinator.unregister(oldRegistration)
+
+        let replacementRecorder = CaptureActionSignalRecorder()
+        let replacementRegistration = coordinator.register { replacementRecorder.record($0) }
+        defer { coordinator.unregister(replacementRegistration) }
+        let replacementGeneration = try #require(coordinator.activeGenerationForTesting)
+        #expect(replacementGeneration != oldGeneration)
+
+        coordinator.forwardForTesting(SIGTERM, generation: oldGeneration)
+        #expect(replacementRecorder.signals.isEmpty)
+        coordinator.forwardForTesting(SIGTERM, generation: replacementGeneration)
+        #expect(replacementRecorder.signals == [SIGTERM])
+    }
+
+    @Test
+    func `deadline boundary expires at equality`() {
+        #expect(!CaptureActionProcessDeadline.hasExpired(
+            observedAtNanoseconds: 99,
+            deadlineNanoseconds: 100
+        ))
+        #expect(CaptureActionProcessDeadline.hasExpired(
+            observedAtNanoseconds: 100,
+            deadlineNanoseconds: 100
+        ))
+        #expect(CaptureActionProcessDeadline.hasExpired(
+            observedAtNanoseconds: 101,
+            deadlineNanoseconds: 100
+        ))
+    }
+
+    @Test
+    func `blocking waiter times out a late exit when timeout task is delayed`() async throws {
+        let result = try await CaptureActionProcessRunner.run(
+            command: ["/bin/sleep", "0.15"],
+            timeoutSeconds: 0.05,
+            signalProcessGroup: { pid, signal in
+                _ = Darwin.kill(-pid, signal)
+            },
+            timeoutTaskDelayNanoseconds: 1_000_000_000
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.timedOut)
+        #expect(result.processGroupCleaned)
+        #expect(!result.succeeded)
+    }
+
     @Test
     func `runner escalates timeout for TERM ignoring child`() async throws {
         let started = Date()
@@ -15,6 +70,18 @@ struct CaptureActionProcessRunnerTests {
         #expect(result.timedOut == true)
         #expect(result.exitCode != 0)
         #expect(Date().timeIntervalSince(started) < 2)
+    }
+
+    @Test
+    func `spawn restores default TERM handling after coordinator installation`() async throws {
+        let result = try await CaptureActionProcessRunner.run(
+            command: ["/bin/sleep", "30"],
+            timeoutSeconds: 0.1
+        )
+
+        #expect(result.timedOut)
+        #expect(result.exitCode == 128 + SIGTERM)
+        #expect(result.processGroupCleaned)
     }
 
     @Test
@@ -124,17 +191,20 @@ struct CaptureActionProcessRunnerTests {
     func `runner abandons deadline then eventually reaps child when signal delivery fails`() async throws {
         let ignoredSignals = IgnoredProcessGroupSignals()
         let started = Date()
-        let result = try await CaptureActionProcessRunner.run(
-            command: ["/bin/sleep", "30"],
-            timeoutSeconds: 0.1,
-            signalProcessGroup: { pid, signal in
-                ignoredSignals.record(pid: pid, signal: signal)
-            }
-        )
+        do {
+            _ = try await CaptureActionProcessRunner.run(
+                command: ["/bin/sleep", "30"],
+                timeoutSeconds: 0.1,
+                signalProcessGroup: { pid, signal in
+                    ignoredSignals.record(pid: pid, signal: signal)
+                }
+            )
+            Issue.record("Expected process-group cleanup failure")
+        } catch {
+            #expect(error.localizedDescription == "Action process group could not be fully terminated")
+        }
 
         let elapsed = Date().timeIntervalSince(started)
-        #expect(result.timedOut == true)
-        #expect(result.exitCode == 128 + SIGKILL)
         #expect(elapsed < 3)
         #expect(elapsed >= 2)
         #expect(ignoredSignals.signals.contains(SIGTERM))
@@ -160,16 +230,82 @@ struct CaptureActionProcessRunnerTests {
     }
 
     @Test
-    func `runner returns when background child inherits output pipes`() async throws {
-        let started = Date()
+    func `fast child output retains its final bytes`() async throws {
+        for index in 0..<50 {
+            let expected = "capture-output-\(index)-tail"
+            let result = try await CaptureActionProcessRunner.run(
+                command: ["/usr/bin/printf", "%s", expected],
+                timeoutSeconds: 2
+            )
+            #expect(result.stdout == expected)
+            #expect(!result.stdoutTruncated)
+        }
+    }
+
+    @Test
+    func `runner terminates a background child that inherits output pipes`() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-pipe-child-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ready = root.appendingPathComponent("ready")
+        let release = root.appendingPathComponent("release")
+        let marker = root.appendingPathComponent("survived")
         let result = try await CaptureActionProcessRunner.run(
-            command: ["/bin/sh", "-c", "sleep 2 &"],
+            command: [
+                "/usr/bin/perl",
+                "-e",
+                "if (fork() == 0) { open(my $ready, '>', $ARGV[0]) or die $!; close($ready); " +
+                    "while (!-e $ARGV[1]) { select undef, undef, undef, 0.01; } " +
+                    "open(my $marker, '>', $ARGV[2]) or die $!; close($marker); exit 0; } " +
+                    "while (!-e $ARGV[0]) { select undef, undef, undef, 0.01; } exit 0;",
+                ready.path,
+                release.path,
+                marker.path,
+            ],
             timeoutSeconds: 5
         )
 
         #expect(result.exitCode == 0)
         #expect(result.timedOut == false)
-        #expect(Date().timeIntervalSince(started) < 1)
+        #expect(result.processGroupCleaned == true)
+        try Data().write(to: release)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test
+    func `normal child exit cleans descendants before returning`() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-normal-exit-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let ready = root.appendingPathComponent("descendant-ready")
+        let release = root.appendingPathComponent("release-descendant")
+        let marker = root.appendingPathComponent("descendant-survived")
+        let result = try await CaptureActionProcessRunner.run(
+            command: [
+                "/usr/bin/perl",
+                "-e",
+                "use POSIX (); if (fork() == 0) { $SIG{TERM} = 'IGNORE'; " +
+                    "open(my $ready, '>', $ARGV[0]) or die $!; " +
+                    "print $ready \"$$ \" . POSIX::getpgrp() . \"\\n\"; close($ready); " +
+                    "while (!-e $ARGV[1]) { select undef, undef, undef, 0.01; } " +
+                    "open(my $marker, '>', $ARGV[2]) or die $!; close($marker); exit 0; } " +
+                    "while (!-e $ARGV[0]) { select undef, undef, undef, 0.01; } exit 0;",
+                ready.path,
+                release.path,
+                marker.path,
+            ],
+            timeoutSeconds: 5
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.processGroupCleaned == true)
+        try Data().write(to: release)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(FileManager.default.fileExists(atPath: marker.path) == false)
     }
 
     @Test
@@ -203,26 +339,149 @@ struct CaptureActionProcessRunnerTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
+        let ready = root.appendingPathComponent("descendant-ready")
+        let release = root.appendingPathComponent("release-descendant")
         let marker = root.appendingPathComponent("descendant-survived")
         let task = Task {
             try await CaptureActionProcessRunner.run(
                 command: [
-                    "/bin/sh",
-                    "-c",
-                    "(trap '' TERM; sleep 1; touch \"$1\") & wait",
-                    "sh",
+                    "/usr/bin/perl",
+                    "-e",
+                    "if (fork() == 0) { $SIG{TERM} = 'IGNORE'; " +
+                        "open(my $ready, '>', $ARGV[0]) or die $!; close($ready); " +
+                        "while (!-e $ARGV[1]) { select undef, undef, undef, 0.01; } " +
+                        "open(my $marker, '>', $ARGV[2]) or die $!; close($marker); exit 0; } wait;",
+                    ready.path,
+                    release.path,
                     marker.path,
                 ],
                 timeoutSeconds: 5
             )
         }
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await Self.waitUntilFileExists(ready)
         task.cancel()
         _ = try? await task.value
 
-        try await Task.sleep(nanoseconds: 1_200_000_000)
+        try Data().write(to: release)
+        try await Task.sleep(nanoseconds: 200_000_000)
         #expect(FileManager.default.fileExists(atPath: marker.path) == false)
+    }
+
+    @Test
+    func `missing process identity refuses before child release`() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-identity-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("child-ran")
+
+        let thrown = await #expect(throws: (any Error).self) {
+            _ = try await CaptureActionProcessRunner.run(
+                command: ["/usr/bin/touch", marker.path],
+                timeoutSeconds: 1,
+                signalProcessGroup: { pid, signal in
+                    _ = Darwin.kill(-pid, signal)
+                },
+                processStartIdentity: { _ in nil }
+            )
+        }
+
+        #expect(try #require(thrown).localizedDescription ==
+            "Action process identity was unavailable before release")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test
+    func `cancellation during identity capture refuses before child release`() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-pre-release-cancel-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("child-ran")
+        let identityGate = BlockingProcessIdentityProvider()
+        let launchRecorder = CaptureActionLaunchRecorder()
+        let task = Task.detached {
+            try await CaptureActionProcessRunner.run(
+                command: ["/usr/bin/touch", marker.path],
+                timeoutSeconds: 5,
+                onLaunch: { _ in launchRecorder.record() },
+                signalProcessGroup: { pid, signal in
+                    _ = Darwin.kill(-pid, signal)
+                },
+                processStartIdentity: { identityGate.resolve(processIdentifier: $0) }
+            )
+        }
+
+        try await identityGate.waitUntilEntered()
+        task.cancel()
+        identityGate.release()
+        let thrown = await #expect(throws: (any Error).self) {
+            _ = try await task.value
+        }
+
+        #expect(try #require(thrown) is CancellationError)
+        #expect(!launchRecorder.wasRecorded)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+        if let processIdentifier = identityGate.processIdentifier {
+            try await Self.waitUntilProcessIsGone(processIdentifier)
+        } else {
+            Issue.record("Identity provider did not observe the suspended child")
+        }
+    }
+
+    @Test
+    func `concurrent runners do not starve cancellation or timeout cleanup`() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-concurrent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runnerCount = 12
+        let cancellationCount = runnerCount / 2
+        let readyFiles = (0..<runnerCount).map { root.appendingPathComponent("ready-\($0)") }
+        let lateMarkers = (0..<runnerCount).map { root.appendingPathComponent("late-\($0)") }
+        let tasks = zip(readyFiles.indices, zip(readyFiles, lateMarkers)).map { item in
+            let (index, pair) = item
+            let (ready, marker) = pair
+            return Task {
+                try await CaptureActionProcessRunner.run(
+                    command: [
+                        "/usr/bin/perl",
+                        "-e",
+                        "if (fork() == 0) { $SIG{TERM} = 'IGNORE'; " +
+                            "open(my $r, '>', $ARGV[0]) or die $!; close($r); sleep 10; " +
+                            "open(my $m, '>', $ARGV[1]) or die $!; close($m); exit 0; } wait;",
+                        ready.path,
+                        marker.path,
+                    ],
+                    timeoutSeconds: index < cancellationCount ? 30 : 0.75
+                )
+            }
+        }
+
+        for ready in readyFiles {
+            try await Self.waitUntilFileExists(ready, timeoutSeconds: 5)
+        }
+        let cancellationStarted = ContinuousClock.now
+        tasks.prefix(cancellationCount).forEach { $0.cancel() }
+        var results: [CaptureActionProcessResult] = []
+        for task in tasks {
+            if let result = try? await task.value {
+                results.append(result)
+            }
+        }
+        let elapsed = cancellationStarted.duration(to: .now)
+
+        #expect(elapsed < .seconds(3))
+        #expect(results.count == runnerCount)
+        #expect(results.prefix(cancellationCount).allSatisfy { !$0.timedOut })
+        #expect(results.suffix(runnerCount - cancellationCount).allSatisfy { result in
+            result.timedOut && result.durationMs < 2500
+        })
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(lateMarkers.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
     }
 
     private static func waitUntilFileExists(_ url: URL, timeoutSeconds: TimeInterval = 2.0) async throws {
@@ -280,5 +539,66 @@ private final class IgnoredProcessGroupSignals: @unchecked Sendable {
             self.recordedProcessIdentifier = pid
             self.recordedSignals.append(signal)
         }
+    }
+}
+
+private final nonisolated class CaptureActionLaunchRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded = false
+
+    var wasRecorded: Bool {
+        self.lock.withLock { self.recorded }
+    }
+
+    func record() {
+        self.lock.withLock { self.recorded = true }
+    }
+}
+
+private final nonisolated class CaptureActionSignalRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedSignals: [Int32] = []
+
+    var signals: [Int32] {
+        self.lock.withLock { self.recordedSignals }
+    }
+
+    func record(_ signalNumber: Int32) {
+        self.lock.withLock { self.recordedSignals.append(signalNumber) }
+    }
+}
+
+private final nonisolated class BlockingProcessIdentityProvider: @unchecked Sendable {
+    private let lock = NSLock()
+    private let releaseSemaphore = DispatchSemaphore(value: 0)
+    private var entered = false
+    private var capturedProcessIdentifier: pid_t?
+
+    var processIdentifier: pid_t? {
+        self.lock.withLock { self.capturedProcessIdentifier }
+    }
+
+    func resolve(processIdentifier: pid_t) -> UInt64? {
+        self.lock.withLock {
+            self.capturedProcessIdentifier = processIdentifier
+            self.entered = true
+        }
+        self.releaseSemaphore.wait()
+        return SystemIdentityResolver.processStartIdentity(processIdentifier)
+    }
+
+    func release() {
+        self.releaseSemaphore.signal()
+    }
+
+    func waitUntilEntered() async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
+            if self.lock.withLock({ self.entered }) {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("Timed out waiting for suspended process identity capture")
     }
 }

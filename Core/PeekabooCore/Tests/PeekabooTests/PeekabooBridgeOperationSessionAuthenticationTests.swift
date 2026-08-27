@@ -8,6 +8,11 @@ import Testing
 @testable import PeekabooBridge
 @testable import PeekabooCore
 
+private func bridgeFallbackVersion(distance: Int) -> PeekabooBridgeProtocolVersion {
+    let current = PeekabooBridgeConstants.protocolVersion
+    return PeekabooBridgeProtocolVersion(major: current.major, minor: current.minor - distance)
+}
+
 @Suite(.serialized)
 struct PeekabooBridgeOperationSessionAuthenticationTests {
     @Test
@@ -288,6 +293,8 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
     func `trusted protocol fallback authenticates and preserves legacy behavior`() async throws {
         let peer = try ConcurrentGatedBridgePeer()
         let client = TrustedBridgeClientFixture.make(socketPath: peer.socketPath)
+        let previousVersion = bridgeFallbackVersion(distance: 1)
+        let legacyAttemptVersion = bridgeFallbackVersion(distance: 2)
 
         do {
             let handshake = Task { try await client.handshake(client: Self.clientIdentity) }
@@ -297,21 +304,21 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
                 to: currentRequest)
             let previousRequest = try await peer.nextRequest()
             guard case let .handshake(previousPayload) = try previousRequest.decode() else {
-                Issue.record("Expected trusted protocol 1.31 fallback request")
+                Issue.record("Expected the preceding trusted protocol fallback request")
                 await peer.stop()
                 return
             }
-            #expect(previousPayload.protocolVersion == .init(major: 1, minor: 31))
+            #expect(previousPayload.protocolVersion == previousVersion)
             try await peer.respond(
-                .error(.init(code: .versionMismatch, message: "Protocol 1.31 unavailable")),
+                .error(.init(code: .versionMismatch, message: "Preceding protocol unavailable")),
                 to: previousRequest)
             let legacyRequest = try await peer.nextRequest()
             guard case let .handshake(legacyPayload) = try legacyRequest.decode() else {
-                Issue.record("Expected trusted protocol 1.30 fallback request")
+                Issue.record("Expected the second trusted protocol fallback request")
                 await peer.stop()
                 return
             }
-            #expect(legacyPayload.protocolVersion == .init(major: 1, minor: 30))
+            #expect(legacyPayload.protocolVersion == legacyAttemptVersion)
             try await peer.respond(.handshake(Self.legacyHandshake()), to: legacyRequest)
             let response = try await handshake.value
             #expect(response.negotiatedVersion == .init(major: 1, minor: 28))
@@ -1003,7 +1010,8 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
                 bundleIdentifier: "dev.peekaboo.raw-success-test",
                 bundleShortVersion: "1",
                 bundleVersion: "1",
-                codeSignatureHash: listener.host.codeSignatureHash),
+                codeSignatureHash: listener.host.codeSignatureHash,
+                sourceCommit: String(repeating: "a", count: 40)),
             hostCapabilities: [
                 PeekabooBridgeHostCapability.attestedOperationReceipts,
                 PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
@@ -1033,7 +1041,8 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
                 bundleIdentifier: "dev.peekaboo.raw-success-test",
                 bundleShortVersion: "1",
                 bundleVersion: "1",
-                codeSignatureHash: listener.host.codeSignatureHash),
+                codeSignatureHash: listener.host.codeSignatureHash,
+                sourceCommit: String(repeating: "a", count: 40)),
             hostCapabilities: [
                 PeekabooBridgeHostCapability.attestedOperationReceipts,
                 PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
@@ -1043,10 +1052,16 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
         let peer = try ScriptedBridgePeer(responses: [.handshake(handshake), .ok, .handshake(successorHandshake)])
         let client = TrustedBridgeClientFixture.make(
             socketPath: peer.socketPath,
-            operationClientInstanceID: session.clientInstanceID)
+            operationClientInstanceID: session.clientInstanceID,
+            signingSourceCommit: String(repeating: "a", count: 40))
 
         do {
             _ = try await client.handshake(client: Self.clientIdentity)
+            let authenticatedHost = try #require(await client.authenticatedHostIdentity())
+            #expect(authenticatedHost.signingIdentifier == "dev.peekaboo.test-host")
+            #expect(authenticatedHost.teamIdentifier == TrustedBridgeClientFixture.teamIdentifier)
+            #expect(authenticatedHost.codeSignatureHash == listener.host.codeSignatureHash)
+            #expect(authenticatedHost.sourceCommit == String(repeating: "a", count: 40))
             do {
                 _ = try await client.send(.permissionsStatus)
                 Issue.record("Expected unsigned success to remain an invalid lost response")
@@ -1277,7 +1292,8 @@ enum TrustedBridgeClientFixture {
         operationReceiptExportDirectory: URL? = nil,
         operationClientInstanceID: UUID = UUID(),
         trustedHostTeamIDs: Set<String> = [TrustedBridgeClientFixture.teamIdentifier],
-        signingTeamIdentifier: String = TrustedBridgeClientFixture.teamIdentifier) -> PeekabooBridgeClient
+        signingTeamIdentifier: String = TrustedBridgeClientFixture.teamIdentifier,
+        signingSourceCommit: String? = nil) -> PeekabooBridgeClient
     {
         PeekabooBridgeClient(
             socketPath: socketPath,
@@ -1293,7 +1309,8 @@ enum TrustedBridgeClientFixture {
                 return PeekabooBridgeHost.PeerSigningIdentity(
                     bundleIdentifier: "dev.peekaboo.test-host",
                     teamIdentifier: signingTeamIdentifier,
-                    codeSignatureHash: hash)
+                    codeSignatureHash: hash,
+                    sourceCommit: signingSourceCommit)
             }))
     }
 }

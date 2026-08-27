@@ -219,6 +219,10 @@ public actor PeekabooBridgeClient {
         }
     }
 
+    public func authenticatedHostIdentity() -> PeekabooBridgeAuthenticatedHostIdentity? {
+        self.operationSession?.authenticatedHostIdentity
+    }
+
     /// Most recent protocol-1.29 receipt accepted by this client after signature and digest validation.
     public func lastOperationReceipt() -> PeekabooBridgeOperationReceipt? {
         self.latestVerifiedOperationReceipt
@@ -344,7 +348,8 @@ public actor PeekabooBridgeClient {
         return self.installOperationSessionState(
             successor,
             listenerAttestation: listenerAttestation,
-            listenerLiveIdentity: current.listenerLiveIdentity)
+            listenerLiveIdentity: current.listenerLiveIdentity,
+            authenticatedHostIdentity: current.authenticatedHostIdentity)
     }
 
     private func cancelOperationSessionRenewal(replacingSessionID: UUID) {
@@ -765,6 +770,7 @@ public actor PeekabooBridgeClient {
         let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
         let sessionAttestation: PeekabooBridgeOperationSessionAttestation?
         let receiptlessAuthenticatedHost: PeekabooBridgeConnectedHostIdentity?
+        let authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
         if handshake.negotiatedVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
             guard handshake.hostCapabilities?.contains(
                 PeekabooBridgeHostCapability.attestedOperationReceipts) == true,
@@ -805,10 +811,11 @@ public actor PeekabooBridgeClient {
                     message: "Bridge operation session attestation is invalid",
                     details: error.localizedDescription)
             }
-            guard handshake.hostIdentity?.processIdentifier == advertisedListenerAttestation.host.processIdentifier,
-                  handshake.hostIdentity?.processStartIdentity ==
+            guard let advertisedHostIdentity = handshake.hostIdentity,
+                  advertisedHostIdentity.processIdentifier == advertisedListenerAttestation.host.processIdentifier,
+                  advertisedHostIdentity.processStartIdentity ==
                   advertisedListenerAttestation.host.processStartIdentity,
-                  handshake.hostIdentity?.codeSignatureHash == advertisedListenerAttestation.host.codeSignatureHash
+                  advertisedHostIdentity.codeSignatureHash == advertisedListenerAttestation.host.codeSignatureHash
             else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .unauthorizedClient,
@@ -818,11 +825,16 @@ public actor PeekabooBridgeClient {
             listenerLiveIdentity = connectedHost.liveIdentity
             sessionAttestation = advertisedSessionAttestation
             receiptlessAuthenticatedHost = nil
+            authenticatedHostIdentity = Self.authenticatedHostIdentity(
+                advertised: advertisedHostIdentity,
+                listener: advertisedListenerAttestation,
+                signingIdentity: signingIdentity)
         } else {
             listenerAttestation = nil
             listenerLiveIdentity = nil
             sessionAttestation = nil
             receiptlessAuthenticatedHost = self.trustedHostTeamIDs == nil ? nil : connectedHost
+            authenticatedHostIdentity = nil
         }
 
         let exactInputAdvertised = handshake.supportedOperations.contains(.exactDialogEnterText)
@@ -918,7 +930,29 @@ public actor PeekabooBridgeClient {
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,
+            authenticatedHostIdentity: authenticatedHostIdentity,
             receiptlessAuthenticatedHost: receiptlessAuthenticatedHost)
+    }
+
+    private static func authenticatedHostIdentity(
+        advertised: PeekabooBridgeHostIdentity,
+        listener: PeekabooBridgeListenerAttestation,
+        signingIdentity: PeekabooBridgeHost.PeerSigningIdentity) -> PeekabooBridgeAuthenticatedHostIdentity?
+    {
+        guard let sourceCommit = signingIdentity.sourceCommit,
+              advertised.sourceCommit == sourceCommit,
+              let signingIdentifier = signingIdentity.bundleIdentifier,
+              let teamIdentifier = signingIdentity.teamIdentifier
+        else { return nil }
+        return PeekabooBridgeAuthenticatedHostIdentity(
+            processIdentifier: listener.host.processIdentifier,
+            processStartIdentity: listener.host.processStartIdentity,
+            signingIdentifier: signingIdentifier,
+            teamIdentifier: teamIdentifier,
+            codeSignatureHash: listener.host.codeSignatureHash,
+            sourceCommit: sourceCommit,
+            bundleShortVersion: advertised.bundleShortVersion,
+            bundleVersion: advertised.bundleVersion)
     }
 
     private static func supportsStatelessClickVariants(_ handshake: PeekabooBridgeHandshakeResponse) -> Bool {
@@ -1110,7 +1144,8 @@ public actor PeekabooBridgeClient {
                 self.installOperationSessionState(
                     sessionAttestation,
                     listenerAttestation: listenerAttestation,
-                    listenerLiveIdentity: listenerLiveIdentity)
+                    listenerLiveIdentity: listenerLiveIdentity,
+                    authenticatedHostIdentity: candidate.authenticatedHostIdentity)
             }
         } else {
             // A legacy negotiation cannot retire the server-side 1.29 session because the old host ignores
@@ -1166,7 +1201,8 @@ public actor PeekabooBridgeClient {
     private func installOperationSessionState(
         _ attestation: PeekabooBridgeOperationSessionAttestation,
         listenerAttestation: PeekabooBridgeListenerAttestation,
-        listenerLiveIdentity: PeekabooBridgeLivePeerIdentity) -> UInt64
+        listenerLiveIdentity: PeekabooBridgeLivePeerIdentity,
+        authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?) -> UInt64
     {
         self.operationSessionEpoch &+= 1
         if self.operationSessionEpoch == 0 {
@@ -1177,6 +1213,7 @@ public actor PeekabooBridgeClient {
             epoch: epoch,
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
+            authenticatedHostIdentity: authenticatedHostIdentity,
             attestation: attestation,
             nextSequence: .init(0),
             remainingClaimCount: attestation.remainingClaimCount)
@@ -1360,6 +1397,7 @@ private struct PeekabooBridgeClientOperationSession: Sendable {
     let epoch: UInt64
     let listenerAttestation: PeekabooBridgeListenerAttestation
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity
+    let authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
     let attestation: PeekabooBridgeOperationSessionAttestation
     var nextSequence: PeekabooBridgeOperationSessionSequence
     var remainingClaimCount: Int
@@ -1398,6 +1436,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?
+    let authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
     let receiptlessAuthenticatedHost: PeekabooBridgeConnectedHostIdentity?
 }
 

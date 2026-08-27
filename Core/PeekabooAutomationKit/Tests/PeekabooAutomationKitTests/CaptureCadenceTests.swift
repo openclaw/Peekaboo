@@ -274,6 +274,7 @@ struct CaptureSamplingMetricsTests {
             sourceKind: .live,
             videoIn: nil,
             videoOut: nil,
+            videoArtifactCustody: nil,
             scope: CaptureScope(kind: .frontmost),
             options: CaptureOptions(
                 duration: 1,

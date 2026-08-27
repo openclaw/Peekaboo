@@ -62,6 +62,12 @@ extension WatchCaptureSession {
         case stopRequested
     }
 
+    enum CaptureAttemptRaceResult: @unchecked Sendable {
+        case capture(Result<CaptureAttemptResult, any Error>)
+        case stop(Result<CaptureAttemptResult, any Error>)
+        case deadline(Result<CaptureAttemptResult, any Error>)
+    }
+
     func validateTiming() throws -> ValidatedTiming {
         let idleFps: Double
         let activeFps: Double
@@ -148,7 +154,7 @@ extension WatchCaptureSession {
             let attemptResult: CaptureAttemptResult
             state.captureAttempts += 1
             do {
-                attemptResult = try await self.captureFrameOrStop()
+                attemptResult = try await self.captureFrameOrStop(deadlineNs: timing.deadlineNs)
             } catch {
                 if let delay = ScreenCaptureKitTransientError.retryDelayNanoseconds(after: error) {
                     state.captureFailures += 1
@@ -326,37 +332,64 @@ extension WatchCaptureSession {
         state.frameIndex += 1
     }
 
-    func captureFrameOrStop() async throws -> CaptureAttemptResult {
+    func captureFrameOrStop(deadlineNs: UInt64) async throws -> CaptureAttemptResult {
         guard !self.hasStopRequest() else { return .stopRequested }
+        let now = self.clock.nowNanoseconds()
+        guard deadlineNs > now else { return .stopRequested }
+        try self.requireNoRetiringCaptureTask()
         let provider = self.frameProvider
         let captureTask = Task<CaptureAttemptResult, any Error> { @MainActor in
             let output = try await provider.captureFrame()
             return .frame(output.frame, warning: output.warning)
         }
+        var captureResultReturned = false
         let stopTask = Task<CaptureAttemptResult, any Error> { [weak self] in
             await self?.waitForStopRequest()
+            try Task.checkCancellation()
+            return .stopRequested
+        }
+        let deadlineTask = Task<CaptureAttemptResult, any Error> {
+            try await self.clock.sleep(nanoseconds: deadlineNs - now)
             try Task.checkCancellation()
             return .stopRequested
         }
         defer {
             captureTask.cancel()
             stopTask.cancel()
+            deadlineTask.cancel()
+            if !captureResultReturned {
+                self.retireCaptureTask(captureTask)
+            }
         }
         return try await withTaskCancellationHandler {
-            let result: CaptureAttemptResult = try await withCheckedThrowingContinuation { continuation in
+            let race = await withCheckedContinuation { continuation in
                 let gate = WatchCaptureAttemptContinuation(continuation: continuation)
                 Task {
-                    await gate.resume(with: captureTask.result)
+                    let result = await captureTask.result
+                    gate.resume(with: .capture(result))
                 }
                 Task {
-                    await gate.resume(with: stopTask.result)
+                    let result = await stopTask.result
+                    gate.resume(with: .stop(result))
+                }
+                Task {
+                    let result = await deadlineTask.result
+                    gate.resume(with: .deadline(result))
                 }
             }
             try Task.checkCancellation()
-            return result
+            switch race {
+            case let .capture(result):
+                captureResultReturned = true
+                return try result.get()
+            case let .stop(result), let .deadline(result):
+                _ = try result.get()
+                return .stopRequested
+            }
         } onCancel: {
             captureTask.cancel()
             stopTask.cancel()
+            deadlineTask.cancel()
         }
     }
 
@@ -577,17 +610,17 @@ extension WatchCaptureSession {
 
 private final class WatchCaptureAttemptContinuation: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptResult, any Error>?
+    private var continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptRaceResult, Never>?
 
-    init(continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptResult, any Error>) {
+    init(continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptRaceResult, Never>) {
         self.continuation = continuation
     }
 
-    func resume(with result: Result<WatchCaptureSession.CaptureAttemptResult, any Error>) {
+    func resume(with result: WatchCaptureSession.CaptureAttemptRaceResult) {
         self.lock.lock()
         let continuation = self.continuation
         self.continuation = nil
         self.lock.unlock()
-        continuation?.resume(with: result)
+        continuation?.resume(returning: result)
     }
 }

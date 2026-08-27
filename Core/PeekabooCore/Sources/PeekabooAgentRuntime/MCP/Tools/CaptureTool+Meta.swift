@@ -97,6 +97,7 @@ enum CaptureMetaBuilder {
             "contact_thumb_width": .string("\(summary.contactThumbSize.width)"),
             "contact_thumb_height": .string("\(summary.contactThumbSize.height)"),
             "contact_sampled_indexes": .array(summary.contactSampledIndexes.map { .string("\($0)") }),
+            "artifact_sha256": .object(summary.artifactSHA256.mapValues(Value.string)),
         ]
     }
 

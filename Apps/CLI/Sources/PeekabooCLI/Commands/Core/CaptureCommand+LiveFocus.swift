@@ -30,11 +30,11 @@ extension CaptureFocusTargetCommand {
         windowID: CGWindowID?,
         windowMutationIdentity: WindowMutationIdentity?,
         focusResultProvider: FocusResultProvider? = nil
-    ) async throws {
+    ) async throws -> DesktopActionOutcome? {
         let options: FocusOptions
         switch self.captureFocus {
         case .background:
-            return
+            return nil
         case .auto:
             options = FocusOptions(
                 autoFocus: true,
@@ -83,6 +83,7 @@ extension CaptureFocusTargetCommand {
             operation: "Capture focus",
             requiresTarget: windowID != nil
         )
+        return actionResult.outcome
     }
 }
 

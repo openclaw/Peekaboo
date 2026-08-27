@@ -37,7 +37,7 @@ extension WatchCaptureSession {
 
         let fileName = String(format: "keep-%04d.png", self.frames.count + 1)
         let url = self.outputRoot.appendingPathComponent(fileName)
-        try WatchCaptureArtifactWriter.writePNG(
+        let sha256 = try WatchCaptureArtifactWriter.writePNG(
             image: cgImage,
             to: url,
             highlight: self.options.highlightChanges ? context.motionBoxes : nil)
@@ -62,7 +62,9 @@ extension WatchCaptureSession {
             timestampMs: context.timestampMs,
             changePercent: context.changePercent,
             reason: context.reason,
-            motionBoxes: context.motionBoxes?.isEmpty == false ? context.motionBoxes : nil)
+            motionBoxes: context.motionBoxes?.isEmpty == false ? context.motionBoxes : nil,
+            sha256: sha256,
+            captureEngine: context.capture.metadata.diagnostics?.engine)
     }
 
     func prepareVideoWriterIfNeeded(for cgImage: CGImage) throws {

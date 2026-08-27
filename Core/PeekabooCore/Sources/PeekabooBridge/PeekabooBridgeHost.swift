@@ -393,6 +393,19 @@ public final actor PeekabooBridgeHost {
         let bundleIdentifier: String?
         let teamIdentifier: String?
         let codeSignatureHash: String?
+        let sourceCommit: String?
+
+        init(
+            bundleIdentifier: String?,
+            teamIdentifier: String?,
+            codeSignatureHash: String?,
+            sourceCommit: String? = nil)
+        {
+            self.bundleIdentifier = bundleIdentifier
+            self.teamIdentifier = teamIdentifier
+            self.codeSignatureHash = codeSignatureHash
+            self.sourceCommit = sourceCommit
+        }
     }
 
     typealias PeerSigningInformationProvider = (_ processIdentifier: pid_t) -> [String: Any]?

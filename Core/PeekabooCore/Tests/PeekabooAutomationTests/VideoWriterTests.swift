@@ -78,6 +78,12 @@ struct VideoWriterTests {
         #expect(height == 720)
         #expect(abs(Double(nominalFrameRate) - 12) < 0.5)
         #expect(result.videoOut?.hasSuffix("capture.mp4") == true)
+        #expect(result.videoArtifactCustody?.path == URL(fileURLWithPath: videoOut).standardizedFileURL.path)
+        #expect(result.videoArtifactCustody?.byteCount ?? 0 > 0)
+        var videoInformation = stat()
+        #expect(videoOut.withCString { lstat($0, &videoInformation) } == 0)
+        #expect((videoInformation.st_mode & 0o777) == (S_IRUSR | S_IWUSR))
+        try CaptureArtifactIntegrityValidator.validate(result)
     }
 
     @Test
@@ -129,7 +135,55 @@ struct VideoWriterTests {
     }
 
     @Test
-    func `partial video cleanup failure is surfaced and retains the artifact`() throws {
+    func `video writer refuses a replaced output path without deleting the replacement`() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-video-replacement-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        let output = outputDir.appendingPathComponent("capture.mp4")
+        let writer = try VideoWriter(outputPath: output.path, width: 20, height: 20, fps: 2)
+        let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
+        try await writer.append(image: image)
+        let replacement = Data("replacement".utf8)
+
+        await #expect(throws: CaptureArtifactIntegrityError.self) {
+            _ = try await writer.finish {
+                try FileManager.default.removeItem(at: output)
+                try replacement.write(to: output, options: .withoutOverwriting)
+            }
+        }
+        #expect(throws: PeekabooError.self) {
+            try writer.abortAndRemovePartialOutput()
+        }
+        #expect(try Data(contentsOf: output) == replacement)
+    }
+
+    @Test
+    func `video writer cleans output when initial custody binding fails`() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-video-custody-failure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        let output = outputDir.appendingPathComponent("capture.mp4")
+        let writer = try VideoWriter(
+            outputPath: output.path,
+            width: 20,
+            height: 20,
+            fps: 2,
+            custodyDescriptorOpener: { _ in
+                errno = EMFILE
+                return -1
+            })
+        let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
+
+        await #expect(throws: PeekabooError.self) {
+            try await writer.append(image: image)
+        }
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+    }
+
+    @Test
+    func `partial video cleanup failure is surfaced and retains the artifact`() async throws {
         let outputDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-video-cleanup-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
@@ -141,7 +195,9 @@ struct VideoWriterTests {
             height: 20,
             fps: 2,
             fileManager: FailingRemovalFileManager())
-        try Data("partial".utf8).write(to: output)
+        let image = try #require(Self.makeSolidImage(size: CGSize(width: 20, height: 20)))
+        try await writer.append(image: image)
+        _ = try await writer.finish()
 
         let thrown = #expect(throws: PeekabooError.self) {
             try writer.abortAndRemovePartialOutput()
@@ -167,6 +223,21 @@ struct VideoWriterTests {
         #expect(longPrimary.localizedDescription.contains("Incomplete video cleanup failed"))
         #expect(longPrimary.localizedDescription.contains("cleanup-marker"))
         #expect(longPrimary.localizedDescription.utf8.count <= 512)
+    }
+
+    private static func makeSolidImage(size: CGSize) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: Int(size.width),
+            height: Int(size.height),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.setFillColor(CGColor(red: 0.3, green: 0.4, blue: 0.5, alpha: 1))
+        context.fill(CGRect(origin: .zero, size: size))
+        return context.makeImage()
     }
 }
 

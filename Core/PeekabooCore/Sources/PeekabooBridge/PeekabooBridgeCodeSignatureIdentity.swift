@@ -59,6 +59,45 @@ enum PeekabooBridgeCodeSignatureIdentity {
         return self.hexString(for: Data(hash))
     }
 
+    /// Returns Apple-anchored signing metadata for the live current process, bracketed by
+    /// its kernel CDHash and process generation.
+    static func authenticatedCurrentProcessSigningInformation() -> [String: Any]? {
+        let processIdentifier = getpid()
+        guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier),
+              let liveHashBefore = self.codeSignatureHash(processIdentifier: processIdentifier)
+        else { return nil }
+
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess,
+              let code
+        else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode,
+              let initialInformation = self.signingInformation(staticCode),
+              let identifier = initialInformation[kSecCodeInfoIdentifier as String] as? String,
+              let teamIdentifier = initialInformation[kSecCodeInfoTeamIdentifier as String] as? String,
+              let initialHash = initialInformation[kSecCodeInfoUnique as String] as? Data,
+              self.hexString(for: initialHash) == liveHashBefore,
+              let requirement = self.appleAnchoredRequirement(
+                  identifier: identifier,
+                  teamIdentifier: teamIdentifier),
+              SecCodeCheckValidity(code, SecCSFlags(), requirement) == errSecSuccess,
+              SecStaticCodeCheckValidity(
+                  staticCode,
+                  SecCSFlags(rawValue: UInt32(kSecCSDoNotValidateResources)),
+                  requirement) == errSecSuccess,
+              let finalInformation = self.signingInformation(staticCode),
+              finalInformation[kSecCodeInfoIdentifier as String] as? String == identifier,
+              finalInformation[kSecCodeInfoTeamIdentifier as String] as? String == teamIdentifier,
+              let finalHash = finalInformation[kSecCodeInfoUnique as String] as? Data,
+              self.hexString(for: finalHash) == liveHashBefore,
+              self.codeSignatureHash(processIdentifier: processIdentifier) == liveHashBefore,
+              SystemIdentityResolver.processStartIdentity(processIdentifier) == processStartIdentity
+        else { return nil }
+        return finalInformation
+    }
+
     /// Returns the kernel CDHash for one caller-owned, unreaped process generation.
     ///
     /// Unlike a socket peer, a freshly spawned child has no peer audit token. Its parent keeps

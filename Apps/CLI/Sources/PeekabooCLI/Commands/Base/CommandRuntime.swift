@@ -187,6 +187,10 @@ struct CommandRuntime {
     let hostDescription: String
     let selectedRemoteSocketPath: String?
     let selectedRemoteHostProcessIdentifier: pid_t?
+    let selectedRemoteHostIdentity: PeekabooBridgeHostIdentity?
+    let selectedRemoteAuthenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
+    let selectedRemoteAuthenticatedHostIdentityProvider:
+        (@Sendable () async -> PeekabooBridgeAuthenticatedHostIdentity?)?
     let captureEngineSafetyOverride: CaptureEnginePreference?
     let toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal?
     let snapshotInvalidationRemoteSocketPaths: [String]
@@ -211,6 +215,10 @@ struct CommandRuntime {
         hostDescription: String = "local (in-process)",
         selectedRemoteSocketPath: String? = nil,
         selectedRemoteHostProcessIdentifier: pid_t? = nil,
+        selectedRemoteHostIdentity: PeekabooBridgeHostIdentity? = nil,
+        selectedRemoteAuthenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity? = nil,
+        selectedRemoteAuthenticatedHostIdentityProvider:
+        (@Sendable () async -> PeekabooBridgeAuthenticatedHostIdentity?)? = nil,
         captureEngineSafetyOverride: CaptureEnginePreference? = nil,
         toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil,
         snapshotInvalidationRemoteSocketPaths: [String] = [],
@@ -226,6 +234,9 @@ struct CommandRuntime {
         self.hostDescription = hostDescription
         self.selectedRemoteSocketPath = selectedRemoteSocketPath
         self.selectedRemoteHostProcessIdentifier = selectedRemoteHostProcessIdentifier
+        self.selectedRemoteHostIdentity = selectedRemoteHostIdentity
+        self.selectedRemoteAuthenticatedHostIdentity = selectedRemoteAuthenticatedHostIdentity
+        self.selectedRemoteAuthenticatedHostIdentityProvider = selectedRemoteAuthenticatedHostIdentityProvider
         self.captureEngineSafetyOverride = captureEngineSafetyOverride
         self.toolCapturePreflightRefusal = toolCapturePreflightRefusal
         self.snapshotInvalidationRemoteSocketPaths = snapshotInvalidationRemoteSocketPaths
@@ -309,6 +320,10 @@ extension CommandRuntime {
             hostDescription: resolution.hostDescription,
             selectedRemoteSocketPath: resolution.selectedRemoteSocketPath,
             selectedRemoteHostProcessIdentifier: resolution.selectedRemoteHostProcessIdentifier,
+            selectedRemoteHostIdentity: resolution.selectedRemoteHostIdentity,
+            selectedRemoteAuthenticatedHostIdentity: resolution.selectedRemoteAuthenticatedHostIdentity,
+            selectedRemoteAuthenticatedHostIdentityProvider:
+            resolution.selectedRemoteAuthenticatedHostIdentityProvider,
             captureEngineSafetyOverride: resolution.captureEngineSafetyOverride,
             toolCapturePreflightRefusal: resolution.toolCapturePreflightRefusal,
             snapshotInvalidationRemoteSocketPaths: resolution.snapshotInvalidationRemoteSocketPaths,

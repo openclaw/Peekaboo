@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CryptoKit
 import Foundation
 import ImageIO
 import PeekabooFoundation
@@ -42,7 +43,22 @@ enum WatchCaptureArtifactWriter {
         }
 
         for (idx, frame) in framesToUse.enumerated() {
-            guard let image = self.makeCGImage(fromFile: frame.path) else {
+            guard let expectedSHA256 = frame.sha256 else {
+                throw PeekabooError.fileIOError("Contact sheet source frame lacks digest custody: \(frame.file)")
+            }
+            let retained: CaptureArtifactIntegrityValidator.RetainedFile
+            do {
+                retained = try CaptureArtifactIntegrityValidator.retainedRegularFile(
+                    path: frame.path,
+                    maximumBytes: CaptureArtifactIntegrityValidator.maximumPNGBytes)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw PeekabooError.fileIOError("Contact sheet source frame is unreadable: \(frame.file)")
+            }
+            guard retained.sha256 == expectedSHA256,
+                  let image = self.makeCGImage(from: retained.data)
+            else {
                 throw PeekabooError.fileIOError("Contact sheet source frame is unreadable: \(frame.file)")
             }
             let resized = self.resize(image: image, to: thumbSize) ?? image
@@ -59,7 +75,7 @@ enum WatchCaptureArtifactWriter {
         }
 
         let contactURL = outputRoot.appendingPathComponent("contact.png")
-        try self.writePNG(image: cg, to: contactURL, highlight: nil)
+        let sha256 = try self.writePNG(image: cg, to: contactURL, highlight: nil)
 
         return CaptureContactSheet(
             path: contactURL.path,
@@ -67,7 +83,8 @@ enum WatchCaptureArtifactWriter {
             columns: columns,
             rows: rows,
             thumbSize: thumbSize,
-            sampledFrameIndexes: sampledIndexes)
+            sampledFrameIndexes: sampledIndexes,
+            sha256: sha256)
     }
 
     static func makeCGImage(from data: Data) -> CGImage? {
@@ -97,7 +114,8 @@ enum WatchCaptureArtifactWriter {
         return context.makeImage()
     }
 
-    static func writePNG(image: CGImage, to url: URL, highlight: [CGRect]?) throws {
+    @discardableResult
+    static func writePNG(image: CGImage, to url: URL, highlight: [CGRect]?) throws -> String {
         let finalImage: CGImage = if let highlight, !highlight.isEmpty,
                                      let annotated = self.annotate(image: image, boxes: highlight)
         {
@@ -119,16 +137,17 @@ enum WatchCaptureArtifactWriter {
         if !CGImageDestinationFinalize(destination) {
             throw PeekabooError.fileIOError("Failed to encode PNG for: \(url.path)")
         }
+        let data = encoded as Data
         do {
-            try (encoded as Data).write(to: url, options: .atomic)
+            try data.write(to: url, options: .atomic)
         } catch {
             throw PeekabooError.fileIOError("Failed to write PNG to \(url.path): \(error.localizedDescription)")
         }
+        return self.sha256(data)
     }
 
-    private static func makeCGImage(fromFile path: String) -> CGImage? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
-        return self.makeCGImage(from: data)
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func sampleFrames(_ frames: [CaptureFrameInfo], maxCount: Int) -> [CaptureFrameInfo] {
