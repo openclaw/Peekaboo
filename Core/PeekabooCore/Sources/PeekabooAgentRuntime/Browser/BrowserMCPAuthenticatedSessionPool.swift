@@ -26,11 +26,42 @@ final class BrowserMCPAuthenticatedSessionPool {
         let mutationGate: MCPToolSnapshotExecutionGate
     }
 
-    struct SessionID: Hashable, Sendable {
+    struct SessionID: Hashable, @unchecked Sendable {
         fileprivate let rawValue: UUID
+        private let lifetime: SessionLifetime
 
         init() {
             self.rawValue = UUID()
+            self.lifetime = SessionLifetime()
+        }
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.rawValue == rhs.rawValue
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(self.rawValue)
+        }
+
+        fileprivate var hasEnded: Bool {
+            self.lifetime.hasEnded
+        }
+
+        fileprivate func markEnded() {
+            self.lifetime.markEnded()
+        }
+    }
+
+    private final class SessionLifetime: @unchecked Sendable {
+        private let lock = NSLock()
+        private var ended = false
+
+        var hasEnded: Bool {
+            self.lock.withLock { self.ended }
+        }
+
+        func markEnded() {
+            self.lock.withLock { self.ended = true }
         }
     }
 
@@ -39,7 +70,6 @@ final class BrowserMCPAuthenticatedSessionPool {
     private let serverNamePrefix: String
     private let factory: Factory
     private var sessions: [SessionID: SessionState] = [:]
-    private var endedSessions = Set<SessionID>()
     private var endingSessions: [SessionID: Task<Void, Never>] = [:]
     private var namedSessions: [String: SessionID] = [:]
     private var targetOwners: [TargetKey: TargetOwner] = [:]
@@ -53,7 +83,7 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func manager(for sessionID: SessionID) -> BrowserMCPSessionManager? {
-        guard !self.endedSessions.contains(sessionID) else { return nil }
+        guard !sessionID.hasEnded else { return nil }
         if let state = self.sessions[sessionID] {
             return state.manager
         }
@@ -89,7 +119,7 @@ final class BrowserMCPAuthenticatedSessionPool {
             await ending.value
             return
         }
-        self.endedSessions.insert(sessionID)
+        sessionID.markEnded()
         self.namedSessions = self.namedSessions.filter { $0.value != sessionID }
         guard let state = self.sessions.removeValue(forKey: sessionID) else {
             self.targetOwners = self.targetOwners.filter { $0.value != .session(sessionID) }
@@ -114,7 +144,7 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func bind(_ sessionID: SessionID, to receipt: BrowserMCPConnectionReceipt) throws {
-        guard !self.endedSessions.contains(sessionID), self.sessions[sessionID] != nil else {
+        guard !sessionID.hasEnded, self.sessions[sessionID] != nil else {
             throw BrowserMCPConnectionError.sessionEnded
         }
         let keys = Self.targetKeys(for: receipt)
@@ -162,6 +192,13 @@ final class BrowserMCPAuthenticatedSessionPool {
 
     var isEmpty: Bool {
         self.sessions.isEmpty
+    }
+
+    var retainedSessionIdentityCount: Int {
+        Set(self.sessions.keys)
+            .union(self.endingSessions.keys)
+            .union(self.namedSessions.values)
+            .count
     }
 
     private static func targetKeys(for receipt: BrowserMCPConnectionReceipt) -> Set<TargetKey> {

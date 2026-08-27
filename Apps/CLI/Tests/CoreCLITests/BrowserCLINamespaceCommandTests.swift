@@ -1,5 +1,8 @@
 import Commander
 import Foundation
+import PeekabooBridge
+import PeekabooCore
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooCLI
@@ -7,6 +10,72 @@ import Testing
 @MainActor
 struct BrowserCLINamespaceCommandTests {
     private static let pageReference = "bp1_0123456789abcdef0123456789abcdef"
+
+    @Test
+    func `remote adapter replaces local outcome metadata with verified bridge truth`() throws {
+        let local = DesktopActionOutcome.dispatchedUnverified(
+            route: .local,
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+        let verified = local.routed(to: .bridge)
+        let localData = try JSONEncoder().encode(local.projection)
+        var localFields = try #require(JSONSerialization.jsonObject(with: localData) as? [String: Any])
+        localFields["provider_note"] = "preserved"
+        let wireMetaData = try JSONSerialization.data(withJSONObject: localFields)
+        let wireMeta = try JSONDecoder().decode(PeekabooBridgeJSONValue.self, from: wireMetaData)
+
+        let response = try RemoteBrowserCLINamespaceBridgeAdapter.toolResponse(.init(
+            content: [],
+            isError: false,
+            meta: wireMeta
+        ), verifiedOutcome: verified)
+        let fields = try #require(response.meta?.objectValue)
+
+        #expect(fields["route"]?.stringValue == "bridge")
+        #expect(fields["provider_note"]?.stringValue == "preserved")
+        #expect(fields["state"]?.stringValue == verified.state.rawValue)
+    }
+
+    @Test
+    func `namespace runtime selects only on demand Bridge candidates without local fallback`() {
+        var options = CommandRuntimeOptions()
+        options.requiresBrowserCapabilityNamespace = true
+        options.preferRemote = false
+        let decision = RuntimeHostResolver.initialRoutingDecision(
+            options: options,
+            environment: [:],
+            configurationInput: nil,
+            knownSnapshotInvalidationRemoteSocketPaths: []
+        )
+        #expect(decision == .remote)
+
+        let candidates = RuntimeHostResolver.implicitRemoteCandidates(
+            options: options,
+            daemonSocketPath: "/tmp/peekaboo-daemon.sock",
+            buildScopedDaemonSocketPath: "/tmp/peekaboo-build.sock",
+            historicalBuildScopedDaemonSocketPaths: ["/tmp/peekaboo-old.sock"]
+        )
+        #expect(!candidates.isEmpty)
+        #expect(candidates.allSatisfy { $0.requiredHostKind == .onDemand })
+        #expect(!candidates.contains { $0.socketPath == PeekabooBridgeConstants.peekabooSocketPath })
+    }
+
+    @Test
+    func `remote services expose namespace adapter only after negotiated construction`() {
+        let client = PeekabooBridgeClient(socketPath: "/tmp/peekaboo-unused-browser-namespace.sock")
+        let legacy = RemotePeekabooServices(client: client)
+        let current = RemotePeekabooServices(
+            client: client,
+            supportsBrowserCapabilityNamespaces: true
+        )
+
+        #expect((legacy as any BrowserCLINamespaceBridgeAdapterProviding)
+            .browserCLINamespaceBridgeAdapter == nil)
+        #expect((current as any BrowserCLINamespaceBridgeAdapterProviding)
+            .browserCLINamespaceBridgeAdapter != nil)
+    }
 
     @Test
     func `bind window parses exactly three selectors and disables legacy browser routing`() throws {
@@ -218,7 +287,7 @@ struct BrowserCLINamespaceCommandTests {
     func `adapter seam keeps create bind and close in one explicit authority owner`() async throws {
         let receipt = Data("canonical-receipt-fixture".utf8)
         let adapter = RecordingNamespaceAdapter(receipt: receipt)
-        let creation = try await adapter.createNamespace()
+        let creation = await adapter.createNamespace()
         #expect(creation.namespaceReceiptData == receipt)
         _ = try await adapter.bindWindow(
             request: BrowserCLINamespaceBindWindowRequest(
@@ -237,7 +306,7 @@ struct BrowserCLINamespaceCommandTests {
             namespaceReceiptData: creation.namespaceReceiptData
         )
         _ = try await adapter.closeNamespace(namespaceReceiptData: creation.namespaceReceiptData)
-        #expect(await adapter.operations == ["create", "bind", "execute", "close"])
+        #expect(adapter.operations == ["create", "bind", "execute", "close"])
     }
 
     @Test
@@ -255,7 +324,7 @@ struct BrowserCLINamespaceCommandTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let namespacePath = root.appendingPathComponent("namespace.json").path
 
-        let create = try CommanderCLIBinder.instantiateCommand(
+        var create = try CommanderCLIBinder.instantiateCommand(
             ofType: BrowserCommand.self,
             parsedValues: ParsedValues(
                 positional: ["namespace-create"],
@@ -263,6 +332,7 @@ struct BrowserCLINamespaceCommandTests {
                 flags: []
             )
         )
+        create.setRuntimeOptions(CommandRuntimeOptions())
         #expect(create.runtimeOptions.requiresBrowserCapabilityNamespace)
         #expect(!create.runtimeOptions.requiresBrowserMCP)
         try create.validateBeforeRuntime()
@@ -431,7 +501,7 @@ struct BrowserCLINamespaceCommandTests {
         if options["namespaceFile"] == nil {
             options["namespaceFile"] = ["/private/tmp/fixture-browser-namespace.json"]
         }
-        return try CommanderCLIBinder.instantiateCommand(
+        var command = try CommanderCLIBinder.instantiateCommand(
             ofType: BrowserCommand.self,
             parsedValues: ParsedValues(
                 positional: ["bind-window"],
@@ -439,10 +509,18 @@ struct BrowserCLINamespaceCommandTests {
                 flags: flags
             )
         )
+        var runtimeOptions = CommandRuntimeOptions()
+        runtimeOptions.remoteIsolationRequested = flags.contains("no-remote")
+        runtimeOptions.bridgeSocketPath = options["bridge-socket"]?.last
+        runtimeOptions.jsonOutput = flags.contains("jsonOutput")
+        runtimeOptions.verbose = flags.contains("verbose")
+        command.setRuntimeOptions(runtimeOptions)
+        return command
     }
 }
 
-private actor RecordingNamespaceAdapter: BrowserCLINamespaceBridgeAdapter {
+@MainActor
+private final class RecordingNamespaceAdapter: BrowserCLINamespaceBridgeAdapter {
     let receipt: Data
     let closeIsError: Bool
     var operations: [String] = []
@@ -498,7 +576,7 @@ private actor RecordingNamespaceAdapter: BrowserCLINamespaceBridgeAdapter {
     }
 }
 
-private struct IrrelevantArgument: Sendable, CustomTestStringConvertible {
+private nonisolated struct IrrelevantArgument: Sendable, CustomTestStringConvertible {
     let optionLabel: String?
     let optionValue: String?
     let flagLabel: String?
@@ -558,6 +636,7 @@ private struct IrrelevantArgument: Sendable, CustomTestStringConvertible {
         Self(optionLabel: nil, optionValue: nil, flagLabel: label)
     }
 
+    @MainActor
     func apply(to values: inout ParsedValues) {
         if let optionLabel, let optionValue {
             values.options[optionLabel] = [optionValue]

@@ -196,7 +196,7 @@ InjectedRuntimeBackedCommand {
         _ = try self.arguments()
     }
 
-    private func arguments() throws -> [String: Any] {
+    func arguments() throws -> [String: Any] {
         let normalizedAction = self.normalizedAction
         if normalizedAction == BrowserProcessLocalAction.bindWindow {
             throw BrowserCommandInputError.nativeWindowBindingRequiresNamespace()

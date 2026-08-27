@@ -1077,6 +1077,20 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `sequential authenticated sessions retain no ended identities`() async {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        for index in 1...96 {
+            let sessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+            _ = pool.manager(for: sessionID)
+            await pool.end(sessionID)
+            #expect(pool.retainedSessionIdentityCount == 0, "retained session at cycle \(index)")
+            #expect(pool.manager(for: sessionID) == nil)
+        }
+    }
+
+    @Test
     func `root and scoped sessions cannot claim the same exact target in either order`() throws {
         let pool = BrowserMCPAuthenticatedSessionPool { _ in
             Self.exactSession(manager: MockBrowserMCPManager())

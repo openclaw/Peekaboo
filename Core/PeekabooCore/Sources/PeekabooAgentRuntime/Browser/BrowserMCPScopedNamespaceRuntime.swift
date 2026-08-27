@@ -102,7 +102,6 @@ public final class BrowserMCPScopedNamespaceRuntime {
     private enum Slot {
         case active(any BrowserMCPScopedNamespaceSession)
         case closing(Task<Void, Never>)
-        case ended
     }
 
     private enum Phase: Equatable {
@@ -158,8 +157,6 @@ public final class BrowserMCPScopedNamespaceRuntime {
                 throw BrowserMCPScopedNamespaceRuntimeError.namespaceAlreadyExists
             case .closing:
                 throw BrowserMCPScopedNamespaceRuntimeError.namespaceClosing
-            case .ended:
-                throw BrowserMCPScopedNamespaceRuntimeError.namespaceEnded
             }
         }
         self.slots[namespaceID] = try .active(self.makeSession(namespaceID))
@@ -189,8 +186,6 @@ public final class BrowserMCPScopedNamespaceRuntime {
             session = activeSession
         case .closing:
             throw BrowserMCPScopedNamespaceRuntimeError.namespaceClosing
-        case .ended:
-            throw BrowserMCPScopedNamespaceRuntimeError.namespaceEnded
         case nil:
             throw BrowserMCPScopedNamespaceRuntimeError.namespaceUnknown
         }
@@ -207,13 +202,11 @@ public final class BrowserMCPScopedNamespaceRuntime {
     /// Duplicate close callers join the same task. Ended identities remain tombstoned for this runtime generation and
     /// cannot accidentally acquire a fresh capability map.
     public func close(_ namespaceID: BrowserMCPScopedNamespaceID) async throws {
-        guard self.slots[namespaceID] != nil else {
-            throw BrowserMCPScopedNamespaceRuntimeError.namespaceUnknown
-        }
+        guard self.slots[namespaceID] != nil else { return }
         guard let task = self.beginClose(namespaceID) else { return }
         await task.value
         if case .closing? = self.slots[namespaceID] {
-            self.slots[namespaceID] = .ended
+            self.slots.removeValue(forKey: namespaceID)
         }
     }
 
@@ -232,12 +225,20 @@ public final class BrowserMCPScopedNamespaceRuntime {
                 await task.value
             }
             for namespaceID in namespaceIDs where self.slots[namespaceID].map(Self.isClosing) == true {
-                self.slots[namespaceID] = .ended
+                self.slots.removeValue(forKey: namespaceID)
             }
             self.phase = .ended
         }
         self.retirementTask = retirementTask
         await retirementTask.value
+    }
+
+    /// Reopens the empty runtime after one Bridge listener generation has fully retired.
+    public func beginNextHostGeneration() {
+        precondition(self.phase == .ended)
+        precondition(self.slots.isEmpty)
+        self.retirementTask = nil
+        self.phase = .active
     }
 
     private func beginClose(_ namespaceID: BrowserMCPScopedNamespaceID) -> Task<Void, Never>? {
@@ -250,7 +251,7 @@ public final class BrowserMCPScopedNamespaceRuntime {
             return task
         case let .closing(existing):
             return existing
-        case .ended, nil:
+        case nil:
             return nil
         }
     }
@@ -260,6 +261,10 @@ public final class BrowserMCPScopedNamespaceRuntime {
             return true
         }
         return false
+    }
+
+    var namespaceCount: Int {
+        self.slots.count
     }
 }
 

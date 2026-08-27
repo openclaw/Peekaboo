@@ -290,6 +290,7 @@ enum PeekabooBridgeConnectedRequest {
         let connection: PeekabooBridgeConnectionLiveness
         let requestTracker: PeekabooBridgeRequestTracker
         let operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
+        let browserCapabilityNamespaceAuthority: PeekabooBridgeBrowserCapabilityNamespaceAuthority?
         let operationSessionAuthorizationPin:
             PeekabooBridgeOperationReceiptAuthority.SessionAuthorizationPin?
     }
@@ -396,14 +397,25 @@ enum PeekabooBridgeConnectedRequest {
                         context.connection.canReceiveResponse()
                     }
                     let operation: @Sendable () async -> Data = {
-                        await context.server.handleDecoded(request, peer: context.peer)
+                        let requestID: UUID? = if case let .attestedOperation(payload) = request {
+                            payload.requestID
+                        } else {
+                            nil
+                        }
+                        return await PeekabooBridgeRequestContext.$attestedOperationRequestID.withValue(requestID) {
+                            await context.server.handleDecoded(request, peer: context.peer)
+                        }
                     }
-                    let response = await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(
-                        context.operationReceiptAuthority)
+                    let response = await PeekabooBridgeRequestContext.$browserCapabilityNamespaceAuthority.withValue(
+                        context.browserCapabilityNamespaceAuthority)
                     {
-                        await PeekabooBridgeRequestContext.$clientConnectionProbe.withValue(
-                            connectionProbe,
-                            operation: operation)
+                        await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(
+                            context.operationReceiptAuthority)
+                        {
+                            await PeekabooBridgeRequestContext.$clientConnectionProbe.withValue(
+                                connectionProbe,
+                                operation: operation)
+                        }
                     }
                     context.requestTracker.finish(trackedRequest)
                     race.finish(.response(response))

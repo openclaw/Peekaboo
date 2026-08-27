@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -38,7 +39,7 @@ struct BrowserMCPScopedNamespaceRuntimeTests {
     }
 
     @Test
-    func `close publishes closing then joins one drain and tombstones the identity`() async throws {
+    func `close publishes closing then joins one drain and releases the identity`() async throws {
         let fixture = NamespaceRuntimeFixture()
         let namespaceID = Self.namespaceID(3)
         try fixture.runtime.open(namespaceID)
@@ -89,15 +90,26 @@ struct BrowserMCPScopedNamespaceRuntimeTests {
             _ = try await fixture.runtime.execute(
                 in: namespaceID,
                 arguments: ToolArguments(raw: ["action": "status"]))
-            Issue.record("Expected ended namespace to reject new work")
+            Issue.record("Expected closed namespace to reject new work")
         } catch let error as BrowserMCPScopedNamespaceRuntimeError {
-            #expect(error == .namespaceEnded)
-        }
-        #expect(throws: BrowserMCPScopedNamespaceRuntimeError.namespaceEnded) {
-            try fixture.runtime.open(namespaceID)
+            #expect(error == .namespaceUnknown)
         }
         try await fixture.runtime.close(namespaceID)
         #expect(session.closeCount == 1)
+    }
+
+    @Test
+    func `sequential namespace closes retain no runtime identities`() async throws {
+        let fixture = NamespaceRuntimeFixture()
+        for index in 1...96 {
+            let namespaceID = BrowserMCPScopedNamespaceID(rawValue: UUID())
+            try fixture.runtime.open(namespaceID)
+            _ = try await fixture.runtime.execute(
+                in: namespaceID,
+                arguments: ToolArguments(raw: ["action": "status"]))
+            try await fixture.runtime.close(namespaceID)
+            #expect(fixture.runtime.namespaceCount == 0, "retained namespace at cycle \(index)")
+        }
     }
 
     @Test
@@ -268,6 +280,39 @@ struct BrowserMCPScopedNamespaceRuntimeTests {
             #expect(receipt?.windowID == 313)
             #expect(receipt?.quality == .exact)
         }
+    }
+
+    @Test
+    func `foreground connect projects its top level process receipt as exact target`() async throws {
+        let fixture = NamespaceRuntimeFixture()
+        let namespaceID = Self.namespaceID(14)
+        try fixture.runtime.open(namespaceID)
+        let session = try #require(fixture.sessions[namespaceID])
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        session.response = try ToolResponse.text(
+            "connected",
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: [
+                    "connection_receipt": .object([
+                        "pid": .int(42),
+                        "process_start_identity_decimal": .string("1001"),
+                        "browser_url": .string("http://127.0.0.1:9222"),
+                    ]),
+                ],
+                outcome: outcome))
+
+        let connected = try await fixture.runtime.execute(
+            in: namespaceID,
+            arguments: ToolArguments(raw: ["action": "connect"]),
+            policy: .explicitlyForegroundAllowed)
+
+        #expect(connected.targetIdentity?.processIdentity.processIdentifier == 42)
+        #expect(connected.targetIdentity?.processIdentity.processStartIdentity == 1001)
+        #expect(connected.outcome == outcome)
+        #expect(!Self.dump(connected.response).contains("127.0.0.1:9222"))
     }
 
     @Test

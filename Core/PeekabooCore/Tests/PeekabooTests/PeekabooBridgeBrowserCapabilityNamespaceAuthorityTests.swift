@@ -227,6 +227,12 @@ struct PeekabooBridgeBrowserCapabilityNamespaceAuthorityTests {
             try await fixture.authority.awaitDrained(identity: identity)
             await drainFinished.markFinished()
         }
+        let duplicateIdentity = try await fixture.authority.beginClose(
+            receipt,
+            principal: fixture.principal)
+        let duplicateDrain = Task {
+            try await fixture.authority.awaitDrained(identity: duplicateIdentity)
+        }
         await Task.yield()
         #expect(await !drainFinished.isFinished)
         try await fixture.authority.complete(first)
@@ -234,8 +240,11 @@ struct PeekabooBridgeBrowserCapabilityNamespaceAuthorityTests {
         #expect(await !drainFinished.isFinished)
         try await fixture.authority.complete(second)
         try await drain.value
+        try await duplicateDrain.value
         #expect(await drainFinished.isFinished)
         #expect(await fixture.authority.lifecycleState(namespaceID: receipt.payload.namespaceID) == .closed)
+        let repeated = try await fixture.authority.beginClose(receipt, principal: fixture.principal)
+        try await fixture.authority.awaitDrained(identity: repeated)
     }
 
     @Test
@@ -358,6 +367,14 @@ struct PeekabooBridgeBrowserCapabilityNamespaceAuthorityTests {
         await Task.yield()
         try await fixture.authority.complete(claim)
         try await retry.value
+        let terminalNamespaceIDs = try await fixture.authority.terminalNamespaceIDsRequiringRuntimeRetirement()
+        #expect(terminalNamespaceIDs == [
+            receipt.payload.namespaceID,
+        ])
+        let responseLossRetry = try await fixture.authority.beginClose(
+            receipt,
+            principal: fixture.principal)
+        try await fixture.authority.awaitDrained(identity: responseLossRetry)
         #expect(await fixture.authority.lifecycleState(namespaceID: receipt.payload.namespaceID) == .closed)
     }
 
@@ -373,6 +390,7 @@ struct PeekabooBridgeBrowserCapabilityNamespaceAuthorityTests {
             admission: fixture.namespaceAdmission,
             lifetimeMilliseconds: 10000)
         let identity = try await fixture.authority.beginClose(receipt, principal: fixture.principal)
+        try await fixture.authority.markRuntimeRetired(namespaceID: receipt.payload.namespaceID)
 
         for _ in 0..<4 {
             _ = try await fixture.authority.open(
@@ -382,6 +400,35 @@ struct PeekabooBridgeBrowserCapabilityNamespaceAuthorityTests {
         }
         #expect(await fixture.authority.lifecycleState(namespaceID: receipt.payload.namespaceID) == nil)
         try await fixture.authority.awaitDrained(identity: identity)
+        fixture.clock.advance(by: 10001)
+        let repeated = try await fixture.authority.beginClose(receipt, principal: fixture.principal)
+        try await fixture.authority.awaitDrained(identity: repeated)
+    }
+
+    @Test
+    func `expired runtime retirement sweep bounds abandoned namespaces`() async throws {
+        let fixture = try NamespaceAuthorityFixture(
+            uuids: (100..<220).map { Self.uuid(UInt16($0)) })
+        var runtimeNamespaceIDs = Set<UUID>()
+
+        for _ in 0..<24 {
+            for _ in 0..<4 {
+                let receipt = try await fixture.authority.open(
+                    principal: fixture.principal,
+                    admission: fixture.namespaceAdmission,
+                    lifetimeMilliseconds: 10000)
+                runtimeNamespaceIDs.insert(receipt.payload.namespaceID)
+            }
+            fixture.clock.advance(by: 10001)
+            let expired = try await fixture.authority.terminalNamespaceIDsRequiringRuntimeRetirement()
+            #expect(expired.count == 4)
+            for namespaceID in expired {
+                #expect(runtimeNamespaceIDs.remove(namespaceID) != nil)
+                try await fixture.authority.markRuntimeRetired(namespaceID: namespaceID)
+            }
+            #expect(runtimeNamespaceIDs.isEmpty)
+            #expect(await fixture.authority.retainedNamespaceCount() <= 4)
+        }
     }
 
     private static func uuid(_ suffix: UInt16) -> UUID {

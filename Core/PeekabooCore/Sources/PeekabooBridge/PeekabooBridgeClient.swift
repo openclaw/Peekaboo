@@ -1081,7 +1081,7 @@ public actor PeekabooBridgeClient {
             operations.isSubset(of: Set(handshake.supportedOperations))
     }
 
-    static func supportsBrowserCapabilityNamespaces(
+    public static func supportsBrowserCapabilityNamespaces(
         _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
     {
         let operations = PeekabooBridgeOperation.browserCapabilityNamespaceOperations

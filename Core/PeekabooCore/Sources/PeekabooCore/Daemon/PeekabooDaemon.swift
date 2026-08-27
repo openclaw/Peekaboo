@@ -54,6 +54,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
                 mode: .auto,
                 bridgeSocketPath: bridgeSocketPath,
                 allowlistedTeams: [],
+                allowedOperations: PeekabooBridgeOperation.onDemandDefaultAllowlist,
                 windowTrackingEnabled: true,
                 windowPollInterval: windowPollInterval,
                 hostKind: .onDemand,
@@ -68,6 +69,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
                 mode: .manual,
                 bridgeSocketPath: bridgeSocketPath,
                 allowlistedTeams: [],
+                allowedOperations: PeekabooBridgeOperation.onDemandDefaultAllowlist,
                 windowTrackingEnabled: true,
                 windowPollInterval: windowPollInterval,
                 hostKind: .onDemand)

@@ -255,6 +255,136 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
     }
 }
 
+@MainActor
+extension PeekabooServices: PeekabooBridgeBrowserCapabilityNamespaceProviding {
+    public var supportsBrowserCapabilityNamespaces: Bool {
+        self.browser is BrowserMCPService
+    }
+
+    public var supportsNativeBrowserWindowBinding: Bool {
+        guard let browser = self.browser as? BrowserMCPService else { return false }
+        return browser.supportsNativeBrowserConnectionBinding
+    }
+
+    public func prepareBrowserCapabilityNamespaceRuntime() throws {
+        guard self.browserCapabilityNamespaceRuntime == nil else { return }
+        self.browserCapabilityNamespaceRuntime = try BrowserMCPScopedNamespaceRuntime(context: MCPToolContext(
+            services: self,
+            executionPolicy: .backgroundOnly))
+    }
+
+    public func openBrowserCapabilityNamespace(namespaceID: UUID) async throws {
+        guard let runtime = self.browserCapabilityNamespaceRuntime else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The local browser namespace runtime is unavailable")
+        }
+        do {
+            try runtime.open(.init(rawValue: namespaceID))
+        } catch let error as BrowserMCPScopedNamespaceRuntimeError {
+            throw Self.browserCapabilityNamespaceRuntimeRefusal(error, mutatesDesktop: false)
+        }
+    }
+
+    public func executeBrowserCapabilityNamespace(
+        namespaceID: UUID,
+        request: PeekabooBridgeBrowserCapabilityNamespaceRequest) async throws
+        -> PeekabooBridgeBrowserCapabilityNamespaceServiceResult
+    {
+        guard let runtime = self.browserCapabilityNamespaceRuntime else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The local browser namespace runtime is unavailable")
+        }
+        let arguments = ToolArguments(raw: request.toolArguments.mapValues { $0.toAny() })
+        let policy: BrowserMCPScopedNamespaceExecutionPolicy = switch request.executionMode {
+        case .backgroundOnly:
+            .backgroundOnly
+        case .foregroundAllowed:
+            .explicitlyForegroundAllowed
+        }
+        let result: BrowserMCPScopedNamespaceExecutionResult
+        do {
+            result = try await runtime.execute(
+                in: .init(rawValue: namespaceID),
+                arguments: arguments,
+                policy: policy)
+        } catch let error as BrowserMCPScopedNamespaceRuntimeError {
+            throw Self.browserCapabilityNamespaceRuntimeRefusal(
+                error,
+                mutatesDesktop: !request.isReadOnly)
+        }
+        let response = result.response
+        let nativeReceipt = result.nativeWindowReceipt.map {
+            PeekabooBridgeBrowserNativeWindowReceipt(
+                pageReference: $0.pageReference,
+                processIdentifier: $0.processIdentifier,
+                processStartIdentityDecimal: String($0.processStartIdentity),
+                windowID: $0.windowID,
+                bounds: $0.bounds)
+        }
+        let bridgeResponse = try PeekabooBridgeBrowserCapabilityNamespaceActionResponse(
+            content: response.content.map { try PeekabooBridgeJSONValue.fromCodable($0) },
+            isError: response.isError,
+            meta: response.meta.map { try PeekabooBridgeJSONValue.fromCodable($0) },
+            structuredContent: response.structuredContent.map { try PeekabooBridgeJSONValue.fromCodable($0) },
+            nativeWindowReceipt: nativeReceipt)
+        return PeekabooBridgeBrowserCapabilityNamespaceServiceResult(
+            response: bridgeResponse,
+            targetIdentity: result.targetIdentity,
+            outcome: result.outcome)
+    }
+
+    public func closeBrowserCapabilityNamespace(namespaceID: UUID) async throws {
+        guard let runtime = self.browserCapabilityNamespaceRuntime else { return }
+        do {
+            try await runtime.close(.init(rawValue: namespaceID))
+        } catch let error as BrowserMCPScopedNamespaceRuntimeError {
+            throw Self.browserCapabilityNamespaceRuntimeRefusal(error, mutatesDesktop: false)
+        }
+    }
+
+    public func closeAllBrowserCapabilityNamespaces() async {
+        guard let runtime = self.browserCapabilityNamespaceRuntime else { return }
+        await runtime.closeAll()
+    }
+
+    public func beginNextBrowserCapabilityNamespaceGeneration() {
+        self.browserCapabilityNamespaceRuntime?.beginNextHostGeneration()
+    }
+
+    private static func browserCapabilityNamespaceRuntimeRefusal(
+        _ error: BrowserMCPScopedNamespaceRuntimeError,
+        mutatesDesktop: Bool) -> PeekabooBridgeErrorEnvelope
+    {
+        let code: PeekabooBridgeErrorCode
+        let reason: DesktopActionOutcome.RefusalReason
+        switch error {
+        case .namespaceUnknown, .namespaceClosing, .namespaceEnded:
+            code = .notFound
+            reason = .targetUnavailable
+        case .namespaceAlreadyExists:
+            code = .invalidRequest
+            reason = .invalidRequest
+        case .localExecutionRequired, .localBrowserServiceRequired, .scopedSessionUnavailable:
+            code = .operationNotSupported
+            reason = .runtimeIncompatible
+        }
+        guard mutatesDesktop else {
+            return PeekabooBridgeErrorEnvelope(code: code, message: error.localizedDescription)
+        }
+        return PeekabooBridgeErrorEnvelope(
+            code: code,
+            actionFailure: .preDispatchRefusal(
+                route: .bridge,
+                reason: reason,
+                message: error.localizedDescription,
+                hint: reason == .targetUnavailable
+                    ? "Create a new browser capability namespace before retrying."
+                    : "Update and relaunch the on-demand Peekaboo host before retrying."))
+    }
+}
+
 extension PeekabooBridgeJSONValue {
     static func fromCodable(_ value: some Encodable) throws -> PeekabooBridgeJSONValue {
         let data = try JSONEncoder().encode(value)

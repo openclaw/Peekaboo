@@ -512,6 +512,11 @@ enum BrowserMCPScopedNamespaceResponseSanitizer {
 
     private static func processTargetIdentity(from meta: Value?) -> DesktopTargetIdentity? {
         guard case let .object(fields)? = meta else { return nil }
+        if let receipt = fields["connection_receipt"]?.objectValue,
+           let identity = self.processIdentity(from: receipt)
+        {
+            return identity
+        }
         if let execution = fields[BrowserMCPExecutionEvidence.metadataKey]?.objectValue,
            let receipt = execution["connection_receipt"]?.objectValue,
            let identity = self.processIdentity(from: receipt)

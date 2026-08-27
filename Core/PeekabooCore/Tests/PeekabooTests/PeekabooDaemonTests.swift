@@ -18,6 +18,15 @@ struct PeekabooDaemonTests {
     }
 
     @Test
+    func `production on-demand daemon modes include browser namespace operations`() {
+        for configuration in [PeekabooDaemon.Configuration.auto(), .manual()] {
+            #expect(configuration.hostKind == .onDemand)
+            #expect(PeekabooBridgeOperation.browserCapabilityNamespaceOperations.isSubset(of:
+                configuration.allowedOperations))
+        }
+    }
+
+    @Test
     func `auto daemon reports activity and idle deadline`() async {
         let daemon = PeekabooDaemon(configuration: .init(
             mode: .auto,

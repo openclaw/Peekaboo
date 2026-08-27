@@ -7,6 +7,23 @@ extension DesktopActionOutcome {
     /// fieldwise initializer: callers project a validated outcome, while decoding reconstructs and
     /// validates that outcome before accepting the compatibility booleans.
     public struct Projection: Codable, Equatable, Sendable {
+        public static let fieldNames: Set<String> = [
+            "delivery_mechanism",
+            "delivery_mode",
+            "dispatch_state",
+            "dispatched_unit_count",
+            "effect",
+            "escalation",
+            "evidence",
+            "mutation_dispatched",
+            "refusal_reason",
+            "requires_fresh_observation",
+            "retry_safe",
+            "retry_safety",
+            "route",
+            "state",
+        ]
+
         public let outcome: DesktopActionOutcome
 
         public var state: State {

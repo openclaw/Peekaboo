@@ -1,6 +1,9 @@
 import CoreFoundation
 import Darwin
 import Foundation
+import MCP
+import PeekabooBridge
+import PeekabooCore
 import PeekabooFoundation
 import TachikomaMCP
 
@@ -59,7 +62,7 @@ protocol BrowserCLINamespaceBridgeAdapter: Sendable {
 @MainActor
 protocol BrowserCLINamespaceBridgeAdapterProviding: AnyObject {
     /// Present only when the selected RemotePeekabooServices was built from a negotiated Bridge 1.38 client.
-    var browserCLINamespaceBridgeAdapter: any BrowserCLINamespaceBridgeAdapter { get }
+    var browserCLINamespaceBridgeAdapter: (any BrowserCLINamespaceBridgeAdapter)? { get }
 }
 
 /// The Bridge 1.38 integration makes only its negotiated `RemotePeekabooServices` conform to the
@@ -95,6 +98,151 @@ enum BrowserCLINamespaceEnvironment {
         }
     }
     #endif
+}
+
+extension RemotePeekabooServices: BrowserCLINamespaceBridgeAdapterProviding {
+    var browserCLINamespaceBridgeAdapter: (any BrowserCLINamespaceBridgeAdapter)? {
+        self.browserCapabilityNamespaceClient.map(RemoteBrowserCLINamespaceBridgeAdapter.init)
+    }
+}
+
+struct RemoteBrowserCLINamespaceBridgeAdapter: BrowserCLINamespaceBridgeAdapter {
+    let client: PeekabooBridgeClient
+
+    func createNamespace() async throws -> BrowserCLINamespaceCreateResult {
+        let receipt = try await self.client.createBrowserCapabilityNamespace()
+        let receiptData = try await self.client.canonicalBrowserCapabilityNamespaceReceiptData(receipt)
+        return BrowserCLINamespaceCreateResult(
+            namespaceReceiptData: receiptData,
+            response: .text("Browser capability namespace created.")
+        )
+    }
+
+    func bindWindow(
+        request: BrowserCLINamespaceBindWindowRequest,
+        namespaceReceiptData: Data
+    ) async throws -> ToolResponse {
+        let receipt = try await self.client.decodeBrowserCapabilityNamespaceReceipt(namespaceReceiptData)
+        let response = try await self.client.executeBrowserCapabilityNamespace(.init(
+            namespaceReceipt: receipt,
+            action: .bindWindow(.init(
+                pageID: request.pageID,
+                processIdentifier: request.processIdentifier,
+                windowID: request.windowID
+            ))
+        ))
+        return try Self.toolResponse(response)
+    }
+
+    func executeAction(
+        request: BrowserCLINamespaceHighLevelActionRequest,
+        namespaceReceiptData: Data
+    ) async throws -> ToolResponse {
+        let receipt = try await self.client.decodeBrowserCapabilityNamespaceReceipt(namespaceReceiptData)
+        guard let action = PeekabooBridgeBrowserHighLevelAction(rawValue: request.action.rawValue) else {
+            throw BrowserCLINamespaceCommandError.unsupportedNamespaceAction(request.action.rawValue)
+        }
+        let arguments = try request.arguments.mapValues(Self.bridgeJSONValue)
+        let executionMode: PeekabooBridgeBrowserCapabilityExecutionMode = switch request.executionMode {
+        case .backgroundOnly:
+            .backgroundOnly
+        case .foregroundAllowed:
+            .foregroundAllowed
+        }
+        let result = try await self.client.executeBrowserCapabilityNamespaceResult(.init(
+            namespaceReceipt: receipt,
+            executionMode: executionMode,
+            action: .executeAction(.init(action: action, arguments: arguments))
+        ))
+        return try Self.toolResponse(result.payload, verifiedOutcome: result.outcome)
+    }
+
+    func closeNamespace(namespaceReceiptData: Data) async throws -> ToolResponse {
+        let receipt = try await self.client.decodeBrowserCapabilityNamespaceReceipt(namespaceReceiptData)
+        _ = try await self.client.closeBrowserCapabilityNamespace(receipt)
+        return .text("Browser capability namespace closed.")
+    }
+
+    static func toolResponse(
+        _ response: PeekabooBridgeBrowserCapabilityNamespaceActionResponse,
+        verifiedOutcome: DesktopActionOutcome? = nil
+    ) throws -> ToolResponse {
+        let decodedMeta = try response.meta.map { try self.decode($0, as: Value.self) }
+        let meta = try self.metadata(decodedMeta, replacingOutcomeWith: verifiedOutcome)
+        return try ToolResponse(
+            content: response.content.map { try self.decode($0, as: Tool.Content.self) },
+            isError: response.isError,
+            meta: meta,
+            structuredContent: response.structuredContent.map { try self.decode($0, as: Value.self) }
+        )
+    }
+
+    private static func metadata(
+        _ metadata: Value?,
+        replacingOutcomeWith outcome: DesktopActionOutcome?
+    ) throws -> Value? {
+        guard let outcome else { return metadata }
+        var fields: [String: Value] = switch metadata {
+        case let .object(existing):
+            existing
+        case let .some(providerMetadata):
+            ["provider_meta": providerMetadata]
+        case nil:
+            [:]
+        }
+        for key in DesktopActionOutcome.Projection.fieldNames {
+            fields.removeValue(forKey: key)
+        }
+        let data = try JSONEncoder().encode(outcome.projection)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard case let .object(canonicalFields) = Value.from(object) else {
+            throw BrowserCLINamespaceCommandError.adapterUnavailable
+        }
+        fields.merge(canonicalFields) { _, canonical in canonical }
+        return .object(fields)
+    }
+
+    private static func decode<Value: Decodable>(
+        _ value: PeekabooBridgeJSONValue,
+        as _: Value.Type
+    ) throws -> Value {
+        try JSONDecoder().decode(Value.self, from: JSONEncoder().encode(value))
+    }
+
+    private static func bridgeJSONValue(_ value: Any) throws -> PeekabooBridgeJSONValue {
+        switch value {
+        case is NSNull:
+            .null
+        case let value as Bool:
+            .bool(value)
+        case let value as Int:
+            .int(value)
+        case let value as Int32:
+            .int(Int(value))
+        case let value as UInt32:
+            .int(Int(value))
+        case let value as Double:
+            .double(value)
+        case let value as NSNumber:
+            if CFGetTypeID(value) == CFBooleanGetTypeID() {
+                .bool(value.boolValue)
+            } else if value.doubleValue.rounded() == value.doubleValue {
+                .int(value.intValue)
+            } else {
+                .double(value.doubleValue)
+            }
+        case let value as String:
+            .string(value)
+        case let value as [Any]:
+            try .array(value.map(self.bridgeJSONValue))
+        case let value as [String: Any]:
+            try .object(value.mapValues(self.bridgeJSONValue))
+        default:
+            throw BrowserCLINamespaceCommandError.unsupportedNamespaceAction(
+                "argument type \(String(describing: type(of: value)))"
+            )
+        }
+    }
 }
 
 enum BrowserCLINamespaceLifecycle {
@@ -302,8 +450,8 @@ extension BrowserCommand {
     func validateBrowserCapabilityNamespaceActionBeforeRuntime(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws {
-        try self.requireRemoteNamespaceRouting(environment: environment)
         let store = try self.namespaceReceiptStore()
+        try self.requireRemoteNamespaceRouting(environment: environment)
         if let control = BrowserCLINamespaceControlAction(rawValue: self.normalizedAction) {
             let unsupported = self.namespaceUnsupportedArguments(allowsBindSelectors: false)
             guard unsupported.isEmpty else {

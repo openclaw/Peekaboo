@@ -203,6 +203,8 @@ extension PeekabooBridgeOperationReceiptAuthority {
 /// attested Bridge request ID, allowing distinct requests to execute concurrently without turning the namespace into
 /// a one-shot token. No BrowserMCPService type crosses this boundary.
 actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
+    private typealias DrainContinuation = CheckedContinuation<Void, any Error>
+
     struct Configuration: Equatable, Sendable {
         static let hardMaximumNamespaceCount = 1024
         static let hardMaximumLifetimeMilliseconds: Int64 = 60 * 60 * 1000
@@ -358,7 +360,7 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
         guard let predecessor = self.entries[namespaceID] else {
             throw PeekabooBridgeBrowserCapabilityNamespaceError.namespaceNotFound
         }
-        guard predecessor.outstandingDrainLeaseID == nil, predecessor.drainWaiter == nil else {
+        guard predecessor.outstandingDrainLeaseID == nil, predecessor.drainWaiters.isEmpty else {
             throw PeekabooBridgeBrowserCapabilityNamespaceError.namespaceClosing
         }
         guard predecessor.state == .open ||
@@ -454,14 +456,34 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
         -> PeekabooBridgeBrowserCapabilityNamespaceIdentity
     {
         try self.requireLiveRegistry()
-        let namespaceID = try self.validateRegisteredReceipt(
-            receipt,
-            principal: principal,
-            at: self.clock())
+        let now = self.clock()
+        self.expireEntries(at: now)
+        try Self.validatePrincipal(principal, expectedUserIdentifier: self.hostEffectiveUserIdentifier)
+        try self.validateReceipt(receipt, principal: principal, at: now, allowsExpired: true)
+        let namespaceID = receipt.payload.namespaceID
         guard let entry = self.entries[namespaceID] else {
-            throw PeekabooBridgeBrowserCapabilityNamespaceError.namespaceNotFound
+            // Open entries are never evicted. A valid same-generation receipt missing from the bounded registry can
+            // therefore only name an already-terminal namespace whose close acknowledgement was lost.
+            return PeekabooBridgeBrowserCapabilityNamespaceIdentity(
+                namespaceID: namespaceID,
+                registryGenerationID: self.registryGenerationID,
+                principal: principal,
+                allowsNativeBrowserWindowBinding: true,
+                drainLeaseID: nil)
         }
-        guard entry.state == .open || entry.state == .closing else {
+        guard entry.receipt == receipt else {
+            throw PeekabooBridgeBrowserCapabilityNamespaceError.invalidReceipt
+        }
+        if entry.state == .closed || entry.state == .expired, entry.activeClaimIDs.isEmpty {
+            entry.state = .closed
+            return PeekabooBridgeBrowserCapabilityNamespaceIdentity(
+                namespaceID: namespaceID,
+                registryGenerationID: self.registryGenerationID,
+                principal: principal,
+                allowsNativeBrowserWindowBinding: entry.allowsNativeBrowserWindowBinding,
+                drainLeaseID: entry.outstandingDrainLeaseID)
+        }
+        guard entry.state == .open || entry.state == .closing || entry.state == .expired else {
             throw self.lifecycleError(entry.state)
         }
         let drainLeaseID: UInt64?
@@ -501,8 +523,14 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
         else {
             throw PeekabooBridgeBrowserCapabilityNamespaceError.principalMismatch
         }
-        guard entry.outstandingDrainLeaseID == drainLeaseID else {
-            throw PeekabooBridgeBrowserCapabilityNamespaceError.claimMismatch
+        if entry.outstandingDrainLeaseID != drainLeaseID {
+            guard entry.outstandingDrainLeaseID == nil,
+                  entry.activeClaimIDs.isEmpty,
+                  entry.state == .closed || entry.state == .expired
+            else {
+                throw PeekabooBridgeBrowserCapabilityNamespaceError.claimMismatch
+            }
+            return
         }
         guard entry.state != .open else {
             throw PeekabooBridgeBrowserCapabilityNamespaceError.namespaceClosing
@@ -512,16 +540,13 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
             self.finishTerminalStateIfDrained(entry)
             return
         }
-        guard entry.drainWaiter == nil else {
-            throw PeekabooBridgeBrowserCapabilityNamespaceError.drainAlreadyAwaited
-        }
         let waiterID = self.nextDrainWaiterID()
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: DrainContinuation) in
                 if Task.isCancelled {
                     continuation.resume(throwing: CancellationError())
                 } else {
-                    entry.drainWaiter = DrainWaiter(id: waiterID, continuation: continuation)
+                    entry.drainWaiters[waiterID] = continuation
                 }
             }
         } onCancel: {
@@ -544,22 +569,15 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
 
     /// Stops all namespaces, waits for in-flight authority claims, and leaves no accepting entry.
     func drainAll() async throws {
-        try self.requireLiveRegistry()
+        try self.beginDrainingAll()
         try Task.checkCancellation()
-        self.drainingAll = true
-        let now = self.clock()
-        self.expireEntries(at: now)
-        for entry in self.entries.values where entry.state == .open {
-            entry.state = entry.activeClaimIDs.isEmpty ? .closed : .closing
-            self.resumeNamespaceDrainWaiterIfDrained(entry)
-        }
         guard self.entries.values.contains(where: { !$0.activeClaimIDs.isEmpty }) else { return }
         guard self.allDrainWaiter == nil else {
             throw PeekabooBridgeBrowserCapabilityNamespaceError.drainAlreadyAwaited
         }
         let waiterID = self.nextDrainWaiterID()
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: DrainContinuation) in
                 if Task.isCancelled {
                     continuation.resume(throwing: CancellationError())
                 } else {
@@ -574,6 +592,18 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
         try Task.checkCancellation()
     }
 
+    /// Freezes namespace admission synchronously without waiting for already-claimed work.
+    func beginDrainingAll() throws {
+        try self.requireLiveRegistry()
+        self.drainingAll = true
+        let now = self.clock()
+        self.expireEntries(at: now)
+        for entry in self.entries.values where entry.state == .open {
+            entry.state = entry.activeClaimIDs.isEmpty ? .closed : .closing
+            self.resumeNamespaceDrainWaiterIfDrained(entry)
+        }
+    }
+
     /// Immediately invalidates this generation. A replacement authority must mint a new generation and namespace IDs.
     @discardableResult
     func invalidateForRestart() -> Int {
@@ -584,10 +614,11 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
         for entry in self.entries.values {
             entry.state = .closed
             entry.outstandingDrainLeaseID = nil
-            let waiter = entry.drainWaiter
-            entry.drainWaiter = nil
-            waiter?.continuation.resume(
-                throwing: PeekabooBridgeBrowserCapabilityNamespaceError.registryInvalidated)
+            let waiters = Array(entry.drainWaiters.values)
+            entry.drainWaiters.removeAll()
+            for waiter in waiters {
+                waiter.resume(throwing: PeekabooBridgeBrowserCapabilityNamespaceError.registryInvalidated)
+            }
         }
         let allWaiter = self.allDrainWaiter
         self.allDrainWaiter = nil
@@ -603,6 +634,28 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
 
     func activeClaimCount(namespaceID: UUID) -> Int? {
         self.entries[namespaceID]?.activeClaimIDs.count
+    }
+
+    func retainedNamespaceCount() -> Int {
+        self.entries.count
+    }
+
+    func terminalNamespaceIDsRequiringRuntimeRetirement() throws -> [UUID] {
+        try self.requireLiveRegistry()
+        self.expireEntries(at: self.clock())
+        return self.entries.values
+            .filter { ($0.state == .closed || $0.state == .expired) && !$0.runtimeRetired }
+            .sorted { $0.ordinal < $1.ordinal }
+            .map(\.receipt.payload.namespaceID)
+    }
+
+    func markRuntimeRetired(namespaceID: UUID) throws {
+        try self.requireLiveRegistry()
+        guard let entry = self.entries[namespaceID] else { return }
+        guard entry.state == .closed || entry.state == .expired else {
+            throw PeekabooBridgeBrowserCapabilityNamespaceError.namespaceClosing
+        }
+        entry.runtimeRetired = true
     }
 
     func verify(
@@ -685,7 +738,8 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
     private func validateReceipt(
         _ receipt: PeekabooBridgeBrowserCapabilityNamespaceReceipt,
         principal: PeekabooBridgeBrowserCapabilityPrincipal,
-        at now: Int64) throws
+        at now: Int64,
+        allowsExpired: Bool = false) throws
     {
         let payload = receipt.payload
         guard payload.schemaVersion == 1,
@@ -721,7 +775,7 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
         guard !issueOverflow, payload.issuedAtUnixMilliseconds <= latestAllowedIssue else {
             throw PeekabooBridgeBrowserCapabilityNamespaceError.receiptNotYetValid
         }
-        guard now < payload.expiresAtUnixMilliseconds else {
+        guard allowsExpired || now < payload.expiresAtUnixMilliseconds else {
             throw PeekabooBridgeBrowserCapabilityNamespaceError.receiptExpired
         }
         try self.signingContext.validateSignature(receipt)
@@ -733,8 +787,9 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
                 .filter({
                     !excludedNamespaceIDs.contains($0.receipt.payload.namespaceID) &&
                         ($0.state == .closed || $0.state == .expired) &&
+                        $0.runtimeRetired &&
                         $0.activeClaimIDs.isEmpty &&
-                        $0.drainWaiter == nil &&
+                        $0.drainWaiters.isEmpty &&
                         $0.outstandingDrainLeaseID == nil
                 })
                 .min(by: { $0.ordinal < $1.ordinal })
@@ -765,10 +820,10 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
 
     private func resumeNamespaceDrainWaiterIfDrained(_ entry: Entry) {
         guard entry.activeClaimIDs.isEmpty else { return }
-        guard let waiter = entry.drainWaiter else { return }
-        entry.drainWaiter = nil
+        let waiters = Array(entry.drainWaiters.values)
+        entry.drainWaiters.removeAll()
         entry.outstandingDrainLeaseID = nil
-        waiter.continuation.resume()
+        waiters.forEach { $0.resume() }
     }
 
     private func resumeAllDrainWaiterIfDrained() {
@@ -779,10 +834,10 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
     }
 
     private func cancelNamespaceDrainWaiter(namespaceID: UUID, waiterID: UInt64) {
-        guard let entry = self.entries[namespaceID], entry.drainWaiter?.id == waiterID else { return }
-        let waiter = entry.drainWaiter
-        entry.drainWaiter = nil
-        waiter?.continuation.resume(throwing: CancellationError())
+        guard let entry = self.entries[namespaceID],
+              let waiter = entry.drainWaiters.removeValue(forKey: waiterID)
+        else { return }
+        waiter.resume(throwing: CancellationError())
     }
 
     private func cancelAllDrainWaiter(waiterID: UInt64) {
@@ -874,7 +929,8 @@ actor PeekabooBridgeBrowserCapabilityNamespaceAuthority {
         var claimedIDs: Set<UUID> = []
         var activeClaimIDs: Set<UUID> = []
         var outstandingDrainLeaseID: UInt64?
-        var drainWaiter: DrainWaiter?
+        var drainWaiters: [UInt64: DrainContinuation] = [:]
+        var runtimeRetired = false
 
         init(
             receipt: PeekabooBridgeBrowserCapabilityNamespaceReceipt,

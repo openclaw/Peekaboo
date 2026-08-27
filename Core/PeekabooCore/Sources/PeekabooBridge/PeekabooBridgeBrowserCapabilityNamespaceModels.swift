@@ -189,7 +189,18 @@ public struct PeekabooBridgeBrowserCapabilityNamespaceCreateRequest: Codable, Eq
         _ = encoder.container(keyedBy: EmptyCodingKey.self)
     }
 
-    private enum EmptyCodingKey: String, CodingKey {}
+    private struct EmptyCodingKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init?(stringValue: String) {
+            nil
+        }
+
+        init?(intValue: Int) {
+            nil
+        }
+    }
 }
 
 /// Per-call authority. A namespace never permanently acquires foreground permission.

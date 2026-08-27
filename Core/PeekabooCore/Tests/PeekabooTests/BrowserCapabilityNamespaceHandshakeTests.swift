@@ -24,6 +24,14 @@ struct BrowserCapabilityNamespaceHandshakeTests {
             server: server,
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
+        await host.setAuthenticationForTesting(.init(
+            liveIdentity: { try PeekabooBridgeSocketIO.livePeerIdentity(fd: $0) },
+            coldPeer: { identity, _ in
+                PeekabooBridgePeer(
+                    liveIdentity: identity,
+                    bundleIdentifier: "dev.peekaboo.browser-namespace-client",
+                    teamIdentifier: TrustedBridgeClientFixture.teamIdentifier)
+            }))
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
@@ -75,6 +83,188 @@ struct BrowserCapabilityNamespaceHandshakeTests {
             PeekabooBridgeHostCapability.browserCapabilityNamespaces) != true)
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.nativeBrowserWindowBinding) != true)
+    }
+
+    @Test
+    @MainActor
+    func `namespace lifecycle survives listener restart and rejects the retired receipt`() async throws {
+        let socketPath = "/tmp/peekaboo-browser-namespace-lifecycle-\(UUID().uuidString).sock"
+        let services = StubServices()
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: PeekabooBridgeOperation.onDemandDefaultAllowlist)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        await host.setAuthenticationForTesting(.init(
+            liveIdentity: { try PeekabooBridgeSocketIO.livePeerIdentity(fd: $0) },
+            coldPeer: { identity, _ in
+                PeekabooBridgePeer(
+                    liveIdentity: identity,
+                    bundleIdentifier: "dev.peekaboo.browser-namespace-lifecycle-client",
+                    teamIdentifier: TrustedBridgeClientFixture.teamIdentifier)
+            }))
+        try await host.startChecked()
+
+        let firstClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await firstClient.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.browser-namespace-lifecycle",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        services.browserNamespaceOpenError = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "Injected namespace runtime-open failure")
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await firstClient.createBrowserCapabilityNamespace()
+        }
+        services.browserNamespaceOpenError = nil
+        #expect(services.browserNamespaceOpenedIDs.isEmpty)
+        let firstReceipt = try await firstClient.createBrowserCapabilityNamespace()
+        let firstReceiptData = try await firstClient.canonicalBrowserCapabilityNamespaceReceiptData(firstReceipt)
+        #expect(try await firstClient.decodeBrowserCapabilityNamespaceReceipt(firstReceiptData) == firstReceipt)
+        let action = PeekabooBridgeBrowserCapabilityNamespaceRequest(
+            namespaceReceipt: firstReceipt,
+            action: .executeAction(.init(action: .status)))
+        let actionResponse = try await firstClient.executeBrowserCapabilityNamespace(action)
+        #expect(!actionResponse.isError)
+        services.browserNamespaceOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        services.browserNamespaceTargetIdentity = try DesktopTargetIdentity(
+            processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
+        let mutation = try await firstClient.executeBrowserCapabilityNamespaceResult(.init(
+            namespaceReceipt: firstReceipt,
+            action: .executeAction(.init(
+                action: .click,
+                arguments: ["page_id": .string(Self.pageReference)]))))
+        #expect(mutation.outcome?.route == .bridge)
+        #expect(mutation.outcome?.dispatchState.unitCount == .one)
+        #expect(services.browserNamespacePrepareCount == 1)
+        #expect(services.browserNamespaceOpenedIDs == [firstReceipt.payload.namespaceID])
+        #expect(services.browserNamespaceExecutedIDs == [
+            firstReceipt.payload.namespaceID,
+            firstReceipt.payload.namespaceID,
+        ])
+        _ = try await firstClient.closeBrowserCapabilityNamespace(firstReceipt)
+        let repeatedClose = try await firstClient.closeBrowserCapabilityNamespace(firstReceipt)
+        #expect(repeatedClose.namespaceID == firstReceipt.payload.namespaceID)
+        #expect(services.browserNamespaceClosedIDs == [firstReceipt.payload.namespaceID])
+
+        #expect(await host.stop() == .stopped)
+        #expect(services.browserNamespaceCloseAllCount == 1)
+        #expect(services.browserNamespaceOpenedIDs.isEmpty)
+
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let replacementClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await replacementClient.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.browser-namespace-lifecycle",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await replacementClient.executeBrowserCapabilityNamespace(action)
+        }
+        let replacementReceipt = try await replacementClient.createBrowserCapabilityNamespace()
+        #expect(replacementReceipt.payload.listenerInstanceID != firstReceipt.payload.listenerInstanceID)
+        #expect(services.browserNamespacePrepareCount == 1)
+        let closed = try await replacementClient.closeBrowserCapabilityNamespace(replacementReceipt)
+        #expect(closed.namespaceID == replacementReceipt.payload.namespaceID)
+        #expect(services.browserNamespaceClosedIDs == [
+            firstReceipt.payload.namespaceID,
+            replacementReceipt.payload.namespaceID,
+        ])
+    }
+
+    @Test
+    @MainActor
+    func `blocked namespace retirement obeys host drain timeout and retains ownership`() async throws {
+        let socketPath = "/tmp/peekaboo-browser-namespace-stop-\(UUID().uuidString).sock"
+        let services = StubServices()
+        let retirementBarrier = BrowserNamespaceLifecycleBarrier()
+        services.browserNamespaceCloseAllHandler = {
+            await retirementBarrier.block()
+        }
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: PeekabooBridgeOperation.onDemandDefaultAllowlist)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestDrainTimeoutSec: 0.05)
+        try await host.startChecked()
+
+        let stop = Task { await host.stop() }
+        await retirementBarrier.waitUntilBlocked()
+        guard case let .ownershipRetained(pendingRequestCount, _) = await stop.value else {
+            Issue.record("Expected blocked namespace retirement to retain listener ownership")
+            return
+        }
+        #expect(pendingRequestCount == 0)
+        await retirementBarrier.release()
+        await host.waitUntilFullyStopped()
+        let retainsOwnership = await host.isRetainingOwnershipForRequestsForTesting
+        #expect(!retainsOwnership)
+    }
+
+    @Test
+    @MainActor
+    func `late old generation create cannot enter the reopened runtime`() async throws {
+        let socketPath = "/tmp/peekaboo-browser-namespace-create-stop-\(UUID().uuidString).sock"
+        let services = StubServices()
+        let openBarrier = BrowserNamespaceLifecycleBarrier()
+        services.browserNamespaceOpenHandler = {
+            await openBarrier.block()
+        }
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: PeekabooBridgeOperation.onDemandDefaultAllowlist)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestDrainTimeoutSec: 0.05)
+        await host.setAuthenticationForTesting(.init(
+            liveIdentity: { try PeekabooBridgeSocketIO.livePeerIdentity(fd: $0) },
+            coldPeer: { identity, _ in
+                PeekabooBridgePeer(
+                    liveIdentity: identity,
+                    bundleIdentifier: "dev.peekaboo.browser-namespace-create-stop-client",
+                    teamIdentifier: TrustedBridgeClientFixture.teamIdentifier)
+            }))
+        try await host.startChecked()
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.browser-namespace-create-stop",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+
+        let create = Task { try await client.createBrowserCapabilityNamespace() }
+        await openBarrier.waitUntilBlocked()
+        let stop = Task { await host.stop() }
+        guard case .ownershipRetained = await stop.value else {
+            Issue.record("Expected blocked old-generation create to retain listener ownership")
+            return
+        }
+        await openBarrier.release()
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await create.value
+        }
+        await host.waitUntilFullyStopped()
+        #expect(services.browserNamespaceOpenedIDs.isEmpty)
+        #expect(services.browserNamespaceRuntimeAccepting)
     }
 
     @Test
@@ -176,5 +366,92 @@ extension StubServices: PeekabooBridgeBrowserCapabilityNamespaceProviding {
 
     var supportsNativeBrowserWindowBinding: Bool {
         true
+    }
+
+    func prepareBrowserCapabilityNamespaceRuntime() throws {
+        self.browserNamespacePrepareCount += 1
+        self.browserNamespaceRuntimeAccepting = true
+    }
+
+    func openBrowserCapabilityNamespace(namespaceID: UUID) async throws {
+        await self.browserNamespaceOpenHandler?()
+        guard self.browserNamespaceRuntimeAccepting else {
+            throw PeekabooBridgeErrorEnvelope(code: .notFound, message: "Namespace runtime is retired")
+        }
+        if let browserNamespaceOpenError {
+            throw browserNamespaceOpenError
+        }
+        self.browserNamespaceOpenedIDs.insert(namespaceID)
+    }
+
+    func executeBrowserCapabilityNamespace(
+        namespaceID: UUID,
+        request _: PeekabooBridgeBrowserCapabilityNamespaceRequest) async throws
+        -> PeekabooBridgeBrowserCapabilityNamespaceServiceResult
+    {
+        guard self.browserNamespaceOpenedIDs.contains(namespaceID) else {
+            throw PeekabooBridgeErrorEnvelope(code: .notFound, message: "Namespace is not open")
+        }
+        self.browserNamespaceExecutedIDs.append(namespaceID)
+        return .init(
+            response: .init(
+                content: [.object([
+                    "type": .string("text"),
+                    "text": .string("ok"),
+                ])],
+                isError: false),
+            targetIdentity: self.browserNamespaceTargetIdentity,
+            outcome: self.browserNamespaceOutcome)
+    }
+
+    func closeBrowserCapabilityNamespace(namespaceID: UUID) async throws {
+        if self.browserNamespaceClosedIDs.contains(namespaceID) {
+            return
+        }
+        guard self.browserNamespaceOpenedIDs.remove(namespaceID) != nil else {
+            throw PeekabooBridgeErrorEnvelope(code: .notFound, message: "Namespace is not open")
+        }
+        self.browserNamespaceClosedIDs.append(namespaceID)
+    }
+
+    func closeAllBrowserCapabilityNamespaces() async {
+        self.browserNamespaceCloseAllCount += 1
+        self.browserNamespaceRuntimeAccepting = false
+        await self.browserNamespaceCloseAllHandler?()
+        self.browserNamespaceOpenedIDs.removeAll()
+    }
+
+    func beginNextBrowserCapabilityNamespaceGeneration() {
+        self.browserNamespaceRuntimeAccepting = true
+    }
+}
+
+private actor BrowserNamespaceLifecycleBarrier {
+    private var blocked = false
+    private var released = false
+    private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func block() async {
+        self.blocked = true
+        self.blockedWaiters.forEach { $0.resume() }
+        self.blockedWaiters.removeAll()
+        guard !self.released else { return }
+        await withCheckedContinuation { continuation in
+            self.releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilBlocked() async {
+        guard !self.blocked else { return }
+        await withCheckedContinuation { continuation in
+            self.blockedWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        self.released = true
+        self.releaseWaiters.forEach { $0.resume() }
+        self.releaseWaiters.removeAll()
     }
 }

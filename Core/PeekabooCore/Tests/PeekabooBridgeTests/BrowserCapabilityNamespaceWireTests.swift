@@ -28,6 +28,20 @@ struct BrowserCapabilityNamespaceWireTests {
     }
 
     @Test
+    func `namespace connect refuses explicit provider endpoints before dispatch`() {
+        let request = PeekabooBridgeRequest.browserCapabilityNamespace(.init(
+            namespaceReceipt: Self.receipt(),
+            executionMode: .foregroundAllowed,
+            action: .executeAction(.init(
+                action: .connect,
+                arguments: ["browser_url": .string("http://127.0.0.1:9222")]))))
+
+        #expect(throws: DesktopActionFailure.self) {
+            try request.validateBrowserCapabilityExecutionMode()
+        }
+    }
+
+    @Test
     func `signed namespace receipt round trips without private browser identifiers`() throws {
         let receipt = Self.receipt()
         let data = try JSONEncoder.peekabooBridgeEncoder().encode(receipt)

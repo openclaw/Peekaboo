@@ -4,22 +4,7 @@ import PeekabooFoundation
 import TachikomaMCP
 
 enum MCPToolResponseMetadataProjector {
-    static let actionOutcomeKeys: Set<String> = [
-        "delivery_mechanism",
-        "delivery_mode",
-        "dispatch_state",
-        "dispatched_unit_count",
-        "effect",
-        "escalation",
-        "evidence",
-        "mutation_dispatched",
-        "refusal_reason",
-        "requires_fresh_observation",
-        "retry_safe",
-        "retry_safety",
-        "route",
-        "state",
-    ]
+    static let actionOutcomeKeys = DesktopActionOutcome.Projection.fieldNames
 
     static let requiredActionOutcomeKeys: Set<String> = [
         "dispatch_state",

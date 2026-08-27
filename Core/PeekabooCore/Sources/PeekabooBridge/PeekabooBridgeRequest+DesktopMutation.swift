@@ -144,15 +144,26 @@ extension PeekabooBridgeRequest {
     }
 
     func validateBrowserCapabilityExecutionMode() throws {
-        guard case let .browserCapabilityNamespace(payload) = self.unwrappedOperationRequest,
-              payload.requestsForegroundDelivery,
-              payload.executionMode != .foregroundAllowed
-        else { return }
-        throw DesktopActionFailure.preDispatchRefusal(
-            route: .bridge,
-            reason: .foregroundRequired,
-            message: "This browser namespace action requires explicit foreground authority.",
-            hint: "Retry only with foreground_allowed when interrupting the user is intentional.")
+        guard case let .browserCapabilityNamespace(payload) = self.unwrappedOperationRequest else { return }
+        if payload.requestsForegroundDelivery,
+           payload.executionMode != .foregroundAllowed
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .foregroundConsentRequired,
+                message: "This browser namespace action requires explicit foreground authority.",
+                hint: "Retry only with foreground_allowed when interrupting the user is intentional.")
+        }
+        if case let .executeAction(action) = payload.action,
+           action.action == .connect,
+           action.arguments["browser_url"] != nil
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .invalidRequest,
+                message: "Browser capability namespaces do not accept explicit DevTools endpoints.",
+                hint: "Connect by signed local process/channel discovery, then bind an opaque page to a native window.")
+        }
     }
 
     var requiresRequestPinnedExactWindowScrollReceipt: Bool {
@@ -227,6 +238,9 @@ extension PeekabooBridgeRequest {
 enum PeekabooBridgeRequestContext {
     @TaskLocal static var clientConnectionProbe: (@Sendable () -> Bool)?
     @TaskLocal static var operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
+    @TaskLocal static var browserCapabilityNamespaceAuthority:
+        PeekabooBridgeBrowserCapabilityNamespaceAuthority?
+    @TaskLocal static var attestedOperationRequestID: UUID?
     @TaskLocal static var usesAttestedOperationResultSemantics = false
     @TaskLocal static var negotiatedSessionCapabilities: PeekabooBridgeNegotiatedSessionCapabilities?
 

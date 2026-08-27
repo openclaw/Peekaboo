@@ -27,12 +27,14 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
     public let screens: any ScreenServiceProtocol
     public let browser: any BrowserMCPClientProviding
     public let agent: (any AgentServiceProtocol)?
+    public let browserCapabilityNamespaceClient: PeekabooBridgeClient?
 
     private let client: PeekabooBridgeClient
     private let supportsPostEventPermissionRequest: Bool
 
     public init(
         client: PeekabooBridgeClient,
+        supportsBrowserCapabilityNamespaces: Bool = false,
         supportsTargetedHotkeys: Bool = false,
         supportsProcessGenerationPinnedHotkeys: Bool = false,
         targetedHotkeyUnavailableReason: String? = nil,
@@ -89,6 +91,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
         self.client = client
+        self.browserCapabilityNamespaceClient = supportsBrowserCapabilityNamespaces ? client : nil
         self.supportsPostEventPermissionRequest = supportsPostEventPermissionRequest
         let supportsRemoteDesktopObservationOCR = supportsDesktopObservation && supportsDesktopObservationOCR
         let supportsRemoteCaptureEnginePreference = supportsDesktopObservation &&

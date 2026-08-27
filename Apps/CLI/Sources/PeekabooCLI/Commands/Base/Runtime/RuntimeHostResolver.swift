@@ -413,6 +413,10 @@ enum RuntimeHostResolver {
     }
 
     static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
+        if options.requiresBrowserCapabilityNamespace {
+            return "No authenticated on-demand Bridge host negotiated protocol 1.38 browser capability " +
+                "namespaces and exact native-window binding. Update and relaunch Peekaboo before retrying."
+        }
         if options.requiresExactWindowPixelFocusTyping {
             return "No compatible Bridge host advertises atomic exact-window pixel-focus typing. " +
                 "Update and relaunch Peekaboo, then observe the exact target again before retrying."
@@ -533,6 +537,10 @@ enum RuntimeHostResolver {
             return .local(snapshotInvalidationRemoteSocketPaths: [])
         }
 
+        if options.requiresBrowserCapabilityNamespace {
+            return .remote
+        }
+
         if self.inputPolicyRequiresLocal(
             options: options,
             environment: environment,
@@ -629,6 +637,7 @@ enum RuntimeHostResolver {
         return options.requiresScreenCapturePermission ||
             options.requiresInspectAccessibilityTree ||
             options.requiresBrowserMCP ||
+            options.requiresBrowserCapabilityNamespace ||
             options.requiresImplicitSnapshotInvalidation ||
             options.usesPerToolSnapshotInvalidation ||
             options.requiresForegroundModifierClickSnapshotLease ||
@@ -667,7 +676,7 @@ enum RuntimeHostResolver {
             daemons.append(ImplicitRemoteCandidate(
                 socketPath: socketPath,
                 requireReusableDaemon: true,
-                requiredHostKind: nil,
+                requiredHostKind: options.requiresBrowserCapabilityNamespace ? .onDemand : nil,
                 requiresValidatedHistoricalDaemon: false
             ))
         }
@@ -686,6 +695,10 @@ enum RuntimeHostResolver {
             requiredHostKind: .gui,
             requiresValidatedHistoricalDaemon: false
         )
+
+        if options.requiresBrowserCapabilityNamespace {
+            return daemons
+        }
 
         if options.requiresApplicationRelaunch || options.requiresSurvivingApplicationHost {
             return daemons
@@ -823,6 +836,8 @@ enum RuntimeHostResolver {
         )
         return RemotePeekabooServices(
             client: client,
+            supportsBrowserCapabilityNamespaces:
+            PeekabooBridgeClient.supportsBrowserCapabilityNamespaces(handshake),
             supportsTargetedHotkeys: targetedHotkey.isEnabled,
             supportsProcessGenerationPinnedHotkeys:
             BridgeCapabilityPolicy.supportsProcessGenerationPinnedHotkeys(for: handshake),

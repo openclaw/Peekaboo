@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
@@ -10,6 +11,7 @@ extension PeekabooBridgeClient {
         let response = try await self.send(.browserCreateCapabilityNamespace(.init()))
         switch response {
         case let .browserCapabilityNamespaceCreated(receipt):
+            try self.validateBrowserCapabilityNamespaceReceipt(receipt)
             return receipt
         case let .error(envelope):
             throw envelope
@@ -18,6 +20,28 @@ extension PeekabooBridgeClient {
                 code: .invalidRequest,
                 message: "Unexpected browser capability namespace creation response")
         }
+    }
+
+    public func canonicalBrowserCapabilityNamespaceReceiptData(
+        _ receipt: PeekabooBridgeBrowserCapabilityNamespaceReceipt) throws -> Data
+    {
+        try self.validateBrowserCapabilityNamespaceReceipt(receipt)
+        return try PeekabooBridgeOperationReceiptCoding.canonicalData(receipt)
+    }
+
+    public func decodeBrowserCapabilityNamespaceReceipt(
+        _ data: Data) throws -> PeekabooBridgeBrowserCapabilityNamespaceReceipt
+    {
+        let receipt = try self.decoder.decode(
+            PeekabooBridgeBrowserCapabilityNamespaceReceipt.self,
+            from: data)
+        guard try PeekabooBridgeOperationReceiptCoding.canonicalData(receipt) == data else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Browser capability namespace receipt bytes are not canonical")
+        }
+        try self.validateBrowserCapabilityNamespaceReceipt(receipt)
+        return receipt
     }
 
     public func executeBrowserCapabilityNamespace(
@@ -40,7 +64,7 @@ extension PeekabooBridgeClient {
         if request.executionMode == .backgroundOnly, request.requestsForegroundDelivery {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,
-                reason: .foregroundRequired,
+                reason: .foregroundConsentRequired,
                 message: "This browser namespace action requires explicit foreground authority.",
                 hint: "Retry only with foreground_allowed when interrupting the user is intentional.")
         }
@@ -59,14 +83,15 @@ extension PeekabooBridgeClient {
                     message: "Unexpected browser capability namespace action response")
             }
         }
-        let result = try await self.actionResult(
-            for: bridgeRequest,
-            expectedResponse: "browser capability namespace action",
-            operationReceiptRequirement: .required)
-        { response in
-            guard case let .browserCapabilityNamespaceAction(payload) = response else { return nil }
-            return payload
-        }
+        let result: UIAutomationActionResult<PeekabooBridgeBrowserCapabilityNamespaceActionResponse> =
+            try await self.actionResult(
+                for: bridgeRequest,
+                expectedResponse: "browser capability namespace action",
+                operationReceiptRequirement: .required)
+            { response in
+                guard case let .browserCapabilityNamespaceAction(payload) = response else { return nil }
+                return payload
+            }
         try Self.validateBrowserCapabilityNamespaceResponse(result.payload, request: request)
         return result.desktopActionResult
     }
@@ -108,6 +133,49 @@ extension PeekabooBridgeClient {
                 reason: .runtimeIncompatible,
                 message: "This browser capability namespace cannot bind an exact native window.",
                 hint: "Update the local on-demand Peekaboo host and create a new namespace.")
+        }
+    }
+
+    private func validateBrowserCapabilityNamespaceReceipt(
+        _ receipt: PeekabooBridgeBrowserCapabilityNamespaceReceipt) throws
+    {
+        try self.requireBrowserCapabilityNamespace(nativeWindowBinding: false)
+        guard let listenerAttestation = self.operationAttestation else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .unauthorizedClient,
+                message: "Browser capability namespace receipt validation requires an attested Bridge session")
+        }
+        try listenerAttestation.validateSignature()
+        let payload = receipt.payload
+        guard payload.listenerInstanceID == listenerAttestation.listenerInstanceID,
+              payload.listenerPublicKeySHA256 == PeekabooBridgeOperationReceiptCoding.sha256(
+                  listenerAttestation.publicKey),
+              payload.issuedAtUnixMilliseconds > 0,
+              payload.expiresAtUnixMilliseconds > payload.issuedAtUnixMilliseconds,
+              !payload.principal.teamIdentifier.isEmpty,
+              !payload.principal.bundleIdentifier.isEmpty,
+              !payload.principal.codeSignatureHash.isEmpty
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Browser capability namespace receipt contradicts the active Bridge listener")
+        }
+        let publicKey: Curve25519.Signing.PublicKey
+        do {
+            publicKey = try Curve25519.Signing.PublicKey(
+                rawRepresentation: listenerAttestation.publicKey)
+        } catch {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .unauthorizedClient,
+                message: "Bridge listener public key is invalid")
+        }
+        guard try publicKey.isValidSignature(
+            receipt.signature,
+            for: PeekabooBridgeOperationReceiptCoding.canonicalData(payload))
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .unauthorizedClient,
+                message: "Browser capability namespace receipt signature is invalid")
         }
     }
 
