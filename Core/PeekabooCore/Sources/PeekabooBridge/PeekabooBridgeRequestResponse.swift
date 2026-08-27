@@ -18,6 +18,9 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case browserConnect(PeekabooBridgeBrowserChannelRequest)
     case browserDisconnect
     case browserExecute(PeekabooBridgeBrowserExecuteRequest)
+    case browserCreateCapabilityNamespace(PeekabooBridgeBrowserCapabilityNamespaceCreateRequest)
+    case browserCapabilityNamespace(PeekabooBridgeBrowserCapabilityNamespaceRequest)
+    case browserCloseCapabilityNamespace(PeekabooBridgeBrowserCapabilityNamespaceCloseRequest)
     case captureScreen(PeekabooBridgeCaptureScreenRequest)
     case captureWindow(PeekabooBridgeCaptureWindowRequest)
     case captureFrontmost(PeekabooBridgeCaptureFrontmostRequest)
@@ -143,6 +146,9 @@ extension PeekabooBridgeRequest {
         case .browserConnect: .browserConnect
         case .browserDisconnect: .browserDisconnect
         case .browserExecute: .browserExecute
+        case .browserCreateCapabilityNamespace: .browserCreateCapabilityNamespace
+        case .browserCapabilityNamespace: .browserCapabilityNamespace
+        case .browserCloseCapabilityNamespace: .browserCloseCapabilityNamespace
         case .captureScreen: .captureScreen
         case .captureWindow: .captureWindow
         case .captureFrontmost: .captureFrontmost
@@ -264,6 +270,9 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case certificationProducerAttestation(PeekabooBridgeCertificationProducerAttestationResponse)
     case browserStatus(PeekabooBridgeBrowserStatus)
     case browserToolResponse(PeekabooBridgeBrowserToolResponse)
+    case browserCapabilityNamespaceCreated(PeekabooBridgeBrowserCapabilityNamespaceReceipt)
+    case browserCapabilityNamespaceAction(PeekabooBridgeBrowserCapabilityNamespaceActionResponse)
+    case browserCapabilityNamespaceClosed(PeekabooBridgeBrowserCapabilityNamespaceCloseResponse)
     case capture(CaptureResult)
     case elementDetection(ElementDetectionResult)
     case focusedElement(UIFocusInfo?)

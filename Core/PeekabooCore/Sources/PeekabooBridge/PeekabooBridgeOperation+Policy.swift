@@ -1,6 +1,13 @@
 import Foundation
 
 extension PeekabooBridgeOperation {
+    /// Protocol-1.38 operations reserved for an authenticated on-demand host with a complete scoped browser runtime.
+    public static let browserCapabilityNamespaceOperations: Set<PeekabooBridgeOperation> = [
+        .browserCreateCapabilityNamespace,
+        .browserCapabilityNamespace,
+        .browserCloseCapabilityNamespace,
+    ]
+
     var mutatesDesktop: Bool {
         PeekabooBridgeOperationResultSemantics.contract(for: self).completion.mutatesDesktop
     }
@@ -158,4 +165,9 @@ extension PeekabooBridgeOperation {
             .browserDisconnect,
             .browserExecute,
         ])
+
+    /// Explicit allowlist for the local on-demand daemon. Handshake negotiation still removes the namespace
+    /// operations unless every protocol, receipt, client-offer, host-kind, and service-support condition is true.
+    public static let onDemandDefaultAllowlist: Set<PeekabooBridgeOperation> =
+        PeekabooBridgeOperation.remoteDefaultAllowlist.union(Self.browserCapabilityNamespaceOperations)
 }

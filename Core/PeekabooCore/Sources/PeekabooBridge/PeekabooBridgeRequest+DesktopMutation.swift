@@ -36,6 +36,9 @@ extension PeekabooBridgeRequest {
     }
 
     var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
+        if self.requiresBrowserCapabilityNamespaces {
+            return PeekabooBridgeConstants.browserCapabilityNamespaceVersion
+        }
         if self.requiresNativeBrowserConnectionBinding {
             return PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion
         }
@@ -120,6 +123,36 @@ extension PeekabooBridgeRequest {
         default:
             false
         }
+    }
+
+    var requiresBrowserCapabilityNamespaces: Bool {
+        switch self.unwrappedOperationRequest.operation {
+        case .browserCreateCapabilityNamespace,
+             .browserCapabilityNamespace,
+             .browserCloseCapabilityNamespace:
+            true
+        default:
+            false
+        }
+    }
+
+    var requiresNativeBrowserWindowBinding: Bool {
+        guard case let .browserCapabilityNamespace(payload) = self.unwrappedOperationRequest,
+              case .bindWindow = payload.action
+        else { return false }
+        return true
+    }
+
+    func validateBrowserCapabilityExecutionMode() throws {
+        guard case let .browserCapabilityNamespace(payload) = self.unwrappedOperationRequest,
+              payload.requestsForegroundDelivery,
+              payload.executionMode != .foregroundAllowed
+        else { return }
+        throw DesktopActionFailure.preDispatchRefusal(
+            route: .bridge,
+            reason: .foregroundRequired,
+            message: "This browser namespace action requires explicit foreground authority.",
+            hint: "Retry only with foreground_allowed when interrupting the user is intentional.")
     }
 
     var requiresRequestPinnedExactWindowScrollReceipt: Bool {

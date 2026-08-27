@@ -48,6 +48,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case browserConnect
     case browserDisconnect
     case browserExecute
+    case browserCreateCapabilityNamespace
+    case browserCapabilityNamespace
+    case browserCloseCapabilityNamespace
     // Capture
     case captureScreen
     case captureWindow
@@ -276,6 +279,11 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         if version < PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion {
             compatible.remove(.ownsSnapshot)
         }
+        if version < PeekabooBridgeConstants.browserCapabilityNamespaceVersion {
+            compatible.remove(.browserCreateCapabilityNamespace)
+            compatible.remove(.browserCapabilityNamespace)
+            compatible.remove(.browserCloseCapabilityNamespace)
+        }
         return compatible
     }
     // swiftlint:enable cyclomatic_complexity
@@ -384,6 +392,8 @@ public enum PeekabooBridgeHostCapability {
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
     public static let processGenerationBoundElementMutations = "processGenerationBoundElementMutations"
+    public static let browserCapabilityNamespaces = "browserCapabilityNamespaces"
+    public static let nativeBrowserWindowBinding = "nativeBrowserWindowBinding"
     public static let exactDialogInputExecution = "exactDialogInputExecution"
     public static let exactForcedDialogDismissExecution = "exactForcedDialogDismissExecution"
     public static let dialogInputFocusPolicy = "dialogInputFocusPolicy"
@@ -408,6 +418,8 @@ public enum PeekabooBridgeClientCapability {
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
     public static let installedApplicationCatalog = "installedApplicationCatalog"
+    public static let browserCapabilityNamespaces = "browserCapabilityNamespaces"
+    public static let nativeBrowserWindowBinding = "nativeBrowserWindowBinding"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

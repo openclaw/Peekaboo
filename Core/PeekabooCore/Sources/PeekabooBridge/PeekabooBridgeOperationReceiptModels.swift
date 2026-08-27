@@ -879,6 +879,11 @@ enum PeekabooBridgeOperationReceiptSemantics {
                 return
             }
         }
+        try PeekabooBridgeBrowserCapabilityNamespaceReceiptValidation.validateNativeTarget(
+            payload,
+            request: request,
+            response: response,
+            plan: plan)
         if case .browser = payload.target,
            ![PeekabooBridgeOperation.browserConnect, .browserExecute].contains(request.operation)
         {

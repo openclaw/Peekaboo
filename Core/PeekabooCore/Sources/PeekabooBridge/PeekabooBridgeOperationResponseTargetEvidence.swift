@@ -34,6 +34,19 @@ extension PeekabooBridgeRequest {
 }
 
 extension PeekabooBridgeResponse {
+    var browserCapabilityNamespaceResponse: PeekabooBridgeBrowserCapabilityNamespaceActionResponse? {
+        switch self {
+        case let .attestedOperation(payload):
+            payload.response.browserCapabilityNamespaceResponse
+        case let .projectedAction(payload):
+            payload.response.browserCapabilityNamespaceResponse
+        case let .browserCapabilityNamespaceAction(response):
+            response
+        default:
+            nil
+        }
+    }
+
     var browserExecutionResponse: PeekabooBridgeBrowserToolResponse? {
         switch self {
         case let .attestedOperation(payload):
@@ -103,6 +116,9 @@ extension PeekabooBridgeResponse {
         case let .browserToolResponse(result)
             where plan.operation == .browserExecute && plan.target.responseEvidenceSource == .browserConnection:
             return [Self.browserEvidence(result.connectionReceipt)].compactMap(\.self)
+        case let .browserCapabilityNamespaceAction(result)
+            where plan.operation == .browserCapabilityNamespace:
+            return [result.nativeWindowReceipt?.targetEvidence].compactMap(\.self)
         case let .browserStatus(status)
             where plan.operation == .browserConnect && plan.target.responseEvidenceSource == .browserConnection:
             return [Self.browserEvidence(status.connectionReceipt)].compactMap(\.self)
@@ -132,6 +148,9 @@ extension PeekabooBridgeResponse {
              .certificationProducerAttestation,
              .browserStatus,
              .browserToolResponse,
+             .browserCapabilityNamespaceCreated,
+             .browserCapabilityNamespaceAction,
+             .browserCapabilityNamespaceClosed,
              .capture,
              .elementDetection,
              .focusedElement,

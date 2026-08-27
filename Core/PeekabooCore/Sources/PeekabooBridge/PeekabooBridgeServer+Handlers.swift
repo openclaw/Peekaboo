@@ -50,6 +50,12 @@ extension PeekabooBridgeServer {
                 return try await .init(response: self.handleBrowserRequest(request))
             }
             return try await self.handleBrowserExecute(payload)
+        case .browserCreateCapabilityNamespace,
+             .browserCapabilityNamespace,
+             .browserCloseCapabilityNamespace:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "This Bridge host has no browser capability namespace runtime")
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
             return try await .init(response: self.handleCaptureRequest(request))
         case .desktopObservation:

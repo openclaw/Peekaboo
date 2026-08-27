@@ -62,6 +62,9 @@ enum PeekabooBridgeOperationResultSemantics {
         case bool
         case browserStatus
         case browserToolResponse
+        case browserCapabilityNamespaceReceipt
+        case browserCapabilityNamespaceAction
+        case browserCapabilityNamespaceClose
         case capture
         case clickResult
         case daemonStatus
@@ -841,9 +844,8 @@ extension PeekabooBridgeOperationResultSemantics {
             // Only invalid carriage remains wrapped after canonical unwrapping. It must not be
             // granted the inner operation's mutation semantics.
             return .init(completion: .readOnly, targetPolicy: .notApplicable)
-        case let .browserExecute(payload):
-            guard payload.isReadOnly else { return self.contract(for: request.operation) }
-            return .init(completion: .readOnly, targetPolicy: .notApplicable)
+        case .browserExecute, .browserCapabilityNamespace:
+            return self.browserContract(for: request)
         case let .click(payload):
             let delivery: DesktopActionOutcome.Delivery
             let targetPolicy: TargetPolicy
@@ -973,6 +975,25 @@ extension PeekabooBridgeOperationResultSemantics {
                 targetPolicy: payload.windowContext == nil ? .global : .responseResolved)
         default:
             return self.contract(for: request.operation)
+        }
+    }
+
+    private static func browserContract(for request: PeekabooBridgeRequest) -> Contract {
+        switch request {
+        case let .browserExecute(payload):
+            guard payload.isReadOnly else { return self.contract(for: request.operation) }
+            return .init(completion: .readOnly, targetPolicy: .notApplicable)
+        case let .browserCapabilityNamespace(payload):
+            guard !payload.isReadOnly else {
+                return .init(completion: .readOnly, targetPolicy: .notApplicable)
+            }
+            let mode: DesktopActionOutcome.Delivery.Mode =
+                payload.requestsForegroundDelivery ? .foreground : .background
+            return .init(
+                completion: .dispatchedUnverified(.init(mechanism: .browserProtocol, mode: mode)),
+                targetPolicy: .external)
+        default:
+            preconditionFailure("Browser contract requested for non-browser operation")
         }
     }
 
@@ -1286,6 +1307,9 @@ extension PeekabooBridgeOperationResultSemantics {
              .browserConnect,
              .browserDisconnect,
              .browserExecute,
+             .browserCreateCapabilityNamespace,
+             .browserCapabilityNamespace,
+             .browserCloseCapabilityNamespace,
              .captureScreen,
              .captureWindow,
              .captureFrontmost,
@@ -1419,7 +1443,8 @@ extension PeekabooBridgeOperationResultSemantics {
         switch request.operation {
         case .agentExecutionTrace:
             return [.dispatchedUnverified]
-        case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse,
+        case .requestPostEventPermission, .browserExecute, .browserCapabilityNamespace,
+             .swipe, .drag, .moveMouse,
              .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
              .launchDockItem, .rightClickDockItem,
@@ -1473,6 +1498,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .createExactWindowHeldPointerOwner,
              .daemonStatus, .daemonStop, .browserStatus,
              .browserDisconnect,
+             .browserCreateCapabilityNamespace, .browserCloseCapabilityNamespace,
              .getFocusedElement, .waitForElement, .listWindows, .getFocusedWindow,
              .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
              .listMenus, .listFrontmostMenus, .listMenuExtras, .menuExtraOpenMenuFrame,
@@ -1802,6 +1828,10 @@ extension PeekabooBridgeOperationResultSemantics {
             return [rule(browserForeground, .exact(1))]
         case .browserExecute:
             return [rule(browserBackground, .variable)]
+        case .browserCapabilityNamespace:
+            guard case .dispatchedUnverified = contract.completion else { return [] }
+            let delivery = contract.completion.fixedDelivery ?? browserBackground
+            return [rule(delivery, .variable)]
         default:
             guard let delivery = contract.completion.fixedDelivery else { return [] }
             return [rule(delivery, .exact(1))]

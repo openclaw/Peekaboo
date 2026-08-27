@@ -219,6 +219,17 @@ public final class PeekabooBridgeServer {
         {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
         }
+        let browserNamespaceService = services as? any PeekabooBridgeBrowserCapabilityNamespaceProviding
+        resolvedHostCapabilities = protocolBrowserNamespaceCapabilities(
+            resolvedHostCapabilities,
+            support: .init(
+                hostKind: hostKind,
+                maximumProtocolVersion: supportedVersions.upperBound,
+                allowedOperations: self.allowedOperations,
+                supportsBrowserCapabilityNamespaces:
+                browserNamespaceService?.supportsBrowserCapabilityNamespaces == true,
+                supportsNativeBrowserWindowBinding:
+                browserNamespaceService?.supportsNativeBrowserWindowBinding == true))
         if supportedVersions.upperBound >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion,
            services.snapshots.supportsProducerBoundSnapshotReferences,
            self.allowedOperations.contains(.ownsSnapshot)
@@ -1092,6 +1103,7 @@ public final class PeekabooBridgeServer {
                     message: "Certification operations require a signed Bridge operation receipt")
             }
         }
+        try request.validateBrowserCapabilityExecutionMode()
         if request.requiresRequestPinnedExactWindowScrollReceipt {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
             let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
@@ -1117,6 +1129,11 @@ public final class PeekabooBridgeServer {
             guard (negotiatedVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
                   !request.requiresNativeBrowserConnectionBinding ||
                   session?.nativeBrowserConnectionBinding == true,
+                  !request.requiresBrowserCapabilityNamespaces ||
+                  (PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics &&
+                      session?.browserCapabilityNamespaces == true),
+                  !request.requiresNativeBrowserWindowBinding ||
+                  session?.nativeBrowserWindowBinding == true,
                   !request.requiresProducerBoundSnapshotReferences ||
                   session?.producerBoundSnapshotReferences == true,
                   !request.requiresTargetedClickAccessibilityValueDelivery ||
@@ -1321,6 +1338,21 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion {
         capabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
+    }
+    return capabilities
+}
+
+private func protocolBrowserNamespaceCapabilities(
+    _ declaredCapabilities: Set<String>,
+    support: PeekabooBridgeBrowserCapabilityNamespaceNegotiation.HostSupport) -> Set<String>
+{
+    var capabilities = declaredCapabilities
+    if PeekabooBridgeBrowserCapabilityNamespaceNegotiation.hostCanDeclareCapabilities(support) {
+        capabilities.insert(PeekabooBridgeHostCapability.browserCapabilityNamespaces)
+        capabilities.insert(PeekabooBridgeHostCapability.nativeBrowserWindowBinding)
+    } else {
+        capabilities.remove(PeekabooBridgeHostCapability.browserCapabilityNamespaces)
+        capabilities.remove(PeekabooBridgeHostCapability.nativeBrowserWindowBinding)
     }
     return capabilities
 }

@@ -45,6 +45,26 @@ public protocol PeekabooBridgeBrowserConnectionResultProviding: PeekabooBridgeSe
         browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
 }
 
+/// Capability declaration for the protocol-1.38 caller-owned browser namespace runtime.
+///
+/// Conformance alone grants nothing: current hosts must explicitly override both defaults before the on-demand
+/// handshake can advertise the closed namespace operations.
+@MainActor
+public protocol PeekabooBridgeBrowserCapabilityNamespaceProviding: PeekabooBridgeServiceProviding {
+    var supportsBrowserCapabilityNamespaces: Bool { get }
+    var supportsNativeBrowserWindowBinding: Bool { get }
+}
+
+extension PeekabooBridgeBrowserCapabilityNamespaceProviding {
+    public var supportsBrowserCapabilityNamespaces: Bool {
+        false
+    }
+
+    public var supportsNativeBrowserWindowBinding: Bool {
+        false
+    }
+}
+
 extension PeekabooBridgeBrowserConnectionResultProviding {
     public var supportsNativeBrowserConnectionBinding: Bool {
         false
