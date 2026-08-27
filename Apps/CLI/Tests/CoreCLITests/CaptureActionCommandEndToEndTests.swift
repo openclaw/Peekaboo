@@ -21,14 +21,16 @@ struct CaptureActionCommandEndToEndTests {
         let focusOutcome = DesktopActionOutcome.confirmedChange(
             route: .local,
             delivery: .init(mechanism: .nativeFramework, mode: .foreground),
-            unitCount: .one)
+            unitCount: .one
+        )
         var command = CaptureActionCommand()
         command.recordCaptureFocusOutcome(focusOutcome)
         #expect(command.captureFocusOutcome == focusOutcome)
         #expect(command.captureMutationDispatched)
         let aggregate = try #require(CaptureActionOutcomeSemantics.aggregate(
             focusOutcome: focusOutcome,
-            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome))
+            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome
+        ))
 
         #expect(aggregate.state == .dispatchedUnverified)
         #expect(aggregate.delivery?.mechanism == .composite)
@@ -38,14 +40,17 @@ struct CaptureActionCommandEndToEndTests {
         let mixedRouteFocus = DesktopActionOutcome.confirmedChange(
             route: .bridge,
             delivery: .init(mechanism: .nativeFramework, mode: .foreground),
-            unitCount: .one)
+            unitCount: .one
+        )
         let mixedRoute = CaptureActionOutcomeSemantics.aggregate(
             focusOutcome: mixedRouteFocus,
-            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome)
+            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome
+        )
         #expect(mixedRoute == nil)
         let mixedRouteFailure = CaptureActionOutcomeSemantics.failureAggregate(
             focusOutcome: mixedRouteFocus,
-            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome)
+            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome
+        )
         #expect(mixedRouteFailure.state == .indeterminate)
         #expect(mixedRouteFailure.route == .local)
         #expect(mixedRouteFailure.delivery == nil)
@@ -54,10 +59,12 @@ struct CaptureActionCommandEndToEndTests {
         let oversizedFocus = DesktopActionOutcome.confirmedChange(
             route: .bridge,
             delivery: .init(mechanism: .nativeFramework, mode: .foreground),
-            unitCount: DesktopActionOutcome.DispatchUnitCount(Int.max))
+            unitCount: DesktopActionOutcome.DispatchUnitCount(Int.max)
+        )
         let overflowFailure = CaptureActionOutcomeSemantics.failureAggregate(
             focusOutcome: oversizedFocus,
-            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome)
+            childOutcome: CaptureActionOutcomeSemantics.completedChildOutcome
+        )
         #expect(overflowFailure.state == .indeterminate)
         #expect(overflowFailure.dispatchState.unitCount == nil)
     }
@@ -101,22 +108,26 @@ struct CaptureActionCommandEndToEndTests {
                 let result = try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
                 processRecorder.invocations.append(.init(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
                     startedAt: startedAt,
-                    finishedAt: Date()))
+                    finishedAt: Date()
+                ))
                 return result
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
 
         command.runtime = self.makeRuntime()
         let result = try await command.executeActionCapture()
         let encoded = try JSONEncoder().encode(command.jsonEnvelope(for: result))
         let envelope = try JSONDecoder().decode(
             ResultEnvelope<CaptureActionCommandResult>.self,
-            from: encoded)
+            from: encoded
+        )
 
         #expect(envelope.success)
         #expect(envelope.effect == .unverifiable)
@@ -158,7 +169,8 @@ struct CaptureActionCommandEndToEndTests {
         try Self.verifyPublishedManifest(
             result: envelope.data,
             command: command.command,
-            outputDirectory: outputDirectory)
+            outputDirectory: outputDirectory
+        )
 
         try FileManager.default.removeItem(at: outputDirectory)
         needsCleanup = false
@@ -200,9 +212,11 @@ struct CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
 
         command.runtime = self.makeRuntime()
         let thrown = await #expect(throws: (any Error).self) {
@@ -241,16 +255,19 @@ struct CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
 
         command.runtime = self.makeRuntime()
         let result = try await command.executeActionCapture()
         let encoded = try JSONEncoder().encode(command.jsonEnvelope(for: result))
         let envelope = try JSONDecoder().decode(
             ResultEnvelope<CaptureActionCommandResult>.self,
-            from: encoded)
+            from: encoded
+        )
 
         #expect(!envelope.success)
         #expect(envelope.effect == .unverifiable)
@@ -267,7 +284,8 @@ struct CaptureActionCommandEndToEndTests {
         let manifestReceipt = try #require(envelope.data.manifest)
         let manifest = try JSONDecoder().decode(
             CaptureActionManifest.self,
-            from: Data(contentsOf: URL(fileURLWithPath: manifestReceipt.path)))
+            from: Data(contentsOf: URL(fileURLWithPath: manifestReceipt.path))
+        )
         #expect(!manifest.result.success)
         #expect(manifest.result.effect == .unverifiable)
         #expect(manifest.result.mutationDispatched)
@@ -275,12 +293,14 @@ struct CaptureActionCommandEndToEndTests {
         #expect(manifest.result.outcome == envelope.outcome)
         let failedResultData = try JSONEncoder().encode(envelope.data)
         var contradictoryCommandResult = try #require(
-            JSONSerialization.jsonObject(with: failedResultData) as? [String: Any])
+            JSONSerialization.jsonObject(with: failedResultData) as? [String: Any]
+        )
         contradictoryCommandResult["success"] = true
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(
                 CaptureActionCommandResult.self,
-                from: JSONSerialization.data(withJSONObject: contradictoryCommandResult))
+                from: JSONSerialization.data(withJSONObject: contradictoryCommandResult)
+            )
         }
         #expect(command.captureMutationDispatched)
     }
@@ -309,20 +329,24 @@ struct CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
         command.runtime = self.makeRuntime()
 
         let result = try await command.executeActionCapture()
         #expect(!result.success)
         #expect(result.action.succeeded)
         #expect(result.validation.missing.contains(
-            "capture ended before the action and requested post-roll completed"))
+            "capture ended before the action and requested post-roll completed"
+        ))
         let receipt = try #require(result.manifest)
         let manifest = try JSONDecoder().decode(
             CaptureActionManifest.self,
-            from: Data(contentsOf: URL(fileURLWithPath: receipt.path)))
+            from: Data(contentsOf: URL(fileURLWithPath: receipt.path))
+        )
         #expect(manifest.timeline.samplingCompletedMs < manifest.timeline.actionCompletedMs)
         #expect(manifest.timeline.samplingCompletedMs <= manifest.timeline.captureCompletedMs)
         #expect(!manifest.result.success)
@@ -370,9 +394,11 @@ struct CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
         command.runtime = self.makeRuntime()
 
         let result = try await command.executeActionCapture()
@@ -385,10 +411,12 @@ struct CaptureActionCommandEndToEndTests {
         let manifestReceipt = try #require(result.manifest)
         let manifest = try JSONDecoder().decode(
             CaptureActionManifest.self,
-            from: Data(contentsOf: URL(fileURLWithPath: manifestReceipt.path)))
+            from: Data(contentsOf: URL(fileURLWithPath: manifestReceipt.path))
+        )
         try CaptureActionManifestWriter.validateArtifacts(
             manifest.artifacts,
-            outputRoot: outputDirectory)
+            outputRoot: outputDirectory
+        )
     }
 
     @Test
@@ -421,9 +449,11 @@ struct CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
         command.runtime = self.makeRuntime()
 
         let thrown = await #expect(throws: (any Error).self) {
@@ -458,9 +488,11 @@ struct CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
         command.runtime = self.makeRuntime()
 
         let thrown = await #expect(throws: (any Error).self) {
@@ -496,7 +528,8 @@ struct CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
             hostIdentityProvider: {
                 PeekabooBridgeAuthenticatedHostIdentity(
@@ -507,8 +540,10 @@ struct CaptureActionCommandEndToEndTests {
                     codeSignatureHash: "",
                     sourceCommit: String(repeating: "b", count: 40),
                     bundleShortVersion: "4.2.3",
-                    bundleVersion: "1")
-            })
+                    bundleVersion: "1"
+                )
+            }
+        )
         command.runtime = self.makeRuntime()
 
         let thrown = await #expect(throws: (any Error).self) {
@@ -536,8 +571,8 @@ struct CaptureActionCommandEndToEndTests {
     private static func verifyPublishedManifest(
         result: CaptureActionCommandResult,
         command: [String],
-        outputDirectory: URL) throws
-    {
+        outputDirectory: URL
+    ) throws {
         let manifestReceipt = try #require(result.manifest)
         let manifestURL = URL(fileURLWithPath: manifestReceipt.path)
         let manifestData = try Data(contentsOf: manifestURL)
@@ -574,10 +609,12 @@ struct CaptureActionCommandEndToEndTests {
         try Self.verifyContradictoryResultsAreRejected(
             result: result,
             manifest: manifest,
-            manifestData: manifestData)
+            manifestData: manifestData
+        )
         try CaptureActionManifestWriter.validateArtifacts(
             manifest.artifacts,
-            outputRoot: outputDirectory)
+            outputRoot: outputDirectory
+        )
 
         try Data([0x00]).write(to: manifestURL, options: .atomic)
         let changedManifestData = try Data(contentsOf: manifestURL)
@@ -595,7 +632,8 @@ struct CaptureActionCommandEndToEndTests {
                 outputRoot: outputDirectory,
                 beforePostPublicationValidation: {
                     try Data([0x00]).write(to: postPublicationURL, options: .atomic)
-                })
+                }
+            )
         }
         #expect(try #require(postPublicationFailure).localizedDescription.contains("published manifest quarantined"))
         #expect(!FileManager.default.fileExists(atPath: manifestReceipt.path))
@@ -604,7 +642,8 @@ struct CaptureActionCommandEndToEndTests {
         try Self.verifyManifestCancellationAndReplacementCleanup(
             manifest: manifest,
             manifestURL: manifestURL,
-            outputDirectory: outputDirectory)
+            outputDirectory: outputDirectory
+        )
 
         let tamperTargets = try [
             #require(result.capture.frames.first?.path),
@@ -622,14 +661,16 @@ struct CaptureActionCommandEndToEndTests {
             #expect(throws: (any Error).self) {
                 try CaptureActionManifestWriter.validateArtifacts(
                     manifest.artifacts,
-                    outputRoot: outputDirectory)
+                    outputRoot: outputDirectory
+                )
             }
             if path == result.capture.metadataFile {
                 #expect(throws: (any Error).self) {
                     try CaptureActionManifestWriter.makeArtifacts(
                         capture: result.capture,
                         outputRoot: outputDirectory,
-                        metadataSHA256: semanticReceipt.metadataSHA256)
+                        metadataSHA256: semanticReceipt.metadataSHA256
+                    )
                 }
             }
             try original.write(to: url, options: .atomic)
@@ -652,17 +693,20 @@ struct CaptureActionCommandEndToEndTests {
             diffAlgorithm: result.capture.diffAlgorithm,
             diffScale: result.capture.diffScale,
             options: result.capture.options,
-            warnings: result.capture.warnings)
+            warnings: result.capture.warnings
+        )
         let artifactsWithVideo = try CaptureActionManifestWriter.makeArtifacts(
             capture: captureWithVideo,
             outputRoot: outputDirectory,
-            metadataSHA256: semanticReceipt.metadataSHA256)
+            metadataSHA256: semanticReceipt.metadataSHA256
+        )
         #expect(artifactsWithVideo.last?.role == .video)
         try Data("changed-video".utf8).write(to: videoURL, options: .atomic)
         #expect(throws: (any Error).self) {
             try CaptureActionManifestWriter.validateArtifacts(
                 artifactsWithVideo,
-                outputRoot: outputDirectory)
+                outputRoot: outputDirectory
+            )
         }
         try FileManager.default.removeItem(at: videoURL)
     }
@@ -670,34 +714,39 @@ struct CaptureActionCommandEndToEndTests {
     private static func verifyContradictoryResultsAreRejected(
         result: CaptureActionCommandResult,
         manifest: CaptureActionManifest,
-        manifestData: Data) throws
-    {
+        manifestData: Data
+    ) throws {
         let processData = try JSONEncoder().encode(result.action)
         var contradictoryProcess = try #require(JSONSerialization.jsonObject(with: processData) as? [String: Any])
         contradictoryProcess["processStartIdentityDecimal"] = "1"
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(
                 CaptureActionProcessResult.self,
-                from: JSONSerialization.data(withJSONObject: contradictoryProcess))
+                from: JSONSerialization.data(withJSONObject: contradictoryProcess)
+            )
         }
         let commandResultData = try JSONEncoder().encode(result)
         var invalidReceiptResult = try #require(
-            JSONSerialization.jsonObject(with: commandResultData) as? [String: Any])
+            JSONSerialization.jsonObject(with: commandResultData) as? [String: Any]
+        )
         var invalidReceipt = try #require(invalidReceiptResult["manifest"] as? [String: Any])
         invalidReceipt["sha256"] = ""
         invalidReceiptResult["manifest"] = invalidReceipt
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(
                 CaptureActionCommandResult.self,
-                from: JSONSerialization.data(withJSONObject: invalidReceiptResult))
+                from: JSONSerialization.data(withJSONObject: invalidReceiptResult)
+            )
         }
         var invalidValidationResult = try #require(
-            JSONSerialization.jsonObject(with: commandResultData) as? [String: Any])
+            JSONSerialization.jsonObject(with: commandResultData) as? [String: Any]
+        )
         invalidValidationResult["validation"] = ["ok": true, "checked": [], "missing": []]
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(
                 CaptureActionCommandResult.self,
-                from: JSONSerialization.data(withJSONObject: invalidValidationResult))
+                from: JSONSerialization.data(withJSONObject: invalidValidationResult)
+            )
         }
         let resultData = try JSONEncoder().encode(manifest.result)
         var contradictoryResult = try #require(JSONSerialization.jsonObject(with: resultData) as? [String: Any])
@@ -707,41 +756,48 @@ struct CaptureActionCommandEndToEndTests {
             try JSONDecoder().decode(CaptureActionManifest.ResultSemantics.self, from: contradictoryManifest)
         }
         var contradictoryManifestObject = try #require(
-            JSONSerialization.jsonObject(with: manifestData) as? [String: Any])
+            JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
+        )
         var contradictoryAction = try #require(contradictoryManifestObject["action"] as? [String: Any])
         contradictoryAction["exitCode"] = 7
         contradictoryManifestObject["action"] = contradictoryAction
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(
                 CaptureActionManifest.self,
-                from: JSONSerialization.data(withJSONObject: contradictoryManifestObject))
+                from: JSONSerialization.data(withJSONObject: contradictoryManifestObject)
+            )
         }
         var falseFailureManifestObject = try #require(
-            JSONSerialization.jsonObject(with: manifestData) as? [String: Any])
+            JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
+        )
         var falseFailureResult = try #require(falseFailureManifestObject["result"] as? [String: Any])
         falseFailureResult["success"] = false
         falseFailureManifestObject["result"] = falseFailureResult
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(
                 CaptureActionManifest.self,
-                from: JSONSerialization.data(withJSONObject: falseFailureManifestObject))
+                from: JSONSerialization.data(withJSONObject: falseFailureManifestObject)
+            )
         }
         var overflowManifestObject = try #require(
-            JSONSerialization.jsonObject(with: manifestData) as? [String: Any])
+            JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
+        )
         var overflowRequest = try #require(overflowManifestObject["request"] as? [String: Any])
         overflowRequest["postRollMs"] = Int.max
         overflowManifestObject["request"] = overflowRequest
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(
                 CaptureActionManifest.self,
-                from: JSONSerialization.data(withJSONObject: overflowManifestObject))
+                from: JSONSerialization.data(withJSONObject: overflowManifestObject)
+            )
         }
     }
 
     private func makeRuntime() -> CommandRuntime {
         CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: PeekabooServices())
+            services: PeekabooServices()
+        )
     }
 
     private static func isNonemptyFile(_ path: String) -> Bool {
@@ -765,12 +821,13 @@ struct CaptureActionCommandEndToEndTests {
             codeSignatureHash: String(repeating: "a", count: 40),
             sourceCommit: String(repeating: "b", count: 40),
             bundleShortVersion: "4.2.3",
-            bundleVersion: "1")
+            bundleVersion: "1"
+        )
     }
 
     private static func captureStandardOutput(
-        operation: () async -> Void) async throws -> Data
-    {
+        operation: () async -> Void
+    ) async throws -> Data {
         let pipe = Pipe()
         let originalStandardOutput = dup(STDOUT_FILENO)
         guard originalStandardOutput >= 0,
@@ -818,9 +875,11 @@ extension CaptureActionCommandEndToEndTests {
                     stdout: "",
                     stderr: "",
                     stdoutTruncated: false,
-                    stderrTruncated: false)
+                    stderrTruncated: false
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
         command.runtime = self.makeRuntime()
 
         let execution = Task { @MainActor in
@@ -832,7 +891,8 @@ extension CaptureActionCommandEndToEndTests {
         }
         #expect(error is CancellationError)
         #expect(!FileManager.default.fileExists(
-            atPath: outputDirectory.appendingPathComponent(CaptureActionManifestWriter.fileName).path))
+            atPath: outputDirectory.appendingPathComponent(CaptureActionManifestWriter.fileName).path
+        ))
     }
 
     @Test
@@ -865,9 +925,11 @@ extension CaptureActionCommandEndToEndTests {
                     stdout: "",
                     stderr: "",
                     stdoutTruncated: false,
-                    stderrTruncated: false)
+                    stderrTruncated: false
+                )
             },
-            hostIdentityProvider: { Self.authenticatedHostIdentity() })
+            hostIdentityProvider: { Self.authenticatedHostIdentity() }
+        )
         command.runtime = self.makeRuntime()
 
         let result = try await command.executeActionCapture()
@@ -898,7 +960,8 @@ extension CaptureActionCommandEndToEndTests {
                 try await CaptureActionProcessRunner.run(
                     command: childCommand,
                     timeoutSeconds: timeoutSeconds,
-                    onLaunch: onLaunch)
+                    onLaunch: onLaunch
+                )
             },
             hostIdentityProvider: {
                 let base = Self.authenticatedHostIdentity()
@@ -911,8 +974,10 @@ extension CaptureActionCommandEndToEndTests {
                     codeSignatureHash: base.codeSignatureHash,
                     sourceCommit: base.sourceCommit,
                     bundleShortVersion: base.bundleShortVersion,
-                    bundleVersion: base.bundleVersion)
-            })
+                    bundleVersion: base.bundleVersion
+                )
+            }
+        )
         command.runtime = self.makeRuntime()
 
         let thrown = await #expect(throws: (any Error).self) {
@@ -921,21 +986,23 @@ extension CaptureActionCommandEndToEndTests {
         #expect(try #require(thrown).localizedDescription.contains("host identity changed"))
         #expect(command.captureMutationDispatched)
         #expect(!FileManager.default.fileExists(
-            atPath: outputDirectory.appendingPathComponent(CaptureActionManifestWriter.fileName).path))
+            atPath: outputDirectory.appendingPathComponent(CaptureActionManifestWriter.fileName).path
+        ))
     }
 
     private static func verifyManifestCancellationAndReplacementCleanup(
         manifest: CaptureActionManifest,
         manifestURL: URL,
-        outputDirectory: URL) throws
-    {
+        outputDirectory: URL
+    ) throws {
         let cancellationFailure = #expect(throws: CancellationError.self) {
             _ = try CaptureActionManifestWriter.write(
                 manifest,
                 outputRoot: outputDirectory,
                 beforePostPublicationValidation: {
                     throw CancellationError()
-                })
+                }
+            )
         }
         #expect(cancellationFailure != nil)
         #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
@@ -949,18 +1016,20 @@ extension CaptureActionCommandEndToEndTests {
                     guard manifestURL.path.withCString({ mkfifo($0, 0o600) }) == 0 else {
                         throw POSIXError(.EIO)
                     }
-                })
+                }
+            )
         }
         #expect(try #require(replacementFailure).localizedDescription.contains(
-            "published manifest cleanup could not be verified"))
+            "published manifest cleanup could not be verified"
+        ))
         #expect(FileManager.default.fileExists(atPath: manifestURL.path))
         try FileManager.default.removeItem(at: manifestURL)
     }
 
     private static func verifyVideoAliasValidation(
         command: CaptureActionCommand,
-        capture: CaptureSessionResult) async throws
-    {
+        capture: CaptureSessionResult
+    ) async throws {
         let cancellationPreserved = await Task { @MainActor in
             withUnsafeCurrentTask { $0?.cancel() }
             do {
@@ -986,7 +1055,8 @@ extension CaptureActionCommandEndToEndTests {
             diffAlgorithm: capture.diffAlgorithm,
             diffScale: capture.diffScale,
             options: capture.options,
-            warnings: capture.warnings)
+            warnings: capture.warnings
+        )
         let validation = try command.validateArtifacts(aliasedVideoCapture)
         #expect(!validation.ok)
         #expect(validation.missing.contains {
@@ -1021,7 +1091,8 @@ private final class DeterministicCaptureActionFrameSource: CaptureFrameSource {
             bitsPerComponent: 8,
             bytesPerRow: Int(size.width) * 4,
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
         return (
             context?.makeImage(),
             CaptureMetadata(
@@ -1034,7 +1105,10 @@ private final class DeterministicCaptureActionFrameSource: CaptureFrameSource {
                     outputScale: 1,
                     scaleSource: "deterministic-test",
                     finalPixelSize: size,
-                    engine: self.engine)))
+                    engine: self.engine
+                )
+            )
+        )
     }
 }
 

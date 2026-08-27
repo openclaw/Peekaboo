@@ -29,7 +29,8 @@ struct CaptureActionManifestReceipt: Codable {
             throw DecodingError.dataCorruptedError(
                 forKey: .sha256,
                 in: container,
-                debugDescription: "Capture action manifest receipt is invalid")
+                debugDescription: "Capture action manifest receipt is invalid"
+            )
         }
         self.path = path
         self.sha256 = sha256
@@ -65,8 +66,8 @@ struct CaptureActionManifest: Codable {
         action: Action,
         capture: Capture,
         artifacts: [Artifact],
-        result: ResultSemantics)
-    {
+        result: ResultSemantics
+    ) {
         precondition(schemaVersion == 1 && !runID.isEmpty)
         precondition(Self.artifactsAreCanonical(artifacts))
         precondition(Self.semanticFailure(
@@ -74,7 +75,8 @@ struct CaptureActionManifest: Codable {
             request: request,
             action: action,
             capture: capture,
-            result: result) == nil)
+            result: result
+        ) == nil)
         self.schemaVersion = schemaVersion
         self.runID = runID
         self.timeline = timeline
@@ -110,25 +112,28 @@ struct CaptureActionManifest: Codable {
             throw DecodingError.dataCorruptedError(
                 forKey: .schemaVersion,
                 in: container,
-                debugDescription: "Capture action manifest identity is invalid")
+                debugDescription: "Capture action manifest identity is invalid"
+            )
         }
         guard Self.artifactsAreCanonical(artifacts) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .artifacts,
                 in: container,
-                debugDescription: "Capture action manifest artifact inventory is invalid")
+                debugDescription: "Capture action manifest artifact inventory is invalid"
+            )
         }
         if let failure = Self.semanticFailure(
             timeline: timeline,
             request: request,
             action: action,
             capture: capture,
-            result: result)
-        {
+            result: result
+        ) {
             throw DecodingError.dataCorruptedError(
                 forKey: .result,
                 in: container,
-                debugDescription: failure)
+                debugDescription: failure
+            )
         }
         self.schemaVersion = schemaVersion
         self.runID = runID
@@ -145,20 +150,20 @@ struct CaptureActionManifest: Codable {
         request: Request,
         action: Action,
         capture: Capture,
-        result: ResultSemantics) -> String?
-    {
+        result: ResultSemantics
+    ) -> String? {
         guard request.preRollMs >= 0, request.postRollMs >= 0 else {
             return "Capture action manifest roll timing is invalid"
         }
         let (postRollBoundaryMs, postRollOverflow) = timeline.actionCompletedMs.addingReportingOverflow(
-            request.postRollMs)
+            request.postRollMs
+        )
         guard !postRollOverflow else {
             return "Capture action manifest roll timing overflowed"
         }
         let expectedFocusRoute: DesktopActionOutcome.Route = capture.executionRoute == .remote ? .bridge : .local
         if let focusOutcome = result.focusOutcome?.outcome,
-           focusOutcome.route != expectedFocusRoute
-        {
+           focusOutcome.route != expectedFocusRoute {
             return "Capture action focus route contradicts the selected capture host"
         }
         let routeIsCanonical = switch capture.executionRoute {
@@ -245,8 +250,8 @@ struct CaptureActionManifest: Codable {
             processGroupCleaned: Bool,
             durationMs: Int,
             stdout: Stream,
-            stderr: Stream)
-        {
+            stderr: Stream
+        ) {
             precondition(processStartIdentityDecimal == String(processStartIdentity))
             self.containmentScope = containmentScope
             self.processIdentifier = processIdentifier
@@ -279,7 +284,8 @@ struct CaptureActionManifest: Codable {
             let processStartIdentity = try container.decode(UInt64.self, forKey: .processStartIdentity)
             let processStartIdentityDecimal = try container.decode(
                 String.self,
-                forKey: .processStartIdentityDecimal)
+                forKey: .processStartIdentityDecimal
+            )
             guard processIdentifier > 0,
                   processStartIdentity > 0,
                   processStartIdentityDecimal == String(processStartIdentity)
@@ -287,7 +293,8 @@ struct CaptureActionManifest: Codable {
                 throw DecodingError.dataCorruptedError(
                     forKey: .processStartIdentity,
                     in: container,
-                    debugDescription: "Capture action process provenance is incomplete")
+                    debugDescription: "Capture action process provenance is incomplete"
+                )
             }
             self.containmentScope = try container.decode(ContainmentScope.self, forKey: .containmentScope)
             self.processIdentifier = processIdentifier
@@ -331,7 +338,8 @@ struct CaptureActionManifest: Codable {
                   Self.isLowerHex(identity.sourceCommit, count: 40)
             else {
                 throw CaptureActionHostProvenanceError(
-                    message: "Capture action requires a source-stamped, signed host identity")
+                    message: "Capture action requires a source-stamped, signed host identity"
+                )
             }
             self.processIdentifier = identity.processIdentifier
             self.processStartIdentity = identity.processStartIdentity
@@ -362,7 +370,8 @@ struct CaptureActionManifest: Codable {
             let processStartIdentity = try container.decode(UInt64.self, forKey: .processStartIdentity)
             let processStartIdentityDecimal = try container.decode(
                 String.self,
-                forKey: .processStartIdentityDecimal)
+                forKey: .processStartIdentityDecimal
+            )
             let codeSignatureHash = try container.decode(String.self, forKey: .codeSignatureHash)
             let sourceCommit = try container.decode(String.self, forKey: .sourceCommit)
             let signingIdentifier = try container.decode(String.self, forKey: .signingIdentifier)
@@ -378,7 +387,8 @@ struct CaptureActionManifest: Codable {
                 throw DecodingError.dataCorruptedError(
                     forKey: .codeSignatureHash,
                     in: container,
-                    debugDescription: "Capture action host provenance is incomplete")
+                    debugDescription: "Capture action host provenance is incomplete"
+                )
             }
             self.processIdentifier = processIdentifier
             self.processStartIdentity = processStartIdentity
@@ -441,12 +451,13 @@ struct CaptureActionManifest: Codable {
             validation: CaptureActionArtifactValidation,
             focusOutcome: DesktopActionOutcome?,
             childOutcome: DesktopActionOutcome,
-            outcome: DesktopActionOutcome?)
-        {
+            outcome: DesktopActionOutcome?
+        ) {
             precondition(CaptureActionOutcomeSemantics.isCanonicalAggregate(
                 outcome,
                 focusOutcome: focusOutcome,
-                childOutcome: childOutcome))
+                childOutcome: childOutcome
+            ))
             precondition(validation.isCanonical)
             self.commandSucceeded = commandSucceeded
             self.validation = validation
@@ -472,10 +483,12 @@ struct CaptureActionManifest: Codable {
             let validation = try container.decode(CaptureActionArtifactValidation.self, forKey: .validation)
             let focusOutcome = try container.decodeIfPresent(
                 DesktopActionOutcome.Projection.self,
-                forKey: .focusOutcome)
+                forKey: .focusOutcome
+            )
             let childOutcome = try container.decode(
                 DesktopActionOutcome.Projection.self,
-                forKey: .childOutcome)
+                forKey: .childOutcome
+            )
             let outcome = try container.decodeIfPresent(DesktopActionOutcome.Projection.self, forKey: .outcome)
             self.commandSucceeded = commandSucceeded
             self.validation = validation
@@ -486,7 +499,8 @@ struct CaptureActionManifest: Codable {
                   CaptureActionOutcomeSemantics.isCanonicalAggregate(
                       outcome?.outcome,
                       focusOutcome: focusOutcome?.outcome,
-                      childOutcome: childOutcome.outcome),
+                      childOutcome: childOutcome.outcome
+                  ),
                   try container.decode(DesktopActionOutcome.Effect.self, forKey: .effect) == self.effect,
                   try container.decode(Bool.self, forKey: .mutationDispatched) == self.mutationDispatched,
                   try container.decode(Bool.self, forKey: .retrySafe) == self.retrySafe
@@ -494,7 +508,8 @@ struct CaptureActionManifest: Codable {
                 throw DecodingError.dataCorruptedError(
                     forKey: .outcome,
                     in: container,
-                    debugDescription: "Capture action result fields contradict the canonical outcome")
+                    debugDescription: "Capture action result fields contradict the canonical outcome"
+                )
             }
         }
 
@@ -533,38 +548,43 @@ enum CaptureActionManifestWriter {
     static func makeArtifacts(
         capture: CaptureSessionResult,
         outputRoot: URL,
-        metadataSHA256: String) throws -> [CaptureActionManifest.Artifact]
-    {
+        metadataSHA256: String
+    ) throws -> [CaptureActionManifest.Artifact] {
         var artifacts = try capture.frames.map { frame in
             try self.artifact(
                 role: .frame,
                 path: frame.path,
                 expectedSHA256: frame.sha256,
-                outputRoot: outputRoot)
+                outputRoot: outputRoot
+            )
         }
         try artifacts.append(self.artifact(
             role: .contactSheet,
             path: capture.contactSheet.path,
             expectedSHA256: capture.contactSheet.sha256,
-            outputRoot: outputRoot))
+            outputRoot: outputRoot
+        ))
         try artifacts.append(self.artifact(
             role: .metadata,
             path: capture.metadataFile,
             expectedSHA256: metadataSHA256,
-            outputRoot: outputRoot))
+            outputRoot: outputRoot
+        ))
         if let videoOut = capture.videoOut {
             guard let videoCustody = capture.videoArtifactCustody,
                   URL(fileURLWithPath: videoOut).standardizedFileURL.path == videoCustody.path
             else {
                 throw CaptureActionManifestError(
-                    message: "Capture action video lacks matching writer-authored custody: \(videoOut)")
+                    message: "Capture action video lacks matching writer-authored custody: \(videoOut)"
+                )
             }
             try artifacts.append(self.artifact(
                 role: .video,
                 path: videoOut,
                 expectedSHA256: videoCustody.sha256,
                 expectedCustody: videoCustody,
-                outputRoot: outputRoot))
+                outputRoot: outputRoot
+            ))
         }
         return artifacts
     }
@@ -572,8 +592,8 @@ enum CaptureActionManifestWriter {
     static func write(
         _ manifest: CaptureActionManifest,
         outputRoot: URL,
-        beforePostPublicationValidation: () throws -> Void = {}) throws -> CaptureActionManifestReceipt
-    {
+        beforePostPublicationValidation: () throws -> Void = {}
+    ) throws -> CaptureActionManifestReceipt {
         try Task.checkCancellation()
         try self.validateArtifacts(manifest.artifacts, outputRoot: outputRoot)
         try Task.checkCancellation()
@@ -582,7 +602,8 @@ enum CaptureActionManifestWriter {
         let url = outputRoot.appendingPathComponent(self.fileName, isDirectory: false)
         let temporaryURL = outputRoot.appendingPathComponent(
             ".\(self.fileName).\(UUID().uuidString).tmp",
-            isDirectory: false)
+            isDirectory: false
+        )
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
         var publishedIdentity: PublishedFileIdentity?
         do {
@@ -598,7 +619,8 @@ enum CaptureActionManifestWriter {
                         sourcePath,
                         AT_FDCWD,
                         destinationPath,
-                        UInt32(RENAME_EXCL))
+                        UInt32(RENAME_EXCL)
+                    )
                 }
             }
             guard publishResult == 0 else {
@@ -609,7 +631,8 @@ enum CaptureActionManifestWriter {
                 throw error
             }
             throw CaptureActionManifestError(
-                message: "Could not publish capture action manifest at \(url.path): \(error.localizedDescription)")
+                message: "Could not publish capture action manifest at \(url.path): \(error.localizedDescription)"
+            )
         }
 
         do {
@@ -622,7 +645,8 @@ enum CaptureActionManifestWriter {
                 at: url,
                 maximumBytes: data.count,
                 expectedIdentity: publishedIdentity,
-                retainData: true)
+                retainData: true
+            )
             guard let retained = retainedFile.data,
                   retained == data,
                   let decoded = try? JSONDecoder().decode(CaptureActionManifest.self, from: retained),
@@ -636,7 +660,8 @@ enum CaptureActionManifestWriter {
         } catch {
             let removed = self.quarantinePublishedManifest(
                 at: url,
-                identity: publishedIdentity)
+                identity: publishedIdentity
+            )
             if error is CancellationError, removed {
                 throw error
             }
@@ -656,27 +681,30 @@ enum CaptureActionManifestWriter {
         return CaptureActionManifest.Stream(
             sha256: self.sha256(data),
             byteCount: data.count,
-            truncated: truncated)
+            truncated: truncated
+        )
     }
 
     static func validateArtifacts(
         _ artifacts: [CaptureActionManifest.Artifact],
-        outputRoot: URL) throws
-    {
+        outputRoot: URL
+    ) throws {
         for artifact in artifacts {
             try Task.checkCancellation()
             let url = self.url(for: artifact.path, outputRoot: outputRoot)
             let roleLimit = self.maximumBytes(for: artifact.role)
             guard artifact.byteCount > 0, artifact.byteCount <= roleLimit else {
                 throw CaptureActionManifestError(
-                    message: "Capture action artifact size is outside its role limit: \(artifact.path)")
+                    message: "Capture action artifact size is outside its role limit: \(artifact.path)"
+                )
             }
             let observed = try self.fileDigestAndSize(at: url, maximumBytes: artifact.byteCount)
             guard observed.byteCount == artifact.byteCount,
                   observed.sha256 == artifact.sha256
             else {
                 throw CaptureActionManifestError(
-                    message: "Capture action artifact changed before manifest publication: \(artifact.path)")
+                    message: "Capture action artifact changed before manifest publication: \(artifact.path)"
+                )
             }
         }
     }
@@ -686,8 +714,8 @@ enum CaptureActionManifestWriter {
         path: String,
         expectedSHA256: String?,
         expectedCustody: CaptureVideoArtifactCustody? = nil,
-        outputRoot: URL) throws -> CaptureActionManifest.Artifact
-    {
+        outputRoot: URL
+    ) throws -> CaptureActionManifest.Artifact {
         let url = URL(fileURLWithPath: path).standardizedFileURL
         let expectedIdentity: PublishedFileIdentity? = try expectedCustody.map { custody in
             guard let device = dev_t(exactly: custody.device),
@@ -701,7 +729,8 @@ enum CaptureActionManifestWriter {
             at: url,
             maximumBytes: self.maximumBytes(for: role),
             expectedIdentity: expectedIdentity,
-            retainData: false).hashed
+            retainData: false
+        ).hashed
         guard observed.byteCount > 0 else {
             throw CaptureActionManifestError(message: "Capture action artifact is empty: \(path)")
         }
@@ -715,7 +744,8 @@ enum CaptureActionManifestWriter {
             role: role,
             path: self.manifestPath(for: url, outputRoot: outputRoot),
             byteCount: observed.byteCount,
-            sha256: observed.sha256)
+            sha256: observed.sha256
+        )
     }
 
     private static func manifestPath(for url: URL, outputRoot: URL) -> String {
@@ -747,12 +777,13 @@ enum CaptureActionManifestWriter {
 
     private static func quarantinePublishedManifest(
         at url: URL,
-        identity: PublishedFileIdentity?) -> Bool
-    {
+        identity: PublishedFileIdentity?
+    ) -> Bool {
         guard let identity else { return false }
         let quarantineURL = url.deletingLastPathComponent().appendingPathComponent(
             ".\(url.lastPathComponent).\(UUID().uuidString).failed",
-            isDirectory: false)
+            isDirectory: false
+        )
         let quarantineResult = url.withUnsafeFileSystemRepresentation { sourcePath in
             quarantineURL.withUnsafeFileSystemRepresentation { destinationPath in
                 guard let sourcePath, let destinationPath else { return Int32(-1) }
@@ -761,7 +792,8 @@ enum CaptureActionManifestWriter {
                     sourcePath,
                     AT_FDCWD,
                     destinationPath,
-                    UInt32(RENAME_EXCL))
+                    UInt32(RENAME_EXCL)
+                )
             }
         }
         if quarantineResult != 0 {
@@ -776,7 +808,8 @@ enum CaptureActionManifestWriter {
                         sourcePath,
                         AT_FDCWD,
                         destinationPath,
-                        UInt32(RENAME_EXCL))
+                        UInt32(RENAME_EXCL)
+                    )
                 }
             }
             return false
@@ -795,15 +828,16 @@ enum CaptureActionManifestWriter {
             at: url,
             maximumBytes: maximumBytes,
             expectedIdentity: nil,
-            retainData: false).hashed
+            retainData: false
+        ).hashed
     }
 
     private static func retainedFile(
         at url: URL,
         maximumBytes: Int,
         expectedIdentity: PublishedFileIdentity?,
-        retainData: Bool) throws -> RetainedFile
-    {
+        retainData: Bool
+    ) throws -> RetainedFile {
         let descriptor = url.withUnsafeFileSystemRepresentation { path in
             guard let path else { return Int32(-1) }
             return open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
@@ -820,7 +854,8 @@ enum CaptureActionManifestWriter {
               before.st_size <= off_t(maximumBytes)
         else {
             throw CaptureActionManifestError(
-                message: "Capture action artifact is not a bounded regular file: \(url.path)")
+                message: "Capture action artifact is not a bounded regular file: \(url.path)"
+            )
         }
         let openedIdentity = PublishedFileIdentity(device: before.st_dev, inode: before.st_ino)
         guard expectedIdentity == nil || expectedIdentity == openedIdentity else {
@@ -880,12 +915,14 @@ enum CaptureActionManifestWriter {
               byteCount == Int(after.st_size)
         else {
             throw CaptureActionManifestError(
-                message: "Capture action artifact changed while it was being hashed: \(url.path)")
+                message: "Capture action artifact changed while it was being hashed: \(url.path)"
+            )
         }
         let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         return RetainedFile(
             data: retainData ? data : nil,
-            hashed: HashedFile(sha256: digest, byteCount: byteCount))
+            hashed: HashedFile(sha256: digest, byteCount: byteCount)
+        )
     }
 
     private static func maximumBytes(for role: CaptureActionManifest.Artifact.Role) -> Int {
