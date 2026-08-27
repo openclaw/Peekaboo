@@ -672,7 +672,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     actionFailure = Self.indeterminateSequenceFailure(
                         dispatchedCallCount: dispatchedCallCount,
                         completedCallCount: completedCallCount,
-                        delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(...index)),
+                        delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(index + 1)),
                         cause: cause)
                     response = .error(actionFailure?.message ?? "Browser sequence completion is unknown")
                     shouldValidateConnection = false
@@ -685,7 +685,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 actionFailure = Self.indeterminateSequenceFailure(
                     dispatchedCallCount: dispatchedCallCount,
                     completedCallCount: completedCallCount,
-                    delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(...index)),
+                    delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(index + 1)),
                     cause: error)
                 response = .error(actionFailure?.message ?? "Browser sequence completion is unknown")
                 shouldValidateConnection = false
@@ -701,7 +701,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 actionFailure = Self.indeterminateSequenceFailure(
                     dispatchedCallCount: dispatchedCallCount,
                     completedCallCount: completedCallCount,
-                    delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(...index)),
+                    delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(index + 1)),
                     causeDescription: "The browser tool returned an error response.")
                 break
             }
@@ -998,6 +998,14 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private static func errorDescription(_ error: any Error) -> String {
         (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    private static func actionSemantics(_ call: BrowserMCPMappedCall)
+        -> BrowserMCPPageRoutingContract.ActionSemantics
+    {
+        BrowserMCPPageRoutingContract.actionSemantics(
+            for: call.toolName,
+            arguments: call.arguments) ?? .mutating
     }
 
     private func execute(

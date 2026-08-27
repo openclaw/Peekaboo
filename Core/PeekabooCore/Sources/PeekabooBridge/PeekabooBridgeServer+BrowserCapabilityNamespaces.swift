@@ -106,9 +106,10 @@ extension PeekabooBridgeServer {
             let target = if let targetIdentity = result.targetIdentity {
                 PeekabooBridgeHandledResponse.Mutation.TargetDisposition.handlerResolved(targetIdentity)
             } else if let browserTargetReceipt = result.browserTargetReceipt {
-                .browserCapabilityNamespace(browserTargetReceipt)
+                PeekabooBridgeHandledResponse.Mutation.TargetDisposition.browserCapabilityNamespace(
+                    browserTargetReceipt)
             } else {
-                .external
+                PeekabooBridgeHandledResponse.Mutation.TargetDisposition.external
             }
             handled = handled.finalizingMutation(outcome: outcome, target: target)
         }

@@ -98,9 +98,12 @@ struct BrowserCapabilityNamespaceHandshakeTests {
             PeekabooBridgeHostCapability.browserCapabilityNamespaces) != true)
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.nativeBrowserWindowBinding) != true)
-        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+        let refusal = await #expect(throws: DesktopActionFailure.self) {
             _ = try await client.createBrowserCapabilityNamespace()
         }
+        #expect(refusal?.outcome.refusalReason == .runtimeIncompatible)
+        #expect(refusal?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(refusal?.outcome.retrySafety == .safe)
         #expect(services.browserNamespaceOpenedIDs.isEmpty)
     }
 
