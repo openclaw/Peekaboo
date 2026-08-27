@@ -14,7 +14,8 @@ permissions:
   security-events: write
 
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    codeql:${{ github.workflow }}:${{ github.event.pull_request.head.repo.id || github.repository_id }}:${{ github.head_ref || github.ref_name }}:${{ github.base_ref || github.event.repository.default_branch }}
   cancel-in-progress: true
 
 jobs:
@@ -79,50 +80,34 @@ jobs:
       - name: Build CLI
         run: swift build --package-path Apps/CLI --configuration debug
 
-      - name: Build Peekaboo
+      - name: Build apps
+        env:
+          CODEQL_DERIVED_DATA: ${{ runner.temp }}/codeql-swift
         run: |
-          xcodebuild \
-            -workspace Apps/Peekaboo.xcworkspace \
-            -scheme Peekaboo \
-            -configuration Debug \
-            -sdk macosx \
-            -derivedDataPath "$RUNNER_TEMP/codeql-peekaboo" \
-            -disableAutomaticPackageResolution \
-            -onlyUsePackageVersionsFromResolvedFile \
-            -skipPackageUpdates \
-            build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+          set -euo pipefail
 
-      - name: Build Playground
-        run: |
-          xcodebuild \
-            -project Apps/Playground/Playground.xcodeproj \
-            -scheme Playground \
-            -configuration Debug \
-            -sdk macosx \
-            -derivedDataPath "$RUNNER_TEMP/codeql-playground" \
-            build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+          schemes=(
+            Peekaboo
+            Playground
+            Inspector
+          )
 
-      - name: Build Inspector
-        run: |
-          xcodebuild \
-            -project Apps/PeekabooInspector/Inspector.xcodeproj \
-            -scheme Inspector \
-            -configuration Debug \
-            -sdk macosx \
-            -derivedDataPath "$RUNNER_TEMP/codeql-inspector" \
-            build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+          for scheme in "${schemes[@]}"; do
+            xcodebuild \
+              -workspace Apps/Peekaboo.xcworkspace \
+              -scheme "$scheme" \
+              -configuration Debug \
+              -sdk macosx \
+              -derivedDataPath "$CODEQL_DERIVED_DATA" \
+              -disableAutomaticPackageResolution \
+              -onlyUsePackageVersionsFromResolvedFile \
+              -skipPackageUpdates \
+              build \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              DEVELOPMENT_TEAM=""
+          done
 
       - name: Analyze
         uses: github/codeql-action/analyze@v4
