@@ -1,12 +1,11 @@
 import Darwin
 import Foundation
 import MachO
-import PeekabooAutomationKit
 import PeekabooBridge
 
 enum DaemonLaunchPolicy {
     static let defaultLaunchTimeoutSeconds =
-        ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 2
+        PeekabooBridgeServer.defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds + 1
 
     /// Retains the Foundation process until its termination source has reaped the child.
     private final nonisolated class ProcessExitObserver: @unchecked Sendable {

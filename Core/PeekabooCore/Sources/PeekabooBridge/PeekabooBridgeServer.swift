@@ -65,6 +65,11 @@ struct PeekabooBridgeReceiptlessNegotiation {
 @MainActor
 // swiftlint:disable:next type_body_length
 public final class PeekabooBridgeServer {
+    /// The Bridge owns the outer publication wait. Its one-second reserve prevents the bounded
+    /// process scan and publication wait from racing at the same deadline.
+    public static let defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds =
+        ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1
+
     private enum ScreenCaptureKitOwnershipPreparationOutcome: Sendable {
         case available
         case unavailable(String)
@@ -126,8 +131,8 @@ public final class PeekabooBridgeServer {
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     let desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator
     private let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
-    let screenCaptureKitOwnerReceiptProvider:
-        @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt?
+    let screenCaptureKitOwnerClaimProvider:
+        @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt
     private let screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval
     private var screenCaptureKitOwnershipPreparationTask:
         Task<ScreenCaptureKitOwnershipPreparationOutcome, Never>?
@@ -163,12 +168,12 @@ public final class PeekabooBridgeServer {
         screenCaptureKitOwnershipPreparer: @escaping @Sendable () async throws -> Void = {
             try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
         },
-        screenCaptureKitOwnerReceiptProvider: @escaping @Sendable () throws
-            -> ScreenCaptureKitOwnerLease.OwnerReceipt? = {
-                try ScreenCaptureKitOwnerLease.currentOwnerReceiptIfHeld()
+        screenCaptureKitOwnerClaimProvider: @escaping @Sendable () throws
+            -> ScreenCaptureKitOwnerLease.OwnerReceipt = {
+                try ScreenCaptureKitOwnerLease().claim().receipt
             },
-        screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval = ScreenCaptureKitOwnerLease
-            .defaultProcessCapabilityPreparationTimeoutSeconds,
+        screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval = PeekabooBridgeServer
+            .defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds,
         postEventAccessEvaluator: (@MainActor @Sendable () -> Bool)? = nil,
         postEventAccessRequester: (@MainActor @Sendable () -> Bool)? = nil,
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
@@ -354,7 +359,7 @@ public final class PeekabooBridgeServer {
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
         self.desktopOperationLaneCoordinator = desktopOperationLaneCoordinator
         self.screenCaptureKitOwnershipPreparer = screenCaptureKitOwnershipPreparer
-        self.screenCaptureKitOwnerReceiptProvider = screenCaptureKitOwnerReceiptProvider
+        self.screenCaptureKitOwnerClaimProvider = screenCaptureKitOwnerClaimProvider
         self.screenCaptureKitOwnershipPreparationTimeoutSeconds =
             screenCaptureKitOwnershipPreparationTimeoutSeconds
         self.automationActivityObserver = automationActivityObserver

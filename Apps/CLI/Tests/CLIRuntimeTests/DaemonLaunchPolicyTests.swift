@@ -1,15 +1,20 @@
 import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooBridge
 import Testing
 @testable import PeekabooCLI
 
 struct DaemonLaunchPolicyTests {
     @Test
-    func `daemon readiness budget contains ScreenCaptureKit owner preparation`() {
+    func `daemon readiness reserves both ScreenCaptureKit preparation boundaries`() {
+        #expect(
+            PeekabooBridgeServer.defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds >=
+                ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1
+        )
         #expect(
             DaemonLaunchPolicy.defaultLaunchTimeoutSeconds >=
-                ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1
+                PeekabooBridgeServer.defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds + 1
         )
         #expect(DaemonLaunchPolicy.defaultLaunchTimeoutSeconds < 12)
     }
