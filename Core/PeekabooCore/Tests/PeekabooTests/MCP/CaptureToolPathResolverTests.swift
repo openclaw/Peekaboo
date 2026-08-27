@@ -430,21 +430,29 @@ struct CaptureToolPathResolverTests {
             source: .live,
             videoIn: nil,
             videoOut: nil,
-            frames: [],
+            frames: [CaptureFrameInfo(
+                index: 0,
+                path: "/tmp/frame.png",
+                file: "frame.png",
+                timestampMs: 0,
+                changePercent: 0,
+                reason: .first,
+                sha256: String(repeating: "a", count: 64))],
             contactSheet: CaptureContactSheet(
                 path: "/tmp/contact.png",
                 file: "contact.png",
                 columns: 1,
                 rows: 1,
                 thumbSize: CGSize(width: 100, height: 100),
-                sampledFrameIndexes: []),
+                sampledFrameIndexes: [0],
+                sha256: String(repeating: "b", count: 64)),
             metadataFile: "/tmp/metadata.json",
             stats: CaptureStats(
                 durationMs: 1,
                 fpsIdle: 1,
                 fpsActive: 1,
                 fpsEffective: 1,
-                framesKept: 0,
+                framesKept: 1,
                 framesDropped: 0,
                 maxFramesHit: false,
                 maxMbHit: false),
@@ -481,6 +489,10 @@ struct CaptureToolPathResolverTests {
         #expect(meta["target_identity"]?.objectValue?["window_id"] == .int(42))
         #expect(meta["target_receipt"] != nil)
         #expect(meta["scope"] != nil)
+        #expect(meta["artifact_sha256"]?.objectValue == [
+            "/tmp/frame.png": .string(String(repeating: "a", count: 64)),
+            "/tmp/contact.png": .string(String(repeating: "b", count: 64)),
+        ])
     }
 
     @Test

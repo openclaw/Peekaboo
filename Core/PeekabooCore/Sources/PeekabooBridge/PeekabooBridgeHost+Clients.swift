@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import OSLog
 import PeekabooAutomationKit
+import PeekabooFoundation
 import Security
 
 extension PeekabooBridgeHost {
@@ -360,7 +361,9 @@ extension PeekabooBridgeHost {
             bundleIdentifier: info[kSecCodeInfoIdentifier as String] as? String,
             teamIdentifier: teamIdentifier,
             codeSignatureHash: (info[kSecCodeInfoUnique as String] as? Data)?
-                .map { String(format: "%02x", $0) }.joined())
+                .map { String(format: "%02x", $0) }.joined(),
+            sourceCommit: (info[kSecCodeInfoPList as String] as? [String: Any])
+                .flatMap { SourceProvenance.exactCommit($0["PeekabooSourceCommit"] as? String) })
     }
 
     private nonisolated static func signingInformation(pid: pid_t) -> [String: Any]? {

@@ -134,6 +134,10 @@ extension RuntimeHostResolver {
         let hostDescription: String
         let selectedRemoteSocketPath: String?
         let selectedRemoteHostProcessIdentifier: pid_t?
+        var selectedRemoteHostIdentity: PeekabooBridgeHostIdentity?
+        var selectedRemoteAuthenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
+        var selectedRemoteAuthenticatedHostIdentityProvider:
+            (@Sendable () async -> PeekabooBridgeAuthenticatedHostIdentity?)?
         let snapshotInvalidationRemoteSocketPaths: [String]
         let applicationRelaunchAllowed: Bool
         let requiredHostFailure: String?

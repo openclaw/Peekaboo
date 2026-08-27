@@ -130,6 +130,12 @@ private final class WatchCaptureStopSignal: @unchecked Sendable {
 /// Adaptive PNG capture session for agents.
 @MainActor
 public final class WatchCaptureSession {
+    private static var retiringCaptureTasks: [UUID: Task<CaptureAttemptResult, any Error>] = [:]
+
+    static var retiringCaptureTaskCount: Int {
+        self.retiringCaptureTasks.count
+    }
+
     enum Constants {
         static let diffScaleWidth: CGFloat = 256
         static let motionDelta: UInt8 = 18 // luma delta threshold (0-255)
@@ -159,6 +165,7 @@ public final class WatchCaptureSession {
     var frameAttempts: Int = 0
     var totalBytes: Int = 0
     var lastCaptureErrorDescription: String?
+    public private(set) var samplingEndedAtMonotonicNanoseconds: UInt64?
     private let stopSignal = WatchCaptureStopSignal()
 
     public init(dependencies: WatchCaptureDependencies, configuration: WatchCaptureConfiguration) {
@@ -203,6 +210,7 @@ public final class WatchCaptureSession {
 
             let timing = self.makeTiming(from: validatedTiming)
             let sampling = try await self.captureFrames(timing: timing)
+            self.samplingEndedAtMonotonicNanoseconds = self.clock.nowNanoseconds()
             try Task.checkCancellation()
 
             let sourceDiagnostics = self.captureSourceDiagnostics
@@ -216,8 +224,10 @@ public final class WatchCaptureSession {
                     lastCaptureError: self.lastCaptureErrorDescription)
             }
 
-            if let writer = self.videoWriter {
+            let videoArtifactCustody: CaptureVideoArtifactCustody? = if let writer = self.videoWriter {
                 try await writer.finish()
+            } else {
+                nil
             }
 
             let contact = try WatchCaptureArtifactWriter.buildContactSheet(
@@ -233,6 +243,7 @@ public final class WatchCaptureSession {
                 sourceKind: self.sourceKind,
                 videoIn: self.videoIn,
                 videoOut: self.videoWriter?.finalURL.path,
+                videoArtifactCustody: videoArtifactCustody,
                 scope: self.scope,
                 options: self.options,
                 videoOptions: self.videoOptions,
@@ -249,6 +260,7 @@ public final class WatchCaptureSession {
                     sourceDiagnostics: sourceDiagnostics))
 
             try self.store.writeJSON(metadata, to: metadataURL)
+            try CaptureArtifactIntegrityValidator.validate(metadata)
             return metadata
         } catch {
             let primaryError = error
@@ -278,6 +290,22 @@ public final class WatchCaptureSession {
 
     func waitForStopRequest() async {
         await self.stopSignal.wait()
+    }
+
+    func requireNoRetiringCaptureTask() throws {
+        guard Self.retiringCaptureTasks.isEmpty else {
+            throw PeekabooError.captureFailed(
+                reason: "A previous capture request is still retiring after cancellation")
+        }
+    }
+
+    func retireCaptureTask(_ task: Task<CaptureAttemptResult, any Error>) {
+        let identifier = UUID()
+        Self.retiringCaptureTasks[identifier] = task
+        Task { @MainActor in
+            _ = await task.result
+            Self.retiringCaptureTasks.removeValue(forKey: identifier)
+        }
     }
 
     var captureSourceDiagnostics: CaptureFrameSourceDiagnostics {

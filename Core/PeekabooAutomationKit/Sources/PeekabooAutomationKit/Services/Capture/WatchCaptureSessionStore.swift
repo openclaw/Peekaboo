@@ -19,6 +19,7 @@ struct WatchCaptureSessionStore {
         let staleArtifacts = contents.filter { url in
             url.lastPathComponent == "contact.png" ||
                 url.lastPathComponent == "metadata.json" ||
+                url.lastPathComponent == "action.json" ||
                 (url.lastPathComponent.hasPrefix("keep-") && url.pathExtension.lowercased() == "png")
         }
         guard staleArtifacts.isEmpty else {

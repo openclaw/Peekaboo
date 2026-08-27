@@ -194,6 +194,10 @@ action is necessary, use explicit coordinates bound to the exact `snapshot`/`coo
 
 Observation and capture do not activate a target by default. `see` and `inspect_ui` only perform the focus-changing `AXWebArea` retry when `web_focus: true` is supplied. `image` and live `capture` use `capture_focus: "background"` by default; pass `capture_focus: "foreground"` when activating the target is intentional. The legacy `auto` value remains accepted for focus-if-needed compatibility.
 
+Successful `capture` results bind every retained frame and `contact.png` to capture-session-authored SHA-256 values.
+MCP exposes them in `artifact_sha256`; finalization revalidates those bytes, complete PNG decoding and dimensions, and
+the exact semantic `metadata.json` result before reporting success.
+
 The MCP `image` tool stores logical 1x captures by default. Pass `scale: "native"` or `retina: true` to request native display pixels. Set `max_dimension` to a positive integer to cap the longest output edge while preserving aspect ratio; inline `format: "data"` captures default to 1500 pixels when no cap is supplied.
 
 ### Capture coordinate context

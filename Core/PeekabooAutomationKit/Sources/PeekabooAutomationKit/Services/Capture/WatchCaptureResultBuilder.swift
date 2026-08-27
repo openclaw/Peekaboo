@@ -4,6 +4,7 @@ struct WatchCaptureResultBuilder {
     let sourceKind: CaptureSessionResult.Source
     let videoIn: String?
     let videoOut: String?
+    let videoArtifactCustody: CaptureVideoArtifactCustody?
     let scope: CaptureScope
     let options: CaptureOptions
     let videoOptions: CaptureVideoOptionsSnapshot?
@@ -27,6 +28,7 @@ struct WatchCaptureResultBuilder {
             source: self.sourceKind,
             videoIn: self.videoIn,
             videoOut: self.videoOut,
+            videoArtifactCustody: self.videoArtifactCustody,
             frames: input.frames,
             contactSheet: input.contactSheet,
             metadataFile: input.metadataURL.path,

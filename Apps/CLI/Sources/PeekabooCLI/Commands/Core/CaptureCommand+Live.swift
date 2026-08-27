@@ -83,7 +83,7 @@ InjectedRuntimeBackedCommand {
             let scope = try await resolveScope()
             let options = try buildOptions()
             if scope.kind == .window, let identifier = scope.applicationIdentifier {
-                try await focusIfNeeded(
+                _ = try await focusIfNeeded(
                     appIdentifier: identifier,
                     windowID: scope.windowId,
                     windowMutationIdentity: scope.windowMutationIdentity

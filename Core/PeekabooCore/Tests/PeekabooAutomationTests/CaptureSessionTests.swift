@@ -169,7 +169,9 @@ struct CaptureSessionTests {
             .appendingPathComponent("peekaboo-stale-capture-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         let oldContact = outputDir.appendingPathComponent("contact.png")
+        let oldAction = outputDir.appendingPathComponent("action.json")
         try Data("old-contact".utf8).write(to: oldContact)
+        try Data("old-action".utf8).write(to: oldAction)
         defer { try? FileManager.default.removeItem(at: outputDir) }
         let session = Self.makeSession(
             source: DiagnosticFrameSource(steps: [.invalid("missing image")]),
@@ -184,6 +186,7 @@ struct CaptureSessionTests {
             return
         }
         #expect(try Data(contentsOf: oldContact) == Data("old-contact".utf8))
+        #expect(try Data(contentsOf: oldAction) == Data("old-action".utf8))
         #expect(!FileManager.default.fileExists(atPath: outputDir.appendingPathComponent("metadata.json").path))
     }
 

@@ -75,12 +75,29 @@ public struct CaptureVideoOptionsSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+public struct CaptureVideoArtifactCustody: Codable, Sendable, Equatable {
+    public let path: String
+    public let byteCount: Int
+    public let sha256: String
+    public let device: UInt64
+    public let inode: UInt64
+
+    public init(path: String, byteCount: Int, sha256: String, device: UInt64, inode: UInt64) {
+        self.path = path
+        self.byteCount = byteCount
+        self.sha256 = sha256
+        self.device = device
+        self.inode = inode
+    }
+}
+
 public struct CaptureSessionResult: Codable, Sendable, Equatable {
     public enum Source: String, Codable, Sendable { case live, video }
 
     public let source: Source
     public let videoIn: String?
     public let videoOut: String?
+    public let videoArtifactCustody: CaptureVideoArtifactCustody?
 
     public let frames: [CaptureFrameInfo]
     public let contactSheet: CaptureContactSheet
@@ -113,6 +130,7 @@ public struct CaptureSessionResult: Codable, Sendable, Equatable {
         source: Source,
         videoIn: String?,
         videoOut: String?,
+        videoArtifactCustody: CaptureVideoArtifactCustody? = nil,
         frames: [CaptureFrameInfo],
         contactSheet: CaptureContactSheet,
         metadataFile: String,
@@ -126,6 +144,7 @@ public struct CaptureSessionResult: Codable, Sendable, Equatable {
         self.source = source
         self.videoIn = videoIn
         self.videoOut = videoOut
+        self.videoArtifactCustody = videoArtifactCustody
         self.frames = frames
         self.contactSheet = contactSheet
         self.metadataFile = metadataFile
@@ -149,6 +168,7 @@ public struct CaptureMetaSummary: Sendable, Equatable {
     public let contactRows: Int
     public let contactThumbSize: CGSize
     public let contactSampledIndexes: [Int]
+    public let artifactSHA256: [String: String]
 
     public static func make(from result: CaptureSessionResult) -> CaptureMetaSummary {
         CaptureMetaSummary(
@@ -160,6 +180,12 @@ public struct CaptureMetaSummary: Sendable, Equatable {
             contactColumns: result.contactSheet.columns,
             contactRows: result.contactSheet.rows,
             contactThumbSize: result.contactSheet.thumbSize,
-            contactSampledIndexes: result.contactSheet.sampledFrameIndexes)
+            contactSampledIndexes: result.contactSheet.sampledFrameIndexes,
+            artifactSHA256: Dictionary(uniqueKeysWithValues: (
+                result.frames.compactMap { frame in
+                    frame.sha256.map { (frame.path, $0) }
+                } +
+                    [result.contactSheet.sha256.map { (result.contactSheet.path, $0) }].compactMap(\.self) +
+                    [result.videoArtifactCustody.map { ($0.path, $0.sha256) }].compactMap(\.self))))
     }
 }

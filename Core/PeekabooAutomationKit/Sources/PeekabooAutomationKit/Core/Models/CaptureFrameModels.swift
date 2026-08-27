@@ -17,6 +17,10 @@ public struct CaptureFrameInfo: Codable, Sendable, Equatable {
     public let changePercent: Double
     public let reason: Reason
     public let motionBoxes: [CGRect]?
+    /// SHA-256 of the exact PNG bytes written by the capture session.
+    public let sha256: String?
+    /// Capture backend that produced this retained frame, when reported by the source.
+    public let captureEngine: String?
 
     public init(
         index: Int,
@@ -25,7 +29,9 @@ public struct CaptureFrameInfo: Codable, Sendable, Equatable {
         timestampMs: Int,
         changePercent: Double,
         reason: Reason,
-        motionBoxes: [CGRect]? = nil)
+        motionBoxes: [CGRect]? = nil,
+        sha256: String? = nil,
+        captureEngine: String? = nil)
     {
         self.index = index
         self.path = path
@@ -34,6 +40,8 @@ public struct CaptureFrameInfo: Codable, Sendable, Equatable {
         self.changePercent = changePercent
         self.reason = reason
         self.motionBoxes = motionBoxes
+        self.sha256 = sha256
+        self.captureEngine = captureEngine
     }
 }
 
@@ -239,6 +247,8 @@ public struct CaptureContactSheet: Codable, Sendable, Equatable {
     public let rows: Int
     public let thumbSize: CGSize
     public let sampledFrameIndexes: [Int]
+    /// SHA-256 of the exact PNG bytes written by the capture session.
+    public let sha256: String?
 
     public init(
         path: String,
@@ -246,7 +256,8 @@ public struct CaptureContactSheet: Codable, Sendable, Equatable {
         columns: Int,
         rows: Int,
         thumbSize: CGSize,
-        sampledFrameIndexes: [Int])
+        sampledFrameIndexes: [Int],
+        sha256: String? = nil)
     {
         self.path = path
         self.file = file
@@ -254,6 +265,7 @@ public struct CaptureContactSheet: Codable, Sendable, Equatable {
         self.rows = rows
         self.thumbSize = thumbSize
         self.sampledFrameIndexes = sampledFrameIndexes
+        self.sha256 = sha256
     }
 }
 

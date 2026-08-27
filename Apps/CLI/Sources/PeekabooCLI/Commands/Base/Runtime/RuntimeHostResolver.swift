@@ -755,6 +755,7 @@ enum RuntimeHostResolver {
                     continue
                 }
                 try Task.checkCancellation()
+                let authenticatedHostIdentity = await client.authenticatedHostIdentity()
                 let hostDescription = Self.remoteHostDescription(handshake: handshakeResponse, socketPath: socketPath)
                 return Resolution(
                     services: Self.remoteServices(client: client, handshake: handshakeResponse, options: options),
@@ -762,6 +763,11 @@ enum RuntimeHostResolver {
                     selectedRemoteSocketPath: NSString(string: socketPath).standardizingPath,
                     selectedRemoteHostProcessIdentifier: validation.reusableDaemonStatus?.pid ??
                         handshakeResponse.hostIdentity?.processIdentifier,
+                    selectedRemoteHostIdentity: handshakeResponse.hostIdentity,
+                    selectedRemoteAuthenticatedHostIdentity: authenticatedHostIdentity,
+                    selectedRemoteAuthenticatedHostIdentityProvider: {
+                        await client.authenticatedHostIdentity()
+                    },
                     snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
                     applicationRelaunchAllowed: BridgeCapabilityPolicy.supportsApplicationRelaunch(
                         for: handshakeResponse

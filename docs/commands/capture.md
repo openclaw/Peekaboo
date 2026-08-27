@@ -13,7 +13,7 @@ read_when:
 - `capture action` — start adaptive live capture, run a child command, keep post-roll, stop early, and validate output artifacts.
 - `capture video` — ingest an existing video, sample frames (by FPS or interval), optionally skip diff filtering, and emit the same outputs.
 
-The MCP server exposes the same primitive as the `capture` tool. MCP arguments use snake_case names such as `duration_seconds`, `active_fps`, `threshold_percent`, `output_dir`, and `video_out`.
+The MCP `capture` tool exposes the live and video forms. Arbitrary child execution in `capture action` remains CLI-only. MCP arguments use snake_case names such as `duration_seconds`, `active_fps`, `threshold_percent`, `output_dir`, and `video_out`.
 
 `capture live` is the only spelling for live capture.
 
@@ -21,7 +21,12 @@ The MCP server exposes the same primitive as the `capture` tool. MCP arguments u
 - PNG frames (kept frames only)
 - `contact.png` contact sheet
 - `metadata.json` (`CaptureResult`) with stats, warnings, grid info, and source (live|video)
+- `action.json` for `capture action`, with the action timeline/result, capture route and authenticated host identity, actual retained-frame engines, and hashes for every published artifact
 - Optional MP4 (`--video-out`) built from kept frames
+
+Each retained frame and contact sheet carries the SHA-256 of the exact PNG bytes written by the capture session.
+Before success, Peekaboo revalidates those digests, complete PNG decoding, contact-sheet dimensions, and an exact
+semantic round-trip of `metadata.json`. A child command cannot replace capture-owned files with merely nonempty data.
 
 For diff-filtered captures, each retained frame's `changePercent` and `motionBoxes` compare it with the previous
 retained frame, not with an internal sample that was dropped. This keeps heartbeat metadata truthful when a small
@@ -67,7 +72,31 @@ add another sleep or extend the session beyond its deadline.
 - Action timing: `--pre-roll` (default `250ms`), `--post-roll` (default `500ms`), `--action-timeout` (defaults to the remaining duration after roll time).
 - Command: pass the child command after `--`, e.g. `peekaboo capture action -- echo smoke`. Commander also accepts `--command -- echo smoke`, but the `--` form is clearer for commands with their own flags.
 
-The command exits non-zero if the child command exits non-zero, times out, or required capture artifacts are missing/empty. JSON output includes the child command exit code/stdout/stderr, the normal `CaptureResult`, and artifact validation details.
+The command exits non-zero if the child command exits non-zero, times out, leaves a process-group descendant that Peekaboo cannot terminate, or required capture artifacts fail custody or semantic validation. JSON output includes the child command exit code/stdout/stderr, the normal `CaptureResult`, artifact validation details, the canonical `outcome`, and the SHA-256 receipt for `action.json`. Command success is cross-checked against the child, validation, and manifest receipt; effect/dispatch/retry fields are derived from the canonical outcome. A released child reports dispatched-unverified evidence rather than claiming a verified partial desktop change. Failures before focus or child release report a canonical refused, retry-safe, not-dispatched outcome.
+
+The child starts after the requested pre-roll while capture remains active, and capture continues through the full
+post-roll. The pre-roll race does not join the long-running session task. A live capture deadline can also end an
+in-flight frame attempt, so one slow or cancellation-insensitive capture call cannot defer the action until after the
+requested session duration.
+
+Peekaboo starts the process-group leader suspended, captures and revalidates its exact process generation, installs signal
+forwarding, and only then releases command code. If generation evidence is unavailable, no child code runs. Blocking
+leader observation runs outside Swift's cooperative executor so concurrent actions cannot starve cancellation or timeout
+work. After the direct child exits Peekaboo gives remaining members a bounded TERM grace,
+escalates to KILL, and verifies that the group is gone before post-roll completion, artifact validation, or manifest
+publication. `action.json` then binds the command digest and argument count without persisting raw child arguments,
+along with monotonic action offsets, separate focus/child receipts and their canonical aggregate when representable,
+capture engines, selected execution route, an Apple-anchored signing identifier, trusted Team ID, live CDHash, source
+commit, and exact process generation, plus the exact frame/contact/metadata/video bytes. `capture action` therefore
+refuses raw, ad-hoc, unstamped, untrusted-team, or unsigned hosts instead of publishing incomplete provenance.
+Retain the SHA-256 returned in CLI JSON with the manifest: the manifest is canonical and hash-bound to that result, but
+it is not by itself an independently signed certification artifact.
+
+The manifest records `containmentScope: process_group`. This lifecycle boundary covers the launched group, including
+ordinary background children, but it is not a hostile-process sandbox. A command that deliberately calls `setsid` or
+moves descendants into another process group has escaped that contract; do not use such a command when process
+containment is part of the evidence requirement. Retaining and checking the returned manifest SHA-256 detects later
+artifact or manifest rewrites.
 
 ## `capture video` flags
 - Required: `--input <video>` (positional `input` argument)
@@ -81,7 +110,7 @@ Validation: video source rejects targeting/focus/cadence flags; live rejects sam
 
 Live and video sessions require at least one valid image. Peekaboo fails before contact-sheet or metadata creation with `CAPTURE_NO_VALID_FRAMES` and the bounded capture/decode cause; cancellation, permanent capture failures, and file/video-writer errors keep their original error instead. Retry metadata follows actual dispatch: a read-only capture reports `mutation_dispatched: false` and `retry_safe: true`, while a completed focus operation or `capture action` child dispatch reports `mutation_dispatched: true`, `effect: partial`, and `retry_safe: false`.
 
-An explicit `--path` may reuse an existing directory only when it contains no prior capture-owned `contact.png`, `metadata.json`, or `keep-*.png` artifacts. Choose a new directory when rerunning a capture instead of silently reusing stale output.
+An explicit `--path` may reuse an existing directory only when it contains no prior capture-owned `contact.png`, `metadata.json`, `action.json`, or `keep-*.png` artifacts. Choose a new directory when rerunning a capture instead of silently reusing stale output.
 
 ## Examples
 ```bash
@@ -94,7 +123,7 @@ peekaboo capture live --mode screen --screen-index 1 --video-out /tmp/capture.mp
 # Live, record an explicit desktop region; --region also infers area mode
 peekaboo capture live --region 100,120,640,360 --duration 10s
 
-# Capture a command-driven flow with pre/post-roll and JSON proof
+# Capture a command-driven flow with a hash-bound JSON result and action manifest
 peekaboo capture action --duration-limit 10s --json -- ./test-flow.sh --smoke
 
 # Video ingest, sample 2 fps, trim first 5s
@@ -106,7 +135,8 @@ peekaboo capture video /path/to/demo.mov --every 500ms --no-diff
 
 ## Design notes
 - Live defaults: max duration 180s, `--max-frames` 800, resolution cap 1440, diff strategy `fast` unless `--diff-strategy quality` is set.
-- Action capture uses the same live sampler and can stop it early once the child command and post-roll complete.
+- Action capture uses the same live sampler and stops it after the child command and post-roll complete; pre-roll,
+  child execution, and post-roll are all represented in the retained frame timeline.
 - Background live capture of an exact PID/window reacquires a generation-pinned read lane for each frame. Unrelated app mutations can overlap, while a queued mutation for the captured process runs before the next frame. Screen, area, frontmost, unresolved, foreground, and focus-capable observations remain globally exclusive.
 - Video ingest uses the same diff/keep logic as live; `--no-diff` keeps every sampled frame. `--max-frames` also bounds video sample attempts, 32 consecutive decode failures stop sampling early, and each decode has a five-second deadline that cancels pending generator work. Negative/zero sampling values and trim offsets are rejected, trim end is exclusive and capped to the asset duration, and the resolution cap must be positive and finite. When no motion is detected without capture/decode loss, you may end up with a single kept frame plus a `noMotion` warning. Undecodable samples remain bounded warnings when later samples succeed; if every admitted sample is invalid, the command fails instead of returning an empty contact sheet.
 - MP4 output is transactional with session success: writer, frame, contact-sheet, metadata, or cancellation failures cancel the writer and remove its incomplete output. If removal itself fails, Peekaboo reports that cleanup failure alongside the primary capture error instead of silently leaving a corrupt artifact. Contact-sheet creation fails if any advertised source frame is unreadable instead of emitting blank cells with false sampled indexes.

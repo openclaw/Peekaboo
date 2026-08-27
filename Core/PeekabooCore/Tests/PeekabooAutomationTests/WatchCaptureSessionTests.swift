@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import CoreGraphics
+import Darwin
 import Foundation
 import ImageIO
 import PeekabooFoundation
@@ -7,7 +8,41 @@ import Testing
 import UniformTypeIdentifiers
 @testable @_spi(Testing) import PeekabooAutomationKit
 
+@Suite(.serialized)
 struct WatchCaptureSessionTests {
+    @Test
+    func `Retained capture reads reject special files and observe cancellation`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("capture-retained-read-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("artifact")
+
+        #expect(path.path.withCString { mkfifo($0, 0o600) } == 0)
+        #expect(throws: CaptureArtifactIntegrityError.self) {
+            try CaptureArtifactIntegrityValidator.retainedRegularFile(path: path.path, maximumBytes: 1024)
+        }
+        try FileManager.default.removeItem(at: path)
+        try FileManager.default.createSymbolicLink(atPath: path.path, withDestinationPath: "/dev/zero")
+        #expect(throws: CaptureArtifactIntegrityError.self) {
+            try CaptureArtifactIntegrityValidator.retainedRegularFile(path: path.path, maximumBytes: 1024)
+        }
+        try FileManager.default.removeItem(at: path)
+        try Data(repeating: 1, count: 64).write(to: path)
+
+        let cancelled = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return Result {
+                try CaptureArtifactIntegrityValidator.retainedRegularFile(path: path.path, maximumBytes: 1024)
+            }
+        }
+        guard case let .failure(error) = await cancelled.value else {
+            Issue.record("Expected retained read cancellation")
+            return
+        }
+        #expect(error is CancellationError)
+    }
+
     @Test
     @MainActor
     func `video decoder suspension releases MainActor`() async throws {
@@ -630,7 +665,77 @@ struct WatchCaptureSessionTests {
 
         #expect(result.frames.count == 1)
         #expect(elapsed < .milliseconds(150))
+        #expect(WatchCaptureSession.retiringCaptureTaskCount == 1)
         await releaseTask.value
+        await Self.waitForCaptureTaskRetirement()
+        #expect(WatchCaptureSession.retiringCaptureTaskCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Session deadline returns while an in-flight frame source ignores cancellation`() async throws {
+        let image = try #require(WatchCaptureArtifactWriter.makeCGImage(from: Self.makePNG(
+            size: CGSize(width: 20, height: 20))))
+        let source = NoncooperativeCaptureFrameSource(image: image)
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watch-noncooperative-deadline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let options = CaptureOptions(
+            duration: 0.15,
+            idleFps: 5,
+            activeFps: 5,
+            changeThresholdPercent: 100,
+            heartbeatSeconds: 0,
+            quietMsToIdle: 0,
+            maxFrames: 10,
+            maxMegabytes: nil,
+            highlightChanges: false,
+            captureFocus: .background,
+            resolutionCap: nil,
+            diffStrategy: .fast,
+            diffBudgetMs: nil)
+        let session = WatchCaptureSession(
+            dependencies: WatchCaptureDependencies(
+                screenCapture: StubScreenCaptureService(
+                    result: Self.makePNG(size: CGSize(width: 20, height: 20)),
+                    size: CGSize(width: 20, height: 20)),
+                screenService: StubScreenService(),
+                frameSource: source),
+            configuration: WatchCaptureConfiguration(
+                scope: CaptureScope(kind: .frontmost),
+                options: options,
+                outputRoot: output,
+                autoclean: WatchAutocleanConfig(minutes: 1, managed: false),
+                sourceKind: .live,
+                keepAllFrames: true))
+
+        let started = ContinuousClock.now
+        let task = Task { @MainActor in try await session.run() }
+        await source.waitUntilBlocked()
+        let releaseTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            source.release()
+        }
+        let result = try await task.value
+        let elapsed = started.duration(to: .now)
+
+        #expect(result.frames.count == 1)
+        #expect(elapsed >= .milliseconds(100))
+        #expect(elapsed < .milliseconds(300))
+        #expect(WatchCaptureSession.retiringCaptureTaskCount == 1)
+        await #expect(throws: PeekabooError.self) {
+            _ = try await session.captureFrameOrStop(deadlineNs: UInt64.max)
+        }
+        await releaseTask.value
+        await Self.waitForCaptureTaskRetirement()
+        #expect(WatchCaptureSession.retiringCaptureTaskCount == 0)
+    }
+
+    @MainActor
+    private static func waitForCaptureTaskRetirement() async {
+        for _ in 0..<100 where WatchCaptureSession.retiringCaptureTaskCount > 0 {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
     }
 
     @Test
