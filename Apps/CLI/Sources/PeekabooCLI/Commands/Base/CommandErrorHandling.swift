@@ -139,6 +139,8 @@ extension ErrorHandlingCommand {
             errorCode(for: posixError)
         case is CaptureCadenceValidationError:
             .VALIDATION_ERROR
+        case is CaptureActionHostProvenanceError:
+            .CAPTURE_FAILED
         case is Commander.ValidationError:
             .VALIDATION_ERROR
         default:

@@ -14,6 +14,8 @@ struct CaptureActionCommandEndToEndTests {
     @Test
     func `Capture action rejects the ad hoc test host identity`() {
         #expect(PeekabooBridgeAuthenticatedHostIdentity.current() == nil)
+        let command = CaptureActionCommand()
+        #expect(command.mapErrorToCode(CaptureActionHostProvenanceError(message: "unsigned")) == .CAPTURE_FAILED)
     }
 
     @Test
