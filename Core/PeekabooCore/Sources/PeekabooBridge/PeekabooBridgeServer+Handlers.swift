@@ -457,8 +457,12 @@ extension PeekabooBridgeServer {
         switch request {
         case let .desktopObservation(payload):
             try Self.validateAttestedWebFocusTarget(payload)
+            let executionPayload = Self.desktopObservationExecutionRequest(
+                payload,
+                hostRegisteredScreenCaptureKitOwnership: self.hostCapabilities.contains(
+                    PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership))
             if self.services.desktopObservation is any DesktopObservationActionResultProviding {
-                let result = try await self.services.desktopObservation.observeResult(payload)
+                let result = try await self.services.desktopObservation.observeResult(executionPayload)
                 try Self.validateAttestedObservationBinding(
                     payload,
                     result: result.payload,
@@ -506,7 +510,7 @@ extension PeekabooBridgeServer {
                     message: "Menu-bar popover opening requires an action-result-aware observation service.",
                     hint: "Update the runtime host before retrying this conditional background mutation.")
             }
-            let observation = try await self.services.desktopObservation.observe(payload)
+            let observation = try await self.services.desktopObservation.observe(executionPayload)
             try Self.validateAttestedObservationBinding(
                 payload,
                 result: observation,
@@ -532,6 +536,24 @@ extension PeekabooBridgeServer {
         default:
             throw Self.invalidRequest(for: request)
         }
+    }
+
+    /// A Bridge-owned ScreenCaptureKit process can capture a background display directly. Keeping `auto` as
+    /// classic-first here serializes every request behind `/usr/sbin/screencapture`; that helper can stall despite the
+    /// host's usable ScreenCaptureKit grant and consume half of the Bridge deadline before modern fallback begins.
+    /// Explicit engine choices and caller-local capture retain their existing contracts.
+    static func desktopObservationExecutionRequest(
+        _ request: DesktopObservationRequest,
+        hostRegisteredScreenCaptureKitOwnership: Bool) -> DesktopObservationRequest
+    {
+        guard hostRegisteredScreenCaptureKitOwnership,
+              request.capture.engine == .auto,
+              request.capture.focus == .background,
+              case .screen = request.target
+        else { return request }
+        var request = request
+        request.capture.engine = .modern
+        return request
     }
 
     private static func readOnlyObservationFailure(
