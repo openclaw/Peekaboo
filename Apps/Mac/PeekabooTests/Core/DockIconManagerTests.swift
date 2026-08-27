@@ -59,7 +59,7 @@ struct DockIconManagerTests {
         _ = NSApplication.shared
         self.manager = DockIconManager.shared
         // Use a temporary, non-shared settings instance for testing
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.manager.connectToSettings(self.settings)
     }
 }

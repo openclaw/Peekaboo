@@ -15,7 +15,7 @@ struct EndToEndTests {
         if !installAgent {
             services.agent = nil
         }
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.settings.connectServices(services)
         self.sessionStore = SessionStore(storageURL: Self.makeTemporarySessionURL())
         self.agent = PeekabooAgent(settings: self.settings, sessionStore: self.sessionStore, services: services)
@@ -60,7 +60,7 @@ struct ErrorRecoveryTests {
     mutating func setup() throws {
         let services = PeekabooServices()
         services.agent = nil
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.settings.connectServices(services)
         self.sessionStore = SessionStore(storageURL: Self.makeTemporarySessionURL())
         self.agent = PeekabooAgent(settings: self.settings, sessionStore: self.sessionStore, services: services)
@@ -121,7 +121,7 @@ struct ConcurrencyTests {
     mutating func setup() throws {
         let services = PeekabooServices()
         services.agent = nil
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.settings.connectServices(services)
         self.sessionStore = SessionStore(storageURL: Self.makeTemporarySessionURL())
         self.agent = PeekabooAgent(settings: self.settings, sessionStore: self.sessionStore, services: services)

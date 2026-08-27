@@ -11,7 +11,7 @@ struct PeekabooAgentTests {
     let mockSessionStore: SessionStore
 
     init() {
-        self.mockPeekabooSettings = PeekabooSettings()
+        self.mockPeekabooSettings = makeTestSettings()
         // Use isolated storage for tests
         let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try? FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)
@@ -59,7 +59,7 @@ struct PeekabooAgentTests {
 
 @MainActor
 private func makeUnavailableAgent() -> (PeekabooAgent, PeekabooSettings, SessionStore) {
-    let settings = PeekabooSettings()
+    let settings = makeTestSettings()
     settings.openAIAPIKey = "sk-test-key"
     let testDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try? FileManager.default.createDirectory(at: testDir, withIntermediateDirectories: true)

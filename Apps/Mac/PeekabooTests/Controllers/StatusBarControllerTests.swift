@@ -33,7 +33,7 @@ struct StatusBarControllerTests {
         permissionsService: MockPermissionsService = MockPermissionsService(),
         updater: any UpdaterProviding = DisabledUpdaterController()) -> StatusBarController
     {
-        let settings = PeekabooSettings()
+        let settings = makeTestSettings()
         let sessionStore = SessionStore(
             storageURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("StatusBarControllerTests-\(UUID().uuidString).json"))
