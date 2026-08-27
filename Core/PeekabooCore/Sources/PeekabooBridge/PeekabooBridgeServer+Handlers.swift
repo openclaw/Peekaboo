@@ -1,6 +1,6 @@
 import CoreGraphics
 import Foundation
-import PeekabooAutomationKit
+@_spi(Bridge) import PeekabooAutomationKit
 import PeekabooFoundation
 
 // swiftlint:disable file_length
@@ -469,13 +469,17 @@ extension PeekabooBridgeServer {
             } else {
                 nil
             }
-            let executionPayload = Self.desktopObservationExecutionRequest(
+            let prefersModernFirstAutomaticCapture = Self.desktopObservationPrefersModernFirstAutomaticCapture(
                 payload,
                 hostRegisteredScreenCaptureKitOwnership: hostRegisteredScreenCaptureKitOwnership,
                 hostIdentity: self.hostIdentity,
                 currentScreenCaptureKitOwnerReceipt: currentScreenCaptureKitOwnerReceipt)
             if self.services.desktopObservation is any DesktopObservationActionResultProviding {
-                let result = try await self.services.desktopObservation.observeResult(executionPayload)
+                let result = try await ScreenCaptureService.withModernFirstAutomaticCapture(
+                    prefersModernFirstAutomaticCapture)
+                {
+                    try await self.services.desktopObservation.observeResult(payload)
+                }
                 try Self.validateAttestedObservationBinding(
                     payload,
                     result: result.payload,
@@ -523,7 +527,11 @@ extension PeekabooBridgeServer {
                     message: "Menu-bar popover opening requires an action-result-aware observation service.",
                     hint: "Update the runtime host before retrying this conditional background mutation.")
             }
-            let observation = try await self.services.desktopObservation.observe(executionPayload)
+            let observation = try await ScreenCaptureService.withModernFirstAutomaticCapture(
+                prefersModernFirstAutomaticCapture)
+            {
+                try await self.services.desktopObservation.observe(payload)
+            }
             try Self.validateAttestedObservationBinding(
                 payload,
                 result: observation,
@@ -555,14 +563,15 @@ extension PeekabooBridgeServer {
     /// classic-first here serializes every request behind `/usr/sbin/screencapture`; that helper can stall despite the
     /// host's usable ScreenCaptureKit grant and consume half of the Bridge deadline before modern fallback begins.
     /// Registration and preparation do not claim the process-lifetime lease. The eligible request therefore claims
-    /// it atomically, then requires the returned live receipt to match this Bridge generation before removing
-    /// automatic fallback. Explicit engine choices and caller-local capture retain their existing contracts.
-    static func desktopObservationExecutionRequest(
+    /// it atomically, then requires the returned live receipt to match this Bridge generation before selecting a
+    /// scoped modern-first automatic order. Legacy remains the fallback, and explicit engine choices plus
+    /// caller-local capture retain their existing contracts.
+    static func desktopObservationPrefersModernFirstAutomaticCapture(
         _ request: DesktopObservationRequest,
         hostRegisteredScreenCaptureKitOwnership: Bool,
         hostIdentity: PeekabooBridgeHostIdentity?,
         currentScreenCaptureKitOwnerReceipt: ScreenCaptureKitOwnerLease.OwnerReceipt?)
-        -> DesktopObservationRequest
+        -> Bool
     {
         guard hostRegisteredScreenCaptureKitOwnership,
               let hostIdentity,
@@ -573,10 +582,8 @@ extension PeekabooBridgeServer {
               request.capture.engine == .auto,
               request.capture.focus == .background,
               case .screen = request.target
-        else { return request }
-        var request = request
-        request.capture.engine = .modern
-        return request
+        else { return false }
+        return true
     }
 
     private static func readOnlyObservationFailure(

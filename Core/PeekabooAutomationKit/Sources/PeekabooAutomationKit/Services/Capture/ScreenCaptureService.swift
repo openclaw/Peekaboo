@@ -2,6 +2,10 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
+enum ScreenCaptureExecutionContext {
+    @TaskLocal static var prefersModernFirstAutomaticCapture = false
+}
+
 /**
  * Screen and window capture service with dual API support.
  *
@@ -111,6 +115,20 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
     let legacyOperator: any LegacyScreenCaptureOperating
     let screenLockProbe: @MainActor @Sendable () -> Bool?
     @TaskLocal static var captureEnginePreference: CaptureEnginePreference = .auto
+
+    @_spi(Bridge) @_spi(Testing) public static func withModernFirstAutomaticCapture<T: Sendable>(
+        _ enabled: Bool,
+        operation: @MainActor () async throws -> T) async rethrows -> T
+    {
+        guard enabled else { return try await operation() }
+        return try await ScreenCaptureExecutionContext.$prefersModernFirstAutomaticCapture.withValue(
+            true,
+            operation: operation)
+    }
+
+    @_spi(Testing) public static var prefersModernFirstAutomaticCaptureForTesting: Bool {
+        ScreenCaptureExecutionContext.prefersModernFirstAutomaticCapture
+    }
 
     public convenience init(
         loggingService: any LoggingServiceProtocol,

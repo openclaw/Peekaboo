@@ -291,7 +291,11 @@ import PeekabooFoundation
     func apis(for preference: CaptureEnginePreference) -> [ScreenCaptureAPI] {
         switch preference {
         case .auto:
-            self.apis
+            if ScreenCaptureExecutionContext.prefersModernFirstAutomaticCapture {
+                self.apis.filter { $0 == .modern } + self.apis.filter { $0 != .modern }
+            } else {
+                self.apis
+            }
         case .modern:
             [.modern]
         case .legacy:

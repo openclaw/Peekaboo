@@ -1,6 +1,6 @@
 import CoreGraphics
 import Foundation
-import PeekabooAutomationKit
+@_spi(Testing) import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
 import Testing
@@ -121,7 +121,9 @@ struct AutoScreenCaptureConcurrencyTests {
         _ = try await (first, second)
 
         #expect(observation.requests.count == 2)
-        #expect(observation.requests.allSatisfy { $0.capture.engine == .modern })
+        #expect(observation.requests.allSatisfy { $0.capture.engine == .auto })
+        #expect(observation.legacyAttemptCount == 0)
+        #expect(observation.modernAttemptCount == 2)
         #expect(await captureLane.captureCount == 2)
         #expect(await captureLane.settlementCount == 2)
         #expect(claimCounter.count == 2)
@@ -291,7 +293,7 @@ struct AutoScreenCaptureConcurrencyTests {
 
         #expect(results.count == 2)
         #expect(observation.requests.count == 2)
-        #expect(observation.requests.allSatisfy { $0.capture.engine == .modern })
+        #expect(observation.requests.allSatisfy { $0.capture.engine == .auto })
         #expect(observation.legacyAttemptCount == 0)
         #expect(observation.modernAttemptCount == 2)
         #expect(claimCounter.count == 2)
@@ -432,6 +434,50 @@ struct AutoScreenCaptureConcurrencyTests {
         await host.stop()
     }
 
+    @Test
+    func `Claimed automatic screen capture falls back to legacy after modern failure`() async throws {
+        let socketPath = "/tmp/peekaboo-auto-screen-modern-fallback-\(UUID().uuidString).sock"
+        let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
+        let claimCounter = BridgeOwnerClaimCounter()
+        let observation = BridgeAutoScreenObservationService(
+            failSlowAutomaticCapture: false,
+            failModernAutomaticCapture: true)
+        let services = StubServices(
+            desktopObservation: observation,
+            supportsScreenCaptureKitProcessOwnership: true)
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.desktopObservation],
+            screenCaptureKitOwnershipPreparer: {},
+            screenCaptureKitOwnerClaimProvider: {
+                claimCounter.record()
+                return ownerReceipt
+            },
+            permissionStatusEvaluator: Self.grantedPermissions)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 0.5)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let client = try await self.makeNegotiatedClient(
+            socketPath: socketPath,
+            requestTimeoutSec: 2)
+
+        _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
+
+        #expect(observation.requests.count == 1)
+        #expect(observation.requests.first?.capture.engine == .auto)
+        #expect(observation.modernAttemptCount == 1)
+        #expect(observation.legacyAttemptCount == 1)
+        #expect(claimCounter.count == 1)
+        await host.stop()
+    }
+
     private static let backgroundAutoScreenRequest = DesktopObservationRequest(
         target: .screen(index: 0),
         capture: .init(engine: .auto, focus: .background),
@@ -473,6 +519,7 @@ struct AutoScreenCaptureConcurrencyTests {
 @MainActor
 private final class BridgeAutoScreenObservationService: DesktopObservationServiceProtocol {
     private let failSlowAutomaticCapture: Bool
+    private let failModernAutomaticCapture: Bool
     private let captureLane: BridgeSyntheticCaptureLane?
     private(set) var requests: [DesktopObservationRequest] = []
     private(set) var legacyAttemptCount = 0
@@ -480,9 +527,11 @@ private final class BridgeAutoScreenObservationService: DesktopObservationServic
 
     init(
         failSlowAutomaticCapture: Bool = true,
+        failModernAutomaticCapture: Bool = false,
         captureLane: BridgeSyntheticCaptureLane? = nil)
     {
         self.failSlowAutomaticCapture = failSlowAutomaticCapture
+        self.failModernAutomaticCapture = failModernAutomaticCapture
         self.captureLane = captureLane
     }
 
@@ -491,7 +540,19 @@ private final class BridgeAutoScreenObservationService: DesktopObservationServic
         switch request.capture.engine {
         case .modern:
             self.modernAttemptCount += 1
+            if self.failModernAutomaticCapture {
+                throw OperationError.captureFailed(reason: "Fixture modern capture failed")
+            }
             if let captureLane {
+                await captureLane.capture()
+            } else {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        case .auto where ScreenCaptureService.prefersModernFirstAutomaticCaptureForTesting:
+            self.modernAttemptCount += 1
+            if self.failModernAutomaticCapture {
+                self.legacyAttemptCount += 1
+            } else if let captureLane {
                 await captureLane.capture()
             } else {
                 try await Task.sleep(for: .milliseconds(10))

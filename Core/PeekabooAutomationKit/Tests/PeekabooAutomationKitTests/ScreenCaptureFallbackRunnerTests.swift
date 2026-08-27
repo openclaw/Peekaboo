@@ -67,6 +67,24 @@ struct ScreenCaptureFallbackRunnerTests {
 
     @Test
     @MainActor
+    func `Bridge modern-first scope reorders only automatic capture and restores afterward`() async {
+        let runner = ScreenCaptureFallbackRunner(apis: [.legacy, .modern])
+
+        let scoped = await ScreenCaptureService.withModernFirstAutomaticCapture(true) {
+            (
+                auto: runner.apis(for: .auto),
+                modern: runner.apis(for: .modern),
+                legacy: runner.apis(for: .legacy))
+        }
+
+        #expect(scoped.auto == [.modern, .legacy])
+        #expect(scoped.modern == [.modern])
+        #expect(scoped.legacy == [.legacy])
+        #expect(runner.apis(for: .auto) == [.legacy, .modern])
+    }
+
+    @Test
+    @MainActor
     func `wedged system screencapture child is killed and reaped without blocking main actor`() async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")

@@ -25,41 +25,41 @@ struct DesktopObservationCapturePolicyTests {
         let backgroundScreen = DesktopObservationRequest(
             target: .screen(index: 0),
             capture: .init(engine: .auto, focus: .background))
-        #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+        #expect(PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
             backgroundScreen,
             hostRegisteredScreenCaptureKitOwnership: true,
             hostIdentity: hostIdentity,
-            currentScreenCaptureKitOwnerReceipt: ownerReceipt).capture.engine == .modern)
-        #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+            currentScreenCaptureKitOwnerReceipt: ownerReceipt))
+        #expect(!PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
             backgroundScreen,
             hostRegisteredScreenCaptureKitOwnership: false,
             hostIdentity: hostIdentity,
-            currentScreenCaptureKitOwnerReceipt: ownerReceipt) == backgroundScreen)
-        #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+            currentScreenCaptureKitOwnerReceipt: ownerReceipt))
+        #expect(!PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
             backgroundScreen,
             hostRegisteredScreenCaptureKitOwnership: true,
             hostIdentity: hostIdentity,
-            currentScreenCaptureKitOwnerReceipt: nil) == backgroundScreen)
-        #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+            currentScreenCaptureKitOwnerReceipt: nil))
+        #expect(!PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
             backgroundScreen,
             hostRegisteredScreenCaptureKitOwnership: true,
             hostIdentity: hostIdentity,
-            currentScreenCaptureKitOwnerReceipt: differentProcessReceipt) == backgroundScreen)
-        #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+            currentScreenCaptureKitOwnerReceipt: differentProcessReceipt))
+        #expect(!PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
             backgroundScreen,
             hostRegisteredScreenCaptureKitOwnership: true,
             hostIdentity: hostIdentity,
-            currentScreenCaptureKitOwnerReceipt: differentGenerationReceipt) == backgroundScreen)
+            currentScreenCaptureKitOwnerReceipt: differentGenerationReceipt))
 
         for engine in [CaptureEnginePreference.legacy, .modern] {
             let explicit = DesktopObservationRequest(
                 target: .screen(index: 0),
                 capture: .init(engine: engine, focus: .background))
-            #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+            #expect(!PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
                 explicit,
                 hostRegisteredScreenCaptureKitOwnership: true,
                 hostIdentity: hostIdentity,
-                currentScreenCaptureKitOwnerReceipt: ownerReceipt) == explicit)
+                currentScreenCaptureKitOwnerReceipt: ownerReceipt))
         }
 
         let foreground = DesktopObservationRequest(
@@ -68,15 +68,15 @@ struct DesktopObservationCapturePolicyTests {
         let window = DesktopObservationRequest(
             target: .windowID(42),
             capture: .init(engine: .auto, focus: .background))
-        #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+        #expect(!PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
             foreground,
             hostRegisteredScreenCaptureKitOwnership: true,
             hostIdentity: hostIdentity,
-            currentScreenCaptureKitOwnerReceipt: ownerReceipt) == foreground)
-        #expect(PeekabooBridgeServer.desktopObservationExecutionRequest(
+            currentScreenCaptureKitOwnerReceipt: ownerReceipt))
+        #expect(!PeekabooBridgeServer.desktopObservationPrefersModernFirstAutomaticCapture(
             window,
             hostRegisteredScreenCaptureKitOwnership: true,
             hostIdentity: hostIdentity,
-            currentScreenCaptureKitOwnerReceipt: ownerReceipt) == window)
+            currentScreenCaptureKitOwnerReceipt: ownerReceipt))
     }
 }
