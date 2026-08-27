@@ -14,6 +14,10 @@ const catalog = JSON.parse(fs.readFileSync(
   path.join(root, "scripts/background-computer-use-catalog.json"),
   "utf8",
 ));
+const harnessSource = fs.readFileSync(
+  path.join(root, "scripts/test-background-computer-use.sh"),
+  "utf8",
+);
 
 function rules(result) {
   return new Set(result.failures.map((entry) => entry.rule));
@@ -64,17 +68,18 @@ test("passing report covers the complete 42-case catalog", () => {
   assert.deepEqual(result.failures, []);
 });
 
-test("generic AXPress is certified as a foreground-consent refusal with no-effect readback", () => {
-  const actionIndex = catalog.cases.findIndex((entry) => entry.id === "action");
-  const action = catalog.cases[actionIndex];
+test("AXPress refusal preserves one snapshot for a background state-only action", () => {
+  const refusalIndex = catalog.cases.findIndex((entry) => entry.id === "action-press-refused");
+  const refusal = catalog.cases[refusalIndex];
+  const action = catalog.cases[refusalIndex + 1];
 
   assert.deepEqual(
     {
-      command: action.command,
-      phase: action.phase,
-      exit: action.expected_exit,
-      effect: action.expected_effect,
-      error: action.expected_error_code,
+      command: refusal.command,
+      phase: refusal.phase,
+      exit: refusal.expected_exit,
+      effect: refusal.expected_effect,
+      error: refusal.expected_error_code,
     },
     {
       command: "action",
@@ -84,27 +89,93 @@ test("generic AXPress is certified as a foreground-consent refusal with no-effec
       error: "VALIDATION_ERROR",
     },
   );
-  assert.deepEqual(action.required_oracles, [
+  assert.deepEqual(refusal.required_oracles, [
     "predispatch_refusal",
     "refusal_guidance",
     "action_no_effect_readback",
     "playground_log_unchanged",
-    "single_click_witness",
+    "same_snapshot_reuse",
+    "snapshot_only_targeting",
   ]);
-  assert.equal(catalog.cases[actionIndex + 1]?.id, "see-click-after-action-refusal");
-  assert.equal(catalog.cases.some((entry) => entry.id === "see-click-after-action"), false);
+  assert.deepEqual(
+    {
+      id: action.id,
+      command: action.command,
+      phase: action.phase,
+      exit: action.expected_exit,
+      effect: action.expected_effect,
+      delivery: action.expected_delivery,
+    },
+    {
+      id: "action",
+      command: "action",
+      phase: "background",
+      exit: "success",
+      effect: "unverifiable",
+      delivery: "background",
+    },
+  );
+  assert.deepEqual(action.required_oracles, [
+    "background_delivery",
+    "action_readback",
+    "action_value_precondition",
+    "playground_log_delta",
+    "same_snapshot_reuse",
+    "snapshot_only_targeting",
+  ]);
+  assert.deepEqual(
+    catalog.cases.slice(refusalIndex - 1, refusalIndex + 4).map((entry) => entry.id),
+    ["see-scroll", "action-press-refused", "action", "see-scroll-after-action", "scroll-action-background"],
+  );
+  assert.equal(catalog.cases.some((entry) => entry.id === "see-click-for-action"), false);
+  assert.equal(catalog.cases.some((entry) => entry.id === "see-click-after-action-refusal"), false);
 
   const forgedSuccess = makePassingReport(catalog);
-  const forgedAction = caseById(forgedSuccess, "action");
-  forgedAction.exit_code = 0;
-  forgedAction.result_success = true;
-  forgedAction.effect = "confirmed";
-  forgedAction.error_code = null;
+  const forgedRefusal = caseById(forgedSuccess, "action-press-refused");
+  forgedRefusal.exit_code = 0;
+  forgedRefusal.result_success = true;
+  forgedRefusal.effect = "confirmed";
+  forgedRefusal.error_code = null;
   const forgedResult = validateCertification(catalog, forgedSuccess);
   assert.equal(forgedResult.success, false);
   assert.ok(rules(forgedResult).has("exit_contract"));
   assert.ok(rules(forgedResult).has("effect"));
   assert.ok(rules(forgedResult).has("refusal_code"));
+});
+
+test("snapshot action argv stays selector-exclusive and ordered", () => {
+  const actionSection = harnessSource.slice(
+    harnessSource.indexOf("run_checked_case action-press-refused"),
+    harnessSource.indexOf("run_checked_case scroll-action-background"),
+  );
+  assert.ok(actionSection.length > 0);
+
+  const pressInvocation = actionSection.match(
+    /run_checked_case action-press-refused[\s\S]*?action AXPress[^\n]*\\?\n?[^|]*\|\| true/,
+  )?.[0];
+  const incrementInvocation = actionSection.match(
+    /run_checked_case action unchanged success[\s\S]*?action AXIncrement[^\n]*\\?\n?[^|]*\|\| true/,
+  )?.[0];
+  assert.ok(pressInvocation);
+  assert.ok(incrementInvocation);
+  assert.match(pressInvocation, /--snapshot "\$SCROLL_SNAPSHOT"/);
+  assert.match(incrementInvocation, /--snapshot "\$ACTION_SNAPSHOT"/);
+  assert.doesNotMatch(pressInvocation, /--pid|--window-id/);
+  assert.doesNotMatch(incrementInvocation, /--pid|--window-id/);
+  assert.match(actionSection, /ACTION_SNAPSHOT="\$SCROLL_SNAPSHOT"/);
+
+  const orderedMarkers = [
+    "run_checked_case action-press-refused",
+    "ACTION_SNAPSHOT=\"$SCROLL_SNAPSHOT\"",
+    "run_checked_case action unchanged success",
+    "run_checked_case see-scroll-after-action",
+  ];
+  let previous = -1;
+  for (const marker of orderedMarkers) {
+    const index = actionSection.indexOf(marker);
+    assert.ok(index > previous, `Expected ordered harness marker: ${marker}`);
+    previous = index;
+  }
 });
 
 test("every successful cataloged mutation explicitly requires background delivery", () => {
