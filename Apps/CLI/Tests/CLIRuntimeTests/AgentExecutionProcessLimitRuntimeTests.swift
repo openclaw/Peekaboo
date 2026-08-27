@@ -145,8 +145,20 @@ struct AgentExecutionProcessLimitRuntimeTests {
         let response = try #require(JSONSerialization.jsonObject(with: result.output) as? [String: Any])
         let error = try #require(response["error"] as? [String: Any])
         #expect(response["success"] as? Bool == false)
-        #expect(error["code"] as? String == "BRIDGE_UNAVAILABLE")
-        #expect((error["message"] as? String)?.contains(bridge.socketPath) == true)
+        let errorCode = try #require(error["code"] as? String)
+        let errorMessage = try #require(error["message"] as? String)
+        // A live SCK owner can refuse this explicit socket before receipt authentication. Both
+        // safe outcomes precede provider execution; the handshake-only assertions below ensure
+        // this does not hide a fallback route or a dispatched tool operation.
+        #expect(
+            ["BRIDGE_UNAVAILABLE", "CAPTURE_FAILED"].contains(errorCode),
+            "Response: \(response); Bridge requests: \(requestBodies)"
+        )
+        #expect(errorMessage.contains(bridge.socketPath))
+        if errorCode == "CAPTURE_FAILED" {
+            #expect(errorMessage.contains("owner socket is unavailable"))
+            #expect(errorMessage.contains("No capture was dispatched"))
+        }
         #expect(result.standardError.isEmpty)
 
         let decodedRequests = try requests.map {
