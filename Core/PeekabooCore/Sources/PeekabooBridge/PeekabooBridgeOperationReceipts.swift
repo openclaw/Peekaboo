@@ -1219,6 +1219,12 @@ final class PeekabooBridgeOperationReceiptAuthority: @unchecked Sendable {
         }.value
     }
 
+    func signBrowserCapabilityNamespacePayload(
+        _ payload: PeekabooBridgeBrowserCapabilityNamespaceReceiptPayload) throws -> Data
+    {
+        try self.signCanonical(payload)
+    }
+
     private func signCanonical(_ payload: some Encodable) throws -> Data {
         self.signingLock.lock()
         defer { self.signingLock.unlock() }
