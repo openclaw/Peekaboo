@@ -102,6 +102,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     typealias PreferredChannelProvider = @MainActor @Sendable () -> BrowserMCPChannel
     typealias IsolatedConnectionProvider = @MainActor @Sendable () -> Bool
     typealias TargetReservation = @MainActor (BrowserMCPConnectionReceipt) throws -> Void
+    typealias TargetRelease = @MainActor @Sendable () -> Void
 
     private let serverName: String
     private let manager: any BrowserMCPManaging
@@ -182,10 +183,17 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             channel)
     }
 
-    func status(channel: BrowserMCPChannel?) async -> BrowserMCPStatus {
+    func status(
+        channel: BrowserMCPChannel?,
+        releaseTargetWhenDisconnected: TargetRelease? = nil) async -> BrowserMCPStatus
+    {
         do {
             return try await self.withExecutionGate {
-                await self.inspectStatusUnlocked(channel: channel).status
+                let inspection = await self.inspectStatusUnlocked(channel: channel)
+                if !inspection.status.isConnected, !inspection.wasCancelled {
+                    releaseTargetWhenDisconnected?()
+                }
+                return inspection.status
             }
         } catch {
             return BrowserMCPStatus(
@@ -445,9 +453,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             causeDescription: self.errorDescription(cause))
     }
 
-    func disconnect() async {
+    func disconnect(releaseTarget: TargetRelease? = nil) async {
         try? await self.withExecutionGate {
             await self.clearConnection()
+            releaseTarget?()
         }
     }
 
@@ -538,7 +547,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     let preflight = try await self.executeSequenceUnlocked(
                         [BrowserMCPMappedCall(
                             toolName: "take_snapshot",
-                            arguments: ["pageId": elementPreflight.providerPageID])],
+                            arguments: [
+                                "pageId": elementPreflight.providerPageID,
+                                "verbose": true,
+                            ])],
                         channel: channel,
                         expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
                         expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,

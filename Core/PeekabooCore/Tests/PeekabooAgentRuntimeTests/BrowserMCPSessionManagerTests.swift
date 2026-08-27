@@ -123,6 +123,49 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `element preflight preserves verbose snapshot references`() async throws {
+        let provider = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: provider)
+        let status = try await session.connect(channel: .stable)
+        let binding = try BrowserMCPExecutionSessionBinding(
+            connectionReceipt: #require(status.connectionReceipt),
+            providerSessionEpoch: #require(status.providerSessionEpoch))
+        provider.executedTools.removeAll()
+        provider.executedArguments.removeAll()
+        provider.executeHandler = { toolName, arguments in
+            if toolName == "take_snapshot" {
+                let uid = arguments["verbose"] as? Bool == true ? "21_1" : "22_1"
+                return ToolResponse(
+                    content: [.text(
+                        text: "uid=\(uid) generic \"Verbose only\"",
+                        annotations: nil,
+                        _meta: nil)],
+                    structuredContent: .object([
+                        "snapshot": .object([
+                            "id": .string(uid),
+                            "role": .string("generic"),
+                            "name": .string("Verbose only"),
+                        ]),
+                    ]))
+            }
+            return .text("clicked")
+        }
+
+        let result = try await session.executeSequence(
+            [BrowserMCPMappedCall(toolName: "click", arguments: ["pageId": 7, "uid": "21_1"])],
+            channel: .stable,
+            expectedSessionBinding: binding,
+            elementPreflight: BrowserMCPElementPreflight(
+                providerPageID: 7,
+                providerUIDs: ["21_1"]))
+
+        #expect(!result.response.isError)
+        #expect(provider.executedTools == ["take_snapshot", "click"])
+        #expect(provider.executedArguments.first?["pageId"] as? Int == 7)
+        #expect(provider.executedArguments.first?["verbose"] as? Bool == true)
+    }
+
+    @Test
     func `status waits for an in flight connection lifecycle`() async throws {
         let manager = MockBrowserMCPManager()
         let barrier = SequenceBarrier()
@@ -845,6 +888,194 @@ struct BrowserMCPSessionManagerTests {
 
         await firstProbe.release()
         _ = try await firstConnection.value
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `older disconnect cannot release a newer connection reservation`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: nil)
+
+        let teardownBarrier = SequenceBarrier()
+        firstProvider.removeHandler = { await teardownBarrier.block() }
+        let reconnectProbe = SequenceBarrier()
+        firstProvider.executeHandler = { toolName, _ in
+            if toolName == "list_pages" {
+                await reconnectProbe.block()
+            }
+            return .text("ok")
+        }
+        let disconnectCompletion = CompletionFlag()
+        let disconnect = Task { @MainActor in
+            await first.disconnect()
+            await disconnectCompletion.markFinished()
+        }
+        await teardownBarrier.waitUntilBlocked()
+        let reconnect = Task { @MainActor in
+            try await first.connect(channel: nil, browserURL: nil)
+        }
+
+        await teardownBarrier.release()
+        await reconnectProbe.waitUntilBlocked()
+        let completionDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !disconnectCompletion.finished, ContinuousClock.now < completionDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await disconnectCompletion.finished)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: nil)
+        }
+        #expect(secondProvider.addedConfigs.isEmpty)
+
+        await reconnectProbe.release()
+        _ = try await reconnect.value
+        await disconnect.value
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `older root disconnect cannot release a newer root connection reservation`() async throws {
+        let rootProvider = MockBrowserMCPManager()
+        let scopedProvider = MockBrowserMCPManager()
+        let rootManager = Self.exactSession(manager: rootProvider)
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: scopedProvider)
+        }
+        let scopedSessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+        let scopedManager = try #require(pool.manager(for: scopedSessionID))
+        _ = try await rootManager.connectWithOutcome(
+            channel: nil,
+            reserveTarget: { try pool.bindRoot(to: $0) })
+
+        let teardownBarrier = SequenceBarrier()
+        rootProvider.removeHandler = { await teardownBarrier.block() }
+        let reconnectProbe = SequenceBarrier()
+        rootProvider.executeHandler = { toolName, _ in
+            if toolName == "list_pages" {
+                await reconnectProbe.block()
+            }
+            return .text("ok")
+        }
+        let disconnectCompletion = CompletionFlag()
+        let disconnect = Task { @MainActor in
+            await rootManager.disconnect(releaseTarget: { pool.unbindRoot() })
+            await disconnectCompletion.markFinished()
+        }
+        await teardownBarrier.waitUntilBlocked()
+        let reconnect = Task { @MainActor in
+            try await rootManager.connectWithOutcome(
+                channel: nil,
+                reserveTarget: { try pool.bindRoot(to: $0) })
+        }
+
+        await teardownBarrier.release()
+        await reconnectProbe.waitUntilBlocked()
+        let completionDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !disconnectCompletion.finished, ContinuousClock.now < completionDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await disconnectCompletion.finished)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await scopedManager.connectWithOutcome(
+                channel: nil,
+                reserveTarget: { try pool.bind(scopedSessionID, to: $0) })
+        }
+        #expect(scopedProvider.addedConfigs.isEmpty)
+
+        await reconnectProbe.release()
+        _ = try await reconnect.value
+        await disconnect.value
+        await rootManager.disconnect(releaseTarget: { pool.unbindRoot() })
+        await pool.end(scopedSessionID)
+    }
+
+    @Test
+    func `cancelled connect releases its target reservation through an uncancelled gate`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let resolutionBarrier = SequenceBarrier()
+        let firstManager = Self.exactSession(
+            manager: firstProvider,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                await resolutionBarrier.block()
+                try Task.checkCancellation()
+                let port = try #require(URL(string: url)?.port)
+                return BrowserMCPDevToolsEndpoint(
+                    browserURL: "http://127.0.0.1:\(port)/",
+                    webSocketDebuggerURL: "ws://127.0.0.1:\(port)/devtools/browser/browser-a",
+                    browserID: "browser-a",
+                    browserVersion: "Chrome/151.0",
+                    protocolVersion: "1.3")
+            })
+        let secondManager = Self.exactSession(manager: secondProvider)
+        var managers = [firstManager, secondManager]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in managers.removeFirst() }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        let connection = Task { @MainActor in
+            try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        }
+
+        await resolutionBarrier.waitUntilBlocked()
+        connection.cancel()
+        await resolutionBarrier.release()
+        do {
+            _ = try await connection.value
+            Issue.record("Expected the first connection to be cancelled")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        _ = try await second.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        #expect(firstProvider.addedConfigs.isEmpty)
+        #expect(secondProvider.addedConfigs.count == 1)
+
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `cancelled status inspection retains live target ownership`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let firstManager = Self.exactSession(
+            manager: firstProvider,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            })
+        let secondManager = Self.exactSession(manager: secondProvider)
+        var managers = [firstManager, secondManager]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in managers.removeFirst() }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        await endpoints.cancelResolution()
+
+        let cancelledStatus = await first.status(channel: nil)
+
+        #expect(!cancelledStatus.isConnected)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        }
+        #expect(firstProvider.removeCount == 0)
+        #expect(secondProvider.addedConfigs.isEmpty)
+
+        await first.disconnect()
         await root.endAuthenticatedSession(named: "agent:first")
         await root.endAuthenticatedSession(named: "agent:second")
     }

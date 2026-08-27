@@ -464,9 +464,9 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
     @MainActor
     public func status(channel: BrowserMCPChannel? = nil) async -> BrowserMCPStatus {
-        let status = await self.resolvedSessionManager().status(channel: channel)
-        self.reconcileTargetOwnership(with: status)
-        return status
+        await self.resolvedSessionManager().status(
+            channel: channel,
+            releaseTargetWhenDisconnected: self.targetOwnershipRelease())
     }
 
     @MainActor
@@ -505,41 +505,16 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
                 browserURL: browserURL,
                 reserveTarget: reservation)
         } catch {
-            await self.reconcileTargetOwnership(with: manager.status(channel: nil))
+            await self.reconcileTargetOwnershipAfterFailure(using: manager)
             throw error
-        }
-        if let ownedSession = self.ownedSession,
-           let receipt = result.payload.connectionReceipt
-        {
-            do {
-                try ownedSession.pool.bind(ownedSession.id, to: receipt)
-            } catch {
-                await self.resolvedSessionManager().disconnect()
-                ownedSession.pool.unbind(ownedSession.id)
-                throw error
-            }
-        } else if let pool = self.authenticatedSessionPool,
-                  let receipt = result.payload.connectionReceipt
-        {
-            do {
-                try pool.bindRoot(to: receipt)
-            } catch {
-                await self.resolvedSessionManager().disconnect()
-                pool.unbindRoot()
-                throw error
-            }
         }
         return result
     }
 
     @MainActor
     public func disconnect() async {
-        await self.resolvedSessionManager().disconnect()
-        if let ownedSession = self.ownedSession {
-            ownedSession.pool.unbind(ownedSession.id)
-        } else {
-            self.authenticatedSessionPool?.unbindRoot()
-        }
+        await self.resolvedSessionManager().disconnect(
+            releaseTarget: self.targetOwnershipRelease())
     }
 
     @MainActor
@@ -789,20 +764,30 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     }
 
     @MainActor
-    private func reconcileTargetOwnership(with status: BrowserMCPStatus) {
-        guard self.usesTargetOwnershipPool, !status.isConnected else { return }
+    private func targetOwnershipRelease() -> BrowserMCPSessionManager.TargetRelease? {
+        guard self.usesTargetOwnershipPool else { return nil }
         if let ownedSession = self.ownedSession {
-            ownedSession.pool.unbind(ownedSession.id)
-        } else {
-            self.authenticatedSessionPool?.unbindRoot()
+            return { ownedSession.pool.unbind(ownedSession.id) }
         }
+        guard let pool = self.authenticatedSessionPool else { return nil }
+        return { pool.unbindRoot() }
     }
 
     @MainActor
     private func reconcileTargetOwnershipAfterExecutionFailure() async {
         guard self.usesTargetOwnershipPool else { return }
-        let status = await self.resolvedSessionManager().status(channel: nil)
-        self.reconcileTargetOwnership(with: status)
+        await self.reconcileTargetOwnershipAfterFailure(using: self.resolvedSessionManager())
+    }
+
+    @MainActor
+    private func reconcileTargetOwnershipAfterFailure(using manager: BrowserMCPSessionManager) async {
+        guard let releaseTarget = self.targetOwnershipRelease() else { return }
+        let reconciliation = Task { @MainActor in
+            _ = await manager.status(
+                channel: nil,
+                releaseTargetWhenDisconnected: releaseTarget)
+        }
+        await reconciliation.value
     }
 
     /// Legacy low-level configuration factory retained for source compatibility.

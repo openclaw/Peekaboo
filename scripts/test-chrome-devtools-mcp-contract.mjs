@@ -187,6 +187,11 @@ assert.match(
 );
 assert.match(
   textSnapshotSource,
+  /interestingOnly:\s*!verbose/,
+  "verbose snapshots no longer select the full accessibility tree",
+);
+assert.match(
+  textSnapshotSource,
   /`\$\{snapshotId\}_\$\{idCounter\+\+\}`/,
   "new snapshot UID allocation changed",
 );
@@ -214,6 +219,11 @@ assert.match(
   mcpResponseSource,
   /structuredContent\.message = this\.#textResponseLines\.join\('\\n'\)/,
   "provider structured result-message projection changed",
+);
+assert.match(
+  mcpResponseSource,
+  /this\.#page\.textSnapshot = await TextSnapshot\.create/,
+  "snapshot responses no longer replace the page's live element identity map",
 );
 const messageProjectionIndex = mcpResponseSource.indexOf("structuredContent.message =");
 const viewportStatusIndex = mcpResponseSource.indexOf("Emulating viewport:");
