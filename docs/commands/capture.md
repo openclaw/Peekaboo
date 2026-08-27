@@ -70,7 +70,7 @@ add another sleep or extend the session beyond its deadline.
 ## `capture action` flags
 - Targeting/focus/cadence/caps/output: same as `capture live`, except `--duration` is replaced by `--duration-limit` (default `60s`, max `180s`; bare values are milliseconds).
 - Action timing: `--pre-roll` (default `250ms`), `--post-roll` (default `500ms`), `--action-timeout` (defaults to the remaining duration after roll time).
-- Command: pass the child command after `--`, e.g. `peekaboo capture action -- echo smoke`. Commander also accepts `--command -- echo smoke`, but the `--` form is clearer for commands with their own flags.
+- Command: pass the child command after `--`, e.g. `peekaboo capture action -- echo smoke`. This keeps child flags separate from Peekaboo options.
 
 The command exits non-zero if the child command exits non-zero, times out, leaves a process-group descendant that Peekaboo cannot terminate, or required capture artifacts fail custody or semantic validation. JSON output includes the child command exit code/stdout/stderr, the normal `CaptureResult`, artifact validation details, the canonical `outcome`, and the SHA-256 receipt for `action.json`. Command success is cross-checked against the child, validation, and manifest receipt; effect/dispatch/retry fields are derived from the canonical outcome. A released child reports dispatched-unverified evidence rather than claiming a verified partial desktop change. Failures before focus or child release report a canonical refused, retry-safe, not-dispatched outcome.
 
@@ -99,7 +99,7 @@ containment is part of the evidence requirement. Retaining and checking the retu
 artifact or manifest rewrites.
 
 ## `capture video` flags
-- Required: `--input <video>` (positional `input` argument)
+- Required: positional `<input>` video path
 - Sampling: `--sample-fps <fps>` (default 2) XOR `--every <duration>`
 - Trim: `--start <duration>`, `--end <duration>`
 - Diff: `--no-diff` (keep all sampled frames); otherwise uses diff/keep logic
@@ -123,8 +123,13 @@ peekaboo capture live --mode screen --screen-index 1 --video-out /tmp/capture.mp
 # Live, record an explicit desktop region; --region also infers area mode
 peekaboo capture live --region 100,120,640,360 --duration 10s
 
-# Capture a command-driven flow with a hash-bound JSON result and action manifest
-peekaboo capture action --duration-limit 10s --json -- ./test-flow.sh --smoke
+# Capture a command-driven flow with a hash-bound result, action manifest, and MP4
+peekaboo capture action --duration-limit 10s --path /tmp/action-capture \
+  --video-out /tmp/action.mp4 --json -- ./test-flow.sh --smoke
+
+# Re-ingest the exact action MP4 with the positional video input
+peekaboo capture video /tmp/action.mp4 --every 500ms --no-diff \
+  --path /tmp/action-video-ingest --json
 
 # Video ingest, sample 2 fps, trim first 5s
 peekaboo capture video /path/to/demo.mov --sample-fps 2 --start 5s --video-out /tmp/demo.mp4
