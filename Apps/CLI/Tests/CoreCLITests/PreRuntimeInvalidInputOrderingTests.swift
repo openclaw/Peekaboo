@@ -16,6 +16,10 @@ struct PreRuntimeInvalidInputOrderingTests {
             "Unsupported browser action 'frobnicate'"
         ),
         (
+            ["peekaboo", "browser", "bind-window", "--json"],
+            "browser bind-window is not available to standalone CLI invocations."
+        ),
+        (
             [
                 "peekaboo", "browser", "connect", "--browser-url", "ftp://127.0.0.1:1", "--json",
             ],

@@ -31,6 +31,14 @@ private struct BrowserCommandInputError: LocalizedError, ResultEnvelopeError {
             envelopeHint: "Run `peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground`."
         )
     }
+
+    static func nativeWindowBindingRequiresNamespace() -> Self {
+        Self(
+            errorDescription: "browser bind-window is not available to standalone CLI invocations.",
+            envelopeHint: "Use one process-local MCP or Agent browser session. Durable CLI binding requires an " +
+                "authenticated Bridge 1.38 browser namespace receipt."
+        )
+    }
 }
 
 @MainActor
@@ -165,6 +173,9 @@ InjectedRuntimeBackedCommand {
         let normalizedAction = self.action
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "-", with: "_")
+        if normalizedAction == BrowserProcessLocalAction.bindWindow {
+            throw BrowserCommandInputError.nativeWindowBindingRequiresNamespace()
+        }
         guard BrowserAction(rawValue: normalizedAction) != nil else {
             throw ValidationError("Unsupported browser action '\(self.action)'")
         }

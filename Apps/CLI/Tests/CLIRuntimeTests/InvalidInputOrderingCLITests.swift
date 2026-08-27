@@ -122,6 +122,13 @@ struct InvalidInputOrderingCLITests {
             hint: nil
         ),
         JSONCase(
+            arguments: ["browser", "bind-window", "--json"],
+            code: "VALIDATION_ERROR",
+            message: "browser bind-window is not available to standalone CLI invocations.",
+            hint: "Use one process-local MCP or Agent browser session. Durable CLI binding requires an " +
+                "authenticated Bridge 1.38 browser namespace receipt."
+        ),
+        JSONCase(
             arguments: [
                 "browser", "connect", "--browser-url", "ftp://127.0.0.1:1", "--json",
             ],

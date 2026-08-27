@@ -47,6 +47,12 @@ these raw CLI compatibility values. Those references also bind the exact provide
 and expire after a newer snapshot, navigation, disconnect, connection replacement, or session end. Bridge-backed
 opaque-reference sessions currently fail closed pending an authenticated browser-session wire namespace.
 
+`browser bind-window` is intentionally unavailable to standalone CLI invocations. A one-shot CLI process cannot retain
+the caller-owned opaque page capability or native binding, and the daemon's legacy shared browser state is not a safe
+substitute. Use one process-local MCP or Agent browser session. Durable CLI binding will require an authenticated Bridge
+1.38 browser namespace receipt; until that wire contract exists, the CLI refuses before runtime discovery or provider
+dispatch.
+
 `browser upload-file` requires `--page-id`, a fresh file-input `--uid`, and an absolute `--path` to a current-user
 regular file no larger than 100 MiB. Peekaboo never grants Chrome DevTools MCP unrestricted filesystem access. The daemon
 copies the already-open source into its private browser-session temporary root, preserves only the source basename, and

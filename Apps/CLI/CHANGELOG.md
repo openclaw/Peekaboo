@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `click --modifiers ... --foreground` with exact snapshot preflight and truthful cursor/focus restoration reporting.
 
 ### Changed
+- Refuse standalone `browser bind-window` before runtime discovery until Bridge can carry an authenticated persistent browser namespace; process-local MCP and Agent sessions own the exact binding instead.
 - Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
 - Avoid reopening and hashing Bridge screenshot artifacts twice before CLI or MCP consumption while retaining signed client verification and use-time publication checks.
