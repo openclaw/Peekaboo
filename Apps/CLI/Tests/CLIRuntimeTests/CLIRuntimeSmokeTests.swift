@@ -459,11 +459,13 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo mcp help renders without starting server`() async throws {
+    func `peekaboo mcp help renders only runnable transport examples without starting server`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo(["mcp", "--help"])
         #expect(result.status == .exited(0))
         #expect(result.standardOutput.contains("Start Peekaboo as an MCP server"))
+        #expect(result.standardOutput.contains("peekaboo mcp serve --transport stdio"))
+        #expect(!result.standardOutput.contains("peekaboo mcp serve --transport http"))
     }
 
     @Test
