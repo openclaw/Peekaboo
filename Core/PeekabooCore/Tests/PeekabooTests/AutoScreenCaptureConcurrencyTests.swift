@@ -56,6 +56,7 @@ struct AutoScreenCaptureConcurrencyTests {
     @Test
     func `Bridge prepares screen ownership before serving concurrent captures inside its envelope`() async throws {
         let socketPath = "/tmp/peekaboo-auto-screen-prepared-\(UUID().uuidString).sock"
+        let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let preparation = BridgeOwnerPreparationGate()
         let captureLane = BridgeSyntheticCaptureLane(
             captureDelay: .milliseconds(20),
@@ -74,6 +75,7 @@ struct AutoScreenCaptureConcurrencyTests {
             screenCaptureKitOwnershipPreparer: {
                 await preparation.prepare()
             },
+            screenCaptureKitOwnerReceiptProvider: { ownerReceipt },
             permissionStatusEvaluator: Self.grantedPermissions)
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
@@ -228,6 +230,7 @@ struct AutoScreenCaptureConcurrencyTests {
     @Test
     func `Bridge owner runs concurrent background auto screen observations on modern capture`() async throws {
         let socketPath = "/tmp/peekaboo-auto-screen-concurrency-\(UUID().uuidString).sock"
+        let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let observation = BridgeAutoScreenObservationService()
         let services = StubServices(
             desktopObservation: observation,
@@ -239,6 +242,7 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
             screenCaptureKitOwnershipPreparer: {},
+            screenCaptureKitOwnerReceiptProvider: { ownerReceipt },
             permissionStatusEvaluator: Self.grantedPermissions)
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
@@ -267,6 +271,47 @@ struct AutoScreenCaptureConcurrencyTests {
         await host.stop()
     }
 
+    @Test
+    func `Negotiated Bridge with a different live screen owner preserves automatic capture`() async throws {
+        let socketPath = "/tmp/peekaboo-auto-screen-different-owner-\(UUID().uuidString).sock"
+        let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
+        let differentOwnerReceipt = ScreenCaptureKitOwnerLease.OwnerReceipt(
+            processIdentifier: ownerReceipt.processIdentifier + 1,
+            processStartIdentity: ownerReceipt.processStartIdentity + 1)
+        let observation = BridgeAutoScreenObservationService(failSlowAutomaticCapture: false)
+        let services = StubServices(
+            desktopObservation: observation,
+            supportsScreenCaptureKitProcessOwnership: true)
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.desktopObservation],
+            screenCaptureKitProcessCapabilityRegistrar: {},
+            screenCaptureKitOwnershipPreparer: {},
+            screenCaptureKitOwnerReceiptProvider: { differentOwnerReceipt },
+            permissionStatusEvaluator: Self.grantedPermissions)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 0.5)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let client = try await self.makeNegotiatedClient(
+            socketPath: socketPath,
+            requestTimeoutSec: 2)
+
+        _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
+
+        #expect(observation.requests.count == 1)
+        #expect(observation.requests.first?.capture.engine == .auto)
+        #expect(observation.legacyAttemptCount == 1)
+        #expect(observation.modernAttemptCount == 0)
+        await host.stop()
+    }
+
     private static let backgroundAutoScreenRequest = DesktopObservationRequest(
         target: .screen(index: 0),
         capture: .init(engine: .auto, focus: .background),
@@ -278,6 +323,16 @@ struct AutoScreenCaptureConcurrencyTests {
             accessibility: true,
             appleScript: false,
             postEvent: true)
+    }
+
+    private static func currentProcessOwnerReceipt() -> ScreenCaptureKitOwnerLease.OwnerReceipt? {
+        let processIdentifier = getpid()
+        guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier) else {
+            return nil
+        }
+        return ScreenCaptureKitOwnerLease.OwnerReceipt(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity)
     }
 
     private func makeNegotiatedClient(

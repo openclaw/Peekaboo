@@ -126,6 +126,8 @@ public final class PeekabooBridgeServer {
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     let desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator
     private let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
+    let screenCaptureKitOwnerReceiptProvider:
+        @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt?
     private let screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval
     private var screenCaptureKitOwnershipPreparationTask:
         Task<ScreenCaptureKitOwnershipPreparationOutcome, Never>?
@@ -161,6 +163,10 @@ public final class PeekabooBridgeServer {
         screenCaptureKitOwnershipPreparer: @escaping @Sendable () async throws -> Void = {
             try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
         },
+        screenCaptureKitOwnerReceiptProvider: @escaping @Sendable () throws
+            -> ScreenCaptureKitOwnerLease.OwnerReceipt? = {
+                try ScreenCaptureKitOwnerLease.currentOwnerReceiptIfHeld()
+            },
         screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval = ScreenCaptureKitOwnerLease
             .defaultProcessCapabilityPreparationTimeoutSeconds,
         postEventAccessEvaluator: (@MainActor @Sendable () -> Bool)? = nil,
@@ -348,6 +354,7 @@ public final class PeekabooBridgeServer {
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
         self.desktopOperationLaneCoordinator = desktopOperationLaneCoordinator
         self.screenCaptureKitOwnershipPreparer = screenCaptureKitOwnershipPreparer
+        self.screenCaptureKitOwnerReceiptProvider = screenCaptureKitOwnerReceiptProvider
         self.screenCaptureKitOwnershipPreparationTimeoutSeconds =
             screenCaptureKitOwnershipPreparationTimeoutSeconds
         self.automationActivityObserver = automationActivityObserver

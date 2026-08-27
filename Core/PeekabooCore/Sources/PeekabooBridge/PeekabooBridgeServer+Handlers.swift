@@ -457,10 +457,23 @@ extension PeekabooBridgeServer {
         switch request {
         case let .desktopObservation(payload):
             try Self.validateAttestedWebFocusTarget(payload)
+            let hostRegisteredScreenCaptureKitOwnership = self.hostCapabilities.contains(
+                PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
+            let currentScreenCaptureKitOwnerReceipt: ScreenCaptureKitOwnerLease.OwnerReceipt? = if
+                hostRegisteredScreenCaptureKitOwnership,
+                payload.capture.engine == .auto,
+                payload.capture.focus == .background,
+                case .screen = payload.target
+            {
+                try? self.screenCaptureKitOwnerReceiptProvider()
+            } else {
+                nil
+            }
             let executionPayload = Self.desktopObservationExecutionRequest(
                 payload,
-                hostRegisteredScreenCaptureKitOwnership: self.hostCapabilities.contains(
-                    PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership))
+                hostRegisteredScreenCaptureKitOwnership: hostRegisteredScreenCaptureKitOwnership,
+                hostIdentity: self.hostIdentity,
+                currentScreenCaptureKitOwnerReceipt: currentScreenCaptureKitOwnerReceipt)
             if self.services.desktopObservation is any DesktopObservationActionResultProviding {
                 let result = try await self.services.desktopObservation.observeResult(executionPayload)
                 try Self.validateAttestedObservationBinding(
@@ -541,12 +554,22 @@ extension PeekabooBridgeServer {
     /// A Bridge-owned ScreenCaptureKit process can capture a background display directly. Keeping `auto` as
     /// classic-first here serializes every request behind `/usr/sbin/screencapture`; that helper can stall despite the
     /// host's usable ScreenCaptureKit grant and consume half of the Bridge deadline before modern fallback begins.
-    /// Explicit engine choices and caller-local capture retain their existing contracts.
+    /// Registration and preparation do not claim the process-lifetime lease, so the live owner receipt must still
+    /// match this Bridge generation before removing automatic fallback. Explicit engine choices and caller-local
+    /// capture retain their existing contracts.
     static func desktopObservationExecutionRequest(
         _ request: DesktopObservationRequest,
-        hostRegisteredScreenCaptureKitOwnership: Bool) -> DesktopObservationRequest
+        hostRegisteredScreenCaptureKitOwnership: Bool,
+        hostIdentity: PeekabooBridgeHostIdentity?,
+        currentScreenCaptureKitOwnerReceipt: ScreenCaptureKitOwnerLease.OwnerReceipt?)
+        -> DesktopObservationRequest
     {
         guard hostRegisteredScreenCaptureKitOwnership,
+              let hostIdentity,
+              let hostProcessStartIdentity = hostIdentity.processStartIdentity,
+              let currentScreenCaptureKitOwnerReceipt,
+              currentScreenCaptureKitOwnerReceipt.processIdentifier == hostIdentity.processIdentifier,
+              currentScreenCaptureKitOwnerReceipt.processStartIdentity == hostProcessStartIdentity,
               request.capture.engine == .auto,
               request.capture.focus == .background,
               case .screen = request.target
