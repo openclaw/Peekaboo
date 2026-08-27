@@ -55,6 +55,57 @@ struct BrowserCapabilityNamespaceHandshakeTests {
 
     @Test
     @MainActor
+    func `failed namespace runtime preparation suppresses the complete namespace surface`() async throws {
+        let socketPath = "/tmp/peekaboo-browser-namespace-preparation-failure-\(UUID().uuidString).sock"
+        let services = StubServices()
+        services.browserNamespacePrepareError = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "Injected namespace preparation failure")
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: PeekabooBridgeOperation.onDemandDefaultAllowlist)
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        await host.setAuthenticationForTesting(.init(
+            liveIdentity: { try PeekabooBridgeSocketIO.livePeerIdentity(fd: $0) },
+            coldPeer: { identity, _ in
+                PeekabooBridgePeer(
+                    liveIdentity: identity,
+                    bundleIdentifier: "dev.peekaboo.browser-namespace-preparation-failure-client",
+                    teamIdentifier: TrustedBridgeClientFixture.teamIdentifier)
+            }))
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        let handshake = try await client.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.browser-namespace-preparation-failure",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+
+        #expect(services.browserNamespacePrepareCount == 1)
+        #expect(PeekabooBridgeOperation.browserCapabilityNamespaceOperations.isDisjoint(with:
+            Set(handshake.supportedOperations)))
+        #expect(PeekabooBridgeOperation.browserCapabilityNamespaceOperations.isDisjoint(with:
+            Set(handshake.enabledOperations ?? [])))
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.browserCapabilityNamespaces) != true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.nativeBrowserWindowBinding) != true)
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await client.createBrowserCapabilityNamespace()
+        }
+        #expect(services.browserNamespaceOpenedIDs.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `GUI host strips namespace operations and capabilities despite complete service`() async throws {
         let socketPath = "/tmp/peekaboo-browser-namespace-gui-\(UUID().uuidString).sock"
         let server = PeekabooBridgeServer(
@@ -370,6 +421,9 @@ extension StubServices: PeekabooBridgeBrowserCapabilityNamespaceProviding {
 
     func prepareBrowserCapabilityNamespaceRuntime() throws {
         self.browserNamespacePrepareCount += 1
+        if let browserNamespacePrepareError {
+            throw browserNamespacePrepareError
+        }
         self.browserNamespaceRuntimeAccepting = true
     }
 

@@ -39,6 +39,7 @@ enum BrowserMCPScopedNamespaceResponseSanitizer {
         arguments: ToolArguments,
         policy: BrowserMCPScopedNamespaceExecutionPolicy) -> BrowserMCPScopedNamespaceExecutionResult
     {
+        let externalBrowserConnectionReceipt = self.externalBrowserConnectionReceipt(from: response.meta)
         var foundUnsafeCapability = false
         let content = response.content.map {
             self.scrubContent($0, foundUnsafeCapability: &foundUnsafeCapability)
@@ -74,6 +75,7 @@ enum BrowserMCPScopedNamespaceResponseSanitizer {
         return BrowserMCPScopedNamespaceExecutionResult(
             response: sanitized,
             targetIdentity: targetIdentity,
+            externalBrowserConnectionReceipt: externalBrowserConnectionReceipt,
             outcome: outcome,
             nativeWindowReceipt: nativeWindowReceipt)
     }
@@ -527,6 +529,65 @@ enum BrowserMCPScopedNamespaceResponseSanitizer {
             return self.processIdentity(from: receipt)
         }
         return nil
+    }
+
+    /// Recovers only a complete exact external-browser receipt from Peekaboo-owned metadata before
+    /// host-only endpoint fields are removed from the public namespace response.
+    private static func externalBrowserConnectionReceipt(from meta: Value?) -> BrowserMCPConnectionReceipt? {
+        guard case let .object(fields)? = meta else { return nil }
+        let receiptFields = fields["connection_receipt"]?.objectValue ??
+            fields[BrowserMCPExecutionEvidence.metadataKey]?.objectValue?["connection_receipt"]?.objectValue
+        guard let receiptFields,
+              receiptFields["pid"] == nil,
+              receiptFields["process_start_identity"] == nil,
+              receiptFields["process_start_identity_decimal"] == nil,
+              receiptFields["bundle_id"] == nil,
+              let browserURL = receiptFields["browser_url"]?.stringValue,
+              let browserID = receiptFields["browser_id"]?.stringValue,
+              !browserID.isEmpty,
+              let browserVersion = receiptFields["browser_version"]?.stringValue,
+              !browserVersion.isEmpty,
+              let protocolVersion = receiptFields["protocol_version"]?.stringValue,
+              !protocolVersion.isEmpty,
+              let endpoint = BrowserLoopbackEndpoint(browserURL: browserURL),
+              let webSocketDebuggerURL = self.externalBrowserWebSocketURL(
+                  fields: receiptFields,
+                  endpoint: endpoint,
+                  browserID: browserID)
+        else { return nil }
+        let channel: BrowserMCPChannel?
+        if let rawChannel = receiptFields["channel"]?.stringValue {
+            guard let parsed = BrowserMCPChannel(rawValue: rawChannel) else { return nil }
+            channel = parsed
+        } else {
+            channel = nil
+        }
+        return BrowserMCPConnectionReceipt(
+            channel: channel,
+            browserURL: endpoint.canonicalBrowserURL,
+            webSocketDebuggerURL: webSocketDebuggerURL,
+            devToolsBrowserID: browserID,
+            browserVersion: browserVersion,
+            protocolVersion: protocolVersion)
+    }
+
+    private static func externalBrowserWebSocketURL(
+        fields: [String: Value],
+        endpoint: BrowserLoopbackEndpoint,
+        browserID: String) -> String?
+    {
+        if let published = fields["websocket_debugger_url"]?.stringValue,
+           !endpoint.matchesWebSocketDebuggerURL(published, browserID: browserID)
+        {
+            return nil
+        }
+        guard var components = URLComponents(string: endpoint.canonicalBrowserURL) else { return nil }
+        components.scheme = "ws"
+        components.path = "/devtools/browser/\(browserID)"
+        guard let synthesized = components.url?.absoluteString,
+              endpoint.matchesWebSocketDebuggerURL(synthesized, browserID: browserID)
+        else { return nil }
+        return synthesized
     }
 
     private static func processIdentity(from fields: [String: Value]) -> DesktopTargetIdentity? {

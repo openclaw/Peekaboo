@@ -109,15 +109,20 @@ InjectedRuntimeBackedCommand {
           peekaboo browser connect --channel stable --foreground
           peekaboo browser new-page --url https://example.com
           peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
-          peekaboo browser namespace-create --namespace-file /private/path/browser-namespace.json
-          peekaboo browser list-pages --namespace-file /private/path/browser-namespace.json
-          peekaboo browser bind-window --namespace-file /private/path/browser-namespace.json \
+          peekaboo browser namespace-create --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
+          peekaboo browser list-pages --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
+          peekaboo browser bind-window --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock" \
             --page-id bp1_0123456789abcdef0123456789abcdef --pid 123 --window-id 456
-          peekaboo browser namespace-close --namespace-file /private/path/browser-namespace.json
+          peekaboo browser namespace-close --namespace-file ~/.peekaboo/browser-namespaces/work.json \
+            --bridge-socket "$HOME/Library/Application Support/Peekaboo/daemon.sock"
 
         Browser actions reuse an existing exact connection by default and never auto-connect.
         Connecting or allowing any foreground browser effect requires explicit --foreground.
-        Durable namespace actions require an explicit owner-only receipt file and a negotiated Bridge 1.38 host.
+        Durable namespace actions require an explicit owner-only receipt file and the same issuing Bridge 1.38 socket
+        on every invocation.
         """
     )
 

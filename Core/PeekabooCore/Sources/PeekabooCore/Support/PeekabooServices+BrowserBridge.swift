@@ -329,9 +329,25 @@ extension PeekabooServices: PeekabooBridgeBrowserCapabilityNamespaceProviding {
             meta: response.meta.map { try PeekabooBridgeJSONValue.fromCodable($0) },
             structuredContent: response.structuredContent.map { try PeekabooBridgeJSONValue.fromCodable($0) },
             nativeWindowReceipt: nativeReceipt)
+        let browserTargetReceipt: PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt?
+        if let external = result.externalBrowserConnectionReceipt {
+            guard let opaque = PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt(
+                namespaceID: namespaceID,
+                registryGenerationID: request.namespaceReceipt.payload.registryGenerationID,
+                externalConnectionReceipt: Self.bridgeReceipt(from: external))
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .internalError,
+                    message: "The scoped browser returned an invalid external target receipt")
+            }
+            browserTargetReceipt = opaque
+        } else {
+            browserTargetReceipt = nil
+        }
         return PeekabooBridgeBrowserCapabilityNamespaceServiceResult(
             response: bridgeResponse,
             targetIdentity: result.targetIdentity,
+            browserTargetReceipt: browserTargetReceipt,
             outcome: result.outcome)
     }
 

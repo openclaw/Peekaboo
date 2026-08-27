@@ -100,7 +100,9 @@ struct BrowserMCPDevToolsControlTransportFactory: Sendable {
 }
 
 actor BrowserMCPDevToolsControlSession {
-    private static let maximumPayloadBytes = 64 * 1024
+    private static let maximumRequestPayloadBytes = 64 * 1024
+    private static let maximumResponsePayloadBytes = 1024 * 1024
+    private static let maximumTargetCount = 4096
     private static let maximumTargetIDBytes = 1024
     private static let approvalTimeout: Duration = .seconds(60)
 
@@ -128,6 +130,18 @@ actor BrowserMCPDevToolsControlSession {
     }
 
     private struct EmptyParameters: Encodable {}
+
+    private struct TargetFilterEntry: Encodable {
+        let type: String?
+        let exclude: Bool
+    }
+
+    private struct TargetsParameters: Encodable {
+        let filter = [
+            TargetFilterEntry(type: "page", exclude: false),
+            TargetFilterEntry(type: nil, exclude: true),
+        ]
+    }
 
     private struct TargetParameters: Encodable {
         let targetId: String
@@ -256,9 +270,13 @@ actor BrowserMCPDevToolsControlSession {
     func getTargets(deadline: ContinuousClock.Instant) async throws -> [BrowserMCPDevToolsTargetInfo] {
         let request = try self.makeRequest(
             method: "Target.getTargets",
-            parameters: EmptyParameters(),
+            parameters: TargetsParameters(),
             deadline: deadline)
         let result: TargetsResult = try await self.perform(request)
+        guard result.targetInfos.count <= Self.maximumTargetCount else {
+            throw self.malformedResponse(
+                "Target.getTargets exceeded the bounded page-target inventory")
+        }
         var targetIDs = Set<String>()
         return try result.targetInfos.map { target in
             guard !target.targetId.isEmpty,
@@ -355,7 +373,7 @@ actor BrowserMCPDevToolsControlSession {
         self.receiveTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    let data = try await transport.receive(maximumPayloadBytes: Self.maximumPayloadBytes)
+                    let data = try await transport.receive(maximumPayloadBytes: Self.maximumResponsePayloadBytes)
                     guard let self else { return }
                     await self.receive(data)
                 } catch is CancellationError {
@@ -395,7 +413,7 @@ actor BrowserMCPDevToolsControlSession {
         }
         self.nextRequestID += 1
         let payload = try JSONEncoder().encode(Command(id: id, method: method, params: parameters))
-        guard payload.count <= Self.maximumPayloadBytes else {
+        guard payload.count <= Self.maximumRequestPayloadBytes else {
             throw BrowserMCPDevToolsControlError.malformedResponse(
                 "the \(method) request exceeded 64 KiB")
         }
@@ -476,9 +494,9 @@ actor BrowserMCPDevToolsControlSession {
 
     private func receive(_ data: Data) {
         guard self.controlState == .open else { return }
-        guard data.count <= Self.maximumPayloadBytes else {
+        guard data.count <= Self.maximumResponsePayloadBytes else {
             let failure = BrowserMCPDevToolsControlError.malformedResponse(
-                "a WebSocket payload exceeded 64 KiB")
+                "a WebSocket payload exceeded 1 MiB")
             self.terminate(state: .failed(failure), pendingError: failure)
             return
         }
@@ -659,7 +677,7 @@ private final class BrowserMCPURLSessionControlTransport: BrowserMCPDevToolsCont
         }
         guard data.count <= maximumPayloadBytes else {
             throw BrowserMCPDevToolsControlError.malformedResponse(
-                "a WebSocket payload exceeded 64 KiB")
+                "a WebSocket payload exceeded the bounded response size")
         }
         return data
     }

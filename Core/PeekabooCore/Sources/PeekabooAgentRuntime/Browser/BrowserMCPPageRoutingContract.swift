@@ -201,6 +201,19 @@ enum BrowserMCPPageRoutingContract {
         }
     }
 
+    static func executionDelivery(
+        for calls: some Collection<BrowserMCPMappedCall>) -> DesktopActionOutcome.Delivery
+    {
+        let foreground = calls.contains { call in
+            BrowserToolActionSemantics.requestsForegroundDelivery(toolName: call.toolName) { name in
+                call.arguments[name] as? Bool
+            }
+        }
+        return .init(
+            mechanism: .browserProtocol,
+            mode: foreground ? .foreground : .background)
+    }
+
     static func capabilityContract(
         for toolName: String,
         arguments: [String: Any] = [:]) -> BrowserMCPToolCapabilityContract?

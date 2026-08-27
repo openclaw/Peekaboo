@@ -16,6 +16,11 @@ struct BrowserMCPDevToolsControlSessionTests {
                         result: ["product": "Chrome/151.0", "protocolVersion": "1.3"])),
                 ]
             case "Target.getTargets":
+                let filter = request.params["filter"] as? [[String: Any]]
+                #expect(filter?.count == 2)
+                #expect(filter?.first?["type"] as? String == "page")
+                #expect(filter?.first?["exclude"] as? Bool == false)
+                #expect(filter?.last?["exclude"] as? Bool == true)
                 return [.success(Self.response(
                     id: request.id,
                     result: [
@@ -90,6 +95,40 @@ struct BrowserMCPDevToolsControlSessionTests {
     }
 
     @Test
+    func `valid page inventory larger than legacy 64 KiB remains usable`() async throws {
+        let pageCount = 1500
+        let transport = FakeControlTransport { command in
+            let request = try Self.decodeCommand(command)
+            if request.method == "Browser.getVersion" {
+                return [.success(Self.response(
+                    id: request.id,
+                    result: ["product": "Chrome/151.0", "protocolVersion": "1.3"]))]
+            }
+            let targets = (0..<pageCount).map { index in
+                [
+                    "targetId": "target-\(index)",
+                    "type": "page",
+                    "title": "Page \(index)",
+                    "url": "https://example.test/page/\(index)?value=abcdefghijklmnopqrstuvwxyz",
+                ]
+            }
+            let response = Self.response(id: request.id, result: ["targetInfos": targets])
+            #expect(response.count > 64 * 1024)
+            #expect(response.count < 1024 * 1024)
+            return [.success(response)]
+        }
+        let opener = FakeControlTransportOpener(transport: transport)
+        let connection = try await self.connect(opener)
+
+        let targets = try await connection.session.getTargets(deadline: Self.deadline(seconds: 2))
+
+        #expect(targets.count == pageCount)
+        #expect(await connection.session.state() == .open)
+        #expect(opener.openCount == 1)
+        await connection.session.close()
+    }
+
+    @Test
     func `unexpected response identity kills control without reopening`() async throws {
         let transport = FakeControlTransport { command in
             let request = try Self.decodeCommand(command)
@@ -128,7 +167,7 @@ struct BrowserMCPDevToolsControlSessionTests {
                     id: request.id,
                     result: ["product": "Chrome/151.0", "protocolVersion": "1.3"]))]
             }
-            return [.success(Data(repeating: 0x20, count: 64 * 1024 + 1))]
+            return [.success(Data(repeating: 0x20, count: 1024 * 1024 + 1))]
         }
         let opener = FakeControlTransportOpener(transport: transport)
         let connection = try await self.connect(opener)

@@ -527,16 +527,22 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     capabilities: capabilities,
                     manager: self,
                     deadline: request.deadline)
-                let nativeWindowReceipt = try await BrowserNativeWindowBindingCoordinator
-                    .revalidateHoldingAuthorities(
-                        pageReference: request.pageReference,
-                        context: context,
-                        control: control,
-                        receiptProviders: receiptProviders)
-                try Self.requireNativeBindingDeadline(request.deadline)
+                var nativeWindowReceipt: BrowserNativeWindowReceipt?
                 let result = try await self.executePreparedSequenceUnlocked(
                     request.calls,
-                    preparation: preparation)
+                    preparation: preparation,
+                    beforeMutatingCall: { _ in
+                        nativeWindowReceipt = try await BrowserNativeWindowBindingCoordinator
+                            .revalidateHoldingAuthorities(
+                                pageReference: request.pageReference,
+                                context: context,
+                                control: control,
+                                receiptProviders: receiptProviders)
+                        try Self.requireNativeBindingDeadline(request.deadline)
+                    })
+                guard let nativeWindowReceipt else {
+                    throw BrowserNativeWindowBindingCoordinatorError.invalidPageCapability
+                }
                 return BrowserNativeWindowBoundExecution(
                     result: result,
                     nativeWindowReceipt: nativeWindowReceipt)
@@ -619,7 +625,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private func executePreparedSequenceUnlocked(
         _ calls: [BrowserMCPMappedCall],
-        preparation: BrowserMCPPreparedExecution) async throws -> BrowserMCPExecutionResult
+        preparation: BrowserMCPPreparedExecution,
+        beforeMutatingCall: (@MainActor (BrowserMCPMappedCall) async throws -> Void)? = nil) async throws
+        -> BrowserMCPExecutionResult
     {
         let sessionBinding = preparation.sessionBinding
         let receipt = sessionBinding.connectionReceipt
@@ -634,7 +642,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         for (index, call) in calls.enumerated() {
             let current: ToolResponse
             do {
-                current = try await self.execute(call)
+                current = try await self.execute(
+                    call,
+                    beforeProviderDispatch: Self.actionSemantics(call) == .mutating
+                        ? beforeMutatingCall
+                        : nil)
             } catch let failure as BrowserMCPCallFailure {
                 failureStage = .call(index: index)
                 switch failure {
@@ -652,6 +664,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     }
                     actionFailure = Self.partialSequenceFailure(
                         completedCallCount: completedCallCount,
+                        delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(index)),
                         cause: cause)
                     response = .error(actionFailure?.message ?? "Browser sequence stopped")
                 case let .mayHaveDispatched(cause):
@@ -659,6 +672,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     actionFailure = Self.indeterminateSequenceFailure(
                         dispatchedCallCount: dispatchedCallCount,
                         completedCallCount: completedCallCount,
+                        delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(...index)),
                         cause: cause)
                     response = .error(actionFailure?.message ?? "Browser sequence completion is unknown")
                     shouldValidateConnection = false
@@ -671,6 +685,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 actionFailure = Self.indeterminateSequenceFailure(
                     dispatchedCallCount: dispatchedCallCount,
                     completedCallCount: completedCallCount,
+                    delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(...index)),
                     cause: error)
                 response = .error(actionFailure?.message ?? "Browser sequence completion is unknown")
                 shouldValidateConnection = false
@@ -686,6 +701,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 actionFailure = Self.indeterminateSequenceFailure(
                     dispatchedCallCount: dispatchedCallCount,
                     completedCallCount: completedCallCount,
+                    delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls.prefix(...index)),
                     causeDescription: "The browser tool returned an error response.")
                 break
             }
@@ -705,6 +721,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 actionFailure = Self.indeterminateSequenceFailure(
                     dispatchedCallCount: dispatchedCallCount,
                     completedCallCount: completedCallCount,
+                    delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls),
                     cause: error)
                 response = .error(actionFailure?.message ?? "Browser connection completion is unknown")
                 await self.clearConnection()
@@ -883,10 +900,12 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private static func partialSequenceFailure(
         completedCallCount: Int,
+        delivery: DesktopActionOutcome.Delivery,
         cause: any Error) -> DesktopActionFailure
     {
         self.partialSequenceFailure(
             completedCallCount: completedCallCount,
+            delivery: delivery,
             causeDescription: self.errorDescription(cause))
     }
 
@@ -928,10 +947,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private static func partialSequenceFailure(
         completedCallCount: Int,
+        delivery: DesktopActionOutcome.Delivery,
         causeDescription: String) -> DesktopActionFailure
     {
         .partial(
-            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            delivery: delivery,
             unitCount: self.dispatchUnitCount(completedCallCount),
             message: "Browser execution stopped after \(completedCallCount) completed tool call(s).",
             hint: "Do not retry the whole sequence; observe the browser and resume only the unfinished suffix.",
@@ -941,24 +961,27 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private static func indeterminateSequenceFailure(
         dispatchedCallCount: Int,
         completedCallCount: Int? = nil,
+        delivery: DesktopActionOutcome.Delivery,
         cause: any Error) -> DesktopActionFailure
     {
         self.indeterminateSequenceFailure(
             dispatchedCallCount: dispatchedCallCount,
             completedCallCount: completedCallCount,
+            delivery: delivery,
             causeDescription: self.errorDescription(cause))
     }
 
     private static func indeterminateSequenceFailure(
         dispatchedCallCount: Int,
         completedCallCount: Int? = nil,
+        delivery: DesktopActionOutcome.Delivery,
         causeDescription: String) -> DesktopActionFailure
     {
         let progress = completedCallCount.map {
             "\($0) completed, \(dispatchedCallCount) dispatched or accepted"
         } ?? "\(dispatchedCallCount) dispatched or accepted"
         return .indeterminate(
-            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            delivery: delivery,
             evidence: .completionUnknown,
             unitCount: self.dispatchUnitCount(dispatchedCallCount),
             message: "Browser execution stopped with \(progress) tool call(s).",
@@ -977,13 +1000,23 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 
-    private func execute(_ call: BrowserMCPMappedCall) async throws -> ToolResponse {
+    private func execute(
+        _ call: BrowserMCPMappedCall,
+        beforeProviderDispatch: (@MainActor (BrowserMCPMappedCall) async throws -> Void)? = nil) async throws
+        -> ToolResponse
+    {
         do {
             try Task.checkCancellation()
         } catch {
             throw BrowserMCPCallFailure.preDispatch(error)
         }
         guard call.toolName == "upload_file" else {
+            do {
+                try await beforeProviderDispatch?(call)
+                try Task.checkCancellation()
+            } catch {
+                throw BrowserMCPCallFailure.preDispatch(error)
+            }
             do {
                 return try await self.manager.executeTool(
                     serverName: self.serverName,
@@ -1012,6 +1045,12 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         var stagedArguments = call.arguments
         stagedArguments["filePath"] = stagedUpload.filePath
+        do {
+            try await beforeProviderDispatch?(call)
+            try Task.checkCancellation()
+        } catch {
+            throw BrowserMCPCallFailure.preDispatch(error)
+        }
         let uploadID = UUID()
         self.activeUploadID = uploadID
         do {

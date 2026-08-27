@@ -43,15 +43,43 @@ fail and require an explicit reconnect.
 Browser `type` and `press-key` require `--uid` from a fresh snapshot. Peekaboo focuses that exact page element and sends
 the keyboard operation as one daemon-owned sequence rather than inheriting whichever control another caller focused.
 Process-local persistent MCP and Agent callers receive opaque, session-owned page and element references instead of
-these raw CLI compatibility values. Those references also bind the exact provider child, cannot cross caller sessions,
-and expire after a newer snapshot, navigation, disconnect, connection replacement, or session end. Bridge-backed
-opaque-reference sessions currently fail closed pending an authenticated browser-session wire namespace.
+these raw CLI compatibility values. Those references bind the exact provider child, cannot cross caller sessions, and
+expire after a newer snapshot, navigation, disconnect, connection replacement, or session end. A durable CLI workflow
+uses the same authority model through an authenticated Bridge 1.38 namespace.
 
-`browser bind-window` is intentionally unavailable to standalone CLI invocations. A one-shot CLI process cannot retain
-the caller-owned opaque page capability or native binding, and the daemon's legacy shared browser state is not a safe
-substitute. Use one process-local MCP or Agent browser session. Durable CLI binding will require an authenticated Bridge
-1.38 browser namespace receipt; until that wire contract exists, the CLI refuses before runtime discovery or provider
-dispatch.
+## Durable Bridge namespaces
+
+Create a namespace in an owner-private state file, then pass both that file and the exact issuing Bridge socket on every
+invocation. The destination must be absent. Peekaboo creates a missing final parent directory with mode `0700`; an
+existing parent must already be owned by the current user, mode `0700`, and free of extended ACLs. The created receipt
+is a bounded regular file with mode `0600`.
+
+```bash
+NAMESPACE_FILE="$HOME/.peekaboo/browser-namespaces/work.json"
+BRIDGE_SOCKET="$HOME/Library/Application Support/Peekaboo/daemon.sock"
+
+peekaboo browser namespace-create \
+  --namespace-file "$NAMESPACE_FILE" --bridge-socket "$BRIDGE_SOCKET"
+peekaboo browser connect --channel stable --foreground \
+  --namespace-file "$NAMESPACE_FILE" --bridge-socket "$BRIDGE_SOCKET"
+peekaboo browser list-pages \
+  --namespace-file "$NAMESPACE_FILE" --bridge-socket "$BRIDGE_SOCKET"
+peekaboo browser bind-window --page-id bp1_... --pid 123 --window-id 456 \
+  --namespace-file "$NAMESPACE_FILE" --bridge-socket "$BRIDGE_SOCKET"
+peekaboo browser snapshot --page-id bp1_... \
+  --namespace-file "$NAMESPACE_FILE" --bridge-socket "$BRIDGE_SOCKET"
+peekaboo browser namespace-close \
+  --namespace-file "$NAMESPACE_FILE" --bridge-socket "$BRIDGE_SOCKET"
+```
+
+`connect` and any operation that intentionally brings a page forward still require `--foreground`; page-targeted work
+remains background by default. The opaque `bp1_`/`be1_` references never expose provider target IDs. The namespace
+receipt is bound to one Bridge listener generation and principal, so another socket or a restarted listener refuses it
+before provider dispatch. `namespace-close` removes the local receipt only after that exact host confirms closure.
+
+Native `bind-window` requires a process-bound official Chrome channel connection. Explicit loopback URLs may be used
+for unbound namespace actions but cannot claim native PID/window binding. Legacy browser commands without
+`--namespace-file` retain their numeric page-ID compatibility path and cannot borrow namespace capabilities.
 
 `browser upload-file` requires `--page-id`, a fresh file-input `--uid`, and an absolute `--path` to a current-user
 regular file no larger than 100 MiB. Peekaboo never grants Chrome DevTools MCP unrestricted filesystem access. The daemon

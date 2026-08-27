@@ -12,6 +12,18 @@ enum PeekabooBridgeBrowserCapabilityNamespaceReceiptValidation {
               !PeekabooBridgeOperationResultSemantics.isNoDispatchFailure(response)
         else { return }
         let responseReceipt = response.browserCapabilityNamespaceResponse?.nativeWindowReceipt
+        if case let .browserCapabilityNamespace(signedTarget) = payload.target {
+            guard responseReceipt == nil,
+                  case let .browserCapabilityNamespace(namespaceRequest) = request.unwrappedOperationRequest,
+                  namespaceRequest.namespaceReceipt.payload.namespaceID == signedTarget.namespaceID,
+                  namespaceRequest.namespaceReceipt.payload.registryGenerationID == signedTarget.registryGenerationID,
+                  signedTarget.isCanonical
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "opaque browser namespace target")
+            }
+            return
+        }
         guard case let .window(signedWindow) = payload.target else {
             guard responseReceipt == nil else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(

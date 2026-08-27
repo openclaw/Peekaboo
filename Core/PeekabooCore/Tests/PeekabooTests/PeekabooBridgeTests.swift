@@ -2027,6 +2027,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserDispatchedCallCount: Int?
     var preservesBrowserReceiptChannel = false
     var browserNamespacePrepareCount = 0
+    var browserNamespacePrepareError: (any Error)?
     var browserNamespaceOpenedIDs: Set<UUID> = []
     var browserNamespaceExecutedIDs: [UUID] = []
     var browserNamespaceClosedIDs: [UUID] = []

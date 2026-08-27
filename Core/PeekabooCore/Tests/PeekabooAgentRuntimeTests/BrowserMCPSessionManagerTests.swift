@@ -1832,8 +1832,40 @@ extension BrowserMCPSessionManagerTests {
             channel: .stable)
 
         #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .background))
         #expect(result.outcome?.dispatchState.unitCount?.rawValue == 2)
         #expect(manager.executedTools == ["click", "type_text"])
+    }
+
+    @Test
+    func `page fronting mutations report foreground provider delivery`() async throws {
+        let manager = MockBrowserMCPManager()
+        let session = Self.exactSession(manager: manager)
+        _ = try await session.connect(channel: .stable)
+        manager.executedTools.removeAll()
+        let service = BrowserMCPService(sessionManager: session)
+        let calls = [
+            BrowserMCPMappedCall(
+                toolName: "select_page",
+                arguments: ["pageId": 7, "bringToFront": true]),
+            BrowserMCPMappedCall(
+                toolName: "new_page",
+                arguments: ["url": "https://example.test/", "background": false]),
+        ]
+
+        for call in calls {
+            let result = try await service.executeSequenceWithOutcome([call], channel: .stable)
+            #expect(result.outcome?.state == .dispatchedUnverified)
+            #expect(result.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
+            #expect(result.outcome?.dispatchState.unitCount == .one)
+        }
+
+        #expect(manager.executedTools == ["select_page", "new_page"])
+
+        manager.executeHandler = { _, _ in ToolResponse.error("provider refused after entry") }
+        let failed = try await service.executeSequenceWithOutcome([calls[0]], channel: .stable)
+        #expect(failed.outcome?.state == .indeterminate)
+        #expect(failed.outcome?.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
     }
 
     @Test

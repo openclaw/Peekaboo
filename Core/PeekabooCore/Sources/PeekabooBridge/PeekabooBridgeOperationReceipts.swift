@@ -51,6 +51,64 @@ public struct PeekabooBridgeOperationProcessIdentity: Codable, Equatable, Sendab
     }
 }
 
+/// Opaque attestation for an exact external browser owned by one scoped namespace.
+///
+/// The canonical connection receipt stays host-private. Its digest proves stable target continuity
+/// without publishing the DevTools WebSocket or browser identity as reusable authority.
+public struct PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt: Codable, Equatable, Sendable {
+    public let namespaceID: UUID
+    public let registryGenerationID: UUID
+    public let connectionReceiptSHA256: String
+
+    public init?(
+        namespaceID: UUID,
+        registryGenerationID: UUID,
+        externalConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt)
+    {
+        guard externalConnectionReceipt.isCanonicalExternalTarget,
+              let digest = try? PeekabooBridgeOperationReceiptCoding.sha256(externalConnectionReceipt)
+        else { return nil }
+        self.namespaceID = namespaceID
+        self.registryGenerationID = registryGenerationID
+        self.connectionReceiptSHA256 = digest
+        guard self.isCanonical else { return nil }
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case namespaceID
+        case registryGenerationID
+        case connectionReceiptSHA256
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.namespaceID = try container.decode(UUID.self, forKey: .namespaceID)
+        self.registryGenerationID = try container.decode(UUID.self, forKey: .registryGenerationID)
+        self.connectionReceiptSHA256 = try container.decode(String.self, forKey: .connectionReceiptSHA256)
+        guard self.isCanonical else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .connectionReceiptSHA256,
+                in: container,
+                debugDescription: "Browser namespace target receipt is incomplete or malformed")
+        }
+    }
+
+    var isCanonical: Bool {
+        Self.isVersion4(self.namespaceID) &&
+            Self.isVersion4(self.registryGenerationID) &&
+            self.connectionReceiptSHA256.utf8.count == 64 &&
+            self.connectionReceiptSHA256.contains { $0 != "0" } &&
+            self.connectionReceiptSHA256.utf8.allSatisfy { byte in
+                (0x30...0x39).contains(byte) || (0x61...0x66).contains(byte)
+            }
+    }
+
+    private static func isVersion4(_ value: UUID) -> Bool {
+        let bytes = withUnsafeBytes(of: value.uuid) { Array($0) }
+        return bytes[6] >> 4 == 4 && bytes[8] >> 6 == 2 && bytes.contains { $0 != 0 }
+    }
+}
+
 /// The canonical stable target coalesced from request, response, and execution-owner evidence.
 ///
 /// Leaf services remain responsible for validating their native target immediately before dispatch;
@@ -60,6 +118,7 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
     case process(ApplicationProcessIdentity)
     case window(WindowMutationIdentity)
     case browser(PeekabooBridgeBrowserConnectionReceipt)
+    case browserCapabilityNamespace(PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt)
 
     private enum CodingKeys: String, CodingKey {
         case kind
@@ -69,6 +128,7 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
         case capturedBounds
         case isMinimized
         case browserConnectionReceipt
+        case browserCapabilityNamespaceTargetReceipt
     }
 
     private enum Kind: String, Codable {
@@ -76,6 +136,7 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
         case process
         case window
         case browser
+        case browserCapabilityNamespace
     }
 
     public init(from decoder: any Decoder) throws {
@@ -118,6 +179,10 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
                     debugDescription: "Bridge browser target receipt is incomplete or inconsistent")
             }
             self = .browser(receipt)
+        case .browserCapabilityNamespace:
+            self = try .browserCapabilityNamespace(container.decode(
+                PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt.self,
+                forKey: .browserCapabilityNamespaceTargetReceipt))
         }
     }
 
@@ -152,6 +217,16 @@ public enum PeekabooBridgeOperationTargetReceipt: Codable, Equatable, Sendable {
             }
             try container.encode(Kind.browser, forKey: .kind)
             try container.encode(receipt, forKey: .browserConnectionReceipt)
+        case let .browserCapabilityNamespace(receipt):
+            guard receipt.isCanonical else {
+                throw EncodingError.invalidValue(
+                    receipt,
+                    .init(
+                        codingPath: container.codingPath,
+                        debugDescription: "Bridge browser namespace target receipt is incomplete or malformed"))
+            }
+            try container.encode(Kind.browserCapabilityNamespace, forKey: .kind)
+            try container.encode(receipt, forKey: .browserCapabilityNamespaceTargetReceipt)
         }
     }
 

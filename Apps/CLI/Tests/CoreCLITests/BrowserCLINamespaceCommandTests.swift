@@ -63,6 +63,50 @@ struct BrowserCLINamespaceCommandTests {
     }
 
     @Test
+    func `production executor preserves configured namespace runtime requirements`() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-cli-namespace-runtime-options-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let resolved = try CommanderRuntimeRouter.resolve(argv: [
+            "peekaboo",
+            "browser",
+            "namespace-create",
+            "--namespace-file",
+            root.appendingPathComponent("namespace.json").path,
+            "--bridge-socket",
+            "/private/tmp/peekaboo-namespace-runtime-options.sock",
+            "--json",
+        ])
+        var receivedOptions: CommandRuntimeOptions?
+
+        do {
+            try await CommanderRuntimeExecutor.run(
+                resolved: resolved,
+                runtimeFactory: .init { options in
+                    receivedOptions = options
+                    throw NamespaceRuntimeConstructionProbe.reached
+                }
+            )
+            Issue.record("Expected runtime construction probe")
+        } catch NamespaceRuntimeConstructionProbe.reached {
+            // Expected after the configured options reach runtime construction.
+        }
+
+        let options = try #require(receivedOptions)
+        #expect(options.requiresBrowserCapabilityNamespace)
+        #expect(!options.requiresBrowserMCP)
+        #expect(options.ignoresCaptureEnginePreference)
+    }
+
+    @Test
     func `remote services expose namespace adapter only after negotiated construction`() {
         let client = PeekabooBridgeClient(socketPath: "/tmp/peekaboo-unused-browser-namespace.sock")
         let legacy = RemotePeekabooServices(client: client)
@@ -213,6 +257,39 @@ struct BrowserCLINamespaceCommandTests {
     }
 
     @Test
+    func `namespace actions require the issuing Bridge socket on every invocation`() throws {
+        let namespaceFile = "/private/tmp/fixture-browser-namespace.json"
+        let requests: [(action: String, options: [String: [String]])] = [
+            ("namespace-create", ["namespaceFile": [namespaceFile]]),
+            ("namespace-close", ["namespaceFile": [namespaceFile]]),
+            ("list-pages", ["namespaceFile": [namespaceFile]]),
+            (
+                "bind-window",
+                [
+                    "pageId": [Self.pageReference],
+                    "pid": ["123"],
+                    "windowId": ["456"],
+                    "namespaceFile": [namespaceFile],
+                ]
+            ),
+        ]
+
+        for request in requests {
+            let command = try CommanderCLIBinder.instantiateCommand(
+                ofType: BrowserCommand.self,
+                parsedValues: ParsedValues(
+                    positional: [request.action],
+                    options: request.options,
+                    flags: []
+                )
+            )
+            #expect(throws: BrowserCLINamespaceCommandError.missingBridgeSocket) {
+                try command.validateBeforeRuntime()
+            }
+        }
+    }
+
+    @Test
     func `ordinary browser actions retain numeric page IDs and legacy browser routing`() throws {
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: BrowserCommand.self,
@@ -323,16 +400,22 @@ struct BrowserCLINamespaceCommandTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
         defer { try? FileManager.default.removeItem(at: root) }
         let namespacePath = root.appendingPathComponent("namespace.json").path
+        let socketPath = "/private/tmp/fixture-browser-namespace.sock"
 
         var create = try CommanderCLIBinder.instantiateCommand(
             ofType: BrowserCommand.self,
             parsedValues: ParsedValues(
                 positional: ["namespace-create"],
-                options: ["namespaceFile": [namespacePath]],
+                options: [
+                    "namespaceFile": [namespacePath],
+                    "bridge-socket": [socketPath],
+                ],
                 flags: []
             )
         )
-        create.setRuntimeOptions(CommandRuntimeOptions())
+        var createRuntimeOptions = CommandRuntimeOptions()
+        createRuntimeOptions.bridgeSocketPath = socketPath
+        create.setRuntimeOptions(createRuntimeOptions)
         #expect(create.runtimeOptions.requiresBrowserCapabilityNamespace)
         #expect(!create.runtimeOptions.requiresBrowserMCP)
         try create.validateBeforeRuntime()
@@ -344,7 +427,10 @@ struct BrowserCLINamespaceCommandTests {
             ofType: BrowserCommand.self,
             parsedValues: ParsedValues(
                 positional: ["list-pages"],
-                options: ["namespaceFile": [namespacePath]],
+                options: [
+                    "namespaceFile": [namespacePath],
+                    "bridge-socket": [socketPath],
+                ],
                 flags: []
             )
         )
@@ -403,7 +489,10 @@ struct BrowserCLINamespaceCommandTests {
             ofType: BrowserCommand.self,
             parsedValues: ParsedValues(
                 positional: ["namespace-close"],
-                options: ["namespaceFile": [namespacePath]],
+                options: [
+                    "namespaceFile": [namespacePath],
+                    "bridge-socket": [socketPath],
+                ],
                 flags: []
             )
         )
@@ -501,6 +590,9 @@ struct BrowserCLINamespaceCommandTests {
         if options["namespaceFile"] == nil {
             options["namespaceFile"] = ["/private/tmp/fixture-browser-namespace.json"]
         }
+        if options["bridge-socket"] == nil {
+            options["bridge-socket"] = ["/private/tmp/fixture.sock"]
+        }
         var command = try CommanderCLIBinder.instantiateCommand(
             ofType: BrowserCommand.self,
             parsedValues: ParsedValues(
@@ -517,6 +609,10 @@ struct BrowserCLINamespaceCommandTests {
         command.setRuntimeOptions(runtimeOptions)
         return command
     }
+}
+
+private enum NamespaceRuntimeConstructionProbe: Error {
+    case reached
 }
 
 @MainActor

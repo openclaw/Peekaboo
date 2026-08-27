@@ -69,15 +69,18 @@ public protocol PeekabooBridgeBrowserCapabilityNamespaceProviding: PeekabooBridg
 public struct PeekabooBridgeBrowserCapabilityNamespaceServiceResult: Sendable {
     public let response: PeekabooBridgeBrowserCapabilityNamespaceActionResponse
     public let targetIdentity: DesktopTargetIdentity?
+    public let browserTargetReceipt: PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt?
     public let outcome: DesktopActionOutcome?
 
     public init(
         response: PeekabooBridgeBrowserCapabilityNamespaceActionResponse,
         targetIdentity: DesktopTargetIdentity? = nil,
+        browserTargetReceipt: PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt? = nil,
         outcome: DesktopActionOutcome? = nil)
     {
         self.response = response
         self.targetIdentity = targetIdentity
+        self.browserTargetReceipt = browserTargetReceipt
         self.outcome = outcome
     }
 }

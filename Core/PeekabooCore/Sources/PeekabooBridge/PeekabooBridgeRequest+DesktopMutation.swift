@@ -154,16 +154,6 @@ extension PeekabooBridgeRequest {
                 message: "This browser namespace action requires explicit foreground authority.",
                 hint: "Retry only with foreground_allowed when interrupting the user is intentional.")
         }
-        if case let .executeAction(action) = payload.action,
-           action.action == .connect,
-           action.arguments["browser_url"] != nil
-        {
-            throw DesktopActionFailure.preDispatchRefusal(
-                route: .bridge,
-                reason: .invalidRequest,
-                message: "Browser capability namespaces do not accept explicit DevTools endpoints.",
-                hint: "Connect by signed local process/channel discovery, then bind an opaque page to a native window.")
-        }
     }
 
     var requiresRequestPinnedExactWindowScrollReceipt: Bool {

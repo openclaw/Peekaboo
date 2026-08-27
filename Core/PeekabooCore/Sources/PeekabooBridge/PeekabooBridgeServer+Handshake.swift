@@ -75,17 +75,15 @@ extension PeekabooBridgeServer {
         var enabledOps = compatibleOperations.enabled
         let clientCapabilities = Set(payload.clientCapabilities ?? [])
         let browserNamespaceOperations = PeekabooBridgeOperation.browserCapabilityNamespaceOperations
-        let browserNamespaceService = self.services as? any PeekabooBridgeBrowserCapabilityNamespaceProviding
         let supportsBrowserCapabilityNamespaces =
             PeekabooBridgeBrowserCapabilityNamespaceNegotiation.sessionCanNegotiateCapabilities(.init(
                 host: .init(
                     hostKind: self.hostKind,
                     maximumProtocolVersion: negotiated,
                     allowedOperations: Set(advertisedOps).intersection(enabledOps),
-                    supportsBrowserCapabilityNamespaces:
-                    browserNamespaceService?.supportsBrowserCapabilityNamespaces == true,
-                    supportsNativeBrowserWindowBinding:
-                    browserNamespaceService?.supportsNativeBrowserWindowBinding == true),
+                    supportsBrowserCapabilityNamespaces: self.browserCapabilityNamespacesAvailable,
+                    supportsNativeBrowserWindowBinding: self.hostCapabilities.contains(
+                        PeekabooBridgeHostCapability.nativeBrowserWindowBinding)),
                 usesAttestedOperationReceipts: supportsAttestedOperationReceipts,
                 clientCapabilities: clientCapabilities))
         if !supportsBrowserCapabilityNamespaces {
@@ -459,11 +457,7 @@ extension PeekabooBridgeServer {
         var operations = self.allowedOperations
         // Retain the wire enum for old-client decoding, but current hosts never advertise or execute the probe.
         operations.remove(._appleScriptProbe)
-        let browserNamespaceService = self.services as? any PeekabooBridgeBrowserCapabilityNamespaceProviding
-        if self.hostKind != .onDemand ||
-            browserNamespaceService?.supportsBrowserCapabilityNamespaces != true ||
-            browserNamespaceService?.supportsNativeBrowserWindowBinding != true
-        {
+        if !self.browserCapabilityNamespacesAvailable {
             operations.subtract(PeekabooBridgeOperation.browserCapabilityNamespaceOperations)
         }
         if self.daemonControl == nil {

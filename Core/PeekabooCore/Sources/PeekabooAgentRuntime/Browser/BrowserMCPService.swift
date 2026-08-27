@@ -836,6 +836,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         let projected = try result.projectingMutationProgress(for: calls)
         let executionOutcome: DesktopActionOutcome? = if plannedMutationCount > 0 {
             projected.actionFailure?.outcome ?? Self.successOutcome(
+                calls: calls,
                 dispatchedCallCount: plannedMutationCount)
         } else if projected.connectionOutcome != nil {
             projected.actionFailure?.outcome
@@ -958,12 +959,15 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             headless: headless)
     }
 
-    private static func successOutcome(dispatchedCallCount: Int) -> DesktopActionOutcome {
+    private static func successOutcome(
+        calls: [BrowserMCPMappedCall],
+        dispatchedCallCount: Int) -> DesktopActionOutcome
+    {
         guard let unitCount = DesktopActionOutcome.DispatchUnitCount(dispatchedCallCount) else {
             preconditionFailure("A successful browser execution must dispatch at least one call")
         }
         return .dispatchedUnverified(
-            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            delivery: BrowserMCPPageRoutingContract.executionDelivery(for: calls),
             evidence: .deliveryAccepted,
             unitCount: unitCount)
     }

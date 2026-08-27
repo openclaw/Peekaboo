@@ -367,6 +367,7 @@ enum BrowserCLINamespaceCommandError: LocalizedError, ResultEnvelopeError, Equat
     case invalidWindowID
     case missingNamespaceFile
     case invalidNamespaceFile
+    case missingBridgeSocket
     case unsupportedNamespaceAction(String)
     case unsupportedArguments([String])
     case localExecutionRefused
@@ -387,6 +388,8 @@ enum BrowserCLINamespaceCommandError: LocalizedError, ResultEnvelopeError, Equat
             "Browser namespace actions require an explicit --namespace-file."
         case .invalidNamespaceFile:
             "--namespace-file must resolve to an absolute browser namespace receipt path."
+        case .missingBridgeSocket:
+            "Durable browser namespace actions require the exact issuing --bridge-socket on every invocation."
         case let .unsupportedNamespaceAction(action):
             "Browser action '\(action)' is not in the closed Bridge 1.38 namespace action set."
         case let .unsupportedArguments(arguments):
@@ -426,6 +429,9 @@ enum BrowserCLINamespaceCommandError: LocalizedError, ResultEnvelopeError, Equat
                 "this namespace."
         case .missingNamespaceFile, .invalidNamespaceFile:
             "Pass the exact owner-private receipt file created for this authenticated Bridge namespace."
+        case .missingBridgeSocket:
+            "Repeat the same explicit --bridge-socket used by namespace-create; " +
+                "another listener will reject the receipt."
         case .unsupportedNamespaceAction:
             "Use one documented high-level browser action; raw call/provider tools are intentionally unavailable."
         case .unsupportedArguments:
@@ -459,8 +465,10 @@ extension BrowserCommand {
             }
             switch control {
             case .create:
+                try self.requireExplicitNamespaceBridgeSocket()
                 try store.validateCanSaveBeforeRuntime()
             case .close:
+                try self.requireExplicitNamespaceBridgeSocket()
                 _ = try store.load()
             }
             return
@@ -471,6 +479,7 @@ extension BrowserCommand {
             return
         }
         _ = try self.namespaceHighLevelActionRequest()
+        try self.requireExplicitNamespaceBridgeSocket()
         _ = try store.load()
     }
 
@@ -532,6 +541,7 @@ extension BrowserCommand {
         guard let exactWindowID = UInt32(exactly: windowID), exactWindowID > 0 else {
             throw BrowserCLINamespaceCommandError.invalidWindowID
         }
+        try self.requireExplicitNamespaceBridgeSocket()
         return BrowserCLINamespaceBindWindowRequest(
             pageID: pageReference,
             processIdentifier: exactProcessIdentifier,
@@ -598,6 +608,15 @@ extension BrowserCommand {
     private func requireRemoteNamespaceRouting(environment: [String: String]) throws {
         guard !self.runtimeOptions.remoteIsolationRequested, environment["PEEKABOO_NO_REMOTE"] == nil else {
             throw BrowserCLINamespaceCommandError.localExecutionRefused
+        }
+    }
+
+    private func requireExplicitNamespaceBridgeSocket() throws {
+        guard let socketPath = self.runtimeOptions.bridgeSocketPath?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !socketPath.isEmpty
+        else {
+            throw BrowserCLINamespaceCommandError.missingBridgeSocket
         }
     }
 

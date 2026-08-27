@@ -80,6 +80,9 @@ struct BrowserNativeWindowBindingCoordinatorTests {
                 ToolResponse.error("unexpected bound tool")
             }
         }
+        let validationsBefore = try fixture.transport.sentCommands()
+            .map(BrowserMCPDevToolsControlSessionTests.decodeCommand)
+            .count(where: { $0.method == "Target.getTargets" })
 
         let execution = try await fixture.capabilities.withExclusiveOperation {
             try await fixture.manager.executeNativeWindowBoundSequence(
@@ -99,6 +102,94 @@ struct BrowserNativeWindowBindingCoordinatorTests {
         #expect(!execution.result.response.isError)
         #expect(execution.nativeWindowReceipt == proof.nativeWindowReceipt)
         #expect(fixture.provider.executedTools.suffix(2) == ["take_snapshot", "click"])
+        let validationsAfter = try fixture.transport.sentCommands()
+            .map(BrowserMCPDevToolsControlSessionTests.decodeCommand)
+            .count(where: { $0.method == "Target.getTargets" })
+        #expect(validationsAfter == validationsBefore + 1)
+        await fixture.control.close()
+    }
+
+    @Test
+    func `bound multi call mutation revalidates immediately before every provider leaf`() async throws {
+        let fixture = try await Self.fixture()
+        _ = try await BrowserNativeWindowBindingCoordinator.bind(
+            pageReference: fixture.pageReference,
+            nativeTarget: Self.nativeTarget,
+            context: fixture.context,
+            dependencies: Self.dependencies())
+        fixture.provider.executeHandler = { _, _ in ToolResponse.text("ok") }
+        let validationsBefore = try fixture.transport.sentCommands()
+            .map(BrowserMCPDevToolsControlSessionTests.decodeCommand)
+            .count(where: { $0.method == "Target.getTargets" })
+
+        let execution = try await fixture.capabilities.withExclusiveOperation {
+            try await fixture.manager.executeNativeWindowBoundSequence(
+                .init(
+                    calls: [
+                        BrowserMCPMappedCall(toolName: "click", arguments: ["pageId": 7, "uid": "1_0"]),
+                        BrowserMCPMappedCall(toolName: "type_text", arguments: ["pageId": 7, "text": "value"]),
+                    ],
+                    channel: .stable,
+                    sessionBinding: fixture.sessionBinding,
+                    elementPreflight: nil,
+                    pageReference: fixture.pageReference,
+                    deadline: Self.deadline),
+                capabilities: fixture.capabilities,
+                receiptProviders: Self.providers())
+        }
+
+        let validationsAfter = try fixture.transport.sentCommands()
+            .map(BrowserMCPDevToolsControlSessionTests.decodeCommand)
+            .count(where: { $0.method == "Target.getTargets" })
+        #expect(validationsAfter == validationsBefore + 2)
+        #expect(execution.result.completedCallCount == 2)
+        #expect(execution.result.dispatchedCallCount == 2)
+        #expect(fixture.provider.executedTools.suffix(2) == ["click", "type_text"])
+        await fixture.control.close()
+    }
+
+    @Test
+    func `target drift between bound calls preserves the completed prefix and skips the second leaf`() async throws {
+        let moved = LockedBoolean()
+        let fixture = try await Self.fixture(windowID: { moved.value ? 42 : 41 })
+        _ = try await BrowserNativeWindowBindingCoordinator.bind(
+            pageReference: fixture.pageReference,
+            nativeTarget: Self.nativeTarget,
+            context: fixture.context,
+            dependencies: Self.dependencies())
+        fixture.provider.executeHandler = { toolName, _ in
+            if toolName == "click" {
+                moved.value = true
+            }
+            return ToolResponse.text("ok")
+        }
+
+        let execution = try await fixture.capabilities.withExclusiveOperation {
+            try await fixture.manager.executeNativeWindowBoundSequence(
+                .init(
+                    calls: [
+                        BrowserMCPMappedCall(toolName: "click", arguments: ["pageId": 7, "uid": "1_0"]),
+                        BrowserMCPMappedCall(toolName: "type_text", arguments: ["pageId": 7, "text": "value"]),
+                    ],
+                    channel: .stable,
+                    sessionBinding: fixture.sessionBinding,
+                    elementPreflight: nil,
+                    pageReference: fixture.pageReference,
+                    deadline: Self.deadline),
+                capabilities: fixture.capabilities,
+                receiptProviders: Self.providers())
+        }
+
+        #expect(execution.result.completedCallCount == 1)
+        #expect(execution.result.dispatchedCallCount == 1)
+        #expect(execution.result.actionFailure?.outcome.state == .partial)
+        #expect(execution.result.actionFailure?.outcome.retrySafety == .unsafe)
+        #expect(fixture.provider.executedTools.suffix(1) == ["click"])
+        await #expect(throws: BrowserToolNativeWindowBindingError.stalePageReference) {
+            _ = try await fixture.capabilities.nativeWindowBinding(
+                pageReference: fixture.pageReference,
+                sessionBinding: fixture.sessionBinding)
+        }
         await fixture.control.close()
     }
 

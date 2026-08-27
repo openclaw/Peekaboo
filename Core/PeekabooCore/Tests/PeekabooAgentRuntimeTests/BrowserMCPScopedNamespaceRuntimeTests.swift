@@ -316,6 +316,46 @@ struct BrowserMCPScopedNamespaceRuntimeTests {
     }
 
     @Test
+    func `external connect retains only host private exact target evidence`() async throws {
+        let fixture = NamespaceRuntimeFixture()
+        let namespaceID = Self.namespaceID(15)
+        try fixture.runtime.open(namespaceID)
+        let session = try #require(fixture.sessions[namespaceID])
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        session.response = try ToolResponse.text(
+            "connected",
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: [
+                    "connection_receipt": .object([
+                        "browser_url": .string("http://127.0.0.1:9222/"),
+                        "browser_id": .string("private-browser"),
+                        "browser_version": .string("Chrome/151.0"),
+                        "protocol_version": .string("1.3"),
+                    ]),
+                ],
+                outcome: outcome))
+
+        let connected = try await fixture.runtime.execute(
+            in: namespaceID,
+            arguments: ToolArguments(raw: ["action": "connect", "browser_url": "http://127.0.0.1:9222"]),
+            policy: .explicitlyForegroundAllowed)
+
+        let receipt = try #require(connected.externalBrowserConnectionReceipt)
+        #expect(receipt.browserURL == "http://127.0.0.1:9222/")
+        #expect(receipt.webSocketDebuggerURL ==
+            "ws://127.0.0.1:9222/devtools/browser/private-browser")
+        #expect(receipt.devToolsBrowserID == "private-browser")
+        #expect(connected.targetIdentity == nil)
+        #expect(connected.outcome == outcome)
+        let publicDump = Self.dump(connected.response)
+        #expect(!publicDump.contains("127.0.0.1:9222"))
+        #expect(!publicDump.contains("private-browser"))
+    }
+
+    @Test
     func `recursive scrubber removes host IDs and fails closed on raw provider capabilities`() async throws {
         let fixture = NamespaceRuntimeFixture()
         let namespaceID = Self.namespaceID(9)

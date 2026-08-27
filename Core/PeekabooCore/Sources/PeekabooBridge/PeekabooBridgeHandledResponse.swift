@@ -17,6 +17,8 @@ struct PeekabooBridgeHandledResponse: Sendable {
             case external
             /// Browser dispatch was bound to this exact non-process DevTools connection.
             case externalBrowser(PeekabooBridgeBrowserConnectionReceipt)
+            /// Namespace dispatch was bound to an opaque digest of one exact external browser connection.
+            case browserCapabilityNamespace(PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt)
         }
 
         let outcome: DesktopActionOutcome
@@ -41,6 +43,11 @@ struct PeekabooBridgeHandledResponse: Sendable {
 
     var externalBrowserTarget: PeekabooBridgeBrowserConnectionReceipt? {
         guard case let .externalBrowser(receipt) = self.mutation?.target else { return nil }
+        return receipt
+    }
+
+    var browserCapabilityNamespaceTarget: PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt? {
+        guard case let .browserCapabilityNamespace(receipt) = self.mutation?.target else { return nil }
         return receipt
     }
 

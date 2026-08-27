@@ -1441,9 +1441,9 @@ extension PeekabooBridgeOperationResultSemantics {
             .suspectedNoop,
         ]
         switch request.operation {
-        case .agentExecutionTrace:
-            return [.dispatchedUnverified]
-        case .requestPostEventPermission, .browserExecute, .browserCapabilityNamespace,
+        case .agentExecutionTrace, .browserCapabilityNamespace:
+            return self.closedProtocolAllowedSuccessStates(for: request)
+        case .requestPostEventPermission, .browserExecute,
              .swipe, .drag, .moveMouse,
              .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
@@ -1511,6 +1511,19 @@ extension PeekabooBridgeOperationResultSemantics {
              .cleanSnapshot, .cleanSnapshotsOlderThan, .cleanAllSnapshots, ._appleScriptProbe:
             return []
         }
+    }
+
+    private static func closedProtocolAllowedSuccessStates(
+        for request: PeekabooBridgeRequest) -> [DesktopActionOutcome.State]
+    {
+        guard request.operation == .browserCapabilityNamespace else {
+            return [.dispatchedUnverified]
+        }
+        guard case let .browserCapabilityNamespace(namespace) = request.unwrappedOperationRequest,
+              case let .executeAction(action) = namespace.action,
+              action.action == .connect
+        else { return [.dispatchedUnverified] }
+        return [.confirmedNoChange, .dispatchedUnverified]
     }
 
     private static func successResponsePolicy(for request: PeekabooBridgeRequest) -> SuccessResponsePolicy {
@@ -2314,12 +2327,13 @@ extension PeekabooBridgeOperationResultSemantics {
             mutation.outcome.state == .confirmedNoChange &&
                 mutation.outcome.dispatchState == .none &&
                 mutation.outcome.delivery == nil
-        case (.external, .handlerResolved), (.external, .responseResolved), (.external, .externalBrowser):
+        case (.external, .handlerResolved), (.external, .responseResolved), (.external, .externalBrowser),
+             (.external, .browserCapabilityNamespace):
             // A process/window identity is an accepted conservative target for an external
             // object. Bare `.external` only names the need and is not itself target evidence.
             true
         case (.notApplicable, _), (.requestDependent, _), (.handlerResolvedOrGlobal, _),
-             (_, .external), (_, .externalBrowser),
+             (_, .external), (_, .externalBrowser), (_, .browserCapabilityNamespace),
              (_, .global), (_, .requestPinned), (_, .responseResolved),
              (_, .handlerResolved):
             false

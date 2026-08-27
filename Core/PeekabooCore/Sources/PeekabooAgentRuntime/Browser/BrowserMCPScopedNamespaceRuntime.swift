@@ -47,6 +47,7 @@ public struct BrowserMCPScopedNamespaceNativeWindowReceipt: Equatable, Sendable 
 public struct BrowserMCPScopedNamespaceExecutionResult: Sendable {
     public let response: ToolResponse
     public let targetIdentity: DesktopTargetIdentity?
+    public let externalBrowserConnectionReceipt: BrowserMCPConnectionReceipt?
     public let outcome: DesktopActionOutcome?
     public let nativeWindowReceipt: BrowserMCPScopedNamespaceNativeWindowReceipt?
 }

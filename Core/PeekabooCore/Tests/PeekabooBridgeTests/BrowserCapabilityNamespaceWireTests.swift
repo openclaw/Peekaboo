@@ -28,7 +28,7 @@ struct BrowserCapabilityNamespaceWireTests {
     }
 
     @Test
-    func `namespace connect refuses explicit provider endpoints before dispatch`() {
+    func `namespace connect admits exact explicit provider endpoints with foreground authority`() {
         let request = PeekabooBridgeRequest.browserCapabilityNamespace(.init(
             namespaceReceipt: Self.receipt(),
             executionMode: .foregroundAllowed,
@@ -36,8 +36,142 @@ struct BrowserCapabilityNamespaceWireTests {
                 action: .connect,
                 arguments: ["browser_url": .string("http://127.0.0.1:9222")]))))
 
-        #expect(throws: DesktopActionFailure.self) {
+        #expect(throws: Never.self) {
             try request.validateBrowserCapabilityExecutionMode()
+        }
+    }
+
+    @Test
+    func `opaque external browser target round trips without connection authority`() throws {
+        let namespace = Self.receipt()
+        let external = PeekabooBridgeBrowserConnectionReceipt(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/private-browser-id",
+            devToolsBrowserID: "private-browser-id",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        let opaque = try #require(PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt(
+            namespaceID: namespace.payload.namespaceID,
+            registryGenerationID: namespace.payload.registryGenerationID,
+            externalConnectionReceipt: external))
+        let target = PeekabooBridgeOperationTargetReceipt.browserCapabilityNamespace(opaque)
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(target)
+        let decoded = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeOperationTargetReceipt.self,
+            from: data)
+        let text = try #require(String(data: data, encoding: .utf8))
+
+        #expect(decoded == target)
+        #expect(text.contains(opaque.connectionReceiptSHA256))
+        #expect(!text.contains("127.0.0.1"))
+        #expect(!text.contains("webSocketDebuggerURL"))
+        #expect(!text.contains("private-browser-id"))
+    }
+
+    @Test
+    func `opaque external target remains bound to its exact namespace generation`() throws {
+        let namespace = Self.receipt()
+        let external = PeekabooBridgeBrowserConnectionReceipt(
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/private-browser-id",
+            devToolsBrowserID: "private-browser-id",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
+        let opaque = try #require(PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt(
+            namespaceID: namespace.payload.namespaceID,
+            registryGenerationID: namespace.payload.registryGenerationID,
+            externalConnectionReceipt: external))
+        let request = PeekabooBridgeRequest.browserCapabilityNamespace(.init(
+            namespaceReceipt: namespace,
+            action: .executeAction(.init(action: .click))))
+        let plan = PeekabooBridgeOperationResultSemantics.requestPlan(for: request, vocabulary: .current)
+        let response = PeekabooBridgeResponse.browserCapabilityNamespaceAction(.init(
+            content: [],
+            isError: false))
+
+        #expect(throws: Never.self) {
+            try PeekabooBridgeBrowserCapabilityNamespaceReceiptValidation.validateNativeTarget(
+                Self.operationPayload(target: .browserCapabilityNamespace(opaque)),
+                request: request,
+                response: response,
+                plan: plan)
+        }
+        let wrongNamespaceID = try #require(UUID(uuidString: "70000000-0000-4000-8000-000000000007"))
+        let wrongNamespace = try #require(PeekabooBridgeBrowserCapabilityNamespaceTargetReceipt(
+            namespaceID: wrongNamespaceID,
+            registryGenerationID: namespace.payload.registryGenerationID,
+            externalConnectionReceipt: external))
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try PeekabooBridgeBrowserCapabilityNamespaceReceiptValidation.validateNativeTarget(
+                Self.operationPayload(target: .browserCapabilityNamespace(wrongNamespace)),
+                request: request,
+                response: response,
+                plan: plan)
+        }
+    }
+
+    @Test
+    func `namespace connect alone admits confirmed no change success`() {
+        let receipt = Self.receipt()
+        let connect = PeekabooBridgeRequest.browserCapabilityNamespace(.init(
+            namespaceReceipt: receipt,
+            executionMode: .foregroundAllowed,
+            action: .executeAction(.init(action: .connect))))
+        let click = PeekabooBridgeRequest.browserCapabilityNamespace(.init(
+            namespaceReceipt: receipt,
+            action: .executeAction(.init(action: .click))))
+        let noChange = DesktopActionOutcome.confirmedNoChange(route: .bridge)
+        let response = PeekabooBridgeResponse.browserCapabilityNamespaceAction(.init(
+            content: [],
+            isError: false))
+
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            noChange,
+            response: response,
+            request: connect))
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            noChange,
+            response: response,
+            request: click))
+    }
+
+    @Test
+    func `namespace page fronting admits only foreground browser delivery`() {
+        let receipt = Self.receipt()
+        let foreground = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let background = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let requests = [
+            PeekabooBridgeRequest.browserCapabilityNamespace(.init(
+                namespaceReceipt: receipt,
+                executionMode: .foregroundAllowed,
+                action: .executeAction(.init(
+                    action: .selectPage,
+                    arguments: ["bring_to_front": .bool(true)])))),
+            PeekabooBridgeRequest.browserCapabilityNamespace(.init(
+                namespaceReceipt: receipt,
+                executionMode: .foregroundAllowed,
+                action: .executeAction(.init(
+                    action: .newPage,
+                    arguments: ["background": .bool(false)])))),
+        ]
+
+        for request in requests {
+            #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                foreground,
+                response: .browserCapabilityNamespaceAction(.init(content: [], isError: false)),
+                request: request))
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                background,
+                response: .browserCapabilityNamespaceAction(.init(content: [], isError: false)),
+                request: request))
         }
     }
 
@@ -379,10 +513,10 @@ struct BrowserCapabilityNamespaceWireTests {
     private static func receipt() -> PeekabooBridgeBrowserCapabilityNamespaceReceipt {
         .init(
             payload: .init(
-                namespaceID: UUID(uuidString: "10000000-0000-0000-0000-000000000001")!,
+                namespaceID: UUID(uuidString: "10000000-0000-4000-8000-000000000001")!,
                 listenerInstanceID: UUID(uuidString: "20000000-0000-0000-0000-000000000002")!,
                 listenerPublicKeySHA256: String(repeating: "a", count: 64),
-                registryGenerationID: UUID(uuidString: "30000000-0000-0000-0000-000000000003")!,
+                registryGenerationID: UUID(uuidString: "30000000-0000-4000-8000-000000000003")!,
                 principal: .init(
                     effectiveUserIdentifier: 501,
                     teamIdentifier: "TEAMID1234",
@@ -391,5 +525,32 @@ struct BrowserCapabilityNamespaceWireTests {
                 issuedAtUnixMilliseconds: 1_800_000_000_000,
                 expiresAtUnixMilliseconds: 1_800_000_300_000),
             signature: Data(repeating: 0x5A, count: 64))
+    }
+
+    private static func operationPayload(
+        target: PeekabooBridgeOperationTargetReceipt) -> PeekabooBridgeOperationReceiptPayload
+    {
+        let sessionID = UUID(uuidString: "40000000-0000-0000-0000-000000000004")!
+        let sequence = PeekabooBridgeOperationSessionSequence(0)
+        return PeekabooBridgeOperationReceiptPayload(
+            requestID: PeekabooBridgeOperationReceiptCoding.deterministicRequestID(
+                sessionID: sessionID,
+                sequence: sequence),
+            sessionID: sessionID,
+            sessionSequence: sequence,
+            sessionAttestationSHA256: String(repeating: "a", count: 64),
+            listenerInstanceID: UUID(uuidString: "50000000-0000-0000-0000-000000000005")!,
+            listenerPublicKeySHA256: String(repeating: "b", count: 64),
+            host: .init(processIdentifier: 1, processStartIdentity: 2, codeSignatureHash: "host"),
+            clientInstanceID: UUID(uuidString: "60000000-0000-0000-0000-000000000006")!,
+            client: .init(processIdentifier: 3, processStartIdentity: 4, codeSignatureHash: "client"),
+            operation: .browserCapabilityNamespace,
+            requestSHA256: String(repeating: "c", count: 64),
+            responseSHA256: String(repeating: "d", count: 64),
+            target: target,
+            outcome: nil,
+            remainingClaimCount: 1,
+            startedAtUnixMilliseconds: 1,
+            completedAtUnixMilliseconds: 2)
     }
 }
