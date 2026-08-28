@@ -181,7 +181,9 @@ struct BrowserMCPHandoffSessionTests {
         #expect(destinationProvider.removeCount == 0)
 
         await teardownBarrier.release()
-        _ = try await transfer.value
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await transfer.value
+        }
         #expect(await end.value)
         #expect(rootProvider.removeCount == 1)
         #expect(!rootProvider.connected)
@@ -222,7 +224,9 @@ struct BrowserMCPHandoffSessionTests {
         #expect(destinationProvider.removeCount == 0)
 
         await addBarrier.release()
-        _ = try await transfer.value
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await transfer.value
+        }
         #expect(await end.value)
         #expect(destinationProvider.removeCount == 1)
 
@@ -231,6 +235,44 @@ struct BrowserMCPHandoffSessionTests {
         #expect(reconnected.isConnected)
         #expect(nextProvider.addedConfigs.count == 1)
         await fixture.root.endAuthenticatedSession(named: "mcp:after-bootstrap-teardown")
+    }
+
+    @Test
+    func `registered session teardown refuses new and existing authenticated handles`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let name = "mcp:ending-admission"
+        _ = try fixture.root.createAuthenticatedSession(named: name)
+        let sessionID = try #require(fixture.pool.existingSessionID(named: name))
+        let lifecycleBarrier = HandoffBarrier()
+        let lifecycleHolder = Task { @MainActor in
+            try await fixture.pool.withHandoffLifecycle(sessionID) {
+                await lifecycleBarrier.block()
+            }
+        }
+        await lifecycleBarrier.waitUntilBlocked()
+        let end = Task { @MainActor in
+            await fixture.root.endAuthenticatedSession(named: name)
+        }
+        while !fixture.pool.isEnding(named: name) {
+            await Task.yield()
+        }
+
+        #expect(fixture.pool.manager(for: sessionID) == nil)
+        #expect(fixture.pool.existingManager(for: sessionID) == nil)
+        #expect(fixture.pool.capabilities(for: sessionID) == nil)
+        #expect(fixture.pool.mutationGate(for: sessionID) == nil)
+        #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try fixture.root.createAuthenticatedSession(named: name)
+        }
+        #expect(fixture.root.existingAuthenticatedSession(named: name) == nil)
+        #expect(destinationProvider.addedConfigs.isEmpty)
+        #expect(destinationProvider.executedTools.isEmpty)
+        #expect(destinationProvider.removeCount == 0)
+
+        await lifecycleBarrier.release()
+        _ = try await lifecycleHolder.value
+        #expect(await end.value)
     }
 
     @Test

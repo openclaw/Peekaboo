@@ -90,7 +90,7 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func manager(for sessionID: SessionID) -> BrowserMCPSessionManager? {
-        guard !self.endedSessions.contains(sessionID) else { return nil }
+        guard !self.endedSessions.contains(sessionID), self.endingSessions[sessionID] == nil else { return nil }
         if let state = self.sessions[sessionID] {
             return state.manager
         }
@@ -110,16 +110,18 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func existingManager(for sessionID: SessionID) -> BrowserMCPSessionManager? {
-        guard !self.endedSessions.contains(sessionID) else { return nil }
+        guard !self.endedSessions.contains(sessionID), self.endingSessions[sessionID] == nil else { return nil }
         return self.sessions[sessionID]?.manager
     }
 
     func capabilities(for sessionID: SessionID) -> BrowserToolCapabilitySession? {
-        self.sessions[sessionID]?.capabilities
+        guard !self.endedSessions.contains(sessionID), self.endingSessions[sessionID] == nil else { return nil }
+        return self.sessions[sessionID]?.capabilities
     }
 
     func mutationGate(for sessionID: SessionID) -> MCPToolSnapshotExecutionGate? {
-        self.sessions[sessionID]?.mutationGate
+        guard !self.endedSessions.contains(sessionID), self.endingSessions[sessionID] == nil else { return nil }
+        return self.sessions[sessionID]?.mutationGate
     }
 
     func withHandoffLifecycle<T>(
