@@ -396,6 +396,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @MainActor
     init(
         sessionManager: BrowserMCPSessionManager,
+        authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool? = nil,
         ownedSession: (
             pool: BrowserMCPAuthenticatedSessionPool,
             id: BrowserMCPAuthenticatedSessionPool.SessionID)? = nil,
@@ -404,7 +405,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     {
         self.supportsNativeBrowserConnectionBinding = sessionManager.supportsNativeBrowserConnectionBinding
         self.sessionManager = sessionManager
-        self.authenticatedSessionPool = nil
+        self.authenticatedSessionPool = authenticatedSessionPool
         self.ownedSession = ownedSession
         self.sessionCapabilities = sessionCapabilities
         self.sessionMutationGate = sessionMutationGate
@@ -443,21 +444,119 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             sessionMutationGate: mutationGate)
     }
 
+    /// Captures a host-private, provider-generation-bound authorization for a later scoped handoff.
+    @MainActor
+    public func authorizeConnectionHandoff(
+        connectionReceipt: BrowserMCPConnectionReceipt) async throws -> BrowserMCPConnectionHandoffAuthorization
+    {
+        try await self.resolvedSessionManager().authorizeConnectionHandoff(receipt: connectionReceipt)
+    }
+
+    /// Moves one already-authorized exact root connection into a caller-scoped provider child.
+    ///
+    /// The binding is host-private authority. Wire adapters must resolve an authenticated opaque claim to this
+    /// value instead of accepting a caller-supplied receipt, provider epoch, or DevTools endpoint.
+    @MainActor
+    public func transferConnection(
+        toAuthenticatedSessionNamed name: String,
+        authorization: BrowserMCPConnectionHandoffAuthorization) async throws -> BrowserMCPService
+    {
+        guard let pool = self.authenticatedSessionPool,
+              self.ownedSession == nil,
+              let sessionID = pool.sessionID(named: name),
+              let destinationManager = pool.manager(for: sessionID)
+        else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        func destinationService() throws -> BrowserMCPService {
+            guard let capabilities = pool.capabilities(for: sessionID),
+                  let mutationGate = pool.mutationGate(for: sessionID)
+            else {
+                throw BrowserMCPConnectionError.sessionEnded
+            }
+            return BrowserMCPService(
+                sessionManager: destinationManager,
+                ownedSession: (pool: pool, id: sessionID),
+                sessionCapabilities: capabilities,
+                sessionMutationGate: mutationGate)
+        }
+
+        let target: BrowserMCPAuthorizedHandoffTarget
+        switch try pool.prepareHandoff(sessionID, authorization: authorization) {
+        case .start:
+            do {
+                try await destinationManager.preflightHandoffDestination()
+                target = try await self.resolvedSessionManager().drainConnectionForHandoff(
+                    authorization: authorization)
+                do {
+                    try await pool.commitRootHandoff(
+                        to: sessionID,
+                        authorization: authorization,
+                        target: target)
+                } catch {
+                    pool.requireSourceRecovery(for: sessionID)
+                    throw BrowserMCPConnectionError.handoffRecoveryRequired(
+                        "source teardown completed, but destination ownership could not be committed")
+                }
+            } catch let BrowserMCPHandoffSourceDrainError.sourceStillLive(cause) {
+                pool.cancelPendingHandoff(for: sessionID)
+                throw cause
+            } catch let BrowserMCPHandoffSourceDrainError.recoveryRequired(cause) {
+                pool.requireSourceRecovery(for: sessionID)
+                throw BrowserMCPConnectionError.handoffRecoveryRequired(cause.localizedDescription)
+            } catch let error as BrowserMCPConnectionError {
+                if case .handoffRecoveryRequired = error {
+                    throw error
+                }
+                pool.cancelPendingHandoff(for: sessionID)
+                throw error
+            } catch {
+                pool.cancelPendingHandoff(for: sessionID)
+                throw error
+            }
+        case let .bootstrap(retryTarget):
+            target = retryTarget
+        case .connected:
+            return try destinationService()
+        }
+
+        do {
+            try await destinationManager.bootstrapAuthorizedHandoff(target)
+            try pool.resolveHandoff(for: sessionID, as: .connected)
+            return try destinationService()
+        } catch let failure as BrowserMCPHandoffDestinationError {
+            if failure.cleanupConfirmed {
+                try? pool.resolveHandoff(for: sessionID, as: .retryable)
+                throw failure.cause
+            }
+            try? pool.resolveHandoff(for: sessionID, as: .recoveryRequired)
+            throw BrowserMCPConnectionError.handoffRecoveryRequired(
+                failure.cause.localizedDescription)
+        }
+    }
+
     @MainActor
     func endAuthenticatedSession(_ sessionID: BrowserMCPAuthenticatedSessionPool.SessionID) async {
         await self.authenticatedSessionPool?.end(sessionID)
     }
 
     @MainActor
-    func endAuthenticatedSession(named name: String) async {
-        await self.authenticatedSessionPool?.end(named: name)
+    public func endAuthenticatedSession(named name: String) async {
+        guard let pool = self.authenticatedSessionPool else { return }
+        if let recovery = pool.sourceRecovery(named: name),
+           await self.resolvedSessionManager().recoverSourceHandoff(
+               authorization: recovery.authorization)
+        {
+            pool.confirmSourceRecovery(for: recovery.sessionID)
+        }
+        await pool.end(named: name)
     }
 
     @MainActor
-    func endAuthenticatedBrowserSession() async {
+    public func endAuthenticatedBrowserSession() async {
         guard let ownedSession else { return }
-        await ownedSession.pool.end(ownedSession.id)
-        if self.ownedSession?.id == ownedSession.id {
+        let cleanupConfirmed = await ownedSession.pool.endAndConfirm(ownedSession.id)
+        if cleanupConfirmed, self.ownedSession?.id == ownedSession.id {
             self.ownedSession = nil
         }
     }
@@ -1022,6 +1121,7 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case expectedConnectionReceiptMismatch
     case expectedProviderSessionEpochMismatch
     case receiptBindingUnsupported
+    case handoffRecoveryRequired(String)
     case sessionEnded
     case targetLocked
 
@@ -1057,6 +1157,8 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "The expected Chrome DevTools MCP child changed before tool dispatch. Refresh browser status and retry."
         case .receiptBindingUnsupported:
             "This browser client cannot atomically bind execution to an exact connection receipt."
+        case let .handoffRecoveryRequired(reason):
+            "Browser connection handoff requires recovery before the target can be reused: \(reason)"
         case .sessionEnded:
             "This authenticated browser session has ended and cannot be reused. Start a new session."
         case .targetLocked:

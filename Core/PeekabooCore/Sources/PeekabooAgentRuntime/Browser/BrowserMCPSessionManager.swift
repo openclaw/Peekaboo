@@ -15,17 +15,6 @@ protocol BrowserMCPManaging: AnyObject {
     func executeTool(serverName: String, toolName: String, arguments: [String: Any]) async throws -> ToolResponse
 }
 
-private struct BrowserMCPPreparedExecution {
-    let sessionBinding: BrowserMCPExecutionSessionBinding
-    let connectionOutcome: DesktopActionOutcome?
-}
-
-private enum BrowserMCPConnectionTargetKind: Sendable, Equatable {
-    case external
-    case isolated
-    case nativeChannel
-}
-
 extension TachikomaMCPClientManager: BrowserMCPManaging {
     func hasServer(name: String) -> Bool {
         self.getServerConfig(name: name) != nil
@@ -33,44 +22,6 @@ extension TachikomaMCPClientManager: BrowserMCPManaging {
 
     func serverToolCount(name: String) async -> Int {
         await self.getServerTools(name: name).count
-    }
-}
-
-private enum BrowserMCPCallFailure: Error {
-    case preDispatch(any Error)
-    case mayHaveDispatched(any Error)
-}
-
-private struct BrowserMCPProjectedProviderError: LocalizedError {
-    let message: String
-
-    var errorDescription: String? {
-        self.message
-    }
-}
-
-struct BrowserMCPEnvironmentOptions: Sendable {
-    let browserURL: String?
-    let isolated: Bool
-    let headless: Bool
-
-    var supportsNativeBrowserConnectionBinding: Bool {
-        self.browserURL == nil && !self.isolated
-    }
-
-    init(environment: [String: String]) {
-        let browserURL = environment["PEEKABOO_BROWSER_MCP_BROWSER_URL"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        self.browserURL = browserURL?.isEmpty == false ? browserURL : nil
-        self.isolated = Self.flag("PEEKABOO_BROWSER_MCP_ISOLATED", in: environment)
-        self.headless = Self.flag("PEEKABOO_BROWSER_MCP_HEADLESS", in: environment)
-    }
-
-    private static func flag(_ name: String, in environment: [String: String]) -> Bool {
-        guard let value = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
-            return false
-        }
-        return ["1", "true", "yes", "on"].contains(value)
     }
 }
 
@@ -378,36 +329,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         var connectionAttemptDispatched = false
         do {
-            let uploadWorkspace = try await self.uploadStager.createWorkspace()
-            var config = target.config
-            config.env["TMPDIR"] = uploadWorkspace.rootPath
-            self.uploadWorkspace = uploadWorkspace
-            // Native channel setup has one owner-controlled identity probe, then this separately
-            // owned MCP child opens the session's execution WebSocket. Later validation never probes.
-            attempt.state.markConnectionDispatchStarted()
-            connectionAttemptDispatched = true
-            try await self.manager.addServer(name: self.serverName, config: config)
-            try Task.checkCancellation()
-            let probe = try await self.manager.executeTool(
-                serverName: self.serverName,
-                toolName: "list_pages",
-                arguments: [:])
-            try Task.checkCancellation()
-            guard !probe.isError else {
-                throw BrowserMCPConnectionError.connectionProbeFailed(
-                    "Chrome DevTools MCP rejected list_pages")
+            try await self.installProvider(target: target) {
+                attempt.state.markConnectionDispatchStarted()
+                connectionAttemptDispatched = true
             }
-            try await self.validate(
-                target.receipt,
-                channelEndpoint: target.channelEndpoint,
-                codeSignatureIdentity: target.codeSignatureIdentity)
-            try Task.checkCancellation()
-            self.connectionReceipt = target.receipt
-            self.providerSessionEpoch = BrowserMCPProviderSessionEpoch()
-            self.connectionSupportsReceiptBoundExecution = target.supportsReceiptBoundExecution
-            self.connectionChannelEndpoint = target.channelEndpoint
-            self.connectionCodeSignatureIdentity = target.codeSignatureIdentity
-            self.connectionTargetKind = target.targetKind
             let status = await self.inspectStatusUnlocked(channel: channel).status
             guard status.isConnected else {
                 throw BrowserMCPConnectionError.connectionLost(
@@ -473,20 +398,158 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
     }
 
-    func endSession() async {
-        guard !self.sessionEnded else { return }
+    func preflightHandoffDestination() async throws {
+        try await self.withExecutionGate {
+            guard self.connectionReceipt == nil,
+                  self.providerSessionEpoch == nil,
+                  !self.manager.hasServer(name: self.serverName),
+                  await !(self.manager.isServerConnected(name: self.serverName))
+            else {
+                throw BrowserMCPConnectionError.targetLocked
+            }
+        }
+    }
+
+    func authorizeConnectionHandoff(receipt: BrowserMCPConnectionReceipt) async throws
+        -> BrowserMCPConnectionHandoffAuthorization
+    {
+        try await self.withExecutionGate {
+            let target = try await self.authorizedHandoffTarget(receipt: receipt)
+            guard await self.manager.isServerConnected(name: self.serverName),
+                  let providerSessionEpoch = self.providerSessionEpoch
+            else {
+                throw BrowserMCPConnectionError.connectionLost("the source MCP child is no longer connected")
+            }
+            _ = target
+            return BrowserMCPConnectionHandoffAuthorization(sourceBinding: .init(
+                connectionReceipt: receipt,
+                providerSessionEpoch: providerSessionEpoch))
+        }
+    }
+
+    func drainConnectionForHandoff(authorization: BrowserMCPConnectionHandoffAuthorization) async throws
+        -> BrowserMCPAuthorizedHandoffTarget
+    {
+        try await self.withExecutionGate {
+            guard self.providerSessionEpoch == authorization.sourceBinding.providerSessionEpoch else {
+                throw BrowserMCPConnectionError.expectedProviderSessionEpochMismatch
+            }
+            let target = try await self.authorizedHandoffTarget(receipt: authorization.connectionReceipt)
+            guard await self.manager.isServerConnected(name: self.serverName) else {
+                throw BrowserMCPConnectionError.connectionLost("the source MCP child is no longer connected")
+            }
+            try Task.checkCancellation()
+
+            // Root ownership remains authoritative while cancellation-resistant cleanup runs. The caller transfers
+            // that exact reservation only after this post-check confirms the source child is gone.
+            let cleanup = Task { @MainActor in
+                await self.removeProviderForHandoff()
+            }
+            guard await cleanup.value else {
+                if await self.manager.isServerConnected(name: self.serverName),
+                   await (try? self.validate(
+                       target.receipt,
+                       channelEndpoint: target.channelEndpoint,
+                       codeSignatureIdentity: target.codeSignatureIdentity,
+                       requireDetectedProcess: false)) != nil
+                {
+                    throw BrowserMCPHandoffSourceDrainError.sourceStillLive(
+                        BrowserMCPConnectionError.connectionLost(
+                            "the source MCP child remained live after handoff teardown"))
+                }
+                throw BrowserMCPHandoffSourceDrainError.recoveryRequired(
+                    BrowserMCPConnectionError.connectionLost(
+                        "source MCP child teardown could not be confirmed"))
+            }
+            self.discardConnectionState()
+            return target
+        }
+    }
+
+    func recoverSourceHandoff(authorization: BrowserMCPConnectionHandoffAuthorization) async -> Bool {
+        let cleanup = Task { @MainActor in
+            do {
+                return try await self.withExecutionGate {
+                    guard self.connectionReceipt == authorization.connectionReceipt,
+                          self.providerSessionEpoch == authorization.sourceBinding.providerSessionEpoch
+                    else { return false }
+                    let confirmed = await self.removeProviderForHandoff()
+                    if confirmed {
+                        self.discardConnectionState()
+                    }
+                    return confirmed
+                }
+            } catch {
+                return false
+            }
+        }
+        return await cleanup.value
+    }
+
+    func bootstrapAuthorizedHandoff(_ target: BrowserMCPAuthorizedHandoffTarget) async throws {
+        do {
+            try await self.withExecutionGate {
+                do {
+                    guard self.connectionReceipt == nil,
+                          self.providerSessionEpoch == nil,
+                          !self.manager.hasServer(name: self.serverName),
+                          await !(self.manager.isServerConnected(name: self.serverName))
+                    else {
+                        throw BrowserMCPConnectionError.targetLocked
+                    }
+                    try await self.validate(
+                        target.receipt,
+                        channelEndpoint: target.channelEndpoint,
+                        codeSignatureIdentity: target.codeSignatureIdentity,
+                        requireDetectedProcess: false)
+                    try Task.checkCancellation()
+                    guard let webSocketDebuggerURL = target.receipt.webSocketDebuggerURL else {
+                        throw BrowserMCPConnectionError.connectionLost(
+                            "the handoff receipt omitted its exact DevTools WebSocket")
+                    }
+
+                    try await self.installProvider(
+                        target: BrowserMCPResolvedTarget(
+                            receipt: target.receipt,
+                            config: BrowserMCPService.chromeDevToolsConfig(
+                                webSocketEndpoint: webSocketDebuggerURL),
+                            supportsReceiptBoundExecution: true,
+                            channelEndpoint: target.channelEndpoint,
+                            codeSignatureIdentity: target.codeSignatureIdentity,
+                            targetKind: target.targetKind),
+                        onProviderDispatch: {})
+                    guard await self.manager.isServerConnected(name: self.serverName) else {
+                        throw BrowserMCPConnectionError.connectionLost(
+                            "the destination MCP child exited during handoff setup")
+                    }
+                } catch {
+                    throw await self.handoffDestinationFailure(error)
+                }
+            }
+        } catch let failure as BrowserMCPHandoffDestinationError {
+            throw failure
+        } catch {
+            throw await self.handoffDestinationFailure(error)
+        }
+    }
+
+    func endSession() async -> Bool {
         self.sessionEnded = true
         let cleanup = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self else { return true }
             do {
                 try await self.executionGate.acquire()
             } catch {
-                return
+                return false
             }
-            await self.clearConnection()
+            let confirmed = await self.removeProviderForHandoff()
+            if confirmed {
+                self.discardConnectionState()
+            }
             await self.executionGate.release()
+            return confirmed
         }
-        await cleanup.value
+        return await cleanup.value
     }
 
     func execute(
@@ -1213,7 +1276,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func validate(
         _ receipt: BrowserMCPConnectionReceipt,
         channelEndpoint suppliedChannelEndpoint: BrowserMCPDevToolsEndpoint? = nil,
-        codeSignatureIdentity suppliedCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity? = nil)
+        codeSignatureIdentity suppliedCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity? = nil,
+        requireDetectedProcess: Bool = true)
         async throws
     {
         if receipt.processIdentifier != nil || receipt.processStartIdentity != nil || receipt.bundleIdentifier != nil {
@@ -1247,13 +1311,18 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   self.processCodeSignatureValidator(
                       processIdentifier,
                       processStartIdentity,
-                      channelIdentity) == codeSignatureIdentity,
-                  self.detectedBrowsers(channel).contains(where: { browser in
-                      browser.processIdentifier == processIdentifier &&
-                          browser.processStartIdentity == processStartIdentity &&
-                          channelIdentity.matches(bundleIdentifier: browser.bundleIdentifier)
-                  })
+                      channelIdentity) == codeSignatureIdentity
             else {
+                throw BrowserMCPConnectionError.connectionLost(
+                    "Chrome PID \(processIdentifier) changed bundle, channel, or signing identity")
+            }
+            if requireDetectedProcess,
+               !self.detectedBrowsers(channel).contains(where: { browser in
+                   browser.processIdentifier == processIdentifier &&
+                       browser.processStartIdentity == processStartIdentity &&
+                       channelIdentity.matches(bundleIdentifier: browser.bundleIdentifier)
+               })
+            {
                 throw BrowserMCPConnectionError.connectionLost(
                     "Chrome PID \(processIdentifier) changed bundle, channel, or signing identity")
             }
@@ -1281,7 +1350,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         if let browserURL = receipt.browserURL {
             let endpoint = try await self.endpointResolver.resolve(browserURL)
-            guard endpoint.webSocketDebuggerURL == receipt.webSocketDebuggerURL,
+            guard endpoint.browserURL == browserURL,
+                  endpoint.webSocketDebuggerURL == receipt.webSocketDebuggerURL,
                   endpoint.browserID == receipt.devToolsBrowserID,
                   endpoint.browserVersion == receipt.browserVersion,
                   endpoint.protocolVersion == receipt.protocolVersion
@@ -1289,6 +1359,43 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 throw BrowserMCPConnectionError.connectionLost("the DevTools browser endpoint changed identity")
             }
         }
+    }
+
+    private func authorizedHandoffTarget(
+        receipt: BrowserMCPConnectionReceipt) async throws
+        -> BrowserMCPAuthorizedHandoffTarget
+    {
+        guard self.connectionReceipt == receipt else {
+            throw BrowserMCPConnectionError.expectedConnectionReceiptMismatch
+        }
+        guard self.providerSessionEpoch != nil else {
+            throw BrowserMCPConnectionError.connectionLost("the source MCP child has no live provider epoch")
+        }
+        let target = try self.storedHandoffTarget(receipt: receipt)
+        try await self.validate(
+            target.receipt,
+            channelEndpoint: target.channelEndpoint,
+            codeSignatureIdentity: target.codeSignatureIdentity,
+            requireDetectedProcess: false)
+        return target
+    }
+
+    private func storedHandoffTarget(receipt: BrowserMCPConnectionReceipt) throws
+        -> BrowserMCPAuthorizedHandoffTarget
+    {
+        guard self.connectionSupportsReceiptBoundExecution,
+              let targetKind = self.connectionTargetKind,
+              targetKind != .isolated,
+              receipt.browserURL != nil,
+              receipt.webSocketDebuggerURL != nil
+        else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        return BrowserMCPAuthorizedHandoffTarget(
+            receipt: receipt,
+            channelEndpoint: self.connectionChannelEndpoint,
+            codeSignatureIdentity: self.connectionCodeSignatureIdentity,
+            targetKind: targetKind)
     }
 
     private func connectionReceipt(
@@ -1364,6 +1471,81 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         if shouldRemoveServer {
             await self.manager.removeServer(name: self.serverName)
         }
+        uploadWorkspace?.cleanup()
+    }
+
+    private func removeProviderForHandoff() async -> Bool {
+        var providerPresent = self.manager.hasServer(name: self.serverName)
+        if !providerPresent {
+            providerPresent = await self.manager.isServerConnected(name: self.serverName)
+        }
+        if providerPresent {
+            await self.manager.removeServer(name: self.serverName)
+        }
+        guard !self.manager.hasServer(name: self.serverName) else { return false }
+        return await !(self.manager.isServerConnected(name: self.serverName))
+    }
+
+    private func handoffDestinationFailure(_ error: any Error) async -> BrowserMCPHandoffDestinationError {
+        let cleanup = Task { @MainActor in
+            let confirmed = await self.removeProviderForHandoff()
+            if confirmed {
+                self.discardConnectionState()
+            }
+            return confirmed
+        }
+        let cleanupConfirmed = await cleanup.value
+        return BrowserMCPHandoffDestinationError(
+            cause: error,
+            cleanupConfirmed: cleanupConfirmed)
+    }
+
+    private func installProvider(
+        target: BrowserMCPResolvedTarget,
+        onProviderDispatch: @MainActor () -> Void) async throws
+    {
+        let uploadWorkspace = try await self.uploadStager.createWorkspace()
+        var config = target.config
+        config.env["TMPDIR"] = uploadWorkspace.rootPath
+        self.uploadWorkspace = uploadWorkspace
+        // Native channel setup has one owner-controlled identity probe, then this separately
+        // owned MCP child opens the session's execution WebSocket. Later validation never probes.
+        onProviderDispatch()
+        try await self.manager.addServer(name: self.serverName, config: config)
+        try Task.checkCancellation()
+        let probe = try await self.manager.executeTool(
+            serverName: self.serverName,
+            toolName: "list_pages",
+            arguments: [:])
+        try Task.checkCancellation()
+        guard !probe.isError else {
+            throw BrowserMCPConnectionError.connectionProbeFailed(
+                "Chrome DevTools MCP rejected list_pages")
+        }
+        try await self.validate(
+            target.receipt,
+            channelEndpoint: target.channelEndpoint,
+            codeSignatureIdentity: target.codeSignatureIdentity,
+            requireDetectedProcess: false)
+        try Task.checkCancellation()
+        self.connectionReceipt = target.receipt
+        self.providerSessionEpoch = BrowserMCPProviderSessionEpoch()
+        self.connectionSupportsReceiptBoundExecution = target.supportsReceiptBoundExecution
+        self.connectionChannelEndpoint = target.channelEndpoint
+        self.connectionCodeSignatureIdentity = target.codeSignatureIdentity
+        self.connectionTargetKind = target.targetKind
+    }
+
+    private func discardConnectionState() {
+        self.connectionReceipt = nil
+        self.providerSessionEpoch = nil
+        self.connectionSupportsReceiptBoundExecution = false
+        self.connectionChannelEndpoint = nil
+        self.connectionCodeSignatureIdentity = nil
+        self.connectionTargetKind = nil
+        self.activeUploadID = nil
+        let uploadWorkspace = self.uploadWorkspace
+        self.uploadWorkspace = nil
         uploadWorkspace?.cleanup()
     }
 
