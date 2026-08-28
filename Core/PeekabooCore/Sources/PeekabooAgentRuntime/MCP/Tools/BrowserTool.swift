@@ -215,11 +215,7 @@ public struct BrowserTool: MCPTool {
                 for: self.targetLockedFailure(),
                 invalidatedSnapshotID: nil)
         } catch let failure as DesktopActionFailure
-            where failure.outcome.state == .refused &&
-            failure.outcome.refusalReason == .requestCancelled &&
-            failure.outcome.dispatchState == .none &&
-            failure.outcome.retrySafety == .safe &&
-            failure.outcome.escalation == .none
+            where Self.isRetrySafePreDispatchCancellation(failure)
         {
             throw CancellationError()
         } catch let failure as DesktopActionFailure {
@@ -378,6 +374,10 @@ public struct BrowserTool: MCPTool {
                     response: response,
                     calls: calls)
             }
+        } catch let failure as DesktopActionFailure
+            where Self.isRetrySafePreDispatchCancellation(failure)
+        {
+            throw failure
         } catch {
             await self.capabilitySession?.invalidateAfterProviderEntry(calls: calls, resolved: resolved)
             throw error
@@ -493,6 +493,14 @@ public struct BrowserTool: MCPTool {
             reason: .requestCancelled,
             message: "Browser execution was cancelled before provider entry.",
             hint: "Submit a new request only if the browser action is still wanted.")
+    }
+
+    private static func isRetrySafePreDispatchCancellation(_ failure: DesktopActionFailure) -> Bool {
+        failure.outcome.state == .refused &&
+            failure.outcome.refusalReason == .requestCancelled &&
+            failure.outcome.dispatchState == .none &&
+            failure.outcome.retrySafety == .safe &&
+            failure.outcome.escalation == .none
     }
 
     private static func sequenceSemantics(

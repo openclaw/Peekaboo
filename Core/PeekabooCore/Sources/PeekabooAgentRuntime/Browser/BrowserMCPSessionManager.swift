@@ -796,10 +796,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         do {
             try await self.validate(receipt)
-        } catch let error as CancellationError {
-            await self.clearConnection()
+        } catch let error where Self.isCancellation(error) {
             if expectedConnectionReceipt != nil || connectionPolicy == .requireExistingLiveReceipt {
-                throw Self.preDispatchFailure(error)
+                throw Self.preDispatchFailure(CancellationError())
             }
             throw error
         } catch where expectedConnectionReceipt != nil {

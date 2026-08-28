@@ -1137,6 +1137,100 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test(arguments: [false, true])
+    func `cancelled capability preflight retains provider target and opaque refs`(
+        transportCancellation: Bool) async throws
+    {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let preflightBarrier = SequenceBarrier()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let firstManager = Self.exactSession(
+            manager: firstProvider,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            })
+        let secondManager = Self.exactSession(manager: secondProvider)
+        var managers = [firstManager, secondManager]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in managers.removeFirst() }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let base = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .unrestricted)
+        let firstContext = base.scopingBrowserSession(named: "mcp:first")
+        let secondContext = base.scopingBrowserSession(named: "mcp:second")
+        let firstClient = try #require(firstContext.browser as? BrowserMCPService)
+        let secondClient = try #require(secondContext.browser as? BrowserMCPService)
+        _ = try await firstClient.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        firstProvider.executeHandler = { toolName, _ in
+            switch toolName {
+            case "list_pages": Self.providerPageResponse(id: 7)
+            case "take_snapshot": Self.providerSnapshotResponse(id: "1_0")
+            default: .text("ok")
+            }
+        }
+        let tool = BrowserTool(context: firstContext)
+        let listed = try await firstContext.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.opaquePageReference(from: listed)
+        let snapshotted = try await firstContext.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try #require(
+            snapshotted.structuredContent?.objectValue?["snapshot"]?.objectValue?["id"]?.stringValue)
+        firstProvider.executedTools.removeAll()
+        await endpoints.cancelResolution(
+            afterSuccessfulResolutions: 1,
+            at: preflightBarrier,
+            asTransportError: transportCancellation)
+
+        let cancelled = Task { @MainActor in
+            try await firstContext.execute(
+                tool: tool,
+                arguments: ToolArguments(raw: [
+                    "action": "click",
+                    "page_id": pageReference,
+                    "uid": elementReference,
+                ]))
+        }
+        await preflightBarrier.waitUntilBlocked()
+        await preflightBarrier.release()
+        do {
+            _ = try await cancelled.value
+            Issue.record("Expected capability receipt preflight cancellation")
+        } catch {
+            #expect(error is CancellationError)
+        }
+
+        #expect(firstProvider.executedTools.isEmpty)
+        #expect(firstProvider.removeCount == 0)
+        let retainedElement = await firstContext.browserCapabilities.elementBinding(for: elementReference)
+        #expect(retainedElement != nil)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await secondClient.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        }
+
+        let retried = try await firstContext.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "click",
+                "page_id": pageReference,
+                "uid": elementReference,
+            ]))
+        #expect(!retried.isError)
+        #expect(firstProvider.executedTools == ["take_snapshot", "click"])
+
+        await firstClient.disconnect()
+        _ = try await secondClient.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        await firstContext.releaseSnapshotOwner()
+        await secondContext.releaseSnapshotOwner()
+    }
+
+    @Test(arguments: [false, true])
     func `cancelled status inspection retains live target ownership`(transportCancellation: Bool) async throws {
         let firstProvider = MockBrowserMCPManager()
         let secondProvider = MockBrowserMCPManager()
@@ -2734,7 +2828,7 @@ extension BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `receipt bound endpoint validation preserves cancellation before dispatch`() async throws {
+    func `receipt bound endpoint validation preserves live connection on cancellation`() async throws {
         let manager = MockBrowserMCPManager()
         let endpoints = EndpointMap()
         await endpoints.set("browser-a", port: 9222)
@@ -2763,9 +2857,10 @@ extension BrowserMCPSessionManagerTests {
             #expect(failure.outcome.dispatchState == .none)
         }
         #expect(manager.executedTools.isEmpty)
-        #expect(manager.removeCount == 1)
-        #expect(!manager.connected)
-        #expect(await (session.status(channel: nil)).connectionReceipt == nil)
+        #expect(manager.removeCount == 0)
+        #expect(manager.connected)
+        await endpoints.set("browser-a", port: 9222)
+        #expect(await (session.status(channel: nil)).connectionReceipt == receipt)
     }
 
     @Test
@@ -3265,6 +3360,21 @@ extension BrowserMCPSessionManagerTests {
             ]))
     }
 
+    private static func providerSnapshotResponse(id: String) -> ToolResponse {
+        ToolResponse(
+            content: [.text(
+                text: "uid=\(id) button \"Continue\"",
+                annotations: nil,
+                _meta: nil)],
+            structuredContent: .object([
+                "snapshot": .object([
+                    "id": .string(id),
+                    "role": .string("button"),
+                    "name": .string("Continue"),
+                ]),
+            ]))
+    }
+
     private static func opaquePageReference(from response: ToolResponse) throws -> String {
         let pages = try #require(response.structuredContent?.objectValue?["pages"]?.arrayValue)
         return try #require(pages.first?.objectValue?["id"]?.stringValue)
@@ -3426,6 +3536,7 @@ private actor EndpointMap {
     private var nextFailureBarrier: SequenceBarrier?
     private var scheduledCancellationRemaining: Int?
     private var scheduledCancellationBarrier: SequenceBarrier?
+    private var scheduledTransportCancellation = false
 
     func set(_ browserID: String, port: Int) {
         self.endpoints[port] = browserID
@@ -3440,9 +3551,14 @@ private actor EndpointMap {
         self.nextFailureBarrier = barrier
     }
 
-    func cancelResolution(afterSuccessfulResolutions count: Int, at barrier: SequenceBarrier) {
+    func cancelResolution(
+        afterSuccessfulResolutions count: Int,
+        at barrier: SequenceBarrier,
+        asTransportError: Bool = false)
+    {
         self.scheduledCancellationRemaining = count
         self.scheduledCancellationBarrier = barrier
+        self.scheduledTransportCancellation = asTransportError
     }
 
     func resolve(_ url: String) async throws -> BrowserMCPDevToolsEndpoint {
@@ -3455,9 +3571,14 @@ private actor EndpointMap {
            let cancellationBarrier = self.scheduledCancellationBarrier
         {
             if remaining == 0 {
+                let useTransportCancellation = self.scheduledTransportCancellation
                 self.scheduledCancellationRemaining = nil
                 self.scheduledCancellationBarrier = nil
+                self.scheduledTransportCancellation = false
                 await cancellationBarrier.block()
+                if useTransportCancellation {
+                    throw URLError(.cancelled)
+                }
                 throw CancellationError()
             }
             self.scheduledCancellationRemaining = remaining - 1
