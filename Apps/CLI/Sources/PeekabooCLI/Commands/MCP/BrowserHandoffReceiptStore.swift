@@ -435,7 +435,6 @@ enum BrowserHandoffCLIInputError: LocalizedError, ResultEnvelopeError, Equatable
     case conflictingBridgeSocket
     case localExecutionRefused
     case invalidReceipt(String)
-    case adoptionUnavailable
 
     nonisolated var errorDescription: String? {
         switch self {
@@ -449,8 +448,6 @@ enum BrowserHandoffCLIInputError: LocalizedError, ResultEnvelopeError, Equatable
             "--browser-handoff does not support --no-remote or PEEKABOO_NO_REMOTE."
         case let .invalidReceipt(cause):
             "Browser handoff receipt could not be loaded before runtime creation: \(cause)"
-        case .adoptionUnavailable:
-            "The selected Bridge provider cannot consume browser handoff receipts."
         }
     }
 

@@ -280,35 +280,6 @@ public protocol BrowserMCPConnectionHandoffProviding: BrowserMCPConnectionResult
     func takeConnectionHandoffReceiptBundleData() -> Data?
 }
 
-/// One caller-scoped browser child adopted from a validated cross-process handoff.
-/// Closing the token tears down only that child and is idempotent.
-@MainActor
-public final class BrowserMCPAdoptedHandoff {
-    public let browser: any BrowserMCPClientProviding
-    private var cleanupHandler: (@Sendable () async -> Void)?
-
-    public init(
-        browser: any BrowserMCPClientProviding,
-        cleanup: @escaping @Sendable () async -> Void)
-    {
-        self.browser = browser
-        self.cleanupHandler = cleanup
-    }
-
-    public func close() async {
-        guard let cleanupHandler = self.cleanupHandler else { return }
-        self.cleanupHandler = nil
-        await cleanupHandler()
-    }
-}
-
-/// Implemented only by a provider that can authenticate and consume the signed Bridge handoff,
-/// reserve its exact target, and return a new caller-scoped browser child.
-@MainActor
-public protocol BrowserHandoffRuntimeAdopting: BrowserMCPClientProviding {
-    func adoptBrowserHandoff(receiptBundleData: Data) async throws -> BrowserMCPAdoptedHandoff
-}
-
 /// Local provider surface that binds dispatch to one exact MCP child epoch as well as its browser target.
 /// Remote Bridge clients intentionally do not conform until their authenticated wire session carries this epoch.
 public protocol BrowserMCPAtomicSessionActionProviding: BrowserMCPActionResultProviding {

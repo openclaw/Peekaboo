@@ -47,7 +47,6 @@ extension MCPCommand {
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             var localDaemon: PeekabooDaemon?
-            var adoptedBrowser: BrowserMCPAdoptedHandoff?
             do {
                 guard let transportType = Self.transportType(named: self.transport) else {
                     runtime.logger.setJsonOutputMode(runtime.configuration.jsonOutput)
@@ -71,8 +70,6 @@ extension MCPCommand {
                     throw ExitCode.failure
                 }
 
-                adoptedBrowser = try await Self.adoptBrowserHandoffIfRequested(using: runtime)
-
                 if runtime.services is RemotePeekabooServices {
                     runtime.logger.debug("MCP: using remote Bridge host; skipping local daemon startup")
                 } else {
@@ -86,19 +83,22 @@ extension MCPCommand {
                     services: runtime.services,
                     snapshotMutationCoordinator: mutationCoordinator,
                     executionPolicy: self.allowForeground ? .foregroundAllowed : .backgroundOnly,
-                    capturePreflightRefusal: runtime.toolCapturePreflightRefusal,
-                    browser: adoptedBrowser?.browser
+                    capturePreflightRefusal: runtime.toolCapturePreflightRefusal
                 )
-                let server = try await PeekabooMCPServer(toolContext: toolContext)
+                let browserHandoff = runtime.browserHandoffReceiptBundleData.map {
+                    BrowserMCPHandoffGrant(payload: $0)
+                }
+                // Server initialization opens the authenticated remote scope before tools are registered or served.
+                let server = try await PeekabooMCPServer(
+                    toolContext: toolContext,
+                    browserHandoff: browserHandoff
+                )
                 try await server.serve(transport: transportType, port: self.port)
-                await adoptedBrowser?.close()
                 await Self.stopLocalDaemon(localDaemon)
             } catch let exitCode as ExitCode {
-                await adoptedBrowser?.close()
                 await Self.stopLocalDaemon(localDaemon)
                 throw exitCode
             } catch {
-                await adoptedBrowser?.close()
                 await Self.stopLocalDaemon(localDaemon)
                 runtime.logger.error("Failed to start MCP server: \(error)")
                 throw ExitCode.failure
@@ -124,24 +124,11 @@ extension MCPCommand {
             await daemon.waitUntilStopped()
         }
 
-        static func adoptBrowserHandoffIfRequested(
-            using runtime: CommandRuntime
-        ) async throws -> BrowserMCPAdoptedHandoff? {
-            guard let receiptBundleData = runtime.browserHandoffReceiptBundleData else { return nil }
-            guard runtime.selectedRemoteSocketPath != nil,
-                  let adopter = runtime.services.browser as? any BrowserHandoffRuntimeAdopting
-            else {
-                throw BrowserHandoffCLIInputError.adoptionUnavailable
-            }
-            return try await adopter.adoptBrowserHandoff(receiptBundleData: receiptBundleData)
-        }
-
         static func makeToolContext(
             services: any PeekabooServiceProviding,
             snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?,
             executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
-            capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil,
-            browser: (any BrowserMCPClientProviding)? = nil
+            capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil
         ) -> MCPToolContext {
             let snapshotExecutionGate: MCPToolSnapshotExecutionGate
             if let agent = services.agent as? PeekabooAgentService {
@@ -154,7 +141,6 @@ extension MCPCommand {
 
             return MCPToolContext(
                 services: services,
-                browser: browser,
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
                 snapshotExecutionGate: snapshotExecutionGate,
                 executionPolicy: executionPolicy,

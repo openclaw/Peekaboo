@@ -432,7 +432,7 @@ struct BrowserHandoffCLITests {
 
     @Test
     @MainActor
-    func `handoff adoption is scoped fail closed and cleaned up exactly once`() async throws {
+    func `handoff server open is scoped fail closed and cleaned up exactly once`() async throws {
         let receiptData = Data("fixture-signed-handoff".utf8)
         let provider = HandoffToolFixtureBrowser()
         let services = Self.services(browser: provider)
@@ -449,19 +449,19 @@ struct BrowserHandoffCLITests {
             browserHandoffReceiptBundleData: receiptData
         )
 
-        let adoption = try #require(try await MCPCommand.Serve.adoptBrowserHandoffIfRequested(using: runtime))
-        #expect(provider.adoptedReceiptData == receiptData)
-        let scopedBrowser = try #require(provider.adoptedBrowser)
         let context = MCPCommand.Serve.makeToolContext(
             services: services,
-            snapshotMutationCoordinator: nil,
-            browser: adoption.browser
+            snapshotMutationCoordinator: nil
         )
-        #expect(ObjectIdentifier(context.browser as AnyObject) == ObjectIdentifier(scopedBrowser))
-        #expect(ObjectIdentifier(context.browser as AnyObject) != ObjectIdentifier(provider))
-        await adoption.close()
-        await adoption.close()
-        #expect(provider.adoptionCleanupCount == 1)
+        let server = try await PeekabooMCPServer(
+            toolContext: context,
+            browserHandoff: BrowserMCPHandoffGrant(payload: receiptData)
+        )
+        #expect(provider.openedReceiptData == receiptData)
+        #expect(await server.browserClientForTesting() !== provider)
+        await server.stopForTesting()
+        await server.stopForTesting()
+        #expect(provider.sessionCleanupCount == 1)
 
         let unavailableRuntime = CommandRuntime(
             configuration: runtime.configuration,
@@ -469,8 +469,15 @@ struct BrowserHandoffCLITests {
             selectedRemoteSocketPath: "/private/tmp/peekaboo-handoff.sock",
             browserHandoffReceiptBundleData: receiptData
         )
-        await #expect(throws: BrowserHandoffCLIInputError.adoptionUnavailable) {
-            _ = try await MCPCommand.Serve.adoptBrowserHandoffIfRequested(using: unavailableRuntime)
+        let unavailableContext = MCPCommand.Serve.makeToolContext(
+            services: unavailableRuntime.services,
+            snapshotMutationCoordinator: nil
+        )
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await PeekabooMCPServer(
+                toolContext: unavailableContext,
+                browserHandoff: BrowserMCPHandoffGrant(payload: receiptData)
+            )
         }
     }
 
@@ -547,12 +554,17 @@ struct BrowserHandoffCLITests {
 
 @MainActor
 private final class HandoffToolFixtureBrowser: BrowserMCPConnectionHandoffProviding,
-BrowserHandoffRuntimeAdopting, @unchecked Sendable {
+BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding, @unchecked Sendable {
     private(set) var handoffConnectCount = 0
     private var handoffData: Data?
-    private(set) var adoptedReceiptData: Data?
-    private(set) var adoptedBrowser: HandoffToolFixtureBrowser?
-    private(set) var adoptionCleanupCount = 0
+    private(set) var openedReceiptData: Data?
+    private(set) var sessionCleanupCount = 0
+    private weak var cleanupOwner: HandoffToolFixtureBrowser?
+    private var sessionEnded = false
+
+    init(cleanupOwner: HandoffToolFixtureBrowser? = nil) {
+        self.cleanupOwner = cleanupOwner
+    }
 
     nonisolated var supportsNativeBrowserConnectionBinding: Bool {
         true
@@ -600,17 +612,17 @@ BrowserHandoffRuntimeAdopting, @unchecked Sendable {
         return self.handoffData
     }
 
-    func adoptBrowserHandoff(receiptBundleData: Data) async throws -> BrowserMCPAdoptedHandoff {
-        let child = HandoffToolFixtureBrowser()
-        self.adoptedReceiptData = receiptBundleData
-        self.adoptedBrowser = child
-        return BrowserMCPAdoptedHandoff(browser: child) { [weak self] in
-            await self?.recordAdoptionCleanup()
-        }
+    func openBrowserMCPScopedSession(
+        handoff: BrowserMCPHandoffGrant?
+    ) async throws -> any BrowserMCPClientProviding {
+        self.openedReceiptData = handoff?.payload
+        return HandoffToolFixtureBrowser(cleanupOwner: self)
     }
 
-    private func recordAdoptionCleanup() {
-        self.adoptionCleanupCount += 1
+    func endBrowserMCPScopedSession() async {
+        guard !self.sessionEnded else { return }
+        self.sessionEnded = true
+        self.cleanupOwner?.sessionCleanupCount += 1
     }
 
     func disconnect() async {}
