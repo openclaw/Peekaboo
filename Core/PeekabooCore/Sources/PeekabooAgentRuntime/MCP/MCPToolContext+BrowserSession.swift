@@ -1,9 +1,14 @@
 extension MCPToolContext {
     @MainActor
-    func scopingBrowserSession(named name: String) -> Self {
+    func scopingBrowserSession(named name: String) throws -> Self {
         guard let root = self.browser as? BrowserMCPService,
-              let scoped = root.authenticatedSession(named: name)
-        else { return self }
+              root.supportsAuthenticatedSessionBootstrap
+        else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        guard let scoped = root.authenticatedSession(named: name) else {
+            throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
+        }
         return self.replacingBrowser(with: scoped)
     }
 
@@ -28,10 +33,7 @@ extension MCPToolContext {
             return self.replacingBrowser(with: scoped)
         }
         guard let opening = self.browser as? any BrowserMCPScopedSessionOpening else {
-            guard self.executionHost == .local, handoff == nil else {
-                throw BrowserMCPConnectionError.receiptBindingUnsupported
-            }
-            return self
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
         }
         let scoped = try await opening.openBrowserMCPScopedSession(handoff: handoff)
         guard scoped !== self.browser else {

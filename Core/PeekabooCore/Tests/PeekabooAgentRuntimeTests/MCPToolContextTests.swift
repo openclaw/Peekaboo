@@ -217,13 +217,46 @@ struct MCPToolContextTests {
     func `remote MCP refuses a browser client without scoped session support`() async {
         let services = RemotePeekabooServices(
             client: PeekabooBridgeClient(socketPath: "/tmp/peekaboo-unused-context-test.sock"))
-        let root = LegacyRemoteBrowserRoot()
+        let root = UnsupportedBrowserRoot()
         let context = MCPToolContext(services: services, browser: root)
 
         await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
             _ = try await context.openingBrowserSession(named: "mcp:must-not-borrow-root")
         }
         #expect(root.callCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `local MCP refuses an unsupported browser root but browser filtering skips session opening`() async throws {
+        let services = PeekabooServices()
+        let root = UnsupportedBrowserRoot()
+        let context = MCPToolContext(services: services, browser: root)
+
+        #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try context.scopingBrowserSession(named: "mcp:must-not-borrow-root")
+        }
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await PeekabooMCPServer(
+                toolContext: context,
+                toolFilters: ToolFilters(
+                    allow: ["browser"],
+                    deny: [],
+                    allowSource: .config,
+                    denySources: [:]))
+        }
+        #expect(root.callCount == 0)
+
+        let filteredServer = try await PeekabooMCPServer(
+            toolContext: context,
+            toolFilters: ToolFilters(
+                allow: ["permissions"],
+                deny: [],
+                allowSource: .config,
+                denySources: [:]))
+        #expect(await filteredServer.registeredToolNamesForTesting() == ["permissions"])
+        #expect(root.callCount == 0)
+        #expect(await filteredServer.stopForTesting())
     }
 
     @Test
@@ -299,7 +332,7 @@ struct MCPToolContextTests {
 }
 
 @MainActor
-private final class LegacyRemoteBrowserRoot: BrowserMCPClientProviding, @unchecked Sendable {
+private final class UnsupportedBrowserRoot: BrowserMCPClientProviding, @unchecked Sendable {
     private(set) var callCount = 0
 
     func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {

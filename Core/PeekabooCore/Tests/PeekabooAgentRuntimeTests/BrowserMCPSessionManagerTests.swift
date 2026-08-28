@@ -429,7 +429,7 @@ struct BrowserMCPSessionManagerTests {
         let base = MCPToolContext(
             services: Self.services(browser: root),
             executionPolicy: .foregroundAllowed)
-        let firstContext = base
+        let firstContext = try base
             .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
             .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         let first = try #require(firstContext.browser as? BrowserMCPService)
@@ -440,7 +440,7 @@ struct BrowserMCPSessionManagerTests {
         #expect(firstProvider.removeCount == 2)
         #expect(root.pendingAuthenticatedSessionCleanupCount == 0)
 
-        let secondContext = base
+        let secondContext = try base
             .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
             .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         let second = try #require(secondContext.browser as? BrowserMCPService)
@@ -558,10 +558,10 @@ struct BrowserMCPSessionManagerTests {
             services: Self.services(browser: root),
             snapshotMutationCoordinator: coordinator,
             executionPolicy: .foregroundAllowed)
-        let firstContext = base
+        let firstContext = try base
             .scopingBrowserSession(named: "mcp:first")
             .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
-        let secondContext = base
+        let secondContext = try base
             .scopingBrowserSession(named: "mcp:second")
             .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         let firstClient = try #require(firstContext.browser as? BrowserMCPService)
@@ -632,7 +632,7 @@ struct BrowserMCPSessionManagerTests {
         let provider = MockBrowserMCPManager()
         let pool = BrowserMCPAuthenticatedSessionPool { _ in Self.exactSession(manager: provider) }
         let root = BrowserMCPService(authenticatedSessionPool: pool)
-        let context = MCPToolContext(
+        let context = try MCPToolContext(
             services: Self.services(browser: root),
             executionPolicy: .unrestricted)
             .scopingBrowserSession(named: "mcp:desktop-exclusion")
@@ -692,7 +692,7 @@ struct BrowserMCPSessionManagerTests {
         let base = MCPToolContext(
             services: Self.services(browser: root),
             executionPolicy: .foregroundAllowed)
-        let context = base
+        let context = try base
             .scopingBrowserSession(named: "mcp:one")
             .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         let client = try #require(context.browser as? BrowserMCPService)
@@ -764,10 +764,10 @@ struct BrowserMCPSessionManagerTests {
             services: Self.services(browser: root),
             snapshotMutationCoordinator: coordinator,
             executionPolicy: .foregroundAllowed)
-        let firstContext = base
+        let firstContext = try base
             .scopingBrowserSession(named: "mcp:debt-first")
             .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
-        let secondContext = base
+        let secondContext = try base
             .scopingBrowserSession(named: "mcp:debt-second")
             .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         let firstClient = try #require(firstContext.browser as? BrowserMCPService)
@@ -832,7 +832,7 @@ struct BrowserMCPSessionManagerTests {
         let root = BrowserMCPService(authenticatedSessionPool: pool)
         let completionBarrier = SequenceBarrier()
         let coordinator = BlockingBrowserCompletionCoordinator(barrier: completionBarrier)
-        let context = MCPToolContext(
+        let context = try MCPToolContext(
             services: Self.services(browser: root),
             snapshotMutationCoordinator: coordinator,
             executionPolicy: .foregroundAllowed)
@@ -877,7 +877,7 @@ struct BrowserMCPSessionManagerTests {
         let root = BrowserMCPService(authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool { _ in
             Self.exactSession(manager: MockBrowserMCPManager())
         })
-        let context = MCPToolContext(
+        let context = try MCPToolContext(
             services: Self.services(browser: root),
             executionPolicy: .unrestricted)
             .scopingBrowserSession(named: "mcp:desktop-teardown")
@@ -931,7 +931,7 @@ struct BrowserMCPSessionManagerTests {
         }
         let root = BrowserMCPService(authenticatedSessionPool: pool)
         let completionBarrier = SequenceBarrier()
-        let context = MCPToolContext(
+        let context = try MCPToolContext(
             services: Self.services(browser: root),
             snapshotMutationCoordinator: BlockingBrowserCompletionCoordinator(barrier: completionBarrier),
             executionPolicy: .foregroundAllowed)
@@ -1386,8 +1386,8 @@ struct BrowserMCPSessionManagerTests {
         let base = MCPToolContext(
             services: Self.services(browser: root),
             executionPolicy: .unrestricted)
-        let firstContext = base.scopingBrowserSession(named: "mcp:first")
-        let secondContext = base.scopingBrowserSession(named: "mcp:second")
+        let firstContext = try base.scopingBrowserSession(named: "mcp:first")
+        let secondContext = try base.scopingBrowserSession(named: "mcp:second")
         let firstClient = try #require(firstContext.browser as? BrowserMCPService)
         let secondClient = try #require(secondContext.browser as? BrowserMCPService)
         _ = try await firstClient.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
@@ -4441,7 +4441,7 @@ extension BrowserMCPSessionManagerTests {
                 environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
         }
         let root = BrowserMCPService(authenticatedSessionPool: pool)
-        let context = MCPToolContext(
+        let context = try MCPToolContext(
             services: Self.services(browser: root),
             executionPolicy: .foregroundAllowed)
             .scopingBrowserSession(named: "mcp:isolated-refusal")
@@ -4474,7 +4474,7 @@ extension BrowserMCPSessionManagerTests {
                 environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
         }
         let root = BrowserMCPService(authenticatedSessionPool: pool)
-        let context = MCPToolContext(
+        let context = try MCPToolContext(
             services: Self.services(browser: root),
             executionPolicy: .foregroundAllowed)
             .scopingBrowserSession(named: "mcp:explicit-endpoint")
