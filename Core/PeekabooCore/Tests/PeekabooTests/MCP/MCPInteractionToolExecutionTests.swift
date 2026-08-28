@@ -1020,7 +1020,7 @@ extension MCPToolExecutionTests {
 
     @Test
     func `Type tool preserves element target when focusing before typing`() async throws {
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
@@ -1062,7 +1062,7 @@ extension MCPToolExecutionTests {
     @Test
     func `snapshot independent foreground type invalidates implicit latest`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
@@ -1080,14 +1080,14 @@ extension MCPToolExecutionTests {
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
         #expect(preserved != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
     func `Type tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let explicitSnapshot = await UISnapshotManager.shared.createSnapshot()
         let explicitSnapshotId = await explicitSnapshot.id
@@ -1110,7 +1110,7 @@ extension MCPToolExecutionTests {
         #expect(explicitHistory != nil)
         #expect(latestHistory != nil)
         #expect(implicitLatest == nil)
-        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
