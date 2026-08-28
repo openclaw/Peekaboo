@@ -92,6 +92,37 @@ test('background Agent type guidance requires an explicit non-dialog snapshot', 
   assert.match(read('docs/commands/type.md'), /Background-only Agent\/MCP.*explicit fresh exact non-dialog/s);
 });
 
+test('browser guidance separates standalone root authority from scoped sessions', () => {
+  const browser = read('docs/commands/browser.md');
+  const mcp = read('docs/commands/mcp.md');
+  const agent = read('docs/commands/agent.md');
+  const changelog = read('CHANGELOG.md');
+  const cliChangelog = read('Apps/CLI/CHANGELOG.md');
+  const changelogContract =
+    /explicit-foreground standalone CLI root auto-connect.*prevents shared-root fallback and unsafe reuse/s;
+
+  assert.match(browser, /default mode.*require an existing exact browser\s+connection and never auto-connect/s);
+  assert.match(browser, /explicit `--foreground`.*standalone CLI browser root may auto-connect/s);
+  assert.match(browser, /MCP, Agent, and Bridge-scoped children remain receipt-only/s);
+  assert.match(mcp, /Each server whose\s+catalog includes `browser`, or which consumes an explicit browser handoff/s);
+  assert.doesNotMatch(mcp, /Each process-local\s+server owns a fresh browser child/s);
+  assert.match(mcp, /Scoped MCP page actions never ambiently auto-connect, even\s+with foreground authority/s);
+  assert.match(mcp, /`--allow-foreground` instead exposes the\s+explicit `browser` `connect` action/s);
+  assert.match(mcp, /Filtering out `browser` therefore creates no browser\s+child/s);
+  assert.match(mcp, /explicit `--browser-handoff` is still\s+authenticated, consumed, and opened/s);
+  assert.match(agent, /Bridge-routed Agent never borrows the host's shared browser root/s);
+  assert.match(agent, /unconfirmed cleanup is retained as retryable debt and blocks\s+session reuse/s);
+  assert.match(changelog, changelogContract);
+  assert.match(cliChangelog, changelogContract);
+  const rootBullet = changelog
+    .split('\n')
+    .find((line) => line.includes('explicit-foreground standalone CLI root auto-connect'));
+  const cliBullet = cliChangelog
+    .split('\n')
+    .find((line) => line.includes('explicit-foreground standalone CLI root auto-connect'));
+  assert.equal(cliBullet, rootBullet, 'root and CLI changelogs must carry the same browser contract');
+});
+
 test('targeted dialog input is documented as background AXValue', () => {
   const dialog = read('docs/commands/dialog.md');
   assert.match(dialog, /Exact targeted.*input stay in the background/s);

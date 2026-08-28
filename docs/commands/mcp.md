@@ -16,11 +16,13 @@ read_when:
 
 ## Implementation notes
 - `serve` instantiates `PeekabooMCPServer` and maps the transport string to `PeekabooCore.TransportType`. Stdio is the default for Claude Code integrations.
-- Public MCP servers are background-only by default. Foreground actions, shared desktop input, browser connection setup,
-  and ambient browser auto-connect fail before dispatch unless a human starts that server process with
-  `--allow-foreground`. Each process-local server owns a fresh browser child and does not borrow another CLI, daemon,
-  or MCP caller's connection. To bootstrap that exact child, call its `browser` tool with `action: "connect"` and
-  accept Chrome's prompt; later page actions reuse the scoped connection and remain page-targeted/background-delivered.
+- Public MCP servers are background-only by default. Foreground actions, shared desktop input, and browser connection
+  setup fail before dispatch unless a human starts that server process with `--allow-foreground`. Each server whose
+  catalog includes `browser`, or which consumes an explicit browser handoff, owns a fresh browser child and does not
+  borrow another CLI, daemon, or MCP caller's connection. Scoped MCP page actions never ambiently auto-connect, even
+  with foreground authority. `--allow-foreground` instead exposes the explicit `browser` `connect` action for that
+  exact child; accept Chrome's prompt once, then later page actions reuse the scoped connection and remain
+  page-targeted/background-delivered.
   Authenticated sessions reject `PEEKABOO_BROWSER_MCP_ISOLATED=1` before provider startup because that child has no
   pinnable browser identity. For headless use, launch Chrome separately and pass its exact loopback `browser_url`.
   This explicit authority never exposes Shell, and a nested Agent remains background-only. Bridge-backed opaque
@@ -49,6 +51,10 @@ read_when:
 - An explicit environment allowlist containing only tools proven unable to capture pixels, such as
   `PEEKABOO_ALLOW_TOOLS=browser`, skips ScreenCaptureKit owner selection at startup. Missing allowlists, unknown tools,
   nested `agent`, and any capture-capable tool remain fail-closed behind the normal owner preflight.
+- MCP resolves its filtered tool catalog before browser bootstrap. Filtering out `browser` therefore creates no browser
+  child and lets browser-free catalogs start against legacy remote providers. An explicit `--browser-handoff` is still
+  authenticated, consumed, and opened even when `browser` is filtered out, so one-shot authority is never silently
+  ignored; the filtered browser tool remains unavailable.
 - UI automation tools include action-first additions: `set_value` directly mutates a settable accessibility value, and `action` invokes a named accessibility action on an element from `see`.
 - `verify_state` replaces fixed sleeps with bounded native polling. It resolves an app or PID to one exact window, evaluates 1–8 AND predicates for window existence/bounds or exact AX element existence/value/enabled/selected state every 100 ms, and reports `satisfied`, `unsatisfied`, or conservative `unknown` after at most 10 seconds. Explicit PIDs and app-name selectors are pinned to the first resolved PID/process-start generation for the whole invocation; relaunch, PID reuse, and selector drift are `unknown`. Exact-window ownership is rechecked on every sample and before an optional screenshot, whose capture metadata must confirm the same PID and window ID. A directly read value matching a unique exact AX identifier can satisfy an `element_value` predicate when unrelated AX siblings are unreadable; missing, mismatched, non-identifier, or ambiguous partial-tree evidence remains `unknown`. A WindowServer miss is corroborated with a complete app-scoped window inventory before Peekaboo reports absence, preserving minimized AX windows. Ownership ambiguity, partial enumeration, or identity changes are `unknown`. It never focuses or replays actions.
 - `click` preserves element IDs and queries when forwarding to automation, so action-first policy can use accessibility actions before synthetic fallback.

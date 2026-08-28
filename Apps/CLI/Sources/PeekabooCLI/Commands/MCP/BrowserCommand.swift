@@ -100,8 +100,10 @@ InjectedRuntimeBackedCommand {
           peekaboo browser new-page --url https://example.com
           peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
 
-        Browser actions reuse an existing exact connection by default and never auto-connect.
-        Connecting or allowing any foreground browser effect requires explicit --foreground.
+        Background browser actions require an existing exact connection and never auto-connect.
+        With explicit --foreground, the standalone browser root may auto-connect when no receipt exists.
+        Authenticated MCP, Agent, and Bridge-scoped children remain receipt-only and require
+        explicit bootstrap instead of ambient auto-connect.
         """
     )
 
@@ -427,7 +429,7 @@ extension BrowserCommand: CommanderSignatureProviding {
                 .commandFlag("background", help: "Open new page in background (default)", long: "background"),
                 .commandFlag(
                     "foreground",
-                    help: "Allow foreground browser effects; opens new pages in the foreground",
+                    help: "Allow foreground browser effects and standalone CLI auto-connect; opens new pages in front",
                     long: "foreground"
                 ),
                 .commandFlag(

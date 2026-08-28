@@ -27,6 +27,10 @@ struct BrowserHandoffCLITests {
 
         #expect(browserHelp.contains("--handoff-file"))
         #expect(browserHelp.contains("authenticated browser handoff receipt"))
+        #expect(browserHelp.contains("Background browser actions require an existing exact connection"))
+        #expect(browserHelp.contains("standalone browser root may auto-connect"))
+        #expect(browserHelp.contains("standalone CLI auto-connect"))
+        #expect(browserHelp.contains("Bridge-scoped children remain receipt-only"))
         #expect(mcpHelp.contains("--browser-handoff"))
         #expect(mcpHelp.contains("authenticated browser target"))
 
