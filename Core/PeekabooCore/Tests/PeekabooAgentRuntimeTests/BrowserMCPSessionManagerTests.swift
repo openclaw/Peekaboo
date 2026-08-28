@@ -2976,6 +2976,70 @@ struct BrowserMCPSessionManagerTests {
 
 extension BrowserMCPSessionManagerTests {
     @Test
+    func `status retains target ownership until orphan provider removal is confirmed`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: nil)
+        firstProvider.connected = false
+        firstProvider.removeLeavesProvider = [true, false]
+
+        let lost = await first.status(channel: nil)
+        #expect(!lost.isConnected)
+        #expect(firstProvider.removeCount == 1)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: nil)
+        }
+        #expect(secondProvider.addedConfigs.isEmpty)
+
+        let cleaned = await first.status(channel: nil)
+        #expect(!cleaned.isConnected)
+        #expect(firstProvider.removeCount == 2)
+        _ = try await second.connect(channel: nil, browserURL: nil)
+        #expect(secondProvider.addedConfigs.count == 1)
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `disconnect retains cleanup debt until end and normal disconnect still releases`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let thirdProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider, thirdProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        let third = try #require(root.authenticatedSession(named: "agent:third"))
+        _ = try await first.connect(channel: nil, browserURL: nil)
+        firstProvider.removeLeavesProvider = [true, false]
+
+        await first.disconnect()
+        #expect(firstProvider.removeCount == 1)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: nil)
+        }
+        #expect(await root.endAuthenticatedSession(named: "agent:first"))
+        #expect(firstProvider.removeCount == 2)
+
+        _ = try await second.connect(channel: nil, browserURL: nil)
+        await second.disconnect()
+        _ = try await third.connect(channel: nil, browserURL: nil)
+        #expect(thirdProvider.addedConfigs.count == 1)
+        await root.endAuthenticatedSession(named: "agent:second")
+        await root.endAuthenticatedSession(named: "agent:third")
+    }
+
+    @Test
     func `existing receipt policy refuses a disconnected read without connecting or dispatching`() async throws {
         let manager = MockBrowserMCPManager()
         let session = Self.session(manager: manager, browsers: [Self.browser(pid: 821, generation: 5821)])

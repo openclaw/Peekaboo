@@ -37,6 +37,7 @@ private struct BrowserMCPResolvedTarget {
 private struct BrowserMCPStatusInspection {
     let status: BrowserMCPStatus
     let wasCancelled: Bool
+    let cleanupConfirmed: Bool
 }
 
 @MainActor
@@ -141,7 +142,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         do {
             return try await self.withExecutionGate {
                 let inspection = await self.inspectStatusUnlocked(channel: channel)
-                if !inspection.status.isConnected, !inspection.wasCancelled {
+                if !inspection.status.isConnected, !inspection.wasCancelled, inspection.cleanupConfirmed {
                     releaseTargetWhenDisconnected?()
                 }
                 return inspection.status
@@ -179,18 +180,15 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         guard let receipt = self.connectionReceipt,
               let providerSessionEpoch = self.providerSessionEpoch
         else {
-            if await self.manager.isServerConnected(name: self.serverName) || self.manager
-                .hasServer(name: self.serverName)
-            {
-                await self.manager.removeServer(name: self.serverName)
-            }
+            let cleanupConfirmed = await self.clearConnection()
             return BrowserMCPStatusInspection(
                 status: BrowserMCPStatus(
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
                     connectionReceipt: nil),
-                wasCancelled: false)
+                wasCancelled: false,
+                cleanupConfirmed: cleanupConfirmed)
         }
 
         do {
@@ -205,7 +203,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     detectedBrowsers: browsers,
                     connectionReceipt: receipt,
                     providerSessionEpoch: providerSessionEpoch),
-                wasCancelled: false)
+                wasCancelled: false,
+                cleanupConfirmed: false)
         } catch let error where Self.isCancellation(error) {
             return BrowserMCPStatusInspection(
                 status: BrowserMCPStatus(
@@ -216,9 +215,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     providerSessionEpoch: providerSessionEpoch,
                     error: CancellationError().localizedDescription,
                     observation: .indeterminate),
-                wasCancelled: true)
+                wasCancelled: true,
+                cleanupConfirmed: false)
         } catch {
-            await self.clearConnection()
+            let cleanupConfirmed = await self.clearConnection()
             return BrowserMCPStatusInspection(
                 status: BrowserMCPStatus(
                     isConnected: false,
@@ -226,7 +226,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     detectedBrowsers: browsers,
                     connectionReceipt: nil,
                     error: error.localizedDescription),
-                wasCancelled: false)
+                wasCancelled: false,
+                cleanupConfirmed: cleanupConfirmed)
         }
     }
 
@@ -393,8 +394,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     func disconnect(releaseTarget: TargetRelease? = nil) async {
         try? await self.withExecutionGate {
-            await self.clearConnection()
-            releaseTarget?()
+            let cleanupConfirmed = await self.clearConnection()
+            if cleanupConfirmed {
+                releaseTarget?()
+            }
         }
     }
 
@@ -1460,7 +1463,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return true
     }
 
-    private func clearConnection() async {
+    @discardableResult
+    private func clearConnection() async -> Bool {
         self.connectionReceipt = nil
         self.providerSessionEpoch = nil
         self.connectionSupportsReceiptBoundExecution = false
@@ -1470,14 +1474,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.activeUploadID = nil
         let uploadWorkspace = self.uploadWorkspace
         self.uploadWorkspace = nil
-        var shouldRemoveServer = self.manager.hasServer(name: self.serverName)
-        if !shouldRemoveServer {
-            shouldRemoveServer = await self.manager.isServerConnected(name: self.serverName)
-        }
-        if shouldRemoveServer {
-            await self.manager.removeServer(name: self.serverName)
-        }
+        let cleanupConfirmed = await self.removeProviderForHandoff()
         uploadWorkspace?.cleanup()
+        return cleanupConfirmed
     }
 
     private func removeProviderForHandoff() async -> Bool {
