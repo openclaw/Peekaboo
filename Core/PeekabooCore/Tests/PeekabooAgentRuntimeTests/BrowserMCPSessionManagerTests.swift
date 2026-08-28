@@ -1046,6 +1046,46 @@ struct BrowserMCPSessionManagerTests {
         await root.endAuthenticatedSession(named: "agent:second")
     }
 
+    @Test
+    func `real validation loss on a cancelled status releases its target reservation`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let validationBarrier = SequenceBarrier()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let firstManager = Self.exactSession(
+            manager: firstProvider,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            })
+        let secondManager = Self.exactSession(manager: secondProvider)
+        var managers = [firstManager, secondManager]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in managers.removeFirst() }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        await endpoints.failNextResolution(after: validationBarrier)
+
+        let inspection = Task { @MainActor in
+            await first.status(channel: nil)
+        }
+        await validationBarrier.waitUntilBlocked()
+        inspection.cancel()
+        await validationBarrier.release()
+
+        let disconnected = await inspection.value
+        #expect(!disconnected.isConnected)
+        #expect(disconnected.connectionReceipt == nil)
+        #expect(disconnected.observation == .confirmed)
+        _ = try await second.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        #expect(firstProvider.removeCount == 1)
+        #expect(secondProvider.addedConfigs.count == 1)
+
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
     @Test(arguments: [false, true])
     func `cancelled status inspection retains live target ownership`(transportCancellation: Bool) async throws {
         let firstProvider = MockBrowserMCPManager()
@@ -3333,6 +3373,7 @@ private actor EndpointMap {
     private var endpoints: [Int: String] = [:]
     private var shouldCancelResolution = false
     private var shouldUseTransportCancellation = false
+    private var nextFailureBarrier: SequenceBarrier?
 
     func set(_ browserID: String, port: Int) {
         self.endpoints[port] = browserID
@@ -3343,7 +3384,16 @@ private actor EndpointMap {
         self.shouldUseTransportCancellation = asTransportError
     }
 
-    func resolve(_ url: String) throws -> BrowserMCPDevToolsEndpoint {
+    func failNextResolution(after barrier: SequenceBarrier) {
+        self.nextFailureBarrier = barrier
+    }
+
+    func resolve(_ url: String) async throws -> BrowserMCPDevToolsEndpoint {
+        if let failureBarrier = self.nextFailureBarrier {
+            self.nextFailureBarrier = nil
+            await failureBarrier.block()
+            throw BrowserMCPConnectionError.connectionLost("the endpoint disappeared during validation")
+        }
         if self.shouldCancelResolution {
             if self.shouldUseTransportCancellation {
                 throw URLError(.cancelled)

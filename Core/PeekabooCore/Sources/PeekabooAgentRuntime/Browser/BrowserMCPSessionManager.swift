@@ -938,7 +938,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     }
 
     private static func isCancellation(_ error: any Error) -> Bool {
-        if Task.isCancelled || error is CancellationError {
+        if error is CancellationError {
             return true
         }
         if (error as? URLError)?.code == .cancelled {
