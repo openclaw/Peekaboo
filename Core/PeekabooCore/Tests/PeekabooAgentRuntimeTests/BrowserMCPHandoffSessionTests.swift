@@ -885,6 +885,39 @@ struct BrowserMCPHandoffSessionTests {
 
 extension BrowserMCPHandoffSessionTests {
     @Test
+    func `confirmed source drain tombstone resolves commit recovery debt`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let name = "mcp:commit-recovery"
+        _ = try #require(fixture.root.authenticatedSession(named: name))
+        let sessionID = try #require(fixture.pool.existingSessionID(named: name))
+        let preparation = try fixture.pool.prepareHandoff(sessionID, authorization: fixture.authorization)
+        guard case .start = preparation else {
+            Issue.record("Expected a new handoff transaction")
+            return
+        }
+
+        _ = try await fixture.rootManager.drainConnectionForHandoff(authorization: fixture.authorization)
+        fixture.pool.requireSourceRecovery(for: sessionID)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await fixture.rootManager.connectWithOutcome(channel: nil, browserURL: Self.browserURL)
+        }
+        #expect(fixture.rootProvider.addedConfigs.count == 1)
+        #expect(await fixture.root.endAuthenticatedSession(named: name))
+        #expect(fixture.pool.isEmpty)
+        #expect(await !fixture.rootManager.recoverSourceHandoff(authorization: fixture.authorization))
+
+        let reconnected = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
+        let replacementEpoch = try #require(reconnected.providerSessionEpoch)
+        #expect(replacementEpoch != fixture.sourceBinding.providerSessionEpoch)
+        #expect(await !fixture.rootManager.recoverSourceHandoff(authorization: fixture.authorization))
+        let replacementStatus = await fixture.root.status(channel: nil)
+        #expect(replacementStatus.isConnected)
+        #expect(replacementStatus.providerSessionEpoch == replacementEpoch)
+        await fixture.root.disconnect()
+    }
+
+    @Test
     func `explicit disconnect retires source authorization capacity`() async throws {
         let fixture = try await Self.fixture(destinationProviders: [])
         var authorizationIDs: [UUID] = []

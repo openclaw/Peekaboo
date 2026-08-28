@@ -5,6 +5,8 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
+// swiftlint:disable file_length
+
 @MainActor
 protocol BrowserMCPManaging: AnyObject {
     func hasServer(name: String) -> Bool
@@ -78,6 +80,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private var connectionTargetKind: BrowserMCPConnectionTargetKind?
     private var uploadWorkspace: BrowserMCPUploadWorkspace?
     private var activeUploadID: UUID?
+    private var connectionCleanupPending = false
+    private var drainedHandoffBinding: BrowserMCPExecutionSessionBinding?
     private var sessionEnded = false
 
     private static let connectionDelivery = DesktopActionOutcome.Delivery(
@@ -177,6 +181,18 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private func inspectStatusUnlocked(channel: BrowserMCPChannel?) async -> BrowserMCPStatusInspection {
         let browsers = self.detectedBrowsers(channel)
+        if self.connectionCleanupPending {
+            let cleanupConfirmed = await self.clearConnection()
+            return BrowserMCPStatusInspection(
+                status: BrowserMCPStatus(
+                    isConnected: false,
+                    toolCount: 0,
+                    detectedBrowsers: browsers,
+                    connectionReceipt: nil,
+                    error: cleanupConfirmed ? nil : "Browser provider cleanup remains pending."),
+                wasCancelled: false,
+                cleanupConfirmed: cleanupConfirmed)
+        }
         guard let receipt = self.connectionReceipt,
               let providerSessionEpoch = self.providerSessionEpoch
         else {
@@ -186,7 +202,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
-                    connectionReceipt: nil),
+                    connectionReceipt: nil,
+                    error: cleanupConfirmed ? nil : "Browser provider cleanup remains pending."),
                 wasCancelled: false,
                 cleanupConfirmed: cleanupConfirmed)
         }
@@ -300,6 +317,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         attempt: BrowserMCPConnectionAttempt,
         reserveTarget: TargetReservation? = nil) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
+        guard !self.connectionCleanupPending, self.drainedHandoffBinding == nil else {
+            throw BrowserMCPConnectionError.targetLocked
+        }
         if let existing = self.connectionReceipt {
             guard self.connectionReceipt(existing, matchesChannel: channel, browserURL: browserURL) else {
                 throw BrowserMCPConnectionError.targetLocked
@@ -403,7 +423,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     func preflightHandoffDestination() async throws {
         try await self.withExecutionGate {
-            guard self.connectionReceipt == nil,
+            guard !self.connectionCleanupPending,
+                  self.drainedHandoffBinding == nil,
+                  self.connectionReceipt == nil,
                   self.providerSessionEpoch == nil,
                   !self.manager.hasServer(name: self.serverName),
                   await !(self.manager.isServerConnected(name: self.serverName))
@@ -465,6 +487,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                         "source MCP child teardown could not be confirmed"))
             }
             self.discardConnectionState()
+            self.drainedHandoffBinding = authorization.sourceBinding
             return target
         }
     }
@@ -473,6 +496,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         let cleanup = Task { @MainActor in
             do {
                 return try await self.withExecutionGate {
+                    if self.drainedHandoffBinding == authorization.sourceBinding {
+                        self.drainedHandoffBinding = nil
+                        return true
+                    }
                     guard self.connectionReceipt == authorization.connectionReceipt,
                           self.providerSessionEpoch == authorization.sourceBinding.providerSessionEpoch
                     else { return false }
@@ -489,11 +516,19 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return await cleanup.value
     }
 
+    func settleDrainedSourceHandoff(authorization: BrowserMCPConnectionHandoffAuthorization) {
+        if self.drainedHandoffBinding == authorization.sourceBinding {
+            self.drainedHandoffBinding = nil
+        }
+    }
+
     func bootstrapAuthorizedHandoff(_ target: BrowserMCPAuthorizedHandoffTarget) async throws {
         do {
             try await self.withExecutionGate {
                 do {
-                    guard self.connectionReceipt == nil,
+                    guard !self.connectionCleanupPending,
+                          self.drainedHandoffBinding == nil,
+                          self.connectionReceipt == nil,
                           self.providerSessionEpoch == nil,
                           !self.manager.hasServer(name: self.serverName),
                           await !(self.manager.isServerConnected(name: self.serverName))
@@ -794,6 +829,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         connectionPolicy: BrowserMCPExecutionConnectionPolicy,
         reserveTarget: TargetReservation?) async throws -> BrowserMCPPreparedExecution
     {
+        guard !self.connectionCleanupPending else {
+            throw Self.existingConnectionRequiredFailure(
+                cause: BrowserMCPConnectionError.connectionLost("browser provider cleanup remains pending"))
+        }
         if self.connectionReceipt == nil, expectedConnectionReceipt == nil {
             guard connectionPolicy == .allowAutoConnect else {
                 throw Self.existingConnectionRequiredFailure()
@@ -1374,6 +1413,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         receipt: BrowserMCPConnectionReceipt) async throws
         -> BrowserMCPAuthorizedHandoffTarget
     {
+        guard !self.connectionCleanupPending else {
+            throw BrowserMCPConnectionError.targetLocked
+        }
         guard self.connectionReceipt == receipt else {
             throw BrowserMCPConnectionError.expectedConnectionReceiptMismatch
         }
@@ -1465,17 +1507,13 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     @discardableResult
     private func clearConnection() async -> Bool {
-        self.connectionReceipt = nil
-        self.providerSessionEpoch = nil
-        self.connectionSupportsReceiptBoundExecution = false
-        self.connectionChannelEndpoint = nil
-        self.connectionCodeSignatureIdentity = nil
-        self.connectionTargetKind = nil
         self.activeUploadID = nil
-        let uploadWorkspace = self.uploadWorkspace
-        self.uploadWorkspace = nil
         let cleanupConfirmed = await self.removeProviderForHandoff()
-        uploadWorkspace?.cleanup()
+        if cleanupConfirmed {
+            self.discardConnectionState()
+        } else {
+            self.connectionCleanupPending = true
+        }
         return cleanupConfirmed
     }
 
@@ -1542,6 +1580,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     }
 
     private func discardConnectionState() {
+        self.connectionCleanupPending = false
         self.connectionReceipt = nil
         self.providerSessionEpoch = nil
         self.connectionSupportsReceiptBoundExecution = false

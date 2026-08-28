@@ -2977,30 +2977,41 @@ struct BrowserMCPSessionManagerTests {
 extension BrowserMCPSessionManagerTests {
     @Test
     func `status retains target ownership until orphan provider removal is confirmed`() async throws {
+        let staging = try UploadStagingFixture()
+        defer { staging.cleanup() }
         let firstProvider = MockBrowserMCPManager()
         let secondProvider = MockBrowserMCPManager()
         var providers = [firstProvider, secondProvider]
         let pool = BrowserMCPAuthenticatedSessionPool { _ in
-            Self.exactSession(manager: providers.removeFirst())
+            Self.exactSession(
+                manager: providers.removeFirst(),
+                uploadStager: staging.stager())
         }
         let root = BrowserMCPService(authenticatedSessionPool: pool)
         let first = try #require(root.authenticatedSession(named: "agent:first"))
         let second = try #require(root.authenticatedSession(named: "agent:second"))
         _ = try await first.connect(channel: nil, browserURL: nil)
+        let uploadRoot = try #require(firstProvider.addedConfigs.first?.env["TMPDIR"])
         firstProvider.connected = false
-        firstProvider.removeLeavesProvider = [true, false]
+        firstProvider.removeLeavesProvider = [true, true, false]
 
         let lost = await first.status(channel: nil)
         #expect(!lost.isConnected)
         #expect(firstProvider.removeCount == 1)
         await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9333")
+        }
+        #expect(firstProvider.removeCount == 2)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await second.connect(channel: nil, browserURL: nil)
         }
         #expect(secondProvider.addedConfigs.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: uploadRoot))
 
         let cleaned = await first.status(channel: nil)
         #expect(!cleaned.isConnected)
-        #expect(firstProvider.removeCount == 2)
+        #expect(firstProvider.removeCount == 3)
+        #expect(!FileManager.default.fileExists(atPath: uploadRoot))
         _ = try await second.connect(channel: nil, browserURL: nil)
         #expect(secondProvider.addedConfigs.count == 1)
         await root.endAuthenticatedSession(named: "agent:first")

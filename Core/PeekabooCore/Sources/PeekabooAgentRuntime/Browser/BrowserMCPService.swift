@@ -556,6 +556,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         else {
             throw BrowserMCPConnectionError.receiptBindingUnsupported
         }
+        let sourceManager = self.resolvedSessionManager()
         return try await pool.withHandoffLifecycle(sessionID) {
             @MainActor
             func destinationService() throws -> BrowserMCPService {
@@ -576,7 +577,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             case .start:
                 do {
                     try await destinationManager.preflightHandoffDestination()
-                    target = try await self.resolvedSessionManager().drainConnectionForHandoff(
+                    target = try await sourceManager.drainConnectionForHandoff(
                         authorization: authorization)
                     onSourceEpochEnded()
                     do {
@@ -584,6 +585,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
                             to: sessionID,
                             authorization: authorization,
                             target: target)
+                        sourceManager.settleDrainedSourceHandoff(authorization: authorization)
                     } catch {
                         pool.requireSourceRecovery(for: sessionID)
                         throw BrowserMCPConnectionError.handoffRecoveryRequired(

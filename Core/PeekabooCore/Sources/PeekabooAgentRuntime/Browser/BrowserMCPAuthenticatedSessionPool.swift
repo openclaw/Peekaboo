@@ -443,6 +443,13 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func confirmSourceRecovery(for sessionID: SessionID) {
+        if let claim = self.pendingHandoffClaims[sessionID] {
+            for key in Self.targetKeys(for: claim.authorization.connectionReceipt)
+                where self.targetOwners[key] == .root
+            {
+                self.targetOwners.removeValue(forKey: key)
+            }
+        }
         self.cancelPendingHandoff(for: sessionID)
     }
 
