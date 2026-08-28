@@ -344,6 +344,31 @@ struct PeekabooMCPServerTests {
 
     @Test
     @MainActor
+    func `press wire rejects obsolete foreground input as invalid params before dispatch`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let session = try await MCPWireSession.connect(context: context)
+
+        let detail = await Self.invalidParamsDetail(
+            session: session,
+            params: .object([
+                "name": .string("press"),
+                "arguments": .object([
+                    "key": .string("c"),
+                    "modifiers": .string("cmd"),
+                    "foreground": .bool(true),
+                ]),
+            ]))
+        #expect(detail?.contains("press") == true)
+        #expect(detail?.contains(#"Unknown property "foreground""#) == true)
+        #expect(automation.lastHotkeyKeys == nil)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
     func `press wire rejects malformed modifier shapes without dispatch`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
@@ -374,11 +399,11 @@ struct PeekabooMCPServerTests {
 
         do {
             for (arguments, expectedMessage) in cases {
-                var foregroundArguments = arguments
-                foregroundArguments["foreground"] = .bool(true)
+                var backgroundArguments = arguments
+                backgroundArguments["snapshot"] = .string("semantic-validation-fixture")
                 let request: RequestContext<CallTool.Result> = try await session.client.callTool(
                     name: "press",
-                    arguments: foregroundArguments)
+                    arguments: backgroundArguments)
                 let result = try await request.value
                 #expect(result.isError == true)
                 #expect(result.content.contains { content in
@@ -424,7 +449,7 @@ struct PeekabooMCPServerTests {
                     name: "press",
                     arguments: [
                         "key": key,
-                        "foreground": .bool(true),
+                        "snapshot": .string("semantic-validation-fixture"),
                     ])
                 let result = try await request.value
                 #expect(result.isError == true)
@@ -452,18 +477,34 @@ struct PeekabooMCPServerTests {
 
     @Test
     @MainActor
-    func `press wire still enforces background policy after semantic validation`() async throws {
+    func `press wire advertises only receipt-pinned background input and enforces runtime policy`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         let session = try await MCPWireSession.connect(context: context)
 
         do {
+            let (tools, _) = try await session.client.listTools()
+            let press = try #require(tools.first { $0.name == "press" })
+            guard case let .object(schema) = press.inputSchema,
+                  case let .object(properties)? = schema["properties"],
+                  case let .array(required)? = schema["required"]
+            else {
+                Issue.record("Expected a policy-aware press schema")
+                await session.stop()
+                return
+            }
+            #expect(properties["snapshot"] != nil)
+            #expect(properties["foreground"] == nil)
+            #expect(properties["app"] == nil)
+            #expect(properties["pid"] == nil)
+            #expect(properties["window_id"] == nil)
+            #expect(required == [.string("snapshot")])
+
             let request: RequestContext<CallTool.Result> = try await session.client.callTool(
                 name: "press",
                 arguments: [
                     "key": .string("c"),
                     "modifiers": .array([.string("cmd")]),
-                    "foreground": .bool(true),
                 ])
             let result = try await request.value
             #expect(result.isError == true)

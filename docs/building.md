@@ -41,6 +41,20 @@ pnpm run build:swift:all
 ./scripts/build-cli-standalone.sh [--install]
 ```
 
+## Debug build-staleness checks
+
+Debug CLI builds leave staleness checks disabled unless Git config contains
+`check-build-staleness = true` in a `[peekaboo]` section or `PEEKABOO_CHECK_BUILD_STALENESS` enables them.
+Set `PEEKABOO_CHECK_BUILD_STALENESS=0` to skip both config discovery and staleness checks;
+`1`, `true`, and `yes` enable them (case-insensitive, with surrounding whitespace ignored).
+Any other nonempty override disables them; an unset or blank override falls back to config.
+Config settings are read in system, XDG, home, then nearest repository order, with later settings taking precedence.
+
+Repository discovery visits each ancestor once, stopping after the filesystem root even when Git metadata is
+missing or inaccessible. It accepts `.git` directories and `.git` files with absolute or relative `gitdir:` paths.
+It reads `config` directly in the referenced Git directory; it does not follow a linked worktree's `commondir`.
+Release builds do not run this startup check.
+
 ## Releases
 
 For full release automation (tarballs, npm package, checksums), follow [RELEASING.md](RELEASING.md). Quick recap:

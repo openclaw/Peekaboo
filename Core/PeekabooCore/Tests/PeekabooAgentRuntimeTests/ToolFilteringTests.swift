@@ -9,6 +9,38 @@ import Testing
 @Suite(.serialized)
 struct ToolFilteringTests {
     @Test
+    func `Explicit browser-only environment allow-list proves ScreenCaptureKit unreachable`() {
+        #expect(MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser permissions sleep"]))
+        #expect(MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(environment: [
+            "PEEKABOO_ALLOW_TOOLS": "browser,see",
+            "PEEKABOO_DISABLE_TOOLS": "see",
+        ]))
+    }
+
+    @Test(arguments: [
+        "browser,see",
+        "browser,image",
+        "browser,capture",
+        "browser,verify_state",
+        "browser,agent",
+        "browser,future_unknown_tool",
+    ])
+    func `Capture-capable nested and unknown environment tools remain fail closed`(_ allowList: String) {
+        #expect(!MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(
+            environment: ["PEEKABOO_ALLOW_TOOLS": allowList]))
+    }
+
+    @Test
+    func `Absent explicit environment allow-list cannot prove ScreenCaptureKit unreachable`() {
+        #expect(!MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(environment: [:]))
+        #expect(!MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(
+            environment: ["PEEKABOO_ALLOW_TOOLS": "   "]))
+        #expect(!MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(
+            environment: ["PEEKABOO_ALLOW_TOOLS": ", ,"]))
+    }
+
+    @Test
     func `Config allow list narrows tools`() {
         let filters = ToolFiltering.filters(
             config: Configuration(tools: .init(allow: ["see", "click"])),

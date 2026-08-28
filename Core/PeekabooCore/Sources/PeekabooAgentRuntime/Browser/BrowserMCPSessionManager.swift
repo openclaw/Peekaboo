@@ -5,6 +5,8 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
+// swiftlint:disable file_length
+
 @MainActor
 protocol BrowserMCPManaging: AnyObject {
     func hasServer(name: String) -> Bool
@@ -15,17 +17,6 @@ protocol BrowserMCPManaging: AnyObject {
     func executeTool(serverName: String, toolName: String, arguments: [String: Any]) async throws -> ToolResponse
 }
 
-private struct BrowserMCPPreparedExecution {
-    let receipt: BrowserMCPConnectionReceipt
-    let connectionOutcome: DesktopActionOutcome?
-}
-
-private enum BrowserMCPConnectionTargetKind: Sendable, Equatable {
-    case external
-    case isolated
-    case nativeChannel
-}
-
 extension TachikomaMCPClientManager: BrowserMCPManaging {
     func hasServer(name: String) -> Bool {
         self.getServerConfig(name: name) != nil
@@ -33,36 +24,6 @@ extension TachikomaMCPClientManager: BrowserMCPManaging {
 
     func serverToolCount(name: String) async -> Int {
         await self.getServerTools(name: name).count
-    }
-}
-
-private enum BrowserMCPCallFailure: Error {
-    case preDispatch(any Error)
-    case mayHaveDispatched(any Error)
-}
-
-struct BrowserMCPEnvironmentOptions: Sendable {
-    let browserURL: String?
-    let isolated: Bool
-    let headless: Bool
-
-    var supportsNativeBrowserConnectionBinding: Bool {
-        self.browserURL == nil && !self.isolated
-    }
-
-    init(environment: [String: String]) {
-        let browserURL = environment["PEEKABOO_BROWSER_MCP_BROWSER_URL"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        self.browserURL = browserURL?.isEmpty == false ? browserURL : nil
-        self.isolated = Self.flag("PEEKABOO_BROWSER_MCP_ISOLATED", in: environment)
-        self.headless = Self.flag("PEEKABOO_BROWSER_MCP_HEADLESS", in: environment)
-    }
-
-    private static func flag(_ name: String, in environment: [String: String]) -> Bool {
-        guard let value = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
-            return false
-        }
-        return ["1", "true", "yes", "on"].contains(value)
     }
 }
 
@@ -78,6 +39,7 @@ private struct BrowserMCPResolvedTarget {
 private struct BrowserMCPStatusInspection {
     let status: BrowserMCPStatus
     let wasCancelled: Bool
+    let cleanupConfirmed: Bool
 }
 
 @MainActor
@@ -93,6 +55,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     typealias ConnectionAttemptProvider = @MainActor @Sendable () -> BrowserMCPConnectionAttempt
     typealias PreferredChannelProvider = @MainActor @Sendable () -> BrowserMCPChannel
     typealias IsolatedConnectionProvider = @MainActor @Sendable () -> Bool
+    typealias TargetReservation = @MainActor (BrowserMCPConnectionReceipt) throws -> Void
+    typealias TargetRelease = @MainActor @Sendable () -> Void
 
     private let serverName: String
     private let manager: any BrowserMCPManaging
@@ -109,12 +73,16 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private let environmentOptions: BrowserMCPEnvironmentOptions
     private let executionGate = MCPToolSnapshotExecutionGate()
     private var connectionReceipt: BrowserMCPConnectionReceipt?
+    private var providerSessionEpoch: BrowserMCPProviderSessionEpoch?
     private var connectionSupportsReceiptBoundExecution = false
     private var connectionChannelEndpoint: BrowserMCPDevToolsEndpoint?
     private var connectionCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity?
     private var connectionTargetKind: BrowserMCPConnectionTargetKind?
     private var uploadWorkspace: BrowserMCPUploadWorkspace?
     private var activeUploadID: UUID?
+    private var connectionCleanupPending = false
+    private var drainedHandoffBinding: BrowserMCPExecutionSessionBinding?
+    private var sessionEnded = false
 
     private static let connectionDelivery = DesktopActionOutcome.Delivery(
         mechanism: .browserProtocol,
@@ -171,11 +139,27 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             channel)
     }
 
-    func status(channel: BrowserMCPChannel?) async -> BrowserMCPStatus {
+    func status(
+        channel: BrowserMCPChannel?,
+        releaseTargetWhenDisconnected: TargetRelease? = nil) async -> BrowserMCPStatus
+    {
         do {
             return try await self.withExecutionGate {
-                await self.inspectStatusUnlocked(channel: channel).status
+                let inspection = await self.inspectStatusUnlocked(channel: channel)
+                if !inspection.status.isConnected, !inspection.wasCancelled, inspection.cleanupConfirmed {
+                    releaseTargetWhenDisconnected?()
+                }
+                return inspection.status
             }
+        } catch let error where Self.isCancellation(error) {
+            return BrowserMCPStatus(
+                isConnected: false,
+                toolCount: 0,
+                detectedBrowsers: self.detectedBrowsers(channel),
+                connectionReceipt: self.connectionReceipt,
+                providerSessionEpoch: self.providerSessionEpoch,
+                error: CancellationError().localizedDescription,
+                observation: .indeterminate)
         } catch {
             return BrowserMCPStatus(
                 isConnected: false,
@@ -197,19 +181,33 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private func inspectStatusUnlocked(channel: BrowserMCPChannel?) async -> BrowserMCPStatusInspection {
         let browsers = self.detectedBrowsers(channel)
-        guard let receipt = self.connectionReceipt else {
-            if await self.manager.isServerConnected(name: self.serverName) || self.manager
-                .hasServer(name: self.serverName)
-            {
-                await self.manager.removeServer(name: self.serverName)
-            }
+        if self.connectionCleanupPending {
+            let cleanupConfirmed = await self.clearConnection()
             return BrowserMCPStatusInspection(
                 status: BrowserMCPStatus(
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
-                    connectionReceipt: nil),
-                wasCancelled: false)
+                    connectionReceipt: cleanupConfirmed ? nil : self.connectionReceipt,
+                    providerSessionEpoch: cleanupConfirmed ? nil : self.providerSessionEpoch,
+                    error: cleanupConfirmed ? nil : "Browser provider cleanup remains pending.",
+                    observation: cleanupConfirmed ? .confirmed : .indeterminate),
+                wasCancelled: false,
+                cleanupConfirmed: cleanupConfirmed)
+        }
+        guard let receipt = self.connectionReceipt,
+              let providerSessionEpoch = self.providerSessionEpoch
+        else {
+            let cleanupConfirmed = await self.clearConnection()
+            return BrowserMCPStatusInspection(
+                status: BrowserMCPStatus(
+                    isConnected: false,
+                    toolCount: 0,
+                    detectedBrowsers: browsers,
+                    connectionReceipt: nil,
+                    error: cleanupConfirmed ? nil : "Browser provider cleanup remains pending."),
+                wasCancelled: false,
+                cleanupConfirmed: cleanupConfirmed)
         }
 
         do {
@@ -222,27 +220,35 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     isConnected: true,
                     toolCount: self.manager.serverToolCount(name: self.serverName),
                     detectedBrowsers: browsers,
-                    connectionReceipt: receipt),
-                wasCancelled: false)
-        } catch is CancellationError {
+                    connectionReceipt: receipt,
+                    providerSessionEpoch: providerSessionEpoch),
+                wasCancelled: false,
+                cleanupConfirmed: false)
+        } catch let error where Self.isCancellation(error) {
             return BrowserMCPStatusInspection(
                 status: BrowserMCPStatus(
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
-                    connectionReceipt: nil,
-                    error: CancellationError().localizedDescription),
-                wasCancelled: true)
+                    connectionReceipt: receipt,
+                    providerSessionEpoch: providerSessionEpoch,
+                    error: CancellationError().localizedDescription,
+                    observation: .indeterminate),
+                wasCancelled: true,
+                cleanupConfirmed: false)
         } catch {
-            await self.clearConnection()
+            let cleanupConfirmed = await self.clearConnection()
             return BrowserMCPStatusInspection(
                 status: BrowserMCPStatus(
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
-                    connectionReceipt: nil,
-                    error: error.localizedDescription),
-                wasCancelled: false)
+                    connectionReceipt: cleanupConfirmed ? nil : receipt,
+                    providerSessionEpoch: cleanupConfirmed ? nil : providerSessionEpoch,
+                    error: error.localizedDescription,
+                    observation: cleanupConfirmed ? .confirmed : .indeterminate),
+                wasCancelled: false,
+                cleanupConfirmed: cleanupConfirmed)
         }
     }
 
@@ -250,9 +256,24 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         try await self.connectWithOutcome(channel: channel, browserURL: browserURL).payload
     }
 
+    func preflightAuthenticatedCapabilityConnect(browserURL: String?) throws {
+        // Request and environment endpoints take precedence over isolated mode in resolveTarget.
+        guard browserURL == nil,
+              self.environmentOptions.browserURL == nil,
+              self.isolatedConnectionRequested()
+        else { return }
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: "Authenticated browser capability sessions cannot use an isolated Chrome child because " +
+                "the launched browser has no pinnable identity.",
+            hint: "Use a native Chrome channel, or launch headless Chrome separately and connect with its exact " +
+                "loopback browser_url.")
+    }
+
     func connectWithOutcome(
         channel: BrowserMCPChannel?,
-        browserURL: String? = nil) async throws -> DesktopActionResult<BrowserMCPStatus>
+        browserURL: String? = nil,
+        reserveTarget: TargetReservation? = nil) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
         let attempt = self.connectionAttempt()
         do {
@@ -262,8 +283,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                         return try await self.connectUnlockedWithOutcome(
                             channel: channel,
                             browserURL: browserURL,
-                            attempt: attempt)
-                    } catch is CancellationError where !attempt.state.didStartAnyDispatch {
+                            attempt: attempt,
+                            reserveTarget: reserveTarget)
+                    } catch let error where Self.isCancellation(error) && !attempt.state.didStartAnyDispatch {
                         throw Self.preDispatchConnectionFailure(CancellationError())
                     } catch BrowserMCPConnectionError.targetLocked {
                         throw BrowserMCPConnectionError.targetLocked
@@ -281,7 +303,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             }
         } catch let failure as DesktopActionFailure {
             throw failure
-        } catch is CancellationError where !attempt.state.didStartAnyDispatch {
+        } catch let error where Self.isCancellation(error) && !attempt.state.didStartAnyDispatch {
             throw Self.preDispatchConnectionFailure(CancellationError())
         } catch BrowserMCPConnectionError.targetLocked {
             throw BrowserMCPConnectionError.targetLocked
@@ -296,8 +318,12 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func connectUnlockedWithOutcome(
         channel: BrowserMCPChannel?,
         browserURL: String? = nil,
-        attempt: BrowserMCPConnectionAttempt) async throws -> DesktopActionResult<BrowserMCPStatus>
+        attempt: BrowserMCPConnectionAttempt,
+        reserveTarget: TargetReservation? = nil) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
+        guard !self.connectionCleanupPending, self.drainedHandoffBinding == nil else {
+            throw BrowserMCPConnectionError.targetLocked
+        }
         if let existing = self.connectionReceipt {
             guard self.connectionReceipt(existing, matchesChannel: channel, browserURL: browserURL) else {
                 throw BrowserMCPConnectionError.targetLocked
@@ -307,7 +333,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 await self.clearConnection()
                 throw BrowserMCPConnectionError.connectionLost("the persistent MCP child exited")
             }
-            let status = await self.inspectStatusUnlocked(channel: channel).status
+            let inspection = await self.inspectStatusUnlocked(channel: channel)
+            guard !inspection.wasCancelled else { throw CancellationError() }
+            let status = inspection.status
             guard status.isConnected else {
                 throw BrowserMCPConnectionError.connectionLost(
                     status.error ?? "the existing browser connection could not be verified")
@@ -318,41 +346,18 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         let target = try await self.resolveTarget(
             channel: channel,
             browserURL: browserURL,
-            attempt: attempt)
+            attempt: attempt,
+            reserveTarget: reserveTarget)
+        try reserveTarget?(target.receipt)
         if self.manager.hasServer(name: self.serverName) {
             await self.manager.removeServer(name: self.serverName)
         }
         var connectionAttemptDispatched = false
         do {
-            let uploadWorkspace = try await self.uploadStager.createWorkspace()
-            var config = target.config
-            config.env["TMPDIR"] = uploadWorkspace.rootPath
-            self.uploadWorkspace = uploadWorkspace
-            // Native channel setup has one owner-controlled identity probe, then this separately
-            // owned MCP child opens the session's execution WebSocket. Later validation never probes.
-            attempt.state.markConnectionDispatchStarted()
-            connectionAttemptDispatched = true
-            try await self.manager.addServer(name: self.serverName, config: config)
-            try Task.checkCancellation()
-            let probe = try await self.manager.executeTool(
-                serverName: self.serverName,
-                toolName: "list_pages",
-                arguments: [:])
-            try Task.checkCancellation()
-            guard !probe.isError else {
-                throw BrowserMCPConnectionError.connectionProbeFailed(
-                    "Chrome DevTools MCP rejected list_pages")
+            try await self.installProvider(target: target) {
+                attempt.state.markConnectionDispatchStarted()
+                connectionAttemptDispatched = true
             }
-            try await self.validate(
-                target.receipt,
-                channelEndpoint: target.channelEndpoint,
-                codeSignatureIdentity: target.codeSignatureIdentity)
-            try Task.checkCancellation()
-            self.connectionReceipt = target.receipt
-            self.connectionSupportsReceiptBoundExecution = target.supportsReceiptBoundExecution
-            self.connectionChannelEndpoint = target.channelEndpoint
-            self.connectionCodeSignatureIdentity = target.codeSignatureIdentity
-            self.connectionTargetKind = target.targetKind
             let status = await self.inspectStatusUnlocked(channel: channel).status
             guard status.isConnected else {
                 throw BrowserMCPConnectionError.connectionLost(
@@ -378,7 +383,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             throw error
         } catch {
             await self.clearConnection()
-            if error is CancellationError, !attempt.state.didStartAnyDispatch {
+            if Self.isCancellation(error), !attempt.state.didStartAnyDispatch {
                 throw Self.preDispatchConnectionFailure(CancellationError())
             }
             if attempt.state.didStartPermissionDispatch || connectionAttemptDispatched {
@@ -411,10 +416,198 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             causeDescription: self.errorDescription(cause))
     }
 
-    func disconnect() async {
-        try? await self.withExecutionGate {
-            await self.clearConnection()
+    func disconnect(releaseTarget: TargetRelease? = nil) async {
+        _ = await self.disconnectAndConfirm(releaseTarget: releaseTarget)
+    }
+
+    func disconnectAndConfirm(releaseTarget: TargetRelease? = nil) async -> Bool {
+        do {
+            return try await self.withExecutionGate {
+                let cleanupConfirmed = await self.clearConnection()
+                if cleanupConfirmed {
+                    releaseTarget?()
+                }
+                return cleanupConfirmed
+            }
+        } catch {
+            return false
         }
+    }
+
+    func confirmedDisconnectedStatus(channel: BrowserMCPChannel?) -> BrowserMCPStatus {
+        BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: self.detectedBrowsers(channel))
+    }
+
+    func preflightHandoffDestination() async throws {
+        try await self.withExecutionGate {
+            guard !self.connectionCleanupPending,
+                  self.drainedHandoffBinding == nil,
+                  self.connectionReceipt == nil,
+                  self.providerSessionEpoch == nil,
+                  !self.manager.hasServer(name: self.serverName),
+                  await !(self.manager.isServerConnected(name: self.serverName))
+            else {
+                throw BrowserMCPConnectionError.targetLocked
+            }
+        }
+    }
+
+    func authorizeConnectionHandoff(receipt: BrowserMCPConnectionReceipt) async throws
+        -> BrowserMCPConnectionHandoffAuthorization
+    {
+        try await self.withExecutionGate {
+            let target = try await self.authorizedHandoffTarget(receipt: receipt)
+            guard await self.manager.isServerConnected(name: self.serverName),
+                  let providerSessionEpoch = self.providerSessionEpoch
+            else {
+                throw BrowserMCPConnectionError.connectionLost("the source MCP child is no longer connected")
+            }
+            _ = target
+            return BrowserMCPConnectionHandoffAuthorization(sourceBinding: .init(
+                connectionReceipt: receipt,
+                providerSessionEpoch: providerSessionEpoch))
+        }
+    }
+
+    func drainConnectionForHandoff(authorization: BrowserMCPConnectionHandoffAuthorization) async throws
+        -> BrowserMCPAuthorizedHandoffTarget
+    {
+        try await self.withExecutionGate {
+            guard self.providerSessionEpoch == authorization.sourceBinding.providerSessionEpoch else {
+                throw BrowserMCPConnectionError.expectedProviderSessionEpochMismatch
+            }
+            let target = try await self.authorizedHandoffTarget(receipt: authorization.connectionReceipt)
+            guard await self.manager.isServerConnected(name: self.serverName) else {
+                throw BrowserMCPConnectionError.connectionLost("the source MCP child is no longer connected")
+            }
+            try Task.checkCancellation()
+
+            // Root ownership remains authoritative while cancellation-resistant cleanup runs. The caller transfers
+            // that exact reservation only after this post-check confirms the source child is gone.
+            let cleanup = Task { @MainActor in
+                await self.removeProviderForHandoff()
+            }
+            guard await cleanup.value else {
+                if await self.manager.isServerConnected(name: self.serverName),
+                   await (try? self.validate(
+                       target.receipt,
+                       channelEndpoint: target.channelEndpoint,
+                       codeSignatureIdentity: target.codeSignatureIdentity,
+                       requireDetectedProcess: false)) != nil
+                {
+                    throw BrowserMCPHandoffSourceDrainError.sourceStillLive(
+                        BrowserMCPConnectionError.connectionLost(
+                            "the source MCP child remained live after handoff teardown"))
+                }
+                throw BrowserMCPHandoffSourceDrainError.recoveryRequired(
+                    BrowserMCPConnectionError.connectionLost(
+                        "source MCP child teardown could not be confirmed"))
+            }
+            self.discardConnectionState()
+            self.drainedHandoffBinding = authorization.sourceBinding
+            return target
+        }
+    }
+
+    func recoverSourceHandoff(authorization: BrowserMCPConnectionHandoffAuthorization) async -> Bool {
+        let cleanup = Task { @MainActor in
+            do {
+                return try await self.withExecutionGate {
+                    if self.drainedHandoffBinding == authorization.sourceBinding {
+                        self.drainedHandoffBinding = nil
+                        return true
+                    }
+                    guard self.connectionReceipt == authorization.connectionReceipt,
+                          self.providerSessionEpoch == authorization.sourceBinding.providerSessionEpoch
+                    else { return false }
+                    let confirmed = await self.removeProviderForHandoff()
+                    if confirmed {
+                        self.discardConnectionState()
+                    }
+                    return confirmed
+                }
+            } catch {
+                return false
+            }
+        }
+        return await cleanup.value
+    }
+
+    func settleDrainedSourceHandoff(authorization: BrowserMCPConnectionHandoffAuthorization) {
+        if self.drainedHandoffBinding == authorization.sourceBinding {
+            self.drainedHandoffBinding = nil
+        }
+    }
+
+    func bootstrapAuthorizedHandoff(_ target: BrowserMCPAuthorizedHandoffTarget) async throws {
+        do {
+            try await self.withExecutionGate {
+                do {
+                    guard !self.connectionCleanupPending,
+                          self.drainedHandoffBinding == nil,
+                          self.connectionReceipt == nil,
+                          self.providerSessionEpoch == nil,
+                          !self.manager.hasServer(name: self.serverName),
+                          await !(self.manager.isServerConnected(name: self.serverName))
+                    else {
+                        throw BrowserMCPConnectionError.targetLocked
+                    }
+                    try await self.validate(
+                        target.receipt,
+                        channelEndpoint: target.channelEndpoint,
+                        codeSignatureIdentity: target.codeSignatureIdentity,
+                        requireDetectedProcess: false)
+                    try Task.checkCancellation()
+                    guard let webSocketDebuggerURL = target.receipt.webSocketDebuggerURL else {
+                        throw BrowserMCPConnectionError.connectionLost(
+                            "the handoff receipt omitted its exact DevTools WebSocket")
+                    }
+
+                    try await self.installProvider(
+                        target: BrowserMCPResolvedTarget(
+                            receipt: target.receipt,
+                            config: BrowserMCPService.chromeDevToolsConfig(
+                                webSocketEndpoint: webSocketDebuggerURL),
+                            supportsReceiptBoundExecution: true,
+                            channelEndpoint: target.channelEndpoint,
+                            codeSignatureIdentity: target.codeSignatureIdentity,
+                            targetKind: target.targetKind),
+                        onProviderDispatch: {})
+                    guard await self.manager.isServerConnected(name: self.serverName) else {
+                        throw BrowserMCPConnectionError.connectionLost(
+                            "the destination MCP child exited during handoff setup")
+                    }
+                } catch {
+                    throw await self.handoffDestinationFailure(error)
+                }
+            }
+        } catch let failure as BrowserMCPHandoffDestinationError {
+            throw failure
+        } catch {
+            throw await self.handoffDestinationFailure(error)
+        }
+    }
+
+    func endSession() async -> Bool {
+        self.sessionEnded = true
+        let cleanup = Task { @MainActor [weak self] in
+            guard let self else { return true }
+            do {
+                try await self.executionGate.acquire()
+            } catch {
+                return false
+            }
+            let confirmed = await self.removeProviderForHandoff()
+            if confirmed {
+                self.discardConnectionState()
+            }
+            await self.executionGate.release()
+            return confirmed
+        }
+        return await cleanup.value
     }
 
     func execute(
@@ -444,7 +637,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     func executeSequenceResult(
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?,
-        connectionPolicy: BrowserMCPExecutionConnectionPolicy = .allowAutoConnect) async throws
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy = .allowAutoConnect,
+        reserveTarget: TargetReservation? = nil) async throws
         -> BrowserMCPExecutionResult
     {
         try await self.withExecutionGate {
@@ -452,7 +646,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 calls,
                 channel: channel,
                 expectedConnectionReceipt: nil,
-                connectionPolicy: connectionPolicy)
+                expectedProviderSessionEpoch: nil,
+                connectionPolicy: connectionPolicy,
+                reserveTarget: reserveTarget)
         }
     }
 
@@ -467,9 +663,55 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     calls,
                     channel: channel,
                     expectedConnectionReceipt: expectedConnectionReceipt,
+                    expectedProviderSessionEpoch: nil,
                     connectionPolicy: .requireExistingLiveReceipt)
             }
-        } catch is CancellationError {
+        } catch let error where Self.isCancellation(error) {
+            throw Self.preDispatchFailure(CancellationError())
+        }
+    }
+
+    func executeSequence(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        elementPreflight: BrowserMCPElementPreflight?) async throws -> BrowserMCPExecutionResult
+    {
+        do {
+            return try await self.withExecutionGate {
+                if let elementPreflight {
+                    let preflight = try await self.executeSequenceUnlocked(
+                        [BrowserMCPMappedCall(
+                            toolName: "take_snapshot",
+                            arguments: [
+                                "pageId": elementPreflight.providerPageID,
+                                "verbose": true,
+                            ])],
+                        channel: channel,
+                        expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
+                        expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
+                        connectionPolicy: .requireExistingLiveReceipt)
+                    let currentUIDs = BrowserMCPProviderSnapshotParser.providerUIDs(in: preflight.response)
+                    // chrome-devtools-mcp v1.6.0 preserves a UID only for the same per-page
+                    // loaderId/backendNodeId pair. The pinned dependency contract checks that identity rule.
+                    guard !preflight.response.isError,
+                          preflight.actionFailure == nil,
+                          currentUIDs.isSuperset(of: elementPreflight.providerUIDs)
+                    else {
+                        throw DesktopActionFailure.preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Browser element references are stale in the current page document.",
+                            hint: "Take a fresh browser snapshot and retry with its new opaque element references.")
+                    }
+                }
+                return try await self.executeSequenceUnlocked(
+                    calls,
+                    channel: channel,
+                    expectedConnectionReceipt: expectedSessionBinding.connectionReceipt,
+                    expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
+                    connectionPolicy: .requireExistingLiveReceipt)
+            }
+        } catch let error where Self.isCancellation(error) {
             throw Self.preDispatchFailure(CancellationError())
         }
     }
@@ -479,7 +721,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt?,
-        connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> BrowserMCPExecutionResult
+        expectedProviderSessionEpoch: BrowserMCPProviderSessionEpoch?,
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy,
+        reserveTarget: TargetReservation? = nil) async throws -> BrowserMCPExecutionResult
     {
         guard !calls.isEmpty else {
             throw BrowserMCPConnectionError.connectionLost("the browser action sequence was empty")
@@ -487,8 +731,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         let preparation = try await self.prepareExecutionReceipt(
             channel: channel,
             expectedConnectionReceipt: expectedConnectionReceipt,
-            connectionPolicy: connectionPolicy)
-        let receipt = preparation.receipt
+            expectedProviderSessionEpoch: expectedProviderSessionEpoch,
+            connectionPolicy: connectionPolicy,
+            reserveTarget: reserveTarget)
+        let sessionBinding = preparation.sessionBinding
+        let receipt = sessionBinding.connectionReceipt
 
         var completedCallCount = 0
         var dispatchedCallCount = 0
@@ -559,9 +806,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         if shouldValidateConnection {
             do {
                 try await self.validate(receipt)
-                guard self.connectionReceipt == receipt else {
+                guard self.connectionReceipt == receipt,
+                      self.providerSessionEpoch == sessionBinding.providerSessionEpoch
+                else {
                     throw BrowserMCPConnectionError.connectionLost(
-                        "the connection receipt changed before the browser response completed")
+                        "the connection receipt or provider child epoch changed before the browser response completed")
                 }
             } catch {
                 failureStage = .connectionValidation
@@ -582,6 +831,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return BrowserMCPExecutionResult(
             response: response,
             connectionReceipt: receipt,
+            providerSessionEpoch: sessionBinding.providerSessionEpoch,
             connectionOutcome: preparation.connectionOutcome,
             completedCallCount: completedCallCount,
             dispatchedCallCount: dispatchedCallCount,
@@ -595,8 +845,14 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func prepareExecutionReceipt(
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt?,
-        connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> BrowserMCPPreparedExecution
+        expectedProviderSessionEpoch: BrowserMCPProviderSessionEpoch?,
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy,
+        reserveTarget: TargetReservation?) async throws -> BrowserMCPPreparedExecution
     {
+        guard !self.connectionCleanupPending else {
+            throw Self.existingConnectionRequiredFailure(
+                cause: BrowserMCPConnectionError.connectionLost("browser provider cleanup remains pending"))
+        }
         if self.connectionReceipt == nil, expectedConnectionReceipt == nil {
             guard connectionPolicy == .allowAutoConnect else {
                 throw Self.existingConnectionRequiredFailure()
@@ -608,7 +864,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     try await self.connectUnlockedWithOutcome(
                         channel: channel,
                         browserURL: nil,
-                        attempt: attempt)
+                        attempt: attempt,
+                        reserveTarget: reserveTarget)
                 }
             } catch let failure as DesktopActionFailure {
                 throw failure
@@ -621,7 +878,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             }
             guard connection.payload.isConnected,
                   let receipt = connection.payload.connectionReceipt,
-                  self.connectionReceipt == receipt
+                  let providerSessionEpoch = connection.payload.providerSessionEpoch,
+                  self.connectionReceipt == receipt,
+                  self.providerSessionEpoch == providerSessionEpoch
             else {
                 throw DesktopActionFailure.indeterminate(
                     delivery: connection.outcome?.delivery ?? Self.connectionDelivery,
@@ -631,10 +890,14 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     hint: "Check browser status before deciding whether to reconnect.")
             }
             return BrowserMCPPreparedExecution(
-                receipt: receipt,
+                sessionBinding: .init(
+                    connectionReceipt: receipt,
+                    providerSessionEpoch: providerSessionEpoch),
                 connectionOutcome: connection.outcome)
         }
-        guard let receipt = self.connectionReceipt else {
+        guard let receipt = self.connectionReceipt,
+              let providerSessionEpoch = self.providerSessionEpoch
+        else {
             if expectedConnectionReceipt != nil {
                 throw BrowserMCPConnectionError.expectedConnectionReceiptMismatch
             }
@@ -645,6 +908,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         if let expectedConnectionReceipt, receipt != expectedConnectionReceipt {
             throw BrowserMCPConnectionError.expectedConnectionReceiptMismatch
+        }
+        if let expectedProviderSessionEpoch, providerSessionEpoch != expectedProviderSessionEpoch {
+            throw BrowserMCPConnectionError.expectedProviderSessionEpochMismatch
         }
         if expectedConnectionReceipt != nil, !self.connectionSupportsReceiptBoundExecution {
             throw BrowserMCPConnectionError.receiptBindingUnsupported
@@ -661,10 +927,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         do {
             try await self.validate(receipt)
-        } catch let error as CancellationError {
-            await self.clearConnection()
+        } catch let error where Self.isCancellation(error) {
             if expectedConnectionReceipt != nil || connectionPolicy == .requireExistingLiveReceipt {
-                throw Self.preDispatchFailure(error)
+                throw Self.preDispatchFailure(CancellationError())
             }
             throw error
         } catch where expectedConnectionReceipt != nil {
@@ -688,7 +953,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             }
             throw error
         }
-        guard self.connectionReceipt == receipt else {
+        guard self.connectionReceipt == receipt,
+              self.providerSessionEpoch == providerSessionEpoch
+        else {
             let error = BrowserMCPConnectionError.connectionLost(
                 "the connection receipt changed while checking the persistent MCP child")
             if expectedConnectionReceipt != nil {
@@ -700,7 +967,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             throw error
         }
         return BrowserMCPPreparedExecution(
-            receipt: receipt,
+            sessionBinding: .init(
+                connectionReceipt: receipt,
+                providerSessionEpoch: providerSessionEpoch),
             connectionOutcome: nil)
     }
 
@@ -800,6 +1069,17 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 
+    private static func isCancellation(_ error: any Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if (error as? URLError)?.code == .cancelled {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
     private func execute(_ call: BrowserMCPMappedCall) async throws -> ToolResponse {
         do {
             try Task.checkCancellation()
@@ -853,14 +1133,60 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 self.activeUploadID = nil
             }
             uploadWorkspace.retain(stagedUpload)
-            return response
+            return Self.projectUploadResponse(
+                response,
+                stagedPath: stagedUpload.filePath,
+                sourcePath: sourcePath)
         } catch {
             if self.activeUploadID == uploadID {
                 self.activeUploadID = nil
             }
             uploadWorkspace.retain(stagedUpload)
-            throw BrowserMCPCallFailure.mayHaveDispatched(error)
+            throw BrowserMCPCallFailure.mayHaveDispatched(Self.projectUploadError(
+                error,
+                stagedPath: stagedUpload.filePath,
+                sourcePath: sourcePath))
         }
+    }
+
+    private static func projectUploadResponse(
+        _ response: ToolResponse,
+        stagedPath: String,
+        sourcePath: String) -> ToolResponse
+    {
+        func project(_ text: String) -> String {
+            text.replacingOccurrences(of: stagedPath, with: sourcePath)
+        }
+        func project(_ value: Value) -> Value {
+            switch value {
+            case let .object(fields):
+                .object(fields.mapValues(project))
+            case let .array(values):
+                .array(values.map(project))
+            case let .string(string):
+                .string(project(string))
+            case .int, .double, .bool, .null, .data:
+                value
+            }
+        }
+        return ToolResponse(
+            content: response.content.map {
+                BrowserToolCapabilityProjection.projectingContentItem($0, transform: project)
+            },
+            isError: response.isError,
+            meta: response.meta.map(project),
+            structuredContent: response.structuredContent.map(project))
+    }
+
+    private static func projectUploadError(
+        _ error: any Error,
+        stagedPath: String,
+        sourcePath: String) -> any Error
+    {
+        let original = self.errorDescription(error)
+        let projected = original.replacingOccurrences(of: stagedPath, with: sourcePath)
+        guard projected != original else { return error }
+        return BrowserMCPProjectedProviderError(message: projected)
     }
 
     private func cancelUpload(id: UUID) async {
@@ -872,17 +1198,23 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func resolveTarget(
         channel: BrowserMCPChannel?,
         browserURL: String?,
-        attempt: BrowserMCPConnectionAttempt) async throws
+        attempt: BrowserMCPConnectionAttempt,
+        reserveTarget: TargetReservation? = nil) async throws
         -> BrowserMCPResolvedTarget
     {
         if let browserURL = browserURL ?? self.environmentOptions.browserURL {
-            return try await self.resolveExactEndpointTarget(browserURL: browserURL, channel: channel)
+            return try await self.resolveExactEndpointTarget(
+                browserURL: browserURL,
+                channel: channel,
+                reserveTarget: reserveTarget)
         }
 
         let resolvedChannel = channel ?? BrowserMCPService.preferredChannel()
         if self.isolatedConnectionRequested() {
+            let receipt = BrowserMCPConnectionReceipt(channel: resolvedChannel)
+            try reserveTarget?(receipt)
             return BrowserMCPResolvedTarget(
-                receipt: BrowserMCPConnectionReceipt(channel: resolvedChannel),
+                receipt: receipt,
                 config: BrowserMCPService.isolatedChromeDevToolsConfig(
                     channel: resolvedChannel,
                     headless: self.environmentOptions.headless),
@@ -931,7 +1263,24 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             processIdentifier: browser.processIdentifier,
             processStartIdentity: processStartIdentity,
             bundleIdentifier: channelIdentity.bundleIdentifier)
-        let endpoint = try await self.channelEndpointResolver.resolve(processTarget, attempt: attempt)
+        try reserveTarget?(BrowserMCPConnectionReceipt(
+            channel: resolvedChannel,
+            processIdentifier: browser.processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: channelIdentity.bundleIdentifier))
+        let endpoint = try await self.channelEndpointResolver.resolve(
+            processTarget,
+            attempt: attempt,
+            reserveAuthority: { reservation in
+                try reserveTarget?(BrowserMCPConnectionReceipt(
+                    channel: resolvedChannel,
+                    processIdentifier: browser.processIdentifier,
+                    processStartIdentity: processStartIdentity,
+                    bundleIdentifier: channelIdentity.bundleIdentifier,
+                    browserURL: reservation.browserURL,
+                    webSocketDebuggerURL: reservation.webSocketDebuggerURL,
+                    devToolsBrowserID: reservation.browserID))
+            })
         guard channelIdentity.matches(bundleIdentifier: self.processBundleIdentifier(browser.processIdentifier)),
               self.processCodeSignatureValidator(
                   browser.processIdentifier,
@@ -963,9 +1312,17 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
 
     private func resolveExactEndpointTarget(
         browserURL: String,
-        channel: BrowserMCPChannel?) async throws -> BrowserMCPResolvedTarget
+        channel: BrowserMCPChannel?,
+        reserveTarget: TargetReservation? = nil) async throws -> BrowserMCPResolvedTarget
     {
-        let endpoint = try await self.endpointResolver.resolve(browserURL)
+        guard let requestedEndpoint = BrowserLoopbackEndpoint(browserURL: browserURL) else {
+            throw BrowserMCPConnectionError.invalidEndpoint(
+                "browser_url must be an exact loopback HTTP origin with an explicit port")
+        }
+        try reserveTarget?(BrowserMCPConnectionReceipt(
+            channel: channel,
+            browserURL: requestedEndpoint.canonicalBrowserURL))
+        let endpoint = try await self.endpointResolver.resolve(requestedEndpoint.canonicalBrowserURL)
         let receipt = BrowserMCPConnectionReceipt(
             channel: channel,
             browserURL: endpoint.browserURL,
@@ -973,6 +1330,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             devToolsBrowserID: endpoint.browserID,
             browserVersion: endpoint.browserVersion,
             protocolVersion: endpoint.protocolVersion)
+        try reserveTarget?(receipt)
         return BrowserMCPResolvedTarget(
             receipt: receipt,
             config: BrowserMCPService.chromeDevToolsConfig(
@@ -986,7 +1344,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     private func validate(
         _ receipt: BrowserMCPConnectionReceipt,
         channelEndpoint suppliedChannelEndpoint: BrowserMCPDevToolsEndpoint? = nil,
-        codeSignatureIdentity suppliedCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity? = nil)
+        codeSignatureIdentity suppliedCodeSignatureIdentity: ChromeProcessCodeSignatureValidator.Identity? = nil,
+        requireDetectedProcess: Bool = true)
         async throws
     {
         if receipt.processIdentifier != nil || receipt.processStartIdentity != nil || receipt.bundleIdentifier != nil {
@@ -1020,13 +1379,18 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   self.processCodeSignatureValidator(
                       processIdentifier,
                       processStartIdentity,
-                      channelIdentity) == codeSignatureIdentity,
-                  self.detectedBrowsers(channel).contains(where: { browser in
-                      browser.processIdentifier == processIdentifier &&
-                          browser.processStartIdentity == processStartIdentity &&
-                          channelIdentity.matches(bundleIdentifier: browser.bundleIdentifier)
-                  })
+                      channelIdentity) == codeSignatureIdentity
             else {
+                throw BrowserMCPConnectionError.connectionLost(
+                    "Chrome PID \(processIdentifier) changed bundle, channel, or signing identity")
+            }
+            if requireDetectedProcess,
+               !self.detectedBrowsers(channel).contains(where: { browser in
+                   browser.processIdentifier == processIdentifier &&
+                       browser.processStartIdentity == processStartIdentity &&
+                       channelIdentity.matches(bundleIdentifier: browser.bundleIdentifier)
+               })
+            {
                 throw BrowserMCPConnectionError.connectionLost(
                     "Chrome PID \(processIdentifier) changed bundle, channel, or signing identity")
             }
@@ -1054,7 +1418,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         }
         if let browserURL = receipt.browserURL {
             let endpoint = try await self.endpointResolver.resolve(browserURL)
-            guard endpoint.webSocketDebuggerURL == receipt.webSocketDebuggerURL,
+            guard endpoint.browserURL == browserURL,
+                  endpoint.webSocketDebuggerURL == receipt.webSocketDebuggerURL,
                   endpoint.browserID == receipt.devToolsBrowserID,
                   endpoint.browserVersion == receipt.browserVersion,
                   endpoint.protocolVersion == receipt.protocolVersion
@@ -1062,6 +1427,46 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 throw BrowserMCPConnectionError.connectionLost("the DevTools browser endpoint changed identity")
             }
         }
+    }
+
+    private func authorizedHandoffTarget(
+        receipt: BrowserMCPConnectionReceipt) async throws
+        -> BrowserMCPAuthorizedHandoffTarget
+    {
+        guard !self.connectionCleanupPending else {
+            throw BrowserMCPConnectionError.targetLocked
+        }
+        guard self.connectionReceipt == receipt else {
+            throw BrowserMCPConnectionError.expectedConnectionReceiptMismatch
+        }
+        guard self.providerSessionEpoch != nil else {
+            throw BrowserMCPConnectionError.connectionLost("the source MCP child has no live provider epoch")
+        }
+        let target = try self.storedHandoffTarget(receipt: receipt)
+        try await self.validate(
+            target.receipt,
+            channelEndpoint: target.channelEndpoint,
+            codeSignatureIdentity: target.codeSignatureIdentity,
+            requireDetectedProcess: false)
+        return target
+    }
+
+    private func storedHandoffTarget(receipt: BrowserMCPConnectionReceipt) throws
+        -> BrowserMCPAuthorizedHandoffTarget
+    {
+        guard self.connectionSupportsReceiptBoundExecution,
+              let targetKind = self.connectionTargetKind,
+              targetKind != .isolated,
+              receipt.browserURL != nil,
+              receipt.webSocketDebuggerURL != nil
+        else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        return BrowserMCPAuthorizedHandoffTarget(
+            receipt: receipt,
+            channelEndpoint: self.connectionChannelEndpoint,
+            codeSignatureIdentity: self.connectionCodeSignatureIdentity,
+            targetKind: targetKind)
     }
 
     private func connectionReceipt(
@@ -1120,8 +1525,84 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return true
     }
 
-    private func clearConnection() async {
+    @discardableResult
+    private func clearConnection() async -> Bool {
+        self.activeUploadID = nil
+        let cleanupConfirmed = await self.removeProviderForHandoff()
+        if cleanupConfirmed {
+            self.discardConnectionState()
+        } else {
+            self.connectionCleanupPending = true
+        }
+        return cleanupConfirmed
+    }
+
+    private func removeProviderForHandoff() async -> Bool {
+        var providerPresent = self.manager.hasServer(name: self.serverName)
+        if !providerPresent {
+            providerPresent = await self.manager.isServerConnected(name: self.serverName)
+        }
+        if providerPresent {
+            await self.manager.removeServer(name: self.serverName)
+        }
+        guard !self.manager.hasServer(name: self.serverName) else { return false }
+        return await !(self.manager.isServerConnected(name: self.serverName))
+    }
+
+    private func handoffDestinationFailure(_ error: any Error) async -> BrowserMCPHandoffDestinationError {
+        let cleanup = Task { @MainActor in
+            let confirmed = await self.removeProviderForHandoff()
+            if confirmed {
+                self.discardConnectionState()
+            }
+            return confirmed
+        }
+        let cleanupConfirmed = await cleanup.value
+        return BrowserMCPHandoffDestinationError(
+            cause: error,
+            cleanupConfirmed: cleanupConfirmed)
+    }
+
+    private func installProvider(
+        target: BrowserMCPResolvedTarget,
+        onProviderDispatch: @MainActor () -> Void) async throws
+    {
+        let uploadWorkspace = try await self.uploadStager.createWorkspace()
+        var config = target.config
+        config.env["TMPDIR"] = uploadWorkspace.rootPath
+        self.uploadWorkspace = uploadWorkspace
+        // Native channel setup has one owner-controlled identity probe, then this separately
+        // owned MCP child opens the session's execution WebSocket. Later validation never probes.
+        onProviderDispatch()
+        try await self.manager.addServer(name: self.serverName, config: config)
+        try Task.checkCancellation()
+        let probe = try await self.manager.executeTool(
+            serverName: self.serverName,
+            toolName: "list_pages",
+            arguments: [:])
+        try Task.checkCancellation()
+        guard !probe.isError else {
+            throw BrowserMCPConnectionError.connectionProbeFailed(
+                "Chrome DevTools MCP rejected list_pages")
+        }
+        try await self.validate(
+            target.receipt,
+            channelEndpoint: target.channelEndpoint,
+            codeSignatureIdentity: target.codeSignatureIdentity,
+            requireDetectedProcess: false)
+        try Task.checkCancellation()
+        self.connectionReceipt = target.receipt
+        self.providerSessionEpoch = BrowserMCPProviderSessionEpoch()
+        self.connectionSupportsReceiptBoundExecution = target.supportsReceiptBoundExecution
+        self.connectionChannelEndpoint = target.channelEndpoint
+        self.connectionCodeSignatureIdentity = target.codeSignatureIdentity
+        self.connectionTargetKind = target.targetKind
+    }
+
+    private func discardConnectionState() {
+        self.connectionCleanupPending = false
         self.connectionReceipt = nil
+        self.providerSessionEpoch = nil
         self.connectionSupportsReceiptBoundExecution = false
         self.connectionChannelEndpoint = nil
         self.connectionCodeSignatureIdentity = nil
@@ -1129,20 +1610,18 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.activeUploadID = nil
         let uploadWorkspace = self.uploadWorkspace
         self.uploadWorkspace = nil
-        var shouldRemoveServer = self.manager.hasServer(name: self.serverName)
-        if !shouldRemoveServer {
-            shouldRemoveServer = await self.manager.isServerConnected(name: self.serverName)
-        }
-        if shouldRemoveServer {
-            await self.manager.removeServer(name: self.serverName)
-        }
         uploadWorkspace?.cleanup()
     }
 
     private func withExecutionGate<Result>(
         _ operation: @MainActor () async throws -> Result) async throws -> Result
     {
+        guard !self.sessionEnded else { throw BrowserMCPConnectionError.sessionEnded }
         try await self.executionGate.acquire()
+        guard !self.sessionEnded else {
+            await self.executionGate.release()
+            throw BrowserMCPConnectionError.sessionEnded
+        }
         do {
             let result = try await operation()
             await self.executionGate.release()

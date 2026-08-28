@@ -133,7 +133,8 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
                 connectionReceipt: Self.bridgeReceipt(from: result.connectionReceipt),
                 completedCallCount: result.completedCallCount,
                 dispatchedCallCount: result.dispatchedCallCount,
-                actionFailure: result.actionFailure)
+                actionFailure: result.actionFailure,
+                providerSessionEpoch: result.providerSessionEpoch?.rawValue)
         }
         let projected = try result.projectingMutationProgress(for: calls)
         return try PeekabooBridgeBrowserExecutionResult(
@@ -141,7 +142,8 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
             connectionReceipt: Self.bridgeReceipt(from: projected.connectionReceipt),
             completedCallCount: projected.completedCallCount,
             dispatchedCallCount: projected.dispatchedCallCount,
-            actionFailure: projected.actionFailure)
+            actionFailure: projected.actionFailure,
+            providerSessionEpoch: projected.providerSessionEpoch?.rawValue)
     }
 
     static func browserChannel(from rawChannel: String?) throws -> BrowserMCPChannel? {
@@ -155,7 +157,7 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
         return channel
     }
 
-    private static func browserTargetLockedFailure() -> DesktopActionFailure {
+    static func browserTargetLockedFailure() -> DesktopActionFailure {
         .preDispatchRefusal(
             reason: .transportSessionUnavailable,
             message: BrowserMCPConnectionError.targetLocked.localizedDescription,
@@ -163,8 +165,12 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
             standardErrorCode: .browserTargetLocked)
     }
 
-    private static func bridgeStatus(from status: BrowserMCPStatus) -> PeekabooBridgeBrowserStatus {
-        PeekabooBridgeBrowserStatus(
+    static func bridgeStatus(from status: BrowserMCPStatus) -> PeekabooBridgeBrowserStatus {
+        let observation: PeekabooBridgeBrowserStatusObservation = switch status.observation {
+        case .confirmed: .confirmed
+        case .indeterminate: .indeterminate
+        }
+        return PeekabooBridgeBrowserStatus(
             isConnected: status.isConnected,
             toolCount: status.toolCount,
             detectedBrowsers: status.detectedBrowsers.map {
@@ -177,10 +183,12 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
                     channel: $0.channel.rawValue)
             },
             connectionReceipt: status.connectionReceipt.map(self.bridgeReceipt),
-            error: status.error)
+            error: status.error,
+            providerSessionEpoch: status.providerSessionEpoch?.rawValue,
+            observation: observation)
     }
 
-    private static func bridgeReceipt(
+    static func bridgeReceipt(
         from receipt: BrowserMCPConnectionReceipt) -> PeekabooBridgeBrowserConnectionReceipt
     {
         PeekabooBridgeBrowserConnectionReceipt(
@@ -195,7 +203,7 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
             protocolVersion: receipt.protocolVersion)
     }
 
-    private static func browserReceipt(
+    static func browserReceipt(
         from receipt: PeekabooBridgeBrowserConnectionReceipt) throws -> BrowserMCPConnectionReceipt
     {
         let channel: BrowserMCPChannel?
@@ -222,15 +230,16 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
             protocolVersion: receipt.protocolVersion)
     }
 
-    private static func bridgeToolResponse(from response: ToolResponse) throws -> PeekabooBridgeBrowserToolResponse {
+    static func bridgeToolResponse(from response: ToolResponse) throws -> PeekabooBridgeBrowserToolResponse {
         let content = try response.content.map { try PeekabooBridgeJSONValue.fromCodable($0) }
         return try PeekabooBridgeBrowserToolResponse(
             content: content,
             isError: response.isError,
-            meta: response.meta.map { try PeekabooBridgeJSONValue.fromCodable($0) })
+            meta: response.meta.map { try PeekabooBridgeJSONValue.fromCodable($0) },
+            structuredContent: response.structuredContent.map { try PeekabooBridgeJSONValue.fromCodable($0) })
     }
 
-    private static func bridgeToolResponse(
+    static func bridgeToolResponse(
         from result: BrowserMCPExecutionResult) throws -> PeekabooBridgeBrowserToolResponse
     {
         let response = try self.bridgeToolResponse(from: result.response)
@@ -238,10 +247,12 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
             content: response.content,
             isError: response.isError,
             meta: response.meta,
+            structuredContent: response.structuredContent,
             connectionReceipt: self.bridgeReceipt(from: result.connectionReceipt),
             completedCallCount: result.completedCallCount,
             dispatchedCallCount: result.dispatchedCallCount,
-            actionFailure: result.actionFailure)
+            actionFailure: result.actionFailure,
+            providerSessionEpoch: result.providerSessionEpoch?.transportID)
     }
 
     private static func bridgeBrowserRefusalResponse(

@@ -92,7 +92,8 @@ struct MCPWrapperCommandBindingTests {
         let command = try CommanderCLIBinder.instantiateCommand(ofType: BrowserCommand.self, parsedValues: parsed)
         #expect(command.action == "status")
         #expect(command.toolExecutionPolicy == .backgroundOnly)
-        #expect(!BrowserCommand.actionMayMutate("status"))
+        #expect(!command.runtimeOptions.requiresImplicitSnapshotInvalidation)
+        #expect(!command.runtimeOptions.usesPerToolSnapshotInvalidation)
     }
 
     @Test
@@ -108,7 +109,74 @@ struct MCPWrapperCommandBindingTests {
 
         #expect(background.toolExecutionPolicy == .backgroundOnly)
         #expect(foreground.toolExecutionPolicy == .foregroundAllowed)
-        #expect(BrowserCommand.actionMayMutate("connect"))
+        #expect(!background.runtimeOptions.requiresImplicitSnapshotInvalidation)
+        #expect(background.runtimeOptions.usesPerToolSnapshotInvalidation)
+        #expect(!foreground.runtimeOptions.requiresImplicitSnapshotInvalidation)
+        #expect(foreground.runtimeOptions.usesPerToolSnapshotInvalidation)
+    }
+
+    @Test
+    func `Browser command derives runtime mutation tracking from mapped provider calls`() throws {
+        let sourceProvenReads: [ParsedValues] = [
+            ParsedValues(positional: ["console"], options: ["pageId": ["1"]], flags: []),
+            ParsedValues(
+                positional: ["network"],
+                options: ["pageId": ["1"], "requestId": ["1"]],
+                flags: []
+            ),
+            ParsedValues(positional: ["screenshot"], options: ["pageId": ["1"]], flags: []),
+        ]
+
+        for parsed in sourceProvenReads {
+            let command = try CommanderCLIBinder.instantiateCommand(
+                ofType: BrowserCommand.self,
+                parsedValues: parsed
+            )
+            #expect(!command.runtimeOptions.requiresImplicitSnapshotInvalidation)
+            #expect(!command.runtimeOptions.usesPerToolSnapshotInvalidation)
+            #expect(!command.runtimeOptions.dynamicToolScreenCaptureReachable)
+        }
+
+        let foregroundOnlyReads: [ParsedValues] = [
+            ParsedValues(positional: ["list-pages"], options: [:], flags: []),
+            ParsedValues(
+                positional: ["wait-for"],
+                options: ["pageId": ["1"], "text": ["ready"]],
+                flags: []
+            ),
+            ParsedValues(positional: ["snapshot"], options: ["pageId": ["1"]], flags: []),
+        ]
+        for parsed in foregroundOnlyReads {
+            let command = try CommanderCLIBinder.instantiateCommand(
+                ofType: BrowserCommand.self,
+                parsedValues: parsed
+            )
+            #expect(!command.runtimeOptions.requiresImplicitSnapshotInvalidation)
+            #expect(command.runtimeOptions.usesPerToolSnapshotInvalidation)
+            #expect(!command.runtimeOptions.dynamicToolScreenCaptureReachable)
+        }
+
+        let selectedWithoutFronting = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(
+                positional: ["select-page"],
+                options: ["pageId": ["1"]],
+                flags: []
+            )
+        )
+        let selectedWithFronting = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(
+                positional: ["select-page"],
+                options: ["pageId": ["1"]],
+                flags: ["bringToFront"]
+            )
+        )
+
+        #expect(selectedWithoutFronting.runtimeOptions.usesPerToolSnapshotInvalidation)
+        #expect(selectedWithFronting.runtimeOptions.usesPerToolSnapshotInvalidation)
+        #expect(!selectedWithFronting.runtimeOptions.requiresImplicitSnapshotInvalidation)
+        #expect(!selectedWithFronting.runtimeOptions.dynamicToolScreenCaptureReachable)
     }
 
     @Test

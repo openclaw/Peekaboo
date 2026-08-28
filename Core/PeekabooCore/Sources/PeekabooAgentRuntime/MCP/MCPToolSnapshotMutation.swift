@@ -115,23 +115,39 @@ enum MCPToolCaptureRequirement: Sendable, Equatable {
 struct MCPToolPendingSnapshotInvalidation: Sendable, Equatable {
     let scope: MCPToolSnapshotMutationScope
     let owner: MCPToolSnapshotOwner
+    let usesCoordinatorBarrier: Bool
+    let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.scope == rhs.scope &&
+            lhs.owner == rhs.owner &&
+            lhs.usesCoordinatorBarrier == rhs.usesCoordinatorBarrier
+    }
 }
 
 public actor MCPToolSnapshotExecutionGate {
-    private struct Waiter {
+    private struct ExclusiveWaiter {
         let id: UUID
         let continuation: CheckedContinuation<Void, any Error>
     }
 
+    private struct SharedWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, any Error>
+    }
+
     private var locked = false
-    private var waiters: [Waiter] = []
-    private var pendingInvalidationRecord: MCPToolPendingSnapshotInvalidation?
+    private var sharedHolderCount = 0
+    private var exclusiveWaiters: [ExclusiveWaiter] = []
+    private var sharedWaiters: [SharedWaiter] = []
+    private var pendingInvalidationRecords: [UUID: MCPToolPendingSnapshotInvalidation] = [:]
+    private var pendingInvalidationOrder: [UUID] = []
 
     public init() {}
 
     func acquire() async throws {
         try Task.checkCancellation()
-        guard self.locked else {
+        guard self.locked || self.sharedHolderCount > 0 else {
             self.locked = true
             return
         }
@@ -142,12 +158,12 @@ public actor MCPToolSnapshotExecutionGate {
                 if Task.isCancelled {
                     continuation.resume(throwing: CancellationError())
                 } else {
-                    self.waiters.append(Waiter(id: waiterID, continuation: continuation))
+                    self.exclusiveWaiters.append(ExclusiveWaiter(id: waiterID, continuation: continuation))
                 }
             }
         } onCancel: {
             Task {
-                await self.cancelWaiter(id: waiterID)
+                await self.cancelExclusiveWaiter(id: waiterID)
             }
         }
 
@@ -160,40 +176,104 @@ public actor MCPToolSnapshotExecutionGate {
     }
 
     func release() {
-        guard !self.waiters.isEmpty else {
-            self.locked = false
-            return
+        self.locked = false
+        self.resumeWaitersIfPossible()
+    }
+
+    func acquireSharedIfNoPendingInvalidation() async throws -> Bool {
+        try Task.checkCancellation()
+        if !self.pendingInvalidationOrder.isEmpty {
+            return false
         }
-        self.waiters.removeFirst().continuation.resume()
+        if !self.locked, self.exclusiveWaiters.isEmpty {
+            self.sharedHolderCount += 1
+            return true
+        }
+
+        let waiterID = UUID()
+        let acquired: Bool = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    self.sharedWaiters.append(SharedWaiter(id: waiterID, continuation: continuation))
+                }
+            }
+        } onCancel: {
+            Task {
+                await self.cancelSharedWaiter(id: waiterID)
+            }
+        }
+        do {
+            try Task.checkCancellation()
+            return acquired
+        } catch {
+            if acquired {
+                self.releaseShared()
+            }
+            throw error
+        }
+    }
+
+    func releaseShared() {
+        guard self.sharedHolderCount > 0 else { return }
+        self.sharedHolderCount -= 1
+        self.resumeWaitersIfPossible()
     }
 
     func pendingInvalidation() -> MCPToolPendingSnapshotInvalidation? {
-        self.pendingInvalidationRecord
+        guard let id = self.pendingInvalidationOrder.first else { return nil }
+        return self.pendingInvalidationRecords[id]
     }
 
     func recordPendingInvalidation(
         _ scope: MCPToolSnapshotMutationScope,
-        owner: MCPToolSnapshotOwner)
+        owner: MCPToolSnapshotOwner,
+        usesCoordinatorBarrier: Bool,
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?)
     {
-        guard let pendingInvalidation = self.pendingInvalidationRecord else {
-            self.pendingInvalidationRecord = MCPToolPendingSnapshotInvalidation(scope: scope, owner: owner)
-            return
+        if self.pendingInvalidationRecords[scope.id] == nil {
+            self.pendingInvalidationOrder.append(scope.id)
         }
-        let pendingCutoff = pendingInvalidation.scope.invalidationCutoff(succeeded: false)
-        let newCutoff = scope.invalidationCutoff(succeeded: false)
-        if newCutoff > pendingCutoff {
-            self.pendingInvalidationRecord = MCPToolPendingSnapshotInvalidation(scope: scope, owner: owner)
-        }
+        self.pendingInvalidationRecords[scope.id] = MCPToolPendingSnapshotInvalidation(
+            scope: scope,
+            owner: owner,
+            usesCoordinatorBarrier: usesCoordinatorBarrier,
+            snapshotMutationCoordinator: snapshotMutationCoordinator)
     }
 
     func clearPendingInvalidation(id: UUID) {
-        guard self.pendingInvalidationRecord?.scope.id == id else { return }
-        self.pendingInvalidationRecord = nil
+        self.pendingInvalidationRecords.removeValue(forKey: id)
+        self.pendingInvalidationOrder.removeAll { $0 == id }
     }
 
-    private func cancelWaiter(id: UUID) {
-        guard let index = self.waiters.firstIndex(where: { $0.id == id }) else { return }
-        let waiter = self.waiters.remove(at: index)
+    private func resumeWaitersIfPossible() {
+        guard !self.locked, self.sharedHolderCount == 0 else { return }
+        if !self.exclusiveWaiters.isEmpty {
+            self.locked = true
+            self.exclusiveWaiters.removeFirst().continuation.resume()
+            return
+        }
+        let canAcquire = self.pendingInvalidationOrder.isEmpty
+        let waiters = self.sharedWaiters
+        self.sharedWaiters.removeAll()
+        if canAcquire {
+            self.sharedHolderCount = waiters.count
+        }
+        for waiter in waiters {
+            waiter.continuation.resume(returning: canAcquire)
+        }
+    }
+
+    private func cancelExclusiveWaiter(id: UUID) {
+        guard let index = self.exclusiveWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = self.exclusiveWaiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private func cancelSharedWaiter(id: UUID) {
+        guard let index = self.sharedWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = self.sharedWaiters.remove(at: index)
         waiter.continuation.resume(throwing: CancellationError())
     }
 }
@@ -267,6 +347,10 @@ public protocol MCPToolSnapshotMutationCoordinating: Sendable {
     @MainActor
     func prepareMutation(_ scope: MCPToolSnapshotMutationScope) throws
 
+    /// Records a mutation that owns a caller-local execution lane without acquiring the shared durable barrier.
+    @MainActor
+    func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) throws
+
     @MainActor
     func completeMutationBarrier(
         _ scope: MCPToolSnapshotMutationScope) throws -> MCPToolMutationBarrierCompletion?
@@ -286,6 +370,11 @@ extension MCPToolSnapshotMutationCoordinating {
     public func prepareMutation(_: MCPToolSnapshotMutationScope) throws {}
 
     @MainActor
+    public func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) throws {
+        try self.prepareMutation(scope)
+    }
+
+    @MainActor
     public func completeMutationBarrier(
         _: MCPToolSnapshotMutationScope) throws -> MCPToolMutationBarrierCompletion?
     {
@@ -293,8 +382,13 @@ extension MCPToolSnapshotMutationCoordinating {
     }
 
     @MainActor
-    public func cancelMutation(_: MCPToolSnapshotMutationScope) async -> Bool {
-        true
+    public func cancelMutation(_ scope: MCPToolSnapshotMutationScope) async -> Bool {
+        do {
+            _ = try self.completeMutationBarrier(scope)
+        } catch {
+            return false
+        }
+        return await self.completeMutation(scope, succeeded: false)
     }
 }
 
@@ -396,7 +490,7 @@ enum MCPToolSnapshotMutationPolicy {
         guard let actionName = arguments.getString("action"),
               let action = BrowserAction(rawValue: actionName)
         else { return .none }
-        return BrowserMCPCallMapper.actionSemantics(action: action, arguments: arguments) == .mutating
+        return BrowserMCPCallMapper.effectiveActionSemantics(action: action, arguments: arguments) == .mutating
             ? .mutation
             : .none
     }

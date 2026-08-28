@@ -3,11 +3,46 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeClient {
-    public func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
-        let response = try await self.send(.browserStatus(PeekabooBridgeBrowserChannelRequest(channel: channel)))
+    public nonisolated static func browserSessionTerminalFailure(
+        from error: any Error) -> PeekabooBridgeBrowserSessionTerminalFailure?
+    {
+        if let envelope = error as? PeekabooBridgeErrorEnvelope {
+            return switch (envelope.code, envelope.context) {
+            case (.invalidRequest, PeekabooBridgeBrowserSessionErrorContext.invalid): .invalidSession
+            case (.invalidRequest, PeekabooBridgeBrowserSessionErrorContext.ended): .sessionEnded
+            case (.unauthorizedClient, PeekabooBridgeBrowserSessionErrorContext.wrongOwner): .wrongOwner
+            case (.versionMismatch, PeekabooBridgeBrowserSessionErrorContext.hostGenerationChanged):
+                .hostGenerationChanged
+            default: nil
+            }
+        }
+        guard let receiptError = error as? PeekabooBridgeOperationReceiptError else { return nil }
+        return switch receiptError {
+        case .invalidListenerAttestation, .invalidListenerSignature,
+             .invalidOperationSessionAttestation, .invalidOperationSessionSignature,
+             .listenerInstanceMismatch, .peerIdentityMismatch, .clientIdentityMismatch:
+            .hostGenerationChanged
+        case .invalidOperationSessionConfiguration, .operationSessionMismatch,
+             .operationSessionRegistryExhausted, .replayedRequest, .invalidOperationSignature,
+             .receiptMismatch, .unsafeArchive, .archiveWriteFailed:
+            nil
+        }
+    }
+
+    public func browserStatus(
+        channel: String?,
+        sessionID: UUID? = nil) async throws -> PeekabooBridgeBrowserStatus
+    {
+        let response = try await self.send(.browserStatus(PeekabooBridgeBrowserChannelRequest(
+            channel: channel,
+            sessionID: sessionID)))
         switch response {
         case let .browserStatus(status):
             try self.validateBrowserStatus(status)
+            if sessionID != nil, !status.isCanonicalScopedSessionStatus {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "canonical scoped browser status evidence")
+            }
             return status
         case let .error(envelope):
             throw envelope
@@ -102,6 +137,140 @@ extension PeekabooBridgeClient {
         return result.desktopActionResult
     }
 
+    public func browserConnectResult(
+        sessionID: UUID,
+        channel: String?,
+        browserURL: String? = nil) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
+    {
+        guard self.browserConnectionHandoffEnabled else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.38 authenticated browser sessions are unavailable")
+        }
+        let request = PeekabooBridgeRequest.browserConnect(.init(
+            channel: channel,
+            browserURL: browserURL,
+            sessionID: sessionID))
+        let result: UIAutomationActionResult<PeekabooBridgeBrowserStatus> = try await self.actionResult(
+            for: request,
+            expectedResponse: "scoped browser connect",
+            timeoutSec: BrowserConnectionTiming.bridgeTransportTimeoutSeconds,
+            operationReceiptRequirement: .required)
+        { response in
+            guard case let .browserStatus(status) = response else { return nil }
+            return status
+        }
+        try self.validateBrowserStatus(result.payload)
+        guard result.payload.isCanonicalScopedSessionStatus else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "canonical scoped browser connect evidence")
+        }
+        return result.desktopActionResult
+    }
+
+    /// Connects in the foreground and returns the exact signed file-borne evidence needed by a
+    /// later authenticated MCP process. Ordinary browser-connect APIs never request this grant.
+    public func browserConnectHandoffResult(
+        channel: String?,
+        browserURL: String? = nil) async throws
+        -> (
+            result: DesktopActionResult<PeekabooBridgeBrowserStatus>,
+            receiptBundle: PeekabooBridgeOperationReceiptBundle)
+    {
+        guard self.browserConnectionHandoffEnabled else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.38 authenticated browser handoff is unavailable")
+        }
+        if browserURL == nil, !self.nativeBrowserConnectionBindingEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Channel browser connect requires native browser connection binding.",
+                hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
+        }
+        let request = PeekabooBridgeRequest.browserConnect(.init(
+            channel: channel,
+            browserURL: browserURL,
+            requestsHandoff: true))
+        let reply = try await self.sendCarryingActionOutcome(
+            request,
+            timeoutSec: BrowserConnectionTiming.bridgeTransportTimeoutSeconds,
+            operationReceiptRequirement: .required)
+        guard case let .browserStatus(status) = reply.response,
+              let outcome = reply.outcome?.outcome,
+              let receiptBundle = reply.operationReceiptBundle,
+              let receipt = status.connectionReceipt,
+              status.isConnected,
+              receipt.matchesConnectRequest(.init(
+                  channel: channel,
+                  browserURL: browserURL,
+                  requestsHandoff: true)),
+              outcome.isAccepted(by: .confirmedNoChangeOrDispatched(
+                  requiring: .init(mechanism: .browserProtocol, mode: .foreground),
+                  unitCount: .exact(.one)))
+        else {
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "the required handoff-enabled browser connect result")
+        }
+        try self.validateBrowserStatus(status)
+        return (
+            DesktopActionResult(payload: status, outcome: outcome),
+            receiptBundle)
+    }
+
+    public func browserSessionBootstrap(
+        receiptBundle: PeekabooBridgeOperationReceiptBundle? = nil,
+        claimID: UUID) async throws -> PeekabooBridgeBrowserSessionBootstrapResponse
+    {
+        guard self.browserConnectionHandoffEnabled else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.38 authenticated browser handoff is unavailable")
+        }
+        let reply = try await self.sendCarryingActionOutcome(
+            .browserSessionBootstrap(.init(receiptBundle: receiptBundle, claimID: claimID)),
+            operationReceiptRequirement: .required)
+        switch reply.response {
+        case let .browserSessionBootstrap(response):
+            let targetReceiptSHA256: String? = try receiptBundle.map { bundle in
+                let connectResponse = try JSONDecoder.peekabooBridgeDecoder().decode(
+                    PeekabooBridgeResponse.self,
+                    from: bundle.canonicalResponse)
+                guard let connectionReceipt = connectResponse.browserExecutionConnectionReceipt else {
+                    throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                        "the browser handoff connection receipt")
+                }
+                return try PeekabooBridgeOperationReceiptCoding.sha256(connectionReceipt)
+            }
+            guard response.claimID == claimID,
+                  response.targetReceiptSHA256 == targetReceiptSHA256
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                    "the browser session bootstrap claim or target identifier")
+            }
+            return response
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected browser session bootstrap response")
+        }
+    }
+
+    public func browserSessionDisconnect(_ sessionID: UUID) async throws {
+        try await self.sendExpectOK(.browserSessionControl(.init(
+            sessionID: sessionID,
+            action: .disconnect)))
+    }
+
+    public func browserSessionEnd(_ sessionID: UUID) async throws {
+        try await self.sendExpectOK(.browserSessionControl(.init(
+            sessionID: sessionID,
+            action: .end)))
+    }
+
     private func directBrowserConnect(
         _ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeBrowserStatus
     {
@@ -175,7 +344,7 @@ extension PeekabooBridgeClient {
                 message: "Result-aware browser execution requires receipt-bound Bridge execution.",
                 hint: "Use a protocol 1.29 runtime with operation receipts, or use the legacy browser API.")
         }
-        return try await self.actionResult(
+        let result: DesktopActionResult<PeekabooBridgeBrowserToolResponse> = try await self.actionResult(
             for: .browserExecute(boundRequest),
             expectedResponse: "browser tool",
             operationReceiptRequirement: .required)
@@ -183,6 +352,18 @@ extension PeekabooBridgeClient {
             guard case let .browserToolResponse(result) = response else { return nil }
             return result
         }.desktopActionResult
+        if result.payload.actionFailure == nil,
+           !result.payload.isError,
+           let expectedEpoch = boundRequest.expectedProviderSessionEpoch,
+           result.payload.providerSessionEpoch != expectedEpoch
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Scoped browser execution returned a different provider epoch.",
+                hint: "Refresh scoped browser status before retrying.")
+        }
+        return result
     }
 
     private func receiptBoundBrowserRequest(
@@ -209,7 +390,19 @@ extension PeekabooBridgeClient {
             }
             return request.binding(to: expectedReceipt)
         }
-        let status = try await self.browserStatus(channel: request.channel)
+        let expectedOperationAttestation = self.operationAttestation
+        let status = try await self.browserStatus(
+            channel: request.channel,
+            sessionID: request.sessionID)
+        if let expectedOperationAttestation,
+           self.operationAttestation != expectedOperationAttestation
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .transportSessionUnavailable,
+                message: "Bridge operation session changed during browser target inspection.",
+                hint: "Establish a fresh Bridge handshake before retrying.")
+        }
         guard status.isConnected,
               let receipt = status.connectionReceipt,
               receipt.isCanonicalExecutionTarget,
@@ -230,7 +423,16 @@ extension PeekabooBridgeClient {
                 message: "Process-bound browser execution requires native browser connection binding.",
                 hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
         }
-        return request.binding(to: receipt)
+        if request.sessionID != nil, status.providerSessionEpoch == nil {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Scoped browser status omitted its provider epoch.",
+                hint: "Refresh the scoped browser session before retrying.")
+        }
+        return request.binding(
+            to: receipt,
+            providerSessionEpoch: status.providerSessionEpoch)
     }
 
     private func directBrowserExecute(
@@ -273,6 +475,16 @@ extension PeekabooBridgeClient {
                 reason: .targetUnavailable,
                 message: "Attested browser read response omitted its connection receipt.",
                 hint: "Update and relaunch the Peekaboo Bridge host before retrying.")
+        }
+        if request.sessionID != nil,
+           !response.isError,
+           response.providerSessionEpoch != request.expectedProviderSessionEpoch
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Scoped browser read returned a different provider epoch.",
+                hint: "Refresh scoped browser status before retrying.")
         }
     }
 

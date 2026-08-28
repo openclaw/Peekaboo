@@ -37,6 +37,142 @@ final class StreamingEventDelegate: @unchecked Sendable, AgentEventDelegate {
 
 // MARK: - Peekaboo Agent Service
 
+enum AgentToolConstructionContext {
+    @TaskLocal static var browserCapabilities: BrowserToolCapabilitySession?
+}
+
+final class AgentRemoteBrowserTaskWaiter<T: Sendable>: @unchecked Sendable {
+    typealias WaitResult = Result<T, any Error>
+
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, any Error>?
+    private var result: WaitResult?
+
+    func value() async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            self.install(continuation)
+        }
+    }
+
+    func finish(_ result: WaitResult) {
+        self.lock.lock()
+        guard self.result == nil else {
+            self.lock.unlock()
+            return
+        }
+        self.result = result
+        let continuation = self.continuation
+        self.continuation = nil
+        self.lock.unlock()
+        continuation?.resume(with: result)
+    }
+
+    private func install(_ continuation: CheckedContinuation<T, any Error>) {
+        self.lock.lock()
+        if let result = self.result {
+            self.lock.unlock()
+            continuation.resume(with: result)
+            return
+        }
+        self.continuation = continuation
+        self.lock.unlock()
+    }
+}
+
+/// Fans one provider generation out to cancellation-responsive callers without one observer task per caller.
+final class AgentRemoteBrowserTaskWaiters<T: Sendable>: @unchecked Sendable {
+    typealias WaitResult = Result<T, any Error>
+
+    private let lock = NSLock()
+    private var waiters: [UUID: AgentRemoteBrowserTaskWaiter<T>] = [:]
+    private var result: WaitResult?
+
+    var pendingCount: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.waiters.count
+    }
+
+    func value() async throws -> T {
+        let waiterID = UUID()
+        let waiter = AgentRemoteBrowserTaskWaiter<T>()
+        let result = self.register(waiterID: waiterID, waiter: waiter)
+        if let result {
+            waiter.finish(result)
+        }
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await waiter.value()
+        } onCancel: {
+            self.cancel(waiterID: waiterID, waiter: waiter)
+        }
+    }
+
+    func finish(_ result: WaitResult) {
+        self.lock.lock()
+        guard self.result == nil else {
+            self.lock.unlock()
+            return
+        }
+        self.result = result
+        let waiters = Array(self.waiters.values)
+        self.waiters.removeAll()
+        self.lock.unlock()
+        for waiter in waiters {
+            waiter.finish(result)
+        }
+    }
+
+    private func register(
+        waiterID: UUID,
+        waiter: AgentRemoteBrowserTaskWaiter<T>) -> WaitResult?
+    {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        guard let result = self.result else {
+            self.waiters[waiterID] = waiter
+            return nil
+        }
+        return result
+    }
+
+    private func cancel(waiterID: UUID, waiter: AgentRemoteBrowserTaskWaiter<T>) {
+        self.lock.lock()
+        let registered = self.waiters.removeValue(forKey: waiterID)
+        self.lock.unlock()
+        guard registered === waiter else { return }
+        waiter.finish(.failure(CancellationError()))
+    }
+}
+
+enum AgentRemoteBrowserOpeningTask {
+    case inFlight(
+        id: UUID,
+        task: Task<any BrowserMCPScopedSessionEnding, any Error>,
+        waiters: AgentRemoteBrowserTaskWaiters<any BrowserMCPScopedSessionEnding>)
+    case retryable(id: UUID)
+
+    var id: UUID {
+        switch self {
+        case let .inFlight(id, _, _), let .retryable(id): id
+        }
+    }
+}
+
+struct AgentSessionDeletionTombstone {
+    enum Phase: Equatable {
+        case deleting
+        case deleted
+    }
+
+    let deletionGeneration: UUID
+    var phase: Phase = .deleting
+    var browserCleanupStarted = false
+    var browserCleanupPending = false
+    var browserCleanupConfirmed = false
+    var invalidatedExecutionGenerations: Set<UUID>
+}
+
 /// Service that integrates the new agent architecture with PeekabooCore services
 @available(macOS 14.0, *)
 @MainActor
@@ -48,6 +184,21 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     var cachedSmartCaptureService: SmartCaptureService?
     var snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     var capturePreflightRefusal: MCPToolCapturePreflightRefusal?
+    var browserCleanupDebtPending = false
+    var remoteBrowserClients: [String: any BrowserMCPScopedSessionEnding] = [:]
+    var remoteBrowserCapabilities: [String: BrowserToolCapabilitySession] = [:]
+    var remoteBrowserOpeningTasks: [String: AgentRemoteBrowserOpeningTask] = [:]
+    var remoteBrowserQueuedOpeningIDs: [String: UUID] = [:]
+    var remoteBrowserQueuedOpeningWaiterCounts: [UUID: Int] = [:]
+    var remoteBrowserOpeningSessionID: String?
+    var remoteBrowserEndingTasks: [String: (
+        id: UUID,
+        task: Task<Bool, Never>,
+        waiters: AgentRemoteBrowserTaskWaiters<Bool>)] = [:]
+    var remoteBrowserCleanupDebt = Set<String>()
+    var agentSessionExecutionGenerations: [String: Set<UUID>] = [:]
+    var agentSessionBrowserExecutionGenerations: [String: Set<UUID>] = [:]
+    var agentSessionDeletionTombstones: [String: AgentSessionDeletionTombstone] = [:]
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
     var isVerbose: Bool = false
@@ -56,6 +207,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     /// so concurrent sessions cannot change one another's authority after construction.
     @TaskLocal static var toolConstructionExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly
     @TaskLocal static var toolConstructionSnapshotOwner = MCPToolSnapshotOwner.legacyProcess
+    @TaskLocal static var toolConstructionBrowserClient: (any BrowserMCPClientProviding)?
 
     /// The default model used by this agent service
     public var defaultModel: String {
@@ -266,10 +418,23 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     /// Clean up any cached sessions or resources
     public func cleanup() async {
         let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        let sessions = self.sessionManager.listSessions()
+        let sessionIDs = self.sessionManager.listSessions()
+            .filter { $0.lastAccessedAt < cutoff }
+            .map(\.id)
+        let claims = self.installAgentSessionDeletionTombstones(for: sessionIDs)
 
-        for session in sessions where session.lastAccessedAt < cutoff {
-            try? await self.sessionManager.deleteSession(id: session.id)
+        for sessionID in sessionIDs {
+            guard let deletionGeneration = claims[sessionID] else { continue }
+            do {
+                _ = try await self.deletePersistedAgentSession(
+                    id: sessionID,
+                    deletionGeneration: deletionGeneration)
+            } catch {
+                continue
+            }
+        }
+        if await !(self.drainBrowserCleanupDebt()) {
+            self.logger.error("Browser session cleanup debt remains after expired-session cleanup")
         }
     }
 

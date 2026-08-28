@@ -12,6 +12,7 @@ public enum BrowserMCPExecutionEvidence {
     public static func attaching(
         to response: ToolResponse,
         connectionReceipt: BrowserMCPConnectionReceipt,
+        providerSessionEpoch: BrowserMCPProviderSessionEpoch? = nil,
         completedCallCount: Int,
         dispatchedCallCount: Int) -> ToolResponse
     {
@@ -22,15 +23,21 @@ public enum BrowserMCPExecutionEvidence {
         if let meta = response.meta, meta.objectValue == nil {
             fields["provider_payload"] = meta
         }
-        fields[self.metadataKey] = .object([
+        var evidenceFields: [String: Value] = [
             "connection_receipt": .object(self.connectionReceiptFields(connectionReceipt)),
             "completed_call_count": .int(completedCallCount),
             "dispatched_call_count": .int(dispatchedCallCount),
-        ])
+        ]
+        if let providerSessionEpoch {
+            evidenceFields["provider_session_epoch"] = .string(
+                providerSessionEpoch.rawValue.uuidString.lowercased())
+        }
+        fields[self.metadataKey] = .object(evidenceFields)
         return ToolResponse(
             content: response.content,
             isError: response.isError,
-            meta: .object(fields))
+            meta: .object(fields),
+            structuredContent: response.structuredContent)
     }
 
     static func split(

@@ -15,16 +15,28 @@ The action is positional and defaults to `status`.
 peekaboo browser status --json
 peekaboo browser connect --channel stable --foreground
 peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground
-peekaboo browser new-page --url https://example.com
-peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
+peekaboo browser new-page --url https://example.com --foreground
+peekaboo browser snapshot --page-id 2 --path /tmp/page.txt --foreground
 ```
 
 Use `peekaboo browser --help` for the complete action-specific option set. Page-scoped automation should retain the returned page ID and pass `--page-id` on later calls so concurrent browser work cannot redirect it.
 
-The CLI is background-only by default. Read and page actions reuse an existing exact browser connection and never
-auto-connect. `connect` can surface Chrome's remote-debugging permission UI, so it is classified as a foreground
-mutation and requires explicit `--foreground`. The same flag is required for `--bring-to-front` or a foreground new
-page. If no exact live connection exists, default-mode actions fail before dispatch and ask you to connect explicitly.
+The CLI is background-only by default. Chrome DevTools MCP 1.6.0's bundled Puppeteer grants browser user activation to
+every page evaluation, including evaluation used internally for page titles, stable-DOM waits, snapshots, and element
+geometry. Default mode therefore exposes only source-audited routes that cannot enter that evaluation path. Page
+discovery, snapshots, navigation, waits, element interaction, and arbitrary script evaluation refuse before provider
+I/O unless the caller passes `--foreground`; accepted calls report `browser_protocol` / `foreground` delivery even if
+the page remains visually behind another app. Exact positive-ID network lookup, page screenshot without an element,
+console listing, emulation, Lighthouse, performance trace operations, and heap capture retain background routes.
+Those source-audited calls report `browser_protocol` / `background` delivery.
+All default calls require an existing exact browser connection receipt and never ambiently auto-connect. With explicit
+`--foreground`, only standalone CLI page actions may auto-connect when no receipt exists. Persistent MCP, Agent, and
+Bridge-scoped page actions never ambiently auto-connect.
+Use explicit `connect` for a foreground-authorized child, or transfer an exact signed handoff into a background
+Bridge-scoped MCP child. `connect` can surface Chrome's remote-debugging permission UI, so it is classified as a
+foreground mutation and requires explicit `--foreground`. The same flag is required for `--bring-to-front` or a
+foreground new page. If no exact live connection exists, default-mode actions fail before dispatch and ask you to
+connect explicitly.
 In `--json` output, canonical action outcome, effect, retry safety, mutation-dispatch state, and exact desktop target
 metadata are projected into the standard root CLI envelope. The original MCP metadata remains under `data.meta` for
 tool-specific consumers.
@@ -42,6 +54,18 @@ fail and require an explicit reconnect.
 
 Browser `type` and `press-key` require `--uid` from a fresh snapshot. Peekaboo focuses that exact page element and sends
 the keyboard operation as one daemon-owned sequence rather than inheriting whichever control another caller focused.
+Persistent MCP and Agent callers, including Bridge-routed Agents, receive opaque, session-owned page and element
+references instead of these raw CLI compatibility values. Those references bind the exact provider child and cannot
+cross caller sessions. A newer snapshot or navigation expires the affected page's element references. Closing a page
+expires that page's namespace; disconnect, connection replacement, or session end expires the complete caller
+namespace. A current Bridge host also supports caller-scoped opaque-reference MCP sessions through an explicit
+authenticated handoff. First run
+`peekaboo browser connect --foreground --bridge-socket <socket> --handoff-file <absolute-private-path>` to connect the exact
+browser and atomically write its signed one-shot receipt. Then start
+`peekaboo mcp serve --bridge-socket <same-socket> --browser-handoff <same-path>`. The Bridge validates the caller, listener
+generation, exact target receipt, claim, and provider epoch before creating a separate scoped child; status, execution,
+disconnect, and end stay bound to that namespace, and no request can fall back to the Bridge's root browser connection.
+Older or incompatible hosts refuse the handoff before MCP serving begins.
 
 `browser upload-file` requires `--page-id`, a fresh file-input `--uid`, and an absolute `--path` to a current-user
 regular file no larger than 100 MiB. Peekaboo never grants Chrome DevTools MCP unrestricted filesystem access. The daemon

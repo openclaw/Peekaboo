@@ -14,11 +14,16 @@ extension MCPCommand.Serve: CommanderSignatureProviding {
                     help: "Reserved port for future HTTP/SSE transport support",
                     long: "port"
                 ),
+                .commandOption(
+                    "browserHandoff",
+                    help: "Consume one signed browser handoff receipt into this server's scoped child",
+                    long: "browser-handoff"
+                ),
             ],
             flags: [
                 .commandFlag(
                     "allowForeground",
-                    help: "Authorize foreground/global UI for this MCP server",
+                    help: "Authorize foreground/global UI and browser user activation for this MCP server",
                     long: "allow-foreground"
                 ),
             ]

@@ -196,9 +196,9 @@ extension RuntimeHostResolver {
         environment: [String: String]
     ) -> Bool {
         if options.usesPerToolSnapshotInvalidation {
-            // Dynamic tools can issue request-local auto/modern capture regardless of the runtime's
-            // startup preference, so even an ambient classic value cannot suppress old-host discovery.
-            return true
+            // Dynamic capture-capable tools can issue request-local auto/modern capture regardless
+            // of startup preference. An explicit environment allow-list may prove none are exposed.
+            return options.dynamicToolScreenCaptureReachable
         }
         return (options.requiresScreenCapturePermission || options.requiresSilentCapture) &&
             self.captureEnginePreferenceForOwnership(options: options, environment: environment) != .legacy
@@ -210,7 +210,7 @@ extension RuntimeHostResolver {
     ) -> Bool {
         guard !self.remoteIsolationRequested(options: options, environment: environment) else { return false }
         if options.usesPerToolSnapshotInvalidation {
-            return true
+            return options.dynamicToolScreenCaptureReachable
         }
         let preference = self.captureEnginePreferenceForOwnership(options: options, environment: environment)
         return options.requiresScreenCapturePermission &&
@@ -245,6 +245,7 @@ extension RuntimeHostResolver {
         environment: [String: String]
     ) -> ScreenCaptureKitSafetyDisposition {
         if options.usesPerToolSnapshotInvalidation,
+           options.dynamicToolScreenCaptureReachable,
            !options.requiresScreenCapturePermission {
             return plan.explicitSocket == nil ? .deferLocalRuntime : .deferToolCapture
         }
@@ -313,7 +314,7 @@ extension RuntimeHostResolver {
         options: CommandRuntimeOptions
     ) -> [ImplicitRemoteCandidate] {
         var paths = plan.candidates.map(\.socketPath)
-        if options.usesPersistentDynamicToolRuntime,
+        if options.usesPersistentDynamicCaptureRuntime,
            plan.explicitSocket?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             // Scope only caller-side socket discovery. The selected host must advertise process
             // ownership here, and every real SCK leaf then rescans all same-user potential Peekaboo

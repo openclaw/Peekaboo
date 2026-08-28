@@ -46,6 +46,7 @@ extension BrowserMCPExecutionResult {
         return BrowserMCPExecutionResult(
             response: self.response,
             connectionReceipt: self.connectionReceipt,
+            providerSessionEpoch: self.providerSessionEpoch,
             connectionOutcome: self.connectionOutcome,
             completedCallCount: completedMutationCount,
             dispatchedCallCount: dispatchedMutationCount,

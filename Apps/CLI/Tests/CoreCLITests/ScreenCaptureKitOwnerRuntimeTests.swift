@@ -2,12 +2,12 @@ import Commander
 import Darwin
 import Foundation
 import PeekabooAutomation
-import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooCLI
 
 @Suite(.serialized, .tags(.safe))
@@ -506,6 +506,8 @@ struct ScreenCaptureKitOwnerRuntimeTests {
     @Test
     func `classic false-permission host remains executable after request-aware selection`() async throws {
         let socketPath = "/tmp/peekaboo-classic-deferral-\(UUID().uuidString).sock"
+        let coordinationRoot = URL(fileURLWithPath: socketPath).appendingPathExtension("coordination")
+        defer { try? FileManager.default.removeItem(at: coordinationRoot) }
         let host = try await Self.startHost(
             socketPath: socketPath,
             processIdentifier: 3131,
@@ -515,7 +517,8 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             serviceOverride: OwnerPolicyFixtureServices(
                 ownerAware: true,
                 observation: ClassicDispatchSentinelObservationService()
-            )
+            ),
+            coordinationRootURL: coordinationRoot
         )
         defer { Task { await host.stop() } }
         var permissionRejections: [String] = []
@@ -556,6 +559,8 @@ struct ScreenCaptureKitOwnerRuntimeTests {
     @Test
     func `dynamic remote projection evaluates each request engine from raw host capabilities`() async throws {
         let socketPath = "/tmp/peekaboo-dynamic-classic-deferral-\(UUID().uuidString).sock"
+        let coordinationRoot = URL(fileURLWithPath: socketPath).appendingPathExtension("coordination")
+        defer { try? FileManager.default.removeItem(at: coordinationRoot) }
         let host = try await Self.startHost(
             socketPath: socketPath,
             processIdentifier: 3131,
@@ -565,7 +570,8 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             serviceOverride: OwnerPolicyFixtureServices(
                 ownerAware: true,
                 observation: ClassicDispatchSentinelObservationService()
-            )
+            ),
+            coordinationRootURL: coordinationRoot
         )
         defer { Task { await host.stop() } }
         let identity = PeekabooBridgeClientIdentity(
@@ -1442,6 +1448,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion,
         usesCurrentHostIdentity: Bool = false,
         serviceOverride: (any PeekabooBridgeServiceProviding)? = nil,
+        coordinationRootURL: URL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-owner-lane-\(UUID().uuidString)", isDirectory: true),
+        screenCaptureKitProcessCapabilityRegistrar: @MainActor @Sendable () throws -> Void = {},
+        screenCaptureKitOwnershipPreparer: @escaping @Sendable () async throws -> Void = {},
         permissionEvaluationObserver: @escaping @MainActor @Sendable () -> Void = {}
     ) async throws -> PeekabooBridgeHost {
         let services: any PeekabooBridgeServiceProviding = if let serviceOverride {
@@ -1487,6 +1497,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                     bundleVersion: nil,
                     codeSignatureHash: codeSignatureHash
                 ),
+            // Synthetic startup and dispatch must not use user-wide ownership or desktop coordination state.
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: coordinationRootURL),
+            screenCaptureKitProcessCapabilityRegistrar: screenCaptureKitProcessCapabilityRegistrar,
+            screenCaptureKitOwnershipPreparer: screenCaptureKitOwnershipPreparer,
             permissionStatusEvaluator: { _ in
                 permissionEvaluationObserver()
                 return PermissionsStatus(

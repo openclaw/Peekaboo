@@ -439,6 +439,7 @@ public final actor PeekabooBridgeHost {
     private var leaseFD: Int32 = -1
     private var socketIdentity: SocketIdentity?
     private var acceptTask: Task<Void, Never>?
+    var browserHandoffMaintenanceTask: Task<Void, Never>?
     private var listenerReadiness: PeekabooBridgeListenerReadiness?
     private var stopTask: Task<PeekabooBridgeHostStopOutcome, Never>?
     private var ownershipCleanupTask: Task<Void, Never>?
@@ -455,7 +456,8 @@ public final actor PeekabooBridgeHost {
     private let allowedTeamIDs: Set<String>
     private let requestTimeoutSec: TimeInterval
     private let requestDrainTimeoutSec: TimeInterval
-    private let server: PeekabooBridgeServer
+    var browserHandoffMaintenanceIntervalMilliseconds: Int64 = 1000
+    let server: PeekabooBridgeServer
     private var authentication = PeekabooBridgeHostAuthentication.live
 
     public init(
@@ -486,10 +488,25 @@ public final actor PeekabooBridgeHost {
             maximumCount: max(8, connectionCapacity.overflow ? Int.max : connectionCapacity.partialValue))
     }
 
+    deinit {
+        self.browserHandoffMaintenanceTask?.cancel()
+        if self.server.supportsBrowserHandoffMaintenance {
+            Self.continueBrowserHandoffShutdownMaintenance(
+                server: self.server,
+                intervalMilliseconds: self.browserHandoffMaintenanceIntervalMilliseconds)
+        }
+    }
+
     #if DEBUG
     func setAuthenticationForTesting(_ authentication: PeekabooBridgeHostAuthentication) {
         precondition(self.listenFD == -1)
         self.authentication = authentication
+    }
+
+    func setBrowserHandoffMaintenanceIntervalForTesting(milliseconds: Int64) {
+        precondition(self.listenFD == -1)
+        precondition(milliseconds > 0)
+        self.browserHandoffMaintenanceIntervalMilliseconds = milliseconds
     }
     #endif
 
@@ -603,6 +620,7 @@ public final actor PeekabooBridgeHost {
                     context: context)
             }
         }
+        self.startBrowserHandoffMaintenanceIfNeeded()
     }
 
     func advertisedHostCapabilities() async -> Set<String> {
@@ -637,6 +655,9 @@ public final actor PeekabooBridgeHost {
                 pendingRequestCount: snapshot.count,
                 oldestRequestAgeSeconds: snapshot.oldestAgeSeconds)
         }
+        let browserHandoffMaintenanceTask = self.browserHandoffMaintenanceTask
+        browserHandoffMaintenanceTask?.cancel()
+        self.browserHandoffMaintenanceTask = nil
         self.requestTracker.stopAcceptingAndCancelAll()
         let acceptTask = self.acceptTask
         acceptTask?.cancel()
@@ -655,6 +676,7 @@ public final actor PeekabooBridgeHost {
         await self.connectionTracker.disconnectAll()
         self.requestTracker.stopAcceptingAndCancelAll()
         await self.connectionTracker.waitForIdle()
+        self.startBrowserHandoffShutdownMaintenance()
         guard await waitForPeekabooBridgeRequestsToDrain(
             self.requestTracker,
             timeoutSeconds: self.requestDrainTimeoutSec)
@@ -665,12 +687,14 @@ public final actor PeekabooBridgeHost {
             Self.logger.error("\(message, privacy: .public)")
             self.ownershipCleanupTask = Task { [self] in
                 await self.requestTracker.waitForIdle()
+                await browserHandoffMaintenanceTask?.value
                 self.releaseRetainedOwnership()
             }
             return .ownershipRetained(
                 pendingRequestCount: snapshot.count,
                 oldestRequestAgeSeconds: snapshot.oldestAgeSeconds)
         }
+        await browserHandoffMaintenanceTask?.value
         self.releaseOwnership()
         return .stopped
     }

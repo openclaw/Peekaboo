@@ -30,25 +30,37 @@ public struct PeekabooBridgeBrowserInfo: Codable, Sendable, Equatable {
     }
 }
 
+public enum PeekabooBridgeBrowserStatusObservation: String, Codable, Sendable, Equatable {
+    case confirmed
+    case indeterminate
+}
+
 public struct PeekabooBridgeBrowserStatus: Codable, Sendable, Equatable {
     public let isConnected: Bool
     public let toolCount: Int
     public let detectedBrowsers: [PeekabooBridgeBrowserInfo]
     public let connectionReceipt: PeekabooBridgeBrowserConnectionReceipt?
     public let error: String?
+    /// Opaque provider-child generation. Present only for caller-scoped protocol-1.38 sessions.
+    public let providerSessionEpoch: UUID?
+    public let observation: PeekabooBridgeBrowserStatusObservation?
 
     public init(
         isConnected: Bool,
         toolCount: Int,
         detectedBrowsers: [PeekabooBridgeBrowserInfo],
         connectionReceipt: PeekabooBridgeBrowserConnectionReceipt? = nil,
-        error: String? = nil)
+        error: String? = nil,
+        providerSessionEpoch: UUID? = nil,
+        observation: PeekabooBridgeBrowserStatusObservation? = nil)
     {
         self.isConnected = isConnected
         self.toolCount = toolCount
         self.detectedBrowsers = detectedBrowsers
         self.connectionReceipt = connectionReceipt
         self.error = error
+        self.providerSessionEpoch = providerSessionEpoch
+        self.observation = observation
     }
 }
 
@@ -197,15 +209,72 @@ extension PeekabooBridgeBrowserConnectionReceipt {
 public struct PeekabooBridgeBrowserChannelRequest: Codable, Sendable, Equatable {
     public let channel: String?
     public let browserURL: String?
+    /// Explicit opt-in for one short-lived, receipt-bound cross-process bootstrap grant.
+    public let requestsHandoff: Bool
+    /// Opaque caller-scoped browser child. Omitted only by legacy/root CLI operations.
+    public let sessionID: UUID?
 
-    public init(channel: String? = nil, browserURL: String? = nil) {
+    public init(
+        channel: String? = nil,
+        browserURL: String? = nil,
+        requestsHandoff: Bool = false,
+        sessionID: UUID? = nil)
+    {
         self.channel = channel
         self.browserURL = browserURL
+        self.requestsHandoff = requestsHandoff
+        self.sessionID = sessionID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case channel
+        case browserURL
+        case requestsHandoff
+        case sessionID
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.channel = try container.decodeIfPresent(String.self, forKey: .channel)
+        self.browserURL = try container.decodeIfPresent(String.self, forKey: .browserURL)
+        self.requestsHandoff = try container.decodeIfPresent(Bool.self, forKey: .requestsHandoff) ?? false
+        self.sessionID = try container.decodeIfPresent(UUID.self, forKey: .sessionID)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.channel, forKey: .channel)
+        try container.encodeIfPresent(self.browserURL, forKey: .browserURL)
+        if self.requestsHandoff {
+            try container.encode(true, forKey: .requestsHandoff)
+        }
+        try container.encodeIfPresent(self.sessionID, forKey: .sessionID)
     }
 }
 
 public enum PeekabooBridgeBrowserExecutionConnectionPolicy: String, Codable, Sendable, Equatable {
     case requireExistingLiveReceipt = "require_existing_live_receipt"
+}
+
+public struct PeekabooBridgeBrowserElementPreflight: Codable, Sendable, Equatable {
+    public let providerPageID: Int
+    public let providerUIDs: [String]
+
+    public init(providerPageID: Int, providerUIDs: [String]) {
+        self.providerPageID = providerPageID
+        self.providerUIDs = providerUIDs
+    }
+
+    public var isCanonical: Bool {
+        self.providerPageID >= 0 && self.providerPageID <= Int(Int32.max) &&
+            !self.providerUIDs.isEmpty &&
+            self.providerUIDs.count <= 4096 &&
+            self.providerUIDs == Array(Set(self.providerUIDs)).sorted() &&
+            self.providerUIDs.allSatisfy { uid in
+                !uid.isEmpty && uid.utf8.count <= 1024 &&
+                    uid.unicodeScalars.allSatisfy { !CharacterSet.whitespacesAndNewlines.contains($0) }
+            }
+    }
 }
 
 public struct PeekabooBridgeBrowserExecuteRequest: Codable, Sendable, Equatable {
@@ -215,13 +284,19 @@ public struct PeekabooBridgeBrowserExecuteRequest: Codable, Sendable, Equatable 
     public let calls: [PeekabooBridgeBrowserToolCall]?
     public let expectedConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt?
     public let connectionPolicy: PeekabooBridgeBrowserExecutionConnectionPolicy?
+    public let sessionID: UUID?
+    public let expectedProviderSessionEpoch: UUID?
+    public let elementPreflight: PeekabooBridgeBrowserElementPreflight?
 
     public init(
         toolName: String,
         arguments: [String: PeekabooBridgeJSONValue],
         channel: String? = nil,
         expectedConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt? = nil,
-        connectionPolicy: PeekabooBridgeBrowserExecutionConnectionPolicy? = nil)
+        connectionPolicy: PeekabooBridgeBrowserExecutionConnectionPolicy? = nil,
+        sessionID: UUID? = nil,
+        expectedProviderSessionEpoch: UUID? = nil,
+        elementPreflight: PeekabooBridgeBrowserElementPreflight? = nil)
     {
         self.toolName = toolName
         self.arguments = arguments
@@ -229,13 +304,19 @@ public struct PeekabooBridgeBrowserExecuteRequest: Codable, Sendable, Equatable 
         self.calls = nil
         self.expectedConnectionReceipt = expectedConnectionReceipt
         self.connectionPolicy = connectionPolicy
+        self.sessionID = sessionID
+        self.expectedProviderSessionEpoch = expectedProviderSessionEpoch
+        self.elementPreflight = elementPreflight
     }
 
     public init(
         calls: [PeekabooBridgeBrowserToolCall],
         channel: String? = nil,
         expectedConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt? = nil,
-        connectionPolicy: PeekabooBridgeBrowserExecutionConnectionPolicy? = nil)
+        connectionPolicy: PeekabooBridgeBrowserExecutionConnectionPolicy? = nil,
+        sessionID: UUID? = nil,
+        expectedProviderSessionEpoch: UUID? = nil,
+        elementPreflight: PeekabooBridgeBrowserElementPreflight? = nil)
     {
         self.toolName = calls.first?.toolName ?? ""
         self.arguments = calls.first?.arguments ?? [:]
@@ -243,6 +324,9 @@ public struct PeekabooBridgeBrowserExecuteRequest: Codable, Sendable, Equatable 
         self.calls = calls
         self.expectedConnectionReceipt = expectedConnectionReceipt
         self.connectionPolicy = connectionPolicy
+        self.sessionID = sessionID
+        self.expectedProviderSessionEpoch = expectedProviderSessionEpoch
+        self.elementPreflight = elementPreflight
     }
 
     public var resolvedCalls: [PeekabooBridgeBrowserToolCall] {
@@ -274,20 +358,30 @@ public struct PeekabooBridgeBrowserExecuteRequest: Codable, Sendable, Equatable 
         }
     }
 
-    func binding(to receipt: PeekabooBridgeBrowserConnectionReceipt) -> Self {
+    func binding(
+        to receipt: PeekabooBridgeBrowserConnectionReceipt,
+        providerSessionEpoch: UUID? = nil) -> Self
+    {
+        let resolvedProviderSessionEpoch = providerSessionEpoch ?? self.expectedProviderSessionEpoch
         if let calls {
             return Self(
                 calls: calls,
                 channel: self.channel,
                 expectedConnectionReceipt: receipt,
-                connectionPolicy: .requireExistingLiveReceipt)
+                connectionPolicy: .requireExistingLiveReceipt,
+                sessionID: self.sessionID,
+                expectedProviderSessionEpoch: resolvedProviderSessionEpoch,
+                elementPreflight: self.elementPreflight)
         }
         return Self(
             toolName: self.toolName,
             arguments: self.arguments,
             channel: self.channel,
             expectedConnectionReceipt: receipt,
-            connectionPolicy: .requireExistingLiveReceipt)
+            connectionPolicy: .requireExistingLiveReceipt,
+            sessionID: self.sessionID,
+            expectedProviderSessionEpoch: resolvedProviderSessionEpoch,
+            elementPreflight: self.elementPreflight)
     }
 }
 
@@ -305,27 +399,33 @@ public struct PeekabooBridgeBrowserToolResponse: Codable, Sendable, Equatable {
     public let content: [PeekabooBridgeJSONValue]
     public let isError: Bool
     public let meta: PeekabooBridgeJSONValue?
+    public let structuredContent: PeekabooBridgeJSONValue?
     public let connectionReceipt: PeekabooBridgeBrowserConnectionReceipt?
     public let completedCallCount: Int?
     public let dispatchedCallCount: Int?
     public let actionFailure: DesktopActionFailure?
+    public let providerSessionEpoch: UUID?
 
     public init(
         content: [PeekabooBridgeJSONValue],
         isError: Bool,
         meta: PeekabooBridgeJSONValue?,
+        structuredContent: PeekabooBridgeJSONValue? = nil,
         connectionReceipt: PeekabooBridgeBrowserConnectionReceipt? = nil,
         completedCallCount: Int? = nil,
         dispatchedCallCount: Int? = nil,
-        actionFailure: DesktopActionFailure? = nil)
+        actionFailure: DesktopActionFailure? = nil,
+        providerSessionEpoch: UUID? = nil)
     {
         self.content = content
         self.isError = isError
         self.meta = meta
+        self.structuredContent = structuredContent
         self.connectionReceipt = connectionReceipt
         self.completedCallCount = completedCallCount
         self.dispatchedCallCount = dispatchedCallCount
         self.actionFailure = actionFailure
+        self.providerSessionEpoch = providerSessionEpoch
     }
 }
 
@@ -336,13 +436,15 @@ public struct PeekabooBridgeBrowserExecutionResult: Sendable, Equatable {
     public let completedCallCount: Int
     public let dispatchedCallCount: Int
     public let actionFailure: DesktopActionFailure?
+    public let providerSessionEpoch: UUID?
 
     public init(
         response: PeekabooBridgeBrowserToolResponse,
         connectionReceipt: PeekabooBridgeBrowserConnectionReceipt,
         completedCallCount: Int,
         dispatchedCallCount: Int,
-        actionFailure: DesktopActionFailure? = nil)
+        actionFailure: DesktopActionFailure? = nil,
+        providerSessionEpoch: UUID? = nil)
     {
         precondition(completedCallCount >= 0)
         precondition(dispatchedCallCount >= completedCallCount)
@@ -351,10 +453,12 @@ public struct PeekabooBridgeBrowserExecutionResult: Sendable, Equatable {
         self.response = PeekabooBridgeBrowserToolResponse(
             content: response.content,
             isError: response.isError,
-            meta: response.meta)
+            meta: response.meta,
+            structuredContent: response.structuredContent)
         self.connectionReceipt = connectionReceipt
         self.completedCallCount = completedCallCount
         self.dispatchedCallCount = dispatchedCallCount
         self.actionFailure = actionFailure
+        self.providerSessionEpoch = providerSessionEpoch
     }
 }

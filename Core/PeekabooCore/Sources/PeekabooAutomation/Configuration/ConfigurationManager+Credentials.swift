@@ -1,89 +1,51 @@
 import Foundation
+import os
 
-extension ConfigurationManager {
-    /// Load credentials from file
+extension ConfigurationManager: CredentialFileAccess {
+    /// A fresh owner is resolved inside the existing lock, so config-root overrides remain dynamic.
+    public func readCredentialSnapshot() throws -> [String: String] {
+        try self.withStateLock {
+            let snapshot = try CredentialFile(url: URL(fileURLWithPath: Self.credentialsPath)).readCredentialSnapshot()
+            self.credentials = snapshot
+            return snapshot
+        }
+    }
+
+    public func updateCredentials(
+        _ edit: (inout [String: String]) throws -> Void) throws -> CredentialFile.Publication
+    {
+        try self.withStateLock {
+            let publication = try CredentialFile(url: URL(fileURLWithPath: Self.credentialsPath))
+                .updateCredentials(edit)
+            self.credentials = publication.snapshot
+            if publication.durabilityWarning {
+                Logger(subsystem: "boo.peekaboo", category: "Credentials")
+                    .warning("Credential file published, but directory durability could not be confirmed")
+            }
+            return publication
+        }
+    }
+
     func loadCredentials() {
-        self.withStateLock {
-            guard FileManager.default.fileExists(atPath: Self.credentialsPath) else {
-                return
-            }
-
-            do {
-                let contents = try String(contentsOfFile: Self.credentialsPath)
-                let lines = contents.components(separatedBy: .newlines)
-
-                for line in lines {
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    if trimmed.isEmpty || trimmed.hasPrefix("#") {
-                        continue
-                    }
-
-                    if let equalIndex = trimmed.firstIndex(of: "=") {
-                        let key = String(trimmed[..<equalIndex]).trimmingCharacters(in: .whitespaces)
-                        let value = String(trimmed[trimmed.index(after: equalIndex)...])
-                            .trimmingCharacters(in: .whitespaces)
-                        if !key.isEmpty, !value.isEmpty {
-                            self.credentials[key] = value
-                        }
-                    }
-                }
-            } catch {
-                // Silently ignore credential loading errors.
-            }
-        }
+        // Existing nonthrowing readers retain their last confirmed snapshot on failure, never on absence.
+        _ = try? self.readCredentialSnapshot()
     }
 
-    /// Save credentials to file with proper permissions
     public func saveCredentials(_ newCredentials: [String: String]) throws {
-        try self.withStateLock {
-            newCredentials.forEach { self.credentials[$0.key] = $0.value }
-
-            try FileManager.default.createDirectory(
-                atPath: Self.baseDir,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700])
-
-            let header = [
-                "# Peekaboo credentials file",
-                "# This file contains sensitive API keys and should not be shared",
-                "",
-            ]
-            let body = self.credentials.sorted(by: { $0.key < $1.key }).map { "\($0.key)=\($0.value)" }
-            let content = (header + body).joined(separator: "\n")
-
-            try content.write(
-                to: URL(fileURLWithPath: Self.credentialsPath),
-                atomically: true,
-                encoding: .utf8)
-
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: Self.credentialsPath)
+        _ = try self.updateCredentials { snapshot in
+            // The public batch API accepts empty values as clears; the file stores only nonempty entries.
+            for (key, value) in newCredentials {
+                snapshot[key] = value.isEmpty ? nil : value
+            }
         }
     }
 
-    /// Set or update a credential
     public func setCredential(key: String, value: String) throws {
-        try self.withStateLock {
-            self.loadCredentials()
-            try self.saveCredentials([key: value])
-        }
+        try self.saveCredentials([key: value])
     }
 
     public func removeCredential(key: String) throws {
-        try self.withStateLock {
-            self.loadCredentials()
-            self.credentials.removeValue(forKey: key)
-
-            if self.credentials.isEmpty {
-                if FileManager.default.fileExists(atPath: Self.credentialsPath) {
-                    try FileManager.default.removeItem(atPath: Self.credentialsPath)
-                }
-                return
-            }
-
-            try self.saveCredentials([:])
-        }
+        _ = try self.updateCredentials { $0.removeValue(forKey: key) }
     }
 
     func validOAuthAccessToken(prefix: String) -> String? {

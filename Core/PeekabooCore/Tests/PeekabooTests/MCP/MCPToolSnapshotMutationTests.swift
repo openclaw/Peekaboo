@@ -44,7 +44,7 @@ struct MCPToolSnapshotMutationTests {
         #expect(Self.effect("clipboard", ["action": "clear"]) == .mutation)
         #expect(Self.effect("clipboard", ["action": "restore"]) == .mutation)
         #expect(Self.effect("clipboard", ["action": "load"]) == .none)
-        #expect(Self.effect("browser", ["action": "snapshot"]) == .none)
+        #expect(Self.effect("browser", ["action": "snapshot"]) == .mutation)
         #expect(Self.effect("browser", ["action": "click"]) == .mutation)
         #expect(Self.effect("agent", [:]) == .none)
         #expect(Self.effect("press", [:]) == .mutation)
@@ -546,7 +546,7 @@ struct MCPToolSnapshotMutationTests {
 
         let response = try await context.execute(
             tool: StubMCPTool(name: "browser"),
-            arguments: ToolArguments(raw: ["action": "click"]))
+            arguments: Self.sourceProvenBackgroundBrowserMutationArguments())
 
         #expect(response.isError)
         let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
@@ -604,7 +604,7 @@ struct MCPToolSnapshotMutationTests {
 
         let response = try await context.execute(
             tool: StubMCPTool(name: "browser", providedResponse: legacyResponse),
-            arguments: ToolArguments(raw: ["action": "click"]))
+            arguments: Self.sourceProvenBackgroundBrowserMutationArguments())
 
         #expect(response.isError)
         let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
@@ -653,7 +653,7 @@ struct MCPToolSnapshotMutationTests {
 
         let response = try await context.execute(
             tool: StubMCPTool(name: "browser", providedResponse: contradictoryResponse),
-            arguments: ToolArguments(raw: ["action": "click"]))
+            arguments: Self.sourceProvenBackgroundBrowserMutationArguments())
 
         #expect(response.isError)
         try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
@@ -694,7 +694,7 @@ struct MCPToolSnapshotMutationTests {
 
             let response = try await context.execute(
                 tool: StubMCPTool(name: "browser", providedResponse: providerResponse),
-                arguments: ToolArguments(raw: ["action": "click"]))
+                arguments: Self.sourceProvenBackgroundBrowserMutationArguments())
 
             #expect(response.isError)
             let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
@@ -711,6 +711,15 @@ struct MCPToolSnapshotMutationTests {
             #expect(response.meta?.objectValue?["target_receipt"] == targetReceiptValue)
             #expect(coordinator.completions.map(\.succeeded) == [false])
         }
+    }
+
+    private static func sourceProvenBackgroundBrowserMutationArguments() -> ToolArguments {
+        ToolArguments(raw: [
+            "action": "performance_trace",
+            "page_id": 1,
+            "trace_action": "start",
+            "reload": true,
+        ])
     }
 
     @Test

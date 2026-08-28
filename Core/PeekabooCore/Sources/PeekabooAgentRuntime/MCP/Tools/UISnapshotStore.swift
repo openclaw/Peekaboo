@@ -436,6 +436,24 @@ struct MCPToolUISnapshotStore: Sendable {
             preservedAt: effectivePreservedAt)
     }
 
+    @discardableResult
+    func invalidateImplicitLatestSnapshotIfOwnerExists(
+        through cutoff: Date,
+        preserving snapshotId: String? = nil,
+        preservedAt: Date? = nil) async -> String?
+    {
+        let effectivePreservedAt = snapshotId == nil ? nil : (preservedAt ?? Date())
+        return await self.manager.invalidateImplicitLatestSnapshotIfOwnerExists(
+            owner: self.owner,
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: effectivePreservedAt)
+    }
+
+    func hasOwnerState() async -> Bool {
+        await self.manager.hasOwnerState(self.owner)
+    }
+
     func removeSnapshot(id: String) async {
         await self.manager.removeSnapshot(owner: self.owner, id: id)
     }
@@ -650,6 +668,25 @@ actor UISnapshotManager {
         state.implicitLatestInvalidatedThrough = max(state.implicitLatestInvalidatedThrough ?? cutoff, cutoff)
         self.store(state, for: owner)
         return invalidatedSnapshotId
+    }
+
+    @discardableResult
+    func invalidateImplicitLatestSnapshotIfOwnerExists(
+        owner: MCPToolSnapshotOwner,
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) -> String?
+    {
+        guard self.ownerStates[owner] != nil else { return nil }
+        return self.invalidateImplicitLatestSnapshot(
+            owner: owner,
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: preservedAt)
+    }
+
+    func hasOwnerState(_ owner: MCPToolSnapshotOwner) -> Bool {
+        self.ownerStates[owner] != nil
     }
 
     func removeAllSnapshots(owner: MCPToolSnapshotOwner) {

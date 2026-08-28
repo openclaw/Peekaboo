@@ -18,6 +18,8 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case browserConnect(PeekabooBridgeBrowserChannelRequest)
     case browserDisconnect
     case browserExecute(PeekabooBridgeBrowserExecuteRequest)
+    case browserSessionBootstrap(PeekabooBridgeBrowserSessionBootstrapRequest)
+    case browserSessionControl(PeekabooBridgeBrowserSessionControlRequest)
     case captureScreen(PeekabooBridgeCaptureScreenRequest)
     case captureWindow(PeekabooBridgeCaptureWindowRequest)
     case captureFrontmost(PeekabooBridgeCaptureFrontmostRequest)
@@ -142,6 +144,8 @@ extension PeekabooBridgeRequest {
         case .browserConnect: .browserConnect
         case .browserDisconnect: .browserDisconnect
         case .browserExecute: .browserExecute
+        case .browserSessionBootstrap: .browserSessionBootstrap
+        case .browserSessionControl: .browserSessionControl
         case .captureScreen: .captureScreen
         case .captureWindow: .captureWindow
         case .captureFrontmost: .captureFrontmost
@@ -261,6 +265,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case certificationProducerAttestation(PeekabooBridgeCertificationProducerAttestationResponse)
     case browserStatus(PeekabooBridgeBrowserStatus)
     case browserToolResponse(PeekabooBridgeBrowserToolResponse)
+    case browserSessionBootstrap(PeekabooBridgeBrowserSessionBootstrapResponse)
     case capture(CaptureResult)
     case elementDetection(ElementDetectionResult)
     case focusedElement(UIFocusInfo?)
@@ -297,6 +302,147 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case detection(ElementDetectionResult)
     case int(Int)
     case error(PeekabooBridgeErrorEnvelope)
+}
+
+/// A concrete reference boundary for recursively wrapped Bridge requests.
+///
+/// The synthesized decoder for this large enum reserves a substantial stack frame. Decoding both
+/// attested and projected wrappers through that witness at every nesting level can exhaust a Swift
+/// cooperative thread's stack even though the wire value has only the permitted finite nesting.
+final class PeekabooBridgeRequestCodingBox: Codable, @unchecked Sendable {
+    let value: PeekabooBridgeRequest
+
+    private struct RequestCaseKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+            self.intValue = nil
+        }
+
+        init?(intValue: Int) {
+            self.stringValue = String(intValue)
+            self.intValue = intValue
+        }
+    }
+
+    private enum AssociatedValueKey: String, CodingKey {
+        case value = "_0"
+    }
+
+    init(_ value: PeekabooBridgeRequest) {
+        self.value = value
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: RequestCaseKey.self)
+        if container.allKeys.count == 1, let key = container.allKeys.first {
+            let associated = try container.nestedContainer(
+                keyedBy: AssociatedValueKey.self,
+                forKey: key)
+            switch key.stringValue {
+            case "attestedOperation", "attested_operation":
+                self.value = try .attestedOperation(associated.decode(
+                    PeekabooBridgeAttestedOperationRequest.self,
+                    forKey: .value))
+                return
+            case "projectedAction", "projected_action":
+                self.value = try .projectedAction(associated.decode(
+                    PeekabooBridgeProjectedActionRequest.self,
+                    forKey: .value))
+                return
+            default:
+                break
+            }
+        }
+        self.value = try PeekabooBridgeRequest(from: decoder)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        try self.value.encode(to: encoder)
+    }
+}
+
+/// A concrete reference boundary for recursively wrapped Bridge responses.
+///
+/// Directly decoding the recursive enum from both wrapper payloads can ask the Swift runtime for
+/// an indefinitely recursive generic metadata path during cold concurrent startup. The box keeps
+/// the synthesized wire bytes unchanged while giving those recursive cases finite witnesses.
+final class PeekabooBridgeResponseCodingBox: Codable, @unchecked Sendable {
+    let value: PeekabooBridgeResponse
+
+    private struct ResponseCaseKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+            self.intValue = nil
+        }
+
+        init?(intValue: Int) {
+            self.stringValue = String(intValue)
+            self.intValue = intValue
+        }
+    }
+
+    private enum AssociatedValueKey: String, CodingKey {
+        case value = "_0"
+    }
+
+    init(_ value: PeekabooBridgeResponse) {
+        self.value = value
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: ResponseCaseKey.self)
+        if container.allKeys.count == 1, let key = container.allKeys.first {
+            let associated = try container.nestedContainer(
+                keyedBy: AssociatedValueKey.self,
+                forKey: key)
+            switch key.stringValue {
+            case "attestedOperation", "attested_operation":
+                self.value = try .attestedOperation(associated.decode(
+                    PeekabooBridgeAttestedOperationResponse.self,
+                    forKey: .value))
+                return
+            case "projectedAction", "projected_action":
+                self.value = try .projectedAction(associated.decode(
+                    PeekabooBridgeProjectedActionResponse.self,
+                    forKey: .value))
+                return
+            default:
+                break
+            }
+        }
+        self.value = try PeekabooBridgeResponse(from: decoder)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        try self.value.encode(to: encoder)
+    }
+}
+
+extension PeekabooBridgeAttestedOperationResponse {
+    private enum CodingKeys: String, CodingKey {
+        case response
+        case receipt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.response = try container.decode(
+            PeekabooBridgeResponseCodingBox.self,
+            forKey: .response).value
+        self.receipt = try container.decode(PeekabooBridgeOperationReceipt.self, forKey: .receipt)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(PeekabooBridgeResponseCodingBox(self.response), forKey: .response)
+        try container.encode(self.receipt, forKey: .receipt)
+    }
 }
 
 extension PeekabooBridgeResponse {

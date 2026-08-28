@@ -15,6 +15,9 @@ extension PeekabooBridgeHandlerMutationSemanticsTests {
                 "text": .string("invalid read arguments"),
             ]),
         ]
+        services.browserResponseStructuredContent = .object([
+            "error": .object(["reason": .string("invalid read arguments")]),
+        ])
         services.browserActionFailure = .indeterminate(
             evidence: .completionUnknown,
             message: "Provider returned an error response.")
@@ -33,6 +36,7 @@ extension PeekabooBridgeHandlerMutationSemanticsTests {
         }
         #expect(response.isError)
         #expect(response.content == services.browserResponseContent)
+        #expect(response.structuredContent == services.browserResponseStructuredContent)
         #expect(response.connectionReceipt == Self.localBrowserReceipt)
         #expect(response.completedCallCount == 1)
         #expect(response.dispatchedCallCount == 1)

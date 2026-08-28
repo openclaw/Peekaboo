@@ -65,10 +65,17 @@ enum CommanderRuntimeExecutor {
         runtimeFactory: RuntimeFactory
     ) async throws {
         if var runtimeCommand = command as? any AsyncRuntimeCommand {
-            let runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(
-                from: resolved.parsedValues,
-                commandType: resolved.type
-            )
+            // Reuse the options already bound to configurable commands. Besides avoiding duplicate policy work,
+            // this keeps private capability files single-read: one validated byte sequence flows into runtime
+            // construction even if the pathname is replaced immediately afterward.
+            let runtimeOptions = if let configurable = command as? any RuntimeOptionsConfigurable {
+                configurable.runtimeOptions
+            } else {
+                try CommanderCLIBinder.makeRuntimeOptions(
+                    from: resolved.parsedValues,
+                    commandType: resolved.type
+                )
+            }
             if self.shouldExportCaptureEnginePreference(runtimeOptions),
                let capturePreference = runtimeOptions.captureEnginePreference {
                 // Respect explicit engine choice; also allow disabling CG globally.

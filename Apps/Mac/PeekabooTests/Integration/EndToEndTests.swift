@@ -10,25 +10,22 @@ struct EndToEndTests {
     var sessionStore: SessionStore!
     var agent: PeekabooAgent!
 
-    mutating func setup(installAgent: Bool = false) throws {
+    mutating func setup(installAgent: Bool = false) throws -> Bool {
         let services = PeekabooServices()
         if !installAgent {
             services.agent = nil
         }
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.settings.connectServices(services)
         self.sessionStore = SessionStore(storageURL: Self.makeTemporarySessionURL())
         self.agent = PeekabooAgent(settings: self.settings, sessionStore: self.sessionStore, services: services)
+        return services.agent != nil
     }
 
     @Test(.enabled(if: Test.runsLiveAgentTests))
     mutating func `Full agent execution flow`() async throws {
-        try self.setup(installAgent: true)
-        // This test requires a valid API key, so skip in CI
-        guard !self.settings.openAIAPIKey.isEmpty else {
-            Issue.record("No API key configured - skipping test")
-            return
-        }
+        let liveAgentAvailable = try self.setup(installAgent: true)
+        try #require(liveAgentAvailable, "Live agent test is enabled, but no configured agent service is available")
 
         // Execute a simple task
         _ = try await self.agent.executeTask("What time is it?")
@@ -60,7 +57,7 @@ struct ErrorRecoveryTests {
     mutating func setup() throws {
         let services = PeekabooServices()
         services.agent = nil
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.settings.connectServices(services)
         self.sessionStore = SessionStore(storageURL: Self.makeTemporarySessionURL())
         self.agent = PeekabooAgent(settings: self.settings, sessionStore: self.sessionStore, services: services)
@@ -121,7 +118,7 @@ struct ConcurrencyTests {
     mutating func setup() throws {
         let services = PeekabooServices()
         services.agent = nil
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.settings.connectServices(services)
         self.sessionStore = SessionStore(storageURL: Self.makeTemporarySessionURL())
         self.agent = PeekabooAgent(settings: self.settings, sessionStore: self.sessionStore, services: services)

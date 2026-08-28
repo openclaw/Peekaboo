@@ -2013,6 +2013,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var lastExpectedBrowserConnectionReceipt: PeekabooBridgeBrowserConnectionReceipt?
     var browserActionFailure: DesktopActionFailure?
     var browserRawIsError = false
+    var browserResponseStructuredContent: PeekabooBridgeJSONValue?
     var browserStatusError: (any Error)?
     var browserConnectFailure: DesktopActionFailure?
     var browserConnectError: (any Error)?
@@ -2112,7 +2113,8 @@ final class StubServices: PeekabooBridgeServiceProviding {
         return PeekabooBridgeBrowserToolResponse(
             content: self.browserResponseContent,
             isError: self.browserRawIsError,
-            meta: nil)
+            meta: nil,
+            structuredContent: self.browserResponseStructuredContent)
     }
 
     func browserExecute(
@@ -2133,7 +2135,8 @@ final class StubServices: PeekabooBridgeServiceProviding {
             response: PeekabooBridgeBrowserToolResponse(
                 content: response.content,
                 isError: actionFailure != nil || response.isError,
-                meta: response.meta),
+                meta: response.meta,
+                structuredContent: response.structuredContent),
             connectionReceipt: self.browserExecutionReceiptOverride ?? expectedConnectionReceipt,
             completedCallCount: self.browserCompletedCallCount ?? request.resolvedCalls.count,
             dispatchedCallCount: self.browserDispatchedCallCount ?? request.resolvedCalls.count,

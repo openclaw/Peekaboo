@@ -48,6 +48,8 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case browserConnect
     case browserDisconnect
     case browserExecute
+    case browserSessionBootstrap
+    case browserSessionControl
     // Capture
     case captureScreen
     case captureWindow
@@ -276,6 +278,10 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         if version < PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion {
             compatible.remove(.ownsSnapshot)
         }
+        if version < PeekabooBridgeConstants.browserConnectionHandoffVersion {
+            compatible.remove(.browserSessionBootstrap)
+            compatible.remove(.browserSessionControl)
+        }
         return compatible
     }
     // swiftlint:enable cyclomatic_complexity
@@ -381,6 +387,7 @@ public enum PeekabooBridgeHostCapability {
     public static let explicitSnapshotPublication = "explicitSnapshotPublication"
     public static let browserConnectionReceipts = "browserConnectionReceipts"
     public static let nativeBrowserConnectionBinding = "nativeBrowserConnectionBinding"
+    public static let browserConnectionHandoff = "browserConnectionHandoff"
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
     public static let processGenerationBoundElementMutations = "processGenerationBoundElementMutations"
@@ -406,6 +413,7 @@ public enum PeekabooBridgeHostCapability {
 public enum PeekabooBridgeClientCapability {
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
+    public static let browserConnectionHandoff = "browserConnectionHandoff"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

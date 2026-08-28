@@ -85,6 +85,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsProcessGenerationPinnedApplicationActivation: Bool = false,
         supportsProcessGenerationPinnedApplicationHide: Bool = false,
         allowLocalApplicationFallback: Bool = false,
+        browserSessionTransport: (any RemoteBrowserMCPSessionTransport)? = nil,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
         self.client = client
@@ -224,7 +225,9 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         self.permissions = PermissionsService()
         self.audioInput = AudioInputService(aiService: PeekabooAIService())
         self.screens = screenService
-        self.browser = RemoteBrowserMCPClient(client: client)
+        self.browser = RemoteBrowserMCPClient(
+            client: client,
+            sessionTransport: browserSessionTransport)
         self.agent = nil
     }
 

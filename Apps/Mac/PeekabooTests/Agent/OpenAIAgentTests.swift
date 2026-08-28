@@ -19,7 +19,7 @@ struct PeekabooAgentServiceTests {
             Issue.record("Failed to initialize PeekabooAgentService: \\(error)")
             self.agentService = nil
         }
-        self.settings = PeekabooSettings()
+        self.settings = makeTestSettings()
         self.settings.connectServices(services)
         self.sessionStore = SessionStore()
         self.agent = PeekabooAgent(

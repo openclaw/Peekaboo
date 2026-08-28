@@ -32,52 +32,14 @@ struct PeekabooApp: App {
     /// Logger
     private let logger = Logger(subsystem: "boo.peekaboo.app", category: "PeekabooApp")
 
-    /// Configure Tachikoma with API keys from settings
+    /// Use the confirmed file snapshot and established environment/config precedence, never an unsaved draft.
     private func configureTachikomaWithSettings() {
-        // Use TachikomaConfiguration profile-based loading (env/credentials).
-        // Only override when user explicitly enters values in settings.
-        if !self.settings.openAIAPIKey.isEmpty {
-            TachikomaConfiguration.current.setAPIKey(
-                self.settings.openAIAPIKey,
-                for: .openai)
-        }
-        if !self.settings.anthropicAPIKey.isEmpty {
-            TachikomaConfiguration.current.setAPIKey(
-                self.settings.anthropicAPIKey,
-                for: .anthropic)
-        }
-        if !self.settings.grokAPIKey.isEmpty {
-            TachikomaConfiguration.current.setAPIKey(
-                self.settings.grokAPIKey,
-                for: .grok)
-        }
-        if !self.settings.googleAPIKey.isEmpty {
-            TachikomaConfiguration.current.setAPIKey(
-                self.settings.googleAPIKey,
-                for: .google)
-        }
-        if !self.settings.miniMaxAPIKey.isEmpty {
-            TachikomaConfiguration.current.setAPIKey(
-                self.settings.miniMaxAPIKey,
-                for: .minimax)
-        }
-        if !self.settings.miniMaxChinaAPIKey.isEmpty {
-            TachikomaConfiguration.current.setAPIKey(
-                self.settings.miniMaxChinaAPIKey,
-                for: .minimaxCN)
-        }
+        self.settings.credentialCoordinator.reload()
         if self.settings.ollamaBaseURL != "http://localhost:11434" {
             TachikomaConfiguration.current.setBaseURL(
                 self.settings.ollamaBaseURL,
                 for: .ollama)
         }
-    }
-
-    /// Load API keys from credentials file if settings are empty
-    private func loadAPIKeysFromCredentials() {
-        // Don't load from environment/credentials into settings
-        // This allows proper environment variable detection in the UI
-        // Tachikoma will handle environment variables directly
     }
 
     var body: some Scene {

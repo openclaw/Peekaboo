@@ -10,6 +10,7 @@ extension PeekabooBridgeOperationResultSemantics.ResponseFamily {
              (.bool, .bool),
              (.browserStatus, .browserStatus),
              (.browserToolResponse, .browserToolResponse),
+             (.browserSessionBootstrap, .browserSessionBootstrap),
              (.capture, .capture),
              (.clickResult, .clickResult),
              (.daemonStatus, .daemonStatus),
