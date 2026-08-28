@@ -1383,6 +1383,7 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case authenticatedSessionCapacityExceeded
     case invalidHandoffAuthorization
     case sessionEnded
+    case scopedSessionOpenRecoveryRequired
     case targetLocked
 
     public var errorDescription: String? {
@@ -1427,6 +1428,9 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "The browser handoff authorization is missing, consumed, or belongs to another exact connection."
         case .sessionEnded:
             "This authenticated browser session has ended and cannot be reused. Start a new session."
+        case .scopedSessionOpenRecoveryRequired:
+            "A caller-scoped browser session open remains unresolved. End or retry its owning session before " +
+                "starting another browser-enabled session."
         case .targetLocked:
             "A different browser target is already connected. " +
                 "Disconnect it before selecting another channel or endpoint."

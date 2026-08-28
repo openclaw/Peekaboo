@@ -289,6 +289,26 @@ struct UnsafeTransfer<T>: @unchecked Sendable {
 extension PeekabooAgentService {
     // MARK: - Helper Functions
 
+    private func acquireExecutionToolset(
+        context: SessionContext,
+        model: LanguageModel,
+        snapshotOwner: MCPToolSnapshotOwner) async throws -> [AgentTool]
+    {
+        do {
+            return try await self.buildExecutionToolset(
+                for: model,
+                agentSessionID: context.id,
+                snapshotOwner: snapshotOwner,
+                executionPolicy: context.toolExecutionPolicy)
+        } catch {
+            let cleanupConfirmed = await self.endBrowserClient(forAgentSessionID: context.id)
+            if !cleanupConfirmed {
+                self.logger.error("Browser session cleanup remains pending after toolset acquisition failed")
+            }
+            throw error
+        }
+    }
+
     /// Parse a model string and return a mock model object for compatibility
     func parseModelString(_ modelString: String) async throws -> Any {
         // This is a compatibility stub - in the new API we use LanguageModel enum directly
@@ -310,11 +330,10 @@ extension PeekabooAgentService {
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
-        let tools = try await self.buildExecutionToolset(
-            for: model,
-            agentSessionID: context.id,
-            snapshotOwner: snapshotOwner,
-            executionPolicy: context.toolExecutionPolicy)
+        let tools = try await self.acquireExecutionToolset(
+            context: context,
+            model: model,
+            snapshotOwner: snapshotOwner)
         self.logModelUsage(model, prefix: "Streaming ")
         guard let provider = context.provider else {
             await self.endEphemeralBrowserClientIfNeeded(context)
@@ -408,11 +427,10 @@ extension PeekabooAgentService {
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
-        let tools = try await self.buildExecutionToolset(
-            for: model,
-            agentSessionID: context.id,
-            snapshotOwner: snapshotOwner,
-            executionPolicy: context.toolExecutionPolicy)
+        let tools = try await self.acquireExecutionToolset(
+            context: context,
+            model: model,
+            snapshotOwner: snapshotOwner)
         self.logModelUsage(model, prefix: "")
         guard let provider = context.provider else {
             await self.endEphemeralBrowserClientIfNeeded(context)

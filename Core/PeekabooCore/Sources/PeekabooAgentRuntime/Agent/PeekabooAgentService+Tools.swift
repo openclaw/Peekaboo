@@ -213,7 +213,7 @@ extension PeekabooAgentService {
         root: any BrowserMCPClientProviding) async throws -> any BrowserMCPClientProviding
     {
         guard self.remoteBrowserOpeningSessionID == nil || self.remoteBrowserOpeningSessionID == sessionID else {
-            throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
+            throw BrowserMCPConnectionError.scopedSessionOpenRecoveryRequired
         }
         self.remoteBrowserOpeningSessionID = sessionID
         let task = Task { @MainActor () throws -> any BrowserMCPScopedSessionEnding in
@@ -237,7 +237,7 @@ extension PeekabooAgentService {
     {
         if let ending = self.remoteBrowserEndingTasks[ownerSessionID] {
             guard await ending.task.value else {
-                throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
+                throw BrowserMCPConnectionError.scopedSessionOpenRecoveryRequired
             }
             return
         }
@@ -249,7 +249,7 @@ extension PeekabooAgentService {
         }
         switch pending {
         case .retryable:
-            throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
+            throw BrowserMCPConnectionError.scopedSessionOpenRecoveryRequired
         case let .inFlight(openingID, task):
             _ = try? await self.finishRemoteBrowserOpening(
                 forAgentSessionID: ownerSessionID,
@@ -257,7 +257,7 @@ extension PeekabooAgentService {
                 task: task,
                 opening: opening)
             if self.remoteBrowserOpeningSessionID == ownerSessionID {
-                throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
+                throw BrowserMCPConnectionError.scopedSessionOpenRecoveryRequired
             }
         }
     }

@@ -3,6 +3,7 @@ import Foundation
 import MCP
 import PeekabooCore
 import PeekabooFoundation
+import Tachikoma
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -2112,6 +2113,33 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `remote Agent reports unresolved root recovery separately from capacity`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        root.failNextOpenIndeterminately = true
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+
+        await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
+            _ = try await agent.browserClient(forAgentSessionID: "recovery-owner")
+        }
+        do {
+            _ = try await agent.browserClient(forAgentSessionID: "recovery-waiter")
+            Issue.record("Expected the unresolved root owner to block another session")
+        } catch let error as BrowserMCPConnectionError {
+            #expect(error == .scopedSessionOpenRecoveryRequired)
+            #expect(error.localizedDescription == "A caller-scoped browser session open remains unresolved. " +
+                "End or retry its owning session before starting another browser-enabled session.")
+        }
+
+        #expect(root.openCount == 1)
+        #expect(root.concurrentOpenCount == 0)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "recovery-waiter"))
+        #expect(await agent.endBrowserClient(forAgentSessionID: "recovery-owner"))
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningIDs.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+    }
+
+    @Test
     func `indeterminate remote Agent open remains owned until exact cleanup before admitting another session`()
         async throws
     {
@@ -2155,6 +2183,124 @@ struct BrowserMCPSessionManagerTests {
         #expect(agent.remoteBrowserOpeningSessionID == nil)
         #expect(await agent.endBrowserClient(forAgentSessionID: "indeterminate-b"))
         #expect(secondChild.endCount == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func `ephemeral Agent execution cleans indeterminate remote open before the next run`(
+        streaming: Bool) async throws
+    {
+        let root = AgentRemoteBrowserRoot()
+        root.failNextOpenIndeterminately = true
+        let provider = AgentRemoteBrowserStatusProvider(supportsStreaming: streaming)
+        let model = LanguageModel.custom(provider: provider)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            defaultModel: model)
+        let delegate: (any AgentEventDelegate)? = streaming
+            ? StreamingEventDelegate { _ in }
+            : nil
+
+        await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
+            _ = try await agent.executeTask(
+                "Inspect browser status",
+                model: model,
+                eventDelegate: delegate,
+                persistSession: false)
+        }
+        #expect(provider.requestCount == 0)
+        #expect(root.openCount == 2)
+        #expect(root.children.count == 1)
+        #expect(root.children[0].endCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningIDs.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
+
+        let result = try await agent.executeTask(
+            "Inspect browser status again",
+            model: model,
+            eventDelegate: delegate,
+            persistSession: false)
+
+        #expect(result.content == "remote browser execution completed")
+        #expect(provider.requestCount == 2)
+        #expect(root.openCount == 3)
+        #expect(root.children.count == 2)
+        #expect(root.children[1].statusCount == 1)
+        #expect(root.children.allSatisfy { $0.endCount == 1 })
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningIDs.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
+        #expect(root.rootExecuteCount == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func `persistent Agent setup failure cleans its undelivered remote claim before resume`(
+        streaming: Bool) async throws
+    {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooPersistentRemoteAgent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let root = AgentRemoteBrowserRoot()
+        root.failNextOpenIndeterminately = true
+        let provider = AgentRemoteBrowserStatusProvider(supportsStreaming: streaming)
+        let model = LanguageModel.custom(provider: provider)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            defaultModel: model,
+            sessionManager: sessionManager)
+        let delegate: (any AgentEventDelegate)? = streaming
+            ? StreamingEventDelegate { _ in }
+            : nil
+
+        await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
+            _ = try await agent.executeTask(
+                "Inspect persistent browser status",
+                model: model,
+                eventDelegate: delegate)
+        }
+        let sessionID = try #require(sessionManager.listSessions().first?.id)
+        #expect(provider.requestCount == 0)
+        #expect(root.openCount == 2)
+        #expect(root.children.count == 1)
+        #expect(root.children[0].endCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningIDs.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
+
+        let result = try await agent.continueSession(
+            sessionId: sessionID,
+            userMessage: "Inspect persistent browser status again",
+            model: model,
+            eventDelegate: delegate)
+
+        #expect(result.content == "remote browser execution completed")
+        #expect(result.sessionId == sessionID)
+        #expect(provider.requestCount == 2)
+        #expect(root.openCount == 3)
+        #expect(root.children.count == 2)
+        #expect(root.children[1].statusCount == 1)
+        #expect(root.children[1].endCount == 0)
+        #expect(agent.remoteBrowserClients[sessionID] === root.children[1])
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningIDs.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
+
+        try await agent.deleteSession(id: sessionID)
+        #expect(root.children[1].endCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
     }
 
     @Test
@@ -2285,8 +2431,13 @@ struct BrowserMCPSessionManagerTests {
         #expect(agent.remoteBrowserOpeningTasks.count == 1)
         #expect(root.openCount == capacity)
 
-        await #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
+        do {
             _ = try await agent.browserClient(forAgentSessionID: "capacity-overflow")
+            Issue.record("Expected the full session store to refuse another reservation")
+        } catch let error as BrowserMCPConnectionError {
+            #expect(error == .authenticatedSessionCapacityExceeded)
+            #expect(error.localizedDescription == "The bounded authenticated browser session store is full. " +
+                "End a session, or retry after cleanup completes.")
         }
         #expect(root.openCount == capacity)
 
@@ -4328,6 +4479,56 @@ private enum AgentRemoteBrowserOpenFixtureError: Error {
     case indeterminate
 }
 
+private final class AgentRemoteBrowserStatusProvider: ModelProvider, @unchecked Sendable {
+    let modelId = "agent-remote-browser-status"
+    let baseURL: String? = nil
+    let apiKey: String? = nil
+    let capabilities: ModelCapabilities
+    private let lock = NSLock()
+    private var requests = 0
+
+    init(supportsStreaming: Bool) {
+        self.capabilities = ModelCapabilities(supportsStreaming: supportsStreaming)
+    }
+
+    var requestCount: Int {
+        self.lock.withLock { self.requests }
+    }
+
+    func generateText(request _: ProviderRequest) async throws -> ProviderResponse {
+        let requestIndex = self.lock.withLock {
+            defer { self.requests += 1 }
+            return self.requests
+        }
+        if requestIndex == 0 {
+            return ProviderResponse(
+                text: "",
+                finishReason: .toolCalls,
+                toolCalls: [AgentToolCall(
+                    id: "remote-browser-status",
+                    name: "browser",
+                    arguments: ["action": AnyAgentToolValue(string: "status")])])
+        }
+        return ProviderResponse(
+            text: "remote browser execution completed",
+            finishReason: .stop)
+    }
+
+    func streamText(request: ProviderRequest) async throws -> AsyncThrowingStream<TextStreamDelta, any Error> {
+        let response = try await self.generateText(request: request)
+        return AsyncThrowingStream { continuation in
+            if !response.text.isEmpty {
+                continuation.yield(.text(response.text))
+            }
+            for toolCall in response.toolCalls ?? [] {
+                continuation.yield(.tool(toolCall))
+            }
+            continuation.yield(.done(finishReason: response.finishReason))
+            continuation.finish()
+        }
+    }
+}
+
 @MainActor
 private final class AgentLegacyRemoteBrowserRoot: BrowserMCPClientProviding, @unchecked Sendable {
     private(set) var executeCount = 0
@@ -4442,13 +4643,15 @@ private final class AgentRemoteScopedBrowserChild: BrowserMCPScopedSessionEnding
     var endBarrier: SequenceBarrier?
     private(set) var executeCount = 0
     private(set) var endCount = 0
+    private(set) var statusCount = 0
 
     init(endResults: [Bool]) {
         self.endResults = endResults
     }
 
     func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
-        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+        self.statusCount += 1
+        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
     }
 
     func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
