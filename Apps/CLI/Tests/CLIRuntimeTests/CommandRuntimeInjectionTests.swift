@@ -41,6 +41,23 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     @MainActor
+    func `learn resolves tools from its injected service provider`() {
+        let injectedServices = RecordingPeekabooServices()
+        let fallbackServices = RecordingPeekabooServices()
+        var fallbackRequests = 0
+        ToolRegistry.configureDefaultServices {
+            fallbackRequests += 1
+            return fallbackServices
+        }
+
+        let tools = LearnCommand.toolDefinitions(using: injectedServices)
+
+        #expect(!tools.isEmpty)
+        #expect(fallbackRequests == 0)
+    }
+
+    @Test
+    @MainActor
     func `aligns Tachikoma profile directory with Peekaboo`() {
         let previousProfile = TachikomaConfiguration.profileDirectoryName
         defer { TachikomaConfiguration.profileDirectoryName = previousProfile }
