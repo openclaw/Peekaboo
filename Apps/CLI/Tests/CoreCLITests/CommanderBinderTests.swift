@@ -423,16 +423,18 @@ struct CommanderBinderTests {
         )
         #expect(!menuBarList.requiresImplicitSnapshotInvalidation)
 
-        let browserClick = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: ["click"], options: [:], flags: []),
-            commandType: BrowserCommand.self
-        )
-        #expect(browserClick.requiresImplicitSnapshotInvalidation)
-        let browserStatus = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: ["status"], options: [:], flags: []),
-            commandType: BrowserCommand.self
-        )
+        let browserClick = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(positional: ["click"], options: [:], flags: [])
+        ).runtimeOptions
+        #expect(!browserClick.requiresImplicitSnapshotInvalidation)
+        #expect(browserClick.usesPerToolSnapshotInvalidation)
+        let browserStatus = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(positional: ["status"], options: [:], flags: [])
+        ).runtimeOptions
         #expect(!browserStatus.requiresImplicitSnapshotInvalidation)
+        #expect(!browserStatus.usesPerToolSnapshotInvalidation)
 
         let seeWithWebFocus = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: ["webFocus"]),
@@ -1414,6 +1416,31 @@ extension CommanderBinderTests {
                 snapshotInvalidationRemoteSocketPaths: ["/tmp/sibling.sock"]
             ))
         }
+    }
+
+    @Test
+    func `Browser-only MCP allow-list keeps dynamic gates without ScreenCaptureKit startup`() throws {
+        let browserOnly = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: MCPCommand.Serve.self,
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser"]
+        )
+        let withCapture = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: MCPCommand.Serve.self,
+            environment: ["PEEKABOO_ALLOW_TOOLS": "browser,see"]
+        )
+
+        #expect(browserOnly.usesPerToolSnapshotInvalidation)
+        #expect(browserOnly.requiresProducerBoundSnapshotReferences)
+        #expect(!browserOnly.dynamicToolScreenCaptureReachable)
+        #expect(!browserOnly.usesPersistentDynamicCaptureRuntime)
+        #expect(!browserOnly.requiresSilentCapture)
+
+        #expect(withCapture.usesPerToolSnapshotInvalidation)
+        #expect(withCapture.dynamicToolScreenCaptureReachable)
+        #expect(withCapture.usesPersistentDynamicCaptureRuntime)
+        #expect(withCapture.requiresSilentCapture)
     }
 
     @Test

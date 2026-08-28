@@ -135,6 +135,10 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
             toolName: toolName,
             arguments: ToolArguments(from: AgentToolArguments(agentArguments)))
     }
+
+    static func browserRequiresForegroundAuthority(_ arguments: ToolArguments) -> Bool {
+        BackgroundOnlyToolPolicy.browserRequiresForegroundAuthority(arguments)
+    }
 }
 
 private enum BackgroundOnlyToolPolicy {
@@ -437,37 +441,37 @@ private enum BackgroundOnlyToolPolicy {
     }
 
     private static func browserViolation(_ arguments: ToolArguments) -> Violation? {
-        if arguments.getBool("bring_to_front") == true {
-            return .activation("bring_to_front=true raises the selected browser page")
-        }
-        if arguments.getBool("background") == false {
-            return .activation("background=false requests a foreground browser page")
-        }
-        let action = self.normalized(arguments.getString("action"))
-        if action == "connect" {
+        guard let rawAction = arguments.getString("action"),
+              let action = BrowserAction(rawValue: rawAction)
+        else { return nil }
+        if action == .connect {
             return .activation("connecting can surface Chrome's remote-debugging setup or permission UI")
         }
-        if action == "newpage" {
-            // DevTools page targets are independent from macOS desktop focus. The typed wrapper maps an omitted
-            // background value to true before delegating upstream, so page mutation can overlap foreground work.
+        if action == .status || action == .disconnect {
             return nil
         }
-        guard action == "call" else { return nil }
-        guard let rawTool = self.normalized(arguments.getString("mcp_tool")) else { return nil }
-
-        switch rawTool {
-        case "selectpage":
-            guard self.rawBrowserBool(arguments, keys: ["bringToFront", "bring_to_front"]) == false else {
-                return .activation("raw select_page does not prove bringToFront=false")
+        guard let calls = self.browserCallsForUserActivationPolicy(action: action, arguments: arguments) else {
+            if !BrowserMCPUserActivationPolicy.backgroundCatalogActions.contains(action) {
+                return .activation("\(action.rawValue) can grant browser user activation")
             }
-        case "newpage":
-            guard self.rawBrowserBool(arguments, keys: ["background"]) == true else {
-                return .activation("raw new_page does not prove background=true")
-            }
-        default:
-            break
+            // Argument validation runs before policy at public MCP and Agent boundaries. Let malformed direct calls
+            // reach the same typed validation error instead of disguising them as authority refusals.
+            return nil
         }
-        return nil
+        return switch BrowserMCPUserActivationPolicy.foregroundRequirement(for: calls) {
+        case .sourceProvenBackground:
+            nil
+        case let .foregroundRequired(detail):
+            .activation(detail)
+        }
+    }
+
+    static func browserRequiresForegroundAuthority(_ arguments: ToolArguments) -> Bool {
+        guard let violation = self.browserViolation(arguments) else { return false }
+        if case .activation = violation {
+            return true
+        }
+        return false
     }
 
     private static func clipboardViolation(_ arguments: ToolArguments) -> Violation? {
@@ -482,19 +486,24 @@ private enum BackgroundOnlyToolPolicy {
         }
     }
 
-    private static func rawBrowserBool(_ arguments: ToolArguments, keys: [String]) -> Bool? {
-        guard let raw = arguments.getString("mcp_args_json"),
-              let data = raw.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
+    private static func browserCallsForUserActivationPolicy(
+        action: BrowserAction,
+        arguments: ToolArguments) -> [BrowserMCPMappedCall]?
+    {
+        var policyArguments = arguments.rawDictionary
+        if policyArguments["page_id"] is String {
+            policyArguments["page_id"] = 0
         }
-        for key in keys {
-            if let value = object[key] as? Bool {
-                return value
-            }
+        let normalizedArguments = ToolArguments(raw: policyArguments)
+        if action == .call {
+            guard let toolName = normalizedArguments.getString("mcp_tool"), !toolName.isEmpty else { return nil }
+            let raw = normalizedArguments.getString("mcp_args_json") ?? "{}"
+            guard let data = raw.data(using: .utf8),
+                  let rawArguments = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            return [BrowserMCPMappedCall(toolName: toolName, arguments: rawArguments)]
         }
-        return nil
+        return try? BrowserMCPCallMapper.mapSequence(action: action, arguments: normalizedArguments)
     }
 
     private static func normalized(_ value: String?) -> String? {

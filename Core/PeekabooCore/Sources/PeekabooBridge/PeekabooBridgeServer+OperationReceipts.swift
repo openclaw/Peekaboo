@@ -25,6 +25,8 @@ private enum OperationReceiptRequestCarriage {
 
 @MainActor
 extension PeekabooBridgeServer {
+    // Attested execution deliberately keeps claim, target, signing, and handoff reservation cleanup in one scope.
+    // swiftlint:disable:next function_body_length
     func handleAttestedOperation(
         _ payload: PeekabooBridgeAttestedOperationRequest,
         peer: PeekabooBridgePeer?,
@@ -67,6 +69,12 @@ extension PeekabooBridgeServer {
                 authority: authority,
                 claim: claim,
                 startedAt: startedAt)
+        }
+        let handoffReservationID = Self.browserHandoffReservationID(
+            request: request,
+            requestID: payload.requestID)
+        defer {
+            self.abandonBrowserHandoffReservation(handoffReservationID)
         }
         let encodingContext = OperationReceiptEncodingContext(
             request: request,
@@ -212,11 +220,17 @@ extension PeekabooBridgeServer {
         {
             return Self.compositeTypeDeliveryRefusal(plan: plan)
         }
+        let operationContext = PeekabooBridgeBrowserHandoffOperationContext(
+            requestID: claim.requestID,
+            clientInstanceID: claim.sessionAttestation.clientInstanceID,
+            peer: peer)
         let handled = await PeekabooBridgeRequestContext.$negotiatedSessionCapabilities.withValue(
             claim.negotiatedCapabilities)
         {
-            await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
-                await self.terminalResponse(for: plan, peer: peer)
+            await PeekabooBridgeRequestContext.$browserHandoffOperation.withValue(operationContext) {
+                await PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                    await self.terminalResponse(for: plan, peer: peer)
+                }
             }
         }
         // This is the single enrichment boundary for attested read-only errors. Existing precise
@@ -301,6 +315,27 @@ extension PeekabooBridgeServer {
                 message: "Bridge operation completed, but its signed receipt could not be archived",
                 details: error.localizedDescription,
                 operationMayHaveCompleted: context.plan.result.completion.mutatesDesktop)
+        }
+        if case let .browserConnect(connectRequest) = context.request.unwrappedOperationRequest,
+           connectRequest.requestsHandoff,
+           let connectionReceipt = response.browserExecutionConnectionReceipt,
+           connectionReceipt.isCanonicalExecutionTarget
+        {
+            let bundle = try PeekabooBridgeOperationReceiptBundle(
+                operationAttestation: context.authority.attestation,
+                operationSessionAttestation: context.claim.sessionAttestation,
+                receipt: receipt,
+                canonicalListenerAttestationPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(
+                    context.authority.attestation.unsignedPayload),
+                canonicalSessionAttestationPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(
+                    context.claim.sessionAttestation.unsignedPayload),
+                canonicalReceiptPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(receipt.payload),
+                canonicalRequest: PeekabooBridgeOperationReceiptCoding.canonicalData(context.request),
+                canonicalResponse: PeekabooBridgeOperationReceiptCoding.canonicalData(response))
+            try self.browserHandoffGrantRegistry.finalize(
+                requestID: context.requestPayload.requestID,
+                receiptBundle: bundle,
+                connectionReceipt: connectionReceipt)
         }
         return try self.encoder.encode(PeekabooBridgeResponse.attestedOperation(.init(
             response: response,

@@ -352,9 +352,9 @@ public struct AgentSystemPrompt {
         - Use native Peekaboo tools (`inspect_ui`, `see`, `click`, `type`, `menu`, `dialog`, `window`) for macOS UI,
           browser chrome, permissions, menus, dialogs, and non-browser apps.
         \(navigationGuidance)
-        - Start each Chrome flow with `list_pages` or `new_page`, retain its page ID, and include `page_id` in every
-          later page-scoped browser action. Never rely on the shared selected page: another agent may be using the
-          same daemon concurrently.
+        - Start each Chrome flow with `list_pages` or `new_page`, retain its opaque page reference, and include it as
+          `page_id` in every later page-scoped browser action. Use element references only from that page's newest
+          snapshot. Never copy page or element references across Agent sessions.
         - Foreground-capable sessions may use `bring_to_front: true` or `background: false` only when the task
           explicitly requires foreground Chrome; background-only sessions must never emit either form.
         - If `browser` fails or is unavailable, fall back to native Peekaboo screen/AX tools.

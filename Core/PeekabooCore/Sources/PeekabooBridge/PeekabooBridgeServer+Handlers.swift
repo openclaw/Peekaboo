@@ -32,7 +32,16 @@ extension PeekabooBridgeServer {
                 self.handleCertificationProducerAttestation(payload)))
         case .requestPostEventPermission:
             return self.handlePostEventPermissionRequest()
-        case .browserStatus, .browserDisconnect:
+        case .browserStatus:
+            guard case let .browserStatus(payload) = request else {
+                throw Self.invalidRequest(for: request)
+            }
+            if let sessionID = payload.sessionID {
+                return try await .init(response: .browserStatus(
+                    self.handleScopedBrowserStatus(sessionID: sessionID, channel: payload.channel)))
+            }
+            return try await .init(response: self.handleBrowserRequest(request))
+        case .browserDisconnect:
             return try await .init(response: self.handleBrowserRequest(request))
         case .browserConnect:
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
@@ -50,6 +59,25 @@ extension PeekabooBridgeServer {
                 return try await .init(response: self.handleBrowserRequest(request))
             }
             return try await self.handleBrowserExecute(payload)
+        case .browserSessionBootstrap:
+            guard case let .browserSessionBootstrap(payload) = request,
+                  let authority = PeekabooBridgeRequestContext.operationReceiptAuthority,
+                  let operation = PeekabooBridgeRequestContext.browserHandoffOperation
+            else {
+                throw Self.invalidRequest(for: request)
+            }
+            try PeekabooBridgeRequestContext.checkRequestIsActive()
+            return try await .init(response: .browserSessionBootstrap(
+                self.browserHandoffGrantRegistry.bootstrap(
+                    request: payload,
+                    authority: authority,
+                    caller: operation.peer.browserSessionCaller(
+                        clientInstanceID: operation.clientInstanceID))))
+        case .browserSessionControl:
+            guard case let .browserSessionControl(payload) = request else {
+                throw Self.invalidRequest(for: request)
+            }
+            return try await .init(response: self.handleBrowserSessionControl(payload))
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
             return try await .init(response: self.handleCaptureRequest(request))
         case .desktopObservation:
@@ -121,6 +149,58 @@ extension PeekabooBridgeServer {
         }
     }
 
+    private func handleScopedBrowserStatus(
+        sessionID: UUID,
+        channel: String?) async throws -> PeekabooBridgeBrowserStatus
+    {
+        let caller = try self.authenticatedBrowserSessionCaller()
+        let lease = try await self.browserHandoffGrantRegistry.authorizeSession(sessionID, caller: caller)
+        defer { self.browserHandoffGrantRegistry.completeSessionOperation(lease) }
+        guard let provider = self.browserSessionBootstrapProvider else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "This Bridge host has no scoped browser session provider")
+        }
+        let status = try await provider.browserSessionStatus(sessionID: sessionID, channel: channel)
+        guard status.isCanonicalScopedSessionStatus else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "Scoped browser provider returned contradictory status evidence")
+        }
+        return status
+    }
+
+    private func handleBrowserSessionControl(
+        _ request: PeekabooBridgeBrowserSessionControlRequest) async throws -> PeekabooBridgeResponse
+    {
+        let caller = try self.authenticatedBrowserSessionCaller()
+        guard let provider = self.browserSessionBootstrapProvider else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "This Bridge host has no scoped browser session provider")
+        }
+        switch request.action {
+        case .disconnect:
+            let lease = try await self.browserHandoffGrantRegistry.authorizeSession(
+                request.sessionID,
+                caller: caller)
+            defer { self.browserHandoffGrantRegistry.completeSessionOperation(lease) }
+            try await provider.disconnectBrowserSession(request.sessionID)
+        case .end:
+            try await self.browserHandoffGrantRegistry.endSession(request.sessionID, caller: caller)
+        }
+        return .ok
+    }
+
+    func authenticatedBrowserSessionCaller() throws -> PeekabooBridgeBrowserSessionCaller {
+        guard let operation = PeekabooBridgeRequestContext.browserHandoffOperation else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .unauthorizedClient,
+                message: "Scoped browser operations require an attested operation caller")
+        }
+        return try operation.peer.browserSessionCaller(clientInstanceID: operation.clientInstanceID)
+    }
+
     private func handleBrowserExecute(
         _ payload: PeekabooBridgeBrowserExecuteRequest) async throws -> PeekabooBridgeHandledResponse
     {
@@ -130,22 +210,72 @@ extension PeekabooBridgeServer {
                 message: "Browser execution requires at least one tool call.",
                 hint: "Provide one browser tool call before retrying.")
         }
-        let target = try await self.browserExecutionTarget(payload)
+        let target: (
+            receipt: PeekabooBridgeBrowserConnectionReceipt,
+            disposition: PeekabooBridgeHandledResponse.Mutation.TargetDisposition)
+        let scopedSessionID = payload.sessionID
+        var scopedLease: PeekabooBridgeBrowserHandoffGrantRegistry.SessionOperationLease?
+        defer {
+            if let scopedLease {
+                self.browserHandoffGrantRegistry.completeSessionOperation(scopedLease)
+            }
+        }
+        if let scopedSessionID {
+            let caller = try self.authenticatedBrowserSessionCaller()
+            scopedLease = try await self.browserHandoffGrantRegistry.authorizeSession(
+                scopedSessionID,
+                caller: caller)
+            guard let expectedReceipt = payload.expectedConnectionReceipt,
+                  expectedReceipt.isCanonicalExecutionTarget,
+                  payload.expectedProviderSessionEpoch != nil,
+                  payload.connectionPolicy == .requireExistingLiveReceipt,
+                  payload.elementPreflight?.isCanonical != false
+            else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .invalidRequest,
+                    message: "Scoped browser execution requires an exact receipt, epoch, and canonical preflight.",
+                    hint: "Refresh scoped browser status before retrying.")
+            }
+            target = try (expectedReceipt, self.browserTargetDisposition(expectedReceipt))
+        } else {
+            scopedLease = nil
+            target = try await self.browserExecutionTarget(payload)
+        }
         let result: PeekabooBridgeBrowserExecutionResult
         do {
-            result = try await self.services.browserExecute(
-                payload,
-                expectedConnectionReceipt: target.receipt)
+            if let scopedSessionID {
+                guard let provider = self.browserSessionBootstrapProvider else {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .operationNotSupported,
+                        message: "This Bridge host has no scoped browser session provider")
+                }
+                result = try await provider.browserSessionExecute(
+                    sessionID: scopedSessionID,
+                    request: payload,
+                    expectedConnectionReceipt: target.receipt)
+            } else {
+                result = try await self.services.browserExecute(
+                    payload,
+                    expectedConnectionReceipt: target.receipt)
+            }
         } catch is CancellationError {
+            let acceptedProviderSessionEpoch = scopedSessionID == nil
+                ? nil
+                : payload.expectedProviderSessionEpoch
             if payload.isReadOnly {
-                return Self.browserReadCancellationHandledResponse(target: target)
+                return Self.browserReadCancellationHandledResponse(
+                    target: target,
+                    providerSessionEpoch: acceptedProviderSessionEpoch)
             }
             return Self.browserOpaqueCancellationHandledResponse(
                 target: target,
+                providerSessionEpoch: acceptedProviderSessionEpoch,
                 causeDescription:
                 "The browser provider was cancelled after accepting the execution request.")
         }
-        guard result.connectionReceipt == target.receipt else {
+        guard result.connectionReceipt == target.receipt,
+              scopedSessionID == nil || result.providerSessionEpoch == payload.expectedProviderSessionEpoch
+        else {
             if payload.isReadOnly {
                 throw DesktopActionFailure.preDispatchRefusal(
                     reason: .targetUnavailable,
@@ -199,10 +329,12 @@ extension PeekabooBridgeServer {
             content: result.response.content,
             isError: routedFailure != nil,
             meta: result.response.meta,
+            structuredContent: result.response.structuredContent,
             connectionReceipt: target.receipt,
             completedCallCount: result.completedCallCount,
             dispatchedCallCount: result.dispatchedCallCount,
-            actionFailure: routedFailure)
+            actionFailure: routedFailure,
+            providerSessionEpoch: result.providerSessionEpoch)
         let outcome =
             routedFailure?.outcome
                 ?? .dispatchedUnverified(
@@ -219,7 +351,8 @@ extension PeekabooBridgeServer {
     private static func browserReadCancellationHandledResponse(
         target: (
             receipt: PeekabooBridgeBrowserConnectionReceipt,
-            disposition: PeekabooBridgeHandledResponse.Mutation.TargetDisposition))
+            disposition: PeekabooBridgeHandledResponse.Mutation.TargetDisposition),
+        providerSessionEpoch: UUID?)
         -> PeekabooBridgeHandledResponse
     {
         .init(response: .browserToolResponse(.init(
@@ -231,7 +364,8 @@ extension PeekabooBridgeServer {
             ],
             isError: true,
             meta: nil,
-            connectionReceipt: target.receipt)))
+            connectionReceipt: target.receipt,
+            providerSessionEpoch: providerSessionEpoch)))
     }
 
     private static func browserReadHandledResponse(
@@ -261,9 +395,11 @@ extension PeekabooBridgeServer {
             content: result.response.content,
             isError: result.response.isError,
             meta: result.response.meta,
+            structuredContent: result.response.structuredContent,
             connectionReceipt: target.receipt,
             completedCallCount: result.completedCallCount,
-            dispatchedCallCount: result.dispatchedCallCount)))
+            dispatchedCallCount: result.dispatchedCallCount,
+            providerSessionEpoch: result.providerSessionEpoch)))
     }
 
     private static func browserNoDispatchHandledResponse(
@@ -294,10 +430,12 @@ extension PeekabooBridgeServer {
                     content: result.response.content,
                     isError: true,
                     meta: result.response.meta,
+                    structuredContent: result.response.structuredContent,
                     connectionReceipt: target.receipt,
                     completedCallCount: 0,
                     dispatchedCallCount: 0,
-                    actionFailure: routedFailure)),
+                    actionFailure: routedFailure,
+                    providerSessionEpoch: result.providerSessionEpoch)),
             mutation: .init(outcome: routedFailure.outcome, target: target.disposition))
     }
 
@@ -305,6 +443,7 @@ extension PeekabooBridgeServer {
         target: (
             receipt: PeekabooBridgeBrowserConnectionReceipt,
             disposition: PeekabooBridgeHandledResponse.Mutation.TargetDisposition),
+        providerSessionEpoch: UUID?,
         causeDescription: String) -> PeekabooBridgeHandledResponse
     {
         let failure = DesktopActionFailure.indeterminate(
@@ -326,7 +465,8 @@ extension PeekabooBridgeServer {
                     isError: true,
                     meta: nil,
                     connectionReceipt: target.receipt,
-                    actionFailure: failure)),
+                    actionFailure: failure,
+                    providerSessionEpoch: providerSessionEpoch)),
             mutation: .init(outcome: failure.outcome, target: target.disposition))
     }
 

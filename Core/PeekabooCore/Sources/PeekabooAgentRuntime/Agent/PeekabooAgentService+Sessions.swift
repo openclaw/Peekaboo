@@ -23,6 +23,7 @@ extension PeekabooAgentService {
         let storedToolExecutionPolicy: MCPToolExecutionPolicy
         let toolExecutionPolicy: MCPToolExecutionPolicy
         let provider: (any ModelProvider)?
+        let executionGeneration: UUID?
     }
 
     enum SessionLogBehavior {
@@ -92,6 +93,9 @@ extension PeekabooAgentService {
             }
         }
 
+        let executionGeneration = persistSession
+            ? try self.beginAgentSessionExecution(for: sessionId)
+            : nil
         return SessionContext(
             id: sessionId,
             isPersistent: persistSession,
@@ -102,7 +106,8 @@ extension PeekabooAgentService {
             modelIdentity: modelIdentity,
             storedToolExecutionPolicy: toolExecutionPolicy,
             toolExecutionPolicy: toolExecutionPolicy,
-            provider: provider)
+            provider: provider,
+            executionGeneration: executionGeneration)
     }
 
     // swiftlint:disable:next function_parameter_count
@@ -116,6 +121,9 @@ extension PeekabooAgentService {
         status: String) throws
     {
         guard context.isPersistent else { return }
+        try self.requireCurrentAgentSessionExecution(
+            sessionID: context.id,
+            executionGeneration: context.executionGeneration)
         let executionTime = endTime.timeIntervalSince(context.executionStart)
         let totalTokens = context.metadata.totalTokens + (usage?.totalTokens ?? 0)
         let hadPreviousUsage = context.metadata.customData[Self.usageObservedMetadataKey]
@@ -215,7 +223,8 @@ extension PeekabooAgentService {
         model: LanguageModel,
         provider: (any ModelProvider)? = nil,
         modelIdentity: PersistedModelIdentity? = nil,
-        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly) -> SessionContext
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        executionGeneration: UUID? = nil) -> SessionContext
     {
         var updatedMessages = session.messages
         let authorityPrompt = AgentSystemPrompt.generate(
@@ -249,6 +258,7 @@ extension PeekabooAgentService {
             modelIdentity: modelIdentity,
             storedToolExecutionPolicy: session.effectiveToolExecutionPolicy,
             toolExecutionPolicy: toolExecutionPolicy,
-            provider: provider)
+            provider: provider,
+            executionGeneration: executionGeneration)
     }
 }

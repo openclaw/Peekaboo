@@ -19,12 +19,14 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             processStartIdentity: { _ in 2050 },
             processBundleIdentifier: { _ in "com.google.Chrome" },
             processCodeSignatureValidator: { _, _, channel in Self.signatureIdentity(channel) },
-            connectionAttempt: { .standalone(timeout: .milliseconds(40)) },
+            // The whole target runs concurrently on the main actor. Keep enough budget for this operation to
+            // enter provider startup even under the broad suite, then let the deliberately blocked provider prove
+            // that the same deadline cancels and tears it down.
+            connectionAttempt: { .standalone(timeout: .seconds(2)) },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
                 resolveInitial: { _, attempt in
                     attempt.state.markPermissionDispatchStarted()
-                    try await Task.sleep(for: .milliseconds(25))
                     return Self.endpoint()
                 },
                 revalidate: { _, _ in }),

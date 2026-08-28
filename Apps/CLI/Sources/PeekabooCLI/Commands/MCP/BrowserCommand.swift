@@ -76,6 +76,8 @@ InjectedRuntimeBackedCommand {
     var insightName: String?
     var mcpTool: String?
     var mcpArgsJson: String?
+    var handoffFile: String?
+    private let handoffReceiptStoreCache = BrowserHandoffReceiptStoreCache()
 
     var runtimeOptions: CommandRuntimeOptions = {
         var options = CommandRuntimeOptions()
@@ -96,17 +98,25 @@ InjectedRuntimeBackedCommand {
         Examples:
           peekaboo browser status --json
           peekaboo browser connect --channel stable --foreground
-          peekaboo browser new-page --url https://example.com
-          peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
+          peekaboo browser new-page --url https://example.com --foreground
+          peekaboo browser snapshot --page-id 2 --path /tmp/page.txt --foreground
 
-        Browser actions reuse an existing exact connection by default and never auto-connect.
-        Connecting or allowing any foreground browser effect requires explicit --foreground.
+        The pinned provider grants browser user activation to every Puppeteer page evaluation, including
+        headless and background pages. Default mode therefore exposes only source-audited routes that do not
+        enter that evaluation path and reports those calls as background browser-protocol delivery. Page discovery,
+        snapshots, navigation, element interaction, and arbitrary script evaluation require explicit --foreground
+        and report foreground browser-protocol delivery.
+        Default calls still require an existing exact connection and never ambiently auto-connect. With explicit
+        --foreground, only standalone CLI page actions may auto-connect when no receipt exists.
         """
     )
 
     mutating func setRuntimeOptions(_ options: CommandRuntimeOptions) {
         var options = options
         options.requiresBrowserMCP = true
+        options.requiresImplicitSnapshotInvalidation = false
+        options.usesPerToolSnapshotInvalidation = self.boundInvocationMayMutate(using: options)
+        options.dynamicToolScreenCaptureReachable = false
         self.runtimeOptions = options
     }
 
@@ -116,15 +126,47 @@ InjectedRuntimeBackedCommand {
 
         do {
             let arguments = try self.arguments()
-            if Self.actionMayMutate(self.action) {
-                self.resolvedRuntime.beginInteractionMutation()
-            }
             let context = MCPToolContext(
                 services: self.services,
-                executionPolicy: self.toolExecutionPolicy
+                snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator,
+                executionPolicy: self.toolExecutionPolicy,
+                capturePreflightRefusal: runtime.toolCapturePreflightRefusal
             )
             let tool = BrowserTool(context: context, instructionAudience: .commandLine)
-            let response = try await tool.execute(arguments: ToolArguments(raw: arguments))
+            let response = try await context.execute(
+                tool: tool,
+                arguments: ToolArguments(raw: arguments)
+            )
+            if let store = try self.handoffReceiptStore() {
+                if response.isError {
+                    _ = (self.services.browser as? any BrowserMCPConnectionHandoffProviding)?
+                        .takeConnectionHandoffReceiptBundleData()
+                    try MCPToolCommandOutput.output(
+                        tool: tool.name,
+                        response: response,
+                        jsonOutput: self.jsonOutput,
+                        logger: self.outputLogger
+                    )
+                    return
+                }
+                guard let provider = self.services.browser as? any BrowserMCPConnectionHandoffProviding else {
+                    throw BrowserHandoffCommandError.providerUnavailable
+                }
+                guard let receiptData = provider.takeConnectionHandoffReceiptBundleData() else {
+                    throw await self.handoffPublicationFailure(
+                        cause: "the provider returned no authenticated receipt",
+                        provider: provider
+                    )
+                }
+                do {
+                    try store.save(receiptData)
+                } catch {
+                    throw await self.handoffPublicationFailure(
+                        cause: "the receipt could not be published: \(error.localizedDescription)",
+                        provider: provider
+                    )
+                }
+            }
             try MCPToolCommandOutput.output(
                 tool: tool.name,
                 response: response,
@@ -139,18 +181,35 @@ InjectedRuntimeBackedCommand {
         }
     }
 
-    static func actionMayMutate(_ rawAction: String) -> Bool {
-        let normalized = rawAction
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "-", with: "_")
-        guard let action = BrowserAction(rawValue: normalized) else { return false }
-        switch action {
-        case .status, .disconnect, .listPages, .waitFor, .snapshot, .console, .network, .screenshot:
-            return false
-        case .connect, .selectPage, .closePage, .newPage, .navigate, .click, .fill, .fillForm, .drag, .hover, .type,
-             .pressKey, .uploadFile, .handleDialog, .performanceTrace, .call:
-            return true
+    private func handoffPublicationFailure(
+        cause: String,
+        provider: any BrowserMCPConnectionHandoffProviding
+    ) async -> BrowserHandoffCommandError {
+        do {
+            let status = try await provider.disconnectWithResult()
+            guard status.observation == .confirmed, !status.isConnected else {
+                return .publicationFailed(
+                    cause: cause,
+                    rollbackFailure: "the provider did not confirm that the browser connection ended"
+                )
+            }
+            return .publicationFailed(cause: cause, rollbackFailure: nil)
+        } catch {
+            return .publicationFailed(cause: cause, rollbackFailure: error.localizedDescription)
         }
+    }
+
+    private func boundInvocationMayMutate(using runtimeOptions: CommandRuntimeOptions) -> Bool {
+        var command = self
+        command.runtimeOptions = runtimeOptions
+        guard let rawArguments = try? command.arguments(),
+              let actionName = rawArguments["action"] as? String,
+              let action = BrowserAction(rawValue: actionName)
+        else { return true }
+        return BrowserMCPCallMapper.effectiveActionSemantics(
+            action: action,
+            arguments: ToolArguments(raw: rawArguments)
+        ) == .mutating
     }
 
     var toolExecutionPolicy: MCPToolExecutionPolicy {
@@ -158,7 +217,24 @@ InjectedRuntimeBackedCommand {
     }
 
     func validateBeforeRuntime() throws {
+        try self.validateHandoffEnvironment()
         _ = try self.arguments()
+        try self.handoffReceiptStore()?.validateCanSave()
+    }
+
+    func validateHandoffEnvironment(
+        _ environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws {
+        guard self.handoffFile != nil else { return }
+        guard environment["PEEKABOO_NO_REMOTE"] == nil else {
+            throw ValidationError("browser connect --handoff-file does not support PEEKABOO_NO_REMOTE")
+        }
+        if let environmentSocket = environment["PEEKABOO_BRIDGE_SOCKET"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !environmentSocket.isEmpty,
+            environmentSocket != self.runtimeOptions.bridgeSocketPath {
+            throw ValidationError("--bridge-socket conflicts with PEEKABOO_BRIDGE_SOCKET")
+        }
     }
 
     private func arguments() throws -> [String: Any] {
@@ -176,6 +252,18 @@ InjectedRuntimeBackedCommand {
            let browserUrl,
            BrowserLoopbackEndpoint(browserURL: browserUrl) == nil {
             throw BrowserCommandInputError.invalidBrowserURL()
+        }
+        if self.handoffFile != nil {
+            guard normalizedAction == BrowserAction.connect.rawValue else {
+                throw ValidationError("--handoff-file is accepted only by browser connect")
+            }
+            guard self.foreground else {
+                throw ValidationError("browser connect --handoff-file requires --foreground")
+            }
+            guard !self.runtimeOptions.remoteIsolationRequested, self.runtimeOptions.preferRemote else {
+                throw ValidationError("browser connect --handoff-file does not support --no-remote")
+            }
+            _ = try self.validatedExplicitBridgeSocket()
         }
 
         var arguments: [String: Any] = ["action": normalizedAction]
@@ -231,6 +319,7 @@ InjectedRuntimeBackedCommand {
         self.add(self.insightSetId, as: "insight_set_id", to: &arguments)
         self.add(self.insightName, as: "insight_name", to: &arguments)
         self.add(self.mcpTool, as: "mcp_tool", to: &arguments)
+        self.addFlag(self.handoffFile != nil, as: "request_handoff", to: &arguments)
         if let mcpArgsJson {
             do {
                 _ = try MCPArgumentParsing.parseJSONObject(mcpArgsJson)
@@ -240,6 +329,23 @@ InjectedRuntimeBackedCommand {
             arguments["mcp_args_json"] = mcpArgsJson
         }
         return arguments
+    }
+
+    private func handoffReceiptStore() throws -> BrowserHandoffReceiptStore? {
+        guard let handoffFile = self.handoffFile else { return nil }
+        return try self.handoffReceiptStoreCache.store(resolvingAbsolutePath: handoffFile)
+    }
+
+    private func validatedExplicitBridgeSocket() throws -> String {
+        guard let bridgeSocket = self.runtimeOptions.bridgeSocketPath,
+              bridgeSocket.hasPrefix("/"),
+              URL(fileURLWithPath: bridgeSocket).standardizedFileURL.path == bridgeSocket
+        else {
+            throw ValidationError(
+                "browser connect --handoff-file requires one standardized absolute --bridge-socket"
+            )
+        }
+        return bridgeSocket
     }
 
     private func add(_ value: String?, as key: String, to arguments: inout [String: Any]) {
@@ -333,6 +439,12 @@ extension BrowserCommand: CommanderSignatureProviding {
                     help: "Advanced JSON object args for call/fill-form",
                     long: "mcp-args-json"
                 ),
+                .commandOption(
+                    "handoffFile",
+                    help: "Atomically create one signed browser handoff receipt at an unused path " +
+                        "in an owner-only directory",
+                    long: "handoff-file"
+                ),
             ],
             flags: [
                 .commandFlag(
@@ -350,7 +462,7 @@ extension BrowserCommand: CommanderSignatureProviding {
                 .commandFlag("background", help: "Open new page in background (default)", long: "background"),
                 .commandFlag(
                     "foreground",
-                    help: "Allow foreground browser effects; opens new pages in the foreground",
+                    help: "Allow browser user activation, foreground effects, and standalone CLI auto-connect",
                     long: "foreground"
                 ),
                 .commandFlag(
@@ -414,6 +526,14 @@ extension BrowserCommand: CommanderBindableCommand {
         self.insightName = values.singleOption("insightName")
         self.mcpTool = values.singleOption("mcpTool")
         self.mcpArgsJson = values.singleOption("mcpArgsJson")
+        let handoffFiles = values.optionValues("handoffFile")
+        guard handoffFiles.count <= 1 else {
+            throw ValidationError("--handoff-file may be specified only once")
+        }
+        if !handoffFiles.isEmpty, values.optionValues("bridge-socket").count != 1 {
+            throw ValidationError("browser connect --handoff-file requires exactly one --bridge-socket")
+        }
+        self.handoffFile = handoffFiles.last
     }
 
     private static func splitCSV(_ values: [String]) -> [String] {
@@ -422,5 +542,48 @@ extension BrowserCommand: CommanderBindableCommand {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
         }
+    }
+}
+
+private enum BrowserHandoffCommandError: LocalizedError, ResultEnvelopeError {
+    case providerUnavailable
+    case publicationFailed(cause: String, rollbackFailure: String?)
+
+    nonisolated var errorDescription: String? {
+        switch self {
+        case .providerUnavailable:
+            "The selected browser provider cannot produce authenticated handoff receipts."
+        case let .publicationFailed(cause, nil):
+            "Browser handoff failed: \(cause) The new browser connection was disconnected cleanly."
+        case let .publicationFailed(cause, rollbackFailure?):
+            "Browser handoff failed: \(cause) Connection rollback could not be confirmed: " +
+                rollbackFailure
+        }
+    }
+
+    nonisolated var envelopeCode: ErrorCode? {
+        .INTERACTION_FAILED
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        .partial
+    }
+
+    nonisolated var envelopeRetrySafe: Bool? {
+        if case .publicationFailed(_, nil) = self {
+            return true
+        }
+        return false
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        true
+    }
+
+    nonisolated var envelopeHint: String? {
+        if case .publicationFailed(_, nil) = self {
+            return "Use a fresh owner-private destination and retry the foreground handoff connect."
+        }
+        return "Do not reconnect automatically. Check browser status and use a fresh owner-private destination."
     }
 }

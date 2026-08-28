@@ -44,7 +44,12 @@ and cannot be changed by model output or writable session JSON alone. Foreground
 toolsets omit `shell`, and the execution boundary refuses it under both Agent policies. Foreground UI authority is not
 a process sandbox; a trusted prompt can operate terminal or scripting apps through their UI. Public MCP servers and
 standalone MCP tool contexts are also background-only. Foreground-capable CLI wrappers require an explicit
-`--foreground`, while `peekaboo mcp serve` never grants foreground authority. Background-only sessions refuse targetless/process-only raw `press`, persistent
+`--foreground`, while `peekaboo mcp serve --allow-foreground` grants that server process explicit foreground authority.
+The pinned browser provider sends Puppeteer page evaluation with browser user activation even for headless/background
+pages. Default Browser catalogs expose only source-audited no-user-activation routes and refuse page discovery,
+snapshots, navigation, waits, element interaction, or arbitrary script evaluation before provider I/O. Explicitly
+foreground-authorized calls report foreground browser-protocol delivery whether or not the page visibly moves.
+Background-only sessions also refuse targetless/process-only raw `press`, persistent
 clipboard writes, targetless dialog input, dialog file actions, browser setup/fronting, and Space switch/follow while
 retaining targeted dialog click/dismiss/input, dialog/Space listing, and unfollowed window placement. Click/dismiss use
 prepared one-shot receipts; targeted input uses exact-target background AXValue. Agent typing requires an explicit

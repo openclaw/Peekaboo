@@ -168,6 +168,13 @@ struct PeekabooBridgeOperationRoutingTests {
         #expect(services.lastBrowserStatusChannel == "stable")
         #expect(status.connectionReceipt?.processIdentifier == 42)
         #expect(status.connectionReceipt?.processStartIdentityDecimal == "10042")
+        let executionReceipt = PeekabooBridgeBrowserConnectionReceipt(
+            channel: "stable",
+            browserURL: "http://127.0.0.1:9222/",
+            webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-routing",
+            devToolsBrowserID: "browser-routing",
+            browserVersion: "Chrome/151.0",
+            protocolVersion: "1.3")
 
         let connectRequest = PeekabooBridgeRequest.browserConnect(.init(
             channel: "stable",
@@ -184,7 +191,9 @@ struct PeekabooBridgeOperationRoutingTests {
         let executeRequest = PeekabooBridgeRequest.browserExecute(.init(
             toolName: "list_pages",
             arguments: ["page": .int(1)],
-            channel: "canary"))
+            channel: "stable",
+            expectedConnectionReceipt: executionReceipt,
+            connectionPolicy: .requireExistingLiveReceipt))
         let executeData = try JSONEncoder.peekabooBridgeEncoder().encode(executeRequest)
         let executeResponse = try await self.decode(server.decodeAndHandle(executeData, peer: nil))
 
@@ -195,16 +204,20 @@ struct PeekabooBridgeOperationRoutingTests {
         #expect(toolResponse.isError == false)
         #expect(toolResponse.connectionReceipt == nil)
         #expect(services.lastBrowserExecute?.toolName == "list_pages")
-        #expect(services.lastBrowserExecute?.channel == "canary")
+        #expect(services.lastBrowserExecute?.channel == "stable")
         #expect(services.lastExpectedBrowserConnectionReceipt == nil)
 
-        let sequenceRequest = PeekabooBridgeRequest.browserExecute(.init(calls: [
-            .init(toolName: "click", arguments: ["uid": .string("2_1")]),
-            .init(toolName: "type_text", arguments: ["text": .string("value")]),
-        ], channel: "stable"))
+        let sequenceRequest = PeekabooBridgeRequest.browserExecute(.init(
+            calls: [
+                .init(toolName: "list_pages", arguments: [:]),
+                .init(toolName: "take_snapshot", arguments: [:]),
+            ],
+            channel: "stable",
+            expectedConnectionReceipt: executionReceipt,
+            connectionPolicy: .requireExistingLiveReceipt))
         let sequenceData = try JSONEncoder.peekabooBridgeEncoder().encode(sequenceRequest)
         _ = try await self.decode(server.decodeAndHandle(sequenceData, peer: nil))
-        #expect(services.lastBrowserExecute?.resolvedCalls.map(\.toolName) == ["click", "type_text"])
+        #expect(services.lastBrowserExecute?.resolvedCalls.map(\.toolName) == ["list_pages", "take_snapshot"])
     }
 
     @Test

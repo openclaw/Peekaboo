@@ -430,7 +430,8 @@ struct AgentToolMCPBridgeTests {
                 providerIdentity: nil),
             storedToolExecutionPolicy: .backgroundOnly,
             toolExecutionPolicy: .backgroundOnly,
-            provider: nil)
+            provider: nil,
+            executionGeneration: nil)
         try service.saveExecutionSession(
             context: context,
             model: .openai(.gpt55),

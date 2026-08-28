@@ -9,6 +9,12 @@ struct BrowserMCPChannelProcessTarget: Sendable, Equatable {
     let bundleIdentifier: String
 }
 
+struct BrowserMCPChannelEndpointReservation: Sendable, Equatable {
+    let browserURL: String
+    let webSocketDebuggerURL: String
+    let browserID: String
+}
+
 private struct BrowserMCPChannelEndpointAuthority: Sendable, Equatable {
     let browserURL: String
     let webSocketDebuggerURL: String
@@ -20,7 +26,9 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
     typealias Resolve = @Sendable (BrowserMCPChannelProcessTarget) async throws -> BrowserMCPDevToolsEndpoint
     typealias ResolveInitial = @Sendable (
         BrowserMCPChannelProcessTarget,
-        BrowserMCPConnectionAttempt) async throws -> BrowserMCPDevToolsEndpoint
+        BrowserMCPConnectionAttempt,
+        (@MainActor @Sendable (BrowserMCPChannelEndpointReservation) throws -> Void)?) async throws
+        -> BrowserMCPDevToolsEndpoint
     typealias Revalidate = @Sendable (
         BrowserMCPChannelProcessTarget,
         BrowserMCPDevToolsEndpoint) async throws -> Void
@@ -29,20 +37,32 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
     private let revalidateAuthority: Revalidate
 
     init(_ resolve: @escaping Resolve, revalidate: @escaping Revalidate) {
-        self.resolveInitial = { target, _ in try await resolve(target) }
+        self.resolveInitial = { target, _, _ in try await resolve(target) }
         self.revalidateAuthority = revalidate
     }
 
-    init(resolveInitial: @escaping ResolveInitial, revalidate: @escaping Revalidate) {
-        self.resolveInitial = resolveInitial
+    init(
+        resolveInitial: @escaping @Sendable (
+            BrowserMCPChannelProcessTarget,
+            BrowserMCPConnectionAttempt) async throws -> BrowserMCPDevToolsEndpoint,
+        revalidate: @escaping Revalidate)
+    {
+        self.resolveInitial = { target, attempt, _ in try await resolveInitial(target, attempt) }
+        self.revalidateAuthority = revalidate
+    }
+
+    init(resolveInitialWithReservation: @escaping ResolveInitial, revalidate: @escaping Revalidate) {
+        self.resolveInitial = resolveInitialWithReservation
         self.revalidateAuthority = revalidate
     }
 
     func resolve(
         _ target: BrowserMCPChannelProcessTarget,
-        attempt: BrowserMCPConnectionAttempt = .standalone()) async throws -> BrowserMCPDevToolsEndpoint
+        attempt: BrowserMCPConnectionAttempt = .standalone(),
+        reserveAuthority: (@MainActor @Sendable (BrowserMCPChannelEndpointReservation) throws -> Void)? = nil)
+        async throws -> BrowserMCPDevToolsEndpoint
     {
-        try await self.resolveInitial(target, attempt)
+        try await self.resolveInitial(target, attempt, reserveAuthority)
     }
 
     func revalidate(
@@ -53,7 +73,7 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
     }
 
     static let live = BrowserMCPChannelEndpointResolver(
-        resolveInitial: { target, attempt in
+        resolveInitialWithReservation: { target, attempt, reserveAuthority in
             try await Self.resolveEndpoint(
                 target: target,
                 attempt: attempt,
@@ -64,7 +84,8 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                     try StableRegularFileReader.live.read(url, 1024)
                 },
                 inspectListener: DarwinProcessLoopbackListenerInspector.live.inspect,
-                probeWebSocket: BrowserMCPDevToolsWebSocketProber.live.probe)
+                probeWebSocket: BrowserMCPDevToolsWebSocketProber.live.probe,
+                reserveAuthority: reserveAuthority)
         },
         revalidate: { target, expected in
             try Self.revalidateEndpoint(
@@ -85,7 +106,9 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
         activePortURL: URL,
         readActivePort: @Sendable (URL) throws -> Data,
         inspectListener: DarwinProcessLoopbackListenerInspector.Inspect,
-        probeWebSocket: BrowserMCPDevToolsWebSocketProber.Probe) async throws
+        probeWebSocket: BrowserMCPDevToolsWebSocketProber.Probe,
+        reserveAuthority: (@MainActor @Sendable (BrowserMCPChannelEndpointReservation) throws -> Void)? = nil)
+        async throws
         -> BrowserMCPDevToolsEndpoint
     {
         let before = try self.resolveAuthority(
@@ -101,6 +124,10 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                 target.channel,
                 "Chrome's DevToolsActivePort published a malformed WebSocket identity")
         }
+        try await reserveAuthority?(BrowserMCPChannelEndpointReservation(
+            browserURL: before.browserURL,
+            webSocketDebuggerURL: before.webSocketDebuggerURL,
+            browserID: before.browserID))
         let version: BrowserMCPDevToolsVersion
         do {
             version = try await probeWebSocket(

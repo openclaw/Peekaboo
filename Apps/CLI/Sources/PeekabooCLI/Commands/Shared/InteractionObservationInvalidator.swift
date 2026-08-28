@@ -7,6 +7,7 @@ import PeekabooFoundation
 final class InteractionMutationTracker {
     private let desktopMutationWatermarkStore: DesktopMutationWatermarkStore
     private var pendingDesktopMutation: DesktopMutationWatermarkStore.PendingMutation?
+    private var pendingConcurrentDesktopMutations: [UUID: DesktopMutationWatermarkStore.PendingMutation] = [:]
     private var durableMutationLeaseCount = 0
     private(set) var mutationStartedAt: Date?
     private(set) var mutationSequence: UInt64 = 0
@@ -24,7 +25,7 @@ final class InteractionMutationTracker {
     }
 
     var hasPendingDurableMutation: Bool {
-        self.pendingDesktopMutation != nil
+        self.pendingDesktopMutation != nil || !self.pendingConcurrentDesktopMutations.isEmpty
     }
 
     @discardableResult
@@ -84,6 +85,31 @@ final class InteractionMutationTracker {
         } else {
             self.durableMutationLeaseCount += 1
         }
+    }
+
+    func beginConcurrentDurableMutation(id: UUID, at startedAt: Date = Date()) throws {
+        guard self.pendingConcurrentDesktopMutations[id] == nil else {
+            throw PeekabooError.operationError(message: "Concurrent desktop mutation was prepared more than once")
+        }
+        self.pendingConcurrentDesktopMutations[id] = try self.desktopMutationWatermarkStore.beginMutation(
+            at: startedAt
+        )
+    }
+
+    func completeConcurrentDurableMutation(
+        id: UUID,
+        through cutoff: Date
+    ) throws -> DesktopMutationWatermarkStore.MutationCompletion? {
+        guard let mutation = self.pendingConcurrentDesktopMutations[id] else { return nil }
+        let completion = try self.desktopMutationWatermarkStore.completeMutation(mutation, through: cutoff)
+        self.pendingConcurrentDesktopMutations.removeValue(forKey: id)
+        return completion
+    }
+
+    func cancelConcurrentDurableMutation(id: UUID) throws {
+        guard let mutation = self.pendingConcurrentDesktopMutations[id] else { return }
+        try self.desktopMutationWatermarkStore.cancelMutation(mutation)
+        self.pendingConcurrentDesktopMutations.removeValue(forKey: id)
     }
 
     func completeDurableMutation(
@@ -597,8 +623,7 @@ extension CommandRuntime {
 @MainActor
 private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMutationCoordinating {
     private struct TrackingReceipt {
-        let sequence: UInt64
-        let ownsBoundary: Bool
+        let boundaryStartedAt: Date
     }
 
     private let targets: InteractionObservationInvalidator.MutationTargets
@@ -606,8 +631,11 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
     private let mutationTracker: InteractionMutationTracker
     private let hasRemoteSelection: Bool
     private var preparedLocalMutationIDs: Set<UUID> = []
+    private var preparedConcurrentMutationIDs: Set<UUID> = []
     private var completedPreparedMutationIDs: Set<UUID> = []
     private var trackingReceipts: [UUID: TrackingReceipt] = [:]
+    private var latestPreparedSequenceByBoundary: [Date: UInt64] = [:]
+    private var committedBoundaries: Set<Date> = []
 
     init(
         targets: InteractionObservationInvalidator.MutationTargets,
@@ -621,35 +649,67 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
     }
 
     func prepareMutation(_ scope: MCPToolSnapshotMutationScope) throws {
+        try self.prepareMutation(scope, durableBarrier: .exclusive)
+    }
+
+    func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) throws {
+        try self.prepareMutation(scope, durableBarrier: .concurrent)
+    }
+
+    private enum DurableBarrierMode {
+        case exclusive
+        case concurrent
+    }
+
+    private func prepareMutation(
+        _ scope: MCPToolSnapshotMutationScope,
+        durableBarrier: DurableBarrierMode
+    ) throws {
         guard scope.effect != .freshObservation else { return }
-        let ownsBoundary = self.mutationTracker.mutationStartedAt == nil
         let needsCallerBarrier = !self.hasRemoteSelection || scope.effect != .mutationProducingFreshObservation
         if needsCallerBarrier {
-            guard try self.mutationTracker.beginDurableMutation(at: scope.startedAt) else {
-                throw PeekabooError.operationError(
-                    message: "A previous local desktop mutation barrier is still pending"
-                )
+            switch durableBarrier {
+            case .exclusive:
+                guard try self.mutationTracker.beginDurableMutation(at: scope.startedAt) else {
+                    throw PeekabooError.operationError(
+                        message: "A previous local desktop mutation barrier is still pending"
+                    )
+                }
+                self.preparedLocalMutationIDs.insert(scope.id)
+            case .concurrent:
+                try self.mutationTracker.beginConcurrentDurableMutation(id: scope.id, at: scope.startedAt)
+                self.preparedConcurrentMutationIDs.insert(scope.id)
             }
-            self.preparedLocalMutationIDs.insert(scope.id)
         }
         self.mutationTracker.begin(
             at: scope.startedAt,
             preservingSnapshotsCreatedAfterBoundary: scope.effect == .mutationProducingFreshObservation
         )
+        let boundaryStartedAt = self.mutationTracker.mutationStartedAt ?? scope.startedAt
+        self.latestPreparedSequenceByBoundary[boundaryStartedAt] = self.mutationTracker.mutationSequence
         self.trackingReceipts[scope.id] = TrackingReceipt(
-            sequence: self.mutationTracker.mutationSequence,
-            ownsBoundary: ownsBoundary
+            boundaryStartedAt: boundaryStartedAt
         )
     }
 
     func completeMutationBarrier(
         _ scope: MCPToolSnapshotMutationScope
     ) throws -> MCPToolMutationBarrierCompletion? {
-        guard self.preparedLocalMutationIDs.contains(scope.id) else { return nil }
-        let completion = try self.mutationTracker.completeDurableMutation(
-            through: scope.completedAt ?? Date()
-        )
-        self.preparedLocalMutationIDs.remove(scope.id)
+        let completion: DesktopMutationWatermarkStore.MutationCompletion?
+        if self.preparedLocalMutationIDs.contains(scope.id) {
+            completion = try self.mutationTracker.completeDurableMutation(
+                through: scope.completedAt ?? Date()
+            )
+            self.preparedLocalMutationIDs.remove(scope.id)
+        } else if self.preparedConcurrentMutationIDs.contains(scope.id) {
+            completion = try self.mutationTracker.completeConcurrentDurableMutation(
+                id: scope.id,
+                through: scope.completedAt ?? Date()
+            )
+            self.preparedConcurrentMutationIDs.remove(scope.id)
+        } else {
+            return nil
+        }
         self.completedPreparedMutationIDs.insert(scope.id)
         return completion.map {
             MCPToolMutationBarrierCompletion(
@@ -661,7 +721,9 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
 
     @discardableResult
     func completeMutation(_ scope: MCPToolSnapshotMutationScope, succeeded: Bool) async -> Bool {
-        self.trackingReceipts.removeValue(forKey: scope.id)
+        if let receipt = self.trackingReceipts.removeValue(forKey: scope.id) {
+            self.committedBoundaries.insert(receipt.boundaryStartedAt)
+        }
         let completedPreparedMutation = self.completedPreparedMutationIDs.remove(scope.id) != nil
         // `see` must observe publication failure before rendering its fresh snapshot.
         let defersToOuterCommandBarrier = !self.hasRemoteSelection &&
@@ -718,23 +780,55 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
                 preserving: preservedSnapshotID,
                 preservedAt: preservedSnapshotID == nil ? nil : scope.completedAt
             )
-            return retried && (!succeeded || effectiveSucceeded)
+            let result = retried && (!succeeded || effectiveSucceeded)
+            self.pruneInactiveBoundaryState()
+            return result
         }
-        return !succeeded || effectiveSucceeded
+        let result = !succeeded || effectiveSucceeded
+        self.pruneInactiveBoundaryState()
+        return result
     }
 
     func cancelMutation(_ scope: MCPToolSnapshotMutationScope) async -> Bool {
         do {
-            if self.preparedLocalMutationIDs.remove(scope.id) != nil {
+            if self.preparedLocalMutationIDs.contains(scope.id) {
                 try self.mutationTracker.cancelDurableMutation()
+                self.preparedLocalMutationIDs.remove(scope.id)
+            }
+            if self.preparedConcurrentMutationIDs.contains(scope.id) {
+                try self.mutationTracker.cancelConcurrentDurableMutation(id: scope.id)
+                self.preparedConcurrentMutationIDs.remove(scope.id)
             }
         } catch {
             return false
         }
         self.completedPreparedMutationIDs.remove(scope.id)
-        if let receipt = self.trackingReceipts.removeValue(forKey: scope.id), receipt.ownsBoundary {
-            self.mutationTracker.cancelUncommittedMutation(sequence: receipt.sequence)
+        if let receipt = self.trackingReceipts.removeValue(forKey: scope.id) {
+            let boundary = receipt.boundaryStartedAt
+            let hasActiveScope = self.trackingReceipts.values.contains { $0.boundaryStartedAt == boundary }
+            // This scope's durable lease was canceled above. Any lease still present belongs to an outer boundary and
+            // must survive this leaf refusal.
+            if !hasActiveScope,
+               !self.committedBoundaries.contains(boundary),
+               !self.mutationTracker.hasPendingDurableMutation,
+               self.mutationTracker.mutationStartedAt == boundary,
+               let latestSequence = self.latestPreparedSequenceByBoundary[boundary],
+               self.mutationTracker.mutationSequence == latestSequence {
+                self.mutationTracker.cancelUncommittedMutation(sequence: latestSequence)
+            }
         }
+        self.pruneInactiveBoundaryState()
         return true
+    }
+
+    private func pruneInactiveBoundaryState() {
+        let activeBoundaries = Set(self.trackingReceipts.values.map(\.boundaryStartedAt))
+        let currentBoundary = self.mutationTracker.mutationStartedAt
+        self.latestPreparedSequenceByBoundary = self.latestPreparedSequenceByBoundary.filter { boundary, _ in
+            activeBoundaries.contains(boundary) || boundary == currentBoundary
+        }
+        self.committedBoundaries = self.committedBoundaries.filter { boundary in
+            activeBoundaries.contains(boundary) || boundary == currentBoundary
+        }
     }
 }

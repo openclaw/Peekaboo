@@ -122,22 +122,39 @@ struct MCPPolicyAwareCatalogTests {
     }
 
     @Test
-    func `Browser tool hides connection setup under background authority`() async {
+    func `Browser tool hides every user activating provider route under background authority`() async {
         let backgroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .backgroundOnly)
         let tool = BrowserTool(context: backgroundContext)
         guard case let .object(schema) = tool.inputSchema,
               case let .object(properties)? = schema["properties"],
               case let .object(action)? = properties["action"],
-              case let .array(actions)? = action["enum"]
+              case let .array(actions)? = action["enum"],
+              case let .object(rawTool)? = properties["mcp_tool"],
+              case let .array(rawNames)? = rawTool["enum"]
         else {
             Issue.record("Expected background-only Browser schema")
             return
         }
-        #expect(!actions.contains(.string(BrowserAction.connect.rawValue)))
-        #expect(actions.contains(.string(BrowserAction.status.rawValue)))
-        #expect(actions.contains(.string(BrowserAction.listPages.rawValue)))
+        #expect(Set(actions.compactMap(\.stringValue)) == Set(
+            BrowserMCPUserActivationPolicy.backgroundCatalogActions.map(\.rawValue)))
+        for hidden in [
+            BrowserAction.connect, .listPages, .selectPage, .closePage, .newPage, .navigate, .waitFor, .snapshot,
+            .click, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog,
+        ] {
+            #expect(!actions.contains(.string(hidden.rawValue)))
+        }
         #expect(properties["browser_url"] == nil)
-        #expect(tool.description.contains("Connect is unavailable"))
+        #expect(properties["uid"] == nil)
+        #expect(properties["message_id"] == nil)
+        #expect(properties["url"] == nil)
+        #expect(properties["request_id"]?.objectValue?["minimum"] == .int(1))
+        #expect(Set(rawNames.compactMap(\.stringValue)) ==
+            BrowserMCPUserActivationPolicy.backgroundCatalogToolNames)
+        #expect(tool.description.contains("browser user activation"))
+        #expect(tool.description.contains("page discovery"))
+        let description = tool.description.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        #expect(description.contains("another cli or daemon connection is not reused"))
+        #expect(!tool.description.contains("standalone CLI"))
 
         let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
         let foregroundTool = BrowserTool(context: foregroundContext)
@@ -150,8 +167,14 @@ struct MCPPolicyAwareCatalogTests {
             return
         }
         #expect(foregroundActions.contains(.string(BrowserAction.connect.rawValue)))
+        #expect(foregroundActions.contains(.string(BrowserAction.listPages.rawValue)))
+        #expect(foregroundActions.contains(.string(BrowserAction.snapshot.rawValue)))
         #expect(foregroundProperties["browser_url"] != nil)
+        #expect(foregroundProperties["uid"] != nil)
+        #expect(foregroundProperties["message_id"] != nil)
+        #expect(foregroundProperties["url"] != nil)
         #expect(foregroundTool.description.contains("accept Chrome's remote debugging prompt"))
+        #expect(foregroundTool.description.contains("user activation"))
     }
 
     @Test

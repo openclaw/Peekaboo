@@ -15,6 +15,181 @@ extension PeekabooAgentService {
         let identity: PersistedModelIdentity
     }
 
+    func beginAgentSessionExecution(for sessionID: String) throws -> UUID {
+        guard self.agentSessionDeletionTombstones[sessionID] == nil else {
+            throw PeekabooError.sessionNotFound(sessionID)
+        }
+        let generation = UUID()
+        self.agentSessionExecutionGenerations[sessionID, default: []].insert(generation)
+        return generation
+    }
+
+    func requireCurrentAgentSessionExecution(
+        sessionID: String,
+        executionGeneration: UUID?) throws
+    {
+        guard self.agentSessionDeletionTombstones[sessionID] == nil else {
+            throw PeekabooError.sessionNotFound(sessionID)
+        }
+        guard let executionGeneration else { return }
+        guard self.agentSessionExecutionGenerations[sessionID]?.contains(executionGeneration) == true else {
+            throw PeekabooError.sessionNotFound(sessionID)
+        }
+    }
+
+    func isCurrentAgentSessionExecution(
+        sessionID: String,
+        executionGeneration: UUID?) -> Bool
+    {
+        guard self.agentSessionDeletionTombstones[sessionID] == nil else { return false }
+        guard let executionGeneration else { return true }
+        return self.agentSessionExecutionGenerations[sessionID]?.contains(executionGeneration) == true
+    }
+
+    func finishAgentSessionExecution(sessionID: String, executionGeneration: UUID?) {
+        guard let executionGeneration else { return }
+        self.finishAgentSessionBrowserExecution(
+            sessionID: sessionID,
+            executionGeneration: executionGeneration)
+        if var tombstone = self.agentSessionDeletionTombstones[sessionID],
+           tombstone.invalidatedExecutionGenerations.remove(executionGeneration) != nil
+        {
+            self.agentSessionDeletionTombstones[sessionID] = tombstone
+            self.settleAgentSessionDeletionIfPossible(sessionID: sessionID)
+            return
+        }
+        guard var generations = self.agentSessionExecutionGenerations[sessionID] else { return }
+        generations.remove(executionGeneration)
+        if generations.isEmpty {
+            self.agentSessionExecutionGenerations.removeValue(forKey: sessionID)
+        } else {
+            self.agentSessionExecutionGenerations[sessionID] = generations
+        }
+    }
+
+    func beginAgentSessionBrowserExecution(sessionID: String, executionGeneration: UUID?) {
+        guard let executionGeneration else { return }
+        self.agentSessionBrowserExecutionGenerations[sessionID, default: []].insert(executionGeneration)
+    }
+
+    @discardableResult
+    func finishAgentSessionBrowserExecution(sessionID: String, executionGeneration: UUID?) -> Bool {
+        guard let executionGeneration,
+              var generations = self.agentSessionBrowserExecutionGenerations[sessionID]
+        else { return false }
+        let removed = generations.remove(executionGeneration) != nil
+        if generations.isEmpty {
+            self.agentSessionBrowserExecutionGenerations.removeValue(forKey: sessionID)
+        } else {
+            self.agentSessionBrowserExecutionGenerations[sessionID] = generations
+        }
+        return removed
+    }
+
+    func hasAgentSessionBrowserExecution(sessionID: String) -> Bool {
+        self.agentSessionBrowserExecutionGenerations[sessionID]?.isEmpty == false
+    }
+
+    func installAgentSessionDeletionTombstones(for sessionIDs: [String]) -> [String: UUID] {
+        var claims: [String: UUID] = [:]
+        for sessionID in sessionIDs where claims[sessionID] == nil {
+            guard self.agentSessionDeletionTombstones[sessionID] == nil else { continue }
+            let deletionGeneration = UUID()
+            let invalidated = self.agentSessionExecutionGenerations.removeValue(forKey: sessionID) ?? []
+            self.agentSessionDeletionTombstones[sessionID] = AgentSessionDeletionTombstone(
+                deletionGeneration: deletionGeneration,
+                invalidatedExecutionGenerations: invalidated)
+            claims[sessionID] = deletionGeneration
+        }
+        return claims
+    }
+
+    func rollbackAgentSessionDeletion(sessionID: String, deletionGeneration: UUID) {
+        guard let tombstone = self.agentSessionDeletionTombstones[sessionID],
+              tombstone.deletionGeneration == deletionGeneration,
+              tombstone.phase == .deleting
+        else { return }
+        self.agentSessionDeletionTombstones.removeValue(forKey: sessionID)
+        if !tombstone.invalidatedExecutionGenerations.isEmpty {
+            self.agentSessionExecutionGenerations[sessionID, default: []]
+                .formUnion(tombstone.invalidatedExecutionGenerations)
+        }
+    }
+
+    func markAgentSessionStorageDeleted(sessionID: String, deletionGeneration: UUID) {
+        guard var tombstone = self.agentSessionDeletionTombstones[sessionID],
+              tombstone.deletionGeneration == deletionGeneration
+        else { return }
+        tombstone.phase = .deleted
+        tombstone.browserCleanupStarted = true
+        self.agentSessionDeletionTombstones[sessionID] = tombstone
+    }
+
+    func recordAgentSessionBrowserCleanup(
+        sessionID: String,
+        deletionGeneration: UUID,
+        confirmed: Bool)
+    {
+        guard var tombstone = self.agentSessionDeletionTombstones[sessionID],
+              tombstone.deletionGeneration == deletionGeneration,
+              tombstone.browserCleanupStarted
+        else { return }
+        if confirmed {
+            tombstone.browserCleanupPending = false
+            tombstone.browserCleanupConfirmed = true
+        } else {
+            tombstone.browserCleanupPending = true
+        }
+        self.agentSessionDeletionTombstones[sessionID] = tombstone
+        self.settleAgentSessionDeletionIfPossible(sessionID: sessionID)
+    }
+
+    func recordDrainedAgentSessionBrowserCleanup() {
+        let sessionIDs = self.agentSessionDeletionTombstones.compactMap { sessionID, tombstone in
+            tombstone.phase == .deleted && tombstone.browserCleanupPending ? sessionID : nil
+        }
+        for sessionID in sessionIDs {
+            guard var tombstone = self.agentSessionDeletionTombstones[sessionID] else { continue }
+            tombstone.browserCleanupPending = false
+            tombstone.browserCleanupConfirmed = true
+            self.agentSessionDeletionTombstones[sessionID] = tombstone
+            self.settleAgentSessionDeletionIfPossible(sessionID: sessionID)
+        }
+    }
+
+    private func settleAgentSessionDeletionIfPossible(sessionID: String) {
+        guard let tombstone = self.agentSessionDeletionTombstones[sessionID],
+              tombstone.phase == .deleted,
+              tombstone.browserCleanupStarted,
+              tombstone.browserCleanupConfirmed,
+              tombstone.invalidatedExecutionGenerations.isEmpty
+        else { return }
+        self.agentSessionDeletionTombstones.removeValue(forKey: sessionID)
+    }
+
+    func deletePersistedAgentSession(
+        id: String,
+        deletionGeneration: UUID) async throws -> Bool
+    {
+        do {
+            try await self.sessionManager.deleteSession(id: id)
+        } catch {
+            self.rollbackAgentSessionDeletion(
+                sessionID: id,
+                deletionGeneration: deletionGeneration)
+            throw error
+        }
+        self.markAgentSessionStorageDeleted(
+            sessionID: id,
+            deletionGeneration: deletionGeneration)
+        let cleanupConfirmed = await self.endBrowserClient(forAgentSessionID: id)
+        self.recordAgentSessionBrowserCleanup(
+            sessionID: id,
+            deletionGeneration: deletionGeneration,
+            confirmed: cleanupConfirmed)
+        return cleanupConfirmed
+    }
+
     public func continueSession(
         sessionId: String,
         userMessage: String,
@@ -57,9 +232,19 @@ extension PeekabooAgentService {
         self.isVerbose = verbose
         TachikomaConfiguration.current.setVerbose(verbose)
 
+        let executionGeneration = try self.beginAgentSessionExecution(for: sessionId)
+        defer {
+            self.finishAgentSessionExecution(
+                sessionID: sessionId,
+                executionGeneration: executionGeneration)
+        }
+
         guard let existingSession = try await self.sessionManager.loadSession(id: sessionId) else {
             throw PeekabooError.sessionNotFound(sessionId)
         }
+        try self.requireCurrentAgentSessionExecution(
+            sessionID: sessionId,
+            executionGeneration: executionGeneration)
         let executionPolicy = try Self.resolveToolExecutionPolicy(
             for: existingSession,
             requested: requestedToolExecutionPolicy)
@@ -95,7 +280,8 @@ extension PeekabooAgentService {
             model: selectedModel,
             provider: resolvedModel.provider,
             modelIdentity: resolvedModel.identity,
-            toolExecutionPolicy: executionPolicy)
+            toolExecutionPolicy: executionPolicy,
+            executionGeneration: executionGeneration)
 
         if let eventDelegate {
             let unsafeDelegate = UnsafeTransfer<any AgentEventDelegate>(eventDelegate)
@@ -279,17 +465,52 @@ extension PeekabooAgentService {
 
     /// Delete a specific session
     public func deleteSession(id: String) async throws {
-        // Delete a specific session
-        try await self.sessionManager.deleteSession(id: id)
+        let claims = self.installAgentSessionDeletionTombstones(for: [id])
+        guard let deletionGeneration = claims[id] else {
+            throw PeekabooError.operationError(message: "Agent session \(id) is already being deleted")
+        }
+        guard try await self.deletePersistedAgentSession(
+            id: id,
+            deletionGeneration: deletionGeneration)
+        else {
+            throw PeekabooError.operationError(
+                message: "Browser session cleanup remains pending after deleting agent session \(id)")
+        }
     }
 
     /// Clear all sessions
     public func clearAllSessions() async throws {
-        // Not available in current AgentSessionManager implementation
-        // Would need to iterate and delete individual sessions
         let sessions = self.sessionManager.listSessions()
-        for session in sessions {
-            try await self.sessionManager.deleteSession(id: session.id)
+        let sessionIDs = sessions.map(\.id)
+        let claims = self.installAgentSessionDeletionTombstones(for: sessionIDs)
+        guard claims.count == Set(sessionIDs).count else {
+            for (sessionID, deletionGeneration) in claims {
+                self.rollbackAgentSessionDeletion(
+                    sessionID: sessionID,
+                    deletionGeneration: deletionGeneration)
+            }
+            throw PeekabooError.operationError(message: "An agent session is already being deleted")
+        }
+        for (index, sessionID) in sessionIDs.enumerated() {
+            guard let deletionGeneration = claims[sessionID] else { continue }
+            do {
+                _ = try await self.deletePersistedAgentSession(
+                    id: sessionID,
+                    deletionGeneration: deletionGeneration)
+            } catch {
+                for pendingID in sessionIDs.dropFirst(index + 1) {
+                    guard let pendingGeneration = claims[pendingID] else { continue }
+                    self.rollbackAgentSessionDeletion(
+                        sessionID: pendingID,
+                        deletionGeneration: pendingGeneration)
+                }
+                throw error
+            }
+        }
+        let cleanupDebtDrained = await self.drainBrowserCleanupDebt()
+        guard cleanupDebtDrained else {
+            throw PeekabooError.operationError(
+                message: "Browser session cleanup remains pending after clearing agent sessions")
         }
     }
 }

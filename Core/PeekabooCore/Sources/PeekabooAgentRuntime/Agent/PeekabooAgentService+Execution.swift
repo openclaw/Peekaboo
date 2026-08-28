@@ -289,6 +289,42 @@ struct UnsafeTransfer<T>: @unchecked Sendable {
 extension PeekabooAgentService {
     // MARK: - Helper Functions
 
+    private func acquireExecutionToolset(
+        context: SessionContext,
+        model: LanguageModel,
+        snapshotOwner: MCPToolSnapshotOwner) async throws -> [AgentTool]
+    {
+        var browserAcquisitionStarted = false
+        do {
+            return try await self.buildExecutionToolset(
+                for: model,
+                agentSessionID: context.id,
+                agentExecutionGeneration: context.executionGeneration,
+                snapshotOwner: snapshotOwner,
+                executionPolicy: context.toolExecutionPolicy,
+                onBrowserAcquisitionStarted: {
+                    browserAcquisitionStarted = true
+                    self.beginAgentSessionBrowserExecution(
+                        sessionID: context.id,
+                        executionGeneration: context.executionGeneration)
+                })
+        } catch {
+            guard browserAcquisitionStarted else { throw error }
+            self.finishAgentSessionBrowserExecution(
+                sessionID: context.id,
+                executionGeneration: context.executionGeneration)
+            guard !self.hasAgentSessionBrowserExecution(sessionID: context.id) else {
+                self.logger.debug("Keeping the shared browser session for another active browser execution")
+                throw error
+            }
+            let cleanupConfirmed = await self.endBrowserClient(forAgentSessionID: context.id)
+            if !cleanupConfirmed {
+                self.logger.error("Browser session cleanup remains pending after toolset acquisition failed")
+            }
+            throw error
+        }
+    }
+
     /// Parse a model string and return a mock model object for compatibility
     func parseModelString(_ modelString: String) async throws -> Any {
         // This is a compatibility stub - in the new API we use LanguageModel enum directly
@@ -305,17 +341,23 @@ extension PeekabooAgentService {
         eventHandler: EventHandler? = nil,
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
+        defer {
+            self.finishAgentSessionExecution(
+                sessionID: context.id,
+                executionGeneration: context.executionGeneration)
+        }
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         _ = streamingDelegate
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
-        let tools = await self.buildToolset(
-            for: model,
-            snapshotOwner: snapshotOwner,
-            executionPolicy: context.toolExecutionPolicy)
+        let tools = try await self.acquireExecutionToolset(
+            context: context,
+            model: model,
+            snapshotOwner: snapshotOwner)
         self.logModelUsage(model, prefix: "Streaming ")
         guard let provider = context.provider else {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
         }
 
@@ -346,6 +388,7 @@ extension PeekabooAgentService {
                 model: model,
                 checkpoint: latestCheckpoint,
                 status: wasCancelled ? "cancelled" : "failed")
+            await self.endEphemeralBrowserClientIfNeeded(context)
             if wasCancelled {
                 throw CancellationError()
             }
@@ -356,23 +399,29 @@ extension PeekabooAgentService {
         let executionTime = endTime.timeIntervalSince(context.executionStart)
         let toolCallCount = outcome.toolCallCount
 
-        try self.saveExecutionSession(
-            context: context,
-            model: model,
-            finalMessages: outcome.messages,
-            endTime: endTime,
-            toolCallCount: toolCallCount,
-            usage: outcome.usage,
-            status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        do {
+            try self.saveExecutionSession(
+                context: context,
+                model: model,
+                finalMessages: outcome.messages,
+                endTime: endTime,
+                toolCallCount: toolCallCount,
+                usage: outcome.usage,
+                status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        } catch {
+            await self.endEphemeralBrowserClientIfNeeded(context)
+            throw error
+        }
 
         if outcome.reachedStepLimit {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw AgentStepLimitExceededError(
                 maxSteps: maxSteps,
                 sessionId: context.id,
                 sessionWasPersisted: context.isPersistent)
         }
 
-        return AgentExecutionResult(
+        let result = AgentExecutionResult(
             content: outcome.content,
             messages: outcome.messages,
             sessionId: context.isPersistent ? context.id : nil,
@@ -383,6 +432,8 @@ extension PeekabooAgentService {
                 toolCallCount: toolCallCount,
                 startTime: context.executionStart,
                 endTime: endTime))
+        await self.endEphemeralBrowserClientIfNeeded(context)
+        return result
     }
 
     /// Execute task using direct generateText calls without streaming
@@ -393,16 +444,22 @@ extension PeekabooAgentService {
         eventHandler: EventHandler? = nil,
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
+        defer {
+            self.finishAgentSessionExecution(
+                sessionID: context.id,
+                executionGeneration: context.executionGeneration)
+        }
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
-        let tools = await self.buildToolset(
-            for: model,
-            snapshotOwner: snapshotOwner,
-            executionPolicy: context.toolExecutionPolicy)
+        let tools = try await self.acquireExecutionToolset(
+            context: context,
+            model: model,
+            snapshotOwner: snapshotOwner)
         self.logModelUsage(model, prefix: "")
         guard let provider = context.provider else {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
         }
 
@@ -432,6 +489,7 @@ extension PeekabooAgentService {
                 model: model,
                 checkpoint: latestCheckpoint,
                 status: wasCancelled ? "cancelled" : "failed")
+            await self.endEphemeralBrowserClientIfNeeded(context)
             if wasCancelled {
                 throw CancellationError()
             }
@@ -441,23 +499,29 @@ extension PeekabooAgentService {
         let endTime = Date()
         let executionTime = endTime.timeIntervalSince(context.executionStart)
 
-        try self.saveExecutionSession(
-            context: context,
-            model: model,
-            finalMessages: outcome.messages,
-            endTime: endTime,
-            toolCallCount: outcome.toolCallCount,
-            usage: outcome.usage,
-            status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        do {
+            try self.saveExecutionSession(
+                context: context,
+                model: model,
+                finalMessages: outcome.messages,
+                endTime: endTime,
+                toolCallCount: outcome.toolCallCount,
+                usage: outcome.usage,
+                status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+        } catch {
+            await self.endEphemeralBrowserClientIfNeeded(context)
+            throw error
+        }
 
         if outcome.reachedStepLimit {
+            await self.endEphemeralBrowserClientIfNeeded(context)
             throw AgentStepLimitExceededError(
                 maxSteps: maxSteps,
                 sessionId: context.id,
                 sessionWasPersisted: context.isPersistent)
         }
 
-        return AgentExecutionResult(
+        let result = AgentExecutionResult(
             content: outcome.content,
             messages: outcome.messages,
             sessionId: context.isPersistent ? context.id : nil,
@@ -468,6 +532,8 @@ extension PeekabooAgentService {
                 toolCallCount: outcome.toolCallCount,
                 startTime: context.executionStart,
                 endTime: endTime))
+        await self.endEphemeralBrowserClientIfNeeded(context)
+        return result
     }
 
     func runGenerationLoop(

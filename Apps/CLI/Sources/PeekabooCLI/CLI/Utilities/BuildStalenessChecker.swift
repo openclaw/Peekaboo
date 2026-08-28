@@ -78,18 +78,20 @@ private func defaultGitConfigPaths(environment: [String: String], currentDirecto
         paths.append(URL(fileURLWithPath: home).appendingPathComponent(".gitconfig").path)
     }
 
-    if let localConfigPath = findGitConfigPath(startingAt: currentDirectory) {
+    if let localConfigPath = findGitConfigPath(startingAt: URL(fileURLWithPath: currentDirectory, isDirectory: true)) {
         paths.append(localConfigPath)
     }
 
     return paths
 }
 
-private func findGitConfigPath(startingAt path: String) -> String? {
-    let fileManager = FileManager.default
-    var directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+func findGitConfigPath(startingAt directory: URL, fileManager: FileManager = .default) -> String? {
+    var components = directory.standardizedFileURL.pathComponents
 
-    while true {
+    // Consume one component per ancestor, including root, without asking for root's parent.
+    while !components.isEmpty {
+        let directory = URL(fileURLWithPath: NSString.path(withComponents: components), isDirectory: true)
+        components.removeLast()
         let dotGit = directory.appendingPathComponent(".git").path
         var isDirectory: ObjCBool = false
         if fileManager.fileExists(atPath: dotGit, isDirectory: &isDirectory) {
@@ -108,13 +110,9 @@ private func findGitConfigPath(startingAt path: String) -> String? {
                 return gitDirURL.appendingPathComponent("config").path
             }
         }
-
-        let parent = directory.deletingLastPathComponent()
-        if parent.path == directory.path {
-            return nil
-        }
-        directory = parent
     }
+
+    return nil
 }
 
 /// Check if the embedded git commit differs from the current git commit

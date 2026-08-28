@@ -214,6 +214,53 @@ struct MCPToolContextTests {
 
     @Test
     @MainActor
+    func `remote MCP refuses a browser client without scoped session support`() async {
+        let services = RemotePeekabooServices(
+            client: PeekabooBridgeClient(socketPath: "/tmp/peekaboo-unused-context-test.sock"))
+        let root = UnsupportedBrowserRoot()
+        let context = MCPToolContext(services: services, browser: root)
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await context.openingBrowserSession(named: "mcp:must-not-borrow-root")
+        }
+        #expect(root.callCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `local MCP refuses an unsupported browser root but browser filtering skips session opening`() async throws {
+        let services = PeekabooServices()
+        let root = UnsupportedBrowserRoot()
+        let context = MCPToolContext(services: services, browser: root)
+
+        #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try context.scopingBrowserSession(named: "mcp:must-not-borrow-root")
+        }
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await PeekabooMCPServer(
+                toolContext: context,
+                toolFilters: ToolFilters(
+                    allow: ["browser"],
+                    deny: [],
+                    allowSource: .config,
+                    denySources: [:]))
+        }
+        #expect(root.callCount == 0)
+
+        let filteredServer = try await PeekabooMCPServer(
+            toolContext: context,
+            toolFilters: ToolFilters(
+                allow: ["permissions"],
+                deny: [],
+                allowSource: .config,
+                denySources: [:]))
+        #expect(await filteredServer.registeredToolNamesForTesting() == ["permissions"])
+        #expect(root.callCount == 0)
+        #expect(await filteredServer.stopForTesting())
+    }
+
+    @Test
+    @MainActor
     func `Agent foreground opt-in cannot execute the real shell tool`() async throws {
         let agent = try PeekabooAgentService(services: PeekabooServices())
         let marker = FileManager.default.temporaryDirectory
@@ -281,6 +328,34 @@ struct MCPToolContextTests {
             #expect(ObjectIdentifier(context.menu as AnyObject) ==
                 ObjectIdentifier(services.menu as AnyObject))
         }
+    }
+}
+
+@MainActor
+private final class UnsupportedBrowserRoot: BrowserMCPClientProviding, @unchecked Sendable {
+    private(set) var callCount = 0
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        self.callCount += 1
+        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        self.callCount += 1
+        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func disconnect() async {
+        self.callCount += 1
+    }
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        self.callCount += 1
+        return .text("unexpected root execution")
     }
 }
 

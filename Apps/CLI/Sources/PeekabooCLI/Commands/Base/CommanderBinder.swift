@@ -1,5 +1,6 @@
 import Commander
 import Foundation
+import PeekabooAgentRuntime
 import PeekabooAutomationKit
 import PeekabooFoundation
 
@@ -154,6 +155,11 @@ enum CommanderCLIBinder {
         options.usesPerToolSnapshotInvalidation = Self.isAgentExecutionCommand(commandType) ||
             commandType == MCPCommand.Serve.self ||
             commandType == VerifyCommand.self
+        if commandType == MCPCommand.Serve.self,
+           MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(environment: environment) {
+            options.dynamicToolScreenCaptureReachable = false
+            options.requiresSilentCapture = false
+        }
         options.requiresProducerBoundSnapshotReferences = commandType == SeeCommand.self ||
             options.requiresSilentCapture ||
             options.usesPerToolSnapshotInvalidation
@@ -224,7 +230,14 @@ enum CommanderCLIBinder {
         }
         if commandType == BrowserCommand.self {
             options.requiresBrowserMCP = true
+            options.requiresBrowserHandoffBridge = !commandValues.optionValues("handoffFile").isEmpty
         }
+        try BrowserHandoffCLIInput.configureRuntimeOptions(
+            &options,
+            commandType: commandType,
+            values: commandValues,
+            environment: environment
+        )
         return options
     }
 
@@ -402,9 +415,6 @@ enum CommanderCLIBinder {
         }
         if commandType == MenuBarCommand.ClickSubcommand.self {
             return true
-        }
-        if commandType == BrowserCommand.self {
-            return BrowserCommand.actionMayMutate(parsedValues.positional.first ?? "status")
         }
         if commandType == SeeCommand.self {
             let values = CommanderBindableValues(parsedValues: parsedValues)

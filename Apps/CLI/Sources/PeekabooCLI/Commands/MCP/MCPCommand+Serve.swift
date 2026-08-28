@@ -19,7 +19,7 @@ extension MCPCommand {
             Starts Peekaboo as an MCP server, exposing all its tools via the
             Model Context Protocol. This allows AI clients like Claude to use
             Peekaboo's automation capabilities. The server is background-only by default;
-            pass --allow-foreground to authorize foreground actions for this server process.
+            pass --allow-foreground to authorize foreground actions and browser user activation for this server process.
 
             USAGE WITH CLAUDE CODE:
               claude mcp add peekaboo -- peekaboo mcp
@@ -37,9 +37,12 @@ extension MCPCommand {
 
         @Flag(
             name: .customLong("allow-foreground"),
-            help: "Authorize foreground/global UI for this MCP server"
+            help: "Authorize foreground/global UI and browser user activation for this MCP server"
         )
         var allowForeground = false
+
+        var browserHandoff: String?
+        var runtimeOptions = CommandRuntimeOptions()
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -82,7 +85,14 @@ extension MCPCommand {
                     executionPolicy: self.allowForeground ? .foregroundAllowed : .backgroundOnly,
                     capturePreflightRefusal: runtime.toolCapturePreflightRefusal
                 )
-                let server = try await PeekabooMCPServer(toolContext: toolContext)
+                let browserHandoff = runtime.browserHandoffReceiptBundleData.map {
+                    BrowserMCPHandoffGrant(payload: $0)
+                }
+                // Server initialization opens the authenticated remote scope before tools are registered or served.
+                let server = try await PeekabooMCPServer(
+                    toolContext: toolContext,
+                    browserHandoff: browserHandoff
+                )
                 try await server.serve(transport: transportType, port: self.port)
                 await Self.stopLocalDaemon(localDaemon)
             } catch let exitCode as ExitCode {
@@ -92,6 +102,20 @@ extension MCPCommand {
                 await Self.stopLocalDaemon(localDaemon)
                 runtime.logger.error("Failed to start MCP server: \(error)")
                 throw ExitCode.failure
+            }
+        }
+
+        func validateBeforeRuntime() throws {
+            if self.browserHandoff != nil {
+                guard self.runtimeOptions.browserHandoffReceiptBundleData != nil else {
+                    throw BrowserHandoffCLIInputError.invalidReceipt("receipt was not loaded before runtime creation")
+                }
+                guard self.runtimeOptions.preferRemote,
+                      !self.runtimeOptions.remoteIsolationRequested,
+                      self.runtimeOptions.bridgeSocketPath != nil
+                else {
+                    throw BrowserHandoffCLIInputError.localExecutionRefused
+                }
             }
         }
 
@@ -138,6 +162,8 @@ extension MCPCommand {
 @MainActor
 extension MCPCommand.Serve: ParsableCommand {}
 extension MCPCommand.Serve: AsyncRuntimeCommand {}
+extension MCPCommand.Serve: PreRuntimeValidatingCommand {}
+extension MCPCommand.Serve: RuntimeOptionsConfigurable {}
 
 extension MCPCommand.Serve: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
@@ -148,5 +174,6 @@ extension MCPCommand.Serve: CommanderBindableCommand {
             self.port = portOption
         }
         self.allowForeground = values.flag("allowForeground")
+        self.browserHandoff = values.singleOption("browserHandoff")
     }
 }
