@@ -279,16 +279,7 @@ extension AgentCommand {
                 toolExecutionPolicy: self.newSessionToolExecutionPolicy
             )
             self.displayResult(result, delegate: outputDelegate)
-            let duration = String(format: "%.2f", result.metadata.executionTime)
-            let sessionId = result.sessionId ?? "none"
-            let finalTokens = result.usage?.totalTokens ?? 0
-            let status = result.metadata.context["status"] ?? "completed"
-            AutomationEventLogger.log(
-                .agent,
-                "result status=\(status) task='\(task)' model=\(result.metadata.modelName) duration=\(duration)s "
-                    + "tools=\(result.metadata.toolCallCount) dry_run=\(self.dryRun) "
-                    + "session=\(sessionId) tokens=\(finalTokens)"
-            )
+            Self.logAgentAutomationResult(result, task: task, dryRun: self.dryRun)
             return result
         } catch let error as PeekabooAgentService.AgentStepLimitExceededError where preserveStepLimitError {
             if outputDelegate?.hasReceivedError != true {
@@ -306,6 +297,35 @@ extension AgentCommand {
                 self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")
             }
             throw ExitCode.failure
+        }
+    }
+
+    static func logAgentAutomationResult(_ result: AgentExecutionResult, task: String, dryRun: Bool) {
+        let model = Self.agentAutomationModelFamily(result.metadata.modelName)
+        let sessionId = result.sessionId
+            .flatMap(UUID.init(uuidString:))
+            .map(\.uuidString) ?? (result.sessionId == nil ? "none" : "invalid")
+        let duration = String(format: "%.2f", result.metadata.executionTime)
+        let finalTokens = result.usage?.totalTokens ?? 0
+        AutomationEventLogger.log(
+            .agent,
+            "result status=completed task_chars=\(task.count) model=\(model) duration=\(duration)s "
+                + "tools=\(result.metadata.toolCallCount) dry_run=\(dryRun) "
+                + "session=\(sessionId) tokens=\(finalTokens)"
+        )
+    }
+
+    private static func agentAutomationModelFamily(_ modelName: String) -> String {
+        guard let family = modelName.split(separator: "/", maxSplits: 1).first?.lowercased() else {
+            return "other"
+        }
+        return switch family {
+        case "anthropic", "anthropic-compatible", "google", "groq", "grok", "kimi", "lmstudio",
+             "minimax", "minimax-cn", "mistral", "ollama", "openai", "openai-compatible",
+             "openrouter", "replicate", "together":
+            family
+        case "azureopenai": "azure-openai"
+        default: "other"
         }
     }
 
