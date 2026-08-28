@@ -310,12 +310,10 @@ extension PeekabooAgentService {
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
-        let browserClient = try await self.browserClient(forAgentSessionID: context.id)
-        let tools = await self.buildToolset(
+        let tools = try await self.buildExecutionToolset(
             for: model,
+            agentSessionID: context.id,
             snapshotOwner: snapshotOwner,
-            browserClient: browserClient,
-            browserCapabilities: self.remoteBrowserCapabilities[context.id],
             executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "Streaming ")
         guard let provider = context.provider else {
@@ -410,12 +408,10 @@ extension PeekabooAgentService {
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
-        let browserClient = try await self.browserClient(forAgentSessionID: context.id)
-        let tools = await self.buildToolset(
+        let tools = try await self.buildExecutionToolset(
             for: model,
+            agentSessionID: context.id,
             snapshotOwner: snapshotOwner,
-            browserClient: browserClient,
-            browserCapabilities: self.remoteBrowserCapabilities[context.id],
             executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "")
         guard let provider = context.provider else {

@@ -41,6 +41,19 @@ enum AgentToolConstructionContext {
     @TaskLocal static var browserCapabilities: BrowserToolCapabilitySession?
 }
 
+enum AgentRemoteBrowserOpeningTask {
+    case inFlight(
+        id: UUID,
+        task: Task<any BrowserMCPScopedSessionEnding, any Error>)
+    case retryable(id: UUID)
+
+    var id: UUID {
+        switch self {
+        case let .inFlight(id, _), let .retryable(id): id
+        }
+    }
+}
+
 /// Service that integrates the new agent architecture with PeekabooCore services
 @available(macOS 14.0, *)
 @MainActor
@@ -55,8 +68,9 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     var browserCleanupDebtPending = false
     var remoteBrowserClients: [String: any BrowserMCPScopedSessionEnding] = [:]
     var remoteBrowserCapabilities: [String: BrowserToolCapabilitySession] = [:]
-    var remoteBrowserOpeningTasks:
-        [String: (id: UUID, task: Task<any BrowserMCPScopedSessionEnding, any Error>)] = [:]
+    var remoteBrowserOpeningTasks: [String: AgentRemoteBrowserOpeningTask] = [:]
+    var remoteBrowserQueuedOpeningIDs: [String: UUID] = [:]
+    var remoteBrowserOpeningSessionID: String?
     var remoteBrowserEndingTasks: [String: (id: UUID, task: Task<Bool, Never>)] = [:]
     var remoteBrowserCleanupDebt = Set<String>()
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate

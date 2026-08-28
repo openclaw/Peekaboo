@@ -55,6 +55,11 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         self.sessionTransport != nil
     }
 
+    @MainActor
+    public var browserMCPScopedSessionOpenAttemptRequiresRecovery: Bool {
+        self.pendingScopedSessionOpenAttempt != nil
+    }
+
     public init(
         client: PeekabooBridgeClient,
         sessionTransport: (any RemoteBrowserMCPSessionTransport)? = nil)

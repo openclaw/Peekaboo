@@ -25,6 +25,42 @@ extension PeekabooAgentService {
         return filtered
     }
 
+    /// Builds the final Agent catalog before acquiring a remote browser scope.
+    ///
+    /// When browser survives filtering, only that already-admitted tool is rebuilt with the session-scoped
+    /// client. This keeps filter evaluation single-shot and prevents browser-disabled runs from opening a scope.
+    func buildExecutionToolset(
+        for model: LanguageModel,
+        agentSessionID: String,
+        snapshotOwner: MCPToolSnapshotOwner,
+        executionPolicy: MCPToolExecutionPolicy,
+        filters: ToolFilters? = nil) async throws -> [AgentTool]
+    {
+        var filtered = self.filteredAgentTools(
+            snapshotOwner: snapshotOwner,
+            executionPolicy: executionPolicy,
+            filters: filters)
+        guard let browserIndex = filtered.firstIndex(where: { $0.name == "browser" }) else {
+            self.logToolsetDetails(filtered, model: model)
+            return filtered
+        }
+
+        let browserClient = try await self.browserClient(forAgentSessionID: agentSessionID)
+        let browserCapabilities = self.remoteBrowserCapabilities[agentSessionID]
+        let scopedBrowserTool = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
+            Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
+                Self.$toolConstructionBrowserClient.withValue(browserClient) {
+                    AgentToolConstructionContext.$browserCapabilities.withValue(browserCapabilities) {
+                        self.createBrowserTool()
+                    }
+                }
+            }
+        }
+        filtered[browserIndex] = scopedBrowserTool
+        self.logToolsetDetails(filtered, model: model)
+        return filtered
+    }
+
     /// The exact tool catalog exposed by a normal public Agent session.
     /// Public Agent entry points are background-only by default and never expose Shell.
     public func publicAgentTools(
@@ -39,7 +75,8 @@ extension PeekabooAgentService {
         snapshotOwner: MCPToolSnapshotOwner,
         browserClient: (any BrowserMCPClientProviding)? = nil,
         browserCapabilities: BrowserToolCapabilitySession? = nil,
-        executionPolicy: MCPToolExecutionPolicy) -> [AgentTool]
+        executionPolicy: MCPToolExecutionPolicy,
+        filters: ToolFilters? = nil) -> [AgentTool]
     {
         let tools = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
             Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
@@ -52,7 +89,7 @@ extension PeekabooAgentService {
         }
         let authorityFiltered = tools.filter { executionPolicy.exposesToolInCatalog(named: $0.name) }
 
-        let filters = ToolFiltering.currentFilters()
+        let filters = filters ?? ToolFiltering.currentFilters()
         return ToolFiltering.applyInputStrategyAvailability(
             ToolFiltering.apply(
                 authorityFiltered,

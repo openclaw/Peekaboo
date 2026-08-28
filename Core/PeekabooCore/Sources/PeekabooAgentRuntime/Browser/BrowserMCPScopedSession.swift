@@ -21,9 +21,23 @@ public protocol BrowserMCPScopedSessionEnding: BrowserMCPClientProviding {
 
 /// Additive surface for browser providers that can create a fresh, end-capable caller-scoped provider child.
 public protocol BrowserMCPScopedSessionOpening: BrowserMCPClientProviding {
+    /// Whether the most recent root open may still own a remote child whose response was not observed.
+    ///
+    /// Callers that serialize multiple logical sessions use this to retain the exact logical owner until
+    /// recovery or teardown resolves the open. Providers without indeterminate-open semantics use the default.
+    @MainActor
+    var browserMCPScopedSessionOpenAttemptRequiresRecovery: Bool { get }
+
     @MainActor
     func openBrowserMCPScopedSession(
         handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPScopedSessionEnding
+}
+
+extension BrowserMCPScopedSessionOpening {
+    @MainActor
+    public var browserMCPScopedSessionOpenAttemptRequiresRecovery: Bool {
+        false
+    }
 }
 
 extension BrowserMCPProviderSessionEpoch {

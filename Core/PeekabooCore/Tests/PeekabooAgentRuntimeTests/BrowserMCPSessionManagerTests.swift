@@ -1986,6 +1986,222 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `simultaneous remote Agent sessions serialize root opens and receive distinct children`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+
+        let firstOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "simultaneous-a")
+        }
+        await openBarrier.waitUntilBlocked()
+        let secondOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "simultaneous-b")
+        }
+        await Task.yield()
+
+        #expect(root.openCount == 1)
+        #expect(root.concurrentOpenCount == 0)
+        await openBarrier.release()
+
+        let first = try await firstOpen.value
+        let second = try await secondOpen.value
+        #expect(first !== second)
+        #expect(first !== root)
+        #expect(second !== root)
+        #expect(root.openCount == 2)
+        #expect(root.concurrentOpenCount == 0)
+        #expect(root.rootExecuteCount == 0)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "simultaneous-a"))
+        #expect(await agent.endBrowserClient(forAgentSessionID: "simultaneous-b"))
+        #expect(root.children.allSatisfy { $0.endCount == 1 })
+    }
+
+    @Test
+    func `ending a queued remote Agent session prevents it from opening after the owner completes`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+
+        let ownerOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "queued-owner")
+        }
+        await openBarrier.waitUntilBlocked()
+        let queuedOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "queued-ended")
+        }
+        await Task.yield()
+        #expect(agent.remoteBrowserQueuedOpeningIDs["queued-ended"] != nil)
+
+        #expect(await agent.endBrowserClient(forAgentSessionID: "queued-ended"))
+        #expect(agent.remoteBrowserQueuedOpeningIDs["queued-ended"] == nil)
+        await openBarrier.release()
+        let owner = try await ownerOpen.value
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await queuedOpen.value
+        }
+
+        #expect(root.openCount == 1)
+        #expect(root.concurrentOpenCount == 0)
+        #expect(root.children.count == 1)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "queued-owner"))
+        let ownerChild = try #require(owner as? AgentRemoteScopedBrowserChild)
+        #expect(ownerChild.endCount == 1)
+    }
+
+    @Test
+    func `cancelled queued remote Agent open stays cleanup addressable without dispatch`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+
+        let ownerOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "cancel-owner")
+        }
+        await openBarrier.waitUntilBlocked()
+        let queuedOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "cancel-queued")
+        }
+        await Task.yield()
+        #expect(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"] != nil)
+
+        queuedOpen.cancel()
+        await openBarrier.release()
+        _ = try await ownerOpen.value
+        await #expect(throws: CancellationError.self) {
+            _ = try await queuedOpen.value
+        }
+
+        #expect(root.openCount == 1)
+        #expect(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"] != nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "cancel-queued"))
+        #expect(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"] == nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "cancel-owner"))
+    }
+
+    @Test
+    func `retryable remote Agent open uses a fresh task generation`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        root.failNextOpenIndeterminately = true
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let sessionID = "retry-generation"
+
+        await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
+            _ = try await agent.browserClient(forAgentSessionID: sessionID)
+        }
+        let failedGeneration = try #require(agent.remoteBrowserOpeningTasks[sessionID]?.id)
+
+        let retryBarrier = SequenceBarrier()
+        root.openBarrier = retryBarrier
+        let retry = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: sessionID)
+        }
+        await retryBarrier.waitUntilBlocked()
+        let retryGeneration = try #require(agent.remoteBrowserOpeningTasks[sessionID]?.id)
+        #expect(retryGeneration != failedGeneration)
+
+        await retryBarrier.release()
+        let browser = try await retry.value
+        #expect(browser !== root)
+        #expect(root.openCount == 2)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
+    }
+
+    @Test
+    func `indeterminate remote Agent open remains owned until exact cleanup before admitting another session`()
+        async throws
+    {
+        let root = AgentRemoteBrowserRoot()
+        root.failNextOpenIndeterminately = true
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let firstSessionID = "indeterminate-a"
+
+        await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
+            _ = try await agent.browserClient(forAgentSessionID: firstSessionID)
+        }
+        #expect(root.browserMCPScopedSessionOpenAttemptRequiresRecovery)
+        #expect(agent.remoteBrowserOpeningTasks[firstSessionID] != nil)
+        #expect(agent.remoteBrowserOpeningSessionID == firstSessionID)
+
+        let cleanupBarrier = SequenceBarrier()
+        root.openBarrier = cleanupBarrier
+        let firstEnd = Task { @MainActor in
+            await agent.endBrowserClient(forAgentSessionID: firstSessionID)
+        }
+        await cleanupBarrier.waitUntilBlocked()
+        let secondOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "indeterminate-b")
+        }
+        await Task.yield()
+        #expect(root.openCount == 2)
+        #expect(root.concurrentOpenCount == 0)
+
+        await cleanupBarrier.release()
+        #expect(await firstEnd.value)
+        let second = try await secondOpen.value
+        let secondChild = try #require(second as? AgentRemoteScopedBrowserChild)
+        let recoveredFirstChild = try #require(root.children.first)
+        #expect(recoveredFirstChild !== secondChild)
+        #expect(recoveredFirstChild.endCount == 1)
+        #expect(secondChild.endCount == 0)
+        #expect(root.openCount == 3)
+        #expect(root.concurrentOpenCount == 0)
+        #expect(root.rootExecuteCount == 0)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "indeterminate-b"))
+        #expect(secondChild.endCount == 1)
+    }
+
+    @Test
+    func `browser filtered Agent execution toolset opens no remote scope`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let filters = ToolFiltering.filters(
+            config: Configuration(tools: .init(allow: ["permissions", "sleep"])),
+            environment: [:])
+
+        let tools = try await agent.buildExecutionToolset(
+            for: .anthropic(.sonnet45),
+            agentSessionID: "browser-filtered",
+            snapshotOwner: MCPToolSnapshotOwner(sessionID: "browser-filtered"),
+            executionPolicy: .backgroundOnly,
+            filters: filters)
+
+        #expect(!tools.contains { $0.name == "browser" })
+        #expect(root.openCount == 0)
+        #expect(root.rootExecuteCount == 0)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+    }
+
+    @Test
+    func `browser included remote Agent execution toolset refuses a legacy shared root`() async throws {
+        let root = AgentLegacyRemoteBrowserRoot()
+        let services = AgentRemoteBrowserServices(base: Self.services(browser: root))
+        let agent = try PeekabooAgentService(services: services)
+        let filters = ToolFiltering.filters(
+            config: Configuration(tools: .init(allow: ["browser"])),
+            environment: [:])
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await agent.buildExecutionToolset(
+                for: .anthropic(.sonnet45),
+                agentSessionID: "browser-included",
+                snapshotOwner: MCPToolSnapshotOwner(sessionID: "browser-included"),
+                executionPolicy: .backgroundOnly,
+                filters: filters)
+        }
+        #expect(root.executeCount == 0)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+    }
+
+    @Test
     func `remote Agent teardown closes an in flight open before the child becomes usable`() async throws {
         let root = AgentRemoteBrowserRoot()
         let openBarrier = SequenceBarrier()
@@ -2077,17 +2293,22 @@ struct BrowserMCPSessionManagerTests {
         let releasedSessionID = activeSessionIDs.removeFirst()
         #expect(await agent.endBrowserClient(forAgentSessionID: releasedSessionID))
         let replacementSessionID = "capacity-replacement"
-        let replacement = try await agent.browserClient(forAgentSessionID: replacementSessionID)
-        await #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
-            _ = try await agent.browserClient(forAgentSessionID: "capacity-overflow-again")
+        let replacementOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: replacementSessionID)
         }
+        await Task.yield()
+        #expect(root.openCount == capacity)
 
         await openBarrier.release()
         let pending = try await pendingOpen.value
+        let replacement = try await replacementOpen.value
         #expect(pending !== replacement)
         #expect(agent.remoteBrowserClients.count == capacity)
         #expect(agent.remoteBrowserOpeningTasks.isEmpty)
         #expect(root.openCount == capacity + 1)
+        await #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
+            _ = try await agent.browserClient(forAgentSessionID: "capacity-overflow-again")
+        }
 
         for sessionID in activeSessionIDs + [replacementSessionID, pendingSessionID] {
             #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
@@ -4047,19 +4268,35 @@ extension BrowserMCPSessionManagerTests {
 private final class AgentRemoteBrowserRoot: BrowserMCPScopedSessionOpening, @unchecked Sendable {
     var openBarrier: SequenceBarrier?
     var nextEndResults: [[Bool]] = []
+    var failNextOpenIndeterminately = false
+    private(set) var browserMCPScopedSessionOpenAttemptRequiresRecovery = false
     private(set) var openCount = 0
+    private(set) var concurrentOpenCount = 0
     private(set) var rootExecuteCount = 0
     private(set) var children: [AgentRemoteScopedBrowserChild] = []
+    private var openInProgress = false
 
     func openBrowserMCPScopedSession(
         handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPScopedSessionEnding
     {
         #expect(handoff == nil)
+        guard !self.openInProgress else {
+            self.concurrentOpenCount += 1
+            throw AgentRemoteBrowserOpenFixtureError.concurrentOpen
+        }
+        self.openInProgress = true
+        defer { self.openInProgress = false }
         self.openCount += 1
         if let openBarrier {
             self.openBarrier = nil
             await openBarrier.block()
         }
+        if self.failNextOpenIndeterminately {
+            self.failNextOpenIndeterminately = false
+            self.browserMCPScopedSessionOpenAttemptRequiresRecovery = true
+            throw AgentRemoteBrowserOpenFixtureError.indeterminate
+        }
+        self.browserMCPScopedSessionOpenAttemptRequiresRecovery = false
         let endResults = self.nextEndResults.isEmpty ? [true] : self.nextEndResults.removeFirst()
         let child = AgentRemoteScopedBrowserChild(endResults: endResults)
         self.children.append(child)
@@ -4084,6 +4321,11 @@ private final class AgentRemoteBrowserRoot: BrowserMCPScopedSessionOpening, @unc
         self.rootExecuteCount += 1
         return .text("shared root")
     }
+}
+
+private enum AgentRemoteBrowserOpenFixtureError: Error {
+    case concurrentOpen
+    case indeterminate
 }
 
 @MainActor
