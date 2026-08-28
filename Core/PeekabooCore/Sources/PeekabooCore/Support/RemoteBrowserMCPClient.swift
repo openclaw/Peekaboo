@@ -26,6 +26,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         let claimID: UUID
         let handoffPayload: Data?
         var phase: ScopedSessionOpenPhase
+        var operationMayHaveCompleted: Bool
     }
 
     private let client: PeekabooBridgeClient
@@ -85,12 +86,19 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
                 self.finishScopedSessionOpenAttempt(attempt, retryable: false)
                 throw error
             } catch {
-                let isIndeterminate = Self.shouldRetryScopedSessionOpen(after: error)
-                if automaticRetryRemaining, isIndeterminate {
+                let operationMayHaveCompleted = Self.scopedSessionOpenMayHaveCompleted(after: error)
+                let remainsUnresolved = self.recordScopedSessionOpenFailure(
+                    attempt,
+                    operationMayHaveCompleted: operationMayHaveCompleted)
+                if automaticRetryRemaining,
+                   !Task.isCancelled,
+                   !(error is CancellationError),
+                   operationMayHaveCompleted
+                {
                     automaticRetryRemaining = false
                     continue
                 }
-                self.finishScopedSessionOpenAttempt(attempt, retryable: isIndeterminate)
+                self.finishScopedSessionOpenAttempt(attempt, retryable: remainsUnresolved)
                 throw error
             }
         }
@@ -484,9 +492,25 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         let attempt = ScopedSessionOpenAttempt(
             claimID: UUID(),
             handoffPayload: payload,
-            phase: .inFlight)
+            phase: .inFlight,
+            operationMayHaveCompleted: false)
         self.pendingScopedSessionOpenAttempt = attempt
         return attempt
+    }
+
+    @MainActor
+    private func recordScopedSessionOpenFailure(
+        _ attempt: ScopedSessionOpenAttempt,
+        operationMayHaveCompleted: Bool) -> Bool
+    {
+        guard var pending = self.pendingScopedSessionOpenAttempt,
+              pending.claimID == attempt.claimID
+        else {
+            return operationMayHaveCompleted
+        }
+        pending.operationMayHaveCompleted = pending.operationMayHaveCompleted || operationMayHaveCompleted
+        self.pendingScopedSessionOpenAttempt = pending
+        return pending.operationMayHaveCompleted
     }
 
     @MainActor
@@ -502,8 +526,10 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         }
     }
 
-    private static func shouldRetryScopedSessionOpen(after error: any Error) -> Bool {
-        guard !Task.isCancelled, !(error is CancellationError) else { return false }
+    private static func scopedSessionOpenMayHaveCompleted(after error: any Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
         if let urlError = error as? URLError {
             return [.timedOut, .networkConnectionLost].contains(urlError.code)
         }

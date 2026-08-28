@@ -131,6 +131,54 @@ struct RemoteBrowserMCPSessionTests {
     }
 
     @Test
+    func `indeterminate dispatch stays unresolved after determinate retry failure`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [URLError(.timedOut), URLError(.cannotConnectToHost)]
+        let root = Self.rootClient(transport: transport)
+        let handoff = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let differentHandoff = BrowserMCPHandoffGrant(payload: Data("different-connect-receipt".utf8))
+
+        await #expect(throws: URLError.self) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: differentHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+
+        #expect(transport.openedClaimIDs.count == 3)
+        #expect(Set(transport.openedClaimIDs).count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func `cancellation retains unresolved claim without automatic retry`(throwsCancellation: Bool) async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [throwsCancellation ? CancellationError() : URLError(.timedOut)]
+        let root = Self.rootClient(transport: transport)
+        let handoff = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let differentHandoff = BrowserMCPHandoffGrant(payload: Data("different-connect-receipt".utf8))
+
+        let firstOpen = Task { @MainActor in
+            if !throwsCancellation {
+                withUnsafeCurrentTask { task in
+                    task?.cancel()
+                }
+            }
+            return try await root.openBrowserMCPScopedSession(handoff: handoff)
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await firstOpen.value
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: differentHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(Set(transport.openedClaimIDs).count == 1)
+    }
+
+    @Test
     func `canonical response lost failure retries once with same claim`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         transport.openErrors = [DesktopActionFailure.indeterminate(
