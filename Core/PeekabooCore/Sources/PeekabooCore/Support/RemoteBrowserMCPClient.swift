@@ -80,10 +80,14 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
                     claimID: attempt.claimID)
                 break
             } catch let error as RemoteBrowserMCPSessionTransportError {
-                self.finishScopedSessionOpenAttempt(attempt, retryable: false)
+                self.finishScopedSessionOpenAttempt(
+                    attempt,
+                    retryable: self.scopedSessionOpenAttemptMayHaveCompleted(attempt))
                 throw error
             } catch let error as RemoteBrowserMCPSessionError {
-                self.finishScopedSessionOpenAttempt(attempt, retryable: false)
+                self.finishScopedSessionOpenAttempt(
+                    attempt,
+                    retryable: self.scopedSessionOpenAttemptMayHaveCompleted(attempt))
                 throw error
             } catch {
                 let operationMayHaveCompleted = Self.scopedSessionOpenMayHaveCompleted(after: error)
@@ -92,7 +96,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
                     operationMayHaveCompleted: operationMayHaveCompleted)
                 if automaticRetryRemaining,
                    !Task.isCancelled,
-                   !(error is CancellationError),
+                   !Self.isScopedSessionOpenCancellation(error),
                    operationMayHaveCompleted
                 {
                     automaticRetryRemaining = false
@@ -514,6 +518,16 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     }
 
     @MainActor
+    private func scopedSessionOpenAttemptMayHaveCompleted(_ attempt: ScopedSessionOpenAttempt) -> Bool {
+        guard let pending = self.pendingScopedSessionOpenAttempt,
+              pending.claimID == attempt.claimID
+        else {
+            return false
+        }
+        return pending.operationMayHaveCompleted
+    }
+
+    @MainActor
     private func finishScopedSessionOpenAttempt(
         _ attempt: ScopedSessionOpenAttempt,
         retryable: Bool)
@@ -527,7 +541,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     }
 
     private static func scopedSessionOpenMayHaveCompleted(after error: any Error) -> Bool {
-        if error is CancellationError {
+        if self.isScopedSessionOpenCancellation(error) {
             return true
         }
         if let urlError = error as? URLError {
@@ -541,6 +555,19 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         }
         if let failure = error as? DesktopActionFailure {
             return failure.outcome.evidence == .responseLost
+        }
+        return false
+    }
+
+    private static func isScopedSessionOpenCancellation(_ error: any Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError {
+            return urlError.code == .cancelled
+        }
+        if let posix = error as? POSIXError {
+            return posix.code == .ECANCELED
         }
         return false
     }
