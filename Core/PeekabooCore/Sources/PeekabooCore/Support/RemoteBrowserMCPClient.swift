@@ -12,8 +12,20 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
 {
     private enum ScopedSessionState: Equatable {
         case active
+        case cleanupDebt
         case terminal
         case ended
+    }
+
+    private enum ScopedSessionOpenPhase: Equatable {
+        case inFlight
+        case retryable
+    }
+
+    private struct ScopedSessionOpenAttempt {
+        let claimID: UUID
+        let handoffPayload: Data?
+        var phase: ScopedSessionOpenPhase
     }
 
     private let client: PeekabooBridgeClient
@@ -21,7 +33,9 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     private let sessionHandle: RemoteBrowserMCPSessionHandle?
     @MainActor private var connectionHandoffReceiptBundleData: Data?
     @MainActor private var lastScopedStatus: BrowserMCPStatus?
+    @MainActor private var pendingScopedSessionOpenAttempt: ScopedSessionOpenAttempt?
     @MainActor private var scopedSessionState = ScopedSessionState.active
+    @MainActor private var scopedSessionEndInFlight = false
 
     var hasScopedSessionTransport: Bool {
         self.sessionTransport != nil
@@ -55,17 +69,41 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         else {
             throw RemoteBrowserMCPSessionError.unavailable
         }
-        let handle = try await sessionTransport.openSession(
-            handoff: handoff,
-            claimID: UUID())
+        let attempt = try self.beginScopedSessionOpenAttempt(handoff: handoff)
+        let handle: RemoteBrowserMCPSessionHandle
+        var automaticRetryRemaining = true
+        while true {
+            do {
+                handle = try await sessionTransport.openSession(
+                    handoff: handoff,
+                    claimID: attempt.claimID)
+                break
+            } catch let error as RemoteBrowserMCPSessionTransportError {
+                self.finishScopedSessionOpenAttempt(attempt, retryable: false)
+                throw error
+            } catch let error as RemoteBrowserMCPSessionError {
+                self.finishScopedSessionOpenAttempt(attempt, retryable: false)
+                throw error
+            } catch {
+                let isIndeterminate = Self.shouldRetryScopedSessionOpen(after: error)
+                if automaticRetryRemaining, isIndeterminate {
+                    automaticRetryRemaining = false
+                    continue
+                }
+                self.finishScopedSessionOpenAttempt(attempt, retryable: isIndeterminate)
+                throw error
+            }
+        }
         guard handle.isCanonical,
               (handoff == nil) == (handle.targetReceiptSHA256 == nil)
         else {
+            self.finishScopedSessionOpenAttempt(attempt, retryable: false)
             if handle.isCanonical {
                 try? await sessionTransport.endSession(handle)
             }
             throw RemoteBrowserMCPSessionError.invalidHandle
         }
+        self.finishScopedSessionOpenAttempt(attempt, retryable: false)
         return RemoteBrowserMCPClient(
             client: self.client,
             sessionTransport: sessionTransport,
@@ -203,10 +241,10 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
 
     @MainActor
     public func endBrowserMCPScopedSession() async {
-        guard let sessionHandle, let sessionTransport, self.scopedSessionState == .active else { return }
-        self.scopedSessionState = .ended
-        self.lastScopedStatus = nil
-        try? await sessionTransport.endSession(sessionHandle)
+        guard let sessionHandle, let sessionTransport else { return }
+        await self.attemptScopedSessionEnd(
+            session: sessionHandle,
+            transport: sessionTransport)
     }
 
     @MainActor
@@ -393,9 +431,92 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         session: RemoteBrowserMCPSessionHandle,
         transport: any RemoteBrowserMCPSessionTransport) async
     {
-        self.scopedSessionState = .ended
+        await self.attemptScopedSessionEnd(session: session, transport: transport)
+    }
+
+    @MainActor
+    private func attemptScopedSessionEnd(
+        session: RemoteBrowserMCPSessionHandle,
+        transport: any RemoteBrowserMCPSessionTransport) async
+    {
+        switch self.scopedSessionState {
+        case .active, .cleanupDebt:
+            break
+        case .terminal, .ended:
+            return
+        }
+        guard !self.scopedSessionEndInFlight else { return }
+        self.scopedSessionState = .cleanupDebt
+        self.scopedSessionEndInFlight = true
         self.lastScopedStatus = nil
-        try? await transport.endSession(session)
+        do {
+            try await transport.endSession(session)
+            self.scopedSessionState = .ended
+        } catch let terminal as RemoteBrowserMCPSessionTransportError {
+            switch terminal {
+            case .invalidSession, .sessionEnded:
+                self.scopedSessionState = .ended
+            case .wrongOwner, .hostGenerationChanged:
+                self.scopedSessionState = .terminal
+            }
+        } catch {
+            self.scopedSessionState = .cleanupDebt
+        }
+        self.scopedSessionEndInFlight = false
+    }
+
+    @MainActor
+    private func beginScopedSessionOpenAttempt(
+        handoff: BrowserMCPHandoffGrant?) throws -> ScopedSessionOpenAttempt
+    {
+        let payload = handoff?.payload
+        if var pending = self.pendingScopedSessionOpenAttempt {
+            guard pending.handoffPayload == payload else {
+                throw RemoteBrowserMCPSessionError.openAttemptUnresolved
+            }
+            guard pending.phase == .retryable else {
+                throw RemoteBrowserMCPSessionError.openInProgress
+            }
+            pending.phase = .inFlight
+            self.pendingScopedSessionOpenAttempt = pending
+            return pending
+        }
+        let attempt = ScopedSessionOpenAttempt(
+            claimID: UUID(),
+            handoffPayload: payload,
+            phase: .inFlight)
+        self.pendingScopedSessionOpenAttempt = attempt
+        return attempt
+    }
+
+    @MainActor
+    private func finishScopedSessionOpenAttempt(
+        _ attempt: ScopedSessionOpenAttempt,
+        retryable: Bool)
+    {
+        guard self.pendingScopedSessionOpenAttempt?.claimID == attempt.claimID else { return }
+        if retryable {
+            self.pendingScopedSessionOpenAttempt?.phase = .retryable
+        } else {
+            self.pendingScopedSessionOpenAttempt = nil
+        }
+    }
+
+    private static func shouldRetryScopedSessionOpen(after error: any Error) -> Bool {
+        guard !Task.isCancelled, !(error is CancellationError) else { return false }
+        if let urlError = error as? URLError {
+            return [.timedOut, .networkConnectionLost].contains(urlError.code)
+        }
+        if let posix = error as? POSIXError {
+            return [.ETIMEDOUT, .ECONNRESET, .EPIPE].contains(posix.code)
+        }
+        if let envelope = error as? PeekabooBridgeErrorEnvelope {
+            return envelope.operationMayHaveCompleted
+        }
+        if let failure = error as? DesktopActionFailure {
+            return failure.outcome.evidence == .responseLost
+        }
+        return false
     }
 
     @MainActor

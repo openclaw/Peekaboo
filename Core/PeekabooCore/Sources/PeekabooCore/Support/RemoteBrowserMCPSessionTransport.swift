@@ -87,6 +87,8 @@ enum RemoteBrowserMCPSessionError: LocalizedError {
     case invalidHandle
     case invalidStatus
     case ended
+    case openInProgress
+    case openAttemptUnresolved
 
     var errorDescription: String? {
         switch self {
@@ -98,6 +100,10 @@ enum RemoteBrowserMCPSessionError: LocalizedError {
             "The Bridge returned contradictory browser session status."
         case .ended:
             "The caller-scoped browser session has ended."
+        case .openInProgress:
+            "A caller-scoped browser session open is already in progress."
+        case .openAttemptUnresolved:
+            "A prior caller-scoped browser session open remains indeterminate."
         }
     }
 }

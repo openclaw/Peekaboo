@@ -75,6 +75,97 @@ struct RemoteBrowserMCPSessionTests {
         #expect(transport.endedSessionIDs.count == 2)
     }
 
+    @Test(arguments: [false, true])
+    func `indeterminate open retry reuses one claim`(usesHandoff: Bool) async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [URLError(.timedOut)]
+        let root = Self.rootClient(transport: transport)
+        let handoff = usesHandoff
+            ? BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+            : nil
+
+        let scoped = try await root.openBrowserMCPScopedSession(handoff: handoff)
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(transport.openedClaimIDs[0] == transport.openedClaimIDs[1])
+        #expect(transport.openedHandoffs[0] == transport.openedHandoffs[1])
+
+        _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+        #expect(transport.openedClaimIDs.count == 3)
+        #expect(transport.openedClaimIDs[2] != transport.openedClaimIDs[1])
+        await (scoped as? any BrowserMCPScopedSessionEnding)?.endBrowserMCPScopedSession()
+    }
+
+    @Test
+    func `indeterminate handoff open refuses a different retry without dispatch`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [URLError(.networkConnectionLost), URLError(.timedOut)]
+        let root = Self.rootClient(transport: transport)
+        let handoff = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+
+        await #expect(throws: URLError.self) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: nil)
+        }
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(transport.openedClaimIDs[0] == transport.openedClaimIDs[1])
+    }
+
+    @Test
+    func `exhausted response loss retry preserves claim for same payload`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [URLError(.networkConnectionLost), URLError(.timedOut)]
+        let root = Self.rootClient(transport: transport)
+        let handoff = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+
+        await #expect(throws: URLError.self) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+
+        #expect(transport.openedClaimIDs.count == 3)
+        #expect(Set(transport.openedClaimIDs).count == 1)
+    }
+
+    @Test
+    func `canonical response lost failure retries once with same claim`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [DesktopActionFailure.indeterminate(
+            route: .bridge,
+            evidence: .responseLost,
+            message: "bootstrap response lost",
+            hint: "retry the same claim")]
+        let root = Self.rootClient(transport: transport)
+
+        _ = try await root.openBrowserMCPScopedSession(handoff: nil)
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(transport.openedClaimIDs[0] == transport.openedClaimIDs[1])
+    }
+
+    @Test
+    func `determinate open failure releases claim for a different handoff`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [PeekabooBridgeErrorEnvelope(
+            code: .invalidRequest,
+            message: "request was rejected before opening")]
+        let root = Self.rootClient(transport: transport)
+        let firstHandoff = BrowserMCPHandoffGrant(payload: Data("first-signed-connect-receipt".utf8))
+        let secondHandoff = BrowserMCPHandoffGrant(payload: Data("second-signed-connect-receipt".utf8))
+
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: firstHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: secondHandoff)
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(transport.openedClaimIDs[0] != transport.openedClaimIDs[1])
+        #expect(transport.openedHandoffs == [firstHandoff.payload, secondHandoff.payload])
+    }
+
     @Test
     func `remote MCP mints opaque refs and refuses raw or copied refs before transport`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
@@ -260,23 +351,32 @@ struct RemoteBrowserMCPSessionTests {
     }
 
     @Test
-    func `failed end is attempted once and remains locally terminal`() async throws {
+    func `failed end stays terminal and retries cleanup debt until confirmed`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
         let context = try await Self.context(browser: root)
             .openingBrowserSession(named: "mcp:end-once", handoff: nil)
         let client = context.browser
-        transport.endFailure = CancellationError()
+        transport.endErrors = [
+            PeekabooBridgeErrorEnvelope(code: .serverBusy, message: "cleanup not confirmed"),
+            CancellationError(),
+        ]
 
         await context.releaseSnapshotOwner()
-        await context.releaseSnapshotOwner()
-
         #expect(transport.endCallCount == 1)
         let statusCallsBefore = transport.statusCallCount
-        let ended = await client.status(channel: nil)
-        #expect(ended.observation == .confirmed)
-        #expect(ended.connectionReceipt == nil)
+        let cleanupDebt = await client.status(channel: nil)
+        #expect(cleanupDebt.observation == .confirmed)
+        #expect(cleanupDebt.connectionReceipt == nil)
         #expect(transport.statusCallCount == statusCallsBefore)
+
+        await context.releaseSnapshotOwner()
+        #expect(transport.endCallCount == 2)
+        await context.releaseSnapshotOwner()
+        #expect(transport.endCallCount == 3)
+        #expect(transport.endedSessionIDs.count == 1)
+        await context.releaseSnapshotOwner()
+        #expect(transport.endCallCount == 3)
     }
 
     @Test
@@ -367,6 +467,7 @@ struct RemoteBrowserMCPSessionTests {
 @MainActor
 private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSessionTransport, @unchecked Sendable {
     private(set) var openedHandoffs: [Data?] = []
+    private(set) var openedClaimIDs: [UUID] = []
     private(set) var statusCallCount = 0
     private(set) var connectCallCount = 0
     private(set) var executeCallCount = 0
@@ -377,15 +478,20 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     var statusFailure: (any Error)?
     var executeFailure: (any Error)?
     var disconnectFailure: (any Error)?
-    var endFailure: (any Error)?
+    var openErrors: [any Error] = []
+    var endErrors: [any Error] = []
     private(set) var endCallCount = 0
     private var epochs: [UUID: BrowserMCPProviderSessionEpoch] = [:]
 
     func openSession(
         handoff: BrowserMCPHandoffGrant?,
-        claimID _: UUID) async throws -> RemoteBrowserMCPSessionHandle
+        claimID: UUID) async throws -> RemoteBrowserMCPSessionHandle
     {
         self.openedHandoffs.append(handoff?.payload)
+        self.openedClaimIDs.append(claimID)
+        if !self.openErrors.isEmpty {
+            throw self.openErrors.removeFirst()
+        }
         let sessionID = UUID()
         self.epochs[sessionID] = BrowserMCPProviderSessionEpoch(transportID: UUID())
         return RemoteBrowserMCPSessionHandle(
@@ -468,8 +574,8 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
 
     func endSession(_ session: RemoteBrowserMCPSessionHandle) async throws {
         self.endCallCount += 1
-        if let endFailure {
-            throw endFailure
+        if !self.endErrors.isEmpty {
+            throw self.endErrors.removeFirst()
         }
         self.endedSessionIDs.append(session.sessionID)
     }
