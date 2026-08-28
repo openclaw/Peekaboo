@@ -620,9 +620,7 @@ struct BrowserConnectionHandoffTests {
     func `host stop joins its reaper and retires retryable abandoned cleanup`() async throws {
         let peer = try Self.approvedPeer()
         let caller = try peer.browserSessionCaller(clientInstanceID: UUID())
-        let life = ProcessLifeBox(
-            startIdentity: caller.process.processStartIdentity,
-            presence: true)
+        let life = ProcessLifeBox(startIdentity: caller.process.processStartIdentity, presence: true)
         let spy = BootstrapSpy(blocksInvalidation: true)
         let socketPath = "/tmp/peekaboo-browser-reaper-stop-\(UUID().uuidString).sock"
         let server = Self.handoffServer(
@@ -658,6 +656,165 @@ struct BrowserConnectionHandoffTests {
             server.browserHandoffGrantRegistry.occupiedCapacityForTesting == 0
         })
         #expect(Set(spy.invalidatedSessionIDs) == expectedSessionIDs)
+    }
+
+    @Test
+    @MainActor
+    func `shutdown reaper times out a noncooperative invalidation and releases server after retry`() async throws {
+        let caller = try Self.approvedPeer().browserSessionCaller(clientInstanceID: UUID())
+        let life = ProcessLifeBox(startIdentity: caller.process.processStartIdentity, presence: true)
+        let spy = SequencedInvalidationSpy()
+        let socketPath = "/tmp/peekaboo-browser-bounded-shutdown-\(UUID().uuidString).sock"
+        var server: PeekabooBridgeServer? = Self.handoffServer(
+            socketPath: socketPath,
+            provider: spy,
+            processStartIdentity: { _ in life.startIdentity },
+            processPresence: { _ in life.presence })
+        server?.browserHandoffGrantRegistry.setCleanupAttemptTimeoutForTesting(milliseconds: 100)
+        weak let weakServer = server
+        var host: PeekabooBridgeHost? = if let server {
+            PeekabooBridgeHost(socketPath: socketPath, server: server)
+        } else {
+            nil
+        }
+        await host?.setBrowserHandoffMaintenanceIntervalForTesting(milliseconds: 5)
+        try await host?.startChecked()
+        _ = try await server?.browserHandoffGrantRegistry.bootstrap(
+            request: .init(claimID: UUID()),
+            authority: Self.authority("bounded-shutdown"),
+            caller: caller)
+
+        life.presence = false
+        #expect(await Self.waitUntil { spy.invalidationAttemptCount == 1 })
+        #expect(await host?.stop() == .stopped)
+        host = nil
+        server = nil
+
+        #expect(await Self.waitUntil { spy.invalidationAttemptCount == 2 })
+        spy.completeInvalidation(attempt: 1, removed: true)
+        #expect(await Self.waitUntil { weakServer == nil })
+        #expect(spy.invalidatedSessionIDs.count == 2)
+        #expect(spy.invalidatedSessionIDs.first == spy.invalidatedSessionIDs.last)
+
+        // The cancelled first call deliberately ignores cancellation and completes after the server is gone.
+        spy.completeInvalidation(attempt: 0, removed: true)
+    }
+
+    @Test
+    @MainActor
+    func `late timed out cleanup completion cannot erase a newer generation`() async throws {
+        let caller = try Self.approvedPeer().browserSessionCaller(clientInstanceID: UUID())
+        let life = ProcessLifeBox(startIdentity: caller.process.processStartIdentity, presence: true)
+        let spy = SequencedInvalidationSpy()
+        let registry = PeekabooBridgeBrowserHandoffGrantRegistry(
+            provider: spy,
+            capacity: 1,
+            cleanupAttemptTimeoutMilliseconds: 20,
+            processStartIdentity: { _ in life.startIdentity },
+            processPresence: { _ in life.presence })
+        let response = try await registry.bootstrap(
+            request: .init(claimID: UUID()),
+            authority: Self.authority("cleanup-aba"),
+            caller: caller)
+
+        life.presence = false
+        registry.scheduleMaintenance()
+        #expect(await Self.waitUntil { spy.invalidationAttemptCount == 1 })
+        for _ in 0..<20 {
+            registry.scheduleMaintenance()
+        }
+        #expect(spy.invalidationAttemptCount == 1)
+        #expect(await Self.waitUntil {
+            registry.cleanupIsPendingForTesting(sessionID: response.sessionID)
+        })
+        registry.setCleanupAttemptTimeoutForTesting(milliseconds: 1000)
+        registry.scheduleMaintenance()
+        #expect(await Self.waitUntil { spy.invalidationAttemptCount == 2 })
+
+        spy.completeInvalidation(attempt: 0, removed: true)
+        #expect(await Self.waitUntil {
+            registry.activeProviderCleanupCallCountForTesting(sessionID: response.sessionID) == 1
+        })
+        #expect(registry.occupiedCapacityForTesting == 1)
+        for _ in 0..<20 {
+            registry.scheduleMaintenance()
+        }
+        #expect(spy.invalidationAttemptCount == 2)
+
+        spy.completeInvalidation(attempt: 1, removed: true)
+        #expect(await Self.waitUntil { registry.occupiedCapacityForTesting == 0 })
+        #expect(spy.invalidatedSessionIDs == [response.sessionID, response.sessionID])
+    }
+
+    @Test
+    @MainActor
+    func `late cleanup success settles debt when no newer generation exists`() async throws {
+        let caller = try Self.approvedPeer().browserSessionCaller(clientInstanceID: UUID())
+        let spy = SequencedInvalidationSpy()
+        let registry = PeekabooBridgeBrowserHandoffGrantRegistry(
+            provider: spy,
+            capacity: 1,
+            cleanupAttemptTimeoutMilliseconds: 15)
+        let response = try await registry.bootstrap(
+            request: .init(claimID: UUID()),
+            authority: Self.authority("cleanup-late-success"),
+            caller: caller)
+
+        let end = Task { @MainActor in
+            try await registry.endSession(response.sessionID, caller: caller)
+        }
+        #expect(await Self.waitUntil { spy.invalidationAttemptCount == 1 })
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try await end.value
+        }
+        spy.completeInvalidation(attempt: 0, removed: true)
+
+        #expect(await Self.waitUntil { registry.occupiedCapacityForTesting == 0 })
+        try await registry.endSession(response.sessionID, caller: caller)
+        #expect(spy.invalidatedSessionIDs == [response.sessionID])
+    }
+
+    @Test
+    @MainActor
+    func `cleanup retries cap noncooperative calls until an exact session slot returns`() async throws {
+        let caller = try Self.approvedPeer().browserSessionCaller(clientInstanceID: UUID())
+        let life = ProcessLifeBox(
+            startIdentity: caller.process.processStartIdentity,
+            presence: true)
+        let spy = SequencedInvalidationSpy()
+        let registry = PeekabooBridgeBrowserHandoffGrantRegistry(
+            provider: spy,
+            capacity: 1,
+            cleanupAttemptTimeoutMilliseconds: 15,
+            processStartIdentity: { _ in life.startIdentity },
+            processPresence: { _ in life.presence })
+        let response = try await registry.bootstrap(
+            request: .init(claimID: UUID()),
+            authority: Self.authority("cleanup-cap"),
+            caller: caller)
+
+        life.presence = false
+        #expect(await Self.waitUntil {
+            registry.scheduleMaintenance()
+            return spy.invalidationAttemptCount == 2
+        })
+        try await Task.sleep(for: .milliseconds(25))
+        for _ in 0..<50 {
+            registry.scheduleMaintenance()
+        }
+        #expect(spy.invalidationAttemptCount == 2)
+        #expect(registry.activeProviderCleanupCallCountForTesting(sessionID: response.sessionID) == 2)
+        #expect(registry.occupiedCapacityForTesting == 1)
+
+        spy.completeInvalidation(attempt: 0, removed: false)
+        #expect(await Self.waitUntil {
+            registry.scheduleMaintenance()
+            return spy.invalidationAttemptCount == 3
+        })
+        spy.completeInvalidation(attempt: 1, removed: false)
+        spy.completeInvalidation(attempt: 2, removed: true)
+        #expect(await Self.waitUntil { registry.occupiedCapacityForTesting == 0 })
+        #expect(spy.invalidatedSessionIDs == [response.sessionID, response.sessionID, response.sessionID])
     }
 
     @Test
@@ -1376,6 +1533,31 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
         for continuation in continuations {
             continuation.resume()
         }
+    }
+}
+
+@MainActor
+private final class SequencedInvalidationSpy: PeekabooBridgeBrowserSessionBootstrapProviding {
+    let supportsBrowserSessionBootstrap = true
+    private var invalidationContinuations: [Int: CheckedContinuation<Bool, Never>] = [:]
+    private(set) var invalidatedSessionIDs: [UUID] = []
+
+    var invalidationAttemptCount: Int {
+        self.invalidatedSessionIDs.count
+    }
+
+    func bootstrapBrowserSession(_: PeekabooBridgeBrowserSessionBootstrapContext) async throws {}
+
+    func invalidateBrowserSession(_ sessionID: UUID) async -> Bool {
+        let attempt = self.invalidationAttemptCount
+        self.invalidatedSessionIDs.append(sessionID)
+        return await withCheckedContinuation { continuation in
+            self.invalidationContinuations[attempt] = continuation
+        }
+    }
+
+    func completeInvalidation(attempt: Int, removed: Bool) {
+        self.invalidationContinuations.removeValue(forKey: attempt)?.resume(returning: removed)
     }
 }
 

@@ -164,6 +164,7 @@ public protocol PeekabooBridgeBrowserSessionBootstrapProviding: Sendable {
     func disconnectBrowserSession(_ sessionID: UUID) async throws
 
     /// Returns true only after the provider child, capability state, and target reservation are absent.
+    /// Concurrent calls for the same session must be idempotent and must never affect a different session.
     func invalidateBrowserSession(_ sessionID: UUID) async -> Bool
 }
 
@@ -224,6 +225,8 @@ struct PeekabooBridgeBrowserHandoffOperationContext: Sendable {
 final class PeekabooBridgeBrowserHandoffGrantRegistry {
     static let defaultCapacity = 128
     static let defaultLifetimeMilliseconds: Int64 = 60000
+    static let defaultCleanupAttemptTimeoutMilliseconds: Int64 = 5000
+    private static let maximumConcurrentProviderCleanupCallsPerSession = 2
 
     private struct Claim: Equatable {
         let claimID: UUID
@@ -272,7 +275,23 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
         case inFlight(Claim, Task<PeekabooBridgeBrowserSessionBootstrapResponse, any Error>)
         case succeeded(Claim, PeekabooBridgeBrowserSessionBootstrapResponse)
         case cleanupPending(Claim, PeekabooBridgeBrowserSessionBootstrapResponse)
-        case ending(Claim, PeekabooBridgeBrowserSessionBootstrapResponse, UUID, Task<Bool, Never>)
+        case ending(
+            Claim,
+            PeekabooBridgeBrowserSessionBootstrapResponse,
+            UUID,
+            Task<CleanupAttemptOutcome, Never>)
+    }
+
+    private enum CleanupAttemptOutcome: Sendable {
+        case completed(Bool)
+        case timedOut
+
+        var removed: Bool {
+            if case .completed(true) = self {
+                return true
+            }
+            return false
+        }
     }
 
     private struct Grant {
@@ -300,13 +319,18 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
         let claim: Claim
         let response: PeekabooBridgeBrowserSessionBootstrapResponse
         let attemptID: UUID
-        let task: Task<Bool, Never>
+        let task: Task<CleanupAttemptOutcome, Never>
     }
 
     private struct PendingCleanupAttempt {
         let sessionID: UUID
         let attemptID: UUID
-        let task: Task<Bool, Never>
+        let task: Task<CleanupAttemptOutcome, Never>
+    }
+
+    private struct CleanupGeneration {
+        let attemptID: UUID
+        var recordsEndedTombstone: Bool
     }
 
     private struct MaintenanceWork {
@@ -317,6 +341,7 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
 
     private let capacity: Int
     private let lifetimeMilliseconds: Int64
+    private var cleanupAttemptTimeoutMilliseconds: Int64
     private let now: @Sendable () -> Int64
     private let provider: (any PeekabooBridgeBrowserSessionBootstrapProviding)?
     private let processStartIdentity: @Sendable (pid_t) -> UInt64?
@@ -329,13 +354,16 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
     private var settlingBootstrapSessionIDs: Set<UUID> = []
     private var pendingCleanupSessionIDs: Set<UUID> = []
     private var activePendingCleanupAttempts: [UUID: PendingCleanupAttempt] = [:]
+    private var activeProviderCleanupCallIDs: [UUID: Set<UUID>] = [:]
+    private var latestCleanupGenerations: [UUID: CleanupGeneration] = [:]
     private var activeOperationTokens: [UUID: Set<UUID>] = [:]
-    private var operationDrainWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
+    private var operationDrainWaiters: [UUID: [UUID: SingleResultWaiter<Bool>]] = [:]
 
     init(
         provider: (any PeekabooBridgeBrowserSessionBootstrapProviding)?,
         capacity: Int = defaultCapacity,
         lifetimeMilliseconds: Int64 = defaultLifetimeMilliseconds,
+        cleanupAttemptTimeoutMilliseconds: Int64 = defaultCleanupAttemptTimeoutMilliseconds,
         now: @escaping @Sendable () -> Int64 = {
             PeekabooBridgeOperationReceiptCoding.unixMilliseconds()
         },
@@ -347,9 +375,11 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
     {
         precondition(capacity > 0)
         precondition(lifetimeMilliseconds > 0)
+        precondition(cleanupAttemptTimeoutMilliseconds > 0)
         self.provider = provider
         self.capacity = capacity
         self.lifetimeMilliseconds = lifetimeMilliseconds
+        self.cleanupAttemptTimeoutMilliseconds = cleanupAttemptTimeoutMilliseconds
         self.now = now
         self.processStartIdentity = processStartIdentity
         self.processPresence = processPresence
@@ -653,6 +683,22 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
     var occupiedCapacityForTesting: Int {
         self.occupiedCapacity
     }
+
+    func setCleanupAttemptTimeoutForTesting(milliseconds: Int64) {
+        precondition(milliseconds > 0)
+        self.cleanupAttemptTimeoutMilliseconds = milliseconds
+    }
+
+    func activeProviderCleanupCallCountForTesting(sessionID: UUID) -> Int {
+        self.activeProviderCleanupCallIDs[sessionID]?.count ?? 0
+    }
+
+    func cleanupIsPendingForTesting(sessionID: UUID) -> Bool {
+        guard let grantID = self.sessionGrantIDs[sessionID],
+              case .cleanupPending? = self.grants[grantID]?.state
+        else { return false }
+        return true
+    }
     #endif
 
     private func beginFailedBootstrapCleanup(_ sessionID: UUID) {
@@ -675,8 +721,8 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
         provider: any PeekabooBridgeBrowserSessionBootstrapProviding) async
     {
         guard let attempt = self.startPendingCleanup(sessionID, provider: provider) else { return }
-        let removed = await attempt.task.value
-        self.settlePendingCleanup(attempt, removed: removed)
+        let outcome = await attempt.task.value
+        self.settlePendingCleanup(attempt, outcome: outcome)
     }
 
     private func startPendingCleanup(
@@ -688,23 +734,30 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
             return active
         }
         let attemptID = UUID()
-        let task = Task { @MainActor in
-            await provider.invalidateBrowserSession(sessionID)
-        }
+        guard let task = self.makeCleanupAttemptTask(
+            sessionID: sessionID,
+            attemptID: attemptID,
+            recordsEndedTombstone: false,
+            operation: {
+                await provider.invalidateBrowserSession(sessionID)
+            }) else { return nil }
         let attempt = PendingCleanupAttempt(sessionID: sessionID, attemptID: attemptID, task: task)
         self.activePendingCleanupAttempts[sessionID] = attempt
         Task { @MainActor [weak self] in
-            let removed = await task.value
-            self?.settlePendingCleanup(attempt, removed: removed)
+            let outcome = await task.value
+            self?.settlePendingCleanup(attempt, outcome: outcome)
         }
         return attempt
     }
 
-    private func settlePendingCleanup(_ attempt: PendingCleanupAttempt, removed: Bool) {
+    private func settlePendingCleanup(_ attempt: PendingCleanupAttempt, outcome: CleanupAttemptOutcome) {
         guard self.activePendingCleanupAttempts[attempt.sessionID]?.attemptID == attempt.attemptID else { return }
         self.activePendingCleanupAttempts.removeValue(forKey: attempt.sessionID)
-        if removed {
+        if outcome.removed {
             self.pendingCleanupSessionIDs.remove(attempt.sessionID)
+            if self.latestCleanupGenerations[attempt.sessionID]?.attemptID == attempt.attemptID {
+                self.latestCleanupGenerations.removeValue(forKey: attempt.sessionID)
+            }
         }
     }
 
@@ -760,16 +813,10 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
             return
         }
         self.activeOperationTokens.removeValue(forKey: lease.sessionID)
-        let waiters = self.operationDrainWaiters.removeValue(forKey: lease.sessionID) ?? []
-        for waiter in waiters {
-            waiter.resume()
-        }
-    }
-
-    private func waitForSessionOperationsToDrain(_ sessionID: UUID) async {
-        guard self.activeOperationTokens[sessionID]?.isEmpty == false else { return }
-        await withCheckedContinuation { continuation in
-            self.operationDrainWaiters[sessionID, default: []].append(continuation)
+        if let waiters = self.operationDrainWaiters.removeValue(forKey: lease.sessionID) {
+            for waiter in waiters.values {
+                waiter.finish(true)
+            }
         }
     }
 
@@ -785,8 +832,7 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
 
         let claim: Claim
         let response: PeekabooBridgeBrowserSessionBootstrapResponse
-        let attemptID: UUID
-        let task: Task<Bool, Never>
+        let attempt: SessionCleanupAttempt
         switch grant.state {
         case let .succeeded(activeClaim, activeResponse),
              let .cleanupPending(activeClaim, activeResponse):
@@ -797,33 +843,47 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
                     code: .operationNotSupported,
                     message: "This Bridge host has no scoped browser session provider")
             }
-            claim = activeClaim
-            response = activeResponse
-            attemptID = UUID()
-            task = Task { @MainActor in
-                await self.waitForSessionOperationsToDrain(sessionID)
-                return await provider.invalidateBrowserSession(sessionID)
+            guard let createdAttempt = self.makeSessionCleanupAttempt(
+                grantID: grantID,
+                claim: activeClaim,
+                response: activeResponse,
+                provider: provider,
+                recordsEndedTombstone: true)
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .serverBusy,
+                    message: "Browser session cleanup is still awaiting an invalidation slot")
             }
-            grant.state = .ending(claim, response, attemptID, task)
+            claim = createdAttempt.claim
+            response = createdAttempt.response
+            attempt = createdAttempt
+            grant.state = .ending(claim, response, attempt.attemptID, attempt.task)
             self.grants[grantID] = grant
         case let .ending(activeClaim, activeResponse, activeAttemptID, existingTask):
             guard activeResponse.sessionID == sessionID else { throw Self.invalidSession() }
             guard activeClaim.caller == caller else { throw Self.wrongOwner() }
             claim = activeClaim
             response = activeResponse
-            attemptID = activeAttemptID
-            task = existingTask
+            self.promoteCleanupGenerationToExplicitEnd(
+                sessionID: sessionID,
+                attemptID: activeAttemptID)
+            attempt = .init(
+                grantID: grantID,
+                claim: activeClaim,
+                response: activeResponse,
+                attemptID: activeAttemptID,
+                task: existingTask)
         case .reserved, .pending, .inFlight:
             throw Self.invalidSession()
         }
 
-        let removed = await task.value
-        if !removed {
+        let outcome = await attempt.task.value
+        if !outcome.removed {
             if var current = self.grants[grantID],
                case let .ending(currentClaim, currentResponse, currentAttemptID, _) = current.state,
                currentClaim == claim,
                currentResponse == response,
-               currentAttemptID == attemptID
+               currentAttemptID == attempt.attemptID
             {
                 current.state = .cleanupPending(claim, response)
                 self.grants[grantID] = current
@@ -832,17 +892,7 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
                 code: .serverBusy,
                 message: "Browser session cleanup is not yet confirmed")
         }
-        guard case let .ending(currentClaim, currentResponse, currentAttemptID, _)? = self.grants[grantID]?.state,
-              currentClaim == claim,
-              currentResponse == response,
-              currentAttemptID == attemptID
-        else { return }
-        self.sessionGrantIDs.removeValue(forKey: sessionID)
-        self.grants.removeValue(forKey: grantID)
-        let expiresAt = Self.addingClamped(self.now(), self.lifetimeMilliseconds)
-        self.endedSessions[sessionID] = EndedSession(caller: caller, expiresAtUnixMilliseconds: expiresAt)
-        self.endedClaims[claim.claimID] = EndedClaim(caller: caller, expiresAtUnixMilliseconds: expiresAt)
-        self.trimEndedTombstones()
+        self.settleConfirmedSessionCleanup(attempt)
     }
 
     private func trimEndedTombstones() {
@@ -975,6 +1025,203 @@ final class PeekabooBridgeBrowserHandoffGrantRegistry {
 }
 
 extension PeekabooBridgeBrowserHandoffGrantRegistry {
+    private func makeCleanupAttemptTask(
+        sessionID: UUID,
+        attemptID: UUID,
+        recordsEndedTombstone: Bool,
+        operation: @escaping @MainActor @Sendable () async -> Bool)
+        -> Task<CleanupAttemptOutcome, Never>?
+    {
+        let callID = UUID()
+        guard self.activeProviderCleanupCallIDs[sessionID, default: []].count <
+            Self.maximumConcurrentProviderCleanupCallsPerSession
+        else { return nil }
+        self.activeProviderCleanupCallIDs[sessionID, default: []].insert(callID)
+        self.latestCleanupGenerations[sessionID] = CleanupGeneration(
+            attemptID: attemptID,
+            recordsEndedTombstone: recordsEndedTombstone)
+
+        let waiter = SingleResultWaiter<CleanupAttemptOutcome>()
+        let providerTask = Task { @MainActor in
+            await operation()
+        }
+        Task { @MainActor [weak self] in
+            let removed = await providerTask.value
+            let completedWithinDeadline = waiter.finish(.completed(removed))
+            self?.finishProviderCleanupCall(sessionID: sessionID, callID: callID)
+            if removed, !completedWithinDeadline {
+                self?.settleLateCleanupSuccess(sessionID: sessionID, attemptID: attemptID)
+            }
+        }
+        let timeoutTask = Task { @MainActor [cleanupAttemptTimeoutMilliseconds] in
+            do {
+                try await Task.sleep(for: .milliseconds(cleanupAttemptTimeoutMilliseconds))
+            } catch {
+                return
+            }
+            guard waiter.finish(.timedOut) else { return }
+            providerTask.cancel()
+        }
+        return Task { @MainActor in
+            let outcome = await waiter.value()
+            timeoutTask.cancel()
+            return outcome
+        }
+    }
+
+    private func finishProviderCleanupCall(sessionID: UUID, callID: UUID) {
+        guard var calls = self.activeProviderCleanupCallIDs[sessionID],
+              calls.remove(callID) != nil
+        else { return }
+        if calls.isEmpty {
+            self.activeProviderCleanupCallIDs.removeValue(forKey: sessionID)
+        } else {
+            self.activeProviderCleanupCallIDs[sessionID] = calls
+        }
+    }
+
+    private func promoteCleanupGenerationToExplicitEnd(sessionID: UUID, attemptID: UUID) {
+        guard var generation = self.latestCleanupGenerations[sessionID],
+              generation.attemptID == attemptID
+        else { return }
+        generation.recordsEndedTombstone = true
+        self.latestCleanupGenerations[sessionID] = generation
+    }
+
+    private func settleLateCleanupSuccess(sessionID: UUID, attemptID: UUID) {
+        guard self.latestCleanupGenerations[sessionID]?.attemptID == attemptID else { return }
+        if self.pendingCleanupSessionIDs.contains(sessionID) {
+            self.pendingCleanupSessionIDs.remove(sessionID)
+            if self.activePendingCleanupAttempts[sessionID]?.attemptID == attemptID {
+                self.activePendingCleanupAttempts.removeValue(forKey: sessionID)
+            }
+            self.latestCleanupGenerations.removeValue(forKey: sessionID)
+            return
+        }
+        guard let grantID = self.sessionGrantIDs[sessionID],
+              let grant = self.grants[grantID]
+        else { return }
+        let claim: Claim
+        let response: PeekabooBridgeBrowserSessionBootstrapResponse
+        switch grant.state {
+        case let .ending(currentClaim, currentResponse, currentAttemptID, _)
+            where currentAttemptID == attemptID:
+            claim = currentClaim
+            response = currentResponse
+        case let .cleanupPending(currentClaim, currentResponse):
+            claim = currentClaim
+            response = currentResponse
+        default:
+            return
+        }
+        self.settleConfirmedSessionCleanup(
+            grantID: grantID,
+            claim: claim,
+            response: response,
+            attemptID: attemptID)
+    }
+
+    private func waitForSessionOperationsToDrain(_ sessionID: UUID) async -> Bool {
+        guard self.activeOperationTokens[sessionID]?.isEmpty == false else { return true }
+        let waiterID = UUID()
+        let waiter = SingleResultWaiter<Bool>()
+        self.operationDrainWaiters[sessionID, default: [:]][waiterID] = waiter
+        return await withTaskCancellationHandler {
+            await waiter.value()
+        } onCancel: {
+            waiter.finish(false)
+            Task { @MainActor [weak self] in
+                self?.removeOperationDrainWaiter(sessionID: sessionID, waiterID: waiterID)
+            }
+        }
+    }
+
+    private func removeOperationDrainWaiter(sessionID: UUID, waiterID: UUID) {
+        guard var waiters = self.operationDrainWaiters[sessionID] else { return }
+        waiters.removeValue(forKey: waiterID)
+        if waiters.isEmpty {
+            self.operationDrainWaiters.removeValue(forKey: sessionID)
+        } else {
+            self.operationDrainWaiters[sessionID] = waiters
+        }
+    }
+
+    private func makeSessionCleanupAttempt(
+        grantID: UUID,
+        claim: Claim,
+        response: PeekabooBridgeBrowserSessionBootstrapResponse,
+        provider: any PeekabooBridgeBrowserSessionBootstrapProviding,
+        recordsEndedTombstone: Bool) -> SessionCleanupAttempt?
+    {
+        let sessionID = response.sessionID
+        let attemptID = UUID()
+        guard let task = self.makeCleanupAttemptTask(
+            sessionID: sessionID,
+            attemptID: attemptID,
+            recordsEndedTombstone: recordsEndedTombstone,
+            operation: { [weak self] in
+                guard await self?.waitForSessionOperationsToDrain(sessionID) == true,
+                      !Task.isCancelled
+                else { return false }
+                return await provider.invalidateBrowserSession(sessionID)
+            })
+        else { return nil }
+        return SessionCleanupAttempt(
+            grantID: grantID,
+            claim: claim,
+            response: response,
+            attemptID: attemptID,
+            task: task)
+    }
+
+    private func settleConfirmedSessionCleanup(_ attempt: SessionCleanupAttempt) {
+        self.settleConfirmedSessionCleanup(
+            grantID: attempt.grantID,
+            claim: attempt.claim,
+            response: attempt.response,
+            attemptID: attempt.attemptID)
+    }
+
+    private func settleConfirmedSessionCleanup(
+        grantID: UUID,
+        claim: Claim,
+        response: PeekabooBridgeBrowserSessionBootstrapResponse,
+        attemptID: UUID)
+    {
+        guard let generation = self.latestCleanupGenerations[response.sessionID],
+              generation.attemptID == attemptID,
+              let current = self.grants[grantID]
+        else { return }
+        switch current.state {
+        case let .ending(currentClaim, currentResponse, currentAttemptID, _):
+            guard currentClaim == claim,
+                  currentResponse == response,
+                  currentAttemptID == attemptID
+            else { return }
+        case let .cleanupPending(currentClaim, currentResponse):
+            guard currentClaim == claim, currentResponse == response else { return }
+        default:
+            return
+        }
+
+        // A true result confirms this exact session and target are absent. Older same-session calls are idempotent,
+        // so keeping their cancelled tasks alive must not retain Bridge capacity or the shutdown server graph.
+        self.sessionGrantIDs.removeValue(forKey: response.sessionID)
+        self.grants.removeValue(forKey: grantID)
+        self.latestCleanupGenerations.removeValue(forKey: response.sessionID)
+        guard generation.recordsEndedTombstone else { return }
+        let expiresAt = Self.addingClamped(self.now(), self.lifetimeMilliseconds)
+        self.endedSessions[response.sessionID] = EndedSession(
+            caller: claim.caller,
+            expiresAtUnixMilliseconds: expiresAt)
+        self.endedClaims[claim.claimID] = EndedClaim(
+            caller: claim.caller,
+            expiresAtUnixMilliseconds: expiresAt)
+        self.trimEndedTombstones()
+    }
+}
+
+extension PeekabooBridgeBrowserHandoffGrantRegistry {
     func scheduleMaintenance() {
         _ = self.beginMaintenance()
     }
@@ -989,15 +1236,15 @@ extension PeekabooBridgeBrowserHandoffGrantRegistry {
     func performMaintenance() async {
         let work = self.beginMaintenance()
         for attempt in work.pendingCleanupAttempts {
-            let removed = await attempt.task.value
-            self.settlePendingCleanup(attempt, removed: removed)
+            let outcome = await attempt.task.value
+            self.settlePendingCleanup(attempt, outcome: outcome)
         }
         for task in work.authorizationCleanupTasks {
             await task.value
         }
         for orphaned in work.orphanedSessions {
-            let removed = await orphaned.task.value
-            self.settleOrphanedSession(orphaned, removed: removed)
+            let outcome = await orphaned.task.value
+            self.settleOrphanedSession(orphaned, outcome: outcome)
         }
     }
 
@@ -1021,20 +1268,18 @@ extension PeekabooBridgeBrowserHandoffGrantRegistry {
             case let .succeeded(claim, response),
                  let .cleanupPending(claim, response):
                 guard reclaimAllSessions || self.ownerIsGone(claim.caller) else { continue }
-                let attemptID = UUID()
-                let task = Task { @MainActor in
-                    await self.waitForSessionOperationsToDrain(response.sessionID)
-                    return await provider.invalidateBrowserSession(response.sessionID)
-                }
-                var endingGrant = grant
-                endingGrant.state = .ending(claim, response, attemptID, task)
-                self.grants[grantID] = endingGrant
-                orphanedSessions.append(.init(
+                guard let attempt = self.makeSessionCleanupAttempt(
                     grantID: grantID,
                     claim: claim,
                     response: response,
-                    attemptID: attemptID,
-                    task: task))
+                    provider: provider,
+                    recordsEndedTombstone: self.latestCleanupGenerations[response.sessionID]?
+                        .recordsEndedTombstone ?? false)
+                else { continue }
+                var endingGrant = grant
+                endingGrant.state = .ending(claim, response, attempt.attemptID, attempt.task)
+                self.grants[grantID] = endingGrant
+                orphanedSessions.append(attempt)
             case .reserved, .pending:
                 guard reclaimAllSessions || grant.expiresAtUnixMilliseconds < now else { continue }
                 if let authorizationID = grant.handoffAuthorizationID {
@@ -1055,8 +1300,8 @@ extension PeekabooBridgeBrowserHandoffGrantRegistry {
         }
         for orphaned in orphanedSessions {
             Task { @MainActor [weak self] in
-                let removed = await orphaned.task.value
-                self?.settleOrphanedSession(orphaned, removed: removed)
+                let outcome = await orphaned.task.value
+                self?.settleOrphanedSession(orphaned, outcome: outcome)
             }
         }
         return MaintenanceWork(
@@ -1065,16 +1310,15 @@ extension PeekabooBridgeBrowserHandoffGrantRegistry {
             orphanedSessions: orphanedSessions)
     }
 
-    private func settleOrphanedSession(_ orphaned: SessionCleanupAttempt, removed: Bool) {
+    private func settleOrphanedSession(_ orphaned: SessionCleanupAttempt, outcome: CleanupAttemptOutcome) {
         guard var current = self.grants[orphaned.grantID],
               case let .ending(currentClaim, currentResponse, currentAttemptID, _) = current.state,
               currentClaim == orphaned.claim,
               currentResponse == orphaned.response,
               currentAttemptID == orphaned.attemptID
         else { return }
-        if removed {
-            self.sessionGrantIDs.removeValue(forKey: orphaned.response.sessionID)
-            self.grants.removeValue(forKey: orphaned.grantID)
+        if outcome.removed {
+            self.settleConfirmedSessionCleanup(orphaned)
         } else {
             current.state = .cleanupPending(orphaned.claim, orphaned.response)
             self.grants[orphaned.grantID] = current
