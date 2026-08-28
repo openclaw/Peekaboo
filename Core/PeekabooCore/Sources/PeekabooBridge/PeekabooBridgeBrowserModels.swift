@@ -265,7 +265,7 @@ public struct PeekabooBridgeBrowserElementPreflight: Codable, Sendable, Equatabl
         self.providerUIDs = providerUIDs
     }
 
-    var isCanonical: Bool {
+    public var isCanonical: Bool {
         self.providerPageID >= 0 && self.providerPageID <= Int(Int32.max) &&
             !self.providerUIDs.isEmpty &&
             self.providerUIDs.count <= 4096 &&

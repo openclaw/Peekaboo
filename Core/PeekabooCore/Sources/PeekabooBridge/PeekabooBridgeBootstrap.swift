@@ -114,7 +114,8 @@ public enum PeekabooBridgeBootstrap {
             daemonControl: configuration.daemonControl,
             desktopMutationWatermarkStore: configuration.desktopMutationWatermarkStore,
             screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer,
-            automationActivityObserver: configuration.automationActivityObserver)
+            automationActivityObserver: configuration.automationActivityObserver,
+            browserSessionBootstrapProvider: services.browserSessionBootstrapProvider)
         let host = PeekabooBridgeHost(
             socketPath: configuration.socketPath,
             server: server,

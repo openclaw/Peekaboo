@@ -6,9 +6,9 @@ import PeekabooFoundation
 import TachikomaMCP
 
 public struct BrowserMCPProviderSessionEpoch: Hashable, Sendable {
-    let rawValue: UUID
+    public let rawValue: UUID
 
-    init(rawValue: UUID = UUID()) {
+    public init(rawValue: UUID = UUID()) {
         self.rawValue = rawValue
     }
 }
@@ -364,6 +364,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
     @MainActor private var sessionManager: BrowserMCPSessionManager?
     @MainActor private var authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool?
+    @MainActor private var connectionHandoffAuthorizations: [UUID: BrowserMCPConnectionHandoffAuthorization] = [:]
     private let sessionCapabilities: BrowserToolCapabilitySession?
     private let sessionMutationGate: MCPToolSnapshotExecutionGate?
     @MainActor private var ownedSession: (
@@ -456,12 +457,87 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             sessionMutationGate: mutationGate)
     }
 
+    @MainActor
+    public var supportsAuthenticatedSessionBootstrap: Bool {
+        self.ownedSession == nil && self.authenticatedSessionPool != nil
+    }
+
+    @MainActor
+    public func createAuthenticatedSession(named name: String) throws -> BrowserMCPService {
+        guard self.supportsAuthenticatedSessionBootstrap,
+              let session = self.authenticatedSession(named: name)
+        else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        return session
+    }
+
+    @MainActor
+    public func existingAuthenticatedSession(named name: String) -> BrowserMCPService? {
+        guard self.supportsAuthenticatedSessionBootstrap,
+              let pool = self.authenticatedSessionPool,
+              let sessionID = pool.existingSessionID(named: name),
+              let manager = pool.existingManager(for: sessionID),
+              let capabilities = pool.capabilities(for: sessionID),
+              let mutationGate = pool.mutationGate(for: sessionID)
+        else { return nil }
+        return BrowserMCPService(
+            sessionManager: manager,
+            ownedSession: (pool: pool, id: sessionID),
+            sessionCapabilities: capabilities,
+            sessionMutationGate: mutationGate)
+    }
+
     /// Captures a host-private, provider-generation-bound authorization for a later scoped handoff.
     @MainActor
     public func authorizeConnectionHandoff(
         connectionReceipt: BrowserMCPConnectionReceipt) async throws -> BrowserMCPConnectionHandoffAuthorization
     {
         try await self.resolvedSessionManager().authorizeConnectionHandoff(receipt: connectionReceipt)
+    }
+
+    @MainActor
+    public func storeConnectionHandoffAuthorization(
+        connectionReceipt: BrowserMCPConnectionReceipt) async throws -> UUID
+    {
+        guard self.supportsAuthenticatedSessionBootstrap else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        guard self.connectionHandoffAuthorizations.count < 128 else {
+            throw BrowserMCPConnectionError.handoffAuthorizationCapacityExceeded
+        }
+        let authorization = try await self.authorizeConnectionHandoff(connectionReceipt: connectionReceipt)
+        guard self.connectionHandoffAuthorizations.count < 128 else {
+            throw BrowserMCPConnectionError.handoffAuthorizationCapacityExceeded
+        }
+        var authorizationID = UUID()
+        while self.connectionHandoffAuthorizations[authorizationID] != nil {
+            authorizationID = UUID()
+        }
+        self.connectionHandoffAuthorizations[authorizationID] = authorization
+        return authorizationID
+    }
+
+    @MainActor
+    public func discardConnectionHandoffAuthorization(_ authorizationID: UUID) {
+        self.connectionHandoffAuthorizations.removeValue(forKey: authorizationID)
+    }
+
+    @MainActor
+    public func transferConnection(
+        toAuthenticatedSessionNamed name: String,
+        authorizationID: UUID,
+        expectedConnectionReceipt: BrowserMCPConnectionReceipt) async throws -> BrowserMCPService
+    {
+        guard let authorization = self.connectionHandoffAuthorizations[authorizationID],
+              authorization.connectionReceipt == expectedConnectionReceipt
+        else {
+            throw BrowserMCPConnectionError.invalidHandoffAuthorization
+        }
+        self.connectionHandoffAuthorizations.removeValue(forKey: authorizationID)
+        return try await self.transferConnection(
+            toAuthenticatedSessionNamed: name,
+            authorization: authorization)
     }
 
     /// Moves one already-authorized exact root connection into a caller-scoped provider child.
@@ -719,6 +795,29 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
                 expectedSessionBinding: expectedSessionBinding,
                 elementPreflight: elementPreflight)
             if result.payload.isError {
+                await self.reconcileTargetOwnershipAfterExecutionFailure()
+            }
+            return result
+        } catch {
+            await self.reconcileTargetOwnershipAfterExecutionFailure()
+            throw error
+        }
+    }
+
+    @MainActor
+    public func executeSequenceResult(
+        _ calls: [BrowserMCPMappedCall],
+        channel: BrowserMCPChannel?,
+        expectedSessionBinding: BrowserMCPExecutionSessionBinding,
+        elementPreflight: BrowserMCPElementPreflight?) async throws -> BrowserMCPExecutionResult
+    {
+        do {
+            let result = try await self.resolvedSessionManager().executeSequence(
+                calls,
+                channel: channel,
+                expectedSessionBinding: expectedSessionBinding,
+                elementPreflight: elementPreflight)
+            if result.response.isError || result.actionFailure != nil {
                 await self.reconcileTargetOwnershipAfterExecutionFailure()
             }
             return result
@@ -1137,6 +1236,8 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case expectedProviderSessionEpochMismatch
     case receiptBindingUnsupported
     case handoffRecoveryRequired(String)
+    case handoffAuthorizationCapacityExceeded
+    case invalidHandoffAuthorization
     case sessionEnded
     case targetLocked
 
@@ -1174,6 +1275,10 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "This browser client cannot atomically bind execution to an exact connection receipt."
         case let .handoffRecoveryRequired(reason):
             "Browser connection handoff requires recovery before the target can be reused: \(reason)"
+        case .handoffAuthorizationCapacityExceeded:
+            "The bounded browser handoff authorization store is full."
+        case .invalidHandoffAuthorization:
+            "The browser handoff authorization is missing, consumed, or belongs to another exact connection."
         case .sessionEnded:
             "This authenticated browser session has ended and cannot be reused. Start a new session."
         case .targetLocked:

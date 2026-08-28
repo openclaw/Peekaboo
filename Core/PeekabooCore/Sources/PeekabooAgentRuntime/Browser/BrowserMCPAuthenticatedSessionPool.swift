@@ -99,6 +99,15 @@ final class BrowserMCPAuthenticatedSessionPool {
         return manager
     }
 
+    func existingSessionID(named name: String) -> SessionID? {
+        self.namedSessions[name]
+    }
+
+    func existingManager(for sessionID: SessionID) -> BrowserMCPSessionManager? {
+        guard !self.endedSessions.contains(sessionID) else { return nil }
+        return self.sessions[sessionID]?.manager
+    }
+
     func capabilities(for sessionID: SessionID) -> BrowserToolCapabilitySession? {
         self.sessions[sessionID]?.capabilities
     }
