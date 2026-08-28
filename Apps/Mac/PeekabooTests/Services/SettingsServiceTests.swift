@@ -9,8 +9,8 @@ import Testing
 struct PeekabooSettingsTests {
     @Test
     func `Visualizer defaults to the three v4 feedback groups`() throws {
-        try withIsolatedSettingsEnvironment { _ in
-            let settings = PeekabooSettings()
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.agentCursorEnabled)
             #expect(settings.inputHUDEnabled)
@@ -20,7 +20,7 @@ struct PeekabooSettingsTests {
 
     @Test
     func `Visualizer migrates legacy animation preferences by group`() throws {
-        try withIsolatedSettingsEnvironment { _ in
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
             let defaults = UserDefaults.standard
             for key in ["clickAnimationEnabled", "mouseTrailEnabled", "swipePathEnabled"] {
                 defaults.set(false, forKey: "peekaboo.\(key)")
@@ -31,7 +31,7 @@ struct PeekabooSettingsTests {
             defaults.set(false, forKey: "peekaboo.screenshotFlashEnabled")
             defaults.set(false, forKey: "peekaboo.watchCaptureHUDEnabled")
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(!settings.agentCursorEnabled)
             #expect(!settings.inputHUDEnabled)
@@ -41,8 +41,8 @@ struct PeekabooSettingsTests {
 
     @Test
     func `Default values are set correctly`() throws {
-        try withIsolatedSettingsEnvironment { _ in
-            let settings = PeekabooSettings()
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             #expect(settings.openAIAPIKey.isEmpty)
             #expect(settings.selectedProvider == "anthropic")
             #expect(settings.selectedModel == "claude-opus-5")
@@ -58,8 +58,8 @@ struct PeekabooSettingsTests {
 
     @Test
     func `API key validation`() throws {
-        try withIsolatedSettingsEnvironment { _ in
-            let settings = PeekabooSettings()
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             settings.selectedProvider = "openai"
 
             // Empty key should be invalid
@@ -77,8 +77,8 @@ struct PeekabooSettingsTests {
 
     @Test
     func `Model selection updates correctly`() throws {
-        try withIsolatedSettingsEnvironment { _ in
-            let settings = PeekabooSettings()
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             let models = ["gpt-5.6", "gpt-5-mini", "gpt-5-nano"]
 
             for model in models {
@@ -97,8 +97,8 @@ struct PeekabooSettingsTests {
         (2.5, 1.0), // Way above maximum
     ])
     func `Temperature bounds are enforced`(input: Double, expected: Double) throws {
-        try withIsolatedSettingsEnvironment { _ in
-            let settings = PeekabooSettings()
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             settings.temperature = input
             #expect(settings.temperature == expected)
         }
@@ -112,8 +112,8 @@ struct PeekabooSettingsTests {
         (200_000, 128_000), // Above maximum
     ])
     func `Max tokens bounds are enforced`(input: Int, expected: Int) throws {
-        try withIsolatedSettingsEnvironment { _ in
-            let settings = PeekabooSettings()
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             settings.maxTokens = input
             #expect(settings.maxTokens == expected)
         }
@@ -121,13 +121,12 @@ struct PeekabooSettingsTests {
 
     @Test
     func `Toggle settings work correctly`() throws {
-        try withIsolatedSettingsEnvironment { _ in
-            var settings = PeekabooSettings()
-            // Test all boolean settings
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            var settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            // launchAtLogin needs an application host for ServiceManagement registration, not this SwiftPM test.
             let toggles: [(WritableKeyPath<PeekabooSettings, Bool>, String)] = [
                 (\.alwaysOnTop, "alwaysOnTop"),
                 (\.showInDock, "showInDock"),
-                (\.launchAtLogin, "launchAtLogin"),
                 (\.hapticFeedbackEnabled, "hapticFeedbackEnabled"),
                 (\.soundEffectsEnabled, "soundEffectsEnabled"),
             ]
@@ -154,25 +153,39 @@ struct PeekabooSettingsTests {
 @MainActor
 struct PeekabooSettingsPersistenceTests {
     @Test
+    func `API keys are not persisted in UserDefaults`() throws {
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.openAIAPIKey = "test-secret"
+
+            #expect(UserDefaults.standard.string(forKey: "peekaboo.openAIAPIKey") == nil)
+        }
+    }
+
+    @Test
     func `PeekabooSettings persist across instances`() throws {
-        try withIsolatedSettingsEnvironment { _ in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let testAPIKey = "sk-test-persistence-key"
             let testModel = "o1-preview"
             let testTemperature = 0.9
 
-            let settings1 = PeekabooSettings()
+            let settings1 = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             settings1.openAIAPIKey = testAPIKey
             settings1.selectedModel = testModel
             settings1.temperature = testTemperature
             settings1.alwaysOnTop = true
 
-            // Create new instance and verify
-            let settings2 = PeekabooSettings()
+            // Reload through an independent coordinator, not the first instance's shared draft state.
+            let reloadedFixture = CredentialCoordinatorFixture(
+                directory: configDir.appendingPathComponent("credential-fixture"))
+            let settings2 = PeekabooSettings(credentialCoordinator: reloadedFixture.coordinator())
 
             #expect(settings2.openAIAPIKey == testAPIKey)
             #expect(settings2.selectedModel == testModel)
             #expect(settings2.temperature == testTemperature)
             #expect(settings2.alwaysOnTop == true)
+            // The original fixture owns the directory until the independent read is complete.
+            withExtendedLifetime(credentialCoordinator) {}
         }
     }
 }
@@ -182,7 +195,7 @@ struct PeekabooSettingsPersistenceTests {
 struct PeekabooSettingsConfigHydrationTests {
     @Test
     func `Configuration-backed state survives init`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -205,7 +218,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "anthropic")
             #expect(settings.selectedModel == "claude-opus-4-8")
@@ -223,7 +236,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration-backed provider aliases hydrate to Google and built-ins include Grok and MiniMax`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -240,7 +253,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "google")
             #expect(settings.selectedModel == "gemini-3.5-flash")
@@ -252,7 +265,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration-backed supported model IDs remain pinned`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -269,7 +282,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "google")
             #expect(settings.selectedModel == "gemini-3-flash")
@@ -281,7 +294,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration provider-only supported model remains unchanged`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -295,7 +308,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "google")
             #expect(settings.selectedModel == "gemini-3-flash")
@@ -308,7 +321,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration provider model wins over legacy UserDefaults without rewriting config`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -326,7 +339,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "openai")
             #expect(settings.selectedModel == "gpt-5.5")
@@ -338,7 +351,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration-backed LM Studio provider is keyless`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -355,7 +368,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "lmstudio")
             #expect(settings.selectedModel == "openai/gpt-oss-120b")
@@ -366,7 +379,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration-backed MiniMax API key validates settings provider`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -384,7 +397,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "minimax")
             #expect(settings.selectedModel == "MiniMax-M2.7")
@@ -394,7 +407,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Standalone qualified default hydrates its provider`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -408,7 +421,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "minimax-cn")
             #expect(settings.selectedModel == "MiniMax-M2.7")
@@ -424,9 +437,9 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Custom provider settings persist qualified agent default`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             try settings.addCustomProvider(
                 Configuration.CustomProvider(
                     name: "Local Proxy",
@@ -455,9 +468,9 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Replacing selected custom provider preserves selection and default`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             let original = Configuration.CustomProvider(
                 name: "Local Proxy",
                 type: .openai,
@@ -489,9 +502,9 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Replacing selected custom provider retargets a removed model`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             let original = Configuration.CustomProvider(
                 name: "Local Proxy",
                 type: .openai,
@@ -525,9 +538,9 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Selecting custom provider also selects its configured model`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             try settings.addCustomProvider(
                 Configuration.CustomProvider(
                     name: "Local Proxy",
@@ -558,8 +571,8 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Selecting catalog-less custom provider does not invent a model`() throws {
-        try withIsolatedSettingsEnvironment { _ in
-            let settings = PeekabooSettings()
+        try withIsolatedSettingsEnvironment { _, credentialCoordinator in
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             try settings.addCustomProvider(
                 Configuration.CustomProvider(
                     name: "Groq",
@@ -653,7 +666,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Custom provider settings hydrate qualified agent default`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -687,7 +700,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "local-proxy")
             #expect(settings.selectedModel == "mini")
@@ -705,7 +718,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Custom provider alias shadows xAI during provider-only hydration`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -740,7 +753,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "xai")
             #expect(settings.selectedModel == "old")
@@ -758,7 +771,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Qualified custom defaults resolve case-insensitively`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -792,7 +805,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "OpenRouter")
             #expect(settings.selectedModel == "mini")
@@ -810,7 +823,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `OpenRouter nested model IDs retain OpenRouter routing`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -827,7 +840,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "openrouter")
             #expect(settings.selectedModel == "anthropic/claude-sonnet-4.6")
@@ -885,7 +898,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Qualified default selects a later configured provider`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -902,7 +915,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "openrouter")
             #expect(settings.selectedModel == "anthropic/claude-sonnet-4.6")
@@ -922,7 +935,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Exact built-in custom provider shadows built-in settings entry`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -953,7 +966,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.allAvailableProviders.count(where: { $0 == "grok" }) == 1)
             #expect(settings.selectedProvider == "grok")
@@ -971,7 +984,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Disabled custom provider does not shadow built-in settings entry`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -1002,7 +1015,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.allAvailableProviders.count(where: { $0 == "grok" }) == 1)
             #expect(settings.selectedProvider == "grok")
@@ -1012,7 +1025,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration-backed xAI provider alias hydrates to Grok`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let previousXAIKey = getenv("X_AI_API_KEY").map { String(cString: $0) }
             setenv("X_AI_API_KEY", "test-xai-key", 1)
             defer {
@@ -1039,7 +1052,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "grok")
             #expect(settings.selectedModel == "grok-4.3")
@@ -1049,7 +1062,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Configuration-backed qualified supported aliases remain unchanged`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             let configJSON = """
             {
@@ -1066,7 +1079,7 @@ struct PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "grok")
             #expect(settings.selectedModel == "grok-4")
@@ -1081,9 +1094,9 @@ struct PeekabooSettingsConfigHydrationTests {
 extension PeekabooSettingsConfigHydrationTests {
     @Test
     func `Removing selected custom provider resets provider and model atomically`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             try settings.addCustomProvider(
                 Configuration.CustomProvider(
                     name: "Local Proxy",
@@ -1117,7 +1130,7 @@ extension PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Mixed-case built-in provider IDs normalize before persistence`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let previousOpenAIKey = getenv("OPENAI_API_KEY").map { String(cString: $0) }
             setenv("OPENAI_API_KEY", "test-openai-key", 1)
             defer {
@@ -1143,7 +1156,7 @@ extension PeekabooSettingsConfigHydrationTests {
             ConfigurationManager.shared.resetForTesting()
             _ = ConfigurationManager.shared.loadConfiguration()
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
 
             #expect(settings.selectedProvider == "openai")
             #expect(settings.selectedModel == "gpt-5.5")
@@ -1162,7 +1175,7 @@ extension PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Replacing fallback custom provider refreshes active agent`() throws {
-        try withIsolatedSettingsEnvironment { configDir in
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
             let configPath = configDir.appendingPathComponent("config.json")
             try """
             {
@@ -1193,7 +1206,7 @@ extension PeekabooSettingsConfigHydrationTests {
             let originalAgent = try #require(services.agent as? PeekabooAgentService)
             #expect(originalAgent.defaultModelSelection == "local-proxy/mini")
 
-            let settings = PeekabooSettings()
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
             settings.selectedProvider = "openai"
             settings.selectedModel = "gpt-5.5"
             settings.connectServices(services)
@@ -1218,8 +1231,9 @@ extension PeekabooSettingsConfigHydrationTests {
     }
 }
 
+/// Hosted CI only: this surrounding Settings graph still uses ambient defaults and provider singletons.
 @MainActor
-private func withIsolatedSettingsEnvironment(_ body: (URL) throws -> Void) throws {
+func withIsolatedSettingsEnvironment(_ body: (URL, ProviderCredentialCoordinator) throws -> Void) throws {
     let fileManager = FileManager.default
     let configDir = fileManager.temporaryDirectory
         .appendingPathComponent("peekaboo-settings-tests-\(UUID().uuidString)", isDirectory: true)
@@ -1282,7 +1296,8 @@ private func withIsolatedSettingsEnvironment(_ body: (URL) throws -> Void) throw
         try? fileManager.removeItem(at: configDir)
     }
 
-    try body(configDir)
+    let fixture = CredentialCoordinatorFixture(directory: configDir.appendingPathComponent("credential-fixture"))
+    try body(configDir, fixture.coordinator())
 }
 
 private func clearPeekabooDefaults(_ defaults: UserDefaults) {

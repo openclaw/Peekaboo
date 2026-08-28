@@ -83,7 +83,8 @@ extension PeekabooBridgeServer {
 
     func windowMutationResponse(
         request: PeekabooBridgeRequest,
-        outcome: DesktopActionOutcome?) async throws -> PeekabooBridgeResponse
+        outcome: DesktopActionOutcome?,
+        focusReadback: ServiceWindowInfo? = nil) async throws -> PeekabooBridgeResponse
     {
         guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
               let outcome,
@@ -96,8 +97,12 @@ extension PeekabooBridgeServer {
             }
             let rawReadback: ServiceWindowInfo?
             do {
-                rawReadback = try await self.services.windows
-                    .listWindows(target: .windowId(identity.windowID)).first
+                if request.operation == .focusWindow, let focusReadback {
+                    rawReadback = focusReadback
+                } else {
+                    rawReadback = try await self.services.windows
+                        .listWindows(target: .windowId(identity.windowID)).first
+                }
             } catch let error as PeekabooError {
                 if [.closeWindow, .backgroundCloseWindow].contains(request.operation),
                    case .windowNotFound = error

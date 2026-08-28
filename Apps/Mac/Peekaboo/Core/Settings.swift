@@ -44,46 +44,34 @@ final class PeekabooSettings {
         }
     }
 
-    var openAIAPIKey: String = "" {
-        didSet {
-            self.save()
-            self.saveAPIKeyToCredentials("OPENAI_API_KEY", self.openAIAPIKey)
-        }
+    var openAIAPIKey: String {
+        get { self.credentialCoordinator.state(for: .openAI).draft }
+        set { self.credentialCoordinator.edit(newValue, for: .openAI) }
     }
 
-    var anthropicAPIKey: String = "" {
-        didSet {
-            self.save()
-            self.saveAPIKeyToCredentials("ANTHROPIC_API_KEY", self.anthropicAPIKey)
-        }
+    var anthropicAPIKey: String {
+        get { self.credentialCoordinator.state(for: .anthropic).draft }
+        set { self.credentialCoordinator.edit(newValue, for: .anthropic) }
     }
 
-    var grokAPIKey: String = "" {
-        didSet {
-            self.save()
-            self.saveAPIKeyToCredentials("X_AI_API_KEY", self.grokAPIKey)
-        }
+    var grokAPIKey: String {
+        get { self.credentialCoordinator.state(for: .grok).draft }
+        set { self.credentialCoordinator.edit(newValue, for: .grok) }
     }
 
-    var googleAPIKey: String = "" {
-        didSet {
-            self.save()
-            self.saveAPIKeyToCredentials("GEMINI_API_KEY", self.googleAPIKey)
-        }
+    var googleAPIKey: String {
+        get { self.credentialCoordinator.state(for: .google).draft }
+        set { self.credentialCoordinator.edit(newValue, for: .google) }
     }
 
-    var miniMaxAPIKey: String = "" {
-        didSet {
-            self.save()
-            self.saveAPIKeyToCredentials("MINIMAX_API_KEY", self.miniMaxAPIKey)
-        }
+    var miniMaxAPIKey: String {
+        get { self.credentialCoordinator.state(for: .miniMax).draft }
+        set { self.credentialCoordinator.edit(newValue, for: .miniMax) }
     }
 
-    var miniMaxChinaAPIKey: String = "" {
-        didSet {
-            self.save()
-            self.saveAPIKeyToCredentials("MINIMAX_CN_API_KEY", self.miniMaxChinaAPIKey)
-        }
+    var miniMaxChinaAPIKey: String {
+        get { self.credentialCoordinator.state(for: .miniMaxChina).draft }
+        set { self.credentialCoordinator.edit(newValue, for: .miniMaxChina) }
     }
 
     var ollamaBaseURL: String = "http://localhost:11434" {
@@ -284,23 +272,26 @@ final class PeekabooSettings {
 
         switch self.selectedProvider {
         case "openai":
-            return !self.openAIAPIKey.isEmpty || self.isUsingOpenAIEnvironment ||
+            return !self.credentialCoordinator.state(for: .openAI).confirmed.isEmpty || self.isUsingOpenAIEnvironment ||
                 self.hasCredentialValue(forAny: ["OPENAI_ACCESS_TOKEN", "OPENAI_API_KEY"])
         case "anthropic":
-            return !self.anthropicAPIKey.isEmpty || self.isUsingAnthropicEnvironment ||
+            return !self.credentialCoordinator.state(for: .anthropic).confirmed.isEmpty || self
+                .isUsingAnthropicEnvironment ||
                 self.hasCredentialValue(forAny: ["ANTHROPIC_ACCESS_TOKEN", "ANTHROPIC_API_KEY"])
         case "grok":
-            return !self.grokAPIKey.isEmpty || self.isUsingGrokEnvironment ||
+            return !self.credentialCoordinator.state(for: .grok).confirmed.isEmpty || self.isUsingGrokEnvironment ||
                 self.hasCredentialValue(forAny: ["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"])
         case "google":
-            return !self.googleAPIKey.isEmpty || self.isUsingGoogleEnvironment ||
+            return !self.credentialCoordinator.state(for: .google).confirmed.isEmpty || self.isUsingGoogleEnvironment ||
                 self.hasCredentialValue(forAny: ["GEMINI_API_KEY", "GOOGLE_API_KEY"])
         case "minimax":
-            return !self.miniMaxAPIKey.isEmpty || self.isUsingMiniMaxEnvironment ||
+            return !self.credentialCoordinator.state(for: .miniMax).confirmed.isEmpty || self
+                .isUsingMiniMaxEnvironment ||
                 self.hasCredentialValue(forAny: ["MINIMAX_API_KEY"]) ||
                 self.configManager.getMiniMaxAPIKey()?.isEmpty == false
         case "minimax-cn", "minimax_cn", "minimaxi":
-            return !self.miniMaxChinaAPIKey.isEmpty || !self.miniMaxAPIKey.isEmpty ||
+            return !self.credentialCoordinator.state(for: .miniMaxChina).confirmed.isEmpty || !self
+                .credentialCoordinator.state(for: .miniMax).confirmed.isEmpty ||
                 self.isUsingMiniMaxChinaEnvironment || self.isUsingMiniMaxEnvironment ||
                 self.hasCredentialValue(forAny: ["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"]) ||
                 self.configManager.getMiniMaxChinaAPIKey()?.isEmpty == false
@@ -319,30 +310,31 @@ final class PeekabooSettings {
 
     /// Check if we're using environment variables
     var isUsingOpenAIEnvironment: Bool {
-        self.openAIAPIKey.isEmpty && self.detectedEnvironmentVariable(for: ["OPENAI_API_KEY"]) != nil
+        self.detectedEnvironmentVariable(for: ["OPENAI_API_KEY"]) != nil
     }
 
     var isUsingAnthropicEnvironment: Bool {
-        self.anthropicAPIKey.isEmpty && self.detectedEnvironmentVariable(for: ["ANTHROPIC_API_KEY"]) != nil
+        self.detectedEnvironmentVariable(for: ["ANTHROPIC_API_KEY"]) != nil
     }
 
     var isUsingGrokEnvironment: Bool {
-        self.grokAPIKey.isEmpty && self.detectedEnvironmentVariable(
+        self.detectedEnvironmentVariable(
             for: ["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"]) != nil
     }
 
     var isUsingGoogleEnvironment: Bool {
-        self.googleAPIKey.isEmpty && self.detectedEnvironmentVariable(
+        self.detectedEnvironmentVariable(
             for: ["GEMINI_API_KEY", "GOOGLE_API_KEY"]) != nil
     }
 
     var isUsingMiniMaxEnvironment: Bool {
-        self.miniMaxAPIKey.isEmpty && self.detectedEnvironmentVariable(for: ["MINIMAX_API_KEY"]) != nil
+        self.detectedEnvironmentVariable(for: ["MINIMAX_API_KEY"]) != nil
     }
 
     var isUsingMiniMaxChinaEnvironment: Bool {
-        self.miniMaxChinaAPIKey.isEmpty && self
-            .detectedEnvironmentVariable(for: ["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"]) != nil
+        self.detectedEnvironmentVariable(for: ["MINIMAX_CN_API_KEY"]) != nil ||
+            (self.configManager.getMiniMaxChinaAPIKey(fallbackToSharedKey: false) == nil &&
+                self.detectedEnvironmentVariable(for: ["MINIMAX_API_KEY"]) != nil)
     }
 
     var allAvailableProviders: [String] {
@@ -355,11 +347,26 @@ final class PeekabooSettings {
     // Storage
     private let userDefaults = UserDefaults.standard
     private let keyPrefix = "peekaboo."
+    let credentialCoordinator: ProviderCredentialCoordinator
 
-    init() {
+    init(credentialCoordinator: ProviderCredentialCoordinator? = nil) {
+        self.credentialCoordinator = credentialCoordinator ?? ProviderCredentialCoordinator(
+            file: ConfigurationManager.shared,
+            legacy: LegacyCredentialPreferences(
+                read: { UserDefaults.standard.string(forKey: "peekaboo.\($0.rawValue)") },
+                remove: { UserDefaults.standard.removeObject(forKey: "peekaboo.\($0.rawValue)") }),
+            runtimeDidChange: {})
         self.load()
         self.loadFromPeekabooConfig()
         self.migrateSettingsIfNeeded()
+        if credentialCoordinator == nil {
+            self.credentialCoordinator.runtimeDidChange = { [weak self] in
+                guard let self else { return }
+                self.configManager.applyAIProviderKeys()
+                self.services?.refreshAgentService()
+            }
+            self.credentialCoordinator.reload()
+        }
     }
 }
 
@@ -377,12 +384,6 @@ extension PeekabooSettings {
     private func loadProviderSettings() {
         self.selectedProvider = self.canonicalProviderIdentifier(
             self.userDefaults.string(forKey: self.namespaced("selectedProvider")) ?? "anthropic")
-        self.openAIAPIKey = self.userDefaults.string(forKey: self.namespaced("openAIAPIKey")) ?? ""
-        self.anthropicAPIKey = self.userDefaults.string(forKey: self.namespaced("anthropicAPIKey")) ?? ""
-        self.grokAPIKey = self.userDefaults.string(forKey: self.namespaced("grokAPIKey")) ?? ""
-        self.googleAPIKey = self.userDefaults.string(forKey: self.namespaced("googleAPIKey")) ?? ""
-        self.miniMaxAPIKey = self.userDefaults.string(forKey: self.namespaced("miniMaxAPIKey")) ?? ""
-        self.miniMaxChinaAPIKey = self.userDefaults.string(forKey: self.namespaced("miniMaxChinaAPIKey")) ?? ""
         self.ollamaBaseURL = self.userDefaults.string(forKey: self.namespaced(
             "ollamaBaseURL")) ?? "http://localhost:11434"
 
@@ -448,12 +449,6 @@ extension PeekabooSettings {
         guard !self.isLoading else { return }
 
         self.userDefaults.set(self.selectedProvider, forKey: "\(self.keyPrefix)selectedProvider")
-        self.userDefaults.set(self.openAIAPIKey, forKey: "\(self.keyPrefix)openAIAPIKey")
-        self.userDefaults.set(self.anthropicAPIKey, forKey: "\(self.keyPrefix)anthropicAPIKey")
-        self.userDefaults.set(self.grokAPIKey, forKey: "\(self.keyPrefix)grokAPIKey")
-        self.userDefaults.set(self.googleAPIKey, forKey: "\(self.keyPrefix)googleAPIKey")
-        self.userDefaults.set(self.miniMaxAPIKey, forKey: "\(self.keyPrefix)miniMaxAPIKey")
-        self.userDefaults.set(self.miniMaxChinaAPIKey, forKey: "\(self.keyPrefix)miniMaxChinaAPIKey")
         self.userDefaults.set(self.ollamaBaseURL, forKey: "\(self.keyPrefix)ollamaBaseURL")
         self.userDefaults.set(self.selectedModel, forKey: "\(self.keyPrefix)selectedModel")
         self.userDefaults.set(self.useCustomVisionModel, forKey: "\(self.keyPrefix)useCustomVisionModel")
@@ -712,38 +707,6 @@ extension PeekabooSettings {
         }
     }
 
-    @MainActor
-    private func saveAPIKeyToCredentials(_ key: String, _ value: String) {
-        guard !self.isLoading else { return }
-
-        do {
-            guard let provider = self.provider(forCredentialKey: key) else { return }
-
-            if value.isEmpty {
-                for credentialKey in self.credentialKeys(for: provider) {
-                    try self.configManager.removeCredential(key: credentialKey)
-                }
-                if let environmentValue = self.environmentCredentialValue(for: provider) {
-                    TachikomaConfiguration.current.setAPIKey(environmentValue, for: provider)
-                } else {
-                    TachikomaConfiguration.current.removeAPIKey(for: provider)
-                }
-                self.services?.refreshAgentService()
-                return
-            }
-            for credentialKey in self.credentialKeys(for: provider) where credentialKey != key {
-                try self.configManager.removeCredential(key: credentialKey)
-            }
-            try self.configManager.setCredential(key: key, value: value)
-            TachikomaConfiguration.current.setAPIKey(value, for: provider)
-
-            // Refresh the agent service to pick up new API keys
-            self.services?.refreshAgentService()
-        } catch {
-            print("Failed to save API key to credentials: \(error)")
-        }
-    }
-
     func connectServices(_ services: PeekabooServices) {
         self.services = services
     }
@@ -925,11 +888,6 @@ extension PeekabooSettings {
             matching: id)
     }
 
-    private func environmentCredentialValue(for provider: Provider) -> String? {
-        let keys = self.credentialKeys(for: provider)
-        return self.detectedEnvironmentVariable(for: keys).flatMap { ProcessInfo.processInfo.environment[$0] }
-    }
-
     private func defaultModel(for provider: String) -> String {
         if let customProviderID = self.customProviderIdentifier(matching: provider),
            self.customProviders[customProviderID] != nil
@@ -969,44 +927,6 @@ extension PeekabooSettings {
             "openrouter/\(self.selectedModel)"
         default:
             self.selectedModel
-        }
-    }
-
-    private func provider(forCredentialKey key: String) -> Provider? {
-        switch key {
-        case "OPENAI_API_KEY":
-            .openai
-        case "ANTHROPIC_API_KEY":
-            .anthropic
-        case "X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY":
-            .grok
-        case "GEMINI_API_KEY", "GOOGLE_API_KEY":
-            .google
-        case "MINIMAX_API_KEY":
-            .minimax
-        case "MINIMAX_CN_API_KEY":
-            .minimaxCN
-        default:
-            nil
-        }
-    }
-
-    private func credentialKeys(for provider: Provider) -> [String] {
-        switch provider {
-        case .openai:
-            ["OPENAI_API_KEY"]
-        case .anthropic:
-            ["ANTHROPIC_API_KEY"]
-        case .grok:
-            ["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"]
-        case .google:
-            ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
-        case .minimax:
-            ["MINIMAX_API_KEY"]
-        case .minimaxCN:
-            ["MINIMAX_CN_API_KEY"]
-        default:
-            []
         }
     }
 

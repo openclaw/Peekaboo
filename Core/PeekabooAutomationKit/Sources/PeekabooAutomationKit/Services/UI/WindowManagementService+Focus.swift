@@ -19,6 +19,46 @@ extension WindowManagementService {
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
     {
+        let result = try await self.focusWindowProofActionResult(target: target, expectedIdentity: expectedIdentity)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: result.outcome,
+            targetIdentity: result.targetIdentity,
+            selectedLeafEvidence: result.selectedLeafEvidence)
+    }
+
+    public func focusWindowProofActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<ServiceWindowInfo>
+    {
+        try await self.focusWindowProofActionResult(
+            target: target,
+            expectedIdentity: expectedIdentity,
+            validateBeforeDispatch: {
+                try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            },
+            dispatch: { options, onDispatch in
+                let focusService = FocusManagementService(
+                    applications: self.applicationService,
+                    operationLaneCoordinator: self.operationLaneCoordinator)
+                try await focusService.focusWindowWithOwnedLane(
+                    windowID: CGWindowID(expectedIdentity.windowID),
+                    options: options,
+                    expectedIdentity: expectedIdentity,
+                    onDispatch: onDispatch)
+            },
+            readback: WindowFocusReadback(catalog: self.cgInfoLookup))
+    }
+
+    func focusWindowProofActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        validateBeforeDispatch: () throws -> Void,
+        dispatch: (
+            _ options: FocusManagementService.FocusOptions,
+            _ onDispatch: @escaping (FocusDispatchRecord) -> Void) async throws -> Void,
+        readback: WindowFocusReadback) async throws -> UIAutomationActionResult<ServiceWindowInfo>
+    {
         guard case let .windowId(windowID) = target,
               windowID == expectedIdentity.windowID,
               let bounds = expectedIdentity.capturedBounds
@@ -32,28 +72,20 @@ extension WindowManagementService {
         var sequence = DesktopActionSequenceAccumulator()
 
         do {
-            try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            return try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
                 self.logger.info("Attempting to focus window with target: \(target)")
                 self.logger.debug("WindowManagementService.focusWindow called with target: \(target)")
-                try self.validatePinnedWindowMutation(
-                    target: target,
-                    expectedIdentity: expectedIdentity)
-                let focusService = FocusManagementService(
-                    applications: self.applicationService,
-                    operationLaneCoordinator: self.operationLaneCoordinator)
-                try await focusService.focusWindowWithOwnedLane(
-                    windowID: CGWindowID(expectedIdentity.windowID),
-                    expectedIdentity: expectedIdentity,
-                    onDispatch: { record in
-                        sequence.record(record.sequenceStep)
-                    })
-                guard SystemIdentityResolver.validateWindowMutationIdentity(
-                    expectedIdentity,
-                    expectedBounds: bounds)
-                else {
-                    throw PeekabooError.commandFailed(
-                        "Window \(expectedIdentity.windowID) changed identity during focus")
+                try validateBeforeDispatch()
+                // Settlement may wait, but an ambiguous mutation must never trigger another raise.
+                try await dispatch(.init(retryCount: 1)) { record in
+                    sequence.record(record.sequenceStep)
                 }
+                let window = try await readback.capture(expectedIdentity: expectedIdentity)
+                let outcome = FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
+                return UIAutomationActionResult(
+                    payload: window,
+                    outcome: outcome,
+                    targetIdentity: targetIdentity)
             }
         } catch let failure as DesktopActionFailure {
             throw self.focusFailure(
@@ -77,12 +109,6 @@ extension WindowManagementService {
                 sequence: sequence,
                 targetReceipt: targetReceipt)
         }
-
-        let outcome = FocusDispatchAccounting.verifiedFocusOutcome(sequence.successResolution())
-        return UIAutomationActionResult(
-            payload: (),
-            outcome: outcome,
-            targetIdentity: targetIdentity)
     }
 
     private func focusFailure(

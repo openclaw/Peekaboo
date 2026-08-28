@@ -344,6 +344,31 @@ struct PeekabooMCPServerTests {
 
     @Test
     @MainActor
+    func `press wire rejects obsolete foreground input as invalid params before dispatch`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let session = try await MCPWireSession.connect(context: context)
+
+        let detail = await Self.invalidParamsDetail(
+            session: session,
+            params: .object([
+                "name": .string("press"),
+                "arguments": .object([
+                    "key": .string("c"),
+                    "modifiers": .string("cmd"),
+                    "foreground": .bool(true),
+                ]),
+            ]))
+        #expect(detail?.contains("press") == true)
+        #expect(detail?.contains(#"Unknown property "foreground""#) == true)
+        #expect(automation.lastHotkeyKeys == nil)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
     func `press wire rejects malformed modifier shapes without dispatch`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)

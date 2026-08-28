@@ -51,6 +51,30 @@ Peekaboo resolves settings in this order (highest → lowest):
 2. **Credentials file** – `peekaboo config credential set OPENAI_API_KEY` prompts without echo and stores the value in `~/.peekaboo/credentials` (`chmod 600`). Scripts should pipe one line with `--credential-stdin --no-input` or use an owner-only `--credential-file`.
 3. **Config file** – avoid storing keys here unless absolutely necessary. OAuth tokens are never written to `config.json`.
 
+The macOS app and CLI use this same file as the ongoing authority for saved API keys, including when
+`PEEKABOO_CONFIG_DIR` changes the configuration root. Settings reloads it when the provider pane opens;
+use **Reload keys** after a CLI rotation while the pane stays open. There is no credential-path Keychain
+storage or importer and no password or biometric prompt for app credential persistence.
+
+The directory is owner-only (`0700`) and the file is owner-readable/writable (`0600`), including temporary
+files before publication. This deliberately accepts file-level protection to avoid authentication prompts:
+the keys are plaintext, and other processes running as your user can read them. Do not share this file.
+Sequential app/CLI edits preserve unrelated keys and OAuth entries; concurrent edits by separate processes,
+including Tachikoma, are not serialized.
+
+Old app preferences are never imported automatically, even if the file is missing, empty, or deleted.
+**Import saved app keys** explicitly recovers legacy-only keys; existing file values win, including CLI
+changes made since the pane opened. Successful saves, clears, and imports retire only the corresponding
+legacy entries. Failed imports leave those entries available for another explicit attempt.
+Showing a credential field or receiving an unchanged binding value never saves the draft or retires legacy keys.
+App edits and legacy imports trim surrounding whitespace and newlines; interior newlines and NUL remain invalid. Whitespace-only app input clears a populated field but leaves an already empty field unchanged; blank legacy entries remain stored without offering recovery.
+
+A failed save keeps the draft marked **Not saved** and leaves the previous effective credential unchanged.
+A failed clear does not claim deletion or environment fallback. **Retry** is explicit after failure, and
+reload preserves failed drafts. A durability warning means publication already happened; reload to check
+instead of blindly repeating the write. Environment overrides, config fallbacks, OAuth sessions, and the
+international MiniMax fallback for MiniMax China remain runtime-only and are not implicitly saved.
+
 ## Provider Variables
 
 - `PEEKABOO_AI_PROVIDERS`: `provider/model` CSV. Example: `openai/gpt-5.6,anthropic/claude-opus-5,grok/grok-4.3,ollama/llava:latest`.

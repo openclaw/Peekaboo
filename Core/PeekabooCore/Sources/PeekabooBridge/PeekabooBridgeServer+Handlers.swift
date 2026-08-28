@@ -1517,9 +1517,25 @@ extension PeekabooBridgeServer {
                 message: "Window focus target changed before dispatch.",
                 hint: "List windows again and retry with the fresh exact target receipt.")
         }
-        let result = try await self.services.windows.focusWindowResult(
-            target: payload.target,
-            expectedIdentity: identity)
+        let result: UIAutomationActionResult<Void>
+        let focusReadback: ServiceWindowInfo?
+        if let provider = self.services.windows as? any WindowManagementFocusProofProviding {
+            let proof = try await provider.focusWindowProofActionResult(
+                target: payload.target,
+                expectedIdentity: identity)
+            focusReadback = proof.payload
+            result = UIAutomationActionResult(
+                payload: (),
+                outcome: proof.outcome,
+                targetIdentity: proof.targetIdentity,
+                selectedLeafEvidence: proof.selectedLeafEvidence)
+        } else {
+            // Preserve the public 4.x provider contract and its existing fail-closed readback.
+            focusReadback = nil
+            result = try await self.services.windows.focusWindowResult(
+                target: payload.target,
+                expectedIdentity: identity)
+        }
         let outcome = try Self.requireCurrentWindowOutcome(result.outcome, operation: "focus window")
         if outcome.state == .refused, outcome.dispatchState == .none {
             return try Self.handledActionResponse(
@@ -1541,7 +1557,8 @@ extension PeekabooBridgeServer {
         }
         let response = try await self.windowMutationResponse(
             request: .focusWindow(payload),
-            outcome: result.outcome)
+            outcome: result.outcome,
+            focusReadback: focusReadback)
         return try Self.handledActionResponse(
             response: response,
             result: result,
