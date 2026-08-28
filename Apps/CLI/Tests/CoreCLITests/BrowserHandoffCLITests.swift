@@ -2,13 +2,12 @@ import Commander
 import Darwin
 import Foundation
 import MCP
-import PeekabooBridge
-import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
+@testable import PeekabooBridge
 @testable import PeekabooCLI
 
 struct BrowserHandoffCLITests {
@@ -518,48 +517,8 @@ struct BrowserHandoffCLITests {
         guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
     }
 
-    @MainActor
     private static func canonicalHandoffData() async throws -> Data {
-        let root = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent(
-            "pbh-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let browser = HandoffToolFixtureBrowser()
-        let services = Self.services(browser: browser)
-        let socket = root.appendingPathComponent("bridge.sock").path
-        let host = PeekabooBridgeHost(
-            socketPath: socket,
-            server: PeekabooBridgeServer(
-                services: services,
-                allowlistedTeams: [],
-                allowlistedBundles: []
-            ),
-            allowedTeamIDs: [],
-            requestTimeoutSec: 2
-        )
-        try await host.startChecked()
-        do {
-            let client = BridgeTestFixtures.authenticatedClient(socketPath: socket, requestTimeoutSec: 2)
-            _ = try await client.handshake(client: .init(
-                bundleIdentifier: "dev.peekaboo.browser-handoff-tests",
-                teamIdentifier: nil,
-                processIdentifier: getpid()
-            ))
-            let handoff = try await client.browserConnectHandoffResult(
-                channel: "stable",
-                browserURL: "http://127.0.0.1:9222"
-            )
-            let encoder = JSONEncoder.peekabooBridgeEncoder()
-            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            let data = try encoder.encode(handoff.receiptBundle)
-            await host.stop()
-            return data
-        } catch {
-            await host.stop()
-            throw error
-        }
+        try await BrowserHandoffReceiptFixture.canonicalData()
     }
 
     @MainActor
@@ -675,3 +634,145 @@ BrowserHandoffRuntimeAdopting, @unchecked Sendable {
 }
 
 private struct StopBeforeRuntimeConstruction: Error {}
+
+private enum BrowserHandoffReceiptFixture {
+    private static let requestedBrowserURL = "http://127.0.0.1:9222"
+    private static let connectionReceipt = PeekabooBridgeBrowserConnectionReceipt(
+        channel: "stable",
+        browserURL: "http://127.0.0.1:9222/",
+        webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-handoff-fixture",
+        devToolsBrowserID: "browser-handoff-fixture",
+        browserVersion: "Chrome/151.0",
+        protocolVersion: "1.3"
+    )
+
+    static func canonicalData() async throws -> Data {
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: "/tmp/peekaboo-browser-handoff-fixture-\(UUID().uuidString).sock"
+        )
+        let archiveDirectory = URL(
+            fileURLWithPath: authority.attestation.receiptArchiveDirectory,
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: archiveDirectory) }
+
+        let peer = try self.currentPeer()
+        let clientInstanceID = UUID()
+        let session = try await authority.createSession(
+            clientInstanceID: clientInstanceID,
+            peer: peer,
+            negotiatedCapabilities: .current
+        )
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+        let request = PeekabooBridgeRequest.projectedAction(.init(request: .browserConnect(.init(
+            channel: "stable",
+            browserURL: self.requestedBrowserURL,
+            requestsHandoff: true
+        ))))
+        let response = PeekabooBridgeResponse.projectedAction(.init(
+            response: .browserStatus(.init(
+                isConnected: true,
+                toolCount: 10,
+                detectedBrowsers: [],
+                connectionReceipt: self.connectionReceipt
+            )),
+            outcome: outcome.projection
+        ))
+        let sequence = PeekabooBridgeOperationSessionSequence(0)
+        let attestedRequest = PeekabooBridgeAttestedOperationRequest(
+            requestID: PeekabooBridgeOperationReceiptCoding.deterministicRequestID(
+                sessionID: session.sessionID,
+                sequence: sequence
+            ),
+            sessionID: session.sessionID,
+            sessionSequence: sequence,
+            expectedListenerInstanceID: authority.attestation.listenerInstanceID,
+            clientInstanceID: clientInstanceID,
+            client: session.client,
+            request: request
+        )
+        guard case let .accepted(claim) = try await authority.claim(attestedRequest, peer: peer) else {
+            throw BrowserHandoffReceiptFixtureError.claimRefused
+        }
+        defer { authority.complete(claim) }
+
+        let now = PeekabooBridgeOperationReceiptCoding.unixMilliseconds()
+        let payload = try PeekabooBridgeOperationReceiptPayload(
+            requestID: claim.requestID,
+            sessionID: claim.sessionID,
+            sessionSequence: claim.sessionSequence,
+            sessionAttestationSHA256: PeekabooBridgeOperationReceiptCoding.sha256(session),
+            listenerInstanceID: authority.attestation.listenerInstanceID,
+            listenerPublicKeySHA256: PeekabooBridgeOperationReceiptCoding.sha256(
+                authority.attestation.publicKey
+            ),
+            host: authority.attestation.host,
+            clientInstanceID: clientInstanceID,
+            client: session.client,
+            operation: .browserConnect,
+            requestSHA256: PeekabooBridgeOperationReceiptCoding.sha256(request),
+            responseSHA256: PeekabooBridgeOperationReceiptCoding.sha256(response),
+            target: .browser(self.connectionReceipt),
+            outcome: outcome.projection,
+            remainingClaimCount: claim.remainingClaimCount,
+            startedAtUnixMilliseconds: now,
+            completedAtUnixMilliseconds: now
+        )
+        let receipt = try await authority.signAndArchive(payload, claim: claim)
+        let bundle = try PeekabooBridgeOperationReceiptBundle(
+            operationAttestation: authority.attestation,
+            operationSessionAttestation: session,
+            receipt: receipt,
+            canonicalListenerAttestationPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(
+                authority.attestation.unsignedPayload
+            ),
+            canonicalSessionAttestationPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(
+                session.unsignedPayload
+            ),
+            canonicalReceiptPayload: PeekabooBridgeOperationReceiptCoding.canonicalData(receipt.payload),
+            canonicalRequest: PeekabooBridgeOperationReceiptCoding.canonicalData(request),
+            canonicalResponse: PeekabooBridgeOperationReceiptCoding.canonicalData(response)
+        )
+        try bundle.validate()
+        return try PeekabooBridgeOperationReceiptCoding.canonicalData(bundle)
+    }
+
+    private static func currentPeer() throws -> PeekabooBridgePeer {
+        guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(getpid()),
+              let codeSignatureHash = PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
+                  processIdentifier: getpid()
+              )
+        else {
+            throw BrowserHandoffReceiptFixtureError.processIdentityUnavailable
+        }
+        var descriptors: [Int32] = [-1, -1]
+        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer {
+            close(descriptors[0])
+            close(descriptors[1])
+        }
+        let auditIdentity = try PeekabooBridgeSocketIO.peerAuditIdentity(fd: descriptors[0])
+        let liveIdentity = PeekabooBridgeLivePeerIdentity(
+            auditIdentity: auditIdentity,
+            processStartIdentity: processStartIdentity,
+            codeSignatureHash: codeSignatureHash
+        )
+        return PeekabooBridgePeer(
+            liveIdentity: liveIdentity,
+            bundleIdentifier: "dev.peekaboo.browser-handoff-tests",
+            teamIdentifier: nil
+        )
+    }
+}
+
+private enum BrowserHandoffReceiptFixtureError: Error {
+    case claimRefused
+    case processIdentityUnavailable
+}
