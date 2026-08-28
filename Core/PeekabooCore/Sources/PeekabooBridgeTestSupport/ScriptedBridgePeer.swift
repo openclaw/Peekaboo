@@ -90,11 +90,26 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
                 while true {
                     guard let listener = descriptors.listenerForAccept else { return }
                     client = accept(listener, nil, nil)
-                    if client >= 0 || errno != EINTR {
+                    if client >= 0 {
                         break
                     }
+                    if errno == EINTR {
+                        continue
+                    }
+                    if errno == EAGAIN || errno == EWOULDBLOCK {
+                        do {
+                            try await Task.sleep(for: .milliseconds(1))
+                        } catch {
+                            return
+                        }
+                        continue
+                    }
+                    return
                 }
-                guard client >= 0 else { return }
+                guard Self.makeNonblocking(client) else {
+                    Darwin.close(client)
+                    return
+                }
                 guard descriptors.register(client: client) else { return }
                 await state.recordAcceptedConnection()
                 defer { descriptors.closeActiveClient(client) }
@@ -106,7 +121,8 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
                     SO_NOSIGPIPE,
                     &noSigPipe,
                     socklen_t(MemoryLayout.size(ofValue: noSigPipe)))
-                await state.record(Self.readRequest(from: client))
+                let request = await Self.readRequest(from: client)
+                await state.record(request)
                 guard !descriptors.isCancelled else { return }
 
                 var shouldClose = false
@@ -126,9 +142,9 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
                             shouldClose = true
                             continue
                         }
-                        Self.write(data, to: client)
+                        await Self.write(data, to: client)
                     case let .respondData(data):
-                        Self.write(data, to: client)
+                        await Self.write(data, to: client)
                     case .close:
                         shouldClose = true
                     }
@@ -183,7 +199,10 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
         let bindResult = withUnsafePointer(to: &address) { pointer in
             Darwin.bind(descriptor, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
         }
-        guard bindResult == 0, listen(descriptor, Int32(backlog)) == 0 else {
+        guard bindResult == 0,
+              listen(descriptor, Int32(backlog)) == 0,
+              Self.makeNonblocking(descriptor)
+        else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
@@ -218,7 +237,7 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
         }
     }
 
-    private nonisolated static func readRequest(from descriptor: Int32) -> Data {
+    private nonisolated static func readRequest(from descriptor: Int32) async -> Data {
         var result = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -232,25 +251,45 @@ public final class ScriptedBridgePeer: @unchecked Sendable {
             if count < 0, errno == EINTR {
                 continue
             }
+            if count < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
+                    return result
+                }
+                continue
+            }
             return result
         }
     }
 
-    private nonisolated static func write(_ data: Data, to descriptor: Int32) {
-        data.withUnsafeBytes { bytes in
-            guard let baseAddress = bytes.baseAddress else { return }
-            var offset = 0
-            while offset < bytes.count {
-                let count = Darwin.write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
-                if count > 0 {
-                    offset += count
-                } else if count < 0, errno == EINTR {
-                    continue
-                } else {
+    private nonisolated static func write(_ data: Data, to descriptor: Int32) async {
+        guard !data.isEmpty else { return }
+        var offset = 0
+        while offset < data.count {
+            let count = data.withUnsafeBytes { bytes in
+                Darwin.write(descriptor, bytes.baseAddress?.advanced(by: offset), bytes.count - offset)
+            }
+            if count > 0 {
+                offset += count
+            } else if count < 0, errno == EINTR {
+                continue
+            } else if count < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
                     return
                 }
+            } else {
+                return
             }
         }
+    }
+
+    private nonisolated static func makeNonblocking(_ descriptor: Int32) -> Bool {
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0 else { return false }
+        return fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0
     }
 
     private actor State {
