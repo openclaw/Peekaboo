@@ -114,6 +114,9 @@ InjectedRuntimeBackedCommand {
     mutating func setRuntimeOptions(_ options: CommandRuntimeOptions) {
         var options = options
         options.requiresBrowserMCP = true
+        options.requiresImplicitSnapshotInvalidation = false
+        options.usesPerToolSnapshotInvalidation = self.boundInvocationMayMutate(using: options)
+        options.dynamicToolScreenCaptureReachable = false
         self.runtimeOptions = options
     }
 
@@ -123,15 +126,17 @@ InjectedRuntimeBackedCommand {
 
         do {
             let arguments = try self.arguments()
-            if Self.actionMayMutate(self.action) {
-                self.resolvedRuntime.beginInteractionMutation()
-            }
             let context = MCPToolContext(
                 services: self.services,
-                executionPolicy: self.toolExecutionPolicy
+                snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator,
+                executionPolicy: self.toolExecutionPolicy,
+                capturePreflightRefusal: runtime.toolCapturePreflightRefusal
             )
             let tool = BrowserTool(context: context, instructionAudience: .commandLine)
-            let response = try await tool.execute(arguments: ToolArguments(raw: arguments))
+            let response = try await context.execute(
+                tool: tool,
+                arguments: ToolArguments(raw: arguments)
+            )
             if let store = try self.handoffReceiptStore() {
                 if response.isError {
                     _ = (self.services.browser as? any BrowserMCPConnectionHandoffProviding)?
@@ -170,19 +175,17 @@ InjectedRuntimeBackedCommand {
         }
     }
 
-    static func actionMayMutate(_ rawAction: String) -> Bool {
-        let normalized = rawAction
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "-", with: "_")
-        guard let action = BrowserAction(rawValue: normalized) else { return false }
-        switch action {
-        case .status, .disconnect:
-            return false
-        case .connect, .listPages, .selectPage, .closePage, .newPage, .navigate, .waitFor, .snapshot, .click, .fill,
-             .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog, .console, .network, .screenshot,
-             .performanceTrace, .call:
-            return true
-        }
+    private func boundInvocationMayMutate(using runtimeOptions: CommandRuntimeOptions) -> Bool {
+        var command = self
+        command.runtimeOptions = runtimeOptions
+        guard let rawArguments = try? command.arguments(),
+              let actionName = rawArguments["action"] as? String,
+              let action = BrowserAction(rawValue: actionName)
+        else { return true }
+        return BrowserMCPCallMapper.effectiveActionSemantics(
+            action: action,
+            arguments: ToolArguments(raw: rawArguments)
+        ) == .mutating
     }
 
     var toolExecutionPolicy: MCPToolExecutionPolicy {

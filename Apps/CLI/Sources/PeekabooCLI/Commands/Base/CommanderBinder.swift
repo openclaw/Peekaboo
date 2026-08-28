@@ -416,9 +416,6 @@ enum CommanderCLIBinder {
         if commandType == MenuBarCommand.ClickSubcommand.self {
             return true
         }
-        if commandType == BrowserCommand.self {
-            return BrowserCommand.actionMayMutate(parsedValues.positional.first ?? "status")
-        }
         if commandType == SeeCommand.self {
             let values = CommanderBindableValues(parsedValues: parsedValues)
             return values.flag("webFocus")

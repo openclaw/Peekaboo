@@ -537,6 +537,7 @@ private enum BrowserHandoffRuntimeRoutingError: LocalizedError {
 /// (e.g., during unit tests) can conform to this protocol and store the parsed options.
 protocol RuntimeOptionsConfigurable {
     var runtimeOptions: CommandRuntimeOptions { get set }
+    mutating func setRuntimeOptions(_ options: CommandRuntimeOptions)
 }
 
 extension RuntimeOptionsConfigurable {

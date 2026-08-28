@@ -490,7 +490,7 @@ enum MCPToolSnapshotMutationPolicy {
         guard let actionName = arguments.getString("action"),
               let action = BrowserAction(rawValue: actionName)
         else { return .none }
-        return BrowserMCPCallMapper.actionSemantics(action: action, arguments: arguments) == .mutating
+        return BrowserMCPCallMapper.effectiveActionSemantics(action: action, arguments: arguments) == .mutating
             ? .mutation
             : .none
     }

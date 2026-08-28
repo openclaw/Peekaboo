@@ -951,9 +951,34 @@ public struct BrowserMCPMappedCall: @unchecked Sendable {
 }
 
 public enum BrowserMCPCallMapper {
-    static func actionSemantics(
+    public static func effectiveActionSemantics(
         action: BrowserAction,
-        arguments: ToolArguments) -> BrowserMCPPageRoutingContract.ActionSemantics
+        arguments: ToolArguments) -> BrowserToolActionSemantics
+    {
+        let calls: [BrowserMCPMappedCall]
+        switch action {
+        case .status, .disconnect:
+            return .readOnly
+        case .connect:
+            return .mutating
+        case .call:
+            guard let call = try? self.mapRawCall(arguments: arguments) else { return .mutating }
+            calls = [call]
+        default:
+            guard let mapped = try? self.mapSequence(action: action, arguments: arguments) else {
+                return self.fallbackActionSemantics(action: action, arguments: arguments)
+            }
+            calls = mapped
+        }
+        if BrowserMCPUserActivationPolicy.foregroundRequirement(for: calls).requiresForegroundAuthority {
+            return .mutating
+        }
+        return self.sequenceActionSemantics(calls)
+    }
+
+    public static func actionSemantics(
+        action: BrowserAction,
+        arguments: ToolArguments) -> BrowserToolActionSemantics
     {
         let calls: [BrowserMCPMappedCall]?
         switch action {
@@ -969,7 +994,13 @@ public enum BrowserMCPCallMapper {
         guard let calls else {
             return self.fallbackActionSemantics(action: action, arguments: arguments)
         }
-        return calls.contains { call in
+        return self.sequenceActionSemantics(calls)
+    }
+
+    private static func sequenceActionSemantics(
+        _ calls: [BrowserMCPMappedCall]) -> BrowserToolActionSemantics
+    {
+        calls.contains { call in
             BrowserMCPPageRoutingContract.actionSemantics(
                 for: call.toolName,
                 arguments: call.arguments) != .readOnly

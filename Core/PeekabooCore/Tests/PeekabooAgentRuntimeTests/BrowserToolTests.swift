@@ -752,14 +752,14 @@ struct BrowserToolTests {
     }
 
     @Test
-    func `Browser snapshot mutation policy shares mapped and raw call semantics`() {
+    func `Browser snapshot mutation policy includes mapped and raw user activation semantics`() {
         func effect(_ raw: [String: Any]) -> MCPToolSnapshotEffect {
             MCPToolSnapshotMutationPolicy.effect(
                 toolName: "browser",
                 arguments: ToolArguments(raw: raw))
         }
 
-        #expect(effect(["action": "list_pages"]) == .none)
+        #expect(effect(["action": "list_pages"]) == .mutation)
         #expect(effect(["action": "status"]) == .none)
         #expect(effect(["action": "disconnect"]) == .none)
         #expect(effect(["action": "connect"]) == .mutation)
@@ -767,22 +767,29 @@ struct BrowserToolTests {
             "action": "call",
             "mcp_tool": "take_snapshot",
             "page_id": 7,
-        ]) == .none)
+        ]) == .mutation)
         #expect(effect([
             "action": "call",
             "mcp_tool": "list_pages",
-        ]) == .none)
+        ]) == .mutation)
         #expect(effect([
             "action": "select_page",
             "page_id": 7,
             "bring_to_front": false,
-        ]) == .none)
+        ]) == .mutation)
         #expect(effect([
             "action": "performance_trace",
             "page_id": 7,
             "trace_action": "start",
             "reload": false,
         ]) == .none)
+
+        #expect(BrowserMCPCallMapper.actionSemantics(
+            action: .listPages,
+            arguments: ToolArguments(raw: ["action": "list_pages"])) == .readOnly)
+        #expect(BrowserMCPCallMapper.effectiveActionSemantics(
+            action: .listPages,
+            arguments: ToolArguments(raw: ["action": "list_pages"])) == .mutating)
 
         #expect(effect([
             "action": "click",
@@ -819,7 +826,7 @@ struct BrowserToolTests {
             "action": "call",
             "mcp_tool": "take_snapshot",
             "page_id": "bp1_opaque",
-        ]) == .none)
+        ]) == .mutation)
     }
 
     @Test
