@@ -652,6 +652,7 @@ public struct MCPToolContext: @unchecked Sendable {
 
     func releaseSnapshotOwner() async {
         let ownedBrowser = self.browser as? any BrowserMCPAuthenticatedSessionEnding
+        let scopedBrowser = self.browser as? any BrowserMCPScopedSessionEnding
         let capabilitySession = self.browserCapabilities
         let lifecycleGate = self.browserMutationExecutionGate
         let snapshotGate = self.snapshotExecutionGate
@@ -682,6 +683,7 @@ public struct MCPToolContext: @unchecked Sendable {
             await lifecycleGate.release()
         }.value
         await ownedBrowser?.endAuthenticatedBrowserSession()
+        await scopedBrowser?.endBrowserMCPScopedSession()
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {

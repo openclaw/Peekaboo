@@ -7,6 +7,36 @@ extension MCPToolContext {
         return self.replacingBrowser(with: scoped)
     }
 
+    /// Creates a browser session owned only by this MCP server.
+    ///
+    /// Local providers use their process-local pool. Remote providers must authenticate a new Bridge scope;
+    /// returning the root client here would let an MCP server observe or operate another caller's connection.
+    @MainActor
+    func openingBrowserSession(
+        named name: String,
+        handoff: BrowserMCPHandoffGrant? = nil) async throws -> Self
+    {
+        if let root = self.browser as? BrowserMCPService,
+           let scoped = root.authenticatedSession(named: name)
+        {
+            guard handoff == nil else {
+                throw BrowserMCPConnectionError.receiptBindingUnsupported
+            }
+            return self.replacingBrowser(with: scoped)
+        }
+        guard let opening = self.browser as? any BrowserMCPScopedSessionOpening else {
+            guard handoff == nil else {
+                throw BrowserMCPConnectionError.receiptBindingUnsupported
+            }
+            return self
+        }
+        let scoped = try await opening.openBrowserMCPScopedSession(handoff: handoff)
+        guard scoped !== self.browser else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        return self.replacingBrowser(with: scoped)
+    }
+
     private func replacingBrowser(with browser: any BrowserMCPClientProviding) -> Self {
         Self(
             automation: self.automation,

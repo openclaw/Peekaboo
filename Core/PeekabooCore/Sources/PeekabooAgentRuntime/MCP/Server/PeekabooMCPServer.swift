@@ -59,30 +59,36 @@ public actor PeekabooMCPServer {
     private let serverName = PeekabooMCPVersion.serverName
     private let serverVersion = PeekabooMCPVersion.current
 
-    public init() async throws {
+    public init(browserHandoff: BrowserMCPHandoffGrant? = nil) async throws {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
-        self.toolContext = try await MainActor.run {
+        let context = try await MainActor.run {
             try MCPToolContext.makeDefaultIfConfigured()
-                .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
-                .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         }
+        self.toolContext = try await context
+            .openingBrowserSession(
+                named: "mcp:\(UUID().uuidString.lowercased())",
+                handoff: browserHandoff)
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
 
         await self.setupHandlers()
         await self.registerAllTools()
     }
 
-    public init(toolContext: MCPToolContext) async throws {
+    public init(
+        toolContext: MCPToolContext,
+        browserHandoff: BrowserMCPHandoffGrant? = nil) async throws
+    {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
-        self.toolContext = await MainActor.run {
-            // A background-only server intentionally starts with a disconnected scoped child. An explicitly
-            // foreground-authorized server exposes BrowserTool.connect for this exact child; later calls reuse it.
-            toolContext
-                .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
-                .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
-        }
+        // A background-only server intentionally starts with a disconnected scoped child. An explicitly
+        // foreground-authorized server exposes BrowserTool.connect for this exact child; later calls reuse it.
+        self.toolContext = try await toolContext
+            .openingBrowserSession(
+                named: "mcp:\(UUID().uuidString.lowercased())",
+                handoff: browserHandoff)
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
 
         await self.setupHandlers()
@@ -251,23 +257,16 @@ public actor PeekabooMCPServer {
 
     public func serve(transport: TransportType, port: Int = 8080) async throws {
         self.logger.info("Starting Peekaboo MCP server on \(transport) transport, version: \(self.serverVersion)")
-
-        let serverTransport: any Transport
-
-        switch transport {
-        case .stdio:
-            serverTransport = EOFDrainingTransport(wrapping: StdioTransport())
-
-        case .http:
-            // Note: HTTP transport would need custom implementation
-            // as the SDK only provides HTTPClientTransport
-            throw MCPError.notImplemented("HTTP server transport not yet implemented")
-
-        case .sse:
-            throw MCPError.notImplemented("SSE server transport not yet implemented")
-        }
-
         do {
+            let serverTransport: any Transport = switch transport {
+            case .stdio:
+                EOFDrainingTransport(wrapping: StdioTransport())
+            case .http:
+                // HTTP transport needs a server implementation; the SDK provides only an HTTP client.
+                throw MCPError.notImplemented("HTTP server transport not yet implemented")
+            case .sse:
+                throw MCPError.notImplemented("SSE server transport not yet implemented")
+            }
             try await self.server.start(transport: serverTransport)
 
             // Keep the server running
