@@ -155,7 +155,7 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 - On the selected runtime host, each browser-enabled `peekaboo mcp serve` session, or server consuming an explicit
   browser handoff, owns and tears down its own browser child. Without an authenticated
   Bridge handoff, the background-only default starts disconnected and cannot bootstrap browser control. To authorize
-  setup for that exact process-local child,
+  setup for that exact server-owned child,
   start `peekaboo mcp serve --allow-foreground` and invoke its `browser` `connect` action; subsequent page operations use
   the resulting caller-owned connection. This scoped connection must use a native Chrome channel or an exact loopback
   `browser_url`; isolated mode is reserved for legacy standalone CLI sessions. With a Bridge handoff, the background

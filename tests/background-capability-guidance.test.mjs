@@ -110,6 +110,8 @@ test('browser guidance separates standalone root authority from scoped sessions'
   assert.match(browserMcp, /status, execution, disconnect, and terminal end all carry the opaque session ID/s);
   assert.match(browserMcp, /Status returns the provider\s+epoch, and execution re-presents that epoch with the exact connection receipt/s);
   assert.match(browserMcp, /Persistent MCP and Agent sessions, including authenticated Bridge-scoped sessions/s);
+  assert.match(browserMcp, /setup for that exact server-owned child/s);
+  assert.doesNotMatch(browserMcp, /setup for that exact process-local child/s);
   assert.match(mcp, /Each server whose\s+catalog includes `browser`, or which consumes an explicit browser handoff/s);
   assert.doesNotMatch(mcp, /Each process-local\s+server owns a fresh browser child/s);
   assert.match(mcp, /Scoped MCP page actions never ambiently auto-connect, even\s+with foreground authority/s);
