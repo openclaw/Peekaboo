@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomationKit
+import PeekabooBridgeTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -146,6 +147,151 @@ struct PeekabooServicesBrowserSessionProviderTests {
         #expect(disconnected.connectionReceipt == nil)
         #expect(disconnected.providerSessionEpoch == nil)
         #expect(await fixture.services.invalidateBrowserSession(sessionID))
+    }
+
+    @Test
+    func `remote Browser tool retains its exact binding until Bridge confirms provider cleanup`() async throws {
+        let child = HostBrowserProviderSpy(label: "child")
+        child.executeHandler = { toolName, _ in
+            switch toolName {
+            case "list_pages":
+                ToolResponse(
+                    content: [.text(
+                        text: "## Pages\n7: Example (https://example.test/) [selected]",
+                        annotations: nil,
+                        _meta: nil)],
+                    structuredContent: .object([
+                        "pages": .array([.object([
+                            "id": .int(7),
+                            "url": .string("https://example.test/"),
+                            "title": .string("Example"),
+                            "selected": .bool(true),
+                        ])]),
+                    ]))
+            case "take_snapshot":
+                ToolResponse(
+                    content: [.text(
+                        text: "uid=1_0 button \"Continue\"",
+                        annotations: nil,
+                        _meta: nil)],
+                    structuredContent: .object([
+                        "snapshot": .object([
+                            "id": .string("1_0"),
+                            "role": .string("button"),
+                            "name": .string("Continue"),
+                        ]),
+                    ]))
+            default:
+                .text("ok")
+            }
+        }
+        let fixture = Self.fixture(children: [child])
+        let socketPath = "/tmp/peekaboo-browser-disconnect-confirmation-\(UUID().uuidString).sock"
+        let server = PeekabooBridgeServer(
+            services: fixture.services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [
+                .browserStatus,
+                .browserConnect,
+                .browserDisconnect,
+                .browserExecute,
+                .browserSessionBootstrap,
+                .browserSessionControl,
+            ],
+            browserSessionBootstrapProvider: fixture.services.browserSessionBootstrapProvider)
+        let authority = try PeekabooBridgeOperationReceiptAuthority(socketPath: socketPath)
+        let operationSession = try await OperationReceiptSessionFixture.make(
+            authority: authority,
+            peer: Self.approvedPeer())
+        let bridge = DirectBridgeBrowserSessionClient(
+            server: server,
+            authority: authority,
+            operationSession: operationSession)
+        let remoteRoot = RemoteBrowserMCPClient(
+            client: PeekabooBridgeClient(socketPath: "/tmp/peekaboo-unused-root-\(UUID().uuidString).sock"),
+            sessionTransport: PeekabooBridgeRemoteBrowserSessionTransport(client: bridge))
+        let context = try await MCPToolContext(
+            services: fixture.services,
+            browser: remoteRoot,
+            executionPolicy: .backgroundOnly)
+            .openingBrowserSession(named: "mcp:bridge-disconnect-confirmation")
+        let connector = try #require(context.browser as? any BrowserMCPConnectionResultProviding)
+        let connected = try await connector.connectWithOutcome(
+            channel: nil,
+            browserURL: Self.browserURL)
+        #expect(connected.payload.connectionReceipt != nil)
+        let tool = BrowserTool(context: context)
+
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try #require(
+            listed.structuredContent?.objectValue?["pages"]?.arrayValue?.first?
+                .objectValue?["id"]?.stringValue)
+        let originalStatus = await context.browser.status(channel: nil)
+        let receipt = try #require(originalStatus.connectionReceipt)
+        let epoch = try #require(originalStatus.providerSessionEpoch)
+        child.leaveProviderAfterRemove = true
+
+        let unconfirmed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "disconnect"]))
+
+        #expect(unconfirmed.isError)
+        #expect(Self.responseText(unconfirmed).contains("completion is unknown"))
+        #expect(!Self.responseText(unconfirmed).contains("Disconnected Chrome DevTools MCP"))
+        #expect(unconfirmed.meta?.objectValue?["state"] == .string("indeterminate"))
+        #expect(unconfirmed.meta?.objectValue?["retry_safe"] == .bool(false))
+        #expect(child.removeCount == 1)
+        #expect(child.connected)
+        #expect(bridge.disconnectFailureObserved)
+        #expect(!bridge.disconnectReturnedOK)
+
+        let binding = BrowserMCPExecutionSessionBinding(
+            connectionReceipt: receipt,
+            providerSessionEpoch: epoch)
+        let retainedCapability = try await context.browserCapabilities.resolve(
+            action: .snapshot,
+            arguments: ToolArguments(raw: ["page_id": pageReference]),
+            sessionBinding: binding)
+        #expect(retainedCapability.providerPageID == 7)
+        let atomicClient = try #require(context.browser as? any BrowserMCPAtomicSessionActionProviding)
+        await #expect(throws: (any Error).self) {
+            _ = try await atomicClient.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7])],
+                channel: nil,
+                expectedSessionBinding: binding,
+                elementPreflight: nil)
+        }
+        let retainedRequest = try #require(bridge.executeRequests.last)
+        #expect(retainedRequest.expectedConnectionReceipt == Self.bridgeReceipt(receipt))
+        #expect(retainedRequest.expectedProviderSessionEpoch == epoch.rawValue)
+
+        let removalAttemptsBeforeRetry = child.removeCount
+        child.leaveProviderAfterRemove = false
+        let confirmed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "disconnect"]))
+        #expect(!confirmed.isError)
+        #expect(Self.responseText(confirmed) == "Disconnected Chrome DevTools MCP.")
+        #expect(child.removeCount == removalAttemptsBeforeRetry + 1)
+        let disconnected = await context.browser.status(channel: nil)
+        #expect(disconnected.observation == .confirmed)
+        #expect(!disconnected.isConnected)
+        #expect(disconnected.connectionReceipt == nil)
+        #expect(disconnected.providerSessionEpoch == nil)
+        let executeCount = child.executedTools.count
+        let stale = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        #expect(stale.isError)
+        #expect(child.executedTools.count == executeCount)
+        #expect(await context.releaseSnapshotOwner())
     }
 
     @Test
@@ -437,6 +583,15 @@ struct PeekabooServicesBrowserSessionProviderTests {
             teamIdentifier: "TESTTEAM")
     }
 
+    private static func approvedPeer() throws -> PeekabooBridgePeer {
+        let base = try OperationReceiptSessionFixture.currentPeer()
+        guard let identity = base.liveIdentity else { throw HostBrowserTestFailure() }
+        return PeekabooBridgePeer(
+            liveIdentity: identity,
+            bundleIdentifier: PeekabooBridgeConstants.cliBundleIdentifier,
+            teamIdentifier: "FWJYW4S8P8")
+    }
+
     private static func waitUntil(
         timeout: Duration = .seconds(1),
         _ condition: () -> Bool) async -> Bool
@@ -462,7 +617,162 @@ struct PeekabooServicesBrowserSessionProviderTests {
             browserVersion: receipt.browserVersion,
             protocolVersion: receipt.protocolVersion)
     }
+
+    private static func bridgeReceipt(
+        _ receipt: BrowserMCPConnectionReceipt) -> PeekabooBridgeBrowserConnectionReceipt
+    {
+        PeekabooBridgeBrowserConnectionReceipt(
+            channel: receipt.channel?.rawValue,
+            processIdentifier: receipt.processIdentifier,
+            processStartIdentity: receipt.processStartIdentity,
+            bundleIdentifier: receipt.bundleIdentifier,
+            browserURL: receipt.browserURL,
+            webSocketDebuggerURL: receipt.webSocketDebuggerURL,
+            devToolsBrowserID: receipt.devToolsBrowserID,
+            browserVersion: receipt.browserVersion,
+            protocolVersion: receipt.protocolVersion)
+    }
+
+    private static func responseText(_ response: ToolResponse) -> String {
+        guard case let .text(text, _, _)? = response.content.first else { return "" }
+        return text
+    }
 }
+
+@MainActor
+private final class DirectBridgeBrowserSessionClient: PeekabooBridgeBrowserSessionClientProviding,
+    @unchecked Sendable
+{
+    private let server: PeekabooBridgeServer
+    private let authority: PeekabooBridgeOperationReceiptAuthority
+    private let operationSession: OperationReceiptSessionFixture
+    private var sequence: UInt64 = 0
+    private(set) var disconnectFailureObserved = false
+    private(set) var disconnectReturnedOK = false
+    private(set) var executeRequests: [PeekabooBridgeBrowserExecuteRequest] = []
+
+    init(
+        server: PeekabooBridgeServer,
+        authority: PeekabooBridgeOperationReceiptAuthority,
+        operationSession: OperationReceiptSessionFixture)
+    {
+        self.server = server
+        self.authority = authority
+        self.operationSession = operationSession
+    }
+
+    func browserSessionBootstrap(
+        receiptBundle: PeekabooBridgeOperationReceiptBundle?,
+        claimID: UUID) async throws -> PeekabooBridgeBrowserSessionBootstrapResponse
+    {
+        let handled = try await self.handle(.browserSessionBootstrap(.init(
+            receiptBundle: receiptBundle,
+            claimID: claimID)))
+        guard case let .browserSessionBootstrap(response) = handled.response else {
+            return try Self.throwUnexpected(handled.response)
+        }
+        return response
+    }
+
+    func browserStatus(channel: String?, sessionID: UUID?) async throws -> PeekabooBridgeBrowserStatus {
+        let handled = try await self.handle(.browserStatus(.init(channel: channel, sessionID: sessionID)))
+        guard case let .browserStatus(status) = handled.response else {
+            return try Self.throwUnexpected(handled.response)
+        }
+        return status
+    }
+
+    func browserConnectResult(
+        sessionID: UUID,
+        channel: String?,
+        browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
+    {
+        let handled = try await self.handle(.projectedAction(.init(request: .browserConnect(.init(
+            channel: channel,
+            browserURL: browserURL,
+            sessionID: sessionID)))))
+        guard case let .browserStatus(status) = handled.response else {
+            return try Self.throwUnexpected(handled.response)
+        }
+        return DesktopActionResult(payload: status, outcome: handled.outcome)
+    }
+
+    func browserExecuteResult(_ request: PeekabooBridgeBrowserExecuteRequest) async throws
+        -> DesktopActionResult<PeekabooBridgeBrowserToolResponse>
+    {
+        self.executeRequests.append(request)
+        let handled = try await self.handle(.browserExecute(request))
+        guard case let .browserToolResponse(response) = handled.response else {
+            return try Self.throwUnexpected(handled.response)
+        }
+        return DesktopActionResult(payload: response, outcome: handled.outcome)
+    }
+
+    func browserSessionDisconnect(_ sessionID: UUID) async throws {
+        do {
+            let handled = try await self.handle(.browserSessionControl(.init(
+                sessionID: sessionID,
+                action: .disconnect)))
+            if case .ok = handled.response {
+                self.disconnectReturnedOK = true
+            }
+            try Self.requireOK(handled.response)
+        } catch {
+            self.disconnectFailureObserved = true
+            throw error
+        }
+    }
+
+    func browserSessionEnd(_ sessionID: UUID) async throws {
+        let handled = try await self.handle(.browserSessionControl(.init(
+            sessionID: sessionID,
+            action: .end)))
+        try Self.requireOK(handled.response)
+    }
+
+    private func handle(_ request: PeekabooBridgeRequest) async throws
+        -> (response: PeekabooBridgeResponse, outcome: DesktopActionOutcome?)
+    {
+        let payload = self.operationSession.request(
+            authority: self.authority,
+            sequence: self.sequence,
+            request: request)
+        self.sequence += 1
+        let data = try await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(self.authority) {
+            try await self.server.handleAttestedOperation(payload, peer: self.operationSession.peer)
+        }
+        let wire = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: data)
+        guard case let .attestedOperation(envelope) = wire else { throw HostBrowserTestFailure() }
+        let response: PeekabooBridgeResponse
+        let projectedOutcome: DesktopActionOutcome?
+        if case let .projectedAction(projected) = envelope.response {
+            response = projected.response
+            projectedOutcome = projected.outcome?.outcome
+        } else {
+            response = envelope.response
+            projectedOutcome = nil
+        }
+        return (response, envelope.receipt.payload.outcome?.outcome ?? projectedOutcome)
+    }
+
+    private static func throwUnexpected<T>(_ response: PeekabooBridgeResponse) throws -> T {
+        if case let .error(envelope) = response {
+            throw envelope
+        }
+        throw HostBrowserTestFailure()
+    }
+
+    private static func requireOK(_ response: PeekabooBridgeResponse) throws {
+        guard case .ok = response else {
+            if case let .error(envelope) = response {
+                throw envelope
+            }
+            throw HostBrowserTestFailure()
+        }
+    }
+}
+
+private struct HostBrowserTestFailure: Error {}
 
 @MainActor
 private final class HostBrowserProviderSpy: BrowserMCPManaging {

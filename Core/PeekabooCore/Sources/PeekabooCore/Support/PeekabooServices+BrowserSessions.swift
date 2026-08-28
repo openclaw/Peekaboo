@@ -125,7 +125,27 @@ extension PeekabooServices: PeekabooBridgeBrowserSessionBootstrapProviding {
     }
 
     public func disconnectBrowserSession(_ sessionID: UUID) async throws {
-        try await self.existingBrowserSession(sessionID).disconnect()
+        let session: any BrowserMCPClientProviding = try self.existingBrowserSession(sessionID)
+        guard let resultProvider = session as? any BrowserMCPDisconnectResultProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The scoped browser provider cannot confirm disconnect cleanup.",
+                hint: "Update the runtime host before retrying this scoped browser disconnect.")
+        }
+        let status = try await resultProvider.disconnectWithResult()
+        guard status.observation == .confirmed,
+              !status.isConnected,
+              status.toolCount == 0,
+              status.connectionReceipt == nil,
+              status.providerSessionEpoch == nil
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .browserProtocol, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Scoped browser disconnect did not confirm provider cleanup.",
+                hint: "Check this exact browser session status before deciding whether to retry.")
+        }
     }
 
     public func invalidateBrowserSession(_ sessionID: UUID) async -> Bool {
