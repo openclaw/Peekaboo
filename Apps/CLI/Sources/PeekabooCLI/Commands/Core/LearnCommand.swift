@@ -29,8 +29,12 @@ struct LearnCommand {
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
         let systemPrompt = AgentSystemPrompt.generate()
-        let tools = ToolRegistry.allTools()
+        let tools = Self.toolDefinitions(using: runtime.services)
         self.outputComprehensiveGuide(systemPrompt: systemPrompt, tools: tools)
+    }
+
+    static func toolDefinitions(using services: any PeekabooServiceProviding) -> [PeekabooToolDefinition] {
+        ToolRegistry.allTools(using: services)
     }
 
     private func outputComprehensiveGuide(systemPrompt: String, tools: [PeekabooToolDefinition]) {

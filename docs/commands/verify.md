@@ -9,7 +9,9 @@ read_when:
 
 `peekaboo verify` polls fresh native window and accessibility state until every requested predicate is stable or the timeout expires. It is the deterministic replacement for sleep-based polling: the command never focuses, clicks, types, or treats an incomplete observation as success.
 
-Results are ternary. `satisfied` exits 0, `unsatisfied` exits 1, and `unknown` exits 2. JSON output includes every predicate result and an `unknown_reason` field; it is `null` when the result is not unknown.
+Results are ternary. `satisfied` exits 0, `unsatisfied` exits 1, and `unknown` exits 2. Evaluated results in JSON output include every predicate result and an `unknown_reason` field; it is `null` when the result is not unknown.
+
+Tool failures that prevent evaluation also exit 2. These failures use the standard error envelope in JSON mode, without predicate results or an `unknown_reason` field.
 
 ## Key options
 

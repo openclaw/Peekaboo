@@ -274,6 +274,14 @@ public protocol WindowManagementPinnedFocusActionResultProviding: WindowManageme
         expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
 }
 
+/// Additive focus capability that captures exact foreground evidence before releasing the mutation lane.
+/// Existing 4.x focus APIs retain their void payload; providers without this capability still require readback.
+public protocol WindowManagementFocusProofProviding: WindowManagementPinnedFocusActionResultProviding {
+    func focusWindowProofActionResult(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<ServiceWindowInfo>
+}
+
 extension WindowManagementServiceProtocol {
     /// Validates a result-aware exact-window mutation and retains its caller-held target receipt.
     ///

@@ -235,15 +235,16 @@ struct PeekabooBridgeDesktopObservationResultTests {
         await host.stop()
     }
 
-    @Test
-    func `signed read-only handler error keeps targetless refusal metadata`() async throws {
+    @Test(arguments: [false, true])
+    func `signed read-only handler error keeps targetless refusal metadata`(exactWindowROI: Bool) async throws {
         let provider = FailingObservationProvider()
         let root = URL(fileURLWithPath: "/tmp/pb-ob-targetless-error-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let socketPath = root.appendingPathComponent("bridge.sock").path
+        // Mirror GUI lane ownership: exercise provider failure, not ambient exact-window lookup.
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
-            server: Self.server(provider: provider),
+            server: Self.server(provider: provider, ownsObservationLane: true),
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
         try await host.startChecked()
@@ -252,8 +253,12 @@ struct PeekabooBridgeDesktopObservationResultTests {
         let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         _ = try await client.handshake(client: Self.clientIdentity)
         let request = DesktopObservationRequest(
-            target: .app(identifier: "Fixture", window: .automatic),
-            capture: .init(engine: .modern, focus: .background),
+            target: exactWindowROI ? .pid(42, window: .id(73)) : .app(identifier: "Fixture", window: .automatic),
+            capture: .init(
+                engine: exactWindowROI ? .auto : .modern,
+                scale: exactWindowROI ? .native : .logical1x,
+                focus: .background,
+                roi: exactWindowROI ? .init(bounds: CGRect(x: 20, y: 30, width: 320, height: 180)) : nil),
             detection: .init(mode: .accessibility))
 
         do {
@@ -368,9 +373,14 @@ struct PeekabooBridgeDesktopObservationResultTests {
         processStartIdentity: 9001,
         windowID: 73)
 
-    private static func server(provider: any DesktopObservationServiceProtocol) -> PeekabooBridgeServer {
+    private static func server(
+        provider: any DesktopObservationServiceProtocol,
+        ownsObservationLane: Bool = false) -> PeekabooBridgeServer
+    {
         PeekabooBridgeServer(
-            services: StubServices(desktopObservation: provider),
+            services: StubServices(
+                desktopObservation: provider,
+                ownedDesktopOperationLanes: ownsObservationLane ? [.desktopObservation] : []),
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],

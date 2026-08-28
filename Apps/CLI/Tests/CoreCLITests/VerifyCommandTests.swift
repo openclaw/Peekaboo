@@ -1,3 +1,9 @@
+import Commander
+import Foundation
+import PeekabooAgentRuntime
+import PeekabooAutomationKit
+import PeekabooBridge
+import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
@@ -47,4 +53,72 @@ struct VerifyCommandTests {
         }
         #expect(category == .vision)
     }
+
+    @Test(arguments: [false, true])
+    func `tool failure exits with unknown error status`(jsonOutput: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("verify-preflight-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var command = try VerifyCommand.parse([
+            "--app", "Fixture", "--window-exists", "--screenshot", directory.appendingPathComponent("unused.png").path,
+        ])
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: jsonOutput, logLevel: nil),
+            services: VerifyPreflightServices(directory: directory),
+            toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal(message: "fixture capture refusal"),
+            interactionMutationTracker: InteractionMutationTracker(
+                desktopMutationWatermarkStore: DesktopMutationWatermarkStore(directoryURL: directory)
+            )
+        )
+
+        let exitCode = await #expect(throws: ExitCode.self) {
+            try await command.run(using: runtime)
+        }
+        #expect(exitCode == ExitCode(2))
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("unused.png").path))
+    }
+}
+
+@MainActor
+private final class VerifyPreflightServices: PeekabooServiceProviding {
+    let automation: any UIAutomationServiceProtocol = MockAutomationService()
+    let windows: any WindowManagementServiceProtocol = MockWindowService(result: [])
+    let menu: any MenuServiceProtocol = MockMenuService(barItems: [])
+    let dock: any DockServiceProtocol = MockDockService(items: [])
+    let snapshots: any SnapshotManagerProtocol = InMemorySnapshotManager()
+    let permissions = PermissionsService()
+    let screens: any ScreenServiceProtocol = ScreenService()
+    let clipboard: any ClipboardServiceProtocol = ClipboardService()
+    let agent: (any AgentServiceProtocol)? = nil
+    let screenCapture: any ScreenCaptureServiceProtocol
+    let applications: any ApplicationServiceProtocol
+    let dialogs: any DialogServiceProtocol
+    let browser: any BrowserMCPClientProviding
+
+    init(directory: URL) {
+        // These adapters are inert until called; preflight must refuse before any Bridge request.
+        let client = PeekabooBridgeClient(socketPath: directory.appendingPathComponent("absent.sock").path)
+        self.screenCapture = RemoteScreenCaptureService(client: client)
+        self.applications = RemoteApplicationService(client: client)
+        self.dialogs = RemoteDialogService(client: client)
+        self.browser = RemoteBrowserMCPClient(client: client)
+    }
+
+    var configuration: PeekabooCore.ConfigurationManager {
+        fatalError("Verification preflight must not load shared configuration")
+    }
+
+    var audioInput: AudioInputService {
+        fatalError("Verification preflight must not initialize AI providers")
+    }
+
+    var logging: any LoggingServiceProtocol {
+        fatalError("Verification preflight uses only the CLI logger")
+    }
+
+    var files: any FileServiceProtocol {
+        fatalError("Verification preflight must not access files")
+    }
+
+    func ensureVisualizerConnection() {}
 }

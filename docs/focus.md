@@ -55,8 +55,19 @@ When you execute a foreground interaction command (`type`, `click --foreground`,
 3. **Detects which Space** contains the window
 4. **Switches or moves Spaces** only when `--space-switch` or `--bring-to-current-space` is explicit
 5. **Brings app to front** and focuses the specific window
-6. **Verifies focus succeeded** before proceeding
+6. **Verifies exact focus succeeded** before proceeding
 7. **Executes your command** on the correctly focused window
+
+For receipt-bound native window focus, the focus owner captures fresh, bounded `AXFocusedWindow` identity and
+foreground application ownership before releasing its global mutation lane. It checks the original PID, process
+generation, exact window ID, and captured bounds around that readback. Bridge validates and signs this evidence;
+ordinary exact-ID window listings remain inexpensive geometry-only reads and do not imply focus. Existing/custom
+4.x providers without the additive focus-proof capability still undergo the existing fail-closed readback validation.
+
+Receipt-bound focus makes one mutation attempt. If an accepted or possibly dispatched action loses exact focus proof,
+is cancelled, or times out, the result remains retry-unsafe with its actual dispatch count. Observe the window before
+trying again; the retry option does not authorize replay after an indeterminate result. Foreground `press` sends no
+chords when setup focus fails, and verified focus does not prove a later chord's semantic effect.
 
 ## Automatic Focus Management
 
@@ -79,7 +90,7 @@ By default, Peekaboo will:
 - ✅ Focus the target window only after explicit foreground consent
 - ✅ Refuse an unintended Space switch unless `--space-switch` or `--bring-to-current-space` is explicit
 - ✅ Wait up to 5 seconds for focus to complete
-- ✅ Retry up to 3 times if focus fails
+- ✅ Retry only where safe; receipt-bound native focus never repeats an indeterminate mutation
 - ✅ Verify focus before proceeding
 
 ## Focus Options
@@ -141,7 +152,8 @@ Use cases:
 - Network-based apps that may be sluggish
 
 ### `--focus-retry-count <number>`
-Sets how many times to retry focus operations (default: 3).
+Sets the retry limit for focus paths that support safe retries (default: 3). Receipt-bound native window focus makes
+one mutation attempt and never retries after dispatch becomes indeterminate.
 
 ```bash
 peekaboo click "Save" --foreground --focus-retry-count 5
