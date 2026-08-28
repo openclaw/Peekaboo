@@ -188,8 +188,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
-                    connectionReceipt: nil,
-                    error: cleanupConfirmed ? nil : "Browser provider cleanup remains pending."),
+                    connectionReceipt: cleanupConfirmed ? nil : self.connectionReceipt,
+                    providerSessionEpoch: cleanupConfirmed ? nil : self.providerSessionEpoch,
+                    error: cleanupConfirmed ? nil : "Browser provider cleanup remains pending.",
+                    observation: cleanupConfirmed ? .confirmed : .indeterminate),
                 wasCancelled: false,
                 cleanupConfirmed: cleanupConfirmed)
         }
@@ -241,8 +243,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     isConnected: false,
                     toolCount: 0,
                     detectedBrowsers: browsers,
-                    connectionReceipt: nil,
-                    error: error.localizedDescription),
+                    connectionReceipt: cleanupConfirmed ? nil : receipt,
+                    providerSessionEpoch: cleanupConfirmed ? nil : providerSessionEpoch,
+                    error: error.localizedDescription,
+                    observation: cleanupConfirmed ? .confirmed : .indeterminate),
                 wasCancelled: false,
                 cleanupConfirmed: cleanupConfirmed)
         }

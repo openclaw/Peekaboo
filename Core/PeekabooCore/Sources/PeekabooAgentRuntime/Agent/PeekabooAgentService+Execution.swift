@@ -294,14 +294,29 @@ extension PeekabooAgentService {
         model: LanguageModel,
         snapshotOwner: MCPToolSnapshotOwner) async throws -> [AgentTool]
     {
+        var browserAcquisitionStarted = false
         do {
             return try await self.buildExecutionToolset(
                 for: model,
                 agentSessionID: context.id,
                 agentExecutionGeneration: context.executionGeneration,
                 snapshotOwner: snapshotOwner,
-                executionPolicy: context.toolExecutionPolicy)
+                executionPolicy: context.toolExecutionPolicy,
+                onBrowserAcquisitionStarted: {
+                    browserAcquisitionStarted = true
+                    self.beginAgentSessionBrowserExecution(
+                        sessionID: context.id,
+                        executionGeneration: context.executionGeneration)
+                })
         } catch {
+            guard browserAcquisitionStarted else { throw error }
+            self.finishAgentSessionBrowserExecution(
+                sessionID: context.id,
+                executionGeneration: context.executionGeneration)
+            guard !self.hasAgentSessionBrowserExecution(sessionID: context.id) else {
+                self.logger.debug("Keeping the shared browser session for another active browser execution")
+                throw error
+            }
             let cleanupConfirmed = await self.endBrowserClient(forAgentSessionID: context.id)
             if !cleanupConfirmed {
                 self.logger.error("Browser session cleanup remains pending after toolset acquisition failed")

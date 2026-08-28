@@ -2598,6 +2598,125 @@ struct BrowserMCPSessionManagerTests {
         #expect(agent.remoteBrowserClients.isEmpty)
     }
 
+    @Test
+    func `cancelled peer acquisition cannot end a coalesced browser generation`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooConcurrentBrowserAcquisition-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let sessionID = "concurrent-browser-acquisition"
+        let now = Date()
+        try sessionManager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "agent-remote-browser-status",
+            messages: [.user("Inspect browser status")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        let terminalResponseBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let provider = AgentRemoteBrowserStatusProvider(
+            supportsStreaming: false,
+            terminalResponseBarrier: terminalResponseBarrier)
+        let model = LanguageModel.custom(provider: provider)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            defaultModel: model,
+            sessionManager: sessionManager)
+        let firstGeneration = try agent.beginAgentSessionExecution(for: sessionID)
+        let secondGeneration = try agent.beginAgentSessionExecution(for: sessionID)
+
+        func context(generation: UUID) -> PeekabooAgentService.SessionContext {
+            PeekabooAgentService.SessionContext(
+                id: sessionID,
+                isPersistent: true,
+                messages: [.user("Inspect browser status")],
+                createdAt: now,
+                executionStart: now,
+                metadata: SessionMetadata(),
+                modelIdentity: .init(
+                    displayName: provider.modelId,
+                    selection: nil,
+                    endpointIdentity: nil,
+                    providerIdentity: nil),
+                storedToolExecutionPolicy: .backgroundOnly,
+                toolExecutionPolicy: .backgroundOnly,
+                provider: provider,
+                executionGeneration: generation)
+        }
+
+        let first = Task { @MainActor in
+            try await agent.executeWithoutStreaming(
+                context: context(generation: firstGeneration),
+                model: model)
+        }
+        await openBarrier.waitUntilBlocked()
+        #expect(agent.agentSessionBrowserExecutionGenerations[sessionID] == [firstGeneration])
+
+        let cancelledPeer = Task { @MainActor in
+            do {
+                _ = try await agent.executeWithoutStreaming(
+                    context: context(generation: secondGeneration),
+                    model: model)
+                Issue.record("Expected the peer browser acquisition to be cancelled")
+                return false
+            } catch is CancellationError {
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
+        }
+        let waiterDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while ContinuousClock.now < waiterDeadline {
+            guard case let .inFlight(_, _, waiters)? = agent.remoteBrowserOpeningTasks[sessionID] else {
+                break
+            }
+            if waiters.pendingCount == 2 {
+                break
+            }
+            await Task.yield()
+        }
+        guard case let .inFlight(_, _, waiters)? = agent.remoteBrowserOpeningTasks[sessionID] else {
+            Issue.record("Expected one coalesced browser opening")
+            await openBarrier.release()
+            _ = try? await first.value
+            return
+        }
+        #expect(waiters.pendingCount == 2)
+
+        cancelledPeer.cancel()
+        #expect(await cancelledPeer.value)
+        #expect(agent.agentSessionBrowserExecutionGenerations[sessionID] == [firstGeneration])
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+
+        await openBarrier.release()
+        await terminalResponseBarrier.waitUntilBlocked()
+        #expect(root.children.count == 1)
+        let child = try #require(root.children.first)
+        #expect(child.statusCount == 1)
+        #expect(child.endCount == 0)
+        #expect(agent.remoteBrowserClients[sessionID] === child)
+
+        await terminalResponseBarrier.release()
+        let result = try await first.value
+        #expect(result.content == "remote browser execution completed")
+        #expect(agent.agentSessionBrowserExecutionGenerations[sessionID] == nil)
+        #expect(await (child.status(channel: nil)).observation == BrowserMCPStatusObservation.confirmed)
+        #expect(child.endCount == 0)
+
+        #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
+        #expect(child.endCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+    }
+
     @Test(arguments: [false, true], [false, true])
     func `cancelled Agent setup returns while remote open is stalled and later admits another run`(
         streaming: Bool,
@@ -3662,13 +3781,18 @@ extension BrowserMCPSessionManagerTests {
         let root = BrowserMCPService(authenticatedSessionPool: pool)
         let first = try #require(root.authenticatedSession(named: "agent:first"))
         let second = try #require(root.authenticatedSession(named: "agent:second"))
-        _ = try await first.connect(channel: nil, browserURL: nil)
+        let connected = try await first.connect(channel: nil, browserURL: nil)
+        let connectedReceipt = try #require(connected.connectionReceipt)
+        let connectedEpoch = try #require(connected.providerSessionEpoch)
         let uploadRoot = try #require(firstProvider.addedConfigs.first?.env["TMPDIR"])
         firstProvider.connected = false
         firstProvider.removeLeavesProvider = [true, true, false]
 
         let lost = await first.status(channel: nil)
         #expect(!lost.isConnected)
+        #expect(lost.observation == .indeterminate)
+        #expect(lost.connectionReceipt == connectedReceipt)
+        #expect(lost.providerSessionEpoch == connectedEpoch)
         #expect(firstProvider.removeCount == 1)
         await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9333")
@@ -3682,12 +3806,87 @@ extension BrowserMCPSessionManagerTests {
 
         let cleaned = await first.status(channel: nil)
         #expect(!cleaned.isConnected)
+        #expect(cleaned.observation == .confirmed)
+        #expect(cleaned.connectionReceipt == nil)
+        #expect(cleaned.providerSessionEpoch == nil)
         #expect(firstProvider.removeCount == 3)
         #expect(!FileManager.default.fileExists(atPath: uploadRoot))
         _ = try await second.connect(channel: nil, browserURL: nil)
         #expect(secondProvider.addedConfigs.count == 1)
         await root.endAuthenticatedSession(named: "agent:first")
         await root.endAuthenticatedSession(named: "agent:second")
+    }
+
+    @Test
+    func `pending cleanup retains capabilities and handoff authorization until confirmed`() async throws {
+        let sourceProvider = MockBrowserMCPManager()
+        let destinationProvider = MockBrowserMCPManager()
+        let sourceManager = Self.exactSession(manager: sourceProvider)
+        let destinationManager = Self.exactSession(manager: destinationProvider)
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in destinationManager }
+        let root = BrowserMCPService(
+            sessionManager: sourceManager,
+            authenticatedSessionPool: pool)
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .unrestricted)
+        sourceProvider.executeHandler = { toolName, _ in
+            switch toolName {
+            case "list_pages": Self.providerPageResponse(id: 7)
+            case "take_snapshot": Self.providerSnapshotResponse(id: "1_0")
+            default: .text("ok")
+            }
+        }
+        let connected = try await root.connect(channel: nil, browserURL: nil)
+        let receipt = try #require(connected.connectionReceipt)
+        let epoch = try #require(connected.providerSessionEpoch)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.opaquePageReference(from: listed)
+        let snapshotted = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        let elementReference = try #require(
+            snapshotted.structuredContent?.objectValue?["snapshot"]?.objectValue?["id"]?.stringValue)
+        let authorizationID = try await root.storeConnectionHandoffAuthorization(connectionReceipt: receipt)
+        sourceProvider.connected = false
+        sourceProvider.removeLeavesProvider = [true, false]
+
+        let pending = await root.status(channel: nil)
+        await context.browserCapabilities.observeStatus(pending)
+
+        #expect(!pending.isConnected)
+        #expect(pending.observation == .indeterminate)
+        #expect(pending.connectionReceipt == receipt)
+        #expect(pending.providerSessionEpoch == epoch)
+        #expect(await context.browserCapabilities.elementBinding(for: elementReference) != nil)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await root.transferConnection(
+                toAuthenticatedSessionNamed: "mcp:pending-cleanup",
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: receipt)
+        }
+
+        let cleaned = await root.status(channel: nil)
+        await context.browserCapabilities.observeStatus(cleaned)
+
+        #expect(!cleaned.isConnected)
+        #expect(cleaned.observation == .confirmed)
+        #expect(cleaned.connectionReceipt == nil)
+        #expect(cleaned.providerSessionEpoch == nil)
+        #expect(await context.browserCapabilities.elementBinding(for: elementReference) == nil)
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await root.transferConnection(
+                toAuthenticatedSessionNamed: "mcp:pending-cleanup",
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: receipt)
+        }
+        #expect(await root.endAuthenticatedSession(named: "mcp:pending-cleanup"))
     }
 
     @Test
@@ -5358,11 +5557,13 @@ private final class AgentRemoteBrowserStatusProvider: ModelProvider, @unchecked 
     let baseURL: String? = nil
     let apiKey: String? = nil
     let capabilities: ModelCapabilities
+    let terminalResponseBarrier: SequenceBarrier?
     private let lock = NSLock()
     private var requests = 0
 
-    init(supportsStreaming: Bool) {
+    init(supportsStreaming: Bool, terminalResponseBarrier: SequenceBarrier? = nil) {
         self.capabilities = ModelCapabilities(supportsStreaming: supportsStreaming)
+        self.terminalResponseBarrier = terminalResponseBarrier
     }
 
     var requestCount: Int {
@@ -5383,6 +5584,7 @@ private final class AgentRemoteBrowserStatusProvider: ModelProvider, @unchecked 
                     name: "browser",
                     arguments: ["action": AnyAgentToolValue(string: "status")])])
         }
+        await self.terminalResponseBarrier?.block()
         return ProviderResponse(
             text: "remote browser execution completed",
             finishReason: .stop)

@@ -48,6 +48,9 @@ extension PeekabooAgentService {
 
     func finishAgentSessionExecution(sessionID: String, executionGeneration: UUID?) {
         guard let executionGeneration else { return }
+        self.finishAgentSessionBrowserExecution(
+            sessionID: sessionID,
+            executionGeneration: executionGeneration)
         if var tombstone = self.agentSessionDeletionTombstones[sessionID],
            tombstone.invalidatedExecutionGenerations.remove(executionGeneration) != nil
         {
@@ -62,6 +65,29 @@ extension PeekabooAgentService {
         } else {
             self.agentSessionExecutionGenerations[sessionID] = generations
         }
+    }
+
+    func beginAgentSessionBrowserExecution(sessionID: String, executionGeneration: UUID?) {
+        guard let executionGeneration else { return }
+        self.agentSessionBrowserExecutionGenerations[sessionID, default: []].insert(executionGeneration)
+    }
+
+    @discardableResult
+    func finishAgentSessionBrowserExecution(sessionID: String, executionGeneration: UUID?) -> Bool {
+        guard let executionGeneration,
+              var generations = self.agentSessionBrowserExecutionGenerations[sessionID]
+        else { return false }
+        let removed = generations.remove(executionGeneration) != nil
+        if generations.isEmpty {
+            self.agentSessionBrowserExecutionGenerations.removeValue(forKey: sessionID)
+        } else {
+            self.agentSessionBrowserExecutionGenerations[sessionID] = generations
+        }
+        return removed
+    }
+
+    func hasAgentSessionBrowserExecution(sessionID: String) -> Bool {
+        self.agentSessionBrowserExecutionGenerations[sessionID]?.isEmpty == false
     }
 
     func installAgentSessionDeletionTombstones(for sessionIDs: [String]) -> [String: UUID] {

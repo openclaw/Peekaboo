@@ -36,7 +36,8 @@ extension PeekabooAgentService {
         agentExecutionGeneration: UUID? = nil,
         snapshotOwner: MCPToolSnapshotOwner,
         executionPolicy: MCPToolExecutionPolicy,
-        filters: ToolFilters? = nil) async throws -> [AgentTool]
+        filters: ToolFilters? = nil,
+        onBrowserAcquisitionStarted: (@MainActor () -> Void)? = nil) async throws -> [AgentTool]
     {
         var filtered = self.filteredAgentTools(
             snapshotOwner: snapshotOwner,
@@ -47,6 +48,7 @@ extension PeekabooAgentService {
             return filtered
         }
 
+        onBrowserAcquisitionStarted?()
         let browserClient = try await self.browserClient(
             forAgentSessionID: agentSessionID,
             executionGeneration: agentExecutionGeneration)

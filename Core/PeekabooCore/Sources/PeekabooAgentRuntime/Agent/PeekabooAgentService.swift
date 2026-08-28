@@ -197,6 +197,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         waiters: AgentRemoteBrowserTaskWaiters<Bool>)] = [:]
     var remoteBrowserCleanupDebt = Set<String>()
     var agentSessionExecutionGenerations: [String: Set<UUID>] = [:]
+    var agentSessionBrowserExecutionGenerations: [String: Set<UUID>] = [:]
     var agentSessionDeletionTombstones: [String: AgentSessionDeletionTombstone] = [:]
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
