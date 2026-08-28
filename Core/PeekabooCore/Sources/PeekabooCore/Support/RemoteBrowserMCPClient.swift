@@ -574,8 +574,17 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             return .init(operationMayHaveCompleted: true, shouldRetryAutomatically: false)
         }
         if let urlError = error as? URLError {
-            let retryable = [.timedOut, .networkConnectionLost].contains(urlError.code)
-            return .init(operationMayHaveCompleted: retryable, shouldRetryAutomatically: retryable)
+            return switch urlError.code {
+            case .timedOut, .networkConnectionLost:
+                .init(operationMayHaveCompleted: true, shouldRetryAutomatically: true)
+            case .badURL, .unsupportedURL, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+                 .notConnectedToInternet, .appTransportSecurityRequiresSecureConnection,
+                 .userAuthenticationRequired, .userCancelledAuthentication, .dataNotAllowed,
+                 .internationalRoamingOff, .callIsActive:
+                .init(operationMayHaveCompleted: false, shouldRetryAutomatically: false)
+            default:
+                .init(operationMayHaveCompleted: true, shouldRetryAutomatically: false)
+            }
         }
         if let posix = error as? POSIXError {
             let retryable = [.ETIMEDOUT, .ECONNRESET, .EPIPE].contains(posix.code)

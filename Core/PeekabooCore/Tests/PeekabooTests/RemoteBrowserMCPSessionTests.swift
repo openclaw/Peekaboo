@@ -210,6 +210,43 @@ struct RemoteBrowserMCPSessionTests {
         #expect(Set(transport.openedClaimIDs).count == 1)
     }
 
+    @Test
+    func `response side URL failure retains claim without automatic retry`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [URLError(.badServerResponse)]
+        let root = Self.rootClient(transport: transport)
+        let handoff = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let differentHandoff = BrowserMCPHandoffGrant(payload: Data("different-connect-receipt".utf8))
+
+        await #expect(throws: URLError.self) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: differentHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(Set(transport.openedClaimIDs).count == 1)
+    }
+
+    @Test
+    func `pre dispatch URL failure releases claim for a different handoff`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [URLError(.cannotConnectToHost)]
+        let root = Self.rootClient(transport: transport)
+        let firstHandoff = BrowserMCPHandoffGrant(payload: Data("first-signed-connect-receipt".utf8))
+        let secondHandoff = BrowserMCPHandoffGrant(payload: Data("second-signed-connect-receipt".utf8))
+
+        await #expect(throws: URLError.self) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: firstHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: secondHandoff)
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(transport.openedClaimIDs[0] != transport.openedClaimIDs[1])
+    }
+
     @Test(arguments: [false, true])
     func `invalid open handle retains claim until cleanup resolves`(canonicalHandle: Bool) async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
