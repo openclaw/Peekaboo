@@ -145,6 +145,75 @@ struct PeekabooBridgeRemoteBrowserSessionTransportTests {
         #expect(evidence?["provider_session_epoch"] == .string(epoch.uuidString.lowercased()))
     }
 
+    @Test
+    func `Bridge handler output mints fresh remote page snapshot and element references`() async throws {
+        let services = StubServices()
+        services.browserResponseContent = [.object([
+            "type": .string("text"),
+            "text": .string("## Pages\n7: Example (https://example.test/) [selected]"),
+        ])]
+        services.browserResponseStructuredContent = .object([
+            "pages": .array([.object([
+                "id": .int(7),
+                "url": .string("https://example.test/"),
+                "title": .string("Example"),
+                "selected": .bool(true),
+            ])]),
+        ])
+        let listed = try await Self.handledBrowserResponse(
+            toolName: "list_pages",
+            arguments: [:],
+            services: services)
+        let rawPages = try RemoteBrowserMCPClient.toolResponse(from: listed)
+        let capabilitySession = BrowserToolCapabilitySession()
+        let binding = BrowserMCPExecutionSessionBinding(
+            connectionReceipt: RemoteBrowserMCPClient.runtimeReceipt(
+                from: PeekabooBridgeHandlerMutationSemanticsTests.localBrowserReceipt),
+            providerSessionEpoch: BrowserMCPProviderSessionEpoch())
+        let pages = try await capabilitySession.project(
+            rawPages,
+            calls: [.init(toolName: "list_pages", arguments: [:])],
+            resolved: nil,
+            sessionBinding: binding)
+        let pageReference = try #require(
+            pages.structuredContent?.objectValue?["pages"]?.arrayValue?.first?
+                .objectValue?["id"]?.stringValue)
+        #expect(pageReference.hasPrefix("bp1_"))
+        #expect(pageReference != "7")
+
+        services.browserResponseContent = [.object([
+            "type": .string("text"),
+            "text": .string("uid=1_0 button \"Continue\""),
+        ])]
+        services.browserResponseStructuredContent = .object([
+            "snapshot": .object([
+                "id": .string("1_0"),
+                "role": .string("button"),
+                "name": .string("Continue"),
+            ]),
+        ])
+        let snapshotted = try await Self.handledBrowserResponse(
+            toolName: "take_snapshot",
+            arguments: ["pageId": .int(7)],
+            services: services)
+        let rawSnapshot = try RemoteBrowserMCPClient.toolResponse(from: snapshotted)
+        let resolved = try await capabilitySession.resolve(
+            action: .snapshot,
+            arguments: ToolArguments(raw: ["page_id": pageReference]),
+            sessionBinding: binding)
+        let snapshot = try await capabilitySession.project(
+            rawSnapshot,
+            calls: [.init(toolName: "take_snapshot", arguments: ["pageId": 7])],
+            resolved: resolved,
+            sessionBinding: binding)
+        let snapshotRoot = try #require(snapshot.structuredContent?.objectValue)
+        let snapshotReference = try #require(snapshotRoot["snapshot_ref"]?.stringValue)
+        let elementReference = try #require(snapshotRoot["snapshot"]?.objectValue?["id"]?.stringValue)
+        #expect(snapshotReference.hasPrefix("bs1_"))
+        #expect(elementReference.hasPrefix("be1_"))
+        #expect(elementReference != "1_0")
+    }
+
     @Test(arguments: [
         (
             PeekabooBridgeErrorCode.invalidRequest,
@@ -235,6 +304,26 @@ struct PeekabooBridgeRemoteBrowserSessionTransportTests {
         devToolsBrowserID: "browser-adapter",
         browserVersion: "Chrome/151.0",
         protocolVersion: "1.3")
+
+    private static func handledBrowserResponse(
+        toolName: String,
+        arguments: [String: PeekabooBridgeJSONValue],
+        services: StubServices) async throws -> PeekabooBridgeBrowserToolResponse
+    {
+        let handled = try await PeekabooBridgeHandlerMutationSemanticsTests.handleCurrent(
+            .browserExecute(.init(
+                toolName: toolName,
+                arguments: arguments,
+                channel: "stable",
+                expectedConnectionReceipt: PeekabooBridgeHandlerMutationSemanticsTests.localBrowserReceipt)),
+            with: PeekabooBridgeHandlerMutationSemanticsTests.server(services: services))
+        guard case let .browserToolResponse(response) = handled.response else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "Expected a browser tool response")
+        }
+        return response
+    }
 
     private static func handoffBundle() async throws -> PeekabooBridgeOperationReceiptBundle {
         let authority = try PeekabooBridgeOperationReceiptAuthority(

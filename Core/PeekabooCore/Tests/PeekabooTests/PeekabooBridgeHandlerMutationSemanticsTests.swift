@@ -84,6 +84,9 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
     @MainActor
     func `browser execution binds every accepted call and response to one exact browser receipt`() async throws {
         let services = StubServices()
+        services.browserResponseStructuredContent = .object([
+            "result": .object(["state": .string("accepted")]),
+        ])
         let server = Self.server(services: services)
         let request = PeekabooBridgeBrowserExecuteRequest(
             calls: [
@@ -110,6 +113,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
             return
         }
         #expect(response.connectionReceipt == services.lastExpectedBrowserConnectionReceipt)
+        #expect(response.structuredContent == services.browserResponseStructuredContent)
         #expect(services.lastBrowserExecute == request.binding(to: Self.localBrowserReceipt))
     }
 
@@ -498,6 +502,9 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
     @MainActor
     func `browser batch failure preserves exact progress and target`() async throws {
         let services = StubServices()
+        services.browserResponseStructuredContent = .object([
+            "result": .object(["state": .string("partial")]),
+        ])
         services.browserCompletedCallCount = 1
         services.browserDispatchedCallCount = 2
         services.browserActionFailure = .indeterminate(
@@ -531,6 +538,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
         }
         #expect(response.completedCallCount == 1)
         #expect(response.dispatchedCallCount == 2)
+        #expect(response.structuredContent == services.browserResponseStructuredContent)
         #expect(response.actionFailure?.outcome.route == .bridge)
         #expect(response.actionFailure?.outcome.retrySafety == .unsafe)
     }
@@ -539,6 +547,9 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
     @MainActor
     func `browser zero progress refusal remains retry safe and dispatch free`() async throws {
         let services = StubServices()
+        services.browserResponseStructuredContent = .object([
+            "error": .object(["reason": .string("target unavailable")]),
+        ])
         services.browserCompletedCallCount = 0
         services.browserDispatchedCallCount = 0
         services.browserActionFailure = .preDispatchRefusal(
@@ -563,6 +574,7 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
         #expect(response.isError)
         #expect(response.completedCallCount == 0)
         #expect(response.dispatchedCallCount == 0)
+        #expect(response.structuredContent == services.browserResponseStructuredContent)
         #expect(response.actionFailure?.outcome.route == .bridge)
         #expect(response.actionFailure?.outcome.dispatchState.mutationDispatched == false)
     }
