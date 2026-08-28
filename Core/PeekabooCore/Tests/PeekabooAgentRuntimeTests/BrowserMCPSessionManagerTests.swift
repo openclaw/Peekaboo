@@ -491,7 +491,7 @@ struct BrowserMCPSessionManagerTests {
                     "url": "https://second.example/",
                 ]))
         }
-        try await Task.sleep(for: .milliseconds(30))
+        await secondBarrier.waitUntilBlocked()
         #expect(secondProvider.executedTools == ["navigate_page"])
         #expect(coordinator.sharedPrepareCount == 0)
         #expect(coordinator.maximumConcurrentCount == 2)
