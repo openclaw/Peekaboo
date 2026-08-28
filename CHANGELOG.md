@@ -25,6 +25,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Preserve exact-window foreground focus evidence under the native mutation lane for signed Bridge receipts, and refuse blind retries after accepted focus loses proof.
 - Keep `peekaboo learn` on its injected main-actor service provider instead of crashing when no process-wide tool registry default exists.
 - Keep `capture action` sampling active across pre-roll, child execution, and post-roll, release only generation-attributed children after terminal-event admission, refuse pre-existing video outputs before child release, reserve startup and descendant-drain time inside the capture deadline, derive post-roll from the recorded child-completion boundary, clear inherited termination-signal masks, keep timeout escalation and cancellable validation off the cooperative/main executors, terminate surviving process-group descendants before validation, reject replaced artifacts, compose focus and child receipts without inventing partial effects, and require Apple-anchored source-stamped host provenance.
 - Warm ScreenCaptureKit ownership validation off the main actor before Bridge socket/capability publication, with explicit publication and daemon-readiness reserves beyond the bounded scan.

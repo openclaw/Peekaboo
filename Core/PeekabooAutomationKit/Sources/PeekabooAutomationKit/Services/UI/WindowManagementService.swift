@@ -41,7 +41,7 @@ public final class WindowManagementService: WindowManagementServiceProtocol,
     WindowMutationInventoryProviding,
     WindowManagementActionOutcomeProviding,
     WindowManagementActionResultProviding,
-    WindowManagementPinnedFocusActionResultProviding
+    WindowManagementFocusProofProviding
 {
     let applicationService: any ApplicationServiceProtocol
     let windowIdentityService = WindowIdentityService()
