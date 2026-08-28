@@ -550,7 +550,7 @@ struct BrowserConnectionHandoffTests {
 
     @Test
     @MainActor
-    func `owner death reclaims successful scoped session while ambiguous liveness preserves it`() async throws {
+    func `owner death closes admission before draining and ambiguous liveness preserves the session`() async throws {
         let peer = try Self.approvedPeer()
         let caller = try peer.browserSessionCaller(clientInstanceID: UUID())
         let life = ProcessLifeBox(
@@ -575,17 +575,27 @@ struct BrowserConnectionHandoffTests {
         }
         #expect(spy.invalidatedSessionIDs.isEmpty)
 
+        let activeOperation = try await registry.authorizeSession(response.sessionID, caller: caller)
         life.presence = false
-        try await registry.reserve(requestID: UUID(), issuer: caller)
+        let replacement = Task { @MainActor in
+            try await registry.reserve(requestID: UUID(), issuer: caller)
+        }
+        await Task.yield()
+        #expect(spy.invalidatedSessionIDs.isEmpty)
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await registry.authorizeSession(response.sessionID, caller: caller)
+        }
+        registry.completeSessionOperation(activeOperation)
+        try await replacement.value
         #expect(spy.invalidatedSessionIDs == [response.sessionID])
     }
 
     @Test
     @MainActor
-    func `bootstrap timeout frees capacity and cleans a provider that completes late`() async throws {
+    func `bootstrap timeout retains capacity until late provider settlement cleanup is confirmed`() async throws {
         let peer = try Self.approvedPeer()
         let caller = try peer.browserSessionCaller(clientInstanceID: UUID())
-        let spy = BootstrapSpy(blocksBootstrap: true)
+        let spy = BootstrapSpy(blocksBootstrap: true, blocksInvalidation: true)
         let registry = PeekabooBridgeBrowserHandoffGrantRegistry(
             provider: spy,
             capacity: 1,
@@ -598,14 +608,22 @@ struct BrowserConnectionHandoffTests {
                 authority: authority,
                 caller: caller)
         }
-        #expect(spy.invalidatedSessionIDs.count == 1)
-        try await registry.reserve(requestID: UUID(), issuer: caller)
+        #expect(spy.invalidatedSessionIDs.isEmpty)
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try await registry.reserve(requestID: UUID(), issuer: caller)
+        }
 
         spy.releaseBootstrap()
-        while spy.invalidatedSessionIDs.count < 2 {
+        while spy.invalidatedSessionIDs.isEmpty {
             await Task.yield()
         }
-        #expect(spy.invalidatedSessionIDs.count == 2)
+        #expect(spy.completedInvalidationCount == 0)
+        spy.releaseInvalidation()
+        while spy.completedInvalidationCount == 0 {
+            await Task.yield()
+        }
+        try await registry.reserve(requestID: UUID(), issuer: caller)
+        #expect(spy.invalidatedSessionIDs == spy.bootstrapContexts.map(\.sessionID))
     }
 
     @Test
@@ -655,7 +673,7 @@ struct BrowserConnectionHandoffTests {
 
     @Test
     @MainActor
-    func `indeterminate end restores the live session and only confirmed retry tombstones`() async throws {
+    func `indeterminate end stays terminal and a confirmed retry tombstones`() async throws {
         let peer = try Self.approvedPeer()
         let caller = try peer.browserSessionCaller(clientInstanceID: UUID())
         let spy = BootstrapSpy()
@@ -670,8 +688,9 @@ struct BrowserConnectionHandoffTests {
         await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
             try await registry.endSession(response.sessionID, caller: caller)
         }
-        let liveOperation = try await registry.authorizeSession(response.sessionID, caller: caller)
-        registry.completeSessionOperation(liveOperation)
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await registry.authorizeSession(response.sessionID, caller: caller)
+        }
         spy.invalidationResult = true
         try await registry.endSession(response.sessionID, caller: caller)
         #expect(spy.invalidatedSessionIDs == [response.sessionID, response.sessionID])
@@ -1085,6 +1104,8 @@ struct BrowserConnectionHandoffTests {
     }
 }
 
+// swiftlint:enable type_body_length
+
 @MainActor
 private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding {
     let supportsBrowserSessionBootstrap = true
@@ -1095,6 +1116,7 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
     private var invalidationContinuation: CheckedContinuation<Void, Never>?
     private(set) var bootstrapContexts: [PeekabooBridgeBrowserSessionBootstrapContext] = []
     private(set) var invalidatedSessionIDs: [UUID] = []
+    private(set) var completedInvalidationCount = 0
     var invalidationResult = true
     private(set) var authorizedHandoffs: [(UUID, PeekabooBridgeBrowserConnectionReceipt)] = []
     private(set) var discardedHandoffAuthorizationIDs: [UUID] = []
@@ -1148,6 +1170,7 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
                 self.invalidationContinuation = continuation
             }
         }
+        self.completedInvalidationCount += 1
         return self.invalidationResult
     }
 
