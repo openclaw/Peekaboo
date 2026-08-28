@@ -7,7 +7,7 @@ import TachikomaMCP
 
 public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
     BrowserMCPAtomicSessionActionProviding, BrowserMCPConnectionResultProviding,
-    BrowserMCPConnectionHandoffProviding, BrowserMCPScopedSessionOpening,
+    BrowserMCPConnectionHandoffProviding, BrowserMCPDisconnectResultProviding, BrowserMCPScopedSessionOpening,
     BrowserMCPScopedSessionEnding, @unchecked Sendable
 {
     private enum ScopedSessionState: Equatable {
@@ -254,24 +254,6 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     public func takeConnectionHandoffReceiptBundleData() -> Data? {
         defer { self.connectionHandoffReceiptBundleData = nil }
         return self.connectionHandoffReceiptBundleData
-    }
-
-    @MainActor
-    public func disconnect() async {
-        if let sessionHandle, let sessionTransport {
-            guard self.scopedSessionState == .active else { return }
-            do {
-                try await sessionTransport.disconnect(session: sessionHandle)
-                self.lastScopedStatus = Self.disconnectedStatus(
-                    detectedBrowsers: self.lastScopedStatus?.detectedBrowsers ?? [])
-            } catch is RemoteBrowserMCPSessionTransportError {
-                self.markScopedSessionTerminal()
-            } catch {
-                // Completion is unknown. Keep the last exact binding until a later authoritative status probe.
-            }
-            return
-        }
-        try? await self.client.browserDisconnect()
     }
 
     @MainActor
@@ -855,5 +837,49 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     private static func decode<T: Decodable>(_ type: T.Type, from value: PeekabooBridgeJSONValue) throws -> T {
         let data = try JSONSerialization.data(withJSONObject: value.toAny(), options: [])
         return try JSONDecoder().decode(type, from: data)
+    }
+}
+
+extension RemoteBrowserMCPClient {
+    @MainActor
+    public func disconnect() async {
+        _ = try? await self.disconnectWithResult()
+    }
+
+    @MainActor
+    public func disconnectWithResult() async throws -> BrowserMCPStatus {
+        if let sessionHandle, let sessionTransport {
+            guard self.scopedSessionState == .active else { return Self.endedStatus() }
+            do {
+                try await sessionTransport.disconnect(session: sessionHandle)
+                let status = Self.disconnectedStatus(
+                    detectedBrowsers: self.lastScopedStatus?.detectedBrowsers ?? [])
+                self.lastScopedStatus = status
+                return status
+            } catch let error as RemoteBrowserMCPSessionTransportError {
+                return self.confirmedTerminalStatus(error: error)
+            } catch {
+                throw Self.indeterminateDisconnectFailure(error)
+            }
+        }
+        do {
+            try await self.client.browserDisconnect()
+            return Self.disconnectedStatus(detectedBrowsers: [])
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch {
+            throw Self.indeterminateDisconnectFailure(error)
+        }
+    }
+
+    private static func indeterminateDisconnectFailure(_ error: any Error) -> DesktopActionFailure {
+        .indeterminate(
+            route: .bridge,
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Browser disconnect completion is unknown after the request entered the provider transport.",
+            hint: "Check this exact browser session status before deciding whether to disconnect or reconnect again.",
+            causeDescription: error.localizedDescription)
     }
 }

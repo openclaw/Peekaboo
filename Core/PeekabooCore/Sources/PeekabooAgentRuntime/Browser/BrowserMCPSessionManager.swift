@@ -413,12 +413,28 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     }
 
     func disconnect(releaseTarget: TargetRelease? = nil) async {
-        try? await self.withExecutionGate {
-            let cleanupConfirmed = await self.clearConnection()
-            if cleanupConfirmed {
-                releaseTarget?()
+        _ = await self.disconnectAndConfirm(releaseTarget: releaseTarget)
+    }
+
+    func disconnectAndConfirm(releaseTarget: TargetRelease? = nil) async -> Bool {
+        do {
+            return try await self.withExecutionGate {
+                let cleanupConfirmed = await self.clearConnection()
+                if cleanupConfirmed {
+                    releaseTarget?()
+                }
+                return cleanupConfirmed
             }
+        } catch {
+            return false
         }
+    }
+
+    func confirmedDisconnectedStatus(channel: BrowserMCPChannel?) -> BrowserMCPStatus {
+        BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: self.detectedBrowsers(channel))
     }
 
     func preflightHandoffDestination() async throws {

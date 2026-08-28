@@ -289,8 +289,25 @@ public struct BrowserTool: MCPTool {
                 outcome: outcome)
         case .disconnect:
             try self.requireAtomicCapabilityProvider(operation: "disconnecting")
-            await self.capabilitySession?.disconnect()
-            await self.client.disconnect()
+            if let resultClient = self.client as? any BrowserMCPDisconnectResultProviding {
+                let status = try await resultClient.disconnectWithResult()
+                guard status.observation == .confirmed,
+                      !status.isConnected,
+                      status.connectionReceipt == nil,
+                      status.providerSessionEpoch == nil
+                else {
+                    throw DesktopActionFailure.indeterminate(
+                        delivery: .init(mechanism: .browserProtocol, mode: .background),
+                        evidence: .completionUnknown,
+                        unitCount: .one,
+                        message: "Browser disconnect did not return a confirmed disconnected status.",
+                        hint: "Check this exact browser session status before deciding whether to retry.")
+                }
+                await self.capabilitySession?.observeStatus(status)
+            } else {
+                await self.capabilitySession?.disconnect()
+                await self.client.disconnect()
+            }
             return ToolResponse.text("Disconnected Chrome DevTools MCP.")
         case .call:
             return try await self.executeCapabilityBound(

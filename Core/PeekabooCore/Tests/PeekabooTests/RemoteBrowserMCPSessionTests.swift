@@ -607,25 +607,107 @@ struct RemoteBrowserMCPSessionTests {
     }
 
     @Test
-    func `indeterminate disconnect keeps exact binding for later status`() async throws {
+    func `indeterminate disconnect reports failure and keeps exact capabilities for later status`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
         let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
         let context = try await Self.context(browser: root)
             .openingBrowserSession(named: "mcp:disconnect-indeterminate", handoff: grant)
+        let tool = BrowserTool(context: context)
         let client = context.browser
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
         let confirmed = await client.status(channel: nil)
         let receipt = try #require(confirmed.connectionReceipt)
         let epoch = try #require(confirmed.providerSessionEpoch)
         transport.disconnectFailure = CancellationError()
 
-        await client.disconnect()
+        let disconnect = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "disconnect"]))
+        #expect(disconnect.isError)
+        #expect(!Self.text(from: disconnect).contains("Disconnected Chrome DevTools MCP"))
+        let metadata = try #require(disconnect.meta?.objectValue)
+        #expect(metadata["state"] == .string("indeterminate"))
+        #expect(metadata["evidence"] == .string("completion_unknown"))
+        #expect(metadata["retry_safe"] == .bool(false))
+
         transport.statusFailure = CancellationError()
         let indeterminate = await client.status(channel: nil)
 
         #expect(indeterminate.observation == .indeterminate)
         #expect(indeterminate.connectionReceipt == receipt)
         #expect(indeterminate.providerSessionEpoch == epoch)
+
+        transport.disconnectFailure = nil
+        transport.statusFailure = nil
+        let executionCount = transport.executeCallCount
+        let resumed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        #expect(!resumed.isError)
+        #expect(transport.executeCallCount == executionCount + 1)
+    }
+
+    @Test
+    func `confirmed disconnect invalidates capabilities and reports success`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let root = Self.rootClient(transport: transport)
+        let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let context = try await Self.context(browser: root)
+            .openingBrowserSession(named: "mcp:disconnect-confirmed", handoff: grant)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+
+        let disconnect = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "disconnect"]))
+
+        #expect(!disconnect.isError)
+        #expect(Self.text(from: disconnect) == "Disconnected Chrome DevTools MCP.")
+        #expect(transport.disconnectCallCount == 1)
+        let executionCount = transport.executeCallCount
+        let stale = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        #expect(stale.isError)
+        #expect(transport.executeCallCount == executionCount)
+    }
+
+    @Test
+    func `terminal disconnect refusal settles scope and reports success`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let root = Self.rootClient(transport: transport)
+        let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let context = try await Self.context(browser: root)
+            .openingBrowserSession(named: "mcp:disconnect-terminal", handoff: grant)
+        let tool = BrowserTool(context: context)
+        transport.disconnectFailure = RemoteBrowserMCPSessionTransportError.sessionEnded
+
+        let disconnect = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "disconnect"]))
+
+        #expect(!disconnect.isError)
+        #expect(Self.text(from: disconnect) == "Disconnected Chrome DevTools MCP.")
+        #expect(transport.disconnectCallCount == 1)
+        let statusCalls = transport.statusCallCount
+        let terminal = await context.browser.status(channel: nil)
+        #expect(terminal.observation == .confirmed)
+        #expect(terminal.connectionReceipt == nil)
+        #expect(terminal.providerSessionEpoch == nil)
+        #expect(transport.statusCallCount == statusCalls)
     }
 
     @Test
@@ -821,6 +903,7 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     private(set) var statusCallCount = 0
     private(set) var connectCallCount = 0
     private(set) var executeCallCount = 0
+    private(set) var disconnectCallCount = 0
     private(set) var endedSessionIDs: [UUID] = []
     private(set) var elementPreflights: [BrowserMCPElementPreflight?] = []
     var omitTargetDigest = false
@@ -924,6 +1007,7 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     }
 
     func disconnect(session _: RemoteBrowserMCPSessionHandle) async throws {
+        self.disconnectCallCount += 1
         if let disconnectFailure {
             throw disconnectFailure
         }

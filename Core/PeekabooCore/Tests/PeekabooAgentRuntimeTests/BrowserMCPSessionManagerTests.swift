@@ -3706,7 +3706,15 @@ extension BrowserMCPSessionManagerTests {
         _ = try await first.connect(channel: nil, browserURL: nil)
         firstProvider.removeLeavesProvider = [true, false]
 
-        await first.disconnect()
+        do {
+            _ = try await first.disconnectWithResult()
+            Issue.record("Expected unconfirmed provider cleanup to report an indeterminate disconnect")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
         #expect(firstProvider.removeCount == 1)
         await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await second.connect(channel: nil, browserURL: nil)
@@ -3715,7 +3723,9 @@ extension BrowserMCPSessionManagerTests {
         #expect(firstProvider.removeCount == 2)
 
         _ = try await second.connect(channel: nil, browserURL: nil)
-        await second.disconnect()
+        let disconnected = try await second.disconnectWithResult()
+        #expect(!disconnected.isConnected)
+        #expect(disconnected.observation == .confirmed)
         _ = try await third.connect(channel: nil, browserURL: nil)
         #expect(thirdProvider.addedConfigs.count == 1)
         await root.endAuthenticatedSession(named: "agent:second")

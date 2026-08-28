@@ -269,6 +269,16 @@ public protocol BrowserMCPConnectionResultProviding: BrowserMCPClientProviding {
         browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
 }
 
+/// Additive browser disconnect surface for providers that can confirm cleanup.
+///
+/// Legacy clients retain the nonthrowing ``BrowserMCPClientProviding/disconnect()`` contract. Providers that own
+/// persistent browser children implement this protocol so callers can distinguish confirmed cleanup from an
+/// indeterminate transport or provider-removal failure.
+public protocol BrowserMCPDisconnectResultProviding: BrowserMCPClientProviding {
+    @MainActor
+    func disconnectWithResult() async throws -> BrowserMCPStatus
+}
+
 /// A remote, receipt-aware provider that can request one authenticated cross-process browser handoff.
 /// Complete receipt bytes remain process-private and are never projected into an MCP tool response.
 @MainActor
@@ -378,7 +388,8 @@ private enum BrowserMCPStoredConnectionHandoffAuthorization {
 
 public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
     BrowserMCPAtomicSessionActionProviding,
-    BrowserMCPConnectionResultProviding, BrowserMCPAuthenticatedSessionEnding, @unchecked Sendable
+    BrowserMCPConnectionResultProviding, BrowserMCPDisconnectResultProviding,
+    BrowserMCPAuthenticatedSessionEnding, @unchecked Sendable
 {
     public let supportsNativeBrowserConnectionBinding: Bool
 
@@ -714,15 +725,6 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         }
         self.pruneConnectionHandoffAuthorizations(authorizationSnapshot, after: result.payload)
         return result
-    }
-
-    @MainActor
-    public func disconnect() async {
-        let releaseTarget = self.targetOwnershipRelease()
-        await self.resolvedSessionManager().disconnect(releaseTarget: {
-            releaseTarget?()
-            self.discardUnclaimedConnectionHandoffAuthorizations()
-        })
     }
 
     @MainActor
@@ -1455,6 +1457,32 @@ extension BrowserMCPService {
     @MainActor
     var pendingAuthenticatedSessionCleanupCount: Int {
         self.authenticatedSessionPool?.pendingCleanupCount ?? 0
+    }
+}
+
+extension BrowserMCPService {
+    @MainActor
+    public func disconnect() async {
+        _ = try? await self.disconnectWithResult()
+    }
+
+    @MainActor
+    public func disconnectWithResult() async throws -> BrowserMCPStatus {
+        let manager = self.resolvedSessionManager()
+        let releaseTarget = self.targetOwnershipRelease()
+        let cleanupConfirmed = await manager.disconnectAndConfirm(releaseTarget: {
+            releaseTarget?()
+            self.discardUnclaimedConnectionHandoffAuthorizations()
+        })
+        guard cleanupConfirmed else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .browserProtocol, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Browser disconnect completion is unknown because provider cleanup was not confirmed.",
+                hint: "Check browser status before deciding whether to disconnect or reconnect again.")
+        }
+        return manager.confirmedDisconnectedStatus(channel: nil)
     }
 }
 
