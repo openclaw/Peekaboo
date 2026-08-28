@@ -68,10 +68,13 @@ public struct BrowserTool: MCPTool {
             "navigation_type": SchemaBuilder.string(
                 description: "Navigation type for navigate.",
                 enum: ["url", "back", "forward", "reload"]),
-            "uid": SchemaBuilder.string(description: """
-            Opaque element capability from this session's latest browser snapshot. It is bound to the exact page,
-            connection, snapshot, and navigation generation and becomes stale after a newer snapshot or navigation.
-            """),
+            "uid": self.capabilitySession == nil
+                ? SchemaBuilder
+                .string(description: "Raw snapshot-local provider element UID from the latest browser snapshot.")
+                : SchemaBuilder.string(description: """
+                Opaque element capability from this session's latest browser snapshot. It is bound to the exact page,
+                connection, snapshot, and navigation generation and becomes stale after a newer snapshot or navigation.
+                """),
             "to_uid": SchemaBuilder.string(description: "Drop target uid for drag."),
             "text": SchemaBuilder.string(description: "Text for type or wait_for."),
             "value": SchemaBuilder.string(description: "Value for fill."),

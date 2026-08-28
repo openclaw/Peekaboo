@@ -101,10 +101,11 @@ InjectedRuntimeBackedCommand {
           peekaboo browser new-page --url https://example.com
           peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
 
-        Background browser actions require an existing exact connection and never auto-connect.
-        With explicit --foreground, the standalone browser root may auto-connect when no receipt exists.
-        Authenticated MCP, Agent, and Bridge-scoped children remain receipt-only and require
-        explicit bootstrap instead of ambient auto-connect.
+        Default read and page actions require an existing exact browser connection receipt and never
+        ambiently auto-connect. With explicit --foreground, only standalone CLI page actions may
+        auto-connect when no receipt exists. Persistent MCP, Agent, and Bridge-scoped page actions never
+        ambiently auto-connect. Use explicit connect for a foreground-authorized child, or transfer an
+        exact signed handoff into a background Bridge-scoped MCP child.
         """
     )
 
@@ -410,7 +411,8 @@ extension BrowserCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "handoffFile",
-                    help: "Write one authenticated browser handoff receipt to an unused owner-private file",
+                    help: "Atomically create one signed browser handoff receipt at an unused path " +
+                        "in an owner-only directory",
                     long: "handoff-file"
                 ),
             ],

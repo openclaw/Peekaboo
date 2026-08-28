@@ -9,6 +9,21 @@ import Testing
 @MainActor
 struct BrowserToolCapabilityIntegrationTests {
     @Test
+    func `command line and MCP uid schemas distinguish raw provider IDs from opaque capabilities`() throws {
+        let context = Self.context(client: CapabilityBrowserMCPClient())
+        let commandLineTool = BrowserTool(context: context, instructionAudience: .commandLine)
+        let mcpTool = BrowserTool(context: context)
+
+        let commandLineDescription = try Self.uidSchemaDescription(for: commandLineTool)
+        let mcpDescription = try Self.uidSchemaDescription(for: mcpTool)
+
+        #expect(commandLineDescription == "Raw snapshot-local provider element UID from the latest browser snapshot.")
+        #expect(!commandLineDescription.contains("Opaque element capability"))
+        #expect(mcpDescription.contains("Opaque element capability"))
+        #expect(!mcpDescription.contains("Raw snapshot-local provider element UID"))
+    }
+
+    @Test
     func `BrowserTool projects opaque refs and rejects another context before provider dispatch`() async throws {
         let client = CapabilityBrowserMCPClient()
         let firstContext = Self.context(client: client)
@@ -945,6 +960,17 @@ extension BrowserToolCapabilityIntegrationTests {
         return try #require(pages.first?.objectValue?["id"]?.stringValue)
     }
 
+    private static func uidSchemaDescription(for tool: BrowserTool) throws -> String {
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(uid)? = properties["uid"],
+              case let .string(description)? = uid["description"]
+        else {
+            throw BrowserToolCapabilitySchemaError.missingUIDDescription
+        }
+        return description
+    }
+
     private static func elementReference(from response: ToolResponse) throws -> String {
         let root = try #require(response.structuredContent?.objectValue)
         return try #require(root["snapshot"]?.objectValue?["id"]?.stringValue)
@@ -1014,6 +1040,10 @@ extension BrowserToolCapabilityIntegrationTests {
                 ]),
             ]))
     }
+}
+
+private enum BrowserToolCapabilitySchemaError: Error {
+    case missingUIDDescription
 }
 
 @MainActor

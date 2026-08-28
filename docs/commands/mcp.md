@@ -21,17 +21,18 @@ read_when:
   catalog includes `browser`, or which consumes an explicit browser handoff, owns a fresh browser child and does not
   borrow another CLI, daemon, or MCP caller's connection. Scoped MCP page actions never ambiently auto-connect, even
   with foreground authority. `--allow-foreground` instead exposes the explicit `browser` `connect` action for that
-  exact child; accept Chrome's prompt once, then later page actions reuse the scoped connection and remain
-  page-targeted/background-delivered.
+  exact child; accept Chrome's prompt once, then later page actions reuse the scoped connection, remain page-targeted,
+  and are background-delivered by default. A foreground-capable server can still explicitly request foreground page
+  selection or opening.
   Authenticated sessions reject `PEEKABOO_BROWSER_MCP_ISOLATED=1` before provider startup because that child has no
   pinnable browser identity. For headless use, launch Chrome separately and pass its exact loopback `browser_url`.
-  This explicit authority never exposes Shell, and a nested Agent remains background-only. Bridge-backed opaque
-  browser sessions are supported only through `--browser-handoff <absolute-private-path>` together with exactly one
-  matching `--bridge-socket`. The receipt must first be created by an explicit foreground
+  This explicit authority never exposes Shell, and a nested Agent remains background-only. A background-only
+  Bridge-backed opaque browser session can start connected only through `--browser-handoff <absolute-private-path>`
+  together with exactly one matching `--bridge-socket`. The receipt must first be created by an explicit foreground
   `peekaboo browser connect --handoff-file` against that same socket. A current Bridge consumes the signed receipt once,
   authenticates its caller, listener generation, exact target, claim, and provider epoch, then gives this MCP server a
   distinct scoped provider child. The background server starts with that inherited exact connection and does not
-  expose `browser connect` or fall back to the Bridge root. Missing, stale, copied, mismatched, consumed, or downgraded
+  expose `browser connect` or fall back to the Bridge root. Missing, stale, mismatched, consumed, or downgraded
   handoffs fail before provider dispatch.
 - Direct-text `paste` is admitted only with an exact generation-pinned app/PID/window authorization and a canonical
   background result. Targetless, foreground, current-clipboard, and binary paste are refused before dispatch. The

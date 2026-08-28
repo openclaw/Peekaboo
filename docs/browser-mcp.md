@@ -105,8 +105,9 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   opens an authenticated caller-scoped transport. A foreground `peekaboo browser connect --handoff-file` on that same
   socket first writes the canonical signed receipt. The Bridge consumes it once, validates the caller, listener/host
   generation, exact target receipt, claim, and provider epoch, then creates a distinct scoped Chrome DevTools MCP child.
-  Scoped status, execution, disconnect, and terminal end all carry the opaque session ID and provider epoch; the remote
-  client remints page and element references for its caller and never falls back to the root connection.
+  Scoped status, execution, disconnect, and terminal end all carry the opaque session ID. Status returns the provider
+  epoch, and execution re-presents that epoch with the exact connection receipt; the remote client remints page and
+  element references for its caller and never falls back to the root connection.
 - The selected runtime host owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
 - Separate legacy CLI invocations require the same current-build reusable daemon. Bridge-scoped handoff instead
   requires a current host advertising authenticated browser-session bootstrap/control; older hosts reject it before
@@ -130,8 +131,9 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   routed directly to that page instead of relying on the process-global selected page. The upstream MCP server
   serializes calls with its FIFO tool mutex, so concurrent agents cannot redirect one another between selection
   and execution.
-- Process-local MCP and Agent sessions never receive Chrome's process-local page integers or snapshot-local UIDs as mutation
-  authority. `list_pages` and `new_page` project opaque caller-owned page references, and browser snapshots project
+- Persistent MCP and Agent sessions, including authenticated Bridge-scoped sessions, never receive Chrome's
+  process-local page integers or snapshot-local UIDs as mutation authority. `list_pages` and `new_page` project opaque
+  caller-owned page references, and browser snapshots project
   opaque element references bound to the exact connection, MCP child epoch, backend page, navigation generation, and provider node,
   frame, loader, or navigation identity when Chrome supplies it. A newer snapshot invalidates prior element refs;
   navigation, disconnect, connection replacement, and MCP-session teardown invalidate their complete subordinate
@@ -150,7 +152,8 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   epoch, opaque-reference namespace, and cleanup lifecycle. Ambiguous opens retry only with the same claim and payload;
   ambiguous end cleanup retains the exact handle until confirmed, while wrong-owner or host-generation failures become
   terminal without unsafe replay.
-- Each process-local `peekaboo mcp serve` session owns and tears down its own browser child. Without an authenticated
+- On the selected runtime host, each browser-enabled `peekaboo mcp serve` session, or server consuming an explicit
+  browser handoff, owns and tears down its own browser child. Without an authenticated
   Bridge handoff, the background-only default starts disconnected and cannot bootstrap browser control. To authorize
   setup for that exact process-local child,
   start `peekaboo mcp serve --allow-foreground` and invoke its `browser` `connect` action; subsequent page operations use

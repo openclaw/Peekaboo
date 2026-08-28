@@ -16,7 +16,7 @@ extension MCPCommand.Serve: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "browserHandoff",
-                    help: "Adopt one authenticated browser target from an owner-private handoff receipt",
+                    help: "Consume one signed browser handoff receipt into this server's scoped child",
                     long: "browser-handoff"
                 ),
             ],

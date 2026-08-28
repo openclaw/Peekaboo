@@ -94,6 +94,7 @@ test('background Agent type guidance requires an explicit non-dialog snapshot', 
 
 test('browser guidance separates standalone root authority from scoped sessions', () => {
   const browser = read('docs/commands/browser.md');
+  const browserMcp = read('docs/browser-mcp.md');
   const mcp = read('docs/commands/mcp.md');
   const agent = read('docs/commands/agent.md');
   const changelog = read('CHANGELOG.md');
@@ -101,13 +102,21 @@ test('browser guidance separates standalone root authority from scoped sessions'
   const changelogContract =
     /explicit-foreground standalone CLI root auto-connect.*filtered MCP and Agent catalogs.*prevents shared-root fallback and unsafe reuse/s;
 
-  assert.match(browser, /default mode.*require an existing exact browser\s+connection and never auto-connect/s);
-  assert.match(browser, /explicit `--foreground`.*standalone CLI browser root may auto-connect/s);
-  assert.match(browser, /MCP, Agent, and Bridge-scoped children remain receipt-only/s);
+  assert.match(browser, /Default read and page actions.*existing exact browser connection\s+receipt and never ambiently auto-connect/s);
+  assert.match(browser, /explicit `--foreground`.*only standalone CLI page actions may\s+auto-connect/s);
+  assert.match(browser, /Persistent MCP, Agent, and Bridge-scoped page actions never ambiently auto-connect/s);
+  assert.match(browser, /newer snapshot or navigation expires the affected page's element references/s);
+  assert.match(browser, /Closing a page\s+expires that page's namespace/s);
+  assert.match(browserMcp, /status, execution, disconnect, and terminal end all carry the opaque session ID/s);
+  assert.match(browserMcp, /Status returns the provider\s+epoch, and execution re-presents that epoch with the exact connection receipt/s);
+  assert.match(browserMcp, /Persistent MCP and Agent sessions, including authenticated Bridge-scoped sessions/s);
   assert.match(mcp, /Each server whose\s+catalog includes `browser`, or which consumes an explicit browser handoff/s);
   assert.doesNotMatch(mcp, /Each process-local\s+server owns a fresh browser child/s);
   assert.match(mcp, /Scoped MCP page actions never ambiently auto-connect, even\s+with foreground authority/s);
   assert.match(mcp, /`--allow-foreground` instead exposes the\s+explicit `browser` `connect` action/s);
+  assert.match(mcp, /background-delivered by default.*explicitly request foreground page\s+selection or opening/s);
+  assert.match(mcp, /A background-only\s+Bridge-backed opaque browser session can start connected only through/s);
+  assert.doesNotMatch(mcp, /Missing, stale, copied,/s);
   assert.match(mcp, /Filtering out `browser` therefore creates no browser\s+child/s);
   assert.match(mcp, /explicit `--browser-handoff` is still\s+authenticated, consumed, and opened/s);
   assert.match(agent, /Bridge-routed Agent never borrows the host's shared browser root/s);

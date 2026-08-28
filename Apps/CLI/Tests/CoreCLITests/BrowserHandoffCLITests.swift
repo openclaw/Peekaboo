@@ -26,13 +26,14 @@ struct BrowserHandoffCLITests {
         let mcpHelp = MCPCommand.Serve.helpMessage()
 
         #expect(browserHelp.contains("--handoff-file"))
-        #expect(browserHelp.contains("authenticated browser handoff receipt"))
-        #expect(browserHelp.contains("Background browser actions require an existing exact connection"))
-        #expect(browserHelp.contains("standalone browser root may auto-connect"))
+        #expect(browserHelp.contains("Atomically create one signed browser handoff receipt"))
+        #expect(browserHelp.contains("Default read and page actions require an existing exact browser connection"))
+        #expect(browserHelp.contains("only standalone CLI page actions may"))
         #expect(browserHelp.contains("standalone CLI auto-connect"))
-        #expect(browserHelp.contains("Bridge-scoped children remain receipt-only"))
+        #expect(browserHelp.contains("Bridge-scoped page actions never"))
+        #expect(browserHelp.contains("background Bridge-scoped MCP child"))
         #expect(mcpHelp.contains("--browser-handoff"))
-        #expect(mcpHelp.contains("authenticated browser target"))
+        #expect(mcpHelp.contains("Consume one signed browser handoff receipt into this server's scoped child"))
 
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let invocation = try Program(descriptors: descriptors.map(\.metadata)).resolve(argv: [
