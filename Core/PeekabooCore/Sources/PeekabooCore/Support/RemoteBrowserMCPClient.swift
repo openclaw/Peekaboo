@@ -7,7 +7,8 @@ import TachikomaMCP
 
 public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
     BrowserMCPAtomicSessionActionProviding, BrowserMCPConnectionResultProviding,
-    BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding, @unchecked Sendable
+    BrowserMCPConnectionHandoffProviding, BrowserMCPScopedSessionOpening,
+    BrowserMCPScopedSessionEnding, @unchecked Sendable
 {
     private enum ScopedSessionState: Equatable {
         case active
@@ -18,6 +19,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     private let client: PeekabooBridgeClient
     private let sessionTransport: (any RemoteBrowserMCPSessionTransport)?
     private let sessionHandle: RemoteBrowserMCPSessionHandle?
+    @MainActor private var connectionHandoffReceiptBundleData: Data?
     @MainActor private var lastScopedStatus: BrowserMCPStatus?
     @MainActor private var scopedSessionState = ScopedSessionState.active
 
@@ -146,6 +148,35 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         } catch let failure as DesktopActionFailure where Self.isBrowserTargetLockedFailure(failure) {
             throw BrowserMCPConnectionError.targetLocked
         }
+    }
+
+    @MainActor
+    public func connectWithHandoffOutcome(
+        channel: BrowserMCPChannel?,
+        browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
+    {
+        self.connectionHandoffReceiptBundleData = nil
+        do {
+            let handoff = try await self.client.browserConnectHandoffResult(
+                channel: channel?.rawValue,
+                browserURL: browserURL)
+            let encoder = JSONEncoder.peekabooBridgeEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let canonicalBundle = try encoder.encode(handoff.receiptBundle)
+            try handoff.receiptBundle.validate()
+            self.connectionHandoffReceiptBundleData = canonicalBundle
+            return try DesktopActionResult(
+                payload: Self.status(from: handoff.result.payload),
+                outcome: handoff.result.outcome)
+        } catch let failure as DesktopActionFailure where Self.isBrowserTargetLockedFailure(failure) {
+            throw BrowserMCPConnectionError.targetLocked
+        }
+    }
+
+    @MainActor
+    public func takeConnectionHandoffReceiptBundleData() -> Data? {
+        defer { self.connectionHandoffReceiptBundleData = nil }
+        return self.connectionHandoffReceiptBundleData
     }
 
     @MainActor

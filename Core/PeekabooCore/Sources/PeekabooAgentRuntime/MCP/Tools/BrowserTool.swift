@@ -3,7 +3,7 @@ import MCP
 import PeekabooFoundation
 import TachikomaMCP
 
-public enum BrowserToolInstructionAudience: Sendable {
+public enum BrowserToolInstructionAudience: Sendable, Equatable {
     case mcp
     case commandLine
 }
@@ -185,6 +185,13 @@ public struct BrowserTool: MCPTool {
         if browserURL != nil, action != .connect {
             return ToolResponse.error("browser_url is accepted only by the connect action")
         }
+        let requestsHandoff = arguments.getBool("request_handoff") == true
+        if requestsHandoff, action != .connect {
+            return ToolResponse.error("request_handoff is accepted only by the connect action")
+        }
+        if requestsHandoff, self.instructionAudience != .commandLine {
+            return ToolResponse.error("request_handoff is reserved for the explicit CLI handoff workflow")
+        }
 
         try Task.checkCancellation()
         do {
@@ -247,6 +254,7 @@ public struct BrowserTool: MCPTool {
             return try await self.statusResponse(channel: channel)
         case .connect:
             try self.requireAtomicCapabilityProvider(operation: "connecting")
+            let requestsHandoff = arguments.getBool("request_handoff") == true
             guard let resultClient = self.client as? any BrowserMCPConnectionResultProviding else {
                 throw DesktopActionFailure.preDispatchRefusal(
                     reason: .operationUnsupported,
@@ -254,9 +262,22 @@ public struct BrowserTool: MCPTool {
                     hint: "Update the runtime host before retrying browser connect.")
             }
             try Self.checkCancellationBeforeProviderEntry()
-            let result = try await resultClient.connectWithOutcome(
-                channel: channel,
-                browserURL: browserURL)
+            let result: DesktopActionResult<BrowserMCPStatus>
+            if requestsHandoff {
+                guard let handoffClient = resultClient as? any BrowserMCPConnectionHandoffProviding else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .operationUnsupported,
+                        message: "Browser handoff requires an authenticated remote Bridge provider.",
+                        hint: "Use an explicit current Bridge socket that supports browser handoff receipts.")
+                }
+                result = try await handoffClient.connectWithHandoffOutcome(
+                    channel: channel,
+                    browserURL: browserURL)
+            } else {
+                result = try await resultClient.connectWithOutcome(
+                    channel: channel,
+                    browserURL: browserURL)
+            }
             await self.capabilitySession?.observeStatus(result.payload)
             let outcome = try Self.validatedConnectOutcome(result.outcome)
             return try self.formatStatus(

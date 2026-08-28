@@ -244,7 +244,6 @@ extension PeekabooBridgeClient {
             sessionID: sessionID,
             action: .end)))
     }
-
     private func directBrowserConnect(
         _ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeBrowserStatus
     {
