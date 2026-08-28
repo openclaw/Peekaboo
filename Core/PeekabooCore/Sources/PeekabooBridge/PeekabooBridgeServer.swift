@@ -118,6 +118,7 @@ public final class PeekabooBridgeServer {
     let allowedOperations: Set<PeekabooBridgeOperation>
     let hostIdentity: PeekabooBridgeHostIdentity?
     private(set) var hostCapabilities: Set<String>
+    nonisolated let supportsBrowserHandoffMaintenance: Bool
     let servingSocketPath: String?
     var agentExecutionRunner: (any PeekabooBridgeAgentExecutionRunning)?
     let daemonControl: (any PeekabooDaemonControlProviding)?
@@ -257,6 +258,8 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.browserConnectionHandoff)
         }
+        self.supportsBrowserHandoffMaintenance = resolvedHostCapabilities.contains(
+            PeekabooBridgeHostCapability.browserConnectionHandoff)
         if supportedVersions.upperBound >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion,
            services.snapshots.supportsProducerBoundSnapshotReferences,
            self.allowedOperations.contains(.ownsSnapshot)
@@ -465,6 +468,14 @@ public final class PeekabooBridgeServer {
                 \(reason, privacy: .public)
                 """)
         }
+    }
+
+    func scheduleBrowserHandoffMaintenance() {
+        self.browserHandoffGrantRegistry.scheduleMaintenance()
+    }
+
+    func scheduleBrowserHandoffShutdownMaintenance() -> Bool {
+        self.browserHandoffGrantRegistry.scheduleShutdownMaintenance()
     }
 
     private nonisolated static func awaitScreenCaptureKitOwnershipPreparation(

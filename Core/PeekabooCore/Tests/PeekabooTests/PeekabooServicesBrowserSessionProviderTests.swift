@@ -208,6 +208,64 @@ struct PeekabooServicesBrowserSessionProviderTests {
     }
 
     @Test
+    func `host reaper releases an abandoned child and its exact target without another Bridge request`() async throws {
+        let child = HostBrowserProviderSpy(label: "child")
+        let fixture = Self.fixture(children: [child])
+        let caller = Self.caller()
+        let life = HostBrowserOwnerLife(
+            startIdentity: caller.process.processStartIdentity,
+            presence: true)
+        let socketPath = "/tmp/peekaboo-browser-target-reaper-\(UUID().uuidString).sock"
+        let server = PeekabooBridgeServer(
+            services: fixture.services,
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [
+                .browserStatus,
+                .browserConnect,
+                .browserDisconnect,
+                .browserExecute,
+                .browserSessionBootstrap,
+                .browserSessionControl,
+            ],
+            hostIdentity: nil,
+            servingSocketPath: socketPath,
+            screenCaptureKitProcessCapabilityRegistrar: {},
+            screenCaptureKitOwnershipPreparer: {},
+            processStartIdentityProvider: { _ in life.startIdentity },
+            processPresenceProvider: { _ in life.presence },
+            browserSessionBootstrapProvider: fixture.services.browserSessionBootstrapProvider)
+        #expect(server.supportsBrowserHandoffMaintenance)
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server)
+        await host.setBrowserHandoffMaintenanceIntervalForTesting(milliseconds: 10)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let response = try await server.browserHandoffGrantRegistry.bootstrap(
+            request: .init(claimID: UUID()),
+            authority: PeekabooBridgeOperationReceiptAuthority(
+                socketPath: "/tmp/peekaboo-browser-target-reaper-authority-\(UUID().uuidString).sock"),
+            caller: caller)
+        _ = try await fixture.services.browserSessionConnect(
+            sessionID: response.sessionID,
+            channel: nil,
+            browserURL: Self.browserURL)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await fixture.root.connectWithOutcome(channel: nil, browserURL: Self.browserURL)
+        }
+
+        life.presence = false
+        let sessionName = "bridge:\(response.sessionID.uuidString.lowercased())"
+        #expect(await Self.waitUntil {
+            child.removeCount == 1 && fixture.root.existingAuthenticatedSession(named: sessionName) == nil
+        })
+        _ = try await fixture.root.connectWithOutcome(channel: nil, browserURL: Self.browserURL)
+        await fixture.root.disconnect()
+        #expect(await host.stop() == .stopped)
+    }
+
+    @Test
     func `discarded authorization cannot bootstrap or create a session`() async throws {
         let child = HostBrowserProviderSpy(label: "child")
         let fixture = Self.fixture(children: [child])
@@ -379,6 +437,17 @@ struct PeekabooServicesBrowserSessionProviderTests {
             teamIdentifier: "TESTTEAM")
     }
 
+    private static func waitUntil(
+        timeout: Duration = .seconds(1),
+        _ condition: () -> Bool) async -> Bool
+    {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return condition()
+    }
+
     private static func runtimeReceipt(
         _ receipt: PeekabooBridgeBrowserConnectionReceipt) -> BrowserMCPConnectionReceipt
     {
@@ -459,6 +528,26 @@ private final class HostBrowserEventLog {
 @MainActor
 private final class HostBrowserFactoryCount {
     var value = 0
+}
+
+private final class HostBrowserOwnerLife: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedStartIdentity: UInt64?
+    private var storedPresence: Bool?
+
+    init(startIdentity: UInt64?, presence: Bool?) {
+        self.storedStartIdentity = startIdentity
+        self.storedPresence = presence
+    }
+
+    var startIdentity: UInt64? {
+        self.lock.withLock { self.storedStartIdentity }
+    }
+
+    var presence: Bool? {
+        get { self.lock.withLock { self.storedPresence } }
+        set { self.lock.withLock { self.storedPresence = newValue } }
+    }
 }
 
 private actor HostAuthorizationBarrier {

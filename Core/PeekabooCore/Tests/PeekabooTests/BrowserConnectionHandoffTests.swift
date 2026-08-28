@@ -517,7 +517,7 @@ struct BrowserConnectionHandoffTests {
         }
         #expect(spy.bootstrapContexts.count == 1)
         #expect(spy.invalidatedSessionIDs == spy.bootstrapContexts.map(\.sessionID))
-        #expect(spy.discardedHandoffAuthorizationIDs.count == 1)
+        #expect(await Self.waitUntil { spy.discardedHandoffAuthorizationIDs.count == 1 })
         await #expect(throws: (any Error).self) {
             _ = try await registry.bootstrap(request: request, authority: authority, caller: caller)
         }
@@ -546,6 +546,118 @@ struct BrowserConnectionHandoffTests {
         spy.invalidationResult = true
         try await registry.reserve(requestID: UUID(), issuer: caller)
         #expect(spy.invalidatedSessionIDs.count == 3)
+    }
+
+    @Test
+    @MainActor
+    func `host maintenance retries failed bootstrap cleanup without another Bridge request`() async throws {
+        let spy = BootstrapSpy(failure: TestFailure())
+        spy.invalidationResult = false
+        let caller = try Self.approvedPeer().browserSessionCaller(clientInstanceID: UUID())
+        let socketPath = "/tmp/peekaboo-browser-cleanup-reaper-\(UUID().uuidString).sock"
+        let server = Self.handoffServer(
+            socketPath: socketPath,
+            provider: spy,
+            processStartIdentity: { _ in caller.process.processStartIdentity },
+            processPresence: { _ in true })
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server)
+        await host.setBrowserHandoffMaintenanceIntervalForTesting(milliseconds: 10)
+        try await host.startChecked()
+
+        await #expect(throws: TestFailure.self) {
+            _ = try await server.browserHandoffGrantRegistry.bootstrap(
+                request: .init(claimID: UUID()),
+                authority: Self.authority("cleanup-reaper"),
+                caller: caller)
+        }
+        #expect(await Self.waitUntil { !spy.invalidatedSessionIDs.isEmpty })
+        let attemptsBeforeConfirmation = spy.invalidatedSessionIDs.count
+        spy.invalidationResult = true
+
+        #expect(await Self.waitUntil {
+            spy.invalidatedSessionIDs.count > attemptsBeforeConfirmation
+        })
+        #expect(await Self.waitUntil {
+            server.browserHandoffGrantRegistry.occupiedCapacityForTesting == 0
+        })
+        #expect(await host.stop() == .stopped)
+    }
+
+    @Test
+    @MainActor
+    func `blocked failed bootstrap cleanup stays single while host maintenance keeps scanning`() async throws {
+        let spy = BootstrapSpy(blocksInvalidation: true, failure: TestFailure())
+        let caller = try Self.approvedPeer().browserSessionCaller(clientInstanceID: UUID())
+        let socketPath = "/tmp/peekaboo-browser-blocked-cleanup-\(UUID().uuidString).sock"
+        let server = Self.handoffServer(
+            socketPath: socketPath,
+            provider: spy,
+            processStartIdentity: { _ in caller.process.processStartIdentity },
+            processPresence: { _ in true })
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server)
+        await host.setBrowserHandoffMaintenanceIntervalForTesting(milliseconds: 5)
+        try await host.startChecked()
+
+        await #expect(throws: TestFailure.self) {
+            _ = try await server.browserHandoffGrantRegistry.bootstrap(
+                request: .init(claimID: UUID()),
+                authority: Self.authority("blocked-cleanup"),
+                caller: caller)
+        }
+        #expect(await Self.waitUntil { spy.invalidatedSessionIDs.count == 1 })
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(spy.invalidatedSessionIDs.count == 1)
+
+        spy.releaseInvalidation()
+        #expect(await Self.waitUntil {
+            server.browserHandoffGrantRegistry.occupiedCapacityForTesting == 0
+        })
+        #expect(await host.stop() == .stopped)
+    }
+
+    @Test
+    @MainActor
+    func `host stop joins its reaper and retires retryable abandoned cleanup`() async throws {
+        let peer = try Self.approvedPeer()
+        let caller = try peer.browserSessionCaller(clientInstanceID: UUID())
+        let life = ProcessLifeBox(
+            startIdentity: caller.process.processStartIdentity,
+            presence: true)
+        let spy = BootstrapSpy(blocksInvalidation: true)
+        let socketPath = "/tmp/peekaboo-browser-reaper-stop-\(UUID().uuidString).sock"
+        let server = Self.handoffServer(
+            socketPath: socketPath,
+            provider: spy,
+            processStartIdentity: { _ in life.startIdentity },
+            processPresence: { _ in life.presence })
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server)
+        await host.setBrowserHandoffMaintenanceIntervalForTesting(milliseconds: 10)
+        try await host.startChecked()
+        let firstResponse = try await server.browserHandoffGrantRegistry.bootstrap(
+            request: .init(claimID: UUID()),
+            authority: Self.authority("reaper-stop"),
+            caller: caller)
+        let secondResponse = try await server.browserHandoffGrantRegistry.bootstrap(
+            request: .init(claimID: UUID()),
+            authority: Self.authority("reaper-stop-second"),
+            caller: caller)
+
+        life.presence = false
+        let expectedSessionIDs = Set([firstResponse.sessionID, secondResponse.sessionID])
+        #expect(await Self.waitUntil { Set(spy.invalidatedSessionIDs) == expectedSessionIDs })
+        let startedAt = ContinuousClock.now
+        #expect(await host.stop() == .stopped)
+        #expect(startedAt.duration(to: .now) < .seconds(1))
+
+        spy.invalidationResult = false
+        spy.releaseInvalidation()
+        #expect(await Self.waitUntil { spy.invalidatedSessionIDs.count > expectedSessionIDs.count })
+        spy.invalidationResult = true
+        spy.releaseInvalidation()
+        #expect(await Self.waitUntil {
+            server.browserHandoffGrantRegistry.occupiedCapacityForTesting == 0
+        })
+        #expect(Set(spy.invalidatedSessionIDs) == expectedSessionIDs)
     }
 
     @Test
@@ -622,6 +734,7 @@ struct BrowserConnectionHandoffTests {
         while spy.completedInvalidationCount == 0 {
             await Task.yield()
         }
+        #expect(await Self.waitUntil { registry.occupiedCapacityForTesting == 0 })
         try await registry.reserve(requestID: UUID(), issuer: caller)
         #expect(spy.invalidatedSessionIDs == spy.bootstrapContexts.map(\.sessionID))
     }
@@ -1014,6 +1127,47 @@ struct BrowserConnectionHandoffTests {
             socketPath: "/tmp/peekaboo-browser-handoff-\(suffix)-\(UUID().uuidString).sock")
     }
 
+    @MainActor
+    private static func handoffServer(
+        socketPath: String,
+        provider: any PeekabooBridgeBrowserSessionBootstrapProviding,
+        processStartIdentity: @escaping @Sendable (pid_t) -> UInt64?,
+        processPresence: @escaping @Sendable (pid_t) -> Bool?) -> PeekabooBridgeServer
+    {
+        PeekabooBridgeServer(
+            services: StubServices(),
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [
+                .browserStatus,
+                .browserConnect,
+                .browserDisconnect,
+                .browserExecute,
+                .browserSessionBootstrap,
+                .browserSessionControl,
+            ],
+            hostIdentity: nil,
+            servingSocketPath: socketPath,
+            screenCaptureKitProcessCapabilityRegistrar: {},
+            screenCaptureKitOwnershipPreparer: {},
+            processStartIdentityProvider: processStartIdentity,
+            processPresenceProvider: processPresence,
+            browserSessionBootstrapProvider: provider)
+    }
+
+    @MainActor
+    private static func waitUntil(
+        timeout: Duration = .seconds(1),
+        _ condition: () -> Bool) async -> Bool
+    {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return condition()
+    }
+
     private static func approvedPeer() throws -> PeekabooBridgePeer {
         let base = try OperationReceiptSessionFixture.currentPeer()
         guard let identity = base.liveIdentity else {
@@ -1113,7 +1267,7 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
     private let blocksInvalidation: Bool
     private let failure: (any Error)?
     private var continuation: CheckedContinuation<Void, Never>?
-    private var invalidationContinuation: CheckedContinuation<Void, Never>?
+    private var invalidationContinuations: [CheckedContinuation<Void, Never>] = []
     private(set) var bootstrapContexts: [PeekabooBridgeBrowserSessionBootstrapContext] = []
     private(set) var invalidatedSessionIDs: [UUID] = []
     private(set) var completedInvalidationCount = 0
@@ -1167,7 +1321,7 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
         self.invalidatedSessionIDs.append(sessionID)
         if self.blocksInvalidation {
             await withCheckedContinuation { continuation in
-                self.invalidationContinuation = continuation
+                self.invalidationContinuations.append(continuation)
             }
         }
         self.completedInvalidationCount += 1
@@ -1217,8 +1371,11 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
     }
 
     func releaseInvalidation() {
-        self.invalidationContinuation?.resume()
-        self.invalidationContinuation = nil
+        let continuations = self.invalidationContinuations
+        self.invalidationContinuations.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
     }
 }
 
