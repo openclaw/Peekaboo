@@ -29,6 +29,11 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         var operationMayHaveCompleted: Bool
     }
 
+    private struct ScopedSessionOpenFailureDisposition {
+        let operationMayHaveCompleted: Bool
+        let shouldRetryAutomatically: Bool
+    }
+
     private let client: PeekabooBridgeClient
     private let sessionTransport: (any RemoteBrowserMCPSessionTransport)?
     private let sessionHandle: RemoteBrowserMCPSessionHandle?
@@ -80,9 +85,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
                     claimID: attempt.claimID)
                 break
             } catch let error as RemoteBrowserMCPSessionTransportError {
-                self.finishScopedSessionOpenAttempt(
-                    attempt,
-                    retryable: self.scopedSessionOpenAttemptMayHaveCompleted(attempt))
+                self.finishScopedSessionOpenAttempt(attempt, retryable: false)
                 throw error
             } catch let error as RemoteBrowserMCPSessionError {
                 self.finishScopedSessionOpenAttempt(
@@ -90,14 +93,13 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
                     retryable: self.scopedSessionOpenAttemptMayHaveCompleted(attempt))
                 throw error
             } catch {
-                let operationMayHaveCompleted = Self.scopedSessionOpenMayHaveCompleted(after: error)
+                let disposition = Self.scopedSessionOpenFailureDisposition(for: error)
                 let remainsUnresolved = self.recordScopedSessionOpenFailure(
                     attempt,
-                    operationMayHaveCompleted: operationMayHaveCompleted)
+                    operationMayHaveCompleted: disposition.operationMayHaveCompleted)
                 if automaticRetryRemaining,
                    !Task.isCancelled,
-                   !Self.isScopedSessionOpenCancellation(error),
-                   operationMayHaveCompleted
+                   disposition.shouldRetryAutomatically
                 {
                     automaticRetryRemaining = false
                     continue
@@ -109,10 +111,11 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         guard handle.isCanonical,
               (handoff == nil) == (handle.targetReceiptSHA256 == nil)
         else {
-            self.finishScopedSessionOpenAttempt(attempt, retryable: false)
-            if handle.isCanonical {
-                try? await sessionTransport.endSession(handle)
-            }
+            _ = self.recordScopedSessionOpenFailure(attempt, operationMayHaveCompleted: true)
+            let cleanupResolved = await Self.resolveInvalidScopedSessionOpen(
+                handle: handle,
+                transport: sessionTransport)
+            self.finishScopedSessionOpenAttempt(attempt, retryable: !cleanupResolved)
             throw RemoteBrowserMCPSessionError.invalidHandle
         }
         self.finishScopedSessionOpenAttempt(attempt, retryable: false)
@@ -540,23 +543,33 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         }
     }
 
-    private static func scopedSessionOpenMayHaveCompleted(after error: any Error) -> Bool {
+    private static func scopedSessionOpenFailureDisposition(
+        for error: any Error) -> ScopedSessionOpenFailureDisposition
+    {
         if self.isScopedSessionOpenCancellation(error) {
-            return true
+            return .init(operationMayHaveCompleted: true, shouldRetryAutomatically: false)
         }
         if let urlError = error as? URLError {
-            return [.timedOut, .networkConnectionLost].contains(urlError.code)
+            let retryable = [.timedOut, .networkConnectionLost].contains(urlError.code)
+            return .init(operationMayHaveCompleted: retryable, shouldRetryAutomatically: retryable)
         }
         if let posix = error as? POSIXError {
-            return [.ETIMEDOUT, .ECONNRESET, .EPIPE].contains(posix.code)
+            let retryable = [.ETIMEDOUT, .ECONNRESET, .EPIPE].contains(posix.code)
+            return .init(operationMayHaveCompleted: true, shouldRetryAutomatically: retryable)
         }
         if let envelope = error as? PeekabooBridgeErrorEnvelope {
-            return envelope.operationMayHaveCompleted
+            let responseWasLost = envelope.operationMayHaveCompleted ||
+                [.timeout, .internalError, .decodingFailed].contains(envelope.code)
+            return .init(
+                operationMayHaveCompleted: responseWasLost,
+                shouldRetryAutomatically: envelope.operationMayHaveCompleted)
         }
         if let failure = error as? DesktopActionFailure {
-            return failure.outcome.evidence == .responseLost
+            return .init(
+                operationMayHaveCompleted: failure.outcome.dispatchState.mutationDispatched,
+                shouldRetryAutomatically: failure.outcome.evidence == .responseLost)
         }
-        return false
+        return .init(operationMayHaveCompleted: true, shouldRetryAutomatically: false)
     }
 
     private static func isScopedSessionOpenCancellation(_ error: any Error) -> Bool {
@@ -570,6 +583,22 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             return posix.code == .ECANCELED
         }
         return false
+    }
+
+    @MainActor
+    private static func resolveInvalidScopedSessionOpen(
+        handle: RemoteBrowserMCPSessionHandle,
+        transport: any RemoteBrowserMCPSessionTransport) async -> Bool
+    {
+        guard handle.isCanonical else { return false }
+        do {
+            try await transport.endSession(handle)
+            return true
+        } catch is RemoteBrowserMCPSessionTransportError {
+            return true
+        } catch {
+            return false
+        }
     }
 
     @MainActor

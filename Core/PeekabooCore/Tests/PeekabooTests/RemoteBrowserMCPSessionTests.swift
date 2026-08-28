@@ -150,13 +150,10 @@ struct RemoteBrowserMCPSessionTests {
         #expect(Set(transport.openedClaimIDs).count == 1)
     }
 
-    @Test(arguments: [false, true])
-    func `indeterminate dispatch stays unresolved after typed retry failure`(usesTransportError: Bool) async throws {
+    @Test
+    func `indeterminate dispatch stays unresolved after local retry failure`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
-        let typedError: any Error = usesTransportError
-            ? RemoteBrowserMCPSessionTransportError.wrongOwner
-            : RemoteBrowserMCPSessionError.invalidHandle
-        transport.openErrors = [URLError(.timedOut), typedError]
+        transport.openErrors = [URLError(.timedOut), RemoteBrowserMCPSessionError.invalidHandle]
         let root = Self.rootClient(transport: transport)
         let handoff = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
         let differentHandoff = BrowserMCPHandoffGrant(payload: Data("different-connect-receipt".utf8))
@@ -170,6 +167,71 @@ struct RemoteBrowserMCPSessionTests {
         _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
 
         #expect(transport.openedClaimIDs.count == 3)
+        #expect(Set(transport.openedClaimIDs).count == 1)
+    }
+
+    @Test(arguments: RemoteBrowserMCPSessionTransportError.allCases)
+    func `terminal transport response resolves prior indeterminate claim`(
+        terminalError: RemoteBrowserMCPSessionTransportError) async throws
+    {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [URLError(.timedOut), terminalError]
+        let root = Self.rootClient(transport: transport)
+        let firstHandoff = BrowserMCPHandoffGrant(payload: Data("first-signed-connect-receipt".utf8))
+        let secondHandoff = BrowserMCPHandoffGrant(payload: Data("second-signed-connect-receipt".utf8))
+
+        await #expect(throws: terminalError) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: firstHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: secondHandoff)
+
+        #expect(transport.openedClaimIDs.count == 3)
+        #expect(transport.openedClaimIDs[0] == transport.openedClaimIDs[1])
+        #expect(transport.openedClaimIDs[2] != transport.openedClaimIDs[1])
+    }
+
+    @Test
+    func `unclassified open failure retains claim without automatic retry`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openErrors = [UnclassifiedOpenFailure()]
+        let root = Self.rootClient(transport: transport)
+        let handoff = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let differentHandoff = BrowserMCPHandoffGrant(payload: Data("different-connect-receipt".utf8))
+
+        await #expect(throws: UnclassifiedOpenFailure.self) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: differentHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
+
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(Set(transport.openedClaimIDs).count == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func `invalid open handle retains claim until cleanup resolves`(canonicalHandle: Bool) async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let invalidHandle = RemoteBrowserMCPSessionHandle(
+            sessionID: canonicalHandle ? UUID() : Self.zeroUUID,
+            targetReceiptSHA256: canonicalHandle ? String(repeating: "a", count: 64) : nil)
+        transport.openHandles = [invalidHandle]
+        if canonicalHandle {
+            transport.endErrors = [CancellationError()]
+        }
+        let root = Self.rootClient(transport: transport)
+        let differentHandoff = BrowserMCPHandoffGrant(payload: Data("different-connect-receipt".utf8))
+
+        await #expect(throws: RemoteBrowserMCPSessionError.invalidHandle) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: nil)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: differentHandoff)
+        }
+        _ = try await root.openBrowserMCPScopedSession(handoff: nil)
+
+        #expect(transport.openedClaimIDs.count == 2)
         #expect(Set(transport.openedClaimIDs).count == 1)
     }
 
@@ -553,7 +615,11 @@ struct RemoteBrowserMCPSessionTests {
         guard case let .text(text, _, _)? = response.content.first else { return "" }
         return text
     }
+
+    private static let zeroUUID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 }
+
+private struct UnclassifiedOpenFailure: Error {}
 
 @MainActor
 private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSessionTransport, @unchecked Sendable {
@@ -570,6 +636,7 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     var executeFailure: (any Error)?
     var disconnectFailure: (any Error)?
     var openErrors: [any Error] = []
+    var openHandles: [RemoteBrowserMCPSessionHandle] = []
     var endErrors: [any Error] = []
     private(set) var endCallCount = 0
     private var epochs: [UUID: BrowserMCPProviderSessionEpoch] = [:]
@@ -582,6 +649,9 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
         self.openedClaimIDs.append(claimID)
         if !self.openErrors.isEmpty {
             throw self.openErrors.removeFirst()
+        }
+        if !self.openHandles.isEmpty {
+            return self.openHandles.removeFirst()
         }
         let sessionID = UUID()
         self.epochs[sessionID] = BrowserMCPProviderSessionEpoch(transportID: UUID())
