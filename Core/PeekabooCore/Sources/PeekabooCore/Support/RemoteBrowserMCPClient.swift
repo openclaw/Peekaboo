@@ -49,6 +49,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     @MainActor private var pendingScopedSessionOpenAttempt: ScopedSessionOpenAttempt?
     @MainActor private var scopedSessionState = ScopedSessionState.active
     @MainActor private var scopedSessionEndInFlight = false
+    @MainActor private var scopedSessionEndRetryRequested = false
 
     var hasScopedSessionTransport: Bool {
         self.sessionTransport != nil
@@ -474,23 +475,29 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         case .terminal, .ended:
             return
         }
-        guard !self.scopedSessionEndInFlight else { return }
-        self.scopedSessionState = .cleanupDebt
+        guard !self.scopedSessionEndInFlight else {
+            self.scopedSessionEndRetryRequested = true
+            return
+        }
         self.scopedSessionEndInFlight = true
         self.lastScopedStatus = nil
-        do {
-            try await transport.endSession(session)
-            self.scopedSessionState = .ended
-        } catch let terminal as RemoteBrowserMCPSessionTransportError {
-            switch terminal {
-            case .invalidSession, .sessionEnded:
-                self.scopedSessionState = .ended
-            case .wrongOwner, .hostGenerationChanged:
-                self.scopedSessionState = .terminal
-            }
-        } catch {
+        repeat {
+            self.scopedSessionEndRetryRequested = false
             self.scopedSessionState = .cleanupDebt
-        }
+            do {
+                try await transport.endSession(session)
+                self.scopedSessionState = .ended
+            } catch let terminal as RemoteBrowserMCPSessionTransportError {
+                switch terminal {
+                case .invalidSession, .sessionEnded:
+                    self.scopedSessionState = .ended
+                case .wrongOwner, .hostGenerationChanged:
+                    self.scopedSessionState = .terminal
+                }
+            } catch {
+                self.scopedSessionState = .cleanupDebt
+            }
+        } while self.scopedSessionState == .cleanupDebt && self.scopedSessionEndRetryRequested
         self.scopedSessionEndInFlight = false
     }
 

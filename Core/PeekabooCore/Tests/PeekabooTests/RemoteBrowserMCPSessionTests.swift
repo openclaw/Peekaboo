@@ -599,6 +599,30 @@ struct RemoteBrowserMCPSessionTests {
     }
 
     @Test
+    func `concurrent end request retries an in flight transient cleanup failure`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.pauseFirstEnd = true
+        transport.endErrors = [URLError(.timedOut)]
+        let root = Self.rootClient(transport: transport)
+        let scoped = try await root.openBrowserMCPScopedSession(handoff: nil)
+        let ending = try #require(scoped as? any BrowserMCPScopedSessionEnding)
+
+        let firstEnd = Task { @MainActor in
+            await ending.endBrowserMCPScopedSession()
+        }
+        await transport.waitUntilFirstEndIsPaused()
+        let overlappingEnd = Task { @MainActor in
+            await ending.endBrowserMCPScopedSession()
+        }
+        await overlappingEnd.value
+        transport.resumeFirstEnd()
+        await firstEnd.value
+
+        #expect(transport.endCallCount == 2)
+        #expect(transport.endedSessionIDs.count == 1)
+    }
+
+    @Test
     func `scoped connection without provider epoch terminates before transport execution`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         transport.omitProviderEpoch = true
@@ -704,7 +728,9 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     var openErrors: [any Error] = []
     var openHandles: [RemoteBrowserMCPSessionHandle] = []
     var endErrors: [any Error] = []
+    var pauseFirstEnd = false
     private(set) var endCallCount = 0
+    private var firstEndContinuation: CheckedContinuation<Void, Never>?
     private var epochs: [UUID: BrowserMCPProviderSessionEpoch] = [:]
 
     func openSession(
@@ -801,10 +827,26 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
 
     func endSession(_ session: RemoteBrowserMCPSessionHandle) async throws {
         self.endCallCount += 1
+        if self.pauseFirstEnd, self.endCallCount == 1 {
+            await withCheckedContinuation { continuation in
+                self.firstEndContinuation = continuation
+            }
+        }
         if !self.endErrors.isEmpty {
             throw self.endErrors.removeFirst()
         }
         self.endedSessionIDs.append(session.sessionID)
+    }
+
+    func waitUntilFirstEndIsPaused() async {
+        while self.firstEndContinuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func resumeFirstEnd() {
+        self.firstEndContinuation?.resume()
+        self.firstEndContinuation = nil
     }
 
     private func connectedStatus(session: RemoteBrowserMCPSessionHandle) -> BrowserMCPStatus {
