@@ -99,7 +99,7 @@ test('browser guidance separates standalone root authority from scoped sessions'
   const changelog = read('CHANGELOG.md');
   const cliChangelog = read('Apps/CLI/CHANGELOG.md');
   const changelogContract =
-    /explicit-foreground standalone CLI root auto-connect.*prevents shared-root fallback and unsafe reuse/s;
+    /explicit-foreground standalone CLI root auto-connect.*filtered MCP and Agent catalogs.*prevents shared-root fallback and unsafe reuse/s;
 
   assert.match(browser, /default mode.*require an existing exact browser\s+connection and never auto-connect/s);
   assert.match(browser, /explicit `--foreground`.*standalone CLI browser root may auto-connect/s);
