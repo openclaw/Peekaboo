@@ -303,7 +303,7 @@ final class BrowserMCPAuthenticatedSessionPool {
 
     func bindRoot(to receipt: BrowserMCPConnectionReceipt) throws {
         let keys = Self.targetKeys(for: receipt)
-        if keys.contains(where: { key in
+        if !self.pendingHandoffOwners.isEmpty || keys.contains(where: { key in
             self.targetOwners[key].map { $0 != .root } ?? false
         }) {
             throw BrowserMCPConnectionError.targetLocked
@@ -315,7 +315,9 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func unbindRoot() {
-        self.targetOwners = self.targetOwners.filter { $0.value != .root }
+        self.targetOwners = self.targetOwners.filter { key, owner in
+            owner != .root || self.pendingHandoffOwners[key] != nil
+        }
     }
 
     func prepareHandoff(

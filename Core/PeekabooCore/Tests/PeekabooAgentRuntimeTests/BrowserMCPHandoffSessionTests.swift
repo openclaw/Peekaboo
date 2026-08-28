@@ -150,6 +150,51 @@ struct BrowserMCPHandoffSessionTests {
     }
 
     @Test
+    func `pending handoff blocks root rebind and release until ownership commits`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        let fixture = try await Self.fixture(
+            rootEnvironment: ["PEEKABOO_BROWSER_MCP_BROWSER_URL": Self.browserURL],
+            destinationProviders: [destinationProvider])
+        let name = "mcp:pending-root-rebind"
+        let pendingDestination = try #require(fixture.root.authenticatedSession(named: name))
+        let namespaceGate = try #require(pendingDestination.browserMutationExecutionGate)
+        try await namespaceGate.acquire()
+
+        let transfer = Task { @MainActor in
+            try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorization: fixture.authorization)
+        }
+        while fixture.rootProvider.removeCount == 0 {
+            await Task.yield()
+        }
+        let rootResponse = try await BrowserTool(
+            client: fixture.root,
+            executionPolicy: .foregroundAllowed,
+            instructionAudience: .commandLine)
+            .execute(arguments: ToolArguments(raw: ["action": "list_pages"]))
+        #expect(rootResponse.isError)
+        #expect(fixture.rootProvider.addedConfigs.count == 1)
+        #expect(fixture.rootProvider.executedTools == ["list_pages"])
+
+        // A disconnected root status/release must not clear ownership claimed by the pending handoff.
+        await fixture.root.disconnect()
+        await namespaceGate.release()
+        let destination = try await transfer.value
+
+        #expect(!fixture.rootProvider.connected)
+        #expect(fixture.rootProvider.addedConfigs.count == 1)
+        #expect(destinationProvider.connected)
+        #expect(destinationProvider.addedConfigs.count == 1)
+
+        #expect(await destination.endAuthenticatedBrowserSession())
+        let reconnected = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
+        #expect(reconnected.isConnected)
+        #expect(fixture.rootProvider.addedConfigs.count == 2)
+        await fixture.root.disconnect()
+    }
+
+    @Test
     func `session teardown waits through source drain before releasing the target`() async throws {
         let teardownBarrier = HandoffBarrier()
         let rootProvider = HandoffProviderSpy(label: "root")
@@ -760,6 +805,7 @@ struct BrowserMCPHandoffSessionTests {
 
     private static func fixture(
         rootProvider: HandoffProviderSpy = HandoffProviderSpy(label: "root"),
+        rootEnvironment: [String: String] = [:],
         destinationProviders: [HandoffProviderSpy]) async throws -> Fixture
     {
         let events = HandoffEventLog()
@@ -779,7 +825,7 @@ struct BrowserMCPHandoffSessionTests {
             provider: rootProvider,
             endpointResolver: endpointResolver,
             detection: detection,
-            environment: [:])
+            environment: rootEnvironment)
         var destinationManagers = destinationProviders.map { provider in
             self.manager(
                 provider: provider,
