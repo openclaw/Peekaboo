@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import MCP
+import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
 import Tachikoma
@@ -2053,7 +2054,7 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `cancelled queued remote Agent open stays cleanup addressable without dispatch`() async throws {
+    func `cancelled queued remote Agent open returns before owner completion and releases reservation`() async throws {
         let root = AgentRemoteBrowserRoot()
         let openBarrier = SequenceBarrier()
         root.openBarrier = openBarrier
@@ -2063,24 +2064,318 @@ struct BrowserMCPSessionManagerTests {
             try await agent.browserClient(forAgentSessionID: "cancel-owner")
         }
         await openBarrier.waitUntilBlocked()
+        let cancellationFinished = CompletionFlag()
         let queuedOpen = Task { @MainActor in
-            try await agent.browserClient(forAgentSessionID: "cancel-queued")
+            do {
+                _ = try await agent.browserClient(forAgentSessionID: "cancel-queued")
+                Issue.record("Expected the queued browser open to be cancelled")
+                return false
+            } catch is CancellationError {
+                await cancellationFinished.markFinished()
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
         }
         await Task.yield()
-        #expect(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"] != nil)
+        let queuedID = try #require(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"])
 
         queuedOpen.cancel()
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !cancellationFinished.finished, ContinuousClock.now < cancellationDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await cancellationFinished.finished)
+        #expect(await queuedOpen.value)
+        #expect(root.openCount == 1)
+        #expect(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"] == nil)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[queuedID] == nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "cancel-queued"))
+
         await openBarrier.release()
         _ = try await ownerOpen.value
-        await #expect(throws: CancellationError.self) {
-            _ = try await queuedOpen.value
-        }
-
-        #expect(root.openCount == 1)
-        #expect(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"] != nil)
-        #expect(await agent.endBrowserClient(forAgentSessionID: "cancel-queued"))
-        #expect(agent.remoteBrowserQueuedOpeningIDs["cancel-queued"] == nil)
         #expect(await agent.endBrowserClient(forAgentSessionID: "cancel-owner"))
+    }
+
+    @Test
+    func `ended queued generation cannot retain a cancelled replacement reservation`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let ownerBarrier = SequenceBarrier()
+        root.openBarrier = ownerBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let ownerSessionID = "queue-generation-owner"
+        let queuedSessionID = "queue-generation-replacement"
+
+        let ownerOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: ownerSessionID)
+        }
+        await ownerBarrier.waitUntilBlocked()
+        let endedGenerationOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: queuedSessionID)
+        }
+        await Task.yield()
+        let endedQueuedID = try #require(agent.remoteBrowserQueuedOpeningIDs[queuedSessionID])
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[endedQueuedID] == 1)
+
+        #expect(await agent.endBrowserClient(forAgentSessionID: queuedSessionID))
+        #expect(agent.remoteBrowserQueuedOpeningIDs[queuedSessionID] == nil)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[endedQueuedID] == 1)
+
+        let replacementCancelled = CompletionFlag()
+        let replacementOpen = Task { @MainActor in
+            do {
+                _ = try await agent.browserClient(forAgentSessionID: queuedSessionID)
+                Issue.record("Expected replacement queued generation cancellation")
+                return false
+            } catch is CancellationError {
+                await replacementCancelled.markFinished()
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
+        }
+        await Task.yield()
+        let replacementQueuedID = try #require(agent.remoteBrowserQueuedOpeningIDs[queuedSessionID])
+        #expect(replacementQueuedID != endedQueuedID)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[replacementQueuedID] == 1)
+
+        replacementOpen.cancel()
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !replacementCancelled.finished, ContinuousClock.now < cancellationDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await replacementCancelled.finished)
+        #expect(await replacementOpen.value)
+        #expect(agent.remoteBrowserQueuedOpeningIDs[queuedSessionID] == nil)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[replacementQueuedID] == nil)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[endedQueuedID] == 1)
+
+        await ownerBarrier.release()
+        _ = try await ownerOpen.value
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await endedGenerationOpen.value
+        }
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[endedQueuedID] == nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: ownerSessionID))
+    }
+
+    @Test
+    func `cancelled coalesced remote Agent open does not cancel its surviving waiter`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let sessionID = "coalesced-cancellation"
+        let cancellationFinished = CompletionFlag()
+
+        let cancelledOpen = Task { @MainActor in
+            do {
+                _ = try await agent.browserClient(forAgentSessionID: sessionID)
+                Issue.record("Expected the first coalesced waiter to be cancelled")
+                return false
+            } catch is CancellationError {
+                await cancellationFinished.markFinished()
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
+        }
+        await openBarrier.waitUntilBlocked()
+        let survivingOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: sessionID)
+        }
+        await Task.yield()
+        #expect(root.openCount == 1)
+        guard case let .inFlight(_, _, openingWaiters)? = agent.remoteBrowserOpeningTasks[sessionID] else {
+            Issue.record("Expected one shared in-flight opening generation")
+            return
+        }
+        #expect(openingWaiters.pendingCount == 2)
+
+        cancelledOpen.cancel()
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !cancellationFinished.finished, ContinuousClock.now < cancellationDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await cancellationFinished.finished)
+        #expect(await cancelledOpen.value)
+        #expect(openingWaiters.pendingCount == 1)
+        #expect(agent.remoteBrowserOpeningSessionID == sessionID)
+        #expect(agent.remoteBrowserOpeningTasks[sessionID] != nil)
+
+        await openBarrier.release()
+        let survivingClient = try await survivingOpen.value
+        #expect(survivingClient !== root)
+        #expect(agent.remoteBrowserClients[sessionID] === survivingClient)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(root.openCount == 1)
+        #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
+    }
+
+    @Test
+    func `cancelled sole remote Agent open is reconciled after its provider returns`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let sessionID = "sole-cancellation"
+        let cancellationFinished = CompletionFlag()
+
+        let cancelledOpen = Task { @MainActor in
+            do {
+                _ = try await agent.browserClient(forAgentSessionID: sessionID)
+                Issue.record("Expected the sole browser open waiter to be cancelled")
+                return false
+            } catch is CancellationError {
+                await cancellationFinished.markFinished()
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
+        }
+        await openBarrier.waitUntilBlocked()
+        cancelledOpen.cancel()
+
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !cancellationFinished.finished, ContinuousClock.now < cancellationDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await cancellationFinished.finished)
+        #expect(await cancelledOpen.value)
+        #expect(agent.remoteBrowserOpeningSessionID == sessionID)
+        guard case let .inFlight(_, _, openingWaiters)? = agent.remoteBrowserOpeningTasks[sessionID] else {
+            Issue.record("Expected the provider-owned generation to remain addressable")
+            return
+        }
+        #expect(openingWaiters.pendingCount == 0)
+
+        await openBarrier.release()
+        let reconciliationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while agent.remoteBrowserClients[sessionID] == nil,
+              ContinuousClock.now < reconciliationDeadline
+        {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let reconciledClient = try #require(agent.remoteBrowserClients[sessionID])
+        #expect(reconciledClient !== root)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
+    }
+
+    @Test
+    func `cancelled Agent waiter preserves production transport claim retry`() async throws {
+        let transport = AgentClaimRecordingRemoteBrowserTransport()
+        let openBarrier = SequenceBarrier()
+        transport.openBarrier = openBarrier
+        let root = RemoteBrowserMCPClient(
+            client: PeekabooBridgeClient(
+                socketPath: "/private/tmp/peekaboo-agent-claim-retry-no-root.sock",
+                requestTimeoutSec: 0.1),
+            sessionTransport: transport)
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let sessionID = "production-claim-cancellation"
+        let cancellationFinished = CompletionFlag()
+
+        let cancelledOpen = Task { @MainActor in
+            do {
+                _ = try await agent.browserClient(forAgentSessionID: sessionID)
+                Issue.record("Expected the production transport waiter to be cancelled")
+                return false
+            } catch is CancellationError {
+                await cancellationFinished.markFinished()
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
+        }
+        await openBarrier.waitUntilBlocked()
+        cancelledOpen.cancel()
+
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !cancellationFinished.finished, ContinuousClock.now < cancellationDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await cancellationFinished.finished)
+        #expect(await cancelledOpen.value)
+        #expect(transport.openedClaimIDs.count == 1)
+
+        await openBarrier.release()
+        let reconciliationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while agent.remoteBrowserClients[sessionID] == nil,
+              ContinuousClock.now < reconciliationDeadline
+        {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(transport.openedClaimIDs.count == 2)
+        #expect(transport.openedClaimIDs[0] == transport.openedClaimIDs[1])
+        #expect(!root.browserMCPScopedSessionOpenAttemptRequiresRecovery)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
+        #expect(transport.endedSessionIDs.count == 1)
+    }
+
+    @Test
+    func `cancelled coalesced queued remote Agent open preserves its surviving reservation`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let ownerBarrier = SequenceBarrier()
+        root.openBarrier = ownerBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let queuedSessionID = "coalesced-queued-cancellation"
+        let cancellationFinished = CompletionFlag()
+
+        let ownerOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "coalesced-queued-owner")
+        }
+        await ownerBarrier.waitUntilBlocked()
+        let cancelledOpen = Task { @MainActor in
+            do {
+                _ = try await agent.browserClient(forAgentSessionID: queuedSessionID)
+                Issue.record("Expected the first queued waiter to be cancelled")
+                return false
+            } catch is CancellationError {
+                await cancellationFinished.markFinished()
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
+        }
+        let survivingOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: queuedSessionID)
+        }
+        await Task.yield()
+        let queuedID = try #require(agent.remoteBrowserQueuedOpeningIDs[queuedSessionID])
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[queuedID] == 2)
+
+        cancelledOpen.cancel()
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !cancellationFinished.finished, ContinuousClock.now < cancellationDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await cancellationFinished.finished)
+        #expect(await cancelledOpen.value)
+        #expect(agent.remoteBrowserQueuedOpeningIDs[queuedSessionID] == queuedID)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[queuedID] == 1)
+
+        await ownerBarrier.release()
+        let ownerClient = try await ownerOpen.value
+        let survivingClient = try await survivingOpen.value
+        #expect(ownerClient !== survivingClient)
+        #expect(root.openCount == 2)
+        #expect(agent.remoteBrowserQueuedOpeningIDs[queuedSessionID] == nil)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts[queuedID] == nil)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "coalesced-queued-owner"))
+        #expect(await agent.endBrowserClient(forAgentSessionID: queuedSessionID))
     }
 
     @Test
@@ -2301,6 +2596,120 @@ struct BrowserMCPSessionManagerTests {
         try await agent.deleteSession(id: sessionID)
         #expect(root.children[1].endCount == 1)
         #expect(agent.remoteBrowserClients.isEmpty)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func `cancelled Agent setup returns while remote open is stalled and later admits another run`(
+        streaming: Bool,
+        persistent: Bool) async throws
+    {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooCancelledRemoteAgent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let provider = AgentRemoteBrowserStatusProvider(supportsStreaming: streaming)
+        let model = LanguageModel.custom(provider: provider)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            defaultModel: model,
+            sessionManager: sessionManager)
+        let delegate: (any AgentEventDelegate)? = streaming
+            ? StreamingEventDelegate { _ in }
+            : nil
+        let cancellationFinished = CompletionFlag()
+
+        let execution = Task { @MainActor in
+            do {
+                _ = try await agent.executeTask(
+                    "Inspect browser status before cancellation",
+                    model: model,
+                    eventDelegate: delegate,
+                    persistSession: persistent)
+                Issue.record("Expected Agent setup to be cancelled")
+                return false
+            } catch is CancellationError {
+                await cancellationFinished.markFinished()
+                return true
+            } catch {
+                Issue.record("Expected CancellationError, got \(error)")
+                return false
+            }
+        }
+        await openBarrier.waitUntilBlocked()
+        let sessionID = try #require(agent.remoteBrowserOpeningSessionID)
+        #expect(agent.remoteBrowserOpeningTasks[sessionID] != nil)
+        #expect(provider.requestCount == 0)
+
+        execution.cancel()
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await !cancellationFinished.finished, ContinuousClock.now < cancellationDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await cancellationFinished.finished)
+        #expect(await execution.value)
+        #expect(agent.remoteBrowserCleanupDebt == [sessionID])
+        let ending = try #require(agent.remoteBrowserEndingTasks[sessionID])
+        #expect(ending.waiters.pendingCount == 0)
+        #expect(root.openCount == 1)
+
+        await openBarrier.release()
+        let cleanupDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while !agent.remoteBrowserOpeningTasks.isEmpty ||
+            !agent.remoteBrowserEndingTasks.isEmpty ||
+            !agent.remoteBrowserCleanupDebt.isEmpty,
+            ContinuousClock.now < cleanupDeadline
+        {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningIDs.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
+        #expect(root.children.count == 1)
+        #expect(root.children[0].endCount == 1)
+
+        let result: AgentExecutionResult
+        if persistent {
+            #expect(sessionManager.listSessions().contains { $0.id == sessionID })
+            result = try await agent.continueSession(
+                sessionId: sessionID,
+                userMessage: "Inspect browser status after cancellation",
+                model: model,
+                eventDelegate: delegate)
+        } else {
+            result = try await agent.executeTask(
+                "Inspect browser status after cancellation",
+                model: model,
+                eventDelegate: delegate,
+                persistSession: false)
+        }
+        #expect(result.content == "remote browser execution completed")
+        #expect(provider.requestCount == 2)
+        #expect(root.openCount == 2)
+        #expect(root.children.count == 2)
+        #expect(root.children[1].statusCount == 1)
+        if persistent {
+            #expect(root.children[1].endCount == 0)
+            try await agent.deleteSession(id: sessionID)
+            #expect(root.children[1].endCount == 1)
+        } else {
+            #expect(root.children[1].endCount == 1)
+        }
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningIDs.isEmpty)
+        #expect(agent.remoteBrowserQueuedOpeningWaiterCounts.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
     }
 
     @Test
@@ -4606,6 +5015,64 @@ private final class AgentRemoteBrowserRoot: BrowserMCPScopedSessionOpening, @unc
 private enum AgentRemoteBrowserOpenFixtureError: Error {
     case concurrentOpen
     case indeterminate
+}
+
+@MainActor
+private final class AgentClaimRecordingRemoteBrowserTransport: RemoteBrowserMCPSessionTransport, @unchecked Sendable {
+    var openBarrier: SequenceBarrier?
+    private(set) var openedClaimIDs: [UUID] = []
+    private(set) var endedSessionIDs: [UUID] = []
+    private var failsNextOpen = true
+
+    func openSession(
+        handoff: BrowserMCPHandoffGrant?,
+        claimID: UUID) async throws -> RemoteBrowserMCPSessionHandle
+    {
+        #expect(handoff == nil)
+        self.openedClaimIDs.append(claimID)
+        if let openBarrier {
+            self.openBarrier = nil
+            await openBarrier.block()
+        }
+        if self.failsNextOpen {
+            self.failsNextOpen = false
+            throw URLError(.networkConnectionLost)
+        }
+        return RemoteBrowserMCPSessionHandle(sessionID: UUID())
+    }
+
+    func status(
+        session _: RemoteBrowserMCPSessionHandle,
+        channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus
+    {
+        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connectWithOutcome(
+        session _: RemoteBrowserMCPSessionHandle,
+        channel _: BrowserMCPChannel?,
+        browserURL _: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
+    {
+        DesktopActionResult(
+            payload: BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: []),
+            outcome: nil)
+    }
+
+    func executeSequenceWithOutcome(
+        session _: RemoteBrowserMCPSessionHandle,
+        calls _: [BrowserMCPMappedCall],
+        channel _: BrowserMCPChannel?,
+        expectedSessionBinding _: BrowserMCPExecutionSessionBinding,
+        elementPreflight _: BrowserMCPElementPreflight?) async throws -> DesktopActionResult<ToolResponse>
+    {
+        DesktopActionResult(payload: .text("unused"), outcome: nil)
+    }
+
+    func disconnect(session _: RemoteBrowserMCPSessionHandle) async throws {}
+
+    func endSession(_ session: RemoteBrowserMCPSessionHandle) async throws {
+        self.endedSessionIDs.append(session.sessionID)
+    }
 }
 
 private final class AgentRemoteBrowserStatusProvider: ModelProvider, @unchecked Sendable {
