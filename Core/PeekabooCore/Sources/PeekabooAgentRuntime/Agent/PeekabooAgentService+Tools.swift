@@ -330,7 +330,9 @@ extension PeekabooAgentService {
         if let ending = self.remoteBrowserEndingTasks[sessionID] {
             let cleanupConfirmed = await ending.task.value
             guard !cleanupConfirmed else { return true }
-            guard self.remoteBrowserEndingTasks[sessionID]?.id != ending.id else { return false }
+            guard let replacement = self.remoteBrowserEndingTasks[sessionID],
+                  replacement.id != ending.id
+            else { return false }
             return await self.endRemoteBrowserClient(forAgentSessionID: sessionID)
         }
         let openingTask = self.remoteBrowserOpeningTasks[sessionID]

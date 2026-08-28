@@ -2502,7 +2502,7 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `overlapping remote Agent teardown retries one failed child cleanup`() async throws {
+    func `overlapping remote Agent teardown retains one failed child cleanup for a later drain`() async throws {
         let root = AgentRemoteBrowserRoot()
         root.nextEndResults = [[false, true]]
         let agent = try PeekabooAgentService(services: Self.services(browser: root))
@@ -2516,18 +2516,72 @@ struct BrowserMCPSessionManagerTests {
             await agent.endBrowserClient(forAgentSessionID: sessionID)
         }
         await endBarrier.waitUntilBlocked()
-        let overlappingEnd = Task { @MainActor in
-            await agent.endBrowserClient(forAgentSessionID: sessionID)
+        let releaseFirstEnd = Task { @MainActor in
+            await endBarrier.release()
         }
-        await Task.yield()
         #expect(child.endCount == 1)
 
-        await endBarrier.release()
+        let overlappingEnd = await agent.endBrowserClient(forAgentSessionID: sessionID)
+        await releaseFirstEnd.value
         #expect(await !firstEnd.value)
-        #expect(await overlappingEnd.value)
+        #expect(!overlappingEnd)
+        #expect(child.endCount == 1)
+        #expect(agent.remoteBrowserClients[sessionID] === child)
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt == [sessionID])
+        #expect(agent.browserCleanupDebtPending)
+
+        #expect(await agent.drainBrowserCleanupDebt())
         #expect(child.endCount == 2)
         #expect(agent.remoteBrowserClients.isEmpty)
         #expect(agent.remoteBrowserCapabilities.isEmpty)
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
+    }
+
+    @Test
+    func `overlapping remote Agent teardown retains failed indeterminate recovery for a later drain`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        root.failNextOpenIndeterminately = true
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let sessionID = "overlapping-indeterminate-cleanup"
+
+        await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
+            _ = try await agent.browserClient(forAgentSessionID: sessionID)
+        }
+        root.failNextOpenIndeterminately = true
+        let recoveryBarrier = SequenceBarrier()
+        root.openBarrier = recoveryBarrier
+        let firstEnd = Task { @MainActor in
+            await agent.endBrowserClient(forAgentSessionID: sessionID)
+        }
+        await recoveryBarrier.waitUntilBlocked()
+        let releaseFirstEnd = Task { @MainActor in
+            await recoveryBarrier.release()
+        }
+        #expect(root.openCount == 2)
+
+        let overlappingEnd = await agent.endBrowserClient(forAgentSessionID: sessionID)
+        await releaseFirstEnd.value
+        #expect(await !firstEnd.value)
+        #expect(!overlappingEnd)
+        #expect(root.openCount == 2)
+        #expect(root.children.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks[sessionID] != nil)
+        #expect(agent.remoteBrowserOpeningSessionID == sessionID)
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt == [sessionID])
+        #expect(agent.browserCleanupDebtPending)
+
+        #expect(await agent.drainBrowserCleanupDebt())
+        #expect(root.openCount == 3)
+        #expect(root.children.count == 1)
+        #expect(root.children[0].endCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserCapabilities.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserOpeningSessionID == nil)
         #expect(agent.remoteBrowserEndingTasks.isEmpty)
         #expect(agent.remoteBrowserCleanupDebt.isEmpty)
         #expect(!agent.browserCleanupDebtPending)
