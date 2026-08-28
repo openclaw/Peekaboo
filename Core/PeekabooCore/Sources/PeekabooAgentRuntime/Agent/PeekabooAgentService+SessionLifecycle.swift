@@ -281,7 +281,10 @@ extension PeekabooAgentService {
     public func deleteSession(id: String) async throws {
         // Delete a specific session
         try await self.sessionManager.deleteSession(id: id)
-        await self.endBrowserClient(forAgentSessionID: id)
+        guard await self.endBrowserClient(forAgentSessionID: id) else {
+            throw PeekabooError.operationError(
+                message: "Browser session cleanup remains pending after deleting agent session \(id)")
+        }
     }
 
     /// Clear all sessions
@@ -291,7 +294,12 @@ extension PeekabooAgentService {
         let sessions = self.sessionManager.listSessions()
         for session in sessions {
             try await self.sessionManager.deleteSession(id: session.id)
-            await self.endBrowserClient(forAgentSessionID: session.id)
+            _ = await self.endBrowserClient(forAgentSessionID: session.id)
+        }
+        let cleanupDebtDrained = await self.drainBrowserCleanupDebt()
+        guard cleanupDebtDrained else {
+            throw PeekabooError.operationError(
+                message: "Browser session cleanup remains pending after clearing agent sessions")
         }
     }
 }

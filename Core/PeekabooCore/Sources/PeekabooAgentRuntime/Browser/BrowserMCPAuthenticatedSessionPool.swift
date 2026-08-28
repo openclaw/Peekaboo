@@ -8,6 +8,8 @@ import PeekabooFoundation
 /// authenticated session can continue through its separate manager and provider connection.
 @MainActor
 final class BrowserMCPAuthenticatedSessionPool {
+    static let sessionCapacity = 128
+
     private enum TargetKey: Hashable {
         case process(processIdentifier: Int32, processStartIdentity: UInt64)
         case browserURL(String)
@@ -71,6 +73,7 @@ final class BrowserMCPAuthenticatedSessionPool {
     private var sessions: [SessionID: SessionState] = [:]
     private var endedSessions = Set<SessionID>()
     private var endingSessions: [SessionID: Task<Bool, Never>] = [:]
+    private var pendingCleanupSessions = Set<SessionID>()
     private var namedSessions: [String: SessionID] = [:]
     private var targetOwners: [TargetKey: TargetOwner] = [:]
     private var pendingHandoffOwners: [TargetKey: SessionID] = [:]
@@ -90,6 +93,7 @@ final class BrowserMCPAuthenticatedSessionPool {
         if let state = self.sessions[sessionID] {
             return state.manager
         }
+        guard self.sessions.count < Self.sessionCapacity else { return nil }
         let name = "\(self.serverNamePrefix)-\(sessionID.rawValue.uuidString.lowercased())"
         let manager = self.factory(name)
         self.sessions[sessionID] = SessionState(
@@ -121,6 +125,7 @@ final class BrowserMCPAuthenticatedSessionPool {
         if let sessionID = self.namedSessions[name] {
             return sessionID
         }
+        guard self.sessions.count < Self.sessionCapacity else { return nil }
         let sessionID = SessionID()
         self.namedSessions[name] = sessionID
         return sessionID
@@ -141,9 +146,12 @@ final class BrowserMCPAuthenticatedSessionPool {
         }
         guard let state = self.sessions[sessionID] else {
             if !sourceRecoveryRequired {
+                self.pendingCleanupSessions.remove(sessionID)
                 self.namedSessions = self.namedSessions.filter { $0.value != sessionID }
                 self.releaseOwnership(for: sessionID)
                 self.handoffs.removeValue(forKey: sessionID)
+            } else {
+                self.pendingCleanupSessions.insert(sessionID)
             }
             return !sourceRecoveryRequired
         }
@@ -151,6 +159,11 @@ final class BrowserMCPAuthenticatedSessionPool {
             do {
                 try await state.mutationGate.acquire()
             } catch {
+                let recoveryRequired = self.pendingHandoffClaims[sessionID]?.sourceRecoveryRequired == true
+                self.finishEnd(
+                    sessionID,
+                    cleanupConfirmed: false,
+                    sourceRecoveryRequired: recoveryRequired)
                 return false
             }
             // Capability end drains its operation gate, which covers reads through response projection; the mutation
@@ -158,11 +171,25 @@ final class BrowserMCPAuthenticatedSessionPool {
             await state.capabilities.end()
             let cleanupConfirmed = await state.manager.endSession()
             await state.mutationGate.release()
-            return cleanupConfirmed && !sourceRecoveryRequired
+            let recoveryRequired = self.pendingHandoffClaims[sessionID]?.sourceRecoveryRequired == true
+            let fullyRecovered = cleanupConfirmed && !recoveryRequired
+            self.finishEnd(
+                sessionID,
+                cleanupConfirmed: fullyRecovered,
+                sourceRecoveryRequired: recoveryRequired)
+            return fullyRecovered
         }
         self.endingSessions[sessionID] = ending
-        let cleanupConfirmed = await ending.value
+        return await ending.value
+    }
+
+    private func finishEnd(
+        _ sessionID: SessionID,
+        cleanupConfirmed: Bool,
+        sourceRecoveryRequired: Bool)
+    {
         if cleanupConfirmed, !sourceRecoveryRequired {
+            self.pendingCleanupSessions.remove(sessionID)
             self.namedSessions = self.namedSessions.filter { $0.value != sessionID }
             self.sessions.removeValue(forKey: sessionID)
             self.releaseOwnership(for: sessionID)
@@ -171,8 +198,28 @@ final class BrowserMCPAuthenticatedSessionPool {
             handoff.phase = .recoveryRequired
             self.handoffs[sessionID] = handoff
         }
+        if !cleanupConfirmed {
+            self.pendingCleanupSessions.insert(sessionID)
+        }
         self.endingSessions.removeValue(forKey: sessionID)
-        return cleanupConfirmed
+    }
+
+    func retryPendingCleanup() async -> Bool {
+        let cleanupSessions = self.pendingCleanupSessions.union(self.endingSessions.keys)
+        for sessionID in cleanupSessions {
+            _ = await self.endAndConfirm(sessionID)
+        }
+        return self.pendingCleanupSessions.isEmpty && self.endingSessions.isEmpty
+    }
+
+    var pendingCleanupNames: [String] {
+        self.namedSessions.compactMap { name, sessionID in
+            self.pendingCleanupSessions.contains(sessionID) ? name : nil
+        }.sorted()
+    }
+
+    var pendingCleanupCount: Int {
+        self.pendingCleanupSessions.count
     }
 
     func bind(_ sessionID: SessionID, to receipt: BrowserMCPConnectionReceipt) throws {

@@ -48,6 +48,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     var cachedSmartCaptureService: SmartCaptureService?
     var snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     var capturePreflightRefusal: MCPToolCapturePreflightRefusal?
+    var browserCleanupDebtPending = false
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
     var isVerbose: Bool = false
@@ -276,6 +277,9 @@ public final class PeekabooAgentService: AgentServiceProtocol {
             } catch {
                 continue
             }
+        }
+        if await !(self.drainBrowserCleanupDebt()) {
+            self.logger.error("Browser session cleanup debt remains after expired-session cleanup")
         }
     }
 

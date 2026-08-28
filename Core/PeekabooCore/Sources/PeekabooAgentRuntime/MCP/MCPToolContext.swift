@@ -52,6 +52,7 @@ public struct MCPToolContext: @unchecked Sendable {
     public let clipboard: any ClipboardServiceProtocol
     public let browser: any BrowserMCPClientProviding
     let browserCapabilities: BrowserToolCapabilitySession
+    let browserCleanupOwner: BrowserMCPService?
     public let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let browserMutationExecutionGate: MCPToolSnapshotExecutionGate
@@ -171,6 +172,7 @@ public struct MCPToolContext: @unchecked Sendable {
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         browserMutationExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        browserCleanupOwner: BrowserMCPService? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
         executionHost: PeekabooServiceExecutionHost = .local,
@@ -194,6 +196,7 @@ public struct MCPToolContext: @unchecked Sendable {
         self.browser = browser
         self.browserCapabilities = (browser as? BrowserMCPService)?.browserCapabilitySession
             ?? BrowserToolCapabilitySession()
+        self.browserCleanupOwner = browserCleanupOwner
         self.snapshotMutationCoordinator = snapshotMutationCoordinator
         self.snapshotExecutionGate = snapshotExecutionGate
             ?? (agent as? PeekabooAgentService)?.snapshotExecutionGate
@@ -239,6 +242,7 @@ public struct MCPToolContext: @unchecked Sendable {
             snapshotMutationCoordinator: snapshotMutationCoordinator,
             snapshotExecutionGate: resolvedSnapshotExecutionGate,
             browserMutationExecutionGate: browserMutationExecutionGate,
+            browserCleanupOwner: services.browser as? BrowserMCPService,
             snapshotOwner: snapshotOwner,
             executionPolicy: executionPolicy,
             executionHost: services.executionHost,
@@ -650,7 +654,8 @@ public struct MCPToolContext: @unchecked Sendable {
             ])
     }
 
-    func releaseSnapshotOwner() async {
+    @discardableResult
+    func releaseSnapshotOwner() async -> Bool {
         let ownedBrowser = self.browser as? any BrowserMCPAuthenticatedSessionEnding
         let scopedBrowser = self.browser as? any BrowserMCPScopedSessionEnding
         let capabilitySession = self.browserCapabilities
@@ -682,8 +687,11 @@ public struct MCPToolContext: @unchecked Sendable {
             }
             await lifecycleGate.release()
         }.value
-        await ownedBrowser?.endAuthenticatedBrowserSession()
+        let directCleanupConfirmed = await ownedBrowser?.endAuthenticatedBrowserSession() ?? true
+        let pendingCleanupDrained = await self.browserCleanupOwner?.retryPendingAuthenticatedSessionCleanup()
+            ?? directCleanupConfirmed
         await scopedBrowser?.endBrowserMCPScopedSession()
+        return (directCleanupConfirmed || pendingCleanupDrained) && pendingCleanupDrained
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {
@@ -706,6 +714,7 @@ public struct MCPToolContext: @unchecked Sendable {
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
             browserMutationExecutionGate: self.browserMutationExecutionGate,
+            browserCleanupOwner: self.browserCleanupOwner,
             snapshotOwner: owner,
             executionPolicy: self.executionPolicy,
             executionHost: self.executionHost,

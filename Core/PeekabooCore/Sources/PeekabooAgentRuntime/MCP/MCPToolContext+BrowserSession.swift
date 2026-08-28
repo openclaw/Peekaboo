@@ -17,10 +17,13 @@ extension MCPToolContext {
         handoff: BrowserMCPHandoffGrant? = nil) async throws -> Self
     {
         if let root = self.browser as? BrowserMCPService,
-           let scoped = root.authenticatedSession(named: name)
+           root.supportsAuthenticatedSessionBootstrap
         {
             guard handoff == nil else {
                 throw BrowserMCPConnectionError.receiptBindingUnsupported
+            }
+            guard let scoped = root.authenticatedSession(named: name) else {
+                throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
             }
             return self.replacingBrowser(with: scoped)
         }
@@ -56,6 +59,7 @@ extension MCPToolContext {
             permissionsStatusProvider: self.permissionsStatusProvider,
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
+            browserCleanupOwner: self.browserCleanupOwner,
             snapshotOwner: self.uiSnapshots.owner,
             executionPolicy: self.executionPolicy,
             executionHost: self.executionHost,

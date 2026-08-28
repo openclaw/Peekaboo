@@ -51,7 +51,7 @@ struct RemoteBrowserMCPSessionTests {
 
         let teardown = Task { await server.stopForTesting() }
         teardown.cancel()
-        await teardown.value
+        _ = await teardown.value
 
         #expect(transport.endedSessionIDs.count == 1)
     }

@@ -365,6 +365,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @MainActor private var sessionManager: BrowserMCPSessionManager?
     @MainActor private var authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool?
     @MainActor private var connectionHandoffAuthorizations: [UUID: BrowserMCPConnectionHandoffAuthorization] = [:]
+    @MainActor private var authenticatedSessionCleanupRetry: (id: UUID, task: Task<Bool, Never>)?
     private let sessionCapabilities: BrowserToolCapabilitySession?
     private let sessionMutationGate: MCPToolSnapshotExecutionGate?
     @MainActor private var ownedSession: (
@@ -1221,6 +1222,40 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     }
 }
 
+extension BrowserMCPService {
+    @MainActor
+    @discardableResult
+    public func retryPendingAuthenticatedSessionCleanup() async -> Bool {
+        guard self.ownedSession == nil, let pool = self.authenticatedSessionPool else { return true }
+        if let retry = self.authenticatedSessionCleanupRetry {
+            return await retry.task.value
+        }
+        let retryID = UUID()
+        let retry = Task { @MainActor in
+            for name in pool.pendingCleanupNames {
+                if let recovery = pool.sourceRecovery(named: name),
+                   await self.resolvedSessionManager().recoverSourceHandoff(
+                       authorization: recovery.authorization)
+                {
+                    pool.confirmSourceRecovery(for: recovery.sessionID)
+                }
+            }
+            let cleanupConfirmed = await pool.retryPendingCleanup()
+            if self.authenticatedSessionCleanupRetry?.id == retryID {
+                self.authenticatedSessionCleanupRetry = nil
+            }
+            return cleanupConfirmed
+        }
+        self.authenticatedSessionCleanupRetry = (retryID, retry)
+        return await retry.value
+    }
+
+    @MainActor
+    var pendingAuthenticatedSessionCleanupCount: Int {
+        self.authenticatedSessionPool?.pendingCleanupCount ?? 0
+    }
+}
+
 public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case noBrowser(BrowserMCPChannel)
     case ambiguousBrowsers(BrowserMCPChannel, [Int32])
@@ -1237,6 +1272,7 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
     case receiptBindingUnsupported
     case handoffRecoveryRequired(String)
     case handoffAuthorizationCapacityExceeded
+    case authenticatedSessionCapacityExceeded
     case invalidHandoffAuthorization
     case sessionEnded
     case targetLocked
@@ -1277,6 +1313,8 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
             "Browser connection handoff requires recovery before the target can be reused: \(reason)"
         case .handoffAuthorizationCapacityExceeded:
             "The bounded browser handoff authorization store is full."
+        case .authenticatedSessionCapacityExceeded:
+            "The bounded authenticated browser session store is full while cleanup remains pending."
         case .invalidHandoffAuthorization:
             "The browser handoff authorization is missing, consumed, or belongs to another exact connection."
         case .sessionEnded:

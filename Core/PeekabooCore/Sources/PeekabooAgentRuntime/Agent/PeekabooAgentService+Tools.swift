@@ -73,21 +73,44 @@ extension PeekabooAgentService {
             capturePreflightRefusal: self.capturePreflightRefusal)
     }
 
-    func browserClient(forAgentSessionID sessionID: String) -> any BrowserMCPClientProviding {
+    func browserClient(forAgentSessionID sessionID: String) throws -> any BrowserMCPClientProviding {
         guard let root = self.services.browser as? BrowserMCPService,
-              let scoped = root.authenticatedSession(named: "agent:\(sessionID)")
+              root.supportsAuthenticatedSessionBootstrap
         else { return self.services.browser }
+        guard let scoped = root.authenticatedSession(named: "agent:\(sessionID)") else {
+            throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
+        }
         return scoped
     }
 
-    func endBrowserClient(forAgentSessionID sessionID: String) async {
-        guard let root = self.services.browser as? BrowserMCPService else { return }
-        await root.endAuthenticatedSession(named: "agent:\(sessionID)")
+    @discardableResult
+    func endBrowserClient(forAgentSessionID sessionID: String) async -> Bool {
+        guard let root = self.services.browser as? BrowserMCPService else { return true }
+        let directCleanupConfirmed = await root.endAuthenticatedSession(named: "agent:\(sessionID)")
+        let pendingCleanupDrained = await root.retryPendingAuthenticatedSessionCleanup()
+        self.browserCleanupDebtPending = !pendingCleanupDrained
+        return (directCleanupConfirmed || pendingCleanupDrained) && pendingCleanupDrained
     }
 
-    func endEphemeralBrowserClientIfNeeded(_ context: SessionContext) async {
-        guard !context.isPersistent else { return }
-        await self.endBrowserClient(forAgentSessionID: context.id)
+    @discardableResult
+    func drainBrowserCleanupDebt() async -> Bool {
+        guard let root = self.services.browser as? BrowserMCPService else {
+            self.browserCleanupDebtPending = false
+            return true
+        }
+        let drained = await root.retryPendingAuthenticatedSessionCleanup()
+        self.browserCleanupDebtPending = !drained
+        return drained
+    }
+
+    @discardableResult
+    func endEphemeralBrowserClientIfNeeded(_ context: SessionContext) async -> Bool {
+        guard !context.isPersistent else { return await self.drainBrowserCleanupDebt() }
+        let cleanupConfirmed = await self.endBrowserClient(forAgentSessionID: context.id)
+        if !cleanupConfirmed {
+            self.logger.error("Browser session cleanup remains pending for ephemeral session \(context.id)")
+        }
+        return cleanupConfirmed
     }
 
     func makeAgentTool(

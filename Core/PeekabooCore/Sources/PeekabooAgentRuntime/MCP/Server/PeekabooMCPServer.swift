@@ -250,9 +250,10 @@ public actor PeekabooMCPServer {
         try await self.server.start(transport: transport)
     }
 
-    func stopForTesting() async {
+    @discardableResult
+    func stopForTesting() async -> Bool {
         await self.server.stop()
-        await self.toolContext.releaseSnapshotOwner()
+        return await self.toolContext.releaseSnapshotOwner()
     }
 
     public func serve(transport: TransportType, port: Int = 8080) async throws {
@@ -271,10 +272,23 @@ public actor PeekabooMCPServer {
 
             // Keep the server running
             await self.server.waitUntilCompleted()
-            await self.toolContext.releaseSnapshotOwner()
         } catch {
-            await self.toolContext.releaseSnapshotOwner()
+            var cleanupConfirmed = await self.toolContext.releaseSnapshotOwner()
+            if !cleanupConfirmed {
+                cleanupConfirmed = await self.toolContext.releaseSnapshotOwner()
+            }
+            if !cleanupConfirmed {
+                self.logger.error("Browser session cleanup remains pending after MCP server failure")
+            }
             throw error
+        }
+        var cleanupConfirmed = await self.toolContext.releaseSnapshotOwner()
+        if !cleanupConfirmed {
+            cleanupConfirmed = await self.toolContext.releaseSnapshotOwner()
+        }
+        guard cleanupConfirmed else {
+            throw MCPError.executionFailed(
+                "Browser session cleanup remains pending after MCP server teardown")
         }
     }
 }

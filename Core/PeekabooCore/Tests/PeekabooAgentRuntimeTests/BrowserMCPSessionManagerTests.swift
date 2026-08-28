@@ -411,8 +411,129 @@ struct BrowserMCPSessionManagerTests {
 
         await completionBarrier.release()
         _ = try await connect.value
-        await release.value
+        _ = await release.value
         #expect(await context.uiSnapshots.getSnapshot(id: ownerSnapshot.id) == nil)
+    }
+
+    @Test
+    func `MCP teardown retries retained cleanup debt and releases the exact target`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let base = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .foregroundAllowed)
+        let firstContext = base
+            .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let first = try #require(firstContext.browser as? BrowserMCPService)
+        _ = try await first.connect(channel: nil, browserURL: nil)
+        firstProvider.removeLeavesProvider = [true, false]
+
+        #expect(await firstContext.releaseSnapshotOwner())
+        #expect(firstProvider.removeCount == 2)
+        #expect(root.pendingAuthenticatedSessionCleanupCount == 0)
+
+        let secondContext = base
+            .scopingBrowserSession(named: "mcp:\(UUID().uuidString.lowercased())")
+            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let second = try #require(secondContext.browser as? BrowserMCPService)
+        _ = try await second.connect(channel: nil, browserURL: nil)
+        #expect(secondProvider.addedConfigs.count == 1)
+        #expect(await secondContext.releaseSnapshotOwner())
+    }
+
+    @Test
+    func `cleanup debt stays bounded and session creation fails closed at capacity`() async throws {
+        var providers: [MockBrowserMCPManager] = []
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            let provider = MockBrowserMCPManager()
+            provider.hasConfiguredServer = true
+            provider.connected = true
+            provider.removeLeavesProvider = [true, false]
+            providers.append(provider)
+            return Self.exactSession(manager: provider)
+        }
+        for _ in 0..<BrowserMCPAuthenticatedSessionPool.sessionCapacity {
+            let sessionID = BrowserMCPAuthenticatedSessionPool.SessionID()
+            _ = try #require(pool.manager(for: sessionID))
+            #expect(await !pool.endAndConfirm(sessionID))
+        }
+        #expect(pool.pendingCleanupCount == BrowserMCPAuthenticatedSessionPool.sessionCapacity)
+
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .foregroundAllowed)
+        await #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
+            _ = try await context.openingBrowserSession(named: "mcp:over-capacity")
+        }
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
+            _ = try agent.browserClient(forAgentSessionID: "over-capacity")
+        }
+
+        #expect(await root.retryPendingAuthenticatedSessionCleanup())
+        #expect(pool.pendingCleanupCount == 0)
+        #expect(providers.allSatisfy { $0.removeCount == 2 })
+        _ = try root.createAuthenticatedSession(named: "after-drain")
+    }
+
+    @Test
+    func `unsupported local handoff does not consume authenticated session capacity`() async throws {
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let context = MCPToolContext(
+            services: Self.services(browser: root),
+            executionPolicy: .foregroundAllowed)
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await context.openingBrowserSession(
+                named: "mcp:unsupported-local-handoff",
+                handoff: BrowserMCPHandoffGrant(payload: Data("unsupported".utf8)))
+        }
+
+        #expect(pool.count == 0)
+        #expect(pool.pendingCleanupCount == 0)
+    }
+
+    @Test
+    func `concurrent cleanup drains join one provider retry`() async throws {
+        let provider = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: provider)
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let child = try root.createAuthenticatedSession(named: "agent:coalesced-cleanup")
+        _ = try await child.connect(channel: nil, browserURL: nil)
+        provider.removeLeavesProvider = [true]
+        #expect(await !child.endAuthenticatedBrowserSession())
+        #expect(pool.pendingCleanupCount == 1)
+
+        let removalBarrier = SequenceBarrier()
+        provider.removeHandler = { await removalBarrier.block() }
+        let first = Task { @MainActor in await root.retryPendingAuthenticatedSessionCleanup() }
+        await removalBarrier.waitUntilBlocked()
+        let secondFinished = CompletionFlag()
+        let second = Task { @MainActor in
+            let result = await root.retryPendingAuthenticatedSessionCleanup()
+            await secondFinished.markFinished()
+            return result
+        }
+        await Task.yield()
+        #expect(await !secondFinished.finished)
+
+        await removalBarrier.release()
+        #expect(await first.value)
+        #expect(await second.value)
+        #expect(provider.removeCount == 2)
+        #expect(pool.pendingCleanupCount == 0)
     }
 
     @Test
@@ -743,8 +864,8 @@ struct BrowserMCPSessionManagerTests {
 
         await completionBarrier.release()
         _ = try await mutation.value
-        await firstRelease.value
-        await secondRelease.value
+        _ = await firstRelease.value
+        _ = await secondRelease.value
         #expect(provider.removeCount == 1)
         #expect(await context.uiSnapshots.getSnapshot(id: ownerSnapshot.id) == nil)
     }
@@ -780,7 +901,7 @@ struct BrowserMCPSessionManagerTests {
 
         await mutationBarrier.release()
         _ = try await mutation.value
-        await release.value
+        _ = await release.value
         #expect(await !context.uiSnapshots.hasOwnerState())
     }
 
@@ -828,7 +949,7 @@ struct BrowserMCPSessionManagerTests {
 
         await completionBarrier.release()
         _ = try await connect.value
-        await release.value
+        _ = await release.value
         #expect(provider.removeCount == 1)
     }
 
@@ -1715,6 +1836,133 @@ struct BrowserMCPSessionManagerTests {
         #expect(restartedCapabilities !== firstCapabilities)
         await agent.endBrowserClient(forAgentSessionID: "session-a")
         await agent.endBrowserClient(forAgentSessionID: "session-b")
+    }
+
+    @Test
+    func `Agent deletion drains retained browser cleanup before releasing its target`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooAgentBrowserDebt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let sessionID = "debt-session"
+        let now = Date()
+        try sessionManager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "test-model",
+            messages: [.user("Test session")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+        let first = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        _ = try await first.connect(channel: nil, browserURL: nil)
+        firstProvider.removeLeavesProvider = [true, false]
+
+        try await agent.deleteSession(id: sessionID)
+
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("\(sessionID).json").path))
+        #expect(firstProvider.removeCount == 2)
+        #expect(!agent.browserCleanupDebtPending)
+        #expect(root.pendingAuthenticatedSessionCleanupCount == 0)
+        let second = try #require(agent.browserClient(forAgentSessionID: "next-session") as? BrowserMCPService)
+        _ = try await second.connect(channel: nil, browserURL: nil)
+        #expect(secondProvider.addedConfigs.count == 1)
+        await agent.endBrowserClient(forAgentSessionID: "next-session")
+    }
+
+    @Test
+    func `Agent deletion reports retained cleanup debt and a later drain releases its target`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooAgentBrowserDebtFailure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let sessionID = "debt-failure-session"
+        let now = Date()
+        try sessionManager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "test-model",
+            messages: [.user("Test session")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        var providers = [firstProvider, secondProvider]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: providers.removeFirst())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+        let first = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        _ = try await first.connect(channel: nil, browserURL: nil)
+        firstProvider.removeLeavesProvider = [true, true, false]
+
+        await #expect(throws: PeekabooError.self) {
+            try await agent.deleteSession(id: sessionID)
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("\(sessionID).json").path))
+        #expect(firstProvider.removeCount == 2)
+        #expect(agent.browserCleanupDebtPending)
+        #expect(root.pendingAuthenticatedSessionCleanupCount == 1)
+        let second = try #require(agent.browserClient(forAgentSessionID: "blocked-session") as? BrowserMCPService)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: nil)
+        }
+
+        #expect(await root.retryPendingAuthenticatedSessionCleanup())
+        #expect(root.pendingAuthenticatedSessionCleanupCount == 0)
+        _ = try await second.connect(channel: nil, browserURL: nil)
+        #expect(secondProvider.addedConfigs.count == 1)
+        await agent.endBrowserClient(forAgentSessionID: "blocked-session")
+    }
+
+    @Test
+    func `Agent clear all uses the final cleanup state after transient failures`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooAgentBrowserClearDebt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let sessionID = "clear-debt-session"
+        let now = Date()
+        try sessionManager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "test-model",
+            messages: [.user("Test session")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        let provider = MockBrowserMCPManager()
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: provider)
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+        let browser = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        _ = try await browser.connect(channel: nil, browserURL: nil)
+        provider.removeLeavesProvider = [true, true, false]
+
+        try await agent.clearAllSessions()
+
+        #expect(provider.removeCount == 3)
+        #expect(root.pendingAuthenticatedSessionCleanupCount == 0)
+        #expect(sessionManager.listSessions().isEmpty)
     }
 
     @Test
@@ -3433,6 +3681,7 @@ private final class MockBrowserMCPManager: BrowserMCPManaging {
     var executeHandler: (@MainActor (String, [String: Any]) async throws -> ToolResponse)?
     var isConnectedHandler: (@MainActor () async -> Bool)?
     var removeHandler: (@MainActor () async -> Void)?
+    var removeLeavesProvider: [Bool] = []
 
     func hasServer(name _: String) -> Bool {
         self.hasConfiguredServer
@@ -3458,8 +3707,9 @@ private final class MockBrowserMCPManager: BrowserMCPManaging {
     func removeServer(name _: String) async {
         await self.removeHandler?()
         self.removeCount += 1
-        self.hasConfiguredServer = false
-        self.connected = false
+        let leavesProvider = self.removeLeavesProvider.isEmpty ? false : self.removeLeavesProvider.removeFirst()
+        self.hasConfiguredServer = leavesProvider
+        self.connected = leavesProvider
     }
 
     func executeTool(
