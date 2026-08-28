@@ -649,7 +649,9 @@ struct BrowserConnectionHandoffTests {
 
         spy.invalidationResult = false
         spy.releaseInvalidation()
-        #expect(await Self.waitUntil { spy.invalidatedSessionIDs.count > expectedSessionIDs.count })
+        #expect(await Self.waitUntil {
+            spy.invalidatedSessionIDs.count == expectedSessionIDs.count * 2
+        })
         spy.invalidationResult = true
         spy.releaseInvalidation()
         #expect(await Self.waitUntil {
