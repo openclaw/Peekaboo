@@ -66,10 +66,11 @@ test('CodeQL workspace scheme covers every analyzed product exactly once', () =>
 
 test('workspace CLI entry point avoids main.swift special-file semantics', () => {
   const sourceDirectory = new URL('../Apps/CLI/Sources/PeekabooExec/', import.meta.url);
-  const mainFiles = readdirSync(sourceDirectory)
-    .filter((file) => file.endsWith('.swift'))
+  const sourceFiles = readdirSync(sourceDirectory);
+  assert.ok(!sourceFiles.some((file) => file.toLowerCase() === 'main.swift'),
+    'The workspace CLI must not contain a main.swift entry point');
+  const mainFiles = sourceFiles.filter((file) => file.endsWith('.swift'))
     .filter((file) => /@main\b/.test(readFileSync(new URL(file, sourceDirectory), 'utf8')));
 
   assert.deepEqual(mainFiles, ['PeekabooMain.swift']);
-  assert.notEqual(mainFiles[0].toLowerCase(), 'main.swift');
 });
