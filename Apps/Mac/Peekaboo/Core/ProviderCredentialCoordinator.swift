@@ -89,6 +89,7 @@ final class ProviderCredentialCoordinator {
     }
 
     func edit(_ value: String, for credential: PeekabooCredential) {
+        let value = Self.normalized(value)
         var state = self.state(for: credential)
         // SwiftUI can replay an unchanged binding; it must not retire legacy keys or overwrite a file rotation.
         guard value != state.draft else { return }
@@ -109,7 +110,8 @@ final class ProviderCredentialCoordinator {
         do {
             let publication = try self.file.updateCredentials { snapshot in
                 for credential in PeekabooCredential.allCases where credential.value(in: snapshot).isEmpty {
-                    guard let value = self.legacy.read(credential), !value.isEmpty else { continue }
+                    let value = Self.normalized(self.legacy.read(credential) ?? "")
+                    guard !value.isEmpty else { continue }
                     credential.replace(in: &snapshot, with: value)
                     imported.insert(credential)
                 }
@@ -153,8 +155,12 @@ final class ProviderCredentialCoordinator {
             self.states[credential] = state
         }
         self.recoverable = Set(PeekabooCredential.allCases.filter {
-            $0.value(in: snapshot).isEmpty && self.legacy.read($0)?.isEmpty == false
+            $0.value(in: snapshot).isEmpty && !Self.normalized(self.legacy.read($0) ?? "").isEmpty
         })
         self.runtimeDidChange()
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

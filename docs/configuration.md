@@ -67,6 +67,7 @@ Old app preferences are never imported automatically, even if the file is missin
 changes made since the pane opened. Successful saves, clears, and imports retire only the corresponding
 legacy entries. Failed imports leave those entries available for another explicit attempt.
 Showing a credential field or receiving an unchanged binding value never saves the draft or retires legacy keys.
+App edits and legacy imports trim surrounding whitespace and newlines; interior newlines and NUL remain invalid. Whitespace-only app input clears a populated field but leaves an already empty field unchanged; blank legacy entries remain stored without offering recovery.
 
 A failed save keeps the draft marked **Not saved** and leaves the previous effective credential unchanged.
 A failed clear does not claim deletion or environment fallback. **Retry** is explicit after failure, and

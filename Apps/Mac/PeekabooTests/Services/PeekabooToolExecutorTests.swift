@@ -8,7 +8,8 @@ import Testing
 struct ToolRegistryTests {
     @Test
     func `All expected tools are registered`() {
-        self.installDefaults()
+        let services = self.installDefaults()
+        defer { withExtendedLifetime(services) {} }
         let allTools = ToolRegistry.allTools()
         #expect(!allTools.isEmpty)
 
@@ -36,7 +37,8 @@ struct ToolRegistryTests {
 
     @Test
     func `Tool definitions are valid`() {
-        self.installDefaults()
+        let services = self.installDefaults()
+        defer { withExtendedLifetime(services) {} }
         let allTools = ToolRegistry.allTools()
 
         for tool in allTools {
@@ -52,7 +54,8 @@ struct ToolRegistryTests {
 
     @Test
     func `Can retrieve a tool by name`() {
-        self.installDefaults()
+        let services = self.installDefaults()
+        defer { withExtendedLifetime(services) {} }
         let tool = ToolRegistry.tool(named: "see")
         #expect(tool != nil)
         #expect(tool?.name == "see")
@@ -60,7 +63,8 @@ struct ToolRegistryTests {
 
     @Test
     func `Tools are grouped by category`() {
-        self.installDefaults()
+        let services = self.installDefaults()
+        defer { withExtendedLifetime(services) {} }
         let categorizedTools = ToolRegistry.toolsByCategory()
         #expect(!categorizedTools.isEmpty)
         #expect(categorizedTools[.vision] != nil)
@@ -69,8 +73,10 @@ struct ToolRegistryTests {
     }
 
     @MainActor
-    private func installDefaults() {
+    private func installDefaults() -> PeekabooServices {
         let services = PeekabooServices()
+        // The default factories capture this owner unowned; each caller must retain it through its assertions.
         services.installAgentRuntimeDefaults()
+        return services
     }
 }
