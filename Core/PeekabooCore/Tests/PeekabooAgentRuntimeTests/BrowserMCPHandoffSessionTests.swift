@@ -883,6 +883,69 @@ struct BrowserMCPHandoffSessionTests {
     }
 }
 
+extension BrowserMCPHandoffSessionTests {
+    @Test
+    func `cancelled pending handoff releases disconnected root ownership`() async throws {
+        let preflightBarrier = HandoffBarrier()
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.isConnectedBarrier = preflightBarrier
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let name = "mcp:root-disconnect-before-drain"
+
+        let transfer = Task { @MainActor in
+            try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorization: fixture.authorization)
+        }
+        await preflightBarrier.waitUntilBlocked()
+        await fixture.root.disconnect()
+        #expect(fixture.rootProvider.removeCount == 1)
+        #expect(!fixture.rootProvider.connected)
+
+        await preflightBarrier.release()
+        await #expect(throws: BrowserMCPConnectionError.expectedProviderSessionEpochMismatch) {
+            _ = try await transfer.value
+        }
+
+        let destination = try #require(fixture.root.authenticatedSession(named: name))
+        let connected = try await destination.connect(channel: nil, browserURL: Self.browserURL)
+        #expect(connected.isConnected)
+        #expect(destinationProvider.addedConfigs.count == 1)
+        #expect(await fixture.root.endAuthenticatedSession(named: name))
+    }
+
+    @Test
+    func `cancelled pending handoff retains live root ownership`() async throws {
+        let occupiedProvider = HandoffProviderSpy(label: "occupied")
+        occupiedProvider.configured = true
+        occupiedProvider.connected = true
+        let contenderProvider = HandoffProviderSpy(label: "contender")
+        let fixture = try await Self.fixture(destinationProviders: [occupiedProvider, contenderProvider])
+
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: "mcp:occupied",
+                authorization: fixture.authorization)
+        }
+        let rootStatus = await fixture.root.status(channel: nil)
+        #expect(rootStatus.isConnected)
+        #expect(fixture.rootProvider.removeCount == 0)
+
+        let contender = try #require(fixture.root.authenticatedSession(named: "mcp:contender"))
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await contender.connect(channel: nil, browserURL: Self.browserURL)
+        }
+        #expect(contenderProvider.addedConfigs.isEmpty)
+
+        await fixture.root.disconnect()
+        let connected = try await contender.connect(channel: nil, browserURL: Self.browserURL)
+        #expect(connected.isConnected)
+        #expect(contenderProvider.addedConfigs.count == 1)
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:occupied"))
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:contender"))
+    }
+}
+
 @MainActor
 private final class HandoffProviderSpy: BrowserMCPManaging {
     let label: String
@@ -897,6 +960,7 @@ private final class HandoffProviderSpy: BrowserMCPManaging {
     var addBarrier: HandoffBarrier?
     var cancelAddAfterBarrier = false
     var removeBarrier: HandoffBarrier?
+    var isConnectedBarrier: HandoffBarrier?
     var leaveConfiguredAfterRemove = false
     var leaveConnectedAfterRemove = false
 
@@ -909,7 +973,8 @@ private final class HandoffProviderSpy: BrowserMCPManaging {
     }
 
     func isServerConnected(name _: String) async -> Bool {
-        self.connected
+        await self.isConnectedBarrier?.block()
+        return self.connected
     }
 
     func serverToolCount(name _: String) async -> Int {

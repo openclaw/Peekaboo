@@ -78,6 +78,7 @@ final class BrowserMCPAuthenticatedSessionPool {
     private var namedSessions: [String: SessionID] = [:]
     private var targetOwners: [TargetKey: TargetOwner] = [:]
     private var pendingHandoffOwners: [TargetKey: SessionID] = [:]
+    private var deferredRootReleaseKeys = Set<TargetKey>()
     private var pendingHandoffClaims: [SessionID: PendingHandoffClaim] = [:]
     private var handoffs: [SessionID: HandoffState] = [:]
 
@@ -315,6 +316,10 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func unbindRoot() {
+        let pendingRootKeys = self.targetOwners.compactMap { key, owner in
+            owner == .root && self.pendingHandoffOwners[key] != nil ? key : nil
+        }
+        self.deferredRootReleaseKeys.formUnion(pendingRootKeys)
         self.targetOwners = self.targetOwners.filter { key, owner in
             owner != .root || self.pendingHandoffOwners[key] != nil
         }
@@ -405,8 +410,16 @@ final class BrowserMCPAuthenticatedSessionPool {
     }
 
     func cancelPendingHandoff(for sessionID: SessionID) {
+        let claimedKeys = self.pendingHandoffOwners.compactMap { key, owner in
+            owner == sessionID ? key : nil
+        }
         self.pendingHandoffOwners = self.pendingHandoffOwners.filter { $0.value != sessionID }
         self.pendingHandoffClaims.removeValue(forKey: sessionID)
+        for key in claimedKeys where self.deferredRootReleaseKeys.remove(key) != nil {
+            if self.targetOwners[key] == .root {
+                self.targetOwners.removeValue(forKey: key)
+            }
+        }
     }
 
     func requireSourceRecovery(for sessionID: SessionID) {
