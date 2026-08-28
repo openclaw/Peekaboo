@@ -1306,8 +1306,16 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
 }
 
 @MainActor
+final class MockConfirmedTypeAutomationService: MockAutomationService,
+ScriptedUIAutomationActionOutcomeProviding {
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript(defaultResponse: .outcome(.confirmedChange(
+        delivery: .init(mechanism: .globalEvents, mode: .foreground))))
+}
+
+@MainActor
 private final class MockElementActionAutomationService: MockAutomationService, ElementActionAutomationServiceProtocol,
 ScriptedUIAutomationActionOutcomeProviding {
+    let supportsSetValueResultTargetBinding = true
     let supportsProcessGenerationBoundElementMutations = true
     let uiAutomationOutcomeTargetIdentity = try? DesktopTargetIdentity(
         processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
@@ -1531,7 +1539,7 @@ class MockApplicationService: ScriptedApplicationInventoryService {
 struct MCPToolErrorHandlingTests {
     @Test
     func `Tool handles invalid argument types gracefully`() async throws {
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
 
         try await MCPToolTestHelpers.withContext(automation: automation) {
             let tool = TypeTool()
@@ -1610,7 +1618,7 @@ struct MCPToolErrorHandlingTests {
 
     @Test
     func `Type tool defaults to linear cadence`() async throws {
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
 
         try await MCPToolTestHelpers.withContext(automation: automation) {
             let tool = TypeTool()
@@ -1636,7 +1644,7 @@ struct MCPToolErrorHandlingTests {
 
     @Test
     func `Type tool describes clear-only requests without claiming it typed`() async throws {
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
 
         try await MCPToolTestHelpers.withContext(automation: automation) {
             let response = try await TypeTool().execute(arguments: ToolArguments(raw: [
@@ -1658,7 +1666,7 @@ struct MCPToolErrorHandlingTests {
 
     @Test
     func `Type tool with WPM opts into human cadence`() async throws {
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
 
         try await MCPToolTestHelpers.withContext(automation: automation) {
             let tool = TypeTool()
@@ -1685,7 +1693,7 @@ struct MCPToolErrorHandlingTests {
 
     @Test
     func `Type tool honors linear profile`() async throws {
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let automation = await MainActor.run { MockConfirmedTypeAutomationService(accessibilityGranted: true) }
 
         try await MCPToolTestHelpers.withContext(automation: automation) {
             let tool = TypeTool()
