@@ -8,12 +8,7 @@ struct ProvidersSettingsView: View {
         @Bindable var settings = self.settings
         Form {
             Section("API Keys") {
-                APIKeyField(provider: .openai, apiKey: $settings.openAIAPIKey)
-                APIKeyField(provider: .anthropic, apiKey: $settings.anthropicAPIKey)
-                APIKeyField(provider: .grok, apiKey: $settings.grokAPIKey)
-                APIKeyField(provider: .google, apiKey: $settings.googleAPIKey)
-                APIKeyField(provider: .minimax, apiKey: $settings.miniMaxAPIKey)
-                APIKeyField(provider: .minimaxChina, apiKey: $settings.miniMaxChinaAPIKey)
+                ProviderCredentialRows(coordinator: settings.credentialCoordinator)
             }
 
             Section("Local Models") {
@@ -30,5 +25,6 @@ struct ProvidersSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { self.settings.credentialCoordinator.reload() }
     }
 }

@@ -8,6 +8,31 @@ import Testing
 struct ConfigurationManagerConcurrencyTests {
     private let manager = ConfigurationManager.shared
 
+    /// Hosted CI only: the suite's shared manager may initialize before a test's override.
+    @Test
+    func `Fresh reads forget deleted keys and failed publication leaves cache unchanged`() async throws {
+        try await withIsolatedConfigurationDirectory { configDirectory in
+            try self.manager.setCredential(key: "OPENAI_API_KEY", value: "synthetic-original")
+            let file = CredentialFile(url: configDirectory.appendingPathComponent("credentials"))
+            _ = try file.updateCredentials { $0.removeAll() }
+            #expect(self.manager.credentialValue(for: "OPENAI_API_KEY") == nil)
+            try self.manager.setCredential(key: "OTHER", value: "synthetic-other")
+            #expect(try self.manager.readCredentialSnapshot().count == 1)
+            #expect(chmod(configDirectory.path, 0o500) == 0)
+            defer { chmod(configDirectory.path, 0o700) }
+            #expect(throws: (any Error).self) {
+                try self.manager.setCredential(key: "FAILED", value: "synthetic-failed")
+            }
+            #expect(self.manager.credentials["FAILED"] == nil)
+            let redirected = configDirectory.appendingPathComponent("redirected")
+            #expect(chmod(configDirectory.path, 0o700) == 0)
+            setenv("PEEKABOO_CONFIG_DIR", redirected.path, 1)
+            try self.manager.setCredential(key: "REDIRECTED", value: "synthetic-new-root")
+            #expect(self.manager.credentialValue(for: "OTHER") == nil)
+            #expect(try file.readCredentialSnapshot().count == 1)
+        }
+    }
+
     @Test
     func `concurrent distinct credential writes persist every key`() async throws {
         try await withIsolatedConfigurationDirectory { configDirectory in

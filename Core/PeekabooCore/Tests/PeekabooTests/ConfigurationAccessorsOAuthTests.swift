@@ -19,6 +19,34 @@ import Testing
 struct ConfigurationAccessorsOAuthTests {
     private let manager = ConfigurationManager.shared
 
+    /// Hosted CI only: this suite initializes ConfigurationManager.shared before its scoped helper.
+    @Test
+    func `Refresh clears only managed slots and never persists environment keys`() throws {
+        try withIsolatedConfigurationEnvironment { configDir in
+            self.unsetAllAnthropicEnv()
+            self.unsetAllOpenAIEnv()
+            self.unsetAllAliasedProviderEnv()
+            unsetenv("MINIMAX_API_KEY")
+            unsetenv("MINIMAX_CN_API_KEY")
+            self.manager.resetForTesting()
+            let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+            let managed: [Provider] = [.openai, .anthropic, .google, .grok, .minimax, .minimaxCN]
+            for provider in managed {
+                configuration.setAPIKey("synthetic-stale", for: provider)
+            }
+            configuration.setAPIKey("synthetic-unrelated", for: .mistral)
+            self.manager.applyAIProviderKeys(to: configuration)
+            #expect(managed.allSatisfy { configuration.getAPIKey(for: $0) == nil })
+            let unrelatedSurvives = configuration.getAPIKey(for: .mistral) == "synthetic-unrelated"
+            #expect(unrelatedSurvives)
+            setenv("OPENAI_API_KEY", "synthetic-environment", 1)
+            self.manager.applyAIProviderKeys(to: configuration)
+            let environmentWins = configuration.getAPIKey(for: .openai) == "synthetic-environment"
+            #expect(environmentWins)
+            #expect(!FileManager.default.fileExists(atPath: configDir.appendingPathComponent("credentials").path))
+        }
+    }
+
     @Test
     func `getAnthropicAPIKey returns nil when only OAuth access token is stored`() throws {
         try withIsolatedConfigurationEnvironment { _ in
@@ -256,6 +284,47 @@ struct ConfigurationAccessorsOAuthTests {
         }
     }
 
+    @Test
+    func `Empty batch values clear existing aliases without losing unrelated entries`() throws {
+        try withIsolatedConfigurationEnvironment { configDir in
+            self.unsetAllAliasedProviderEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "X_AI_API_KEY": "synthetic-old-alias",
+                "UNRELATED_API_KEY": "synthetic-unrelated",
+                "OPENAI_REFRESH_TOKEN": "synthetic-oauth==",
+            ])
+            try self.manager.saveCredentials([
+                "X_AI_API_KEY": "",
+                "GROK_API_KEY": "synthetic-fallback",
+            ])
+            let snapshot = try self.manager.readCredentialSnapshot()
+            let clearedAndPreserved = snapshot == [
+                "GROK_API_KEY": "synthetic-fallback",
+                "UNRELATED_API_KEY": "synthetic-unrelated",
+                "OPENAI_REFRESH_TOKEN": "synthetic-oauth==",
+            ]
+            #expect(clearedAndPreserved)
+            let fallbackResolved = self.manager.getGrokAPIKey() == "synthetic-fallback"
+            #expect(fallbackResolved)
+            #expect(throws: CredentialFile.Failure.invalidData) {
+                try self.manager.saveCredentials([
+                    "GROK_API_KEY": "invalid\nvalue",
+                    "UNRELATED_API_KEY": "synthetic-must-not-publish",
+                ])
+            }
+            let rejectedBatchPreservedFile = try self.manager.readCredentialSnapshot() == snapshot
+            #expect(rejectedBatchPreservedFile)
+            try self.manager.saveCredentials([
+                "GROK_API_KEY": "",
+                "UNRELATED_API_KEY": "",
+                "OPENAI_REFRESH_TOKEN": "",
+            ])
+            #expect(try self.manager.readCredentialSnapshot().isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: configDir.appendingPathComponent("credentials").path))
+        }
+    }
+
     // MARK: - Helpers
 
     private func unsetAllAnthropicEnv() {
@@ -308,6 +377,8 @@ private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) 
         "X_AI_API_KEY",
         "XAI_API_KEY",
         "GROK_API_KEY",
+        "MINIMAX_API_KEY",
+        "MINIMAX_CN_API_KEY",
     ]
     let previousEnvironment = Dictionary(uniqueKeysWithValues: environmentKeys.map { key in
         (key, getenv(key).map { String(cString: $0) })

@@ -128,6 +128,9 @@ jobs:
       - name: Run focused Swift tests
         working-directory: Core/PeekabooCore
         run: |
+          swift test --no-parallel --filter CredentialFileTests
+          swift test --no-parallel --filter ConfigurationManagerConcurrencyTests
+          swift test --no-parallel --filter ConfigurationAccessorsOAuthTests
           swift test --no-parallel --filter ScreenCaptureServiceFlowTests
           swift test --no-parallel --filter AgentRuntimeBoundaryRegressionTests
           swift test --no-parallel --filter AgentSessionManagerStorageTests
@@ -394,6 +397,15 @@ jobs:
             fi
           done
           /usr/bin/xcodebuild -version
+
+      - name: Run Mac package tests (secretless hosted runner only)
+        working-directory: Apps/Mac
+        env:
+          PEEKABOO_CONFIG_DIR: ${{ runner.temp }}/peekaboo-mac-tests
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+          PEEKABOO_RUN_LIVE_AGENT_TESTS: "0"
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+        run: swift test --no-parallel
 
       - name: Build Peekaboo app (Xcode)
         working-directory: Apps

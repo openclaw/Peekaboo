@@ -282,29 +282,29 @@ extension ConfigurationManager {
 
     /// Apply Peekaboo-managed provider keys to Tachikoma.
     public func applyAIProviderKeys(to configuration: TachikomaConfiguration = .current) {
-        if let key = self.getOpenAIAPIKey(), !key.isEmpty {
-            configuration.setAPIKey(key, for: .openai)
-        }
-        if let key = self.getAnthropicAPIKey(), !key.isEmpty {
-            configuration.setAPIKey(key, for: .anthropic)
-        }
-        if let key = self.getGeminiAPIKey(), !key.isEmpty {
-            configuration.setAPIKey(key, for: .google)
-        }
-        if let key = self.getMiniMaxAPIKey(), !key.isEmpty {
-            configuration.setAPIKey(key, for: .minimax)
-        }
-        if let key = self.getMiniMaxChinaAPIKey(fallbackToSharedKey: false), !key.isEmpty {
-            configuration.setAPIKey(key, for: .minimaxCN)
+        self.withStateLock {
+            let managedKeys: [(Provider, String?)] = [
+                (.openai, self.getOpenAIAPIKey()),
+                (.anthropic, self.getAnthropicAPIKey()),
+                (.google, self.getGeminiAPIKey()),
+                (.grok, self.getGrokAPIKey()),
+                (.minimax, self.getMiniMaxAPIKey()),
+                (.minimaxCN, self.getMiniMaxChinaAPIKey(fallbackToSharedKey: false)),
+            ]
+            for (provider, key) in managedKeys {
+                if let key, !key.isEmpty {
+                    // Replace directly so concurrent runtime readers never see a temporary authentication gap.
+                    configuration.setAPIKey(key, for: provider)
+                } else {
+                    configuration.removeAPIKey(for: provider)
+                }
+            }
         }
         if let key = self.getKimiAPIKey(), !key.isEmpty {
             configuration.setAPIKey(key, for: .kimi)
         }
         if let key = self.getOpenRouterAPIKey(), !key.isEmpty {
             configuration.setAPIKey(key, for: "openrouter")
-        }
-        if let key = self.getGrokAPIKey(), !key.isEmpty {
-            configuration.setAPIKey(key, for: .grok)
         }
         let ollamaBaseURL = self.getOllamaBaseURL()
         if !ollamaBaseURL.isEmpty {
