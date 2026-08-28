@@ -25,6 +25,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Bound debug CLI build-staleness config discovery to the starting directory's ancestors so missing or inaccessible Git metadata cannot cause an endless startup traversal.
 - Share the owner-only credential file between app and CLI, trim surrounding whitespace in app edits and legacy imports, ignore unchanged Settings bindings, recover legacy app keys only on explicit import, and keep failed edits visibly unsaved without Keychain prompts. Thanks @vincentkoc for #651.
 - Preserve exact-window foreground focus evidence under the native mutation lane for signed Bridge receipts, and refuse blind retries after accepted focus loses proof.
 - Keep `peekaboo learn` on its injected main-actor service provider instead of crashing when no process-wide tool registry default exists.
