@@ -235,6 +235,35 @@ struct RemoteBrowserMCPSessionTests {
         #expect(Set(transport.openedClaimIDs).count == 1)
     }
 
+    @Test(arguments: [
+        RemoteBrowserMCPSessionTransportError.wrongOwner,
+        RemoteBrowserMCPSessionTransportError.hostGenerationChanged,
+    ])
+    func `terminal invalid handle cleanup refusal poisons claim without replay`(
+        terminalError: RemoteBrowserMCPSessionTransportError) async throws
+    {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        transport.openHandles = [RemoteBrowserMCPSessionHandle(
+            sessionID: UUID(),
+            targetReceiptSHA256: String(repeating: "a", count: 64))]
+        transport.endErrors = [terminalError]
+        let root = Self.rootClient(transport: transport)
+        let differentHandoff = BrowserMCPHandoffGrant(payload: Data("different-connect-receipt".utf8))
+
+        await #expect(throws: RemoteBrowserMCPSessionError.invalidHandle) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: nil)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: nil)
+        }
+        await #expect(throws: RemoteBrowserMCPSessionError.openAttemptUnresolved) {
+            _ = try await root.openBrowserMCPScopedSession(handoff: differentHandoff)
+        }
+
+        #expect(transport.openedClaimIDs.count == 1)
+        #expect(transport.endCallCount == 1)
+    }
+
     @Test(arguments: [false, true])
     func `cancellation retains unresolved claim without automatic retry`(throwsCancellation: Bool) async throws {
         let transport = RecordingRemoteBrowserSessionTransport()

@@ -20,6 +20,13 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     private enum ScopedSessionOpenPhase: Equatable {
         case inFlight
         case retryable
+        case terminal
+    }
+
+    private enum InvalidScopedSessionOpenResolution {
+        case resolved
+        case retryable
+        case terminal
     }
 
     private struct ScopedSessionOpenAttempt {
@@ -112,10 +119,17 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
               (handoff == nil) == (handle.targetReceiptSHA256 == nil)
         else {
             _ = self.recordScopedSessionOpenFailure(attempt, operationMayHaveCompleted: true)
-            let cleanupResolved = await Self.resolveInvalidScopedSessionOpen(
+            let cleanupResolution = await Self.resolveInvalidScopedSessionOpen(
                 handle: handle,
                 transport: sessionTransport)
-            self.finishScopedSessionOpenAttempt(attempt, retryable: !cleanupResolved)
+            switch cleanupResolution {
+            case .resolved:
+                self.finishScopedSessionOpenAttempt(attempt, retryable: false)
+            case .retryable:
+                self.finishScopedSessionOpenAttempt(attempt, retryable: true)
+            case .terminal:
+                self.markScopedSessionOpenAttemptTerminal(attempt)
+            }
             throw RemoteBrowserMCPSessionError.invalidHandle
         }
         self.finishScopedSessionOpenAttempt(attempt, retryable: false)
@@ -489,12 +503,16 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             guard pending.handoffPayload == payload else {
                 throw RemoteBrowserMCPSessionError.openAttemptUnresolved
             }
-            guard pending.phase == .retryable else {
+            switch pending.phase {
+            case .retryable:
+                pending.phase = .inFlight
+                self.pendingScopedSessionOpenAttempt = pending
+                return pending
+            case .inFlight:
                 throw RemoteBrowserMCPSessionError.openInProgress
+            case .terminal:
+                throw RemoteBrowserMCPSessionError.openAttemptUnresolved
             }
-            pending.phase = .inFlight
-            self.pendingScopedSessionOpenAttempt = pending
-            return pending
         }
         let attempt = ScopedSessionOpenAttempt(
             claimID: UUID(),
@@ -543,6 +561,12 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         }
     }
 
+    @MainActor
+    private func markScopedSessionOpenAttemptTerminal(_ attempt: ScopedSessionOpenAttempt) {
+        guard self.pendingScopedSessionOpenAttempt?.claimID == attempt.claimID else { return }
+        self.pendingScopedSessionOpenAttempt?.phase = .terminal
+    }
+
     private static func scopedSessionOpenFailureDisposition(
         for error: any Error) -> ScopedSessionOpenFailureDisposition
     {
@@ -588,16 +612,19 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     @MainActor
     private static func resolveInvalidScopedSessionOpen(
         handle: RemoteBrowserMCPSessionHandle,
-        transport: any RemoteBrowserMCPSessionTransport) async -> Bool
+        transport: any RemoteBrowserMCPSessionTransport) async -> InvalidScopedSessionOpenResolution
     {
-        guard handle.isCanonical else { return false }
+        guard handle.isCanonical else { return .retryable }
         do {
             try await transport.endSession(handle)
-            return true
-        } catch is RemoteBrowserMCPSessionTransportError {
-            return true
+            return .resolved
+        } catch let terminal as RemoteBrowserMCPSessionTransportError {
+            return switch terminal {
+            case .invalidSession, .sessionEnded: .resolved
+            case .wrongOwner, .hostGenerationChanged: .terminal
+            }
         } catch {
-            return false
+            return .retryable
         }
     }
 
