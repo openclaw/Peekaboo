@@ -62,6 +62,7 @@ public actor PeekabooBridgeClient {
     var processGenerationBoundElementMutationsEnabled = false
     var foregroundModifierClickSnapshotLeaseEnabled = false
     var nativeBrowserConnectionBindingEnabled = false
+    var browserConnectionHandoffEnabled = false
     var producerBoundSnapshotReferencesEnabled = false
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
@@ -464,6 +465,7 @@ public actor PeekabooBridgeClient {
         self.processGenerationBoundElementMutationsEnabled = false
         self.foregroundModifierClickSnapshotLeaseEnabled = false
         self.nativeBrowserConnectionBindingEnabled = false
+        self.browserConnectionHandoffEnabled = false
         self.producerBoundSnapshotReferencesEnabled = false
         self.targetedClickAccessibilityValueDeliveryEnabled = false
         self.requestPinnedExactWindowScrollReceiptEnabled = false
@@ -720,10 +722,12 @@ public actor PeekabooBridgeClient {
             operationClientInstanceID: self.operationClientInstanceID,
             replacingOperationSessionID: replacingOperationSessionID,
             clientCapabilities: protocolVersion >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion
-                ? [
+                ? ([
                     PeekabooBridgeClientCapability.producerBoundSnapshotReferences,
                     PeekabooBridgeClientCapability.targetedClickAccessibilityValueDelivery,
-                ]
+                ] + (protocolVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion
+                    ? [PeekabooBridgeClientCapability.browserConnectionHandoff]
+                    : []))
                 : nil)
         let reply = try await self.sendCarryingActionOutcome(.handshake(payload), timeoutSec: timeoutSec)
         try self.validateTrustedConnectedHost(reply.connectedHost)
@@ -920,6 +924,8 @@ public actor PeekabooBridgeClient {
             Self.supportsForegroundModifierClickSnapshotLease(handshake),
             nativeBrowserConnectionBindingEnabled:
             Self.supportsNativeBrowserConnectionBinding(handshake),
+            browserConnectionHandoffEnabled:
+            Self.supportsBrowserConnectionHandoff(handshake),
             producerBoundSnapshotReferencesEnabled:
             Self.supportsProducerBoundSnapshotReferences(handshake),
             targetedClickAccessibilityValueDeliveryEnabled:
@@ -1066,6 +1072,23 @@ public actor PeekabooBridgeClient {
             operations.isSubset(of: Set(handshake.supportedOperations))
     }
 
+    private static func supportsBrowserConnectionHandoff(
+        _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
+    {
+        let operations: Set<PeekabooBridgeOperation> = [
+            .browserStatus,
+            .browserConnect,
+            .browserExecute,
+            .browserSessionBootstrap,
+            .browserSessionControl,
+        ]
+        return handshake.negotiatedVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.browserConnectionHandoff) == true &&
+            operations.isSubset(of: Set(handshake.supportedOperations)) &&
+            operations.isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations))
+    }
+
     private static func supportsRequestPinnedExactWindowScrollReceipt(
         _ handshake: PeekabooBridgeHandshakeResponse) -> Bool
     {
@@ -1128,6 +1151,7 @@ public actor PeekabooBridgeClient {
         self.foregroundModifierClickSnapshotLeaseEnabled =
             candidate.foregroundModifierClickSnapshotLeaseEnabled
         self.nativeBrowserConnectionBindingEnabled = candidate.nativeBrowserConnectionBindingEnabled
+        self.browserConnectionHandoffEnabled = candidate.browserConnectionHandoffEnabled
         self.producerBoundSnapshotReferencesEnabled = candidate.producerBoundSnapshotReferencesEnabled
         self.targetedClickAccessibilityValueDeliveryEnabled =
             candidate.targetedClickAccessibilityValueDeliveryEnabled
@@ -1429,6 +1453,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let processGenerationBoundElementMutationsEnabled: Bool
     let foregroundModifierClickSnapshotLeaseEnabled: Bool
     let nativeBrowserConnectionBindingEnabled: Bool
+    let browserConnectionHandoffEnabled: Bool
     let producerBoundSnapshotReferencesEnabled: Bool
     let targetedClickAccessibilityValueDeliveryEnabled: Bool
     let requestPinnedExactWindowScrollReceiptEnabled: Bool

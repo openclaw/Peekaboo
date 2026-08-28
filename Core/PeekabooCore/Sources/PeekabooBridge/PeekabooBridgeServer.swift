@@ -128,6 +128,8 @@ public final class PeekabooBridgeServer {
     let maximizedVisibleWorkAreaProvider: @MainActor @Sendable (CGRect) -> CGRect?
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let processPresenceProvider: @Sendable (pid_t) -> Bool?
+    let browserSessionBootstrapProvider: (any PeekabooBridgeBrowserSessionBootstrapProviding)?
+    let browserHandoffGrantRegistry: PeekabooBridgeBrowserHandoffGrantRegistry
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     let desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator
     private let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
@@ -187,6 +189,12 @@ public final class PeekabooBridgeServer {
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
         processPresenceProvider: (@Sendable (pid_t) -> Bool?)? = nil,
+        browserSessionBootstrapProvider: (any PeekabooBridgeBrowserSessionBootstrapProviding)? = nil,
+        browserHandoffGrantCapacity: Int = 128,
+        browserHandoffGrantLifetimeMilliseconds: Int64 = 60000,
+        browserHandoffClock: @escaping @Sendable () -> Int64 = {
+            Int64((Date().timeIntervalSince1970 * 1000).rounded(.down))
+        },
         encoder: JSONEncoder = .peekabooBridgeEncoder(),
         decoder: JSONDecoder = .peekabooBridgeDecoder())
     {
@@ -196,6 +204,14 @@ public final class PeekabooBridgeServer {
         self.allowlistedBundles = allowlistedBundles
         self.supportedVersions = supportedVersions
         self.operationReceiptSessionCapacity = operationReceiptSessionCapacity
+        self.browserSessionBootstrapProvider = browserSessionBootstrapProvider
+        self.browserHandoffGrantRegistry = PeekabooBridgeBrowserHandoffGrantRegistry(
+            provider: browserSessionBootstrapProvider,
+            capacity: browserHandoffGrantCapacity,
+            lifetimeMilliseconds: browserHandoffGrantLifetimeMilliseconds,
+            now: browserHandoffClock,
+            processStartIdentity: processStartIdentityProvider,
+            processPresence: processPresenceProvider ?? { Self.observeProcessPresence($0) })
         self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
         self.servingSocketPath = servingSocketPath
         self.agentExecutionRunner = servingSocketPath == nil ? nil : PeekabooBridgeLiveAgentExecutionRunner()
@@ -225,6 +241,21 @@ public final class PeekabooBridgeServer {
                ])
         {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionHandoffVersion,
+           browserSessionBootstrapProvider?.supportsBrowserSessionBootstrap == true,
+           self.allowedOperations.isSuperset(of: [
+               .browserStatus,
+               .browserConnect,
+               .browserExecute,
+               .browserSessionBootstrap,
+               .browserSessionControl,
+           ]),
+           resolvedHostCapabilities.contains(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.browserConnectionHandoff)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.browserConnectionHandoff)
         }
         if supportedVersions.upperBound >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion,
            services.snapshots.supportsProducerBoundSnapshotReferences,
@@ -1092,6 +1123,22 @@ public final class PeekabooBridgeServer {
         if case let .browserExecute(payload) = request {
             _ = try Self.validatedBrowserExecutionReceipt(payload)
         }
+        if request.requiresBrowserConnectionHandoff {
+            let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+                  session?.protocolVersion ?? .init(major: 0, minor: 0) >=
+                  PeekabooBridgeConstants.browserConnectionHandoffVersion,
+                  session?.browserConnectionHandoff == true,
+                  let peer,
+                  let operation = PeekabooBridgeRequestContext.browserHandoffOperation
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Browser handoff requires an authenticated protocol 1.38 capability session")
+            }
+            _ = try peer.browserSessionCaller(clientInstanceID: operation.clientInstanceID)
+            try Self.validateBrowserSessionRequest(request)
+        }
         if op == .observeProcessGeneration || op == .certificationProducerAttestation {
             try self.requireCertificationCaller(peer)
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
@@ -1304,6 +1351,9 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion {
         capabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionHandoffVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.browserConnectionHandoff)
     }
     return capabilities
 }

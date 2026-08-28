@@ -32,6 +32,9 @@ extension PeekabooBridgeRequest {
         if self.requiresNativeBrowserConnectionBinding {
             return PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion
         }
+        if self.requiresBrowserConnectionHandoff {
+            return PeekabooBridgeConstants.browserConnectionHandoffVersion
+        }
         if self.requiresCompositeTypeDeliverySupport {
             return PeekabooBridgeConstants.compositeTypeDeliveryVersion
         }
@@ -115,6 +118,21 @@ extension PeekabooBridgeRequest {
         }
     }
 
+    var requiresBrowserConnectionHandoff: Bool {
+        switch self.unwrappedOperationRequest {
+        case let .browserConnect(payload):
+            payload.requestsHandoff || payload.sessionID != nil
+        case .browserSessionBootstrap, .browserSessionControl:
+            true
+        case let .browserStatus(payload):
+            payload.sessionID != nil || payload.requestsHandoff || payload.browserURL != nil
+        case let .browserExecute(payload):
+            payload.sessionID != nil || payload.expectedProviderSessionEpoch != nil || payload.elementPreflight != nil
+        default:
+            false
+        }
+    }
+
     var requiresRequestPinnedExactWindowScrollReceipt: Bool {
         self.unwrappedOperationRequest.operation == .targetedScroll
     }
@@ -189,6 +207,7 @@ enum PeekabooBridgeRequestContext {
     @TaskLocal static var operationReceiptAuthority: PeekabooBridgeOperationReceiptAuthority?
     @TaskLocal static var usesAttestedOperationResultSemantics = false
     @TaskLocal static var negotiatedSessionCapabilities: PeekabooBridgeNegotiatedSessionCapabilities?
+    @TaskLocal static var browserHandoffOperation: PeekabooBridgeBrowserHandoffOperationContext?
 
     static func checkRequestIsActive() throws {
         try Task.checkCancellation()

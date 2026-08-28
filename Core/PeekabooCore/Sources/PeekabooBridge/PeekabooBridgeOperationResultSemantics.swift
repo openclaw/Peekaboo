@@ -61,6 +61,7 @@ enum PeekabooBridgeOperationResultSemantics {
         case bool
         case browserStatus
         case browserToolResponse
+        case browserSessionBootstrap
         case capture
         case clickResult
         case daemonStatus
@@ -1285,6 +1286,8 @@ extension PeekabooBridgeOperationResultSemantics {
              .browserConnect,
              .browserDisconnect,
              .browserExecute,
+             .browserSessionBootstrap,
+             .browserSessionControl,
              .captureScreen,
              .captureWindow,
              .captureFrontmost,
@@ -1471,6 +1474,8 @@ extension PeekabooBridgeOperationResultSemantics {
              .createExactWindowHeldPointerOwner,
              .daemonStatus, .daemonStop, .browserStatus,
              .browserDisconnect,
+             .browserSessionBootstrap,
+             .browserSessionControl,
              .getFocusedElement, .waitForElement, .listWindows, .getFocusedWindow,
              .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
              .listMenus, .listFrontmostMenus, .listMenuExtras, .menuExtraOpenMenuFrame,

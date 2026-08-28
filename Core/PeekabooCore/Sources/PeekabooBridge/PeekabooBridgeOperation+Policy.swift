@@ -40,6 +40,8 @@ extension PeekabooBridgeOperation {
         .browserConnect,
         .browserDisconnect,
         .browserExecute,
+        .browserSessionBootstrap,
+        .browserSessionControl,
         .captureScreen,
         .captureWindow,
         .captureFrontmost,
@@ -157,5 +159,7 @@ extension PeekabooBridgeOperation {
             .browserConnect,
             .browserDisconnect,
             .browserExecute,
+            .browserSessionBootstrap,
+            .browserSessionControl,
         ])
 }

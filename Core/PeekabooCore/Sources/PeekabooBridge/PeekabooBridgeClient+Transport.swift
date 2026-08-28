@@ -189,6 +189,11 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.requiresBrowserConnectionHandoff, !self.browserConnectionHandoffEnabled {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge protocol 1.38 authenticated browser handoff is unavailable")
+        }
         if request.createsOrPublishesSnapshotState || request.requiresProducerBoundSnapshotReferences,
            !self.producerBoundSnapshotReferencesEnabled
         {

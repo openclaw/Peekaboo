@@ -14,6 +14,22 @@ public struct PeekabooBridgeProjectedActionRequest: Codable, Sendable {
         self.request = request
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case request
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.request = try container.decode(
+            PeekabooBridgeRequestCodingBox.self,
+            forKey: .request).value
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(PeekabooBridgeRequestCodingBox(self.request), forKey: .request)
+    }
+
     /// Returns the legacy action request after enforcing the one-layer action-result contract.
     public func validatedRequest() throws -> PeekabooBridgeRequest {
         if case .projectedAction = self.request {
@@ -55,6 +71,27 @@ public struct PeekabooBridgeProjectedActionResponse: Codable, Sendable {
     {
         self.response = response
         self.outcome = outcome
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case response
+        case outcome
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.response = try container.decode(
+            PeekabooBridgeResponseCodingBox.self,
+            forKey: .response).value
+        self.outcome = try container.decodeIfPresent(
+            DesktopActionOutcome.Projection.self,
+            forKey: .outcome)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(PeekabooBridgeResponseCodingBox(self.response), forKey: .response)
+        try container.encodeIfPresent(self.outcome, forKey: .outcome)
     }
 }
 

@@ -4,10 +4,67 @@ import PeekabooFoundation
 
 @MainActor
 extension PeekabooBridgeServer {
+    static func browserHandoffReservationID(
+        request: PeekabooBridgeRequest,
+        requestID: UUID) -> UUID?
+    {
+        guard case let .browserConnect(connect) = request.unwrappedOperationRequest,
+              connect.requestsHandoff
+        else { return nil }
+        return requestID
+    }
+
+    func abandonBrowserHandoffReservation(_ requestID: UUID?) {
+        guard let requestID,
+              let authorizationID = self.browserHandoffGrantRegistry.abandonReservation(requestID: requestID),
+              let provider = self.browserSessionBootstrapProvider
+        else { return }
+        Task { @MainActor in
+            await provider.discardBrowserConnectionHandoffAuthorization(authorizationID)
+        }
+    }
+
     func handleBrowserConnect(
         _ payload: PeekabooBridgeBrowserChannelRequest) async throws -> PeekabooBridgeHandledResponse
     {
-        let result = try await self.browserConnectionResult(payload)
+        if payload.requestsHandoff {
+            guard payload.sessionID == nil else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "A scoped browser connect cannot mint another handoff grant")
+            }
+            guard let operation = PeekabooBridgeRequestContext.browserHandoffOperation else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Browser handoff intent requires an attested operation context")
+            }
+            try await self.browserHandoffGrantRegistry.reserve(
+                requestID: operation.requestID,
+                issuer: operation.peer.browserSessionCaller(
+                    clientInstanceID: operation.clientInstanceID))
+        }
+        let result: DesktopActionResult<PeekabooBridgeBrowserStatus>
+        if let sessionID = payload.sessionID {
+            let caller = try self.authenticatedBrowserSessionCaller()
+            let lease = try await self.browserHandoffGrantRegistry.authorizeSession(sessionID, caller: caller)
+            defer { self.browserHandoffGrantRegistry.completeSessionOperation(lease) }
+            guard let provider = self.browserSessionBootstrapProvider else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "This Bridge host has no scoped browser session provider")
+            }
+            result = try await provider.browserSessionConnect(
+                sessionID: sessionID,
+                channel: payload.channel,
+                browserURL: payload.browserURL)
+            guard result.payload.isCanonicalScopedSessionStatus else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .internalError,
+                    message: "Scoped browser connect returned contradictory status evidence")
+            }
+        } else {
+            result = try await self.browserConnectionResult(payload)
+        }
         guard result.payload.isConnected,
               let receipt = result.payload.connectionReceipt,
               let outcome = result.outcome
@@ -32,6 +89,24 @@ extension PeekabooBridgeServer {
             unitCount: .exact(.one))
         guard outcome.isAccepted(by: policy) else {
             throw Self.invalidBrowserConnectOutcome(outcome)
+        }
+        if payload.requestsHandoff {
+            guard let operation = PeekabooBridgeRequestContext.browserHandoffOperation,
+                  let provider = self.browserSessionBootstrapProvider
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "This Bridge host cannot authorize a browser handoff")
+            }
+            let authorizationID = try await provider.authorizeBrowserConnectionHandoff(receipt)
+            do {
+                try self.browserHandoffGrantRegistry.attachAuthorization(
+                    requestID: operation.requestID,
+                    authorizationID: authorizationID)
+            } catch {
+                await provider.discardBrowserConnectionHandoffAuthorization(authorizationID)
+                throw error
+            }
         }
         return try .init(
             response: .browserStatus(result.payload),

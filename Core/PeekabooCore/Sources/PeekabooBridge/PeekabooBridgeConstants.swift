@@ -65,7 +65,11 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 37)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 38)
+
+    /// First protocol with one-shot, receipt-bound foreground-connect handoff to a caller-scoped browser session.
+    public static let browserConnectionHandoffVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 38)
 
     /// First protocol that can attest one exact Chrome bundle, process generation, listener, and DevTools identity.
     public static let nativeBrowserConnectionBindingVersion =

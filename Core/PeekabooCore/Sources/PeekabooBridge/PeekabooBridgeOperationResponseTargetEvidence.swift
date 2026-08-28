@@ -132,6 +132,7 @@ extension PeekabooBridgeResponse {
              .certificationProducerAttestation,
              .browserStatus,
              .browserToolResponse,
+             .browserSessionBootstrap,
              .capture,
              .elementDetection,
              .focusedElement,

@@ -1174,10 +1174,11 @@ extension PeekabooBridgeClientConcurrencyTests {
 
             let receipt = PeekabooBridgeBrowserConnectionReceipt(
                 channel: "stable",
-                processIdentifier: 42,
-                processStartIdentity: 10042,
-                bundleIdentifier: "com.google.Chrome",
-                browserVersion: "Chrome/151.0")
+                browserURL: "http://127.0.0.1:9222/",
+                webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-concurrency",
+                devToolsBrowserID: "browser-concurrency",
+                browserVersion: "Chrome/151.0",
+                protocolVersion: "1.3")
             let statusResponse = PeekabooBridgeResponse.browserStatus(.init(
                 isConnected: true,
                 toolCount: 1,

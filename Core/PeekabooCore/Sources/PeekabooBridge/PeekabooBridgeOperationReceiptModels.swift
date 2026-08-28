@@ -31,6 +31,40 @@ public struct PeekabooBridgeAttestedOperationRequest: Codable, Sendable {
         self.request = request
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case requestID
+        case sessionID
+        case sessionSequence
+        case expectedListenerInstanceID
+        case clientInstanceID
+        case client
+        case request
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.requestID = try container.decode(UUID.self, forKey: .requestID)
+        self.sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        self.sessionSequence = try container.decode(
+            PeekabooBridgeOperationSessionSequence.self,
+            forKey: .sessionSequence)
+        self.expectedListenerInstanceID = try container.decode(UUID.self, forKey: .expectedListenerInstanceID)
+        self.clientInstanceID = try container.decode(UUID.self, forKey: .clientInstanceID)
+        self.client = try container.decode(PeekabooBridgeOperationProcessIdentity.self, forKey: .client)
+        self.request = try container.decode(PeekabooBridgeRequestCodingBox.self, forKey: .request).value
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.requestID, forKey: .requestID)
+        try container.encode(self.sessionID, forKey: .sessionID)
+        try container.encode(self.sessionSequence, forKey: .sessionSequence)
+        try container.encode(self.expectedListenerInstanceID, forKey: .expectedListenerInstanceID)
+        try container.encode(self.clientInstanceID, forKey: .clientInstanceID)
+        try container.encode(self.client, forKey: .client)
+        try container.encode(PeekabooBridgeRequestCodingBox(self.request), forKey: .request)
+    }
+
     func validateEnvelope() throws {
         guard self.requestID == PeekabooBridgeOperationReceiptCoding.deterministicRequestID(
             sessionID: self.sessionID,

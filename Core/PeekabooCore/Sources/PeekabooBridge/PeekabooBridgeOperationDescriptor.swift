@@ -106,6 +106,16 @@ extension PeekabooBridgeOperationResultSemantics {
                 targetPolicy: .external,
                 responseFamilies: [.browserToolResponse],
                 responseTargetEvidence: .browserConnection)
+        case .browserSessionBootstrap:
+            descriptor(
+                completion: .readOnly,
+                targetPolicy: .notApplicable,
+                responseFamilies: [.browserSessionBootstrap])
+        case .browserSessionControl:
+            descriptor(
+                completion: .readOnly,
+                targetPolicy: .notApplicable,
+                responseFamilies: [.ok])
         case .captureScreen, .captureFrontmost, .captureArea:
             descriptor(
                 read: .globalExclusive,

@@ -74,6 +74,27 @@ extension PeekabooBridgeServer {
         var advertisedOps = compatibleOperations.advertised.sorted { $0.rawValue < $1.rawValue }
         var enabledOps = compatibleOperations.enabled
         let clientCapabilities = Set(payload.clientCapabilities ?? [])
+        let browserHandoffOperations: Set<PeekabooBridgeOperation> = [
+            .browserStatus,
+            .browserConnect,
+            .browserExecute,
+            .browserSessionBootstrap,
+            .browserSessionControl,
+        ]
+        let supportsBrowserConnectionHandoff =
+            supportsAttestedOperationReceipts &&
+            negotiated >= PeekabooBridgeConstants.browserConnectionHandoffVersion &&
+            clientCapabilities.contains(PeekabooBridgeClientCapability.browserConnectionHandoff) &&
+            self.hostCapabilities.contains(PeekabooBridgeHostCapability.browserConnectionHandoff) &&
+            self.browserSessionBootstrapProvider?.supportsBrowserSessionBootstrap == true &&
+            browserHandoffOperations.isSubset(of: Set(advertisedOps)) &&
+            browserHandoffOperations.isSubset(of: enabledOps) &&
+            (peer?.isApprovedBrowserHandoffCaller() ?? false)
+        if !supportsBrowserConnectionHandoff {
+            advertisedOps.removeAll { $0 == .browserSessionBootstrap || $0 == .browserSessionControl }
+            enabledOps.remove(.browserSessionBootstrap)
+            enabledOps.remove(.browserSessionControl)
+        }
         if !clientCapabilities.contains(PeekabooBridgeClientCapability.producerBoundSnapshotReferences) {
             advertisedOps.removeAll { $0 == .ownsSnapshot }
             enabledOps.remove(.ownsSnapshot)
@@ -145,6 +166,9 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
+        if !supportsBrowserConnectionHandoff {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.browserConnectionHandoff)
+        }
         let browserOperations: Set<PeekabooBridgeOperation> = [
             .browserStatus,
             .browserConnect,
@@ -283,6 +307,8 @@ extension PeekabooBridgeServer {
                             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle),
                         nativeBrowserConnectionBinding: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.nativeBrowserConnectionBinding),
+                        browserConnectionHandoff: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.browserConnectionHandoff),
                         producerBoundSnapshotReferences: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.producerBoundSnapshotReferences),
                         targetedClickAccessibilityValueDelivery: advertisedCapabilities.contains(
