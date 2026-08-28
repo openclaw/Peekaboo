@@ -173,7 +173,7 @@ struct BrowserHandoffCLITests {
         let fixture = try await Self.canonicalHandoffData()
         let directory = try Self.privateDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let store = BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
+        let store = try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
 
         try store.validateCanSave()
         try store.save(fixture)
@@ -191,6 +191,138 @@ struct BrowserHandoffCLITests {
 
     @Test
     @MainActor
+    func `store rejects intermediate symlinks and parent chain substitution after preflight`() async throws {
+        let fixture = try await Self.canonicalHandoffData()
+
+        do {
+            let container = try Self.privateDirectory()
+            defer { try? FileManager.default.removeItem(at: container) }
+            let realParent = container.appendingPathComponent("real", isDirectory: true)
+            try Self.createPrivateDirectory(at: realParent)
+            let linkedParent = container.appendingPathComponent("linked", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: linkedParent, withDestinationURL: realParent)
+            let store = try BrowserHandoffReceiptStore(
+                fileURL: linkedParent.appendingPathComponent("handoff.json")
+            )
+
+            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
+        }
+
+        do {
+            let container = try Self.privateDirectory()
+            defer { try? FileManager.default.removeItem(at: container) }
+            let parent = container.appendingPathComponent("parent", isDirectory: true)
+            let displaced = container.appendingPathComponent("displaced", isDirectory: true)
+            try Self.createPrivateDirectory(at: parent)
+            let store = try BrowserHandoffReceiptStore(fileURL: parent.appendingPathComponent("handoff.json"))
+            try store.validateCanSave()
+
+            try FileManager.default.moveItem(at: parent, to: displaced)
+            try Self.createPrivateDirectory(at: parent)
+
+            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.save(fixture) }
+            #expect(!FileManager.default.fileExists(atPath: parent.appendingPathComponent("handoff.json").path))
+            #expect(!FileManager.default.fileExists(atPath: displaced.appendingPathComponent("handoff.json").path))
+        }
+
+        do {
+            let container = try Self.privateDirectory()
+            defer { try? FileManager.default.removeItem(at: container) }
+            let ancestor = container.appendingPathComponent("ancestor", isDirectory: true)
+            let parent = ancestor.appendingPathComponent("parent", isDirectory: true)
+            let displaced = container.appendingPathComponent("displaced", isDirectory: true)
+            try Self.createPrivateDirectory(at: ancestor)
+            try Self.createPrivateDirectory(at: parent)
+            let store = try BrowserHandoffReceiptStore(fileURL: parent.appendingPathComponent("handoff.json"))
+            try store.validateCanSave()
+
+            try FileManager.default.moveItem(at: ancestor, to: displaced)
+            try Self.createPrivateDirectory(at: ancestor)
+            try Self.createPrivateDirectory(at: parent)
+
+            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.save(fixture) }
+            #expect(!FileManager.default.fileExists(atPath: parent.appendingPathComponent("handoff.json").path))
+            let oldReceipt = displaced.appendingPathComponent("parent/handoff.json")
+            #expect(!FileManager.default.fileExists(atPath: oldReceipt.path))
+        }
+    }
+
+    @Test
+    @MainActor
+    func `browser command retains its validated parent binding until publication`() throws {
+        let container = try Self.privateDirectory()
+        defer { try? FileManager.default.removeItem(at: container) }
+        let parent = container.appendingPathComponent("parent", isDirectory: true)
+        let displaced = container.appendingPathComponent("displaced", isDirectory: true)
+        try Self.createPrivateDirectory(at: parent)
+        let destination = parent.appendingPathComponent("handoff.json")
+        let command = try Self.browserCommand(
+            action: "connect",
+            handoffValues: [destination.path],
+            socketValues: ["/private/tmp/peekaboo-handoff.sock"],
+            flags: ["foreground"]
+        )
+        try command.validateBeforeRuntime()
+
+        try FileManager.default.moveItem(at: parent, to: displaced)
+        try Self.createPrivateDirectory(at: parent)
+
+        #expect(throws: BrowserHandoffReceiptStoreError.self) {
+            try command.validateBeforeRuntime()
+        }
+    }
+
+    @Test
+    @MainActor
+    func `store preserves final substitution and removes publication after ancestor swap`() async throws {
+        let fixture = try await Self.canonicalHandoffData()
+
+        do {
+            let directory = try Self.privateDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let destination = directory.appendingPathComponent("handoff.json")
+            let store = try BrowserHandoffReceiptStore(fileURL: destination)
+            let blocker = Data("existing destination".utf8)
+
+            #expect(throws: BrowserHandoffReceiptStoreError.alreadyExists) {
+                try store.save(fixture) {
+                    try blocker.write(to: destination)
+                }
+            }
+            #expect(try Data(contentsOf: destination) == blocker)
+            let temporaryNames = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .filter { $0.hasPrefix(".pbh-") }
+            #expect(temporaryNames.isEmpty)
+        }
+
+        do {
+            let container = try Self.privateDirectory()
+            defer { try? FileManager.default.removeItem(at: container) }
+            let ancestor = container.appendingPathComponent("ancestor", isDirectory: true)
+            let parent = ancestor.appendingPathComponent("parent", isDirectory: true)
+            let displaced = container.appendingPathComponent("displaced", isDirectory: true)
+            try Self.createPrivateDirectory(at: ancestor)
+            try Self.createPrivateDirectory(at: parent)
+            let destination = parent.appendingPathComponent("handoff.json")
+            let store = try BrowserHandoffReceiptStore(fileURL: destination)
+            try store.validateCanSave()
+
+            #expect(throws: BrowserHandoffReceiptStoreError.self) {
+                try store.save(fixture, afterPublication: {
+                    try FileManager.default.moveItem(at: ancestor, to: displaced)
+                    try Self.createPrivateDirectory(at: ancestor)
+                    try Self.createPrivateDirectory(at: parent)
+                })
+            }
+
+            #expect(!FileManager.default.fileExists(atPath: destination.path))
+            let displacedReceipt = displaced.appendingPathComponent("parent/handoff.json")
+            #expect(!FileManager.default.fileExists(atPath: displacedReceipt.path))
+        }
+    }
+
+    @Test
+    @MainActor
     func `store rejects symlinks hardlinks widened modes ACLs and nonprivate parents`() async throws {
         let fixture = try await Self.canonicalHandoffData()
 
@@ -202,7 +334,7 @@ struct BrowserHandoffCLITests {
             try fixture.write(to: target)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
-            let store = BrowserHandoffReceiptStore(fileURL: link)
+            let store = try BrowserHandoffReceiptStore(fileURL: link)
             #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.load() }
             #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
         }
@@ -246,8 +378,28 @@ struct BrowserHandoffCLITests {
         do {
             let directory = try Self.privateDirectory(mode: 0o755)
             defer { try? FileManager.default.removeItem(at: directory) }
-            let store = BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
+            let store = try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
             #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
+        }
+
+        do {
+            let directory = try Self.privateDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try Self.addExtendedAttribute(to: directory)
+            let store = try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
+            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
+        }
+
+        do {
+            let directory = try Self.privateDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let file = directory.appendingPathComponent("handoff.json")
+            try fixture.write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            try Self.addExtendedAttribute(to: file)
+            #expect(throws: BrowserHandoffReceiptStoreError.self) {
+                try BrowserHandoffReceiptStore(fileURL: file).load()
+            }
         }
     }
 
@@ -259,7 +411,7 @@ struct BrowserHandoffCLITests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("handoff.json")
         let displaced = directory.appendingPathComponent("displaced.json")
-        let store = BrowserHandoffReceiptStore(fileURL: file)
+        let store = try BrowserHandoffReceiptStore(fileURL: file)
         try store.save(fixture)
 
         #expect(throws: BrowserHandoffReceiptStoreError.self) {
@@ -288,7 +440,7 @@ struct BrowserHandoffCLITests {
 
         let longNameDirectory = try Self.privateDirectory()
         defer { try? FileManager.default.removeItem(at: longNameDirectory) }
-        let longNameStore = BrowserHandoffReceiptStore(
+        let longNameStore = try BrowserHandoffReceiptStore(
             fileURL: longNameDirectory.appendingPathComponent(String(repeating: "a", count: 255))
         )
         try longNameStore.validateCanSave()
@@ -302,7 +454,7 @@ struct BrowserHandoffCLITests {
         let fixture = try await Self.canonicalHandoffData()
         let directory = try Self.privateDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let store = BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
+        let store = try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
         try store.save(fixture)
         let socket = "/private/tmp/peekaboo-handoff.sock"
         let valid = ParsedValues(
@@ -414,7 +566,7 @@ struct BrowserHandoffCLITests {
         let fixture = try await Self.canonicalHandoffData()
         let directory = try Self.privateDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let store = BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
+        let store = try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
         try store.save(fixture)
         var receivedData: Data?
 
@@ -506,7 +658,8 @@ struct BrowserHandoffCLITests {
     }
 
     private static func privateDirectory(mode: Int = 0o700) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        let baseDirectory = try Self.canonicalExistingDirectory(FileManager.default.temporaryDirectory)
+        let directory = baseDirectory.appendingPathComponent(
             "peekaboo-browser-handoff-\(UUID().uuidString)",
             isDirectory: true
         )
@@ -517,6 +670,39 @@ struct BrowserHandoffCLITests {
         )
         try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: directory.path)
         return directory
+    }
+
+    private static func canonicalExistingDirectory(_ directory: URL) throws -> URL {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard directory.path.withCString({ realpath($0, &buffer) }) != nil else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        guard let path = String(bytes: bytes, encoding: .utf8) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    private static func createPrivateDirectory(at directory: URL) throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+
+    private static func addExtendedAttribute(to url: URL) throws {
+        let value = Data("test".utf8)
+        let result = value.withUnsafeBytes { bytes in
+            url.path.withCString { path in
+                "dev.peekaboo.browser-handoff-test".withCString { name in
+                    setxattr(path, name, bytes.baseAddress, bytes.count, 0, 0)
+                }
+            }
+        }
+        guard result == 0 else { throw CocoaError(.fileWriteUnknown) }
     }
 
     private static func addReadableACL(to url: URL) throws {

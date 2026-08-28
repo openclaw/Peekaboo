@@ -77,6 +77,7 @@ InjectedRuntimeBackedCommand {
     var mcpTool: String?
     var mcpArgsJson: String?
     var handoffFile: String?
+    private let handoffReceiptStoreCache = BrowserHandoffReceiptStoreCache()
 
     var runtimeOptions: CommandRuntimeOptions = {
         var options = CommandRuntimeOptions()
@@ -301,7 +302,7 @@ InjectedRuntimeBackedCommand {
 
     private func handoffReceiptStore() throws -> BrowserHandoffReceiptStore? {
         guard let handoffFile = self.handoffFile else { return nil }
-        return try BrowserHandoffReceiptStore(resolvingAbsolutePath: handoffFile)
+        return try self.handoffReceiptStoreCache.store(resolvingAbsolutePath: handoffFile)
     }
 
     private func validatedExplicitBridgeSocket() throws -> String {

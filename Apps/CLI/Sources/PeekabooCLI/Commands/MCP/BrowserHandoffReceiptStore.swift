@@ -8,122 +8,168 @@ import PeekabooFoundation
 ///
 /// The file is deliberately treated as private capability material: callers cannot overwrite it, follow a
 /// symbolic link, accept a widened ACL, or decode bytes that changed while they were being read.
-struct BrowserHandoffReceiptStore: Sendable {
+final class BrowserHandoffReceiptStore: @unchecked Sendable {
     static let maximumReceiptBytes: off_t = 256 * 1024
 
     let fileURL: URL
+    private let directoryBinding: BrowserHandoffReceiptDirectoryBinding
 
-    init(fileURL: URL) {
-        self.fileURL = fileURL
+    convenience init(fileURL: URL) throws {
+        try self.init(resolvingAbsolutePath: fileURL.path)
     }
 
     init(resolvingAbsolutePath path: String) throws {
-        guard !path.isEmpty, !path.utf8.contains(0), path.hasPrefix("/") else {
-            throw BrowserHandoffReceiptStoreError.unsafePath("path must be absolute and nonempty")
-        }
-        let resolved = URL(fileURLWithPath: path, isDirectory: false).standardizedFileURL
-        guard resolved.path == path,
-              !resolved.lastPathComponent.isEmpty,
-              resolved.lastPathComponent != ".",
-              resolved.lastPathComponent != ".."
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !path.isEmpty,
+              !path.utf8.contains(0),
+              path.hasPrefix("/"),
+              !path.hasSuffix("/"),
+              components.count >= 2,
+              components.first?.isEmpty == true,
+              components.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
         else {
-            throw BrowserHandoffReceiptStoreError.unsafePath("path must already be in standardized absolute form")
+            throw BrowserHandoffReceiptStoreError.unsafePath(
+                "path must be absolute, nonempty, and already in standardized component form"
+            )
         }
+        let resolved = URL(fileURLWithPath: path, isDirectory: false)
         self.fileURL = resolved
+        self.directoryBinding = BrowserHandoffReceiptDirectoryBinding(
+            directoryPath: resolved.deletingLastPathComponent().path
+        )
     }
 
     /// Proves before runtime construction that the private parent exists and the destination is unused.
     func validateCanSave() throws {
-        let directory = try self.openPrivateDirectory()
-        defer { Darwin.close(directory) }
-        try self.requireDestinationAbsent(in: directory)
+        try self.directoryBinding.withVerifiedDescriptor { directory, revalidate in
+            try self.requireDestinationAbsent(in: directory)
+            try revalidate()
+        }
     }
 
-    func save(_ canonicalReceipt: Data) throws {
+    func save(
+        _ canonicalReceipt: Data,
+        beforePublication: () throws -> Void = {},
+        afterPublication: () throws -> Void = {}
+    ) throws {
         _ = try Self.validateCanonicalReceipt(canonicalReceipt)
-        let directory = try self.openPrivateDirectory()
-        defer { Darwin.close(directory) }
-        try self.requireDestinationAbsent(in: directory)
+        try self.directoryBinding.withVerifiedDescriptor { directory, revalidate in
+            try self.requireDestinationAbsent(in: directory)
 
-        let destinationName = self.fileURL.lastPathComponent
-        let temporaryName = ".pbh-\(UUID().uuidString.lowercased()).tmp"
-        let descriptor = temporaryName.withCString { name in
-            openat(
-                directory,
-                name,
-                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-                S_IRUSR | S_IWUSR
+            let destinationName = self.fileURL.lastPathComponent
+            let temporaryName = ".pbh-\(UUID().uuidString.lowercased()).tmp"
+            let descriptor = temporaryName.withCString { name in
+                openat(
+                    directory,
+                    name,
+                    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                    S_IRUSR | S_IWUSR
+                )
+            }
+            guard descriptor >= 0 else {
+                throw BrowserHandoffReceiptStoreError.writeFailed("temporary file could not be created")
+            }
+            var temporaryStillExists = true
+            var publishedIdentity: BrowserHandoffReceiptFileIdentity?
+            var publicationCommitted = false
+            defer {
+                Darwin.close(descriptor)
+                if temporaryStillExists {
+                    _ = temporaryName.withCString { unlinkat(directory, $0, 0) }
+                }
+                if !publicationCommitted, let publishedIdentity {
+                    Self.unlinkNamedFile(
+                        destinationName,
+                        ifIdentityMatches: publishedIdentity,
+                        in: directory
+                    )
+                    _ = fsync(directory)
+                }
+            }
+
+            guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+                throw BrowserHandoffReceiptStoreError.writeFailed(
+                    "temporary file permissions could not be restricted"
+                )
+            }
+            _ = try Self.validatedFileMetadata(descriptor, expectedSize: 0)
+            try Self.writeExactly(canonicalReceipt, to: descriptor)
+            guard fsync(descriptor) == 0 else {
+                throw BrowserHandoffReceiptStoreError.writeFailed("temporary file could not be synchronized")
+            }
+            let writtenInfo = try Self.validatedFileMetadata(
+                descriptor,
+                expectedSize: off_t(canonicalReceipt.count)
             )
-        }
-        guard descriptor >= 0 else {
-            throw BrowserHandoffReceiptStoreError.writeFailed("temporary file could not be created")
-        }
-        var temporaryStillExists = true
-        defer {
-            Darwin.close(descriptor)
-            if temporaryStillExists {
-                _ = temporaryName.withCString { unlinkat(directory, $0, 0) }
-            }
-        }
+            try beforePublication()
+            try Self.requireNamedFile(
+                temporaryName,
+                matches: BrowserHandoffReceiptFileIdentity(writtenInfo),
+                in: directory
+            )
 
-        guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
-            throw BrowserHandoffReceiptStoreError.writeFailed("temporary file permissions could not be restricted")
-        }
-        _ = try Self.validatedFileMetadata(descriptor, expectedSize: 0)
-        try Self.writeExactly(canonicalReceipt, to: descriptor)
-        guard fsync(descriptor) == 0 else {
-            throw BrowserHandoffReceiptStoreError.writeFailed("temporary file could not be synchronized")
-        }
-        _ = try Self.validatedFileMetadata(descriptor, expectedSize: off_t(canonicalReceipt.count))
-
-        let renameResult = temporaryName.withCString { source in
-            destinationName.withCString { destination in
-                renameatx_np(directory, source, directory, destination, UInt32(RENAME_EXCL))
+            let renameResult = temporaryName.withCString { source in
+                destinationName.withCString { destination in
+                    renameatx_np(directory, source, directory, destination, UInt32(RENAME_EXCL))
+                }
             }
-        }
-        guard renameResult == 0 else {
-            if errno == EEXIST {
-                throw BrowserHandoffReceiptStoreError.alreadyExists
+            guard renameResult == 0 else {
+                if errno == EEXIST {
+                    throw BrowserHandoffReceiptStoreError.alreadyExists
+                }
+                throw BrowserHandoffReceiptStoreError.writeFailed("file could not be published atomically")
             }
-            throw BrowserHandoffReceiptStoreError.writeFailed("file could not be published atomically")
+            temporaryStillExists = false
+            publishedIdentity = BrowserHandoffReceiptFileIdentity(writtenInfo)
+            try afterPublication()
+            _ = try Self.validatedFileMetadata(
+                descriptor,
+                expectedSize: off_t(canonicalReceipt.count)
+            )
+            try revalidate()
+            try Self.requireNamedFile(
+                destinationName,
+                matches: BrowserHandoffReceiptFileIdentity(writtenInfo),
+                in: directory
+            )
+            _ = fsync(directory)
+            publicationCommitted = true
         }
-        temporaryStillExists = false
-        _ = fsync(directory)
     }
 
     func load(afterValidation: () throws -> Void = {}) throws -> Data {
-        let directory = try self.openPrivateDirectory()
-        defer { Darwin.close(directory) }
-        let descriptor = self.fileURL.lastPathComponent.withCString { name in
-            openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
-        }
-        guard descriptor >= 0 else {
-            let reason = switch errno {
-            case ENOENT: "file does not exist"
-            case ELOOP: "symbolic links are not accepted"
-            default: "file cannot be opened securely"
+        try self.directoryBinding.withVerifiedDescriptor { directory, revalidate in
+            let descriptor = self.fileURL.lastPathComponent.withCString { name in
+                openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
             }
-            throw BrowserHandoffReceiptStoreError.unsafePath(reason)
-        }
-        defer { Darwin.close(descriptor) }
+            guard descriptor >= 0 else {
+                let reason = switch errno {
+                case ENOENT: "file does not exist"
+                case ELOOP: "symbolic links are not accepted"
+                default: "file cannot be opened securely"
+                }
+                throw BrowserHandoffReceiptStoreError.unsafePath(reason)
+            }
+            defer { Darwin.close(descriptor) }
 
-        let before = try Self.validatedFileMetadata(descriptor)
-        try afterValidation()
-        let data = try Self.readExactly(descriptor, expectedSize: Int(before.st_size))
-        var after = stat()
-        var pathAfter = stat()
-        let pathStillNamesOpenedFile = self.fileURL.lastPathComponent.withCString { name in
-            fstatat(directory, name, &pathAfter, AT_SYMLINK_NOFOLLOW) == 0 && Self.sameFile(before, pathAfter)
+            let before = try Self.validatedFileMetadata(descriptor)
+            try afterValidation()
+            let data = try Self.readExactly(descriptor, expectedSize: Int(before.st_size))
+            var pathAfter = stat()
+            let pathStillNamesOpenedFile = self.fileURL.lastPathComponent.withCString { name in
+                fstatat(directory, name, &pathAfter, AT_SYMLINK_NOFOLLOW) == 0 && Self.sameFile(before, pathAfter)
+            }
+            let after = try Self.validatedFileMetadata(descriptor, expectedSize: before.st_size)
+            guard Self.sameFile(before, after),
+                  pathStillNamesOpenedFile,
+                  Int64(data.count) == before.st_size
+            else {
+                throw BrowserHandoffReceiptStoreError.unsafePath("file changed while it was being read")
+            }
+            try revalidate()
+            _ = try Self.validateCanonicalReceipt(data)
+            return data
         }
-        guard fstat(descriptor, &after) == 0,
-              Self.sameFile(before, after),
-              pathStillNamesOpenedFile,
-              Int64(data.count) == before.st_size
-        else {
-            throw BrowserHandoffReceiptStoreError.unsafePath("file changed while it was being read")
-        }
-        _ = try Self.validateCanonicalReceipt(data)
-        return data
     }
 
     @discardableResult
@@ -186,52 +232,27 @@ struct BrowserHandoffReceiptStore: Sendable {
         return bundle
     }
 
-    private func openPrivateDirectory() throws -> Int32 {
-        let directoryURL = self.fileURL.deletingLastPathComponent().standardizedFileURL
-        let descriptor = directoryURL.path.withCString {
-            Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
-        }
-        guard descriptor >= 0 else {
-            throw BrowserHandoffReceiptStoreError.unsafePath("private parent directory cannot be opened securely")
-        }
-        var info = stat()
-        guard fstat(descriptor, &info) == 0,
-              info.st_mode & S_IFMT == S_IFDIR,
-              info.st_uid == geteuid(),
-              info.st_mode & 0o777 == 0o700
-        else {
-            Darwin.close(descriptor)
-            throw BrowserHandoffReceiptStoreError.unsafePath(
-                "parent directory must be owned by the current user with mode 0700"
-            )
-        }
-        do {
-            try Self.requireNoExtendedACL(descriptor)
-        } catch {
-            Darwin.close(descriptor)
-            throw error
-        }
-        return descriptor
-    }
-
     private func requireDestinationAbsent(in directory: Int32) throws {
-        let descriptor = self.fileURL.lastPathComponent.withCString { name in
-            openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
-        }
-        if descriptor < 0 {
-            guard errno == ENOENT else {
-                throw BrowserHandoffReceiptStoreError.unsafePath(
-                    errno == ELOOP ? "symbolic links are not accepted" : "destination cannot be inspected securely"
-                )
+        while true {
+            var info = stat()
+            let result = self.fileURL.lastPathComponent.withCString { name in
+                fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW)
+            }
+            if result == 0 {
+                throw BrowserHandoffReceiptStoreError.alreadyExists
+            }
+            let failure = errno
+            if failure == EINTR {
+                continue
+            }
+            guard failure == ENOENT else {
+                throw BrowserHandoffReceiptStoreError.unsafePath("destination cannot be inspected securely")
             }
             return
         }
-        defer { Darwin.close(descriptor) }
-        _ = try Self.validatedFileMetadata(descriptor)
-        throw BrowserHandoffReceiptStoreError.alreadyExists
     }
 
-    private static func validatedFileMetadata(_ descriptor: Int32, expectedSize: off_t? = nil) throws -> stat {
+    fileprivate static func validatedFileMetadata(_ descriptor: Int32, expectedSize: off_t? = nil) throws -> stat {
         var info = stat()
         guard fstat(descriptor, &info) == 0,
               info.st_mode & S_IFMT == S_IFREG,
@@ -247,10 +268,15 @@ struct BrowserHandoffReceiptStore: Sendable {
             )
         }
         try self.requireNoExtendedACL(descriptor)
-        return info
+        try self.requireNoExtendedAttributes(descriptor)
+        var after = stat()
+        guard fstat(descriptor, &after) == 0, self.sameFile(info, after) else {
+            throw BrowserHandoffReceiptStoreError.unsafePath("file metadata changed during validation")
+        }
+        return after
     }
 
-    private static func requireNoExtendedACL(_ descriptor: Int32) throws {
+    fileprivate static func requireNoExtendedACL(_ descriptor: Int32) throws {
         errno = 0
         guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
             if errno == ENOENT {
@@ -260,6 +286,23 @@ struct BrowserHandoffReceiptStore: Sendable {
         }
         acl_free(UnsafeMutableRawPointer(acl))
         throw BrowserHandoffReceiptStoreError.unsafePath("extended access-control entries are not accepted")
+    }
+
+    fileprivate static func requireNoExtendedAttributes(_ descriptor: Int32) throws {
+        while true {
+            errno = 0
+            let count = flistxattr(descriptor, nil, 0, XATTR_SHOWCOMPRESSION)
+            if count == 0 {
+                return
+            }
+            if count == -1, errno == EINTR {
+                continue
+            }
+            if count > 0 {
+                throw BrowserHandoffReceiptStoreError.unsafePath("extended attributes are not accepted")
+            }
+            throw BrowserHandoffReceiptStoreError.unsafePath("extended attributes could not be inspected")
+        }
     }
 
     private static func readExactly(_ descriptor: Int32, expectedSize: Int) throws -> Data {
@@ -319,6 +362,223 @@ struct BrowserHandoffReceiptStore: Sendable {
             lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec &&
             lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec &&
             lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec
+    }
+
+    private static func requireNamedFile(
+        _ name: String,
+        matches identity: BrowserHandoffReceiptFileIdentity,
+        in directory: Int32
+    ) throws {
+        var info = stat()
+        let matches = name.withCString {
+            fstatat(directory, $0, &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+                BrowserHandoffReceiptFileIdentity(info) == identity
+        }
+        guard matches else {
+            throw BrowserHandoffReceiptStoreError.unsafePath("published file identity changed")
+        }
+    }
+
+    private static func unlinkNamedFile(
+        _ name: String,
+        ifIdentityMatches identity: BrowserHandoffReceiptFileIdentity,
+        in directory: Int32
+    ) {
+        var info = stat()
+        let matches = name.withCString {
+            fstatat(directory, $0, &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+                BrowserHandoffReceiptFileIdentity(info) == identity
+        }
+        guard matches else { return }
+        _ = name.withCString { unlinkat(directory, $0, 0) }
+    }
+}
+
+private struct BrowserHandoffReceiptFileIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+
+    init(_ info: stat) {
+        self.device = info.st_dev
+        self.inode = info.st_ino
+    }
+}
+
+private final class BrowserHandoffReceiptDirectoryBinding: @unchecked Sendable {
+    private struct Identity: Equatable {
+        let device: dev_t
+        let inode: ino_t
+    }
+
+    private struct OpenedPath {
+        let descriptor: Int32
+        let identities: [Identity]
+    }
+
+    private let directoryPath: String
+    private let lock = NSLock()
+    private var descriptor: Int32?
+    private var identities: [Identity]?
+
+    init(directoryPath: String) {
+        self.directoryPath = directoryPath
+    }
+
+    deinit {
+        if let descriptor {
+            Darwin.close(descriptor)
+        }
+    }
+
+    func withVerifiedDescriptor<T>(
+        _ operation: (Int32, () throws -> Void) throws -> T
+    ) throws -> T {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        let descriptor = try self.boundDescriptorLocked()
+        try self.revalidateLocked(descriptor: descriptor)
+        return try operation(descriptor) {
+            try self.revalidateLocked(descriptor: descriptor)
+        }
+    }
+
+    private func boundDescriptorLocked() throws -> Int32 {
+        if let descriptor {
+            try self.validatePrivateDirectory(descriptor)
+            return descriptor
+        }
+        let opened = try Self.openDirectoryPath(self.directoryPath)
+        do {
+            try self.validatePrivateDirectory(opened.descriptor)
+        } catch {
+            Darwin.close(opened.descriptor)
+            throw error
+        }
+        self.descriptor = opened.descriptor
+        self.identities = opened.identities
+        return opened.descriptor
+    }
+
+    private func revalidateLocked(descriptor: Int32) throws {
+        try self.validatePrivateDirectory(descriptor)
+        guard let identities else {
+            throw BrowserHandoffReceiptStoreError.unsafePath("parent directory identity is unavailable")
+        }
+        let current = try Self.openDirectoryPath(self.directoryPath)
+        defer { Darwin.close(current.descriptor) }
+        try self.validatePrivateDirectory(current.descriptor)
+        guard current.identities == identities else {
+            throw BrowserHandoffReceiptStoreError.unsafePath(
+                "parent directory or one of its ancestors changed after validation"
+            )
+        }
+    }
+
+    private func validatePrivateDirectory(_ descriptor: Int32) throws {
+        var before = stat()
+        guard fstat(descriptor, &before) == 0,
+              before.st_mode & S_IFMT == S_IFDIR,
+              before.st_uid == geteuid(),
+              before.st_mode & 0o777 == 0o700,
+              before.st_nlink >= 1
+        else {
+            throw BrowserHandoffReceiptStoreError.unsafePath(
+                "parent directory must be owned by the current user with mode 0700"
+            )
+        }
+        try BrowserHandoffReceiptStore.requireNoExtendedACL(descriptor)
+        try BrowserHandoffReceiptStore.requireNoExtendedAttributes(descriptor)
+        var after = stat()
+        guard fstat(descriptor, &after) == 0,
+              Self.sameDirectoryMetadata(before, after)
+        else {
+            throw BrowserHandoffReceiptStoreError.unsafePath(
+                "parent directory metadata changed during validation"
+            )
+        }
+    }
+
+    private static func openDirectoryPath(_ path: String) throws -> OpenedPath {
+        guard path.hasPrefix("/"), !path.utf8.contains(0) else {
+            throw BrowserHandoffReceiptStoreError.unsafePath("parent directory path must be absolute")
+        }
+        let flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK
+        var descriptor = Darwin.open("/", flags)
+        guard descriptor >= 0 else {
+            throw BrowserHandoffReceiptStoreError.unsafePath("filesystem root cannot be opened securely")
+        }
+        var identities: [Identity] = []
+        guard let rootIdentity = self.directoryIdentity(descriptor) else {
+            Darwin.close(descriptor)
+            throw BrowserHandoffReceiptStoreError.unsafePath("filesystem root identity is unavailable")
+        }
+        identities.append(rootIdentity)
+
+        for substring in path.split(separator: "/", omittingEmptySubsequences: true) {
+            let component = String(substring)
+            guard component != ".", component != "..", !component.utf8.contains(0) else {
+                Darwin.close(descriptor)
+                throw BrowserHandoffReceiptStoreError.unsafePath("parent path contains an unsafe component")
+            }
+            let next = component.withCString { openat(descriptor, $0, flags) }
+            guard next >= 0 else {
+                Darwin.close(descriptor)
+                throw BrowserHandoffReceiptStoreError.unsafePath(
+                    "parent path components must be existing non-symbolic-link directories"
+                )
+            }
+            guard let identity = self.directoryIdentity(next) else {
+                Darwin.close(next)
+                Darwin.close(descriptor)
+                throw BrowserHandoffReceiptStoreError.unsafePath(
+                    "parent path component identity is unavailable"
+                )
+            }
+            Darwin.close(descriptor)
+            descriptor = next
+            identities.append(identity)
+        }
+        return OpenedPath(descriptor: descriptor, identities: identities)
+    }
+
+    private static func directoryIdentity(_ descriptor: Int32) -> Identity? {
+        var info = stat()
+        guard fstat(descriptor, &info) == 0,
+              info.st_mode & S_IFMT == S_IFDIR,
+              info.st_nlink >= 1
+        else { return nil }
+        return Identity(device: info.st_dev, inode: info.st_ino)
+    }
+
+    private static func sameDirectoryMetadata(_ lhs: stat, _ rhs: stat) -> Bool {
+        lhs.st_dev == rhs.st_dev &&
+            lhs.st_ino == rhs.st_ino &&
+            lhs.st_uid == rhs.st_uid &&
+            lhs.st_mode == rhs.st_mode &&
+            lhs.st_nlink == rhs.st_nlink &&
+            lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec &&
+            lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec
+    }
+}
+
+final class BrowserHandoffReceiptStoreCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cachedStore: BrowserHandoffReceiptStore?
+
+    func store(resolvingAbsolutePath path: String) throws -> BrowserHandoffReceiptStore {
+        let candidate = try BrowserHandoffReceiptStore(resolvingAbsolutePath: path)
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        if let cachedStore = self.cachedStore {
+            guard cachedStore.fileURL == candidate.fileURL else {
+                throw BrowserHandoffReceiptStoreError.unsafePath(
+                    "handoff destination changed after command validation"
+                )
+            }
+            return cachedStore
+        }
+        self.cachedStore = candidate
+        return candidate
     }
 }
 
