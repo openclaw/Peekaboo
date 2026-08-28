@@ -499,7 +499,7 @@ struct BrowserMCPSessionManagerTests {
                 handoff: BrowserMCPHandoffGrant(payload: Data("unsupported".utf8)))
         }
 
-        #expect(pool.count == 0)
+        #expect(pool.isEmpty)
         #expect(pool.pendingCleanupCount == 0)
     }
 
