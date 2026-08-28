@@ -25,7 +25,7 @@ extension MCPToolContext {
             return self.replacingBrowser(with: scoped)
         }
         guard let opening = self.browser as? any BrowserMCPScopedSessionOpening else {
-            guard handoff == nil else {
+            guard self.executionHost == .local, handoff == nil else {
                 throw BrowserMCPConnectionError.receiptBindingUnsupported
             }
             return self
