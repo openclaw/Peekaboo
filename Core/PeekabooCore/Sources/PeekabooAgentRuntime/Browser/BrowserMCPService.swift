@@ -282,7 +282,8 @@ public protocol BrowserMCPDisconnectResultProviding: BrowserMCPClientProviding {
 /// A remote, receipt-aware provider that can request one authenticated cross-process browser handoff.
 /// Complete receipt bytes remain process-private and are never projected into an MCP tool response.
 @MainActor
-public protocol BrowserMCPConnectionHandoffProviding: BrowserMCPConnectionResultProviding {
+public protocol BrowserMCPConnectionHandoffProviding: BrowserMCPConnectionResultProviding,
+BrowserMCPDisconnectResultProviding {
     func connectWithHandoffOutcome(
         channel: BrowserMCPChannel?,
         browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>

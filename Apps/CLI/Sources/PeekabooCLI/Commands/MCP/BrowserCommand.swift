@@ -153,12 +153,18 @@ InjectedRuntimeBackedCommand {
                     throw BrowserHandoffCommandError.providerUnavailable
                 }
                 guard let receiptData = provider.takeConnectionHandoffReceiptBundleData() else {
-                    throw BrowserHandoffCommandError.missingReceipt
+                    throw await self.handoffPublicationFailure(
+                        cause: "the provider returned no authenticated receipt",
+                        provider: provider
+                    )
                 }
                 do {
                     try store.save(receiptData)
                 } catch {
-                    throw BrowserHandoffCommandError.persistenceFailed(error.localizedDescription)
+                    throw await self.handoffPublicationFailure(
+                        cause: "the receipt could not be published: \(error.localizedDescription)",
+                        provider: provider
+                    )
                 }
             }
             try MCPToolCommandOutput.output(
@@ -172,6 +178,24 @@ InjectedRuntimeBackedCommand {
         } catch {
             self.handleError(error)
             throw ExitCode(1)
+        }
+    }
+
+    private func handoffPublicationFailure(
+        cause: String,
+        provider: any BrowserMCPConnectionHandoffProviding
+    ) async -> BrowserHandoffCommandError {
+        do {
+            let status = try await provider.disconnectWithResult()
+            guard status.observation == .confirmed, !status.isConnected else {
+                return .publicationFailed(
+                    cause: cause,
+                    rollbackFailure: "the provider did not confirm that the browser connection ended"
+                )
+            }
+            return .publicationFailed(cause: cause, rollbackFailure: nil)
+        } catch {
+            return .publicationFailed(cause: cause, rollbackFailure: error.localizedDescription)
         }
     }
 
@@ -523,17 +547,17 @@ extension BrowserCommand: CommanderBindableCommand {
 
 private enum BrowserHandoffCommandError: LocalizedError, ResultEnvelopeError {
     case providerUnavailable
-    case missingReceipt
-    case persistenceFailed(String)
+    case publicationFailed(cause: String, rollbackFailure: String?)
 
     nonisolated var errorDescription: String? {
         switch self {
         case .providerUnavailable:
             "The selected browser provider cannot produce authenticated handoff receipts."
-        case .missingReceipt:
-            "Browser connected without returning its authenticated handoff receipt."
-        case let .persistenceFailed(cause):
-            "Browser connected, but its handoff receipt could not be published: \(cause)"
+        case let .publicationFailed(cause, nil):
+            "Browser handoff failed: \(cause) The new browser connection was disconnected cleanly."
+        case let .publicationFailed(cause, rollbackFailure?):
+            "Browser handoff failed: \(cause) Connection rollback could not be confirmed: " +
+                rollbackFailure
         }
     }
 
@@ -546,7 +570,10 @@ private enum BrowserHandoffCommandError: LocalizedError, ResultEnvelopeError {
     }
 
     nonisolated var envelopeRetrySafe: Bool? {
-        false
+        if case .publicationFailed(_, nil) = self {
+            return true
+        }
+        return false
     }
 
     nonisolated var envelopeMutationDispatched: Bool? {
@@ -554,6 +581,9 @@ private enum BrowserHandoffCommandError: LocalizedError, ResultEnvelopeError {
     }
 
     nonisolated var envelopeHint: String? {
-        "Do not reconnect automatically. Check browser status and use a fresh owner-private destination."
+        if case .publicationFailed(_, nil) = self {
+            return "Use a fresh owner-private destination and retry the foreground handoff connect."
+        }
+        return "Do not reconnect automatically. Check browser status and use a fresh owner-private destination."
     }
 }

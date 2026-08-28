@@ -153,6 +153,7 @@ public struct BrowserTool: MCPTool {
             DevTools page state and is refused before dispatch.
             """, minimum: 1)
         }
+        Self.addCommandLineSchema(to: &properties, audience: self.instructionAudience)
         return SchemaBuilder.object(
             properties: properties,
             required: ["action"])
@@ -879,6 +880,17 @@ extension BrowserTool: MCPToolArgumentSemanticValidating {
             raw[key] = "0_0"
         }
         return ToolArguments(raw: raw)
+    }
+}
+
+extension BrowserTool {
+    fileprivate static func addCommandLineSchema(
+        to properties: inout [String: Value],
+        audience: BrowserToolInstructionAudience)
+    {
+        guard audience == .commandLine else { return }
+        properties["request_handoff"] = SchemaBuilder.boolean(
+            description: "Internal CLI request for an authenticated Bridge handoff receipt.")
     }
 }
 

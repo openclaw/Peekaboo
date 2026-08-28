@@ -124,7 +124,7 @@ struct BrowserToolConnectOutcomeTests {
         let client = ReadCancellationBrowserClient()
 
         let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
-            arguments: ToolArguments(raw: ["action": "list_pages", "channel": "stable"]))
+            arguments: ToolArguments(raw: ["action": "console", "page_id": 1, "channel": "stable"]))
 
         #expect(response.isError)
         #expect(response.meta == nil)

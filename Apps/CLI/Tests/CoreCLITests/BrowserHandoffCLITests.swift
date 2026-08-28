@@ -174,6 +174,36 @@ struct BrowserHandoffCLITests {
 
     @Test
     @MainActor
+    func `handoff publication failure disconnects the reserved browser target`() async throws {
+        let receipt = try await Self.canonicalHandoffData()
+        let directory = try Self.privateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("handoff.json")
+        let provider = HandoffToolFixtureBrowser(handoffPayload: receipt)
+        var command = try Self.browserCommand(
+            action: "connect",
+            handoffValues: [destination.path],
+            socketValues: ["/private/tmp/peekaboo-handoff.sock"],
+            flags: ["foreground"]
+        )
+        try command.validateBeforeRuntime()
+        try Data("occupied".utf8).write(to: destination)
+        let runtime = CommandRuntime(
+            options: command.runtimeOptions,
+            services: Self.services(browser: provider)
+        )
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: runtime)
+        }
+
+        #expect(provider.handoffConnectCount == 1)
+        #expect(provider.disconnectResultCount == 1)
+        #expect(provider.takeConnectionHandoffReceiptBundleData() == nil)
+    }
+
+    @Test
+    @MainActor
     func `store atomically publishes and stably reloads canonical mode 0600 bytes`() async throws {
         let fixture = try await Self.canonicalHandoffData()
         let directory = try Self.privateDirectory()
@@ -751,14 +781,20 @@ struct BrowserHandoffCLITests {
 private final class HandoffToolFixtureBrowser: BrowserMCPConnectionHandoffProviding,
 BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding, @unchecked Sendable {
     private(set) var handoffConnectCount = 0
+    private(set) var disconnectResultCount = 0
+    private let handoffPayload: Data
     private var handoffData: Data?
     private(set) var openedReceiptData: Data?
     private(set) var sessionCleanupCount = 0
     private weak var cleanupOwner: HandoffToolFixtureBrowser?
     private var sessionEnded = false
 
-    init(cleanupOwner: HandoffToolFixtureBrowser? = nil) {
+    init(
+        cleanupOwner: HandoffToolFixtureBrowser? = nil,
+        handoffPayload: Data = Data("private-handoff-bytes".utf8)
+    ) {
         self.cleanupOwner = cleanupOwner
+        self.handoffPayload = handoffPayload
     }
 
     nonisolated var supportsNativeBrowserConnectionBinding: Bool {
@@ -798,7 +834,7 @@ BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding, @unchecked Sendab
         browserURL _: String?
     ) async throws -> DesktopActionResult<BrowserMCPStatus> {
         self.handoffConnectCount += 1
-        self.handoffData = Data("private-handoff-bytes".utf8)
+        self.handoffData = self.handoffPayload
         return DesktopActionResult(payload: Self.connectedStatus, outcome: .confirmedNoChange())
     }
 
@@ -822,6 +858,12 @@ BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding, @unchecked Sendab
     }
 
     func disconnect() async {}
+
+    func disconnectWithResult() async throws -> BrowserMCPStatus {
+        self.disconnectResultCount += 1
+        self.handoffData = nil
+        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
 
     func execute(
         toolName _: String,
