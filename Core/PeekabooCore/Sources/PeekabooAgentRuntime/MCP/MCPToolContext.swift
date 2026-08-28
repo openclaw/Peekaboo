@@ -35,6 +35,8 @@ public struct MCPToolContext: @unchecked Sendable {
         let rejection: ToolResponse?
     }
 
+    private typealias PendingInvalidationRecovery = @MainActor @Sendable () async throws -> ToolResponse?
+
     public let executionHost: PeekabooServiceExecutionHost
     public let automation: any UIAutomationServiceProtocol
     public let menu: any MenuServiceProtocol
@@ -657,42 +659,68 @@ public struct MCPToolContext: @unchecked Sendable {
 
     @discardableResult
     func releaseSnapshotOwner() async -> Bool {
+        await self.releaseSnapshotOwner(recoveringPendingInvalidations: {
+            try await self.recoverPendingInvalidations(
+                on: self.snapshotExecutionGate,
+                acquireGate: false,
+                blockedToolName: "browser session teardown")
+        })
+    }
+
+    @discardableResult
+    func releaseSnapshotOwnerForTesting(
+        recoveringPendingInvalidations recovery: @MainActor @escaping @Sendable () async throws -> ToolResponse?)
+        async -> Bool
+    {
+        await self.releaseSnapshotOwner(recoveringPendingInvalidations: recovery)
+    }
+
+    private func releaseSnapshotOwner(
+        recoveringPendingInvalidations recovery: @escaping PendingInvalidationRecovery) async -> Bool
+    {
         let ownedBrowser = self.browser as? any BrowserMCPAuthenticatedSessionEnding
         let scopedBrowser = self.browser as? any BrowserMCPScopedSessionEnding
         let capabilitySession = self.browserCapabilities
         let lifecycleGate = self.browserMutationExecutionGate
         let snapshotGate = self.snapshotExecutionGate
         let usesSeparateSnapshotGate = lifecycleGate !== snapshotGate
-        await Task {
+        let snapshotCleanupConfirmed = await Task { @MainActor in
             do {
                 try await lifecycleGate.acquire()
             } catch {
-                return
+                return false
             }
             if usesSeparateSnapshotGate {
                 do {
                     try await snapshotGate.acquire()
                 } catch {
                     await lifecycleGate.release()
-                    return
+                    return false
                 }
             }
-            _ = try? await self.recoverPendingInvalidations(
-                on: snapshotGate,
-                acquireGate: false,
-                blockedToolName: "browser session teardown")
+            let recoveryConfirmed: Bool
+            do {
+                recoveryConfirmed = try await recovery() == nil
+            } catch {
+                recoveryConfirmed = false
+            }
             await capabilitySession.end()
-            await self.uiSnapshots.removeOwner()
+            if recoveryConfirmed {
+                await self.uiSnapshots.removeOwner()
+            }
             if usesSeparateSnapshotGate {
                 await snapshotGate.release()
             }
             await lifecycleGate.release()
+            return recoveryConfirmed
         }.value
         let directCleanupConfirmed = await ownedBrowser?.endAuthenticatedBrowserSession() ?? true
         let pendingCleanupDrained = await self.browserCleanupOwner?.retryPendingAuthenticatedSessionCleanup()
             ?? directCleanupConfirmed
         let scopedCleanupConfirmed = await scopedBrowser?.endBrowserMCPScopedSession() ?? true
-        return (directCleanupConfirmed || pendingCleanupDrained) && pendingCleanupDrained && scopedCleanupConfirmed
+        let browserCleanupConfirmed = (directCleanupConfirmed || pendingCleanupDrained) &&
+            pendingCleanupDrained && scopedCleanupConfirmed
+        return snapshotCleanupConfirmed && browserCleanupConfirmed
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {
