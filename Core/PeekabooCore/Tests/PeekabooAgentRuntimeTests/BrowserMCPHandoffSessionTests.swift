@@ -885,6 +885,138 @@ struct BrowserMCPHandoffSessionTests {
 
 extension BrowserMCPHandoffSessionTests {
     @Test
+    func `explicit disconnect retires source authorization capacity`() async throws {
+        let fixture = try await Self.fixture(destinationProviders: [])
+        var authorizationIDs: [UUID] = []
+        for _ in 0..<128 {
+            try await authorizationIDs.append(fixture.root.storeConnectionHandoffAuthorization(
+                connectionReceipt: fixture.sourceBinding.connectionReceipt))
+        }
+        await #expect(throws: BrowserMCPConnectionError.handoffAuthorizationCapacityExceeded) {
+            _ = try await fixture.root.storeConnectionHandoffAuthorization(
+                connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+
+        await fixture.root.disconnect()
+        for authorizationID in try [#require(authorizationIDs.first), #require(authorizationIDs.last)] {
+            await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+                _ = try await fixture.root.transferConnection(
+                    toAuthenticatedSessionNamed: "mcp:stale-disconnect",
+                    authorizationID: authorizationID,
+                    expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+            }
+        }
+
+        let replacement = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
+        let replacementReceipt = try #require(replacement.connectionReceipt)
+        _ = try await fixture.root.storeConnectionHandoffAuthorization(connectionReceipt: replacementReceipt)
+        await fixture.root.disconnect()
+    }
+
+    @Test
+    func `confirmed source loss retires stored handoff authorizations`() async throws {
+        let fixture = try await Self.fixture(destinationProviders: [])
+        let authorizationID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        fixture.rootProvider.connected = false
+
+        let status = await fixture.root.status(channel: nil)
+        #expect(!status.isConnected)
+        #expect(status.observation == .confirmed)
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: "mcp:stale-loss",
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+
+        let replacement = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
+        _ = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: #require(replacement.connectionReceipt))
+        await fixture.root.disconnect()
+    }
+
+    @Test
+    func `indeterminate source status retains the exact handoff authorization`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let authorizationID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        let validationBarrier = HandoffBarrier()
+        await fixture.endpointResolver.blockNext(at: validationBarrier, thenCancel: true)
+
+        let inspection = Task { @MainActor in
+            await fixture.root.status(channel: nil)
+        }
+        await validationBarrier.waitUntilBlocked()
+        inspection.cancel()
+        await validationBarrier.release()
+        let status = await inspection.value
+        #expect(status.observation == .indeterminate)
+        #expect(status.connectionReceipt == fixture.sourceBinding.connectionReceipt)
+        #expect(status.providerSessionEpoch == fixture.sourceBinding.providerSessionEpoch)
+
+        let destination = try await fixture.root.transferConnection(
+            toAuthenticatedSessionNamed: "mcp:retained-indeterminate",
+            authorizationID: authorizationID,
+            expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        #expect(await (destination.status(channel: nil)).isConnected)
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:retained-indeterminate"))
+    }
+
+    @Test
+    func `successful source drain consumes sibling handoff authorizations`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let transferredID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        let siblingID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+
+        let destination = try await fixture.root.transferConnection(
+            toAuthenticatedSessionNamed: "mcp:transferred",
+            authorizationID: transferredID,
+            expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        #expect(await (destination.status(channel: nil)).isConnected)
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: "mcp:sibling",
+                authorizationID: siblingID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:transferred"))
+    }
+
+    @Test
+    func `retryable destination authorization survives ended source observation`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.addError = HandoffFixtureError.provider
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let authorizationID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        let name = "mcp:retry-after-source-end"
+
+        await #expect(throws: HandoffFixtureError.self) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        let sourceStatus = await fixture.root.status(channel: nil)
+        #expect(!sourceStatus.isConnected)
+        #expect(sourceStatus.observation == .confirmed)
+        await fixture.root.disconnect()
+
+        destinationProvider.addError = nil
+        let destination = try await fixture.root.transferConnection(
+            toAuthenticatedSessionNamed: name,
+            authorizationID: authorizationID,
+            expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        #expect(await (destination.status(channel: nil)).isConnected)
+        #expect(await fixture.root.endAuthenticatedSession(named: name))
+    }
+
+    @Test
     func `session release cannot erase committed ownership before handoff bootstrap`() async throws {
         let destinationProvider = HandoffProviderSpy(label: "destination")
         let contenderProvider = HandoffProviderSpy(label: "contender")

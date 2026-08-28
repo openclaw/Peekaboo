@@ -362,6 +362,18 @@ private enum BrowserMCPStoredConnectionHandoffAuthorization {
         authorization: BrowserMCPConnectionHandoffAuthorization,
         name: String,
         attemptID: UUID)
+
+    var authorization: BrowserMCPConnectionHandoffAuthorization {
+        switch self {
+        case let .ready(authorization, _), let .inFlight(authorization, _, _):
+            authorization
+        }
+    }
+
+    var unclaimedAuthorization: BrowserMCPConnectionHandoffAuthorization? {
+        guard case let .ready(authorization, boundName) = self, boundName == nil else { return nil }
+        return authorization
+    }
 }
 
 public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
@@ -517,9 +529,16 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         toAuthenticatedSessionNamed name: String,
         authorization: BrowserMCPConnectionHandoffAuthorization) async throws -> BrowserMCPService
     {
-        try await self.transferConnection(
+        var sourceEpochEnded = false
+        defer {
+            if sourceEpochEnded {
+                self.discardConnectionHandoffAuthorizations(boundTo: authorization.sourceBinding)
+            }
+        }
+        return try await self.transferConnection(
             toAuthenticatedSessionNamed: name,
             authorization: authorization,
+            onSourceEpochEnded: { sourceEpochEnded = true },
             onRetryableDestinationFailure: {})
     }
 
@@ -527,6 +546,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     private func transferConnection(
         toAuthenticatedSessionNamed name: String,
         authorization: BrowserMCPConnectionHandoffAuthorization,
+        onSourceEpochEnded: @MainActor @escaping () -> Void,
         onRetryableDestinationFailure: @MainActor @escaping () -> Void) async throws -> BrowserMCPService
     {
         guard let pool = self.authenticatedSessionPool,
@@ -558,6 +578,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
                     try await destinationManager.preflightHandoffDestination()
                     target = try await self.resolvedSessionManager().drainConnectionForHandoff(
                         authorization: authorization)
+                    onSourceEpochEnded()
                     do {
                         try await pool.commitRootHandoff(
                             to: sessionID,
@@ -648,9 +669,12 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
     @MainActor
     public func status(channel: BrowserMCPChannel? = nil) async -> BrowserMCPStatus {
-        await self.resolvedSessionManager().status(
+        let authorizationSnapshot = self.unclaimedConnectionHandoffAuthorizationSnapshot()
+        let status = await self.resolvedSessionManager().status(
             channel: channel,
             releaseTargetWhenDisconnected: self.targetOwnershipRelease())
+        self.pruneConnectionHandoffAuthorizations(authorizationSnapshot, after: status)
+        return status
     }
 
     @MainActor
@@ -672,6 +696,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
         let manager = self.resolvedSessionManager()
+        let authorizationSnapshot = self.unclaimedConnectionHandoffAuthorizationSnapshot()
         let result: DesktopActionResult<BrowserMCPStatus>
         do {
             if self.sessionCapabilities != nil {
@@ -685,13 +710,17 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             await self.reconcileTargetOwnershipAfterFailure(using: manager)
             throw error
         }
+        self.pruneConnectionHandoffAuthorizations(authorizationSnapshot, after: result.payload)
         return result
     }
 
     @MainActor
     public func disconnect() async {
-        await self.resolvedSessionManager().disconnect(
-            releaseTarget: self.targetOwnershipRelease())
+        let releaseTarget = self.targetOwnershipRelease()
+        await self.resolvedSessionManager().disconnect(releaseTarget: {
+            releaseTarget?()
+            self.discardUnclaimedConnectionHandoffAuthorizations()
+        })
     }
 
     @MainActor
@@ -1005,12 +1034,14 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @MainActor
     private func reconcileTargetOwnershipAfterFailure(using manager: BrowserMCPSessionManager) async {
         guard let releaseTarget = self.targetOwnershipRelease() else { return }
+        let authorizationSnapshot = self.unclaimedConnectionHandoffAuthorizationSnapshot()
         let reconciliation = Task { @MainActor in
-            _ = await manager.status(
+            await manager.status(
                 channel: nil,
                 releaseTargetWhenDisconnected: releaseTarget)
         }
-        await reconciliation.value
+        let status = await reconciliation.value
+        self.pruneConnectionHandoffAuthorizations(authorizationSnapshot, after: status)
     }
 
     /// Legacy low-level configuration factory retained for source compatibility.
@@ -1225,6 +1256,54 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
 extension BrowserMCPService {
     @MainActor
+    private func unclaimedConnectionHandoffAuthorizationSnapshot()
+        -> [UUID: BrowserMCPConnectionHandoffAuthorization]
+    {
+        self.connectionHandoffAuthorizations.compactMapValues(\.unclaimedAuthorization)
+    }
+
+    @MainActor
+    private func pruneConnectionHandoffAuthorizations(
+        _ snapshot: [UUID: BrowserMCPConnectionHandoffAuthorization],
+        after status: BrowserMCPStatus)
+    {
+        guard status.observation == .confirmed else { return }
+        let currentBinding: BrowserMCPExecutionSessionBinding? = if status.isConnected,
+                                                                    let receipt = status.connectionReceipt,
+                                                                    let epoch = status.providerSessionEpoch
+        {
+            BrowserMCPExecutionSessionBinding(
+                connectionReceipt: receipt,
+                providerSessionEpoch: epoch)
+        } else {
+            nil
+        }
+        for (authorizationID, authorization) in snapshot {
+            guard self.connectionHandoffAuthorizations[authorizationID]?.unclaimedAuthorization == authorization,
+                  authorization.sourceBinding != currentBinding
+            else { continue }
+            self.connectionHandoffAuthorizations.removeValue(forKey: authorizationID)
+        }
+    }
+
+    @MainActor
+    private func discardUnclaimedConnectionHandoffAuthorizations() {
+        self.connectionHandoffAuthorizations = self.connectionHandoffAuthorizations.filter { _, entry in
+            entry.unclaimedAuthorization == nil
+        }
+    }
+
+    @MainActor
+    private func discardConnectionHandoffAuthorizations(
+        boundTo sourceBinding: BrowserMCPExecutionSessionBinding,
+        excluding retainedAuthorizationID: UUID? = nil)
+    {
+        self.connectionHandoffAuthorizations = self.connectionHandoffAuthorizations.filter { authorizationID, entry in
+            authorizationID == retainedAuthorizationID || entry.authorization.sourceBinding != sourceBinding
+        }
+    }
+
+    @MainActor
     private func discardConnectionHandoffAuthorizations(boundTo name: String) {
         self.connectionHandoffAuthorizations = self.connectionHandoffAuthorizations.filter { _, entry in
             switch entry {
@@ -1257,6 +1336,10 @@ extension BrowserMCPService {
         self.connectionHandoffAuthorizations[authorizationID] = .ready(
             authorization: authorization,
             boundName: nil)
+        _ = await self.status(channel: nil)
+        guard self.connectionHandoffAuthorizations[authorizationID]?.unclaimedAuthorization == authorization else {
+            throw BrowserMCPConnectionError.invalidHandoffAuthorization
+        }
         return authorizationID
     }
 
@@ -1282,11 +1365,20 @@ extension BrowserMCPService {
             authorization: authorization,
             name: name,
             attemptID: attemptID)
+        var sourceEpochEnded = false
         var retryableDestinationFailure = false
+        defer {
+            if sourceEpochEnded {
+                self.discardConnectionHandoffAuthorizations(
+                    boundTo: authorization.sourceBinding,
+                    excluding: authorizationID)
+            }
+        }
         do {
             let service = try await self.transferConnection(
                 toAuthenticatedSessionNamed: name,
                 authorization: authorization,
+                onSourceEpochEnded: { sourceEpochEnded = true },
                 onRetryableDestinationFailure: {
                     retryableDestinationFailure = true
                 })
