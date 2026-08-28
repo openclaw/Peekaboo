@@ -423,16 +423,18 @@ struct CommanderBinderTests {
         )
         #expect(!menuBarList.requiresImplicitSnapshotInvalidation)
 
-        let browserClick = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: ["click"], options: [:], flags: []),
-            commandType: BrowserCommand.self
-        )
-        #expect(browserClick.requiresImplicitSnapshotInvalidation)
-        let browserStatus = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: ["status"], options: [:], flags: []),
-            commandType: BrowserCommand.self
-        )
+        let browserClick = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(positional: ["click"], options: [:], flags: [])
+        ).runtimeOptions
+        #expect(!browserClick.requiresImplicitSnapshotInvalidation)
+        #expect(browserClick.usesPerToolSnapshotInvalidation)
+        let browserStatus = try CommanderCLIBinder.instantiateCommand(
+            ofType: BrowserCommand.self,
+            parsedValues: ParsedValues(positional: ["status"], options: [:], flags: [])
+        ).runtimeOptions
         #expect(!browserStatus.requiresImplicitSnapshotInvalidation)
+        #expect(!browserStatus.usesPerToolSnapshotInvalidation)
 
         let seeWithWebFocus = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: ["webFocus"]),
