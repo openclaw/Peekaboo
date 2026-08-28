@@ -132,6 +132,10 @@ struct CommandRuntimeOptions {
     /// process bootstrap. Other commands construct the native service graph without eagerly
     /// reloading provider credentials or creating an Agent that they cannot call.
     var requiresAgentService = false
+    /// Canonical signed receipt bytes loaded before runtime construction for one explicit browser handoff.
+    var browserHandoffReceiptBundleData: Data?
+    /// Both handoff production and consumption require one exact remote Bridge with no local fallback.
+    var requiresBrowserHandoffBridge = false
 
     func makeConfiguration() -> CommandRuntime.Configuration {
         CommandRuntime.Configuration(
@@ -160,6 +164,11 @@ struct CommandRuntimeOptions {
             } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
                 options.preferRemote = false
             }
+        }
+        if options.requiresBrowserHandoffBridge {
+            options.preferRemote = true
+            options.remoteIsolationRequested = false
+            options.autoStartDaemon = false
         }
         return options
     }
@@ -203,6 +212,7 @@ struct CommandRuntime {
     let snapshotInvalidationRemoteSocketPaths: [String]
     let applicationRelaunchAllowed: Bool
     let requiredHostFailure: String?
+    let browserHandoffReceiptBundleData: Data?
     let interactionMutationTracker: InteractionMutationTracker
     @MainActor let services: any PeekabooServiceProviding
     @MainActor let logger: Logger
@@ -231,6 +241,7 @@ struct CommandRuntime {
         snapshotInvalidationRemoteSocketPaths: [String] = [],
         applicationRelaunchAllowed: Bool = true,
         requiredHostFailure: String? = nil,
+        browserHandoffReceiptBundleData: Data? = nil,
         interactionMutationTracker: InteractionMutationTracker = InteractionMutationTracker()
     ) {
         // Keep Tachikoma credential/profile resolution aligned with Peekaboo CLI storage.
@@ -249,6 +260,7 @@ struct CommandRuntime {
         self.snapshotInvalidationRemoteSocketPaths = snapshotInvalidationRemoteSocketPaths
         self.applicationRelaunchAllowed = applicationRelaunchAllowed
         self.requiredHostFailure = requiredHostFailure
+        self.browserHandoffReceiptBundleData = browserHandoffReceiptBundleData
         self.interactionMutationTracker = interactionMutationTracker
         self.logger = Logger.shared
 
@@ -295,7 +307,11 @@ struct CommandRuntime {
 
     @MainActor
     init(options: CommandRuntimeOptions, services: any PeekabooServiceProviding) {
-        self.init(configuration: options.makeConfiguration(), services: services)
+        self.init(
+            configuration: options.makeConfiguration(),
+            services: services,
+            browserHandoffReceiptBundleData: options.browserHandoffReceiptBundleData
+        )
     }
 }
 
@@ -304,7 +320,11 @@ extension CommandRuntime {
     static func makeDefault(options: CommandRuntimeOptions) -> CommandRuntime {
         let effectiveOptions = options.applyingEnvironmentOverrides(environment: ProcessInfo.processInfo.environment)
         let services = self.serviceOverride ?? self.makeLocalServices(options: effectiveOptions)
-        return CommandRuntime(configuration: effectiveOptions.makeConfiguration(), services: services)
+        return CommandRuntime(
+            configuration: effectiveOptions.makeConfiguration(),
+            services: services,
+            browserHandoffReceiptBundleData: effectiveOptions.browserHandoffReceiptBundleData
+        )
     }
 
     @MainActor
@@ -317,10 +337,20 @@ extension CommandRuntime {
         let effectiveOptions = options.applyingEnvironmentOverrides(environment: ProcessInfo.processInfo.environment)
         try ObservationCommandSupport.validateCaptureEngineValue(effectiveOptions.captureEnginePreference)
         if let override = serviceOverride {
+            guard !effectiveOptions.requiresBrowserHandoffBridge else {
+                throw BrowserHandoffRuntimeRoutingError.exactBridgeRequired
+            }
             return CommandRuntime(options: effectiveOptions, services: override)
         }
 
         let resolution = try await resolveServices(options: effectiveOptions)
+        if effectiveOptions.requiresBrowserHandoffBridge {
+            let requestedSocket = effectiveOptions.bridgeSocketPath.map { NSString(string: $0).standardizingPath }
+            let selectedSocket = resolution.selectedRemoteSocketPath.map { NSString(string: $0).standardizingPath }
+            guard requestedSocket != nil, selectedSocket == requestedSocket else {
+                throw BrowserHandoffRuntimeRoutingError.exactBridgeRequired
+            }
+        }
         return CommandRuntime(
             configuration: effectiveOptions.makeConfiguration(),
             services: resolution.services,
@@ -335,7 +365,8 @@ extension CommandRuntime {
             toolCapturePreflightRefusal: resolution.toolCapturePreflightRefusal,
             snapshotInvalidationRemoteSocketPaths: resolution.snapshotInvalidationRemoteSocketPaths,
             applicationRelaunchAllowed: resolution.applicationRelaunchAllowed,
-            requiredHostFailure: resolution.requiredHostFailure
+            requiredHostFailure: resolution.requiredHostFailure,
+            browserHandoffReceiptBundleData: effectiveOptions.browserHandoffReceiptBundleData
         )
     }
 
@@ -491,6 +522,14 @@ extension CommandRuntime {
     static func targetedClickAvailability(for handshake: PeekabooBridgeHandshakeResponse)
     -> (isEnabled: Bool, unavailableReason: String?, missingPermissions: Set<PeekabooBridgePermissionKind>) {
         BridgeCapabilityPolicy.targetedClickAvailability(for: handshake)
+    }
+}
+
+private enum BrowserHandoffRuntimeRoutingError: LocalizedError {
+    case exactBridgeRequired
+
+    var errorDescription: String? {
+        "Browser handoff requires the exact explicit Bridge socket; local and alternate-host fallback are refused."
     }
 }
 

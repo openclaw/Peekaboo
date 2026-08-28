@@ -230,7 +230,14 @@ enum CommanderCLIBinder {
         }
         if commandType == BrowserCommand.self {
             options.requiresBrowserMCP = true
+            options.requiresBrowserHandoffBridge = !commandValues.optionValues("handoffFile").isEmpty
         }
+        try BrowserHandoffCLIInput.configureRuntimeOptions(
+            &options,
+            commandType: commandType,
+            values: commandValues,
+            environment: environment
+        )
         return options
     }
 

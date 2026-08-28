@@ -14,6 +14,11 @@ extension MCPCommand.Serve: CommanderSignatureProviding {
                     help: "Reserved port for future HTTP/SSE transport support",
                     long: "port"
                 ),
+                .commandOption(
+                    "browserHandoff",
+                    help: "Adopt one authenticated browser target from an owner-private handoff receipt",
+                    long: "browser-handoff"
+                ),
             ],
             flags: [
                 .commandFlag(
