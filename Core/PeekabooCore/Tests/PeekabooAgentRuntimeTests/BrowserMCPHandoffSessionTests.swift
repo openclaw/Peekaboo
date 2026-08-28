@@ -39,7 +39,7 @@ struct BrowserMCPHandoffSessionTests {
         #expect(status.isConnected)
         #expect(status.connectionReceipt == fixture.sourceBinding.connectionReceipt)
         #expect(status.providerSessionEpoch != fixture.sourceBinding.providerSessionEpoch)
-        await fixture.root.endAuthenticatedSession(named: "mcp:claim-a")
+        #expect(await destination.endAuthenticatedBrowserSession())
     }
 
     @Test
@@ -205,14 +205,14 @@ struct BrowserMCPHandoffSessionTests {
         }
         #expect(firstProvider.addedConfigs.isEmpty)
         #expect(copiedProvider.addedConfigs.isEmpty)
-        await fixture.root.endAuthenticatedSession(named: "mcp:source-recovery")
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:source-recovery") == false)
         await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await fixture.root.transferConnection(
                 toAuthenticatedSessionNamed: "mcp:copied",
                 authorization: fixture.authorization)
         }
         rootProvider.leaveConfiguredAfterRemove = false
-        await fixture.root.endAuthenticatedSession(named: "mcp:source-recovery")
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:source-recovery"))
         let recovered = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
         #expect(recovered.isConnected)
         await fixture.root.disconnect()
@@ -343,10 +343,14 @@ struct BrowserMCPHandoffSessionTests {
         await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
         }
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:destination-recovery") == false)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
+        }
 
         destinationProvider.leaveConfiguredAfterRemove = false
         destinationProvider.leaveConnectedAfterRemove = false
-        await fixture.root.endAuthenticatedSession(named: "mcp:destination-recovery")
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:destination-recovery"))
         let reconnected = try await fixture.root.connect(channel: nil, browserURL: Self.browserURL)
         #expect(reconnected.isConnected)
         await fixture.root.disconnect()

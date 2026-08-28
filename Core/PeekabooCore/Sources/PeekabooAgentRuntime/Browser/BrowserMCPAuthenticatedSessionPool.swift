@@ -332,9 +332,10 @@ final class BrowserMCPAuthenticatedSessionPool {
         self.handoffs[sessionID] = handoff
     }
 
-    func end(named name: String) async {
-        guard let sessionID = self.namedSessions[name] else { return }
-        await self.end(sessionID)
+    @discardableResult
+    func end(named name: String) async -> Bool {
+        guard let sessionID = self.namedSessions[name] else { return true }
+        return await self.endAndConfirm(sessionID)
     }
 
     var count: Int {

@@ -3630,7 +3630,7 @@ private final class LifecycleGateProbingBrowserClient: BrowserMCPAuthenticatedSe
         .text("unused")
     }
 
-    func endAuthenticatedBrowserSession() async {
+    func endAuthenticatedBrowserSession() async -> Bool {
         do {
             self.acquiredLifecycleGate = try await BrowserMCPConnectionDeadline.run(
                 until: ContinuousClock.now.advanced(by: .milliseconds(100)))
@@ -3642,6 +3642,7 @@ private final class LifecycleGateProbingBrowserClient: BrowserMCPAuthenticatedSe
         } catch {
             self.acquiredLifecycleGate = false
         }
+        return self.acquiredLifecycleGate
     }
 }
 

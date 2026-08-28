@@ -282,7 +282,8 @@ public protocol BrowserMCPAtomicSessionActionProviding: BrowserMCPActionResultPr
 
 protocol BrowserMCPAuthenticatedSessionEnding: BrowserMCPClientProviding {
     @MainActor
-    func endAuthenticatedBrowserSession() async
+    @discardableResult
+    func endAuthenticatedBrowserSession() async -> Bool
 }
 
 extension BrowserMCPActionResultProviding {
@@ -541,24 +542,27 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     }
 
     @MainActor
-    public func endAuthenticatedSession(named name: String) async {
-        guard let pool = self.authenticatedSessionPool else { return }
+    @discardableResult
+    public func endAuthenticatedSession(named name: String) async -> Bool {
+        guard let pool = self.authenticatedSessionPool else { return true }
         if let recovery = pool.sourceRecovery(named: name),
            await self.resolvedSessionManager().recoverSourceHandoff(
                authorization: recovery.authorization)
         {
             pool.confirmSourceRecovery(for: recovery.sessionID)
         }
-        await pool.end(named: name)
+        return await pool.end(named: name)
     }
 
     @MainActor
-    public func endAuthenticatedBrowserSession() async {
-        guard let ownedSession else { return }
+    @discardableResult
+    public func endAuthenticatedBrowserSession() async -> Bool {
+        guard let ownedSession else { return true }
         let cleanupConfirmed = await ownedSession.pool.endAndConfirm(ownedSession.id)
         if cleanupConfirmed, self.ownedSession?.id == ownedSession.id {
             self.ownedSession = nil
         }
+        return cleanupConfirmed
     }
 
     var browserCapabilitySession: BrowserToolCapabilitySession? {
