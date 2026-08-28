@@ -23,6 +23,10 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     @MainActor private var lastScopedStatus: BrowserMCPStatus?
     @MainActor private var scopedSessionState = ScopedSessionState.active
 
+    var hasScopedSessionTransport: Bool {
+        self.sessionTransport != nil
+    }
+
     public init(
         client: PeekabooBridgeClient,
         sessionTransport: (any RemoteBrowserMCPSessionTransport)? = nil)
@@ -464,7 +468,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             hint: "Open a new authenticated browser session before retrying.")
     }
 
-    private static func status(from bridgeStatus: PeekabooBridgeBrowserStatus) throws -> BrowserMCPStatus {
+    static func status(from bridgeStatus: PeekabooBridgeBrowserStatus) throws -> BrowserMCPStatus {
         let detectedBrowsers = try bridgeStatus.detectedBrowsers.map { browser in
             guard let channel = BrowserMCPChannel(rawValue: browser.channel),
                   let identity = ChromeChannelIdentity(rawValue: channel.rawValue),
@@ -488,12 +492,21 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             }
             return Self.runtimeReceipt(from: receipt)
         }
+        let providerSessionEpoch = bridgeStatus.providerSessionEpoch.map {
+            BrowserMCPProviderSessionEpoch(transportID: $0)
+        }
+        let observation: BrowserMCPStatusObservation = switch bridgeStatus.observation {
+        case .confirmed, nil: .confirmed
+        case .indeterminate: .indeterminate
+        }
         return BrowserMCPStatus(
             isConnected: bridgeStatus.isConnected,
             toolCount: bridgeStatus.toolCount,
             detectedBrowsers: detectedBrowsers,
             connectionReceipt: connectionReceipt,
-            error: bridgeStatus.error)
+            providerSessionEpoch: providerSessionEpoch,
+            error: bridgeStatus.error,
+            observation: observation)
     }
 
     private static func isBrowserTargetLockedFailure(_ failure: DesktopActionFailure) -> Bool {
@@ -504,7 +517,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             failure.outcome.retrySafety == .safe
     }
 
-    private static func bridgeReceipt(
+    static func bridgeReceipt(
         from receipt: BrowserMCPConnectionReceipt) -> PeekabooBridgeBrowserConnectionReceipt
     {
         PeekabooBridgeBrowserConnectionReceipt(
@@ -519,12 +532,19 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             protocolVersion: receipt.protocolVersion)
     }
 
-    private static func toolResponse(from bridgeResponse: PeekabooBridgeBrowserToolResponse) throws -> ToolResponse {
+    static func toolResponse(from bridgeResponse: PeekabooBridgeBrowserToolResponse) throws -> ToolResponse {
         let content: [MCP.Tool.Content] = try bridgeResponse.content.map { value in
             try self.decode(MCP.Tool.Content.self, from: value)
         }
         let meta: Value? = try bridgeResponse.meta.map { try self.decode(Value.self, from: $0) }
-        let response = ToolResponse(content: content, isError: bridgeResponse.isError, meta: meta)
+        let structuredContent: Value? = try bridgeResponse.structuredContent.map {
+            try self.decode(Value.self, from: $0)
+        }
+        let response = ToolResponse(
+            content: content,
+            isError: bridgeResponse.isError,
+            meta: meta,
+            structuredContent: structuredContent)
         guard let receipt = bridgeResponse.connectionReceipt,
               let completedCallCount = bridgeResponse.completedCallCount,
               let dispatchedCallCount = bridgeResponse.dispatchedCallCount
@@ -534,11 +554,14 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         return BrowserMCPExecutionEvidence.attaching(
             to: response,
             connectionReceipt: Self.runtimeReceipt(from: receipt),
+            providerSessionEpoch: bridgeResponse.providerSessionEpoch.map {
+                BrowserMCPProviderSessionEpoch(transportID: $0)
+            },
             completedCallCount: completedCallCount,
             dispatchedCallCount: dispatchedCallCount)
     }
 
-    private static func runtimeReceipt(
+    static func runtimeReceipt(
         from receipt: PeekabooBridgeBrowserConnectionReceipt) -> BrowserMCPConnectionReceipt
     {
         BrowserMCPConnectionReceipt(

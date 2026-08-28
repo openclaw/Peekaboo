@@ -38,6 +38,14 @@ public enum PeekabooBridgeBrowserSessionErrorContext {
     public static let hostGenerationChanged = "browser_session:host_generation_changed"
 }
 
+/// Authenticated terminal scope failures exposed without leaking receipt-internal error types.
+public enum PeekabooBridgeBrowserSessionTerminalFailure: Equatable, Sendable {
+    case invalidSession
+    case sessionEnded
+    case wrongOwner
+    case hostGenerationChanged
+}
+
 public struct PeekabooBridgeBrowserSessionControlRequest: Codable, Sendable, Equatable {
     public let sessionID: UUID
     public let action: PeekabooBridgeBrowserSessionControlAction

@@ -905,6 +905,9 @@ enum RuntimeHostResolver {
             supportsProcessGenerationPinnedApplicationHide:
             BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationHide(for: handshake),
             allowLocalApplicationFallback: handshake.hostKind == .onDemand,
+            browserSessionTransport: BridgeCapabilityPolicy.supportsBrowserConnectionHandoff(for: handshake)
+                ? PeekabooBridgeRemoteBrowserSessionTransport(client: client)
+                : nil,
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
         )
     }

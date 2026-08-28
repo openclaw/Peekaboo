@@ -399,6 +399,7 @@ public struct PeekabooBridgeBrowserToolResponse: Codable, Sendable, Equatable {
     public let content: [PeekabooBridgeJSONValue]
     public let isError: Bool
     public let meta: PeekabooBridgeJSONValue?
+    public let structuredContent: PeekabooBridgeJSONValue?
     public let connectionReceipt: PeekabooBridgeBrowserConnectionReceipt?
     public let completedCallCount: Int?
     public let dispatchedCallCount: Int?
@@ -409,6 +410,7 @@ public struct PeekabooBridgeBrowserToolResponse: Codable, Sendable, Equatable {
         content: [PeekabooBridgeJSONValue],
         isError: Bool,
         meta: PeekabooBridgeJSONValue?,
+        structuredContent: PeekabooBridgeJSONValue? = nil,
         connectionReceipt: PeekabooBridgeBrowserConnectionReceipt? = nil,
         completedCallCount: Int? = nil,
         dispatchedCallCount: Int? = nil,
@@ -418,6 +420,7 @@ public struct PeekabooBridgeBrowserToolResponse: Codable, Sendable, Equatable {
         self.content = content
         self.isError = isError
         self.meta = meta
+        self.structuredContent = structuredContent
         self.connectionReceipt = connectionReceipt
         self.completedCallCount = completedCallCount
         self.dispatchedCallCount = dispatchedCallCount
@@ -450,7 +453,8 @@ public struct PeekabooBridgeBrowserExecutionResult: Sendable, Equatable {
         self.response = PeekabooBridgeBrowserToolResponse(
             content: response.content,
             isError: response.isError,
-            meta: response.meta)
+            meta: response.meta,
+            structuredContent: response.structuredContent)
         self.connectionReceipt = connectionReceipt
         self.completedCallCount = completedCallCount
         self.dispatchedCallCount = dispatchedCallCount

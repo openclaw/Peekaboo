@@ -227,7 +227,8 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
         return try PeekabooBridgeBrowserToolResponse(
             content: content,
             isError: response.isError,
-            meta: response.meta.map { try PeekabooBridgeJSONValue.fromCodable($0) })
+            meta: response.meta.map { try PeekabooBridgeJSONValue.fromCodable($0) },
+            structuredContent: response.structuredContent.map { try PeekabooBridgeJSONValue.fromCodable($0) })
     }
 
     private static func bridgeToolResponse(
@@ -238,10 +239,12 @@ extension PeekabooServices: PeekabooBridgeBrowserConnectionResultProviding {
             content: response.content,
             isError: response.isError,
             meta: response.meta,
+            structuredContent: response.structuredContent,
             connectionReceipt: self.bridgeReceipt(from: result.connectionReceipt),
             completedCallCount: result.completedCallCount,
             dispatchedCallCount: result.dispatchedCallCount,
-            actionFailure: result.actionFailure)
+            actionFailure: result.actionFailure,
+            providerSessionEpoch: result.providerSessionEpoch?.transportID)
     }
 
     private static func bridgeBrowserRefusalResponse(

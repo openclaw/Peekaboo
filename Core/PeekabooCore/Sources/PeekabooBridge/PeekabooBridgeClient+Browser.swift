@@ -3,6 +3,32 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeClient {
+    public nonisolated static func browserSessionTerminalFailure(
+        from error: any Error) -> PeekabooBridgeBrowserSessionTerminalFailure?
+    {
+        if let envelope = error as? PeekabooBridgeErrorEnvelope {
+            return switch (envelope.code, envelope.context) {
+            case (.invalidRequest, PeekabooBridgeBrowserSessionErrorContext.invalid): .invalidSession
+            case (.invalidRequest, PeekabooBridgeBrowserSessionErrorContext.ended): .sessionEnded
+            case (.unauthorizedClient, PeekabooBridgeBrowserSessionErrorContext.wrongOwner): .wrongOwner
+            case (.versionMismatch, PeekabooBridgeBrowserSessionErrorContext.hostGenerationChanged):
+                .hostGenerationChanged
+            default: nil
+            }
+        }
+        guard let receiptError = error as? PeekabooBridgeOperationReceiptError else { return nil }
+        return switch receiptError {
+        case .invalidListenerAttestation, .invalidListenerSignature,
+             .invalidOperationSessionAttestation, .invalidOperationSessionSignature,
+             .listenerInstanceMismatch, .peerIdentityMismatch, .clientIdentityMismatch:
+            .hostGenerationChanged
+        case .invalidOperationSessionConfiguration, .operationSessionMismatch,
+             .operationSessionRegistryExhausted, .replayedRequest, .invalidOperationSignature,
+             .receiptMismatch, .unsafeArchive, .archiveWriteFailed:
+            nil
+        }
+    }
+
     public func browserStatus(
         channel: String?,
         sessionID: UUID? = nil) async throws -> PeekabooBridgeBrowserStatus
@@ -244,6 +270,7 @@ extension PeekabooBridgeClient {
             sessionID: sessionID,
             action: .end)))
     }
+
     private func directBrowserConnect(
         _ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeBrowserStatus
     {

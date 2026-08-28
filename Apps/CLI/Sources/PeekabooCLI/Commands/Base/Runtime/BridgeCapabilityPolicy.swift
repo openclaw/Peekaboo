@@ -649,6 +649,23 @@ enum BridgeCapabilityPolicy {
             handshake.supportedOperations.contains(.browserExecute)
     }
 
+    static func supportsBrowserConnectionHandoff(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        let requiredOperations: Set<PeekabooBridgeOperation> = [
+            .browserStatus,
+            .browserConnect,
+            .browserExecute,
+            .browserSessionBootstrap,
+            .browserSessionControl,
+        ]
+        let supported = Set(handshake.supportedOperations)
+        let enabled = Set(handshake.enabledOperations ?? handshake.supportedOperations)
+        return handshake.hostKind == .onDemand &&
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.browserConnectionHandoff) == true &&
+            requiredOperations.isSubset(of: supported) &&
+            requiredOperations.isSubset(of: enabled)
+    }
+
     static func supportsPostEventPermissionRequest(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 2) &&
             handshake.supportedOperations.contains(.requestPostEventPermission)
