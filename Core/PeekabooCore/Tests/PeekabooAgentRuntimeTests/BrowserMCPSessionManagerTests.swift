@@ -539,7 +539,7 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `production MCP contexts overlap browser mutations on distinct session gates`() async throws {
+    func `production MCP contexts overlap source proven browser mutations on distinct gates`() async throws {
         let firstProvider = MockBrowserMCPManager()
         let secondProvider = MockBrowserMCPManager()
         var providers = [firstProvider, secondProvider]
@@ -583,13 +583,13 @@ struct BrowserMCPSessionManagerTests {
         let firstBarrier = SequenceBarrier()
         let secondBarrier = SequenceBarrier()
         firstProvider.executeHandler = { toolName, _ in
-            if toolName == "navigate_page" {
+            if toolName == "performance_start_trace" {
                 await firstBarrier.block()
             }
             return Self.providerPageResponse(id: 7)
         }
         secondProvider.executeHandler = { toolName, _ in
-            if toolName == "navigate_page" {
+            if toolName == "performance_start_trace" {
                 await secondBarrier.block()
             }
             return Self.providerPageResponse(id: 8)
@@ -599,9 +599,9 @@ struct BrowserMCPSessionManagerTests {
             try await firstContext.execute(
                 tool: BrowserTool(context: firstContext),
                 arguments: ToolArguments(raw: [
-                    "action": "navigate",
+                    "action": "performance_trace",
                     "page_id": firstPage,
-                    "url": "https://first.example/",
+                    "trace_action": "start",
                 ]))
         }
         await firstBarrier.waitUntilBlocked()
@@ -609,13 +609,13 @@ struct BrowserMCPSessionManagerTests {
             try await secondContext.execute(
                 tool: BrowserTool(context: secondContext),
                 arguments: ToolArguments(raw: [
-                    "action": "navigate",
+                    "action": "performance_trace",
                     "page_id": secondPage,
-                    "url": "https://second.example/",
+                    "trace_action": "start",
                 ]))
         }
         await secondBarrier.waitUntilBlocked()
-        #expect(secondProvider.executedTools == ["navigate_page"])
+        #expect(secondProvider.executedTools == ["performance_start_trace"])
         #expect(coordinator.sharedPrepareCount == 0)
         #expect(coordinator.maximumConcurrentCount == 2)
 
@@ -4403,7 +4403,7 @@ extension BrowserMCPSessionManagerTests {
     }
 
     @Test
-    func `isolated receipt incompatible session allows raw snapshot read`() async throws {
+    func `isolated receipt incompatible snapshot reports foreground user activation`() async throws {
         let manager = MockBrowserMCPManager()
         let session = BrowserMCPSessionManager(
             serverName: "test-browser",
@@ -4429,14 +4429,16 @@ extension BrowserMCPSessionManagerTests {
         #expect(evidence["completed_call_count"] == .int(1))
         #expect(evidence["dispatched_call_count"] == .int(1))
         #expect(evidence["connection_receipt"]?.objectValue?["channel"] == .string("stable"))
-        #expect(MCPToolResponseMetadataProjector.actionOutcomeKeys.allSatisfy {
-            response.meta?.objectValue?[$0] == nil
-        })
+        #expect(response.meta?.objectValue?["state"] == .string("dispatched_unverified"))
+        #expect(response.meta?.objectValue?["delivery_mechanism"] == .string("browser_protocol"))
+        #expect(response.meta?.objectValue?["delivery_mode"] == .string("foreground"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(false))
         #expect(manager.executedTools == ["take_snapshot"])
     }
 
     @Test
-    func `raw list pages read publishes execution evidence without mutation metadata`() async throws {
+    func `raw list pages read publishes execution evidence and foreground user activation`() async throws {
         let manager = MockBrowserMCPManager()
         let session = Self.session(manager: manager, browsers: [Self.browser(pid: 824, generation: 5824)])
         _ = try await session.connect(channel: .stable)
@@ -4455,9 +4457,11 @@ extension BrowserMCPSessionManagerTests {
         #expect(evidence["completed_call_count"] == .int(1))
         #expect(evidence["dispatched_call_count"] == .int(1))
         #expect(evidence["connection_receipt"]?.objectValue?["pid"] == .int(824))
-        #expect(MCPToolResponseMetadataProjector.actionOutcomeKeys.allSatisfy {
-            response.meta?.objectValue?[$0] == nil
-        })
+        #expect(response.meta?.objectValue?["state"] == .string("dispatched_unverified"))
+        #expect(response.meta?.objectValue?["delivery_mechanism"] == .string("browser_protocol"))
+        #expect(response.meta?.objectValue?["delivery_mode"] == .string("foreground"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(false))
         #expect(manager.executedTools == ["list_pages"])
     }
 

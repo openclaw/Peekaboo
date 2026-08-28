@@ -448,7 +448,7 @@ struct RemoteBrowserMCPSessionTests {
     func `remote MCP mints opaque refs and refuses raw or copied refs before transport`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
-        let base = Self.context(browser: root)
+        let base = Self.context(browser: root, executionPolicy: .foregroundAllowed)
         let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
         let first = try await base.openingBrowserSession(named: "mcp:first", handoff: grant)
         let second = try await base.openingBrowserSession(named: "mcp:second", handoff: grant)
@@ -543,7 +543,7 @@ struct RemoteBrowserMCPSessionTests {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
         let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
-        let context = try await Self.context(browser: root)
+        let context = try await Self.context(browser: root, executionPolicy: .foregroundAllowed)
             .openingBrowserSession(named: "mcp:terminal", handoff: grant)
         let tool = BrowserTool(context: context)
         let listed = try await context.execute(
@@ -580,7 +580,7 @@ struct RemoteBrowserMCPSessionTests {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
         let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
-        let context = try await Self.context(browser: root)
+        let context = try await Self.context(browser: root, executionPolicy: .foregroundAllowed)
             .openingBrowserSession(named: "mcp:execution-terminal", handoff: grant)
         let tool = BrowserTool(context: context)
         let listed = try await context.execute(
@@ -611,7 +611,7 @@ struct RemoteBrowserMCPSessionTests {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
         let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
-        let context = try await Self.context(browser: root)
+        let context = try await Self.context(browser: root, executionPolicy: .foregroundAllowed)
             .openingBrowserSession(named: "mcp:disconnect-indeterminate", handoff: grant)
         let tool = BrowserTool(context: context)
         let client = context.browser
@@ -659,7 +659,7 @@ struct RemoteBrowserMCPSessionTests {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
         let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
-        let context = try await Self.context(browser: root)
+        let context = try await Self.context(browser: root, executionPolicy: .foregroundAllowed)
             .openingBrowserSession(named: "mcp:disconnect-confirmed", handoff: grant)
         let tool = BrowserTool(context: context)
         let listed = try await context.execute(
@@ -810,6 +810,13 @@ struct RemoteBrowserMCPSessionTests {
             arguments: ToolArguments(raw: ["action": "connect"]))
         #expect(response.isError)
         #expect(transport.connectCallCount == 0)
+
+        let listPages = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        #expect(listPages.isError)
+        #expect(listPages.meta?.objectValue?["refusal_reason"] == .string("foreground_consent_required"))
+        #expect(transport.executeCallCount == 0)
     }
 
     private static func rootClient(
@@ -822,12 +829,15 @@ struct RemoteBrowserMCPSessionTests {
             sessionTransport: transport)
     }
 
-    private static func context(browser: any BrowserMCPClientProviding) -> MCPToolContext {
+    private static func context(
+        browser: any BrowserMCPClientProviding,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) -> MCPToolContext
+    {
         let services = PeekabooServices(initializeAgentService: false)
         return MCPToolContext(
             services: services,
             browser: browser,
-            executionPolicy: .backgroundOnly)
+            executionPolicy: executionPolicy)
     }
 
     private static func remoteContext(browser: any BrowserMCPClientProviding) -> MCPToolContext {

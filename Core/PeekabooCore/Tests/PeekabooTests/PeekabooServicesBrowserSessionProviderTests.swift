@@ -215,7 +215,7 @@ struct PeekabooServicesBrowserSessionProviderTests {
         let context = try await MCPToolContext(
             services: fixture.services,
             browser: remoteRoot,
-            executionPolicy: .backgroundOnly)
+            executionPolicy: .foregroundAllowed)
             .openingBrowserSession(named: "mcp:bridge-disconnect-confirmation")
         let connector = try #require(context.browser as? any BrowserMCPConnectionResultProviding)
         let connected = try await connector.connectWithOutcome(
