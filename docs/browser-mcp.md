@@ -101,12 +101,16 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`. Public MCP and
   standalone Browser contexts default to background-only and require an existing live exact connection receipt;
   they never auto-connect implicitly.
-- In daemon-backed mode, `RemotePeekabooServices` can forward legacy CLI browser status/connect/execute calls over the
-  Bridge socket. Persistent opaque-reference Agent/MCP execution fails closed until Bridge can authenticate and carry
-  a caller-owned provider-child epoch.
-- The daemon owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
-- Separate CLI invocations require the same current-build reusable daemon. Peekaboo.app and older Bridge hosts are not
-  eligible for browser session routing because they cannot attest the exact persistent connection receipt.
+- In Bridge-backed MCP mode, an explicit `--browser-handoff <absolute-private-path>` plus one exact `--bridge-socket`
+  opens an authenticated caller-scoped transport. A foreground `peekaboo browser connect --handoff-file` on that same
+  socket first writes the canonical signed receipt. The Bridge consumes it once, validates the caller, listener/host
+  generation, exact target receipt, claim, and provider epoch, then creates a distinct scoped Chrome DevTools MCP child.
+  Scoped status, execution, disconnect, and terminal end all carry the opaque session ID and provider epoch; the remote
+  client remints page and element references for its caller and never falls back to the root connection.
+- The selected runtime host owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
+- Separate legacy CLI invocations require the same current-build reusable daemon. Bridge-scoped handoff instead
+  requires a current host advertising authenticated browser-session bootstrap/control; older hosts reject it before
+  the MCP server starts.
 - Native channel connections and explicit loopback URLs both resolve to an exact WebSocket and are eligible for
   receipt-bound execution. Isolated-profile children remain unbound because the child does not report a pinnable
   browser identity.
@@ -141,15 +145,18 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   support caller-owned opaque references. Launch a separate headless Chrome and connect through its exact loopback
   `browser_url` when a non-GUI browser is required. Foreground-capable
   browser setup/activation remains on the shared desktop lane, and failed snapshot invalidation is kept in one ordered
-  cross-session ledger that every browser and desktop mutation must drain before dispatch. Bridge currently retains its one authenticated browser connection because its status/connect/
-  disconnect wire shape has no caller-session namespace; transport multiplexing is deferred without claiming a new
-  Bridge protocol version.
-- Each process-local `peekaboo mcp serve` session owns and tears down its own browser child. A daemon-backed MCP session
-  does not borrow the daemon's shared legacy browser connection or its raw page/element IDs. The background-only default
-  therefore starts disconnected and cannot bootstrap browser control. To authorize setup for that exact scoped child,
+  cross-session ledger that every browser and desktop mutation must drain before dispatch. Bridge-backed sessions use
+  the authenticated browser-session namespace: each claim owns its provider child, exact target receipt, provider
+  epoch, opaque-reference namespace, and cleanup lifecycle. Ambiguous opens retry only with the same claim and payload;
+  ambiguous end cleanup retains the exact handle until confirmed, while wrong-owner or host-generation failures become
+  terminal without unsafe replay.
+- Each process-local `peekaboo mcp serve` session owns and tears down its own browser child. Without an authenticated
+  Bridge handoff, the background-only default starts disconnected and cannot bootstrap browser control. To authorize
+  setup for that exact process-local child,
   start `peekaboo mcp serve --allow-foreground` and invoke its `browser` `connect` action; subsequent page operations use
   the resulting caller-owned connection. This scoped connection must use a native Chrome channel or an exact loopback
-  `browser_url`; isolated mode is reserved for legacy standalone CLI sessions.
+  `browser_url`; isolated mode is reserved for legacy standalone CLI sessions. With a Bridge handoff, the background
+  server instead starts bound to the transferred exact connection and does not expose `connect`.
 
 Use `peekaboo daemon status` to see browser connection state, tool count, and detected Chrome channels.
 

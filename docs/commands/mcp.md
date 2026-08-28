@@ -24,7 +24,13 @@ read_when:
   Authenticated sessions reject `PEEKABOO_BROWSER_MCP_ISOLATED=1` before provider startup because that child has no
   pinnable browser identity. For headless use, launch Chrome separately and pass its exact loopback `browser_url`.
   This explicit authority never exposes Shell, and a nested Agent remains background-only. Bridge-backed opaque
-  browser sessions still fail closed because the wire protocol has no authenticated provider-child epoch.
+  browser sessions are supported only through `--browser-handoff <absolute-private-path>` together with exactly one
+  matching `--bridge-socket`. The receipt must first be created by an explicit foreground
+  `peekaboo browser connect --handoff-file` against that same socket. A current Bridge consumes the signed receipt once,
+  authenticates its caller, listener generation, exact target, claim, and provider epoch, then gives this MCP server a
+  distinct scoped provider child. The background server starts with that inherited exact connection and does not
+  expose `browser connect` or fall back to the Bridge root. Missing, stale, copied, mismatched, consumed, or downgraded
+  handoffs fail before provider dispatch.
 - Direct-text `paste` is admitted only with an exact generation-pinned app/PID/window authorization and a canonical
   background result. Targetless, foreground, current-clipboard, and binary paste are refused before dispatch. The
   nested `agent` tool likewise retains immutable background-only authority and never exposes Shell.
@@ -60,6 +66,15 @@ peekaboo mcp serve --allow-foreground
 
 # Route MCP tools through an existing Bridge host
 peekaboo mcp serve --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock"
+
+# Transfer one exact foreground-approved browser connection into a background Bridge-scoped MCP server
+mkdir -m 700 /private/tmp/peekaboo-browser-handoff
+peekaboo browser connect --channel stable --foreground \
+  --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock" \
+  --handoff-file /private/tmp/peekaboo-browser-handoff/receipt.json
+peekaboo mcp serve \
+  --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock" \
+  --browser-handoff /private/tmp/peekaboo-browser-handoff/receipt.json
 ```
 
 The `see` tool publishes a closed `capture_engine` choice: `auto` (default), `modern`, or `classic`. `classic` is the

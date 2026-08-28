@@ -259,14 +259,17 @@ extension PeekabooBridgeServer {
                     expectedConnectionReceipt: target.receipt)
             }
         } catch is CancellationError {
+            let acceptedProviderSessionEpoch = scopedSessionID == nil
+                ? nil
+                : payload.expectedProviderSessionEpoch
             if payload.isReadOnly {
                 return Self.browserReadCancellationHandledResponse(
                     target: target,
-                    providerSessionEpoch: nil)
+                    providerSessionEpoch: acceptedProviderSessionEpoch)
             }
             return Self.browserOpaqueCancellationHandledResponse(
                 target: target,
-                providerSessionEpoch: nil,
+                providerSessionEpoch: acceptedProviderSessionEpoch,
                 causeDescription:
                 "The browser provider was cancelled after accepting the execution request.")
         }

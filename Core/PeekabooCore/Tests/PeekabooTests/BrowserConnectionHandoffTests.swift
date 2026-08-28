@@ -861,6 +861,23 @@ struct BrowserConnectionHandoffTests {
         #expect(spy.executeRequests.count == 1)
         #expect(spy.executeRequests.first?.elementPreflight == preflight)
 
+        spy.scopedExecutionError = CancellationError()
+        let cancelledExecution = try await Self.attestedResponse(
+            server: server,
+            authority: authority,
+            session: owner,
+            sequence: 4,
+            request: execute)
+        guard case let .browserToolResponse(cancelledResponse) = cancelledExecution else {
+            Issue.record("Expected scoped browser cancellation response")
+            return
+        }
+        #expect(cancelledResponse.isError)
+        #expect(cancelledResponse.connectionReceipt == Self.externalReceipt)
+        #expect(cancelledResponse.providerSessionEpoch == epoch)
+        #expect(spy.executeRequests.count == 2)
+        spy.scopedExecutionError = nil
+
         let wrongOwner = try await OperationReceiptSessionFixture.make(
             authority: authority,
             clientInstanceID: UUID(),
@@ -892,19 +909,19 @@ struct BrowserConnectionHandoffTests {
             server: server,
             authority: authority,
             session: owner,
-            sequence: 4,
+            sequence: 5,
             request: noncanonicalExecute)
         guard case .error = preflightRefusal else {
             Issue.record("Expected noncanonical preflight refusal")
             return
         }
-        #expect(spy.executeRequests.count == 1)
+        #expect(spy.executeRequests.count == 2)
 
         let disconnect = try await Self.attestedResponse(
             server: server,
             authority: authority,
             session: owner,
-            sequence: 5,
+            sequence: 6,
             request: .browserSessionControl(.init(sessionID: handle.sessionID, action: .disconnect)))
         guard case .ok = disconnect else { throw TestFailure() }
         #expect(spy.disconnectedSessionIDs == [handle.sessionID])
@@ -913,7 +930,7 @@ struct BrowserConnectionHandoffTests {
             server: server,
             authority: authority,
             session: owner,
-            sequence: 6,
+            sequence: 7,
             request: .browserSessionControl(.init(sessionID: handle.sessionID, action: .end)))
         guard case .ok = end else { throw TestFailure() }
         #expect(spy.invalidatedSessionIDs == [handle.sessionID])
@@ -922,7 +939,7 @@ struct BrowserConnectionHandoffTests {
             server: server,
             authority: authority,
             session: owner,
-            sequence: 7,
+            sequence: 8,
             request: .browserSessionControl(.init(sessionID: handle.sessionID, action: .end)))
         guard case .ok = repeatedEnd else { throw TestFailure() }
         #expect(spy.invalidatedSessionIDs == [handle.sessionID])
@@ -931,7 +948,7 @@ struct BrowserConnectionHandoffTests {
             server: server,
             authority: authority,
             session: owner,
-            sequence: 8,
+            sequence: 9,
             request: .browserSessionBootstrap(.init(claimID: emptyClaimID)))
         guard case let .error(replayError) = replayedClaim else {
             Issue.record("Expected ended empty claim replay refusal")
@@ -944,7 +961,7 @@ struct BrowserConnectionHandoffTests {
             server: server,
             authority: authority,
             session: owner,
-            sequence: 9,
+            sequence: 10,
             request: .browserStatus(.init(sessionID: handle.sessionID)))
         guard case let .error(endedError) = afterEnd else {
             Issue.record("Expected ended scoped status refusal")
@@ -1084,6 +1101,7 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
     var scopedStatus: PeekabooBridgeBrowserStatus?
     var scopedConnectResult: DesktopActionResult<PeekabooBridgeBrowserStatus>?
     var scopedExecutionResult: PeekabooBridgeBrowserExecutionResult?
+    var scopedExecutionError: (any Error)?
     private(set) var statusRequests: [(UUID, String?)] = []
     private(set) var connectRequests: [(UUID, String?, String?)] = []
     private(set) var executeRequests: [PeekabooBridgeBrowserExecuteRequest] = []
@@ -1159,6 +1177,9 @@ private final class BootstrapSpy: PeekabooBridgeBrowserSessionBootstrapProviding
         -> PeekabooBridgeBrowserExecutionResult
     {
         self.executeRequests.append(request)
+        if let scopedExecutionError {
+            throw scopedExecutionError
+        }
         guard let scopedExecutionResult else { throw TestFailure() }
         return scopedExecutionResult
     }
