@@ -793,9 +793,8 @@ struct BrowserMCPHandoffSessionTests {
     private static let webSocketURL = "ws://127.0.0.1:9222/devtools/browser/browser-a"
 
     private struct Fixture {
-        let root: BrowserMCPService
-        let pool: BrowserMCPAuthenticatedSessionPool
-        let rootProvider: HandoffProviderSpy
+        let root: BrowserMCPService, rootManager: BrowserMCPSessionManager
+        let pool: BrowserMCPAuthenticatedSessionPool, rootProvider: HandoffProviderSpy
         let endpointResolver: HandoffEndpointResolverSpy
         let detection: HandoffDetectionSpy
         let events: HandoffEventLog
@@ -846,13 +845,14 @@ struct BrowserMCPHandoffSessionTests {
         let sourceBinding = try BrowserMCPExecutionSessionBinding(
             connectionReceipt: #require(source.connectionReceipt),
             providerSessionEpoch: #require(source.providerSessionEpoch))
-        let authorization = try await root.authorizeConnectionHandoff(
-            connectionReceipt: sourceBinding.connectionReceipt)
+        let authorization = try await root
+            .authorizeConnectionHandoff(connectionReceipt: sourceBinding.connectionReceipt)
         await events.reset()
         await endpointResolver.reset()
         detection.reset()
         return Fixture(
             root: root,
+            rootManager: rootManager,
             pool: pool,
             rootProvider: rootProvider,
             endpointResolver: endpointResolver,
@@ -884,6 +884,95 @@ struct BrowserMCPHandoffSessionTests {
 }
 
 extension BrowserMCPHandoffSessionTests {
+    @Test
+    func `session release cannot erase committed ownership before handoff bootstrap`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        let contenderProvider = HandoffProviderSpy(label: "contender")
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider, contenderProvider])
+        let name = "mcp:committed-before-bootstrap"
+        let destination = try #require(fixture.root.authenticatedSession(named: name))
+        let sessionID = try #require(fixture.pool.existingSessionID(named: name))
+        let destinationManager = try #require(fixture.pool.existingManager(for: sessionID))
+
+        let preparation = try fixture.pool.prepareHandoff(sessionID, authorization: fixture.authorization)
+        guard case .start = preparation else {
+            Issue.record("Expected a new handoff transaction")
+            return
+        }
+        let target = try await fixture.rootManager.drainConnectionForHandoff(
+            authorization: fixture.authorization)
+        try await fixture.pool.commitRootHandoff(
+            to: sessionID,
+            authorization: fixture.authorization,
+            target: target)
+
+        let pendingStatus = await destination.status(channel: nil)
+        #expect(!pendingStatus.isConnected)
+        let contender = try #require(fixture.root.authenticatedSession(named: "mcp:contender"))
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await contender.connect(channel: nil, browserURL: Self.browserURL)
+        }
+        #expect(contenderProvider.addedConfigs.isEmpty)
+
+        try await destinationManager.bootstrapAuthorizedHandoff(target)
+        try fixture.pool.resolveHandoff(for: sessionID, as: .connected)
+        #expect(await (destination.status(channel: nil)).isConnected)
+        await destination.disconnect()
+
+        let connected = try await contender.connect(channel: nil, browserURL: Self.browserURL)
+        #expect(connected.isConnected)
+        #expect(contenderProvider.addedConfigs.count == 1)
+        #expect(await fixture.root.endAuthenticatedSession(named: name))
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:contender"))
+    }
+
+    @Test
+    func `retryable handoff status cannot release target before owner settles`() async throws {
+        let failureBarrier = HandoffBarrier()
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.addBarrier = failureBarrier
+        destinationProvider.addError = HandoffFixtureError.provider
+        let contenderProvider = HandoffProviderSpy(label: "contender")
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider, contenderProvider])
+        let name = "mcp:retryable-status-release"
+        let destination = try #require(fixture.root.authenticatedSession(named: name))
+
+        let transfer = Task { @MainActor in
+            try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorization: fixture.authorization)
+        }
+        await failureBarrier.waitUntilBlocked()
+        let status = Task { @MainActor in
+            await destination.status(channel: nil)
+        }
+        await Task.yield()
+        await failureBarrier.release()
+        await #expect(throws: HandoffFixtureError.self) {
+            _ = try await transfer.value
+        }
+        #expect(await !status.value.isConnected)
+
+        let contender = try #require(fixture.root.authenticatedSession(named: "mcp:retry-contender"))
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await contender.connect(channel: nil, browserURL: Self.browserURL)
+        }
+        #expect(contenderProvider.addedConfigs.isEmpty)
+
+        destinationProvider.addBarrier = nil
+        destinationProvider.addError = nil
+        let connectedDestination = try await fixture.root.transferConnection(
+            toAuthenticatedSessionNamed: name,
+            authorization: fixture.authorization)
+        #expect(await (connectedDestination.status(channel: nil)).isConnected)
+        #expect(await fixture.root.endAuthenticatedSession(named: name))
+
+        let connected = try await contender.connect(channel: nil, browserURL: Self.browserURL)
+        #expect(connected.isConnected)
+        #expect(contenderProvider.addedConfigs.count == 1)
+        #expect(await fixture.root.endAuthenticatedSession(named: "mcp:retry-contender"))
+    }
+
     @Test
     func `cancelled pending handoff releases disconnected root ownership`() async throws {
         let preflightBarrier = HandoffBarrier()

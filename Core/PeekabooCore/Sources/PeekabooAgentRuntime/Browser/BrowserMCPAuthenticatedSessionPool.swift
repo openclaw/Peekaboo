@@ -299,6 +299,9 @@ final class BrowserMCPAuthenticatedSessionPool {
 
     func unbind(_ sessionID: SessionID) {
         guard self.endingSessions[sessionID] == nil else { return }
+        if let handoff = self.handoffs[sessionID] {
+            guard case .connected = handoff.phase else { return }
+        }
         self.targetOwners = self.targetOwners.filter { $0.value != .session(sessionID) }
     }
 
