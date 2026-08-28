@@ -44,6 +44,7 @@ final class BrowserMCPAuthenticatedSessionPool {
         let manager: BrowserMCPSessionManager
         var capabilities: BrowserToolCapabilitySession
         var mutationGate: MCPToolSnapshotExecutionGate
+        let handoffLifecycleGate: MCPToolSnapshotExecutionGate
     }
 
     struct SessionID: Hashable, Sendable {
@@ -99,7 +100,8 @@ final class BrowserMCPAuthenticatedSessionPool {
         self.sessions[sessionID] = SessionState(
             manager: manager,
             capabilities: BrowserToolCapabilitySession(),
-            mutationGate: MCPToolSnapshotExecutionGate())
+            mutationGate: MCPToolSnapshotExecutionGate(),
+            handoffLifecycleGate: MCPToolSnapshotExecutionGate())
         return manager
     }
 
@@ -118,6 +120,33 @@ final class BrowserMCPAuthenticatedSessionPool {
 
     func mutationGate(for sessionID: SessionID) -> MCPToolSnapshotExecutionGate? {
         self.sessions[sessionID]?.mutationGate
+    }
+
+    func withHandoffLifecycle<T>(
+        _ sessionID: SessionID,
+        operation: @MainActor () async throws -> T) async throws -> T
+    {
+        guard let state = self.sessions[sessionID],
+              !self.endedSessions.contains(sessionID),
+              self.endingSessions[sessionID] == nil
+        else { throw BrowserMCPConnectionError.sessionEnded }
+        let gate = state.handoffLifecycleGate
+        try await gate.acquire()
+        guard self.sessions[sessionID]?.handoffLifecycleGate === gate,
+              !self.endedSessions.contains(sessionID),
+              self.endingSessions[sessionID] == nil
+        else {
+            await gate.release()
+            throw BrowserMCPConnectionError.sessionEnded
+        }
+        do {
+            let result = try await operation()
+            await gate.release()
+            return result
+        } catch {
+            await gate.release()
+            throw error
+        }
     }
 
     func sessionID(named name: String) -> SessionID? {
@@ -139,13 +168,11 @@ final class BrowserMCPAuthenticatedSessionPool {
         if let ending = self.endingSessions[sessionID] {
             return await ending.value
         }
-        self.endedSessions.insert(sessionID)
-        let sourceRecoveryRequired = self.pendingHandoffClaims[sessionID]?.sourceRecoveryRequired == true
-        if !sourceRecoveryRequired {
-            self.cancelPendingHandoff(for: sessionID)
-        }
-        guard let state = self.sessions[sessionID] else {
+        guard let initialState = self.sessions[sessionID] else {
+            self.endedSessions.insert(sessionID)
+            let sourceRecoveryRequired = self.pendingHandoffClaims[sessionID]?.sourceRecoveryRequired == true
             if !sourceRecoveryRequired {
+                self.cancelPendingHandoff(for: sessionID)
                 self.pendingCleanupSessions.remove(sessionID)
                 self.namedSessions = self.namedSessions.filter { $0.value != sessionID }
                 self.releaseOwnership(for: sessionID)
@@ -155,7 +182,28 @@ final class BrowserMCPAuthenticatedSessionPool {
             }
             return !sourceRecoveryRequired
         }
+        let handoffLifecycleGate = initialState.handoffLifecycleGate
         let ending = Task { @MainActor in
+            do {
+                try await handoffLifecycleGate.acquire()
+            } catch {
+                self.pendingCleanupSessions.insert(sessionID)
+                self.endingSessions.removeValue(forKey: sessionID)
+                return false
+            }
+            guard let state = self.sessions[sessionID],
+                  state.handoffLifecycleGate === handoffLifecycleGate
+            else {
+                self.pendingCleanupSessions.insert(sessionID)
+                self.endingSessions.removeValue(forKey: sessionID)
+                await handoffLifecycleGate.release()
+                return false
+            }
+            self.endedSessions.insert(sessionID)
+            let sourceRecoveryRequired = self.pendingHandoffClaims[sessionID]?.sourceRecoveryRequired == true
+            if !sourceRecoveryRequired {
+                self.cancelPendingHandoff(for: sessionID)
+            }
             do {
                 try await state.mutationGate.acquire()
             } catch {
@@ -164,6 +212,7 @@ final class BrowserMCPAuthenticatedSessionPool {
                     sessionID,
                     cleanupConfirmed: false,
                     sourceRecoveryRequired: recoveryRequired)
+                await handoffLifecycleGate.release()
                 return false
             }
             // Capability end drains its operation gate, which covers reads through response projection; the mutation
@@ -177,6 +226,7 @@ final class BrowserMCPAuthenticatedSessionPool {
                 sessionID,
                 cleanupConfirmed: fullyRecovered,
                 sourceRecoveryRequired: recoveryRequired)
+            await handoffLifecycleGate.release()
             return fullyRecovered
         }
         self.endingSessions[sessionID] = ending
@@ -388,6 +438,16 @@ final class BrowserMCPAuthenticatedSessionPool {
         self.handoffs[sessionID] = handoff
     }
 
+    func resolveRetryableHandoffIfNotEnding(for sessionID: SessionID) -> Bool {
+        guard self.endingSessions[sessionID] == nil else { return false }
+        do {
+            try self.resolveHandoff(for: sessionID, as: .retryable)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     @discardableResult
     func end(named name: String) async -> Bool {
         guard let sessionID = self.namedSessions[name] else { return true }
@@ -400,6 +460,11 @@ final class BrowserMCPAuthenticatedSessionPool {
 
     var isEmpty: Bool {
         self.sessions.isEmpty
+    }
+
+    func isEnding(named name: String) -> Bool {
+        guard let sessionID = self.namedSessions[name] else { return false }
+        return self.endingSessions[sessionID] != nil
     }
 
     private static func targetKeys(for receipt: BrowserMCPConnectionReceipt) -> Set<TargetKey> {

@@ -150,6 +150,90 @@ struct BrowserMCPHandoffSessionTests {
     }
 
     @Test
+    func `session teardown waits through source drain before releasing the target`() async throws {
+        let teardownBarrier = HandoffBarrier()
+        let rootProvider = HandoffProviderSpy(label: "root")
+        rootProvider.removeBarrier = teardownBarrier
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        let nextProvider = HandoffProviderSpy(label: "next")
+        let fixture = try await Self.fixture(
+            rootProvider: rootProvider,
+            destinationProviders: [destinationProvider, nextProvider])
+        let name = "mcp:teardown-during-drain"
+
+        let transfer = Task { @MainActor in
+            try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorization: fixture.authorization)
+        }
+        await teardownBarrier.waitUntilBlocked()
+
+        let endFinished = HandoffCompletionFlag()
+        let end = Task { @MainActor in
+            let result = await fixture.root.endAuthenticatedSession(named: name)
+            await endFinished.finish()
+            return result
+        }
+        while !fixture.pool.isEnding(named: name) {
+            await Task.yield()
+        }
+        #expect(await !endFinished.isFinished)
+        #expect(destinationProvider.removeCount == 0)
+
+        await teardownBarrier.release()
+        _ = try await transfer.value
+        #expect(await end.value)
+        #expect(rootProvider.removeCount == 1)
+        #expect(!rootProvider.connected)
+        #expect(destinationProvider.removeCount == 1)
+
+        let next = try #require(fixture.root.authenticatedSession(named: "mcp:after-drain-teardown"))
+        let reconnected = try await next.connect(channel: nil, browserURL: Self.browserURL)
+        #expect(reconnected.isConnected)
+        #expect(nextProvider.addedConfigs.count == 1)
+        await fixture.root.endAuthenticatedSession(named: "mcp:after-drain-teardown")
+    }
+
+    @Test
+    func `session teardown waits through destination bootstrap before releasing the target`() async throws {
+        let addBarrier = HandoffBarrier()
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.addBarrier = addBarrier
+        let nextProvider = HandoffProviderSpy(label: "next")
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider, nextProvider])
+        let name = "mcp:teardown-during-bootstrap"
+
+        let transfer = Task { @MainActor in
+            try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorization: fixture.authorization)
+        }
+        await addBarrier.waitUntilBlocked()
+        let endFinished = HandoffCompletionFlag()
+        let end = Task { @MainActor in
+            let result = await fixture.root.endAuthenticatedSession(named: name)
+            await endFinished.finish()
+            return result
+        }
+        while !fixture.pool.isEnding(named: name) {
+            await Task.yield()
+        }
+        #expect(await !endFinished.isFinished)
+        #expect(destinationProvider.removeCount == 0)
+
+        await addBarrier.release()
+        _ = try await transfer.value
+        #expect(await end.value)
+        #expect(destinationProvider.removeCount == 1)
+
+        let next = try #require(fixture.root.authenticatedSession(named: "mcp:after-bootstrap-teardown"))
+        let reconnected = try await next.connect(channel: nil, browserURL: Self.browserURL)
+        #expect(reconnected.isConnected)
+        #expect(nextProvider.addedConfigs.count == 1)
+        await fixture.root.endAuthenticatedSession(named: "mcp:after-bootstrap-teardown")
+    }
+
+    @Test
     func `partial source teardown rolls ownership back only when the same provider is still live`() async throws {
         let rootProvider = HandoffProviderSpy(label: "root")
         rootProvider.leaveConfiguredAfterRemove = true
@@ -323,6 +407,173 @@ struct BrowserMCPHandoffSessionTests {
     }
 
     @Test
+    func `authorization ID survives retryable destination failure and is consumed on success`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.addError = HandoffFixtureError.provider
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let authorizationID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        let name = "mcp:authorization-retry"
+
+        await #expect(throws: HandoffFixtureError.self) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: "mcp:different-owner",
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+
+        destinationProvider.addError = nil
+        let destination = try await fixture.root.transferConnection(
+            toAuthenticatedSessionNamed: name,
+            authorizationID: authorizationID,
+            expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        #expect(await (destination.status(channel: nil)).isConnected)
+        #expect(destinationProvider.addedConfigs.count == 2)
+        #expect(fixture.rootProvider.removeCount == 1)
+
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        await fixture.root.endAuthenticatedSession(named: name)
+    }
+
+    @Test
+    func `authorization ID rejects concurrent replay and discard wins retryable completion`() async throws {
+        let addBarrier = HandoffBarrier()
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.addBarrier = addBarrier
+        destinationProvider.addError = HandoffFixtureError.provider
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let authorizationID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        let name = "mcp:authorization-discard"
+
+        let transfer = Task { @MainActor in
+            try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        await addBarrier.waitUntilBlocked()
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        fixture.root.discardConnectionHandoffAuthorization(authorizationID)
+        await addBarrier.release()
+        await #expect(throws: HandoffFixtureError.self) {
+            _ = try await transfer.value
+        }
+
+        destinationProvider.addBarrier = nil
+        destinationProvider.addError = nil
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        await fixture.root.endAuthenticatedSession(named: name)
+    }
+
+    @Test
+    func `ending session consumes authorization instead of reviving stale retry state`() async throws {
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.addError = HandoffFixtureError.provider
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let authorizationID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        let name = "mcp:authorization-ending"
+
+        await #expect(throws: HandoffFixtureError.self) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        destinationProvider.addError = nil
+        let sessionID = try #require(fixture.pool.existingSessionID(named: name))
+        let lifecycleBarrier = HandoffBarrier()
+        let lifecycleHolder = Task { @MainActor in
+            try await fixture.pool.withHandoffLifecycle(sessionID) {
+                await lifecycleBarrier.block()
+            }
+        }
+        await lifecycleBarrier.waitUntilBlocked()
+        let end = Task { @MainActor in
+            await fixture.root.endAuthenticatedSession(named: name)
+        }
+        while !fixture.pool.isEnding(named: name) {
+            await Task.yield()
+        }
+
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        await lifecycleBarrier.release()
+        _ = try await lifecycleHolder.value
+        #expect(await end.value)
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+    }
+
+    @Test
+    func `ending session consumes authorization from the current retryable destination failure`() async throws {
+        let addBarrier = HandoffBarrier()
+        let destinationProvider = HandoffProviderSpy(label: "destination")
+        destinationProvider.addBarrier = addBarrier
+        destinationProvider.addError = HandoffFixtureError.provider
+        let fixture = try await Self.fixture(destinationProviders: [destinationProvider])
+        let authorizationID = try await fixture.root.storeConnectionHandoffAuthorization(
+            connectionReceipt: fixture.sourceBinding.connectionReceipt)
+        let name = "mcp:authorization-current-ending"
+
+        let transfer = Task { @MainActor in
+            try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+        await addBarrier.waitUntilBlocked()
+        let end = Task { @MainActor in
+            await fixture.root.endAuthenticatedSession(named: name)
+        }
+        while !fixture.pool.isEnding(named: name) {
+            await Task.yield()
+        }
+
+        await addBarrier.release()
+        await #expect(throws: HandoffFixtureError.self) {
+            _ = try await transfer.value
+        }
+        #expect(await end.value)
+        await #expect(throws: BrowserMCPConnectionError.invalidHandoffAuthorization) {
+            _ = try await fixture.root.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorizationID: authorizationID,
+                expectedConnectionReceipt: fixture.sourceBinding.connectionReceipt)
+        }
+    }
+
+    @Test
     func `indeterminate child cleanup stays locked until owner teardown confirms removal`() async throws {
         let destinationProvider = HandoffProviderSpy(label: "destination")
         destinationProvider.executeError = HandoffFixtureError.provider
@@ -456,6 +707,7 @@ struct BrowserMCPHandoffSessionTests {
 
     private struct Fixture {
         let root: BrowserMCPService
+        let pool: BrowserMCPAuthenticatedSessionPool
         let rootProvider: HandoffProviderSpy
         let endpointResolver: HandoffEndpointResolverSpy
         let detection: HandoffDetectionSpy
@@ -513,6 +765,7 @@ struct BrowserMCPHandoffSessionTests {
         detection.reset()
         return Fixture(
             root: root,
+            pool: pool,
             rootProvider: rootProvider,
             endpointResolver: endpointResolver,
             detection: detection,
@@ -737,6 +990,14 @@ private actor HandoffEventLog {
 
     func reset() {
         self.values.removeAll()
+    }
+}
+
+private actor HandoffCompletionFlag {
+    private(set) var isFinished = false
+
+    func finish() {
+        self.isFinished = true
     }
 }
 

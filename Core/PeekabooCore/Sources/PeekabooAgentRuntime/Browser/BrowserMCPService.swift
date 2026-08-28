@@ -354,6 +354,16 @@ extension BrowserMCPClientProviding {
     }
 }
 
+private enum BrowserMCPStoredConnectionHandoffAuthorization {
+    case ready(
+        authorization: BrowserMCPConnectionHandoffAuthorization,
+        boundName: String?)
+    case inFlight(
+        authorization: BrowserMCPConnectionHandoffAuthorization,
+        name: String,
+        attemptID: UUID)
+}
+
 public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActionResultProviding,
     BrowserMCPAtomicSessionActionProviding,
     BrowserMCPConnectionResultProviding, BrowserMCPAuthenticatedSessionEnding, @unchecked Sendable
@@ -364,7 +374,8 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
     @MainActor private var sessionManager: BrowserMCPSessionManager?
     @MainActor private var authenticatedSessionPool: BrowserMCPAuthenticatedSessionPool?
-    @MainActor private var connectionHandoffAuthorizations: [UUID: BrowserMCPConnectionHandoffAuthorization] = [:]
+    @MainActor private var connectionHandoffAuthorizations:
+        [UUID: BrowserMCPStoredConnectionHandoffAuthorization] = [:]
     @MainActor private var authenticatedSessionCleanupRetry: (id: UUID, task: Task<Bool, Never>)?
     private let sessionCapabilities: BrowserToolCapabilitySession?
     private let sessionMutationGate: MCPToolSnapshotExecutionGate?
@@ -497,50 +508,6 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         try await self.resolvedSessionManager().authorizeConnectionHandoff(receipt: connectionReceipt)
     }
 
-    @MainActor
-    public func storeConnectionHandoffAuthorization(
-        connectionReceipt: BrowserMCPConnectionReceipt) async throws -> UUID
-    {
-        guard self.supportsAuthenticatedSessionBootstrap else {
-            throw BrowserMCPConnectionError.receiptBindingUnsupported
-        }
-        guard self.connectionHandoffAuthorizations.count < 128 else {
-            throw BrowserMCPConnectionError.handoffAuthorizationCapacityExceeded
-        }
-        let authorization = try await self.authorizeConnectionHandoff(connectionReceipt: connectionReceipt)
-        guard self.connectionHandoffAuthorizations.count < 128 else {
-            throw BrowserMCPConnectionError.handoffAuthorizationCapacityExceeded
-        }
-        var authorizationID = UUID()
-        while self.connectionHandoffAuthorizations[authorizationID] != nil {
-            authorizationID = UUID()
-        }
-        self.connectionHandoffAuthorizations[authorizationID] = authorization
-        return authorizationID
-    }
-
-    @MainActor
-    public func discardConnectionHandoffAuthorization(_ authorizationID: UUID) {
-        self.connectionHandoffAuthorizations.removeValue(forKey: authorizationID)
-    }
-
-    @MainActor
-    public func transferConnection(
-        toAuthenticatedSessionNamed name: String,
-        authorizationID: UUID,
-        expectedConnectionReceipt: BrowserMCPConnectionReceipt) async throws -> BrowserMCPService
-    {
-        guard let authorization = self.connectionHandoffAuthorizations[authorizationID],
-              authorization.connectionReceipt == expectedConnectionReceipt
-        else {
-            throw BrowserMCPConnectionError.invalidHandoffAuthorization
-        }
-        self.connectionHandoffAuthorizations.removeValue(forKey: authorizationID)
-        return try await self.transferConnection(
-            toAuthenticatedSessionNamed: name,
-            authorization: authorization)
-    }
-
     /// Moves one already-authorized exact root connection into a caller-scoped provider child.
     ///
     /// The binding is host-private authority. Wire adapters must resolve an authenticated opaque claim to this
@@ -550,6 +517,18 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         toAuthenticatedSessionNamed name: String,
         authorization: BrowserMCPConnectionHandoffAuthorization) async throws -> BrowserMCPService
     {
+        try await self.transferConnection(
+            toAuthenticatedSessionNamed: name,
+            authorization: authorization,
+            onRetryableDestinationFailure: {})
+    }
+
+    @MainActor
+    private func transferConnection(
+        toAuthenticatedSessionNamed name: String,
+        authorization: BrowserMCPConnectionHandoffAuthorization,
+        onRetryableDestinationFailure: @MainActor @escaping () -> Void) async throws -> BrowserMCPService
+    {
         guard let pool = self.authenticatedSessionPool,
               self.ownedSession == nil,
               let sessionID = pool.sessionID(named: name),
@@ -557,70 +536,75 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         else {
             throw BrowserMCPConnectionError.receiptBindingUnsupported
         }
-        func destinationService() throws -> BrowserMCPService {
-            guard let capabilities = pool.capabilities(for: sessionID),
-                  let mutationGate = pool.mutationGate(for: sessionID)
-            else {
-                throw BrowserMCPConnectionError.sessionEnded
-            }
-            return BrowserMCPService(
-                sessionManager: destinationManager,
-                ownedSession: (pool: pool, id: sessionID),
-                sessionCapabilities: capabilities,
-                sessionMutationGate: mutationGate)
-        }
-
-        let target: BrowserMCPAuthorizedHandoffTarget
-        switch try pool.prepareHandoff(sessionID, authorization: authorization) {
-        case .start:
-            do {
-                try await destinationManager.preflightHandoffDestination()
-                target = try await self.resolvedSessionManager().drainConnectionForHandoff(
-                    authorization: authorization)
-                do {
-                    try await pool.commitRootHandoff(
-                        to: sessionID,
-                        authorization: authorization,
-                        target: target)
-                } catch {
-                    pool.requireSourceRecovery(for: sessionID)
-                    throw BrowserMCPConnectionError.handoffRecoveryRequired(
-                        "source teardown completed, but destination ownership could not be committed")
+        return try await pool.withHandoffLifecycle(sessionID) {
+            @MainActor
+            func destinationService() throws -> BrowserMCPService {
+                guard let capabilities = pool.capabilities(for: sessionID),
+                      let mutationGate = pool.mutationGate(for: sessionID)
+                else {
+                    throw BrowserMCPConnectionError.sessionEnded
                 }
-            } catch let BrowserMCPHandoffSourceDrainError.sourceStillLive(cause) {
-                pool.cancelPendingHandoff(for: sessionID)
-                throw cause
-            } catch let BrowserMCPHandoffSourceDrainError.recoveryRequired(cause) {
-                pool.requireSourceRecovery(for: sessionID)
-                throw BrowserMCPConnectionError.handoffRecoveryRequired(cause.localizedDescription)
-            } catch let error as BrowserMCPConnectionError {
-                if case .handoffRecoveryRequired = error {
+                return BrowserMCPService(
+                    sessionManager: destinationManager,
+                    ownedSession: (pool: pool, id: sessionID),
+                    sessionCapabilities: capabilities,
+                    sessionMutationGate: mutationGate)
+            }
+
+            let target: BrowserMCPAuthorizedHandoffTarget
+            switch try pool.prepareHandoff(sessionID, authorization: authorization) {
+            case .start:
+                do {
+                    try await destinationManager.preflightHandoffDestination()
+                    target = try await self.resolvedSessionManager().drainConnectionForHandoff(
+                        authorization: authorization)
+                    do {
+                        try await pool.commitRootHandoff(
+                            to: sessionID,
+                            authorization: authorization,
+                            target: target)
+                    } catch {
+                        pool.requireSourceRecovery(for: sessionID)
+                        throw BrowserMCPConnectionError.handoffRecoveryRequired(
+                            "source teardown completed, but destination ownership could not be committed")
+                    }
+                } catch let BrowserMCPHandoffSourceDrainError.sourceStillLive(cause) {
+                    pool.cancelPendingHandoff(for: sessionID)
+                    throw cause
+                } catch let BrowserMCPHandoffSourceDrainError.recoveryRequired(cause) {
+                    pool.requireSourceRecovery(for: sessionID)
+                    throw BrowserMCPConnectionError.handoffRecoveryRequired(cause.localizedDescription)
+                } catch let error as BrowserMCPConnectionError {
+                    if case .handoffRecoveryRequired = error {
+                        throw error
+                    }
+                    pool.cancelPendingHandoff(for: sessionID)
+                    throw error
+                } catch {
+                    pool.cancelPendingHandoff(for: sessionID)
                     throw error
                 }
-                pool.cancelPendingHandoff(for: sessionID)
-                throw error
-            } catch {
-                pool.cancelPendingHandoff(for: sessionID)
-                throw error
+            case let .bootstrap(retryTarget):
+                target = retryTarget
+            case .connected:
+                return try destinationService()
             }
-        case let .bootstrap(retryTarget):
-            target = retryTarget
-        case .connected:
-            return try destinationService()
-        }
 
-        do {
-            try await destinationManager.bootstrapAuthorizedHandoff(target)
-            try pool.resolveHandoff(for: sessionID, as: .connected)
-            return try destinationService()
-        } catch let failure as BrowserMCPHandoffDestinationError {
-            if failure.cleanupConfirmed {
-                try? pool.resolveHandoff(for: sessionID, as: .retryable)
-                throw failure.cause
+            do {
+                try await destinationManager.bootstrapAuthorizedHandoff(target)
+                try pool.resolveHandoff(for: sessionID, as: .connected)
+                return try destinationService()
+            } catch let failure as BrowserMCPHandoffDestinationError {
+                if failure.cleanupConfirmed {
+                    if pool.resolveRetryableHandoffIfNotEnding(for: sessionID) {
+                        onRetryableDestinationFailure()
+                    }
+                    throw failure.cause
+                }
+                try? pool.resolveHandoff(for: sessionID, as: .recoveryRequired)
+                throw BrowserMCPConnectionError.handoffRecoveryRequired(
+                    failure.cause.localizedDescription)
             }
-            try? pool.resolveHandoff(for: sessionID, as: .recoveryRequired)
-            throw BrowserMCPConnectionError.handoffRecoveryRequired(
-                failure.cause.localizedDescription)
         }
     }
 
@@ -633,6 +617,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @discardableResult
     public func endAuthenticatedSession(named name: String) async -> Bool {
         guard let pool = self.authenticatedSessionPool else { return true }
+        self.discardConnectionHandoffAuthorizations(boundTo: name)
         if let recovery = pool.sourceRecovery(named: name),
            await self.resolvedSessionManager().recoverSourceHandoff(
                authorization: recovery.authorization)
@@ -1223,6 +1208,113 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 }
 
 extension BrowserMCPService {
+    @MainActor
+    private func discardConnectionHandoffAuthorizations(boundTo name: String) {
+        self.connectionHandoffAuthorizations = self.connectionHandoffAuthorizations.filter { _, entry in
+            switch entry {
+            case let .ready(_, boundName):
+                boundName != name
+            case let .inFlight(_, currentName, _):
+                currentName != name
+            }
+        }
+    }
+
+    @MainActor
+    public func storeConnectionHandoffAuthorization(
+        connectionReceipt: BrowserMCPConnectionReceipt) async throws -> UUID
+    {
+        guard self.supportsAuthenticatedSessionBootstrap else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        guard self.connectionHandoffAuthorizations.count < 128 else {
+            throw BrowserMCPConnectionError.handoffAuthorizationCapacityExceeded
+        }
+        let authorization = try await self.authorizeConnectionHandoff(connectionReceipt: connectionReceipt)
+        guard self.connectionHandoffAuthorizations.count < 128 else {
+            throw BrowserMCPConnectionError.handoffAuthorizationCapacityExceeded
+        }
+        var authorizationID = UUID()
+        while self.connectionHandoffAuthorizations[authorizationID] != nil {
+            authorizationID = UUID()
+        }
+        self.connectionHandoffAuthorizations[authorizationID] = .ready(
+            authorization: authorization,
+            boundName: nil)
+        return authorizationID
+    }
+
+    @MainActor
+    public func discardConnectionHandoffAuthorization(_ authorizationID: UUID) {
+        self.connectionHandoffAuthorizations.removeValue(forKey: authorizationID)
+    }
+
+    @MainActor
+    public func transferConnection(
+        toAuthenticatedSessionNamed name: String,
+        authorizationID: UUID,
+        expectedConnectionReceipt: BrowserMCPConnectionReceipt) async throws -> BrowserMCPService
+    {
+        guard case let .ready(authorization, boundName)? = self.connectionHandoffAuthorizations[authorizationID],
+              authorization.connectionReceipt == expectedConnectionReceipt,
+              boundName == nil || boundName == name
+        else {
+            throw BrowserMCPConnectionError.invalidHandoffAuthorization
+        }
+        let attemptID = UUID()
+        self.connectionHandoffAuthorizations[authorizationID] = .inFlight(
+            authorization: authorization,
+            name: name,
+            attemptID: attemptID)
+        var retryableDestinationFailure = false
+        do {
+            let service = try await self.transferConnection(
+                toAuthenticatedSessionNamed: name,
+                authorization: authorization,
+                onRetryableDestinationFailure: {
+                    retryableDestinationFailure = true
+                })
+            self.finishConnectionHandoffAuthorizationAttempt(
+                authorizationID,
+                attemptID: attemptID,
+                authorization: authorization,
+                name: name,
+                retryable: false)
+            return service
+        } catch {
+            self.finishConnectionHandoffAuthorizationAttempt(
+                authorizationID,
+                attemptID: attemptID,
+                authorization: authorization,
+                name: name,
+                retryable: retryableDestinationFailure)
+            throw error
+        }
+    }
+
+    @MainActor
+    private func finishConnectionHandoffAuthorizationAttempt(
+        _ authorizationID: UUID,
+        attemptID: UUID,
+        authorization: BrowserMCPConnectionHandoffAuthorization,
+        name: String,
+        retryable: Bool)
+    {
+        guard case let .inFlight(currentAuthorization, currentName, currentAttemptID)? =
+            self.connectionHandoffAuthorizations[authorizationID],
+            currentAuthorization == authorization,
+            currentName == name,
+            currentAttemptID == attemptID
+        else { return }
+        if retryable {
+            self.connectionHandoffAuthorizations[authorizationID] = .ready(
+                authorization: authorization,
+                boundName: name)
+        } else {
+            self.connectionHandoffAuthorizations.removeValue(forKey: authorizationID)
+        }
+    }
+
     @MainActor
     @discardableResult
     public func retryPendingAuthenticatedSessionCleanup() async -> Bool {
