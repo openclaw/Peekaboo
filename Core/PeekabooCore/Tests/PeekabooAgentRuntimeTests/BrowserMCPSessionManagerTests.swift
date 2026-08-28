@@ -1086,6 +1086,56 @@ struct BrowserMCPSessionManagerTests {
         await root.endAuthenticatedSession(named: "agent:second")
     }
 
+    @Test
+    func `second reconnect validation cancellation retains its healthy target reservation`() async throws {
+        let firstProvider = MockBrowserMCPManager()
+        let secondProvider = MockBrowserMCPManager()
+        let secondValidationBarrier = SequenceBarrier()
+        let endpoints = EndpointMap()
+        await endpoints.set("browser-a", port: 9222)
+        let firstManager = Self.exactSession(
+            manager: firstProvider,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                try await endpoints.resolve(url)
+            })
+        let secondManager = Self.exactSession(manager: secondProvider)
+        var managers = [firstManager, secondManager]
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in managers.removeFirst() }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let first = try #require(root.authenticatedSession(named: "agent:first"))
+        let second = try #require(root.authenticatedSession(named: "agent:second"))
+        _ = try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        await endpoints.cancelResolution(
+            afterSuccessfulResolutions: 1,
+            at: secondValidationBarrier)
+
+        let reconnect = Task { @MainActor in
+            try await first.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        }
+        await secondValidationBarrier.waitUntilBlocked()
+        await secondValidationBarrier.release()
+        do {
+            _ = try await reconnect.value
+            Issue.record("Expected the second validation to cancel the reconnect")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        let retained = await first.status(channel: nil)
+        #expect(retained.isConnected)
+        #expect(retained.observation == .confirmed)
+        #expect(firstProvider.removeCount == 0)
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await second.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        }
+
+        await first.disconnect()
+        _ = try await second.connect(channel: nil, browserURL: "http://127.0.0.1:9222")
+        await root.endAuthenticatedSession(named: "agent:first")
+        await root.endAuthenticatedSession(named: "agent:second")
+    }
+
     @Test(arguments: [false, true])
     func `cancelled status inspection retains live target ownership`(transportCancellation: Bool) async throws {
         let firstProvider = MockBrowserMCPManager()
@@ -3374,6 +3424,8 @@ private actor EndpointMap {
     private var shouldCancelResolution = false
     private var shouldUseTransportCancellation = false
     private var nextFailureBarrier: SequenceBarrier?
+    private var scheduledCancellationRemaining: Int?
+    private var scheduledCancellationBarrier: SequenceBarrier?
 
     func set(_ browserID: String, port: Int) {
         self.endpoints[port] = browserID
@@ -3388,11 +3440,27 @@ private actor EndpointMap {
         self.nextFailureBarrier = barrier
     }
 
+    func cancelResolution(afterSuccessfulResolutions count: Int, at barrier: SequenceBarrier) {
+        self.scheduledCancellationRemaining = count
+        self.scheduledCancellationBarrier = barrier
+    }
+
     func resolve(_ url: String) async throws -> BrowserMCPDevToolsEndpoint {
         if let failureBarrier = self.nextFailureBarrier {
             self.nextFailureBarrier = nil
             await failureBarrier.block()
             throw BrowserMCPConnectionError.connectionLost("the endpoint disappeared during validation")
+        }
+        if let remaining = self.scheduledCancellationRemaining,
+           let cancellationBarrier = self.scheduledCancellationBarrier
+        {
+            if remaining == 0 {
+                self.scheduledCancellationRemaining = nil
+                self.scheduledCancellationBarrier = nil
+                await cancellationBarrier.block()
+                throw CancellationError()
+            }
+            self.scheduledCancellationRemaining = remaining - 1
         }
         if self.shouldCancelResolution {
             if self.shouldUseTransportCancellation {

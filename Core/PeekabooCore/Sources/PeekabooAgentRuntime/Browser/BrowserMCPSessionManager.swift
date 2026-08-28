@@ -357,7 +357,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 await self.clearConnection()
                 throw BrowserMCPConnectionError.connectionLost("the persistent MCP child exited")
             }
-            let status = await self.inspectStatusUnlocked(channel: channel).status
+            let inspection = await self.inspectStatusUnlocked(channel: channel)
+            guard !inspection.wasCancelled else { throw CancellationError() }
+            let status = inspection.status
             guard status.isConnected else {
                 throw BrowserMCPConnectionError.connectionLost(
                     status.error ?? "the existing browser connection could not be verified")
