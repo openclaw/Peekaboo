@@ -912,7 +912,7 @@ extension BrowserToolTests {
     }
 
     @Test
-    func `default background safe Browser tool requires an existing connection and returns canonical refusal`() async throws {
+    func `default background safe Browser tool requires connection and returns canonical refusal`() async throws {
         let client = ConnectionPolicyBrowserMCPClient()
         let response = try await BrowserTool(client: client).execute(arguments: ToolArguments(raw: [
             "action": "console",
