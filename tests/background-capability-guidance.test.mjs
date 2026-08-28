@@ -102,9 +102,12 @@ test('browser guidance separates standalone root authority from scoped sessions'
   const changelogContract =
     /explicit-foreground standalone CLI root auto-connect.*filtered MCP and Agent catalogs.*prevents shared-root fallback and unsafe reuse/s;
 
-  assert.match(browser, /Default read and page actions.*existing exact browser connection\s+receipt and never ambiently auto-connect/s);
-  assert.match(browser, /explicit `--foreground`.*only standalone CLI page actions may\s+auto-connect/s);
-  assert.match(browser, /Persistent MCP, Agent, and Bridge-scoped page actions never ambiently auto-connect/s);
+  assert.match(browser, /Default mode therefore exposes only source-audited routes.*refuse before provider\s+I\/O unless the caller passes `--foreground`/s);
+  assert.match(browser, /source-audited calls report `browser_protocol` \/ `background` delivery/s);
+  assert.match(browser, /accepted calls report `browser_protocol` \/ `foreground` delivery/s);
+  assert.match(browser, /All default calls require an existing exact browser connection receipt and never ambiently auto-connect/s);
+  assert.match(browser, /With explicit\s+`--foreground`.*only standalone CLI page actions may\s+auto-connect/s);
+  assert.match(browser, /Persistent MCP, Agent, and\s+Bridge-scoped page actions never ambiently auto-connect/s);
   assert.match(browser, /newer snapshot or navigation expires the affected page's element references/s);
   assert.match(browser, /Closing a page\s+expires that page's namespace/s);
   assert.match(browserMcp, /status, execution, disconnect, and terminal end all carry the opaque session ID/s);
@@ -115,8 +118,9 @@ test('browser guidance separates standalone root authority from scoped sessions'
   assert.match(mcp, /Each server whose\s+catalog includes `browser`, or which consumes an explicit browser handoff/s);
   assert.doesNotMatch(mcp, /Each process-local\s+server owns a fresh browser child/s);
   assert.match(mcp, /Scoped MCP page actions never ambiently auto-connect, even\s+with foreground authority/s);
-  assert.match(mcp, /`--allow-foreground` instead exposes the\s+explicit `browser` `connect` action/s);
-  assert.match(mcp, /background-delivered by default.*explicitly request foreground page\s+selection or opening/s);
+  assert.match(mcp, /`--allow-foreground` exposes the explicit `browser` `connect` action.*routes that can enter Puppeteer evaluation/s);
+  assert.match(mcp, /default servers hide and pre-dispatch refuse page discovery.*arbitrary script evaluation/s);
+  assert.match(mcp, /Foreground-authorized calls.*truthfully report foreground browser-protocol delivery/s);
   assert.match(mcp, /A background-only\s+Bridge-backed opaque browser session can start connected only through/s);
   assert.doesNotMatch(mcp, /Missing, stale, copied,/s);
   assert.match(mcp, /Filtering out `browser` therefore creates no browser\s+child/s);

@@ -103,8 +103,9 @@ InjectedRuntimeBackedCommand {
 
         The pinned provider grants browser user activation to every Puppeteer page evaluation, including
         headless and background pages. Default mode therefore exposes only source-audited routes that do not
-        enter that evaluation path. Page discovery, snapshots, navigation, element interaction, and arbitrary
-        script evaluation require explicit --foreground and report foreground browser-protocol delivery.
+        enter that evaluation path and reports those calls as background browser-protocol delivery. Page discovery,
+        snapshots, navigation, element interaction, and arbitrary script evaluation require explicit --foreground
+        and report foreground browser-protocol delivery.
         Default calls still require an existing exact connection and never ambiently auto-connect. With explicit
         --foreground, only standalone CLI page actions may auto-connect when no receipt exists.
         """

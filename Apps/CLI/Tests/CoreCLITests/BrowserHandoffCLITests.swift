@@ -27,11 +27,15 @@ struct BrowserHandoffCLITests {
 
         #expect(browserHelp.contains("--handoff-file"))
         #expect(browserHelp.contains("Atomically create one signed browser handoff receipt"))
-        #expect(browserHelp.contains("Default read and page actions require an existing exact browser connection"))
+        #expect(browserHelp.contains("Default mode therefore exposes only source-audited routes"))
+        #expect(browserHelp.contains("reports those calls as background browser-protocol delivery"))
+        #expect(browserHelp.contains("require explicit --foreground"))
+        #expect(browserHelp.contains("and report foreground browser-protocol delivery"))
+        #expect(browserHelp.contains(
+            "Default calls still require an existing exact connection and never ambiently auto-connect"
+        ))
         #expect(browserHelp.contains("only standalone CLI page actions may"))
         #expect(browserHelp.contains("standalone CLI auto-connect"))
-        #expect(browserHelp.contains("Bridge-scoped page actions never"))
-        #expect(browserHelp.contains("background Bridge-scoped MCP child"))
         #expect(mcpHelp.contains("--browser-handoff"))
         #expect(mcpHelp.contains("Consume one signed browser handoff receipt into this server's scoped child"))
 

@@ -28,6 +28,7 @@ discovery, snapshots, navigation, waits, element interaction, and arbitrary scri
 I/O unless the caller passes `--foreground`; accepted calls report `browser_protocol` / `foreground` delivery even if
 the page remains visually behind another app. Exact positive-ID network lookup, page screenshot without an element,
 console listing, emulation, Lighthouse, performance trace operations, and heap capture retain background routes.
+Those source-audited calls report `browser_protocol` / `background` delivery.
 All default calls require an existing exact browser connection receipt and never ambiently auto-connect. With explicit
 `--foreground`, only standalone CLI page actions may auto-connect when no receipt exists. Persistent MCP, Agent, and
 Bridge-scoped page actions never ambiently auto-connect.
