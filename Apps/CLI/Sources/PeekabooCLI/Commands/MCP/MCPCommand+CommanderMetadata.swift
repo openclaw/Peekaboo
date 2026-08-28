@@ -23,7 +23,7 @@ extension MCPCommand.Serve: CommanderSignatureProviding {
             flags: [
                 .commandFlag(
                     "allowForeground",
-                    help: "Authorize foreground/global UI for this MCP server",
+                    help: "Authorize foreground/global UI and browser user activation for this MCP server",
                     long: "allow-foreground"
                 ),
             ]

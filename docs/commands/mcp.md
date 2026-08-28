@@ -20,10 +20,12 @@ read_when:
   setup fail before dispatch unless a human starts that server process with `--allow-foreground`. Each server whose
   catalog includes `browser`, or which consumes an explicit browser handoff, owns a fresh browser child and does not
   borrow another CLI, daemon, or MCP caller's connection. Scoped MCP page actions never ambiently auto-connect, even
-  with foreground authority. `--allow-foreground` instead exposes the explicit `browser` `connect` action for that
-  exact child; accept Chrome's prompt once, then later page actions reuse the scoped connection, remain page-targeted,
-  and are background-delivered by default. A foreground-capable server can still explicitly request foreground page
-  selection or opening.
+  with foreground authority. `--allow-foreground` exposes the explicit `browser` `connect` action for that exact child
+  and browser routes that can enter Puppeteer evaluation. The pinned provider marks those evaluations as user gestures
+  even for background or headless pages, so default servers hide and pre-dispatch refuse page discovery, snapshots,
+  navigation, waits, element interaction, and arbitrary script evaluation. Foreground-authorized calls reuse the scoped
+  connection and truthfully report foreground browser-protocol delivery; this classification does not claim the page
+  was visibly fronted.
   Authenticated sessions reject `PEEKABOO_BROWSER_MCP_ISOLATED=1` before provider startup because that child has no
   pinnable browser identity. For headless use, launch Chrome separately and pass its exact loopback `browser_url`.
   This explicit authority never exposes Shell, and a nested Agent remains background-only. A background-only

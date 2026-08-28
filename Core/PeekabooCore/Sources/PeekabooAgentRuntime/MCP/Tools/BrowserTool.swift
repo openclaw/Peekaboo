@@ -20,10 +20,12 @@ public struct BrowserTool: MCPTool {
         if self.executionPolicy == .backgroundOnly {
             return """
             Controls and inspects Chrome web pages through one existing exact DevTools connection under immutable
-            background-only authority. Use `status` to inspect its receipt, then page-scoped actions with explicit
-            opaque page references. Connect is unavailable because Chrome may surface remote-debugging setup or approval
-            UI. Restart this exact MCP server/session with explicit foreground authority, connect its scoped browser
-            child, then keep later page operations background-targeted; another CLI or daemon connection is not reused.
+            background-only authority. Only source-audited routes that cannot enter Puppeteer page evaluation are
+            available. The pinned provider grants browser user activation to evaluation, so page discovery, snapshots,
+            navigation, element interaction, and arbitrary script evaluation require an explicitly foreground-authorized
+            session even when the page itself would stay behind the user's active app. Connect is likewise unavailable
+            because Chrome may surface remote-debugging setup or approval UI. Another CLI or daemon connection is not
+            reused.
             """
         }
 
@@ -36,13 +38,17 @@ public struct BrowserTool: MCPTool {
 
         Chrome DevTools MCP requires Chrome 144+ with remote debugging enabled at
         chrome://inspect/#remote-debugging. The user must accept Chrome's remote debugging prompt.
+        Routes that can enter Puppeteer page evaluation are foreground-only because the pinned provider grants browser
+        user activation even for headless or background pages.
         Peekaboo starts chrome-devtools-mcp with usage statistics and CrUX lookups disabled.
         """
     }
 
     public var inputSchema: Value {
         let foregroundCapable = self.executionPolicy != .backgroundOnly
-        let actions = BrowserAction.allCases.filter { foregroundCapable || $0 != .connect }
+        let actions = BrowserAction.allCases.filter {
+            foregroundCapable || BrowserMCPUserActivationPolicy.backgroundCatalogActions.contains($0)
+        }
         var properties: [String: Value] = [
             "action": SchemaBuilder.string(
                 description: foregroundCapable
@@ -120,7 +126,11 @@ public struct BrowserTool: MCPTool {
             "insight_set_id": SchemaBuilder.string(description: "Insight set id from trace summary."),
             "insight_name": SchemaBuilder.string(description: "Insight name from trace summary."),
             "mcp_tool": SchemaBuilder.string(
-                description: "Advanced: audited Chrome DevTools MCP v1.6.0 tool name for call."),
+                description: foregroundCapable
+                    ? "Advanced: audited Chrome DevTools MCP v1.6.0 tool name for call. " +
+                    "Routes that enter page evaluation use foreground browser authority."
+                    : "Audited raw tool whose complete path cannot grant browser user activation.",
+                enum: BrowserMCPUserActivationPolicy.catalogToolNames(foregroundCapable: foregroundCapable)),
             "mcp_args_json": SchemaBuilder.string(description: "Advanced: JSON object args for raw MCP call. " +
                 "Page-targeted tools require top-level page_id; nested pageId cannot select the page."),
         ]
@@ -130,6 +140,18 @@ public struct BrowserTool: MCPTool {
             Peekaboo resolves and pins its browser WebSocket identity. Required when multiple Chrome
             processes share one channel.
             """)
+        } else {
+            for key in [
+                "url", "navigation_type", "uid", "to_uid", "text", "value", "key", "submit_key",
+                "dialog_action", "include_snapshot", "double", "bring_to_front", "background", "timeout",
+                "resource_types", "message_id",
+            ] {
+                properties.removeValue(forKey: key)
+            }
+            properties["request_id"] = SchemaBuilder.integer(description: """
+            Positive request ID required for background network lookup. Omitting it makes the provider evaluate shared
+            DevTools page state and is refused before dispatch.
+            """, minimum: 1)
         }
         return SchemaBuilder.object(
             properties: properties,
@@ -396,11 +418,16 @@ public struct BrowserTool: MCPTool {
             } else {
                 nil
             }
-            let response = try await self.executeSequence(
-                calls,
-                channel: channel,
-                expectedSessionBinding: sessionBinding,
-                elementPreflight: elementPreflight)
+            let response: ToolResponse
+            do {
+                response = try await self.executeSequence(
+                    calls,
+                    channel: channel,
+                    expectedSessionBinding: sessionBinding,
+                    elementPreflight: elementPreflight)
+            } catch let failure as DesktopActionFailure {
+                throw Self.reprojectingUserActivationFailure(failure, calls: calls)
+            }
             guard let capabilitySession = self.capabilitySession else { return response }
             do {
                 return try await capabilitySession.project(
@@ -446,7 +473,7 @@ public struct BrowserTool: MCPTool {
         }
         let failure = DesktopActionFailure.indeterminate(
             route: originalOutcome?.route ?? .local,
-            delivery: originalOutcome?.delivery ?? .init(mechanism: .browserProtocol, mode: .background),
+            delivery: Self.delivery(for: calls),
             evidence: .completionUnknown,
             unitCount: originalOutcome?.dispatchState.unitCount ??
                 DesktopActionOutcome.DispatchUnitCount(mutationCount),
@@ -464,7 +491,11 @@ public struct BrowserTool: MCPTool {
         expectedSessionBinding: BrowserMCPExecutionSessionBinding? = nil,
         elementPreflight: BrowserMCPElementPreflight? = nil) async throws -> ToolResponse
     {
-        let semantics = Self.sequenceSemantics(calls)
+        let delivery = Self.delivery(for: calls)
+        let providerSemantics = Self.sequenceSemantics(calls)
+        let semantics: BrowserMCPPageRoutingContract.ActionSemantics = delivery.mode == .foreground
+            ? .mutating
+            : providerSemantics
         guard let resultClient = self.client as? any BrowserMCPActionResultProviding else {
             if self.connectionPolicy == .requireExistingLiveReceipt {
                 throw DesktopActionFailure.preDispatchRefusal(
@@ -509,10 +540,16 @@ public struct BrowserTool: MCPTool {
         } catch is CancellationError where semantics == .readOnly {
             return ToolResponse.error("Browser read was cancelled after provider entry.")
         }
+        let providerOutcome = result.outcome?.reprojectingDelivery(delivery)
         let outcome = try Self.validatedOutcome(
-            result.outcome,
+            providerOutcome ?? Self.successfulUserActivationOutcome(
+                payloadIsError: result.payload.isError,
+                delivery: delivery,
+                callCount: calls.count,
+                providerSemantics: providerSemantics),
             payloadIsError: result.payload.isError,
-            semantics: semantics)
+            semantics: semantics,
+            delivery: delivery)
         let executionMetadata = BrowserMCPExecutionEvidence.split(result.payload.meta)
         var providerFields = MCPToolResponseMetadataProjector.providerFields(
             from: executionMetadata.providerMeta)
@@ -555,15 +592,57 @@ public struct BrowserTool: MCPTool {
         } ? .readOnly : .mutating
     }
 
+    private static func delivery(
+        for calls: [BrowserMCPMappedCall]) -> DesktopActionOutcome.Delivery
+    {
+        let mode: DesktopActionOutcome.Delivery.Mode = BrowserMCPUserActivationPolicy
+            .foregroundRequirement(for: calls)
+            .requiresForegroundAuthority ? .foreground : .background
+        return .init(mechanism: .browserProtocol, mode: mode)
+    }
+
+    private static func successfulUserActivationOutcome(
+        payloadIsError: Bool,
+        delivery: DesktopActionOutcome.Delivery,
+        callCount: Int,
+        providerSemantics: BrowserMCPPageRoutingContract.ActionSemantics) -> DesktopActionOutcome?
+    {
+        guard !payloadIsError,
+              delivery.mode == .foreground,
+              providerSemantics == .readOnly,
+              let unitCount = DesktopActionOutcome.DispatchUnitCount(callCount)
+        else { return nil }
+        return .dispatchedUnverified(
+            delivery: delivery,
+            evidence: .deliveryAccepted,
+            unitCount: unitCount)
+    }
+
+    private static func reprojectingUserActivationFailure(
+        _ failure: DesktopActionFailure,
+        calls: [BrowserMCPMappedCall]) -> DesktopActionFailure
+    {
+        let delivery = Self.delivery(for: calls)
+        guard delivery.mode == .foreground else { return failure }
+        let outcome = failure.outcome.reprojectingDelivery(delivery)
+        return DesktopActionFailure(
+            outcome: outcome,
+            message: failure.message,
+            hint: failure.hint,
+            causeDescription: failure.causeDescription,
+            targetReceipt: failure.targetReceipt) ?? failure
+    }
+
     private static func validatedOutcome(
         _ outcome: DesktopActionOutcome?,
         payloadIsError: Bool,
-        semantics: BrowserMCPPageRoutingContract.ActionSemantics) throws -> DesktopActionOutcome?
+        semantics: BrowserMCPPageRoutingContract.ActionSemantics,
+        delivery: DesktopActionOutcome.Delivery) throws -> DesktopActionOutcome?
     {
         guard let outcome else {
             guard semantics == .readOnly else {
                 throw DesktopActionFailure.indeterminate(
-                    delivery: .init(mechanism: .browserProtocol, mode: .background),
+                    delivery: delivery,
                     evidence: .completionUnknown,
                     message: "Browser mutation returned without a canonical action outcome.",
                     hint: "Observe the browser before retrying and update the runtime host.")

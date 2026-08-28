@@ -160,7 +160,10 @@ struct BrowserToolCapabilityIntegrationTests {
     func `raw snapshot and evaluate script resolve only schema owned element positions`() async throws {
         let client = CapabilityBrowserMCPClient()
         let coordinator = CapabilityMutationCoordinator()
-        let context = Self.context(client: client, coordinator: coordinator)
+        let context = Self.context(
+            client: client,
+            coordinator: coordinator,
+            executionPolicy: .foregroundAllowed)
         let tool = BrowserTool(context: context)
         let listed = try await context.execute(
             tool: tool,
@@ -202,7 +205,7 @@ struct BrowserToolCapabilityIntegrationTests {
     @Test
     func `evaluate script domain uid text is not rewritten as an element capability`() async throws {
         let client = CapabilityBrowserMCPClient()
-        let context = Self.context(client: client)
+        let context = Self.context(client: client, executionPolicy: .foregroundAllowed)
         let tool = BrowserTool(context: context)
         let pageReference = try await Self.pageReference(from: context.execute(
             tool: tool,
@@ -230,6 +233,29 @@ struct BrowserToolCapabilityIntegrationTests {
 
         #expect(!response.isError)
         #expect(Self.text(from: response) == domainResult)
+    }
+
+    @Test
+    func `background capability evaluation refuses before status or provider execution`() async throws {
+        let client = CapabilityBrowserMCPClient()
+        let context = Self.context(client: client, executionPolicy: .backgroundOnly)
+        let tool = BrowserTool(context: context)
+        let pageReference = "bp1_" + String(repeating: "a", count: 32)
+
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "call",
+                "mcp_tool": "evaluate_script",
+                "page_id": pageReference,
+                "mcp_args_json": #"{"function":"() => navigator.userActivation.isActive"}"#,
+            ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string("foreground_consent_required"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(client.statusCount == 0)
+        #expect(client.sequences.isEmpty)
     }
 
     @Test(arguments: ["1_0", "stashed-0"])
@@ -276,7 +302,7 @@ struct BrowserToolCapabilityIntegrationTests {
             MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta).projection?.outcome)
         #expect(outcome.state == .indeterminate)
         #expect(outcome.route == .local)
-        #expect(outcome.delivery == .init(mechanism: .browserProtocol, mode: .background))
+        #expect(outcome.delivery == .init(mechanism: .browserProtocol, mode: .foreground))
         #expect(outcome.evidence == .completionUnknown)
         #expect(outcome.dispatchState.unitCount == .one)
         #expect(outcome.retrySafety == .unsafe)
@@ -932,7 +958,8 @@ extension BrowserToolCapabilityIntegrationTests {
 
     private static func context(
         client: any BrowserMCPClientProviding,
-        coordinator: (any MCPToolSnapshotMutationCoordinating)? = nil) -> MCPToolContext
+        coordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
+        executionPolicy: MCPToolExecutionPolicy = .unrestricted) -> MCPToolContext
     {
         let services = PeekabooServices()
         return MCPToolContext(
@@ -951,7 +978,7 @@ extension BrowserToolCapabilityIntegrationTests {
             clipboard: services.clipboard,
             browser: client,
             snapshotMutationCoordinator: coordinator,
-            executionPolicy: .unrestricted)
+            executionPolicy: executionPolicy)
     }
 
     private static func pageReference(from response: ToolResponse) throws -> String {
@@ -1056,6 +1083,7 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
     let providerSessionEpoch = BrowserMCPProviderSessionEpoch()
     private(set) var sequences: [[BrowserMCPMappedCall]] = []
     private(set) var elementPreflights: [BrowserMCPElementPreflight?] = []
+    private(set) var statusCount = 0
     var statusResponses: [BrowserMCPStatus] = []
     var executeHandler: (@MainActor (String) async -> ToolResponse)?
 
@@ -1065,6 +1093,7 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
     }
 
     func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        self.statusCount += 1
         if !self.statusResponses.isEmpty {
             return self.statusResponses.removeFirst()
         }

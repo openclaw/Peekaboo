@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Reload credential files from fresh snapshots, retain empty-value batch clears, and publish provider edits atomically without losing unrelated keys or OAuth entries. Thanks @vincentkoc for #651.
+- Hide and pre-dispatch refuse every pinned browser-provider route that can grant browser user activation under default background authority, while explicit foreground calls report truthful foreground browser-protocol outcomes.
 - Keep `peekaboo learn` on its injected main-actor service provider instead of crashing when no process-wide tool registry default exists.
 - Keep default browser calls existing-receipt-only while restoring explicit-foreground standalone CLI root auto-connect; resolve filtered MCP and Agent catalogs before browser bootstrap while still consuming explicit signed handoffs; and give MCP, Bridge, and Agent sessions generation-safe scoped children whose confirmed cleanup or retained debt prevents shared-root fallback and unsafe reuse.
 - Let explicitly browser-only MCP servers start without unrelated ScreenCaptureKit ownership preflight, while keeping unknown and capture-capable catalogs fail closed; reject receiptless isolated Chrome children before authenticated capability-session dispatch and direct headless callers to an exact loopback endpoint.

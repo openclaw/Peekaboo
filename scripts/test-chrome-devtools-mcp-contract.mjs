@@ -14,10 +14,15 @@ const semanticsContractURL = new URL(
   "../Core/PeekabooFoundation/Sources/PeekabooFoundation/BrowserToolActionSemantics.swift",
   import.meta.url,
 );
+const userActivationContractURL = new URL(
+  "../Core/PeekabooCore/Sources/PeekabooAgentRuntime/Browser/BrowserMCPUserActivationPolicy.swift",
+  import.meta.url,
+);
 const rootPackage = JSON.parse(readFileSync(rootPackageURL, "utf8"));
 const dependencyPackage = JSON.parse(readFileSync(dependencyPackageURL, "utf8"));
 const routingContract = readFileSync(routingContractURL, "utf8");
 const semanticsContract = readFileSync(semanticsContractURL, "utf8");
+const userActivationContract = readFileSync(userActivationContractURL, "utf8");
 const declaredVersion = rootPackage.devDependencies?.["chrome-devtools-mcp"];
 
 function namesInContractSection(name, source = routingContract) {
@@ -37,6 +42,18 @@ const expectedBlockedSelectedPageNames = namesInContractSection("blocked-selecte
 const expectedReadOnlyNames = namesInContractSection("semantic-read-only", semanticsContract);
 const expectedMutatingNames = namesInContractSection("semantic-mutating", semanticsContract);
 const expectedArgumentDependentNames = namesInContractSection("semantic-argument-dependent", semanticsContract);
+const expectedAlwaysForegroundNames = namesInContractSection(
+  "user-activation-always-foreground",
+  userActivationContract,
+);
+const expectedConditionalUserActivationNames = namesInContractSection(
+  "user-activation-conditional",
+  userActivationContract,
+);
+const expectedSourceProvenBackgroundNames = namesInContractSection(
+  "user-activation-source-proven-background",
+  userActivationContract,
+);
 const expectedElementReferencePaths = namesInContractSection("element-reference-path");
 const expectedPageResponseNames = namesInContractSection("page-response");
 const expectedSnapshotResponseNames = namesInContractSection("snapshot-response");
@@ -168,6 +185,30 @@ const issueFormatterSource = readFileSync(
   new URL("../node_modules/chrome-devtools-mcp/build/src/formatters/IssueFormatter.js", import.meta.url),
   "utf8",
 );
+const waitForHelperSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/WaitForHelper.js", import.meta.url),
+  "utf8",
+);
+const scriptToolSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/script.js", import.meta.url),
+  "utf8",
+);
+const pageToolSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/pages.js", import.meta.url),
+  "utf8",
+);
+const networkToolSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/tools/network.js", import.meta.url),
+  "utf8",
+);
+const textSnapshotImplementationSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/TextSnapshot.js", import.meta.url),
+  "utf8",
+);
+const puppeteerBundleSource = readFileSync(
+  new URL("../node_modules/chrome-devtools-mcp/build/src/third_party/index.js", import.meta.url),
+  "utf8",
+);
 assert.match(mcpPageSource, /Object\.values\(params\)/, "third-party parameter traversal changed");
 assert.match(mcpPageSource, /Object\.keys\(value\)\.length === 1/, "third-party singleton UID rule changed");
 assert.match(
@@ -255,6 +296,51 @@ assert.match(
   "provider issue affected-resource section changed",
 );
 assert.match(
+  puppeteerBundleSource,
+  /send\('Runtime\.evaluate',[\s\S]{0,500}?userGesture:\s*true/,
+  "Puppeteer Runtime.evaluate user-activation behavior changed",
+);
+assert.match(
+  puppeteerBundleSource,
+  /send\('Runtime\.callFunctionOn',[\s\S]{0,1000}?userGesture:\s*true/,
+  "Puppeteer Runtime.callFunctionOn user-activation behavior changed",
+);
+assert.match(
+  scriptToolSource,
+  /evaluatable\.evaluateHandle\(`\(\$\{fnString\}\)`\)/,
+  "evaluate_script no longer enters Puppeteer evaluation",
+);
+assert.match(
+  waitForHelperSource,
+  /this\.#page\.evaluateHandle\(timeout =>/,
+  "provider wait-for-action stabilization no longer enters Puppeteer evaluation",
+);
+assert.match(
+  pageToolSource,
+  /response\.setIncludePages\(true\)/,
+  "provider page actions no longer request page response formatting",
+);
+assert.match(
+  mcpResponseSource,
+  /const title = await fetchPageTitle\(mcpPage\.pptrPage\)/,
+  "provider page responses no longer fetch page titles",
+);
+assert.match(
+  mcpResponseSource,
+  /async function fetchPageTitle\(page\)[\s\S]{0,160}?page\.title\(\)/,
+  "provider page title formatting path changed",
+);
+assert.match(
+  textSnapshotImplementationSource,
+  /options\.devtoolsData \?\? \(await page\.getDevToolsData\(\)\)/,
+  "provider snapshot DevTools-data fallback changed",
+);
+assert.match(
+  networkToolSource,
+  /if \(request\.params\.reqid\)[\s\S]{0,700}?await request\.page\.getDevToolsData\(\)/,
+  "provider network request fallback changed",
+);
+assert.match(
   issueFormatterSource,
   /details\.push\(`uid=\$\{item\.uid\}`\)/,
   "provider issue resource identifier shape changed",
@@ -269,6 +355,7 @@ const pageTargetedNames = tools.filter((tool) => {
 const pageScopedNames = pageScopedTools.map((tool) => tool.name).sort();
 const explicitPageTargetNames = pageTargetedNames.filter((name) => !pageScopedNames.includes(name));
 const globalNames = tools.map((tool) => tool.name).filter((name) => !pageTargetedNames.includes(name)).sort();
+const registeredNames = tools.filter((tool) => handlers.get(tool.name).shouldRegister).map((tool) => tool.name).sort();
 const auditedNames = [
   ...expectedPageScopedNames,
   ...expectedExplicitPageTargetNames,
@@ -277,6 +364,25 @@ const auditedNames = [
 ].sort();
 
 assert.equal(pageScopedTools.length, 32, "the pinned dependency page-scoped contract changed");
+assert.equal(registeredNames.length, 29, "the pinned provider's default registered catalog changed");
+assert.deepEqual(
+  [
+    ...expectedAlwaysForegroundNames,
+    ...expectedConditionalUserActivationNames,
+    ...expectedSourceProvenBackgroundNames,
+  ].sort(),
+  registeredNames,
+  "user-activation policy must partition every default registered provider tool",
+);
+assert.equal(
+  new Set([
+    ...expectedAlwaysForegroundNames,
+    ...expectedConditionalUserActivationNames,
+    ...expectedSourceProvenBackgroundNames,
+  ]).size,
+  registeredNames.length,
+  "user-activation policy categories must be disjoint",
+);
 assert.deepEqual(pageScopedNames, expectedPageScopedNames, "Swift page-scoped raw-tool catalog drifted");
 assert.deepEqual(
   explicitPageTargetNames,

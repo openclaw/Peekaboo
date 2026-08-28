@@ -68,7 +68,25 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "space", arguments: ["action": "move-window", "follow": true]),
             .init(tool: "space", arguments: ["action": "move-window", "foreground": true]),
             .init(tool: "browser", arguments: ["action": "select_page", "bring_to_front": true]),
+            .init(tool: "browser", arguments: ["action": "list_pages"]),
+            .init(tool: "browser", arguments: ["action": "snapshot", "page_id": 1]),
+            .init(tool: "browser", arguments: ["action": "wait_for", "page_id": 1, "text": "ready"]),
+            .init(tool: "browser", arguments: ["action": "console", "page_id": 1, "message_id": 1]),
+            .init(tool: "browser", arguments: ["action": "network", "page_id": 1]),
+            .init(tool: "browser", arguments: ["action": "network", "page_id": 1, "request_id": 0]),
+            .init(tool: "browser", arguments: ["action": "screenshot", "page_id": 1, "uid": "1_0"]),
             .init(tool: "browser", arguments: ["action": "new_page", "background": false]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "evaluate_script",
+                "page_id": 1,
+                "mcp_args_json": #"{"function":"() => navigator.userActivation.isActive"}"#,
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "take_snapshot",
+                "page_id": 1,
+            ]),
             .init(tool: "browser", arguments: [
                 "action": "call",
                 "mcp_tool": "select_page",
@@ -177,26 +195,35 @@ struct MCPToolExecutionPolicyTests {
                 "follow": false,
             ]),
             .init(tool: "browser", arguments: [
-                "action": "select_page",
-                "bring_to_front": false,
+                "action": "console",
+                "page_id": 1,
             ]),
             .init(tool: "browser", arguments: [
-                "action": "new_page",
-                "background": true,
+                "action": "network",
+                "page_id": 1,
+                "request_id": 1,
             ]),
             .init(tool: "browser", arguments: [
-                "action": "new_page",
-                "url": "https://example.com",
+                "action": "screenshot",
+                "page_id": 1,
+                "full_page": true,
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "performance_trace",
+                "page_id": 1,
+                "trace_action": "start",
             ]),
             .init(tool: "browser", arguments: [
                 "action": "call",
-                "mcp_tool": "select_page",
-                "mcp_args_json": #"{"bringToFront":false}"#,
+                "mcp_tool": "emulate",
+                "page_id": 1,
+                "mcp_args_json": #"{"colorScheme":"dark"}"#,
             ]),
             .init(tool: "browser", arguments: [
                 "action": "call",
-                "mcp_tool": "new_page",
-                "mcp_args_json": #"{"background":true}"#,
+                "mcp_tool": "fill_form",
+                "page_id": 1,
+                "mcp_args_json": #"{"elements":[]}"#,
             ]),
             .init(tool: "clipboard", arguments: ["action": "get"]),
             .init(tool: "clipboard", arguments: ["action": "save"]),
@@ -323,6 +350,14 @@ struct MCPToolExecutionPolicyTests {
         let shell = try #require(tools.first { $0.name == "shell" })
         let move = try #require(tools.first { $0.name == "move" })
         let sleep = try #require(tools.first { $0.name == "sleep" })
+        let browser = try #require(tools.first { $0.name == "browser" })
+
+        #expect(Set(browser.parameters.properties["action"]?.enumValues ?? []) == Set(
+            BrowserMCPUserActivationPolicy.backgroundCatalogActions.map(\.rawValue)))
+        #expect(Set(browser.parameters.properties["mcp_tool"]?.enumValues ?? []) ==
+            BrowserMCPUserActivationPolicy.backgroundCatalogToolNames)
+        #expect(browser.parameters.properties["uid"] == nil)
+        #expect(browser.parameters.properties["message_id"] == nil)
 
         for (tool, arguments) in [
             (shell, AgentToolArguments(["command": "/usr/bin/true"])),

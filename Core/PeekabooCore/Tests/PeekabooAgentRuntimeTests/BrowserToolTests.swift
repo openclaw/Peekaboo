@@ -344,7 +344,7 @@ struct BrowserToolTests {
             outcome: nil))
         let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
             .execute(arguments: ToolArguments(raw: [
-                "action": "snapshot",
+                "action": "console",
                 "page_id": 7,
             ]))
 
@@ -535,13 +535,13 @@ struct BrowserToolTests {
         let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let snapshot = try await tool.execute(arguments: ToolArguments(raw: [
-            "action": "snapshot",
+            "action": "console",
             "channel": "canary",
             "page_id": 5,
         ]))
 
         #expect(snapshot.isError == false)
-        #expect(client.executedTools.last?.toolName == "take_snapshot")
+        #expect(client.executedTools.last?.toolName == "list_console_messages")
         #expect(client.executedTools.last?.channel == .canary)
     }
 
@@ -592,12 +592,12 @@ struct BrowserToolTests {
 
         _ = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
-            "mcp_tool": "take_snapshot",
+            "mcp_tool": "list_console_messages",
             "mcp_args_json": #"{"pageId":99}"#,
             "page_id": 12,
         ]))
 
-        #expect(client.executedTools.last?.toolName == "take_snapshot")
+        #expect(client.executedTools.last?.toolName == "list_console_messages")
         #expect(client.executedTools.last?.arguments["pageId"] as? Int == 12)
     }
 
@@ -641,10 +641,7 @@ struct BrowserToolTests {
 
     @Test
     func `Browser raw call allows audited global tool without page ID`() async throws {
-        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
-            isConnected: true,
-            toolCount: 31,
-            detectedBrowsers: []))
+        let client = OutcomeBrowserMCPClient(result: .init(payload: .text("pages"), outcome: nil))
         let tool = BrowserTool(client: client, executionPolicy: .unrestricted)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -653,8 +650,8 @@ struct BrowserToolTests {
         ]))
 
         #expect(response.isError == false)
-        #expect(client.executedTools.last?.toolName == "list_pages")
-        #expect(client.executedTools.last?.arguments["pageId"] == nil)
+        #expect(client.executedSequences.last?.last?.toolName == "list_pages")
+        #expect(client.executedSequences.last?.last?.arguments["pageId"] == nil)
     }
 
     @Test
@@ -851,10 +848,11 @@ struct BrowserToolTests {
         let tool = BrowserTool(context: context, instructionAudience: .commandLine)
 
         _ = try await tool.execute(arguments: ToolArguments(raw: [
-            "action": "list_pages",
+            "action": "console",
+            "page_id": 1,
         ]))
 
-        #expect(client.executedTools.last?.toolName == "list_pages")
+        #expect(client.executedTools.last?.toolName == "list_console_messages")
     }
 
     @Test
@@ -914,10 +912,11 @@ extension BrowserToolTests {
     }
 
     @Test
-    func `default Browser tool requires an existing connection and returns canonical refusal`() async throws {
+    func `default background safe Browser tool requires an existing connection and returns canonical refusal`() async throws {
         let client = ConnectionPolicyBrowserMCPClient()
         let response = try await BrowserTool(client: client).execute(arguments: ToolArguments(raw: [
-            "action": "list_pages",
+            "action": "console",
+            "page_id": 1,
         ]))
 
         #expect(response.isError)
@@ -978,7 +977,8 @@ extension BrowserToolTests {
             context: context,
             instructionAudience: .commandLine)
         let response = try await tool.execute(arguments: ToolArguments(raw: [
-            "action": "list_pages",
+            "action": "console",
+            "page_id": 1,
         ]))
 
         #expect(response.isError)
@@ -990,6 +990,87 @@ extension BrowserToolTests {
         #expect(client.connectedChannels.isEmpty)
         #expect(client.executedSequences.isEmpty)
         #expect(client.executedTools.isEmpty)
+    }
+
+    @Test
+    func `background Browser routes that can grant user activation refuse before provider IO`() async throws {
+        let client = UserActivationCountingBrowserMCPClient()
+        let tool = BrowserTool(
+            client: client,
+            executionPolicy: .backgroundOnly,
+            instructionAudience: .commandLine)
+        let cases: [[String: Any]] = [
+            ["action": "list_pages"],
+            ["action": "snapshot", "page_id": 1],
+            ["action": "console", "page_id": 1, "message_id": 1],
+            ["action": "network", "page_id": 1],
+            ["action": "screenshot", "page_id": 1, "uid": "1_0"],
+            [
+                "action": "call",
+                "mcp_tool": "evaluate_script",
+                "page_id": 1,
+                "mcp_args_json": #"{"function":"() => navigator.userActivation.isActive"}"#,
+            ],
+            [
+                "action": "call",
+                "mcp_tool": "fill_form",
+                "page_id": 1,
+                "mcp_args_json": #"{"elements":[{"uid":"1_0","value":"x"}]}"#,
+            ],
+        ]
+
+        for arguments in cases {
+            let response = try await tool.execute(arguments: ToolArguments(raw: arguments))
+            #expect(response.isError)
+            #expect(response.meta?.objectValue?["refusal_reason"] == .string("foreground_consent_required"))
+            #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+            #expect(response.meta?.objectValue?["retry_safe"] == .bool(true))
+        }
+        #expect(client.statusCount == 0)
+        #expect(client.executedSequences.isEmpty)
+    }
+
+    @Test
+    func `explicit foreground raw evaluation reports foreground browser delivery`() async throws {
+        let providerOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .browserProtocol, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let client = OutcomeBrowserMCPClient(result: .init(
+            payload: .text("true"),
+            outcome: providerOutcome))
+        let response = try await BrowserTool(
+            client: client,
+            executionPolicy: .foregroundAllowed,
+            instructionAudience: .commandLine)
+            .execute(arguments: ToolArguments(raw: [
+                "action": "call",
+                "mcp_tool": "evaluate_script",
+                "page_id": 1,
+                "mcp_args_json": #"{"function":"() => navigator.userActivation.isActive"}"#,
+            ]))
+
+        #expect(!response.isError)
+        #expect(client.executedSequences.first?.first?.toolName == "evaluate_script")
+        #expect(response.meta?.objectValue?["delivery_mechanism"] == .string("browser_protocol"))
+        #expect(response.meta?.objectValue?["delivery_mode"] == .string("foreground"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
+    }
+
+    @Test
+    func `foreground page read that enters evaluation receives a truthful dispatch outcome`() async throws {
+        let client = OutcomeBrowserMCPClient(result: .init(payload: .text("pages"), outcome: nil))
+        let response = try await BrowserTool(
+            client: client,
+            executionPolicy: .foregroundAllowed,
+            instructionAudience: .commandLine)
+            .execute(arguments: ToolArguments(raw: ["action": "list_pages"]))
+
+        #expect(!response.isError)
+        #expect(response.meta?.objectValue?["delivery_mode"] == .string("foreground"))
+        #expect(response.meta?.objectValue?["dispatch_state"] == .string("dispatched"))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(false))
     }
 
     @Test
@@ -1075,6 +1156,42 @@ private final class ConnectionPolicyBrowserMCPClient: BrowserMCPClientProviding,
                 hint: "Connect the intended browser explicitly and retry.")
         }
         return DesktopActionResult(payload: .text("allowed"), outcome: nil)
+    }
+}
+
+@MainActor
+private final class UserActivationCountingBrowserMCPClient: BrowserMCPClientProviding,
+    BrowserMCPActionResultProviding, @unchecked Sendable
+{
+    private(set) var statusCount = 0
+    private(set) var executedSequences: [[BrowserMCPMappedCall]] = []
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        self.statusCount += 1
+        return BrowserMCPStatus(isConnected: true, toolCount: 29, detectedBrowsers: [])
+    }
+
+    func connect(channel: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        await self.status(channel: channel)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        Issue.record("Unexpected single provider dispatch")
+        return .text("unexpected")
+    }
+
+    func executeSequenceWithOutcome(
+        _ calls: [BrowserMCPMappedCall],
+        channel _: BrowserMCPChannel?) async throws -> DesktopActionResult<ToolResponse>
+    {
+        self.executedSequences.append(calls)
+        return .init(payload: .text("unexpected"), outcome: nil)
     }
 }
 

@@ -19,7 +19,7 @@ extension MCPCommand {
             Starts Peekaboo as an MCP server, exposing all its tools via the
             Model Context Protocol. This allows AI clients like Claude to use
             Peekaboo's automation capabilities. The server is background-only by default;
-            pass --allow-foreground to authorize foreground actions for this server process.
+            pass --allow-foreground to authorize foreground actions and browser user activation for this server process.
 
             USAGE WITH CLAUDE CODE:
               claude mcp add peekaboo -- peekaboo mcp
@@ -37,7 +37,7 @@ extension MCPCommand {
 
         @Flag(
             name: .customLong("allow-foreground"),
-            help: "Authorize foreground/global UI for this MCP server"
+            help: "Authorize foreground/global UI and browser user activation for this MCP server"
         )
         var allowForeground = false
 

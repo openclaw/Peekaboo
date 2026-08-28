@@ -98,14 +98,15 @@ InjectedRuntimeBackedCommand {
         Examples:
           peekaboo browser status --json
           peekaboo browser connect --channel stable --foreground
-          peekaboo browser new-page --url https://example.com
-          peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
+          peekaboo browser new-page --url https://example.com --foreground
+          peekaboo browser snapshot --page-id 2 --path /tmp/page.txt --foreground
 
-        Default read and page actions require an existing exact browser connection receipt and never
-        ambiently auto-connect. With explicit --foreground, only standalone CLI page actions may
-        auto-connect when no receipt exists. Persistent MCP, Agent, and Bridge-scoped page actions never
-        ambiently auto-connect. Use explicit connect for a foreground-authorized child, or transfer an
-        exact signed handoff into a background Bridge-scoped MCP child.
+        The pinned provider grants browser user activation to every Puppeteer page evaluation, including
+        headless and background pages. Default mode therefore exposes only source-audited routes that do not
+        enter that evaluation path. Page discovery, snapshots, navigation, element interaction, and arbitrary
+        script evaluation require explicit --foreground and report foreground browser-protocol delivery.
+        Default calls still require an existing exact connection and never ambiently auto-connect. With explicit
+        --foreground, only standalone CLI page actions may auto-connect when no receipt exists.
         """
     )
 
@@ -174,10 +175,11 @@ InjectedRuntimeBackedCommand {
             .replacingOccurrences(of: "-", with: "_")
         guard let action = BrowserAction(rawValue: normalized) else { return false }
         switch action {
-        case .status, .disconnect, .listPages, .waitFor, .snapshot, .console, .network, .screenshot:
+        case .status, .disconnect:
             return false
-        case .connect, .selectPage, .closePage, .newPage, .navigate, .click, .fill, .fillForm, .drag, .hover, .type,
-             .pressKey, .uploadFile, .handleDialog, .performanceTrace, .call:
+        case .connect, .listPages, .selectPage, .closePage, .newPage, .navigate, .waitFor, .snapshot, .click, .fill,
+             .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog, .console, .network, .screenshot,
+             .performanceTrace, .call:
             return true
         }
     }
@@ -432,7 +434,7 @@ extension BrowserCommand: CommanderSignatureProviding {
                 .commandFlag("background", help: "Open new page in background (default)", long: "background"),
                 .commandFlag(
                     "foreground",
-                    help: "Allow foreground browser effects and standalone CLI auto-connect; opens new pages in front",
+                    help: "Allow browser user activation, foreground effects, and standalone CLI auto-connect",
                     long: "foreground"
                 ),
                 .commandFlag(

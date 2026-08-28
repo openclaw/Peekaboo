@@ -100,7 +100,9 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`. Public MCP and
   standalone Browser contexts default to background-only and require an existing live exact connection receipt;
-  they never auto-connect implicitly.
+  they never auto-connect implicitly. The pinned provider grants browser user activation to every Puppeteer page
+  evaluation, including internal page-title, stable-DOM, snapshot, and element-geometry work. Background contexts
+  therefore expose only source-audited routes that cannot reach that path and refuse the rest before provider I/O.
 - In Bridge-backed MCP mode, an explicit `--browser-handoff <absolute-private-path>` plus one exact `--bridge-socket`
   opens an authenticated caller-scoped transport. A foreground `peekaboo browser connect --handoff-file` on that same
   socket first writes the canonical signed receipt. The Bridge consumes it once, validates the caller, listener/host
@@ -122,7 +124,9 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   exact Chrome bundle identity. Bridge protocol 1.34 and the `nativeBrowserConnectionBinding` capability gate this
   combined process-and-DevTools contract; downgraded hosts may still use an explicit loopback `browser_url` but cannot
   perform channel discovery or accept a process-bound browser receipt.
-  Multi-call responses retain exact completed and dispatched-or-accepted counts;
+  Calls that can reach provider evaluation require explicit foreground authority and report browser-protocol foreground
+  delivery even when Chrome remains visually behind another app. Multi-call responses retain exact completed and
+  dispatched-or-accepted counts;
   a later failure returns a typed retry-unsafe outcome so callers resume only after observation, never by replaying the
   whole batch.
 - Active upload cancellation terminates the exact MCP child before deleting its private transfer root; an operation ID
@@ -156,8 +160,8 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
   browser handoff, owns and tears down its own browser child. Without an authenticated
   Bridge handoff, the background-only default starts disconnected and cannot bootstrap browser control. To authorize
   setup for that exact server-owned child,
-  start `peekaboo mcp serve --allow-foreground` and invoke its `browser` `connect` action; subsequent page operations use
-  the resulting caller-owned connection. This scoped connection must use a native Chrome channel or an exact loopback
+  start `peekaboo mcp serve --allow-foreground` and invoke its `browser` `connect` action; user-activating page operations
+  require the same explicit server authority and use the resulting caller-owned connection. This scoped connection must use a native Chrome channel or an exact loopback
   `browser_url`; isolated mode is reserved for legacy standalone CLI sessions. With a Bridge handoff, the background
   server instead starts bound to the transferred exact connection and does not expose `connect`.
 
@@ -204,12 +208,18 @@ Advanced escape hatch:
   `trigger_extension_action` is audited but blocked because upstream still resolves its
   shared selected page internally; Peekaboo will not forward it until upstream supports explicit `pageId` routing.
   Unknown raw tool names fail closed until the routing contract is audited and updated.
+  Background schemas advertise only raw routes with a request-provable no-user-activation variant. Any route that can
+  reach Puppeteer evaluation—including `evaluate_script`, page-list formatting, snapshots, waits, or element work—is
+  hidden and refused before provider entry. Use explicit CLI `--foreground`, MCP `--allow-foreground`, or Agent
+  `--allow-foreground` authority when those operations are intended.
 
-Start MCP or Agent page work with `list_pages` or `new_page`, retain the returned opaque page reference, and include it
+In a foreground-authorized MCP or Agent session, start page work with `list_pages` or `new_page`, retain the returned opaque page reference, and include it
 as `page_id` in every later page-scoped action. Retain element references only from the newest snapshot for that page.
 The standalone CLI continues to expose the provider page integer because each CLI invocation is an explicit
-compatibility boundary rather than a persistent caller capability namespace. `select_page` and `new_page` stay in the background by default. Use `bring_to_front: true` or
-`background: false` only when foreground interaction is intentional.
+compatibility boundary rather than a persistent caller capability namespace. `select_page` and `new_page` can keep the
+page visually behind other apps, but remain foreground-authority operations because their provider response formatting
+grants browser user activation. Use `bring_to_front: true` or `background: false` only when visible foreground
+interaction is intentional.
 
 `type` and `press_key` also require an opaque element reference from the newest snapshot as `uid`. Peekaboo holds one browser execution gate while it
 focuses that exact uid and sends the keyboard operation; concurrent page work cannot interleave between those leaves.
@@ -222,10 +232,10 @@ CLI:
 peekaboo browser status --json
 peekaboo browser connect --channel stable --foreground
 peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground
-peekaboo browser new-page --url https://example.com
-peekaboo browser navigate --page-id 2 --url https://example.com/docs
-peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
-peekaboo browser network --page-id 2 --resource-type xhr --page-size 20 --json
+peekaboo browser new-page --url https://example.com --foreground
+peekaboo browser navigate --page-id 2 --url https://example.com/docs --foreground
+peekaboo browser snapshot --page-id 2 --path /tmp/page.txt --foreground
+peekaboo browser network --page-id 2 --request-id 7 --json
 ```
 
 MCP JSON:

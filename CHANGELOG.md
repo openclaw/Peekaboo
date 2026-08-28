@@ -26,6 +26,7 @@
 
 ### Fixed
 - Share the owner-only credential file between app and CLI, trim surrounding whitespace in app edits and legacy imports, ignore unchanged Settings bindings, recover legacy app keys only on explicit import, and keep failed edits visibly unsaved without Keychain prompts. Thanks @vincentkoc for #651.
+- Hide and pre-dispatch refuse every pinned browser-provider route that can grant browser user activation under default background authority, while explicit foreground calls report truthful foreground browser-protocol outcomes.
 - Preserve exact-window foreground focus evidence under the native mutation lane for signed Bridge receipts, and refuse blind retries after accepted focus loses proof.
 - Keep `peekaboo learn` on its injected main-actor service provider instead of crashing when no process-wide tool registry default exists.
 - Keep default browser calls existing-receipt-only while restoring explicit-foreground standalone CLI root auto-connect; resolve filtered MCP and Agent catalogs before browser bootstrap while still consuming explicit signed handoffs; and give MCP, Bridge, and Agent sessions generation-safe scoped children whose confirmed cleanup or retained debt prevents shared-root fallback and unsafe reuse.

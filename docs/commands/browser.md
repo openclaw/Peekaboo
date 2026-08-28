@@ -15,15 +15,22 @@ The action is positional and defaults to `status`.
 peekaboo browser status --json
 peekaboo browser connect --channel stable --foreground
 peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground
-peekaboo browser new-page --url https://example.com
-peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
+peekaboo browser new-page --url https://example.com --foreground
+peekaboo browser snapshot --page-id 2 --path /tmp/page.txt --foreground
 ```
 
 Use `peekaboo browser --help` for the complete action-specific option set. Page-scoped automation should retain the returned page ID and pass `--page-id` on later calls so concurrent browser work cannot redirect it.
 
-The CLI is background-only by default. Default read and page actions require an existing exact browser connection
-receipt and never ambiently auto-connect. With explicit `--foreground`, only standalone CLI page actions may
-auto-connect when no receipt exists. Persistent MCP, Agent, and Bridge-scoped page actions never ambiently auto-connect.
+The CLI is background-only by default. Chrome DevTools MCP 1.6.0's bundled Puppeteer grants browser user activation to
+every page evaluation, including evaluation used internally for page titles, stable-DOM waits, snapshots, and element
+geometry. Default mode therefore exposes only source-audited routes that cannot enter that evaluation path. Page
+discovery, snapshots, navigation, waits, element interaction, and arbitrary script evaluation refuse before provider
+I/O unless the caller passes `--foreground`; accepted calls report `browser_protocol` / `foreground` delivery even if
+the page remains visually behind another app. Exact positive-ID network lookup, page screenshot without an element,
+console listing, emulation, Lighthouse, performance trace operations, and heap capture retain background routes.
+All default calls require an existing exact browser connection receipt and never ambiently auto-connect. With explicit
+`--foreground`, only standalone CLI page actions may auto-connect when no receipt exists. Persistent MCP, Agent, and
+Bridge-scoped page actions never ambiently auto-connect.
 Use explicit `connect` for a foreground-authorized child, or transfer an exact signed handoff into a background
 Bridge-scoped MCP child. `connect` can surface Chrome's remote-debugging permission UI, so it is classified as a
 foreground mutation and requires explicit `--foreground`. The same flag is required for `--bring-to-front` or a

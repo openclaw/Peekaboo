@@ -34,6 +34,10 @@ read_when:
   then enforces the immutable authority ceiling before dispatch, including foreground aliases, shared-pointer tools,
   focus/activation, foreground capture, global shared system UI mutations, Space switch/follow, persistent clipboard
   writes, browser setup, and browser page fronting. Space listing and unfollowed window moves remain available.
+  The pinned browser provider also treats every Puppeteer page evaluation as a user gesture. Background Agent catalogs
+  therefore hide page discovery, snapshots, navigation, waits, element interaction, and raw script evaluation, and the
+  execution boundary refuses a copied call before provider status or execution. `--allow-foreground` exposes those
+  routes and reports them as foreground browser-protocol delivery even when the page is not visibly raised.
   Refusals report `effect: refused`,
   `mutation_dispatched: false`, and `retry_safe: true`.
 - Background-only Agent raw `press` requires a fresh exact non-dialog snapshot receipt. Targetless, app/PID-only,
