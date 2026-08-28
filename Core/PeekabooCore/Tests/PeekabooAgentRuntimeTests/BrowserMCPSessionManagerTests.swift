@@ -580,6 +580,8 @@ struct BrowserMCPSessionManagerTests {
         let secondPage = try Self.opaquePageReference(from: secondList)
         firstProvider.executedTools.removeAll()
         secondProvider.executedTools.removeAll()
+        let sharedPrepareBaseline = coordinator.sharedPrepareCount
+        #expect(sharedPrepareBaseline == 2)
         let firstBarrier = SequenceBarrier()
         let secondBarrier = SequenceBarrier()
         firstProvider.executeHandler = { toolName, _ in
@@ -616,7 +618,7 @@ struct BrowserMCPSessionManagerTests {
         }
         await secondBarrier.waitUntilBlocked()
         #expect(secondProvider.executedTools == ["performance_start_trace"])
-        #expect(coordinator.sharedPrepareCount == 0)
+        #expect(coordinator.sharedPrepareCount == sharedPrepareBaseline)
         #expect(coordinator.maximumConcurrentCount == 2)
 
         await secondBarrier.release()
@@ -784,6 +786,8 @@ struct BrowserMCPSessionManagerTests {
             arguments: ToolArguments(raw: ["action": "list_pages"])))
         firstProvider.executedTools.removeAll()
         secondProvider.executedTools.removeAll()
+        let setupCompletionAttempts = coordinator.completionAttempts
+        #expect(setupCompletionAttempts == 2)
         coordinator.completionAllowed = false
 
         let firstResult = try await firstContext.execute(
@@ -805,7 +809,7 @@ struct BrowserMCPSessionManagerTests {
             ]))
         #expect(blocked.isError)
         #expect(secondProvider.executedTools.isEmpty)
-        #expect(coordinator.completionAttempts == 2)
+        #expect(coordinator.completionAttempts == setupCompletionAttempts + 2)
 
         coordinator.completionAllowed = true
         let recovered = try await secondContext.execute(
@@ -817,7 +821,7 @@ struct BrowserMCPSessionManagerTests {
             ]))
         #expect(!recovered.isError)
         #expect(secondProvider.executedTools == ["navigate_page"])
-        #expect(coordinator.completionAttempts == 4)
+        #expect(coordinator.completionAttempts == setupCompletionAttempts + 4)
 
         await firstContext.releaseSnapshotOwner()
         await secondContext.releaseSnapshotOwner()
@@ -831,7 +835,9 @@ struct BrowserMCPSessionManagerTests {
         }
         let root = BrowserMCPService(authenticatedSessionPool: pool)
         let completionBarrier = SequenceBarrier()
-        let coordinator = BlockingBrowserCompletionCoordinator(barrier: completionBarrier)
+        let coordinator = BlockingBrowserCompletionCoordinator(
+            barrier: completionBarrier,
+            initiallyArmed: false)
         let context = try MCPToolContext(
             services: Self.services(browser: root),
             snapshotMutationCoordinator: coordinator,
@@ -846,6 +852,7 @@ struct BrowserMCPSessionManagerTests {
             arguments: ToolArguments(raw: ["action": "list_pages"])))
         let ownerSnapshot = await context.uiSnapshots.createSnapshot(id: "teardown-owner")
         provider.executedTools.removeAll()
+        coordinator.arm()
 
         let mutation = Task { @MainActor in
             try await context.execute(
@@ -6089,14 +6096,21 @@ private struct BrowserLaneDesktopMutationTool: MCPTool {
 @MainActor
 private final class BlockingBrowserCompletionCoordinator: MCPToolSnapshotMutationCoordinating, @unchecked Sendable {
     let barrier: SequenceBarrier
+    private var isArmed: Bool
 
-    init(barrier: SequenceBarrier) {
+    init(barrier: SequenceBarrier, initiallyArmed: Bool = true) {
         self.barrier = barrier
+        self.isArmed = initiallyArmed
+    }
+
+    func arm() {
+        self.isArmed = true
     }
 
     func prepareConcurrentMutation(_: MCPToolSnapshotMutationScope) throws {}
 
     func completeMutation(_: MCPToolSnapshotMutationScope, succeeded _: Bool) async -> Bool {
+        guard self.isArmed else { return true }
         await self.barrier.block()
         return true
     }
