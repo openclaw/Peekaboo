@@ -677,17 +677,10 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             if self.sessionCapabilities != nil {
                 try manager.preflightAuthenticatedCapabilityConnect(browserURL: browserURL)
             }
-            let reservation: BrowserMCPSessionManager.TargetReservation? = if let ownedSession = self.ownedSession {
-                { receipt in try ownedSession.pool.bind(ownedSession.id, to: receipt) }
-            } else if let pool = self.authenticatedSessionPool {
-                { receipt in try pool.bindRoot(to: receipt) }
-            } else {
-                nil
-            }
             result = try await manager.connectWithOutcome(
                 channel: channel,
                 browserURL: browserURL,
-                reserveTarget: reservation)
+                reserveTarget: self.targetOwnershipReservation())
         } catch {
             await self.reconcileTargetOwnershipAfterFailure(using: manager)
             throw error
@@ -711,7 +704,9 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             return try await self.executeSequenceWithOutcome(
                 [BrowserMCPMappedCall(toolName: toolName, arguments: arguments)],
                 channel: channel,
-                connectionPolicy: .requireExistingLiveReceipt).payload
+                connectionPolicy: self.requiresExistingLiveReceipt
+                    ? .requireExistingLiveReceipt
+                    : .allowAutoConnect).payload
         }
         return try await self.resolvedSessionManager().execute(
             toolName: toolName,
@@ -728,7 +723,9 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             return try await self.executeSequenceWithOutcome(
                 calls,
                 channel: channel,
-                connectionPolicy: .requireExistingLiveReceipt).payload
+                connectionPolicy: self.requiresExistingLiveReceipt
+                    ? .requireExistingLiveReceipt
+                    : .allowAutoConnect).payload
         }
         return try await self.resolvedSessionManager().executeSequence(calls, channel: channel)
     }
@@ -822,9 +819,12 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
         elementPreflight: BrowserMCPElementPreflight? = nil) async throws -> DesktopActionResult<ToolResponse>
     {
         let manager = self.resolvedSessionManager()
-        let effectiveConnectionPolicy = self.usesTargetOwnershipPool
+        let effectiveConnectionPolicy = self.requiresExistingLiveReceipt
             ? BrowserMCPExecutionConnectionPolicy.requireExistingLiveReceipt
             : connectionPolicy
+        let targetReservation = effectiveConnectionPolicy == .allowAutoConnect
+            ? self.targetOwnershipReservation()
+            : nil
         let semantics = calls.map(Self.actionSemantics)
         let plannedMutationCount = semantics.count(where: { $0 == .mutating })
         let result: BrowserMCPExecutionResult
@@ -852,7 +852,8 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             result = try await manager.executeSequenceResult(
                 calls,
                 channel: channel,
-                connectionPolicy: effectiveConnectionPolicy)
+                connectionPolicy: effectiveConnectionPolicy,
+                reserveTarget: targetReservation)
         } else {
             switch effectiveConnectionPolicy {
             case .allowAutoConnect:
@@ -878,7 +879,8 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
                     result = try await manager.executeSequenceResult(
                         calls,
                         channel: channel,
-                        connectionPolicy: .allowAutoConnect)
+                        connectionPolicy: .allowAutoConnect,
+                        reserveTarget: targetReservation)
                 }
             case .requireExistingLiveReceipt:
                 let status: BrowserMCPStatus
@@ -968,6 +970,20 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
     @MainActor
     private var usesTargetOwnershipPool: Bool {
         self.ownedSession != nil || self.authenticatedSessionPool != nil
+    }
+
+    @MainActor
+    private var requiresExistingLiveReceipt: Bool {
+        self.ownedSession != nil
+    }
+
+    @MainActor
+    private func targetOwnershipReservation() -> BrowserMCPSessionManager.TargetReservation? {
+        if let ownedSession = self.ownedSession {
+            return { receipt in try ownedSession.pool.bind(ownedSession.id, to: receipt) }
+        }
+        guard let pool = self.authenticatedSessionPool else { return nil }
+        return { receipt in try pool.bindRoot(to: receipt) }
     }
 
     @MainActor

@@ -1121,6 +1121,112 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `foreground root auto connect reserves target while scoped execution stays receipt only`() async throws {
+        let rootProvider = MockBrowserMCPManager()
+        let scopedProvider = MockBrowserMCPManager()
+        let rootManager = Self.exactSession(manager: rootProvider)
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: scopedProvider)
+        }
+        let root = BrowserMCPService(
+            sessionManager: rootManager,
+            authenticatedSessionPool: pool)
+        let scoped = try root.createAuthenticatedSession(named: "agent:scoped")
+
+        do {
+            _ = try await scoped.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+                channel: nil,
+                connectionPolicy: .allowAutoConnect)
+            Issue.record("Expected scoped execution to require an existing exact connection")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(scopedProvider.addedConfigs.isEmpty)
+        #expect(scopedProvider.executedTools.isEmpty)
+
+        let response = try await BrowserTool(
+            client: root,
+            executionPolicy: .foregroundAllowed,
+            instructionAudience: .commandLine)
+            .execute(arguments: ToolArguments(raw: ["action": "list_pages"]))
+
+        #expect(!response.isError)
+        #expect(rootProvider.addedConfigs.count == 1)
+        #expect(rootProvider.executedTools == ["list_pages", "list_pages"])
+
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await scoped.connect(channel: nil, browserURL: nil)
+        }
+        #expect(scopedProvider.addedConfigs.isEmpty)
+
+        await root.disconnect()
+        _ = try await scoped.connect(channel: nil, browserURL: nil)
+        #expect(scopedProvider.addedConfigs.count == 1)
+        #expect(scopedProvider.executedTools == ["list_pages"])
+
+        await root.endAuthenticatedSession(named: "agent:scoped")
+    }
+
+    @Test
+    func `cancelled root implicit connect releases its pre-provider target reservation`() async throws {
+        let rootProvider = MockBrowserMCPManager()
+        let scopedProvider = MockBrowserMCPManager()
+        let resolutionBarrier = SequenceBarrier()
+        let rootManager = Self.exactSession(
+            manager: rootProvider,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { url in
+                await resolutionBarrier.block()
+                try Task.checkCancellation()
+                let port = try #require(URL(string: url)?.port)
+                return BrowserMCPDevToolsEndpoint(
+                    browserURL: "http://127.0.0.1:\(port)/",
+                    webSocketDebuggerURL: "ws://127.0.0.1:\(port)/devtools/browser/browser-a",
+                    browserID: "browser-a",
+                    browserVersion: "Chrome/151.0",
+                    protocolVersion: "1.3")
+            })
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            Self.exactSession(manager: scopedProvider)
+        }
+        let root = BrowserMCPService(
+            sessionManager: rootManager,
+            authenticatedSessionPool: pool)
+        let scoped = try root.createAuthenticatedSession(named: "agent:scoped")
+        let execution = Task { @MainActor in
+            try await root.executeSequenceWithOutcome(
+                [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+                channel: nil,
+                connectionPolicy: .allowAutoConnect)
+        }
+
+        await resolutionBarrier.waitUntilBlocked()
+        await #expect(throws: BrowserMCPConnectionError.targetLocked) {
+            _ = try await scoped.connect(channel: nil, browserURL: nil)
+        }
+        #expect(rootProvider.addedConfigs.isEmpty)
+        #expect(scopedProvider.addedConfigs.isEmpty)
+
+        execution.cancel()
+        await resolutionBarrier.release()
+        do {
+            _ = try await execution.value
+            Issue.record("Expected implicit root connection to be cancelled")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+
+        _ = try await scoped.connect(channel: nil, browserURL: nil)
+        #expect(scopedProvider.addedConfigs.count == 1)
+        await root.endAuthenticatedSession(named: "agent:scoped")
+    }
+
+    @Test
     func `cancelled connect releases its target reservation through an uncancelled gate`() async throws {
         let firstProvider = MockBrowserMCPManager()
         let secondProvider = MockBrowserMCPManager()

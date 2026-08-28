@@ -579,7 +579,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
     func executeSequenceResult(
         _ calls: [BrowserMCPMappedCall],
         channel: BrowserMCPChannel?,
-        connectionPolicy: BrowserMCPExecutionConnectionPolicy = .allowAutoConnect) async throws
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy = .allowAutoConnect,
+        reserveTarget: TargetReservation? = nil) async throws
         -> BrowserMCPExecutionResult
     {
         try await self.withExecutionGate {
@@ -588,7 +589,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 channel: channel,
                 expectedConnectionReceipt: nil,
                 expectedProviderSessionEpoch: nil,
-                connectionPolicy: connectionPolicy)
+                connectionPolicy: connectionPolicy,
+                reserveTarget: reserveTarget)
         }
     }
 
@@ -662,7 +664,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt?,
         expectedProviderSessionEpoch: BrowserMCPProviderSessionEpoch?,
-        connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> BrowserMCPExecutionResult
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy,
+        reserveTarget: TargetReservation? = nil) async throws -> BrowserMCPExecutionResult
     {
         guard !calls.isEmpty else {
             throw BrowserMCPConnectionError.connectionLost("the browser action sequence was empty")
@@ -671,7 +674,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             channel: channel,
             expectedConnectionReceipt: expectedConnectionReceipt,
             expectedProviderSessionEpoch: expectedProviderSessionEpoch,
-            connectionPolicy: connectionPolicy)
+            connectionPolicy: connectionPolicy,
+            reserveTarget: reserveTarget)
         let sessionBinding = preparation.sessionBinding
         let receipt = sessionBinding.connectionReceipt
 
@@ -784,7 +788,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         channel: BrowserMCPChannel?,
         expectedConnectionReceipt: BrowserMCPConnectionReceipt?,
         expectedProviderSessionEpoch: BrowserMCPProviderSessionEpoch?,
-        connectionPolicy: BrowserMCPExecutionConnectionPolicy) async throws -> BrowserMCPPreparedExecution
+        connectionPolicy: BrowserMCPExecutionConnectionPolicy,
+        reserveTarget: TargetReservation?) async throws -> BrowserMCPPreparedExecution
     {
         if self.connectionReceipt == nil, expectedConnectionReceipt == nil {
             guard connectionPolicy == .allowAutoConnect else {
@@ -797,7 +802,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     try await self.connectUnlockedWithOutcome(
                         channel: channel,
                         browserURL: nil,
-                        attempt: attempt)
+                        attempt: attempt,
+                        reserveTarget: reserveTarget)
                 }
             } catch let failure as DesktopActionFailure {
                 throw failure
