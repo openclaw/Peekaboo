@@ -73,7 +73,16 @@ extension PeekabooAgentService {
             capturePreflightRefusal: self.capturePreflightRefusal)
     }
 
-    func browserClient(forAgentSessionID sessionID: String) async throws -> any BrowserMCPClientProviding {
+    func browserClient(
+        forAgentSessionID sessionID: String,
+        executionGeneration: UUID? = nil) async throws -> any BrowserMCPClientProviding
+    {
+        guard self.isCurrentAgentSessionExecution(
+            sessionID: sessionID,
+            executionGeneration: executionGeneration)
+        else {
+            throw BrowserMCPConnectionError.sessionEnded
+        }
         guard let root = self.services.browser as? BrowserMCPService,
               root.supportsAuthenticatedSessionBootstrap
         else {
@@ -90,14 +99,12 @@ extension PeekabooAgentService {
     {
         let root = self.services.browser
         guard let opening = root as? any BrowserMCPScopedSessionOpening else {
-            guard self.services.executionHost == .local else {
-                throw BrowserMCPConnectionError.receiptBindingUnsupported
-            }
-            return root
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
         }
         while true {
             try Task.checkCancellation()
-            guard self.remoteBrowserEndingTasks[sessionID] == nil,
+            guard self.agentSessionDeletionTombstones[sessionID] == nil,
+                  self.remoteBrowserEndingTasks[sessionID] == nil,
                   !self.remoteBrowserCleanupDebt.contains(sessionID)
             else {
                 throw BrowserMCPConnectionError.sessionEnded
@@ -185,7 +192,8 @@ extension PeekabooAgentService {
                 queuedID: queuedID)
         }
         while true {
-            guard self.remoteBrowserEndingTasks[sessionID] == nil,
+            guard self.agentSessionDeletionTombstones[sessionID] == nil,
+                  self.remoteBrowserEndingTasks[sessionID] == nil,
                   !self.remoteBrowserCleanupDebt.contains(sessionID)
             else {
                 throw BrowserMCPConnectionError.sessionEnded
@@ -314,7 +322,8 @@ extension PeekabooAgentService {
         -> any BrowserMCPClientProviding
     {
         let scoped = try await waiters.value()
-        guard self.remoteBrowserEndingTasks[sessionID] == nil,
+        guard self.agentSessionDeletionTombstones[sessionID] == nil,
+              self.remoteBrowserEndingTasks[sessionID] == nil,
               !self.remoteBrowserCleanupDebt.contains(sessionID),
               let stored = self.remoteBrowserClients[sessionID],
               stored === scoped
@@ -523,6 +532,9 @@ extension PeekabooAgentService {
         remoteCleanupDrained = remoteCleanupDrained && self.remoteBrowserCleanupDebt.isEmpty
         let drained = localCleanupDrained && remoteCleanupDrained
         self.browserCleanupDebtPending = !drained
+        if drained {
+            self.recordDrainedAgentSessionBrowserCleanup()
+        }
         return drained
     }
 

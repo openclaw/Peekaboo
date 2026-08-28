@@ -3,6 +3,7 @@
 //  PeekabooCore
 //
 
+import Foundation
 import PeekabooAutomation
 import Tachikoma
 
@@ -32,6 +33,7 @@ extension PeekabooAgentService {
     func buildExecutionToolset(
         for model: LanguageModel,
         agentSessionID: String,
+        agentExecutionGeneration: UUID? = nil,
         snapshotOwner: MCPToolSnapshotOwner,
         executionPolicy: MCPToolExecutionPolicy,
         filters: ToolFilters? = nil) async throws -> [AgentTool]
@@ -45,7 +47,9 @@ extension PeekabooAgentService {
             return filtered
         }
 
-        let browserClient = try await self.browserClient(forAgentSessionID: agentSessionID)
+        let browserClient = try await self.browserClient(
+            forAgentSessionID: agentSessionID,
+            executionGeneration: agentExecutionGeneration)
         let browserCapabilities = self.remoteBrowserCapabilities[agentSessionID]
         let scopedBrowserTool = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
             Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {

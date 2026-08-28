@@ -2818,6 +2818,20 @@ struct BrowserMCPSessionManagerTests {
     }
 
     @Test
+    func `local Agent refuses a browser provider without authenticated or scoped sessions`() async throws {
+        let root = AgentLegacyRemoteBrowserRoot()
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await agent.browserClient(forAgentSessionID: "unsupported-local-provider")
+        }
+
+        #expect(root.executeCount == 0)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+    }
+
+    @Test
     func `remote Agent capacity counts active and opening sessions and reopens after release`() async throws {
         let root = AgentRemoteBrowserRoot()
         let agent = try PeekabooAgentService(services: Self.services(browser: root))
@@ -3040,11 +3054,260 @@ struct BrowserMCPSessionManagerTests {
                 providerIdentity: nil),
             storedToolExecutionPolicy: .backgroundOnly,
             toolExecutionPolicy: .backgroundOnly,
-            provider: nil)
+            provider: nil,
+            executionGeneration: nil)
         #expect(await agent.endEphemeralBrowserClientIfNeeded(context))
         #expect(ephemeralChild.endCount == 1)
         #expect(agent.remoteBrowserClients[ephemeralID] == nil)
         #expect(root.rootExecuteCount == 0)
+    }
+
+    @Test
+    func `in flight Agent execution cannot reacquire a local browser child after deletion`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooLocalAgentDeleteRace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let sessionID = "local-delete-race"
+        let now = Date()
+        try sessionManager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "test-model",
+            messages: [.user("Test session")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        var providerCount = 0
+        let pool = BrowserMCPAuthenticatedSessionPool { _ in
+            providerCount += 1
+            return Self.exactSession(manager: MockBrowserMCPManager())
+        }
+        let root = BrowserMCPService(authenticatedSessionPool: pool)
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+        let executionGeneration = try agent.beginAgentSessionExecution(for: sessionID)
+        _ = try await agent.browserClient(
+            forAgentSessionID: sessionID,
+            executionGeneration: executionGeneration)
+        let resumeBarrier = SequenceBarrier()
+        let execution = Task { @MainActor in
+            defer {
+                agent.finishAgentSessionExecution(
+                    sessionID: sessionID,
+                    executionGeneration: executionGeneration)
+            }
+            await resumeBarrier.block()
+            return try await agent.browserClient(
+                forAgentSessionID: sessionID,
+                executionGeneration: executionGeneration)
+        }
+        await resumeBarrier.waitUntilBlocked()
+
+        try await agent.deleteSession(id: sessionID)
+
+        #expect(pool.isEmpty)
+        #expect(providerCount == 1)
+        #expect(agent.agentSessionDeletionTombstones[sessionID]?.phase == .deleted)
+        await resumeBarrier.release()
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await execution.value
+        }
+        #expect(pool.isEmpty)
+        #expect(providerCount == 1)
+        #expect(agent.agentSessionDeletionTombstones[sessionID] == nil)
+    }
+
+    @Test
+    func `in flight Agent execution cannot reacquire a remote browser child after deletion`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooRemoteAgentDeleteRace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let sessionID = "remote-delete-race"
+        let now = Date()
+        try sessionManager.saveSession(AgentSession(
+            id: sessionID,
+            modelName: "test-model",
+            messages: [.user("Test session")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        let root = AgentRemoteBrowserRoot()
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+        let executionGeneration = try agent.beginAgentSessionExecution(for: sessionID)
+        _ = try await agent.browserClient(
+            forAgentSessionID: sessionID,
+            executionGeneration: executionGeneration)
+        let resumeBarrier = SequenceBarrier()
+        let execution = Task { @MainActor in
+            defer {
+                agent.finishAgentSessionExecution(
+                    sessionID: sessionID,
+                    executionGeneration: executionGeneration)
+            }
+            await resumeBarrier.block()
+            return try await agent.browserClient(
+                forAgentSessionID: sessionID,
+                executionGeneration: executionGeneration)
+        }
+        await resumeBarrier.waitUntilBlocked()
+
+        try await agent.deleteSession(id: sessionID)
+
+        #expect(root.openCount == 1)
+        #expect(root.children[0].endCount == 1)
+        #expect(agent.agentSessionDeletionTombstones[sessionID]?.phase == .deleted)
+        await resumeBarrier.release()
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await execution.value
+        }
+        #expect(root.openCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.agentSessionDeletionTombstones[sessionID] == nil)
+    }
+
+    @Test
+    func `unrelated cleanup drain cannot acknowledge a deletion before its own cleanup attempt`() throws {
+        let agent = try PeekabooAgentService(services: PeekabooServices())
+        let sessionID = "cleanup-not-started"
+        let claims = agent.installAgentSessionDeletionTombstones(for: [sessionID])
+        let deletionGeneration = try #require(claims[sessionID])
+        agent.markAgentSessionStorageDeleted(
+            sessionID: sessionID,
+            deletionGeneration: deletionGeneration)
+
+        agent.recordDrainedAgentSessionBrowserCleanup()
+
+        #expect(agent.agentSessionDeletionTombstones[sessionID] != nil)
+        agent.recordAgentSessionBrowserCleanup(
+            sessionID: sessionID,
+            deletionGeneration: deletionGeneration,
+            confirmed: true)
+        #expect(agent.agentSessionDeletionTombstones[sessionID] == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `invalid Agent step budget releases its execution generation`(streaming: Bool) async throws {
+        let agent = try PeekabooAgentService(services: PeekabooServices())
+        let sessionID = "invalid-step-budget"
+        let executionGeneration = try agent.beginAgentSessionExecution(for: sessionID)
+        let now = Date()
+        let context = PeekabooAgentService.SessionContext(
+            id: sessionID,
+            isPersistent: true,
+            messages: [],
+            createdAt: now,
+            executionStart: now,
+            metadata: SessionMetadata(),
+            modelIdentity: .init(
+                displayName: "test-model",
+                selection: nil,
+                endpointIdentity: nil,
+                providerIdentity: nil),
+            storedToolExecutionPolicy: .backgroundOnly,
+            toolExecutionPolicy: .backgroundOnly,
+            provider: nil,
+            executionGeneration: executionGeneration)
+
+        await #expect(throws: PeekabooError.self) {
+            if streaming {
+                _ = try await agent.executeWithStreaming(
+                    context: context,
+                    model: .anthropic(.sonnet45),
+                    maxSteps: 0,
+                    streamingDelegate: StreamingEventDelegate { _ in })
+            } else {
+                _ = try await agent.executeWithoutStreaming(
+                    context: context,
+                    model: .anthropic(.sonnet45),
+                    maxSteps: 0)
+            }
+        }
+
+        #expect(agent.agentSessionExecutionGenerations[sessionID] == nil)
+        let claims = agent.installAgentSessionDeletionTombstones(for: [sessionID])
+        let deletionGeneration = try #require(claims[sessionID])
+        agent.markAgentSessionStorageDeleted(
+            sessionID: sessionID,
+            deletionGeneration: deletionGeneration)
+        agent.recordAgentSessionBrowserCleanup(
+            sessionID: sessionID,
+            deletionGeneration: deletionGeneration,
+            confirmed: true)
+        #expect(agent.agentSessionDeletionTombstones[sessionID] == nil)
+    }
+
+    @Test(arguments: AgentDeletionSweep.allCases)
+    func `Agent deletion sweeps tombstone every session before awaiting browser cleanup`(
+        sweep: AgentDeletionSweep) async throws
+    {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooAgentDeleteSweep-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let firstID = "sweep-first"
+        let secondID = "sweep-second"
+        let firstDate = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        let secondDate = firstDate.addingTimeInterval(-60)
+        for (sessionID, updatedAt) in [(firstID, firstDate), (secondID, secondDate)] {
+            try sessionManager.saveSession(AgentSession(
+                id: sessionID,
+                modelName: "test-model",
+                messages: [.user("Test session")],
+                metadata: SessionMetadata(),
+                createdAt: updatedAt,
+                updatedAt: updatedAt))
+        }
+        let root = AgentRemoteBrowserRoot()
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+        let firstGeneration = try agent.beginAgentSessionExecution(for: firstID)
+        let secondGeneration = try agent.beginAgentSessionExecution(for: secondID)
+        _ = try await agent.browserClient(
+            forAgentSessionID: firstID,
+            executionGeneration: firstGeneration)
+        _ = try await agent.browserClient(
+            forAgentSessionID: secondID,
+            executionGeneration: secondGeneration)
+        let cleanupBarrier = SequenceBarrier()
+        root.children[0].endBarrier = cleanupBarrier
+        let deletion = Task { @MainActor in
+            switch sweep {
+            case .clearAll:
+                try await agent.clearAllSessions()
+            case .expiration:
+                await agent.cleanup()
+            }
+        }
+        await cleanupBarrier.waitUntilBlocked()
+
+        #expect(agent.agentSessionDeletionTombstones[firstID] != nil)
+        #expect(agent.agentSessionDeletionTombstones[secondID] != nil)
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await agent.browserClient(
+                forAgentSessionID: secondID,
+                executionGeneration: secondGeneration)
+        }
+
+        await cleanupBarrier.release()
+        try await deletion.value
+        agent.finishAgentSessionExecution(
+            sessionID: firstID,
+            executionGeneration: firstGeneration)
+        agent.finishAgentSessionExecution(
+            sessionID: secondID,
+            executionGeneration: secondGeneration)
+        #expect(root.openCount == 2)
+        #expect(root.children.allSatisfy { $0.endCount == 1 })
+        #expect(agent.agentSessionDeletionTombstones.isEmpty)
+        #expect(sessionManager.listSessions().isEmpty)
     }
 
     @Test
@@ -4951,6 +5214,11 @@ extension BrowserMCPSessionManagerTests {
         }
         return !FileManager.default.fileExists(atPath: path)
     }
+}
+
+enum AgentDeletionSweep: CaseIterable, Sendable {
+    case clearAll
+    case expiration
 }
 
 @MainActor

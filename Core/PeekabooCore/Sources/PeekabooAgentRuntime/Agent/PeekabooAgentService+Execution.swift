@@ -298,6 +298,7 @@ extension PeekabooAgentService {
             return try await self.buildExecutionToolset(
                 for: model,
                 agentSessionID: context.id,
+                agentExecutionGeneration: context.executionGeneration,
                 snapshotOwner: snapshotOwner,
                 executionPolicy: context.toolExecutionPolicy)
         } catch {
@@ -325,6 +326,11 @@ extension PeekabooAgentService {
         eventHandler: EventHandler? = nil,
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
+        defer {
+            self.finishAgentSessionExecution(
+                sessionID: context.id,
+                executionGeneration: context.executionGeneration)
+        }
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         _ = streamingDelegate
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
@@ -423,6 +429,11 @@ extension PeekabooAgentService {
         eventHandler: EventHandler? = nil,
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
+        defer {
+            self.finishAgentSessionExecution(
+                sessionID: context.id,
+                executionGeneration: context.executionGeneration)
+        }
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
