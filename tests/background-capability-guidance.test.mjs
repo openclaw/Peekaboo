@@ -111,6 +111,9 @@ test('browser guidance separates standalone root authority from scoped sessions'
   assert.match(mcp, /Filtering out `browser` therefore creates no browser\s+child/s);
   assert.match(mcp, /explicit `--browser-handoff` is still\s+authenticated, consumed, and opened/s);
   assert.match(agent, /Bridge-routed Agent never borrows the host's shared browser root/s);
+  assert.match(agent, /browser-filtered Agent run opens no browser\s+scope/s);
+  assert.match(agent, /Each browser-enabled Agent session opens one distinct end-capable remote child/s);
+  assert.doesNotMatch(agent, /Each Agent session opens one distinct end-capable remote child/s);
   assert.match(agent, /unconfirmed cleanup is retained as retryable debt and blocks\s+session reuse/s);
   assert.match(changelog, changelogContract);
   assert.match(cliChangelog, changelogContract);

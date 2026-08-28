@@ -56,12 +56,12 @@ read_when:
   operate terminal or scripting apps through their UI, so grant `--allow-foreground` only to trusted prompts. Use
   Peekaboo's native app/window/Accessibility/browser tools for UI automation.
 - Agent execution stays in the caller process by default. Pass the global `--bridge-socket <path>` option to route its tools through one specific Bridge host; `--no-remote` keeps the run strictly caller-local.
-- A Bridge-routed Agent never borrows the host's shared browser root. Each Agent session opens one distinct end-capable
-  remote child and capability namespace; within one running Agent service, continuations of the same persistent session
-  reuse that child while different sessions remain isolated. Opens and ends coalesce under bounded capacity. Session
-  deletion and ephemeral completion end the exact child; unconfirmed cleanup is retained as retryable debt and blocks
-  session reuse until the host confirms it. A remote provider without scoped-session support refuses before browser
-  dispatch instead of falling back to shared state.
+- A Bridge-routed Agent never borrows the host's shared browser root. A browser-filtered Agent run opens no browser
+  scope. Each browser-enabled Agent session opens one distinct end-capable remote child and capability namespace; within
+  one running Agent service, continuations of the same persistent session reuse that child while different sessions
+  remain isolated. Opens and ends coalesce under bounded capacity. Session deletion and ephemeral completion end the
+  exact child; unconfirmed cleanup is retained as retryable debt and blocks session reuse until the host confirms it. A
+  remote provider without scoped-session support refuses before browser dispatch instead of falling back to shared state.
 - Protocol 1.31 qualification can instead ask an eligible Bridge host to launch the exact authenticated Peekaboo CLI
   peer for one fixed background-only `agent run --no-cache --bridge-socket <serving-host> --json` execution. This is one
   long request through terminal `waitpid`, not a public two-call Agent lifecycle. The host accepts the task but no
