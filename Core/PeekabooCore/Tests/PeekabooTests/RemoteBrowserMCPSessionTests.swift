@@ -11,6 +11,64 @@ import Testing
 @MainActor
 struct RemoteBrowserMCPSessionTests {
     @Test
+    func `browser free MCP catalog starts on a legacy remote provider`() async throws {
+        let legacy = LegacyUnscopedRemoteBrowserClient()
+        let server = try await PeekabooMCPServer(
+            toolContext: Self.remoteContext(browser: legacy),
+            toolFilters: Self.filters(allowing: ["permissions", "sleep"]))
+
+        #expect(await server.registeredToolNamesForTesting() == ["permissions", "sleep"])
+        #expect(await server.browserClientForTesting() === legacy)
+        #expect(legacy.callCount == 0)
+
+        await server.stopForTesting()
+        #expect(legacy.callCount == 0)
+    }
+
+    @Test
+    func `browser catalog fails closed on a legacy remote provider`() async {
+        let legacy = LegacyUnscopedRemoteBrowserClient()
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await PeekabooMCPServer(
+                toolContext: Self.remoteContext(browser: legacy),
+                toolFilters: Self.filters(allowing: ["browser"]))
+        }
+        #expect(legacy.callCount == 0)
+    }
+
+    @Test
+    func `explicit handoff bootstraps even when browser is filtered out`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let server = try await PeekabooMCPServer(
+            toolContext: Self.context(browser: Self.rootClient(transport: transport)),
+            browserHandoff: grant,
+            toolFilters: Self.filters(allowing: ["permissions"]))
+
+        #expect(transport.openedHandoffs == [grant.payload])
+        #expect(await server.registeredToolNamesForTesting() == ["permissions"])
+
+        await server.stopForTesting()
+        #expect(transport.endedSessionIDs.count == 1)
+    }
+
+    @Test
+    func `server registers the exact filtered native tool selection`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let root = Self.rootClient(transport: transport)
+        let server = try await PeekabooMCPServer(
+            toolContext: Self.context(browser: root),
+            toolFilters: Self.filters(allowing: ["browser", "permissions", "sleep"]))
+
+        #expect(await server.registeredToolNamesForTesting() == ["browser", "permissions", "sleep"])
+        #expect(await server.browserClientForTesting() !== root)
+        #expect(transport.openedHandoffs == [nil])
+
+        await server.stopForTesting()
+    }
+
+    @Test
     func `MCP opens an empty remote scope and tears it down`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
@@ -690,6 +748,23 @@ struct RemoteBrowserMCPSessionTests {
             executionPolicy: .backgroundOnly)
     }
 
+    private static func remoteContext(browser: any BrowserMCPClientProviding) -> MCPToolContext {
+        let services = RemotePeekabooServices(client: PeekabooBridgeClient(
+            socketPath: "/private/tmp/peekaboo-legacy-remote-browser-session.sock"))
+        return MCPToolContext(
+            services: services,
+            browser: browser,
+            executionPolicy: .backgroundOnly)
+    }
+
+    private static func filters(allowing toolNames: Set<String>) -> ToolFilters {
+        ToolFilters(
+            allow: toolNames,
+            deny: [],
+            allowSource: .config,
+            denySources: [:])
+    }
+
     private static func pageReference(from response: ToolResponse) throws -> String {
         let root = try #require(response.structuredContent?.objectValue)
         let pages = try #require(root["pages"]?.arrayValue)
@@ -710,6 +785,34 @@ struct RemoteBrowserMCPSessionTests {
 }
 
 private struct UnclassifiedOpenFailure: Error {}
+
+@MainActor
+private final class LegacyUnscopedRemoteBrowserClient: BrowserMCPClientProviding, @unchecked Sendable {
+    private(set) var callCount = 0
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        self.callCount += 1
+        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        self.callCount += 1
+        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func disconnect() async {
+        self.callCount += 1
+    }
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        self.callCount += 1
+        return .text("unexpected legacy remote browser call")
+    }
+}
 
 @MainActor
 private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSessionTransport, @unchecked Sendable {

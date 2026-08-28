@@ -59,40 +59,72 @@ public actor PeekabooMCPServer {
     private let serverName = PeekabooMCPVersion.serverName
     private let serverVersion = PeekabooMCPVersion.current
 
-    public init(browserHandoff: BrowserMCPHandoffGrant? = nil) async throws {
+    public init(
+        browserHandoff: BrowserMCPHandoffGrant? = nil,
+        toolFilters: ToolFilters = ToolFiltering.currentFilters()) async throws
+    {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
         let context = try await MainActor.run {
             try MCPToolContext.makeDefaultIfConfigured()
         }
-        self.toolContext = try await context
-            .openingBrowserSession(
-                named: "mcp:\(UUID().uuidString.lowercased())",
-                handoff: browserHandoff)
-            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let prepared = try await Self.prepareToolContext(
+            context,
+            browserHandoff: browserHandoff,
+            toolFilters: toolFilters,
+            logger: self.logger)
+        self.toolContext = prepared.context
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
 
         await self.setupHandlers()
-        await self.registerAllTools()
+        await self.registerAllTools(selection: prepared.selection)
     }
 
     public init(
         toolContext: MCPToolContext,
-        browserHandoff: BrowserMCPHandoffGrant? = nil) async throws
+        browserHandoff: BrowserMCPHandoffGrant? = nil,
+        toolFilters: ToolFilters = ToolFiltering.currentFilters()) async throws
     {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
-        // A background-only server intentionally starts with a disconnected scoped child. An explicitly
-        // foreground-authorized server exposes BrowserTool.connect for this exact child; later calls reuse it.
-        self.toolContext = try await toolContext
-            .openingBrowserSession(
-                named: "mcp:\(UUID().uuidString.lowercased())",
-                handoff: browserHandoff)
-            .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        let prepared = try await Self.prepareToolContext(
+            toolContext,
+            browserHandoff: browserHandoff,
+            toolFilters: toolFilters,
+            logger: self.logger)
+        self.toolContext = prepared.context
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
 
         await self.setupHandlers()
-        await self.registerAllTools()
+        await self.registerAllTools(selection: prepared.selection)
+    }
+
+    private static func prepareToolContext(
+        _ context: MCPToolContext,
+        browserHandoff: BrowserMCPHandoffGrant?,
+        toolFilters: ToolFilters,
+        logger: os.Logger) async throws -> (context: MCPToolContext, selection: MCPToolCatalog.Selection)
+    {
+        let inputPolicy = await self.runtimeInputPolicy(for: context)
+        let selection = await MainActor.run {
+            MCPToolCatalog.selection(
+                context: context,
+                inputPolicy: inputPolicy,
+                filters: toolFilters,
+                log: { message in
+                    logger.notice("\(message, privacy: .public)")
+                })
+        }
+        let browserContext = if selection.contains("browser") || browserHandoff != nil {
+            try await context.openingBrowserSession(
+                named: "mcp:\(UUID().uuidString.lowercased())",
+                handoff: browserHandoff)
+        } else {
+            context
+        }
+        return (
+            browserContext.replacingSnapshotOwner(with: MCPToolSnapshotOwner()),
+            selection)
     }
 
     private static func makeServer(name: String, version: String) -> Server {
@@ -198,20 +230,10 @@ public actor PeekabooMCPServer {
             _meta: metadata)
     }
 
-    private func registerAllTools() async {
+    private func registerAllTools(selection: MCPToolCatalog.Selection) async {
         let context = self.toolContext
-
-        let filters = ToolFiltering.currentFilters()
-        let logger = self.logger
-        let inputPolicy = await self.runtimeInputPolicy()
         let nativeTools = await MainActor.run {
-            MCPToolCatalog.tools(
-                context: context,
-                inputPolicy: inputPolicy,
-                filters: filters,
-                log: { message in
-                    logger.notice("\(message, privacy: .public)")
-                })
+            MCPToolCatalog.tools(context: context, selection: selection)
         }
 
         await self.toolRegistry.register(nativeTools)
@@ -220,9 +242,9 @@ public actor PeekabooMCPServer {
         self.logger.info("Registered \(toolCount) tools")
     }
 
-    private func runtimeInputPolicy() async -> UIInputPolicy {
+    private static func runtimeInputPolicy(for context: MCPToolContext) async -> UIInputPolicy {
         await MainActor.run {
-            if let automation = self.toolContext.automation as? UIAutomationService {
+            if let automation = context.automation as? UIAutomationService {
                 return automation.inputPolicy
             }
 
