@@ -9,11 +9,17 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     BrowserMCPAtomicSessionActionProviding, BrowserMCPConnectionResultProviding,
     BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding, @unchecked Sendable
 {
+    private enum ScopedSessionState: Equatable {
+        case active
+        case terminal
+        case ended
+    }
+
     private let client: PeekabooBridgeClient
     private let sessionTransport: (any RemoteBrowserMCPSessionTransport)?
     private let sessionHandle: RemoteBrowserMCPSessionHandle?
     @MainActor private var lastScopedStatus: BrowserMCPStatus?
-    @MainActor private var scopedSessionEnded = false
+    @MainActor private var scopedSessionState = ScopedSessionState.active
 
     public init(
         client: PeekabooBridgeClient,
@@ -50,7 +56,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
               (handoff == nil) == (handle.targetReceiptSHA256 == nil)
         else {
             if handle.isCanonical {
-                await sessionTransport.endSession(handle)
+                try? await sessionTransport.endSession(handle)
             }
             throw RemoteBrowserMCPSessionError.invalidHandle
         }
@@ -63,7 +69,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     @MainActor
     public func status(channel: BrowserMCPChannel?) async -> BrowserMCPStatus {
         if let sessionHandle, let sessionTransport {
-            guard !self.scopedSessionEnded else {
+            guard self.scopedSessionState == .active else {
                 return Self.endedStatus()
             }
             do {
@@ -73,6 +79,13 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
                 try Self.validateScopedStatus(status)
                 self.lastScopedStatus = status
                 return status
+            } catch let error as RemoteBrowserMCPSessionTransportError {
+                return self.confirmedTerminalStatus(error: error)
+            } catch let error as RemoteBrowserMCPSessionError {
+                return await self.confirmedMalformedStatus(
+                    error: error,
+                    session: sessionHandle,
+                    transport: sessionTransport)
             } catch {
                 return self.indeterminateStatus(error: error)
             }
@@ -104,14 +117,24 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         browserURL: String?) async throws -> DesktopActionResult<BrowserMCPStatus>
     {
         if let sessionHandle, let sessionTransport {
-            guard !self.scopedSessionEnded else { throw RemoteBrowserMCPSessionError.ended }
-            let result = try await sessionTransport.connectWithOutcome(
-                session: sessionHandle,
-                channel: channel,
-                browserURL: browserURL)
-            try Self.validateScopedStatus(result.payload)
-            self.lastScopedStatus = result.payload
-            return result
+            guard self.scopedSessionState == .active else { throw RemoteBrowserMCPSessionError.ended }
+            do {
+                let result = try await sessionTransport.connectWithOutcome(
+                    session: sessionHandle,
+                    channel: channel,
+                    browserURL: browserURL)
+                try Self.validateScopedStatus(result.payload)
+                self.lastScopedStatus = result.payload
+                return result
+            } catch let error as RemoteBrowserMCPSessionTransportError {
+                self.markScopedSessionTerminal()
+                throw Self.terminalSessionFailure(error)
+            } catch let error as RemoteBrowserMCPSessionError {
+                await self.endMalformedScope(
+                    session: sessionHandle,
+                    transport: sessionTransport)
+                throw Self.terminalSessionFailure(error)
+            }
         }
         do {
             let result = try await self.client.browserConnectResult(
@@ -128,10 +151,16 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     @MainActor
     public func disconnect() async {
         if let sessionHandle, let sessionTransport {
-            guard !self.scopedSessionEnded else { return }
-            await sessionTransport.disconnect(session: sessionHandle)
-            self.lastScopedStatus = Self.disconnectedStatus(
-                detectedBrowsers: self.lastScopedStatus?.detectedBrowsers ?? [])
+            guard self.scopedSessionState == .active else { return }
+            do {
+                try await sessionTransport.disconnect(session: sessionHandle)
+                self.lastScopedStatus = Self.disconnectedStatus(
+                    detectedBrowsers: self.lastScopedStatus?.detectedBrowsers ?? [])
+            } catch is RemoteBrowserMCPSessionTransportError {
+                self.markScopedSessionTerminal()
+            } catch {
+                // Completion is unknown. Keep the last exact binding until a later authoritative status probe.
+            }
             return
         }
         try? await self.client.browserDisconnect()
@@ -139,10 +168,10 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
 
     @MainActor
     public func endBrowserMCPScopedSession() async {
-        guard let sessionHandle, let sessionTransport, !self.scopedSessionEnded else { return }
-        self.scopedSessionEnded = true
+        guard let sessionHandle, let sessionTransport, self.scopedSessionState == .active else { return }
+        self.scopedSessionState = .ended
         self.lastScopedStatus = nil
-        await sessionTransport.endSession(sessionHandle)
+        try? await sessionTransport.endSession(sessionHandle)
     }
 
     @MainActor
@@ -260,7 +289,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         guard let sessionHandle, let sessionTransport else {
             throw Self.scopedAtomicExecutionRequired()
         }
-        guard !self.scopedSessionEnded else { throw RemoteBrowserMCPSessionError.ended }
+        guard self.scopedSessionState == .active else { throw RemoteBrowserMCPSessionError.ended }
         guard let status = self.lastScopedStatus,
               status.connectionReceipt == expectedSessionBinding.connectionReceipt,
               status.providerSessionEpoch == expectedSessionBinding.providerSessionEpoch
@@ -271,12 +300,17 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
                 message: "The exact remote browser provider session changed before tool dispatch.",
                 hint: "Refresh browser status and obtain fresh page and element references.")
         }
-        return try await sessionTransport.executeSequenceWithOutcome(
-            session: sessionHandle,
-            calls: calls,
-            channel: channel,
-            expectedSessionBinding: expectedSessionBinding,
-            elementPreflight: elementPreflight)
+        do {
+            return try await sessionTransport.executeSequenceWithOutcome(
+                session: sessionHandle,
+                calls: calls,
+                channel: channel,
+                expectedSessionBinding: expectedSessionBinding,
+                elementPreflight: elementPreflight)
+        } catch let error as RemoteBrowserMCPSessionTransportError {
+            self.markScopedSessionTerminal()
+            throw Self.terminalSessionFailure(error)
+        }
     }
 
     @MainActor
@@ -289,6 +323,50 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             providerSessionEpoch: self.lastScopedStatus?.providerSessionEpoch,
             error: error.localizedDescription,
             observation: .indeterminate)
+    }
+
+    @MainActor
+    private func confirmedTerminalStatus(error: any Error) -> BrowserMCPStatus {
+        let detectedBrowsers = self.lastScopedStatus?.detectedBrowsers ?? []
+        self.markScopedSessionTerminal()
+        return BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: detectedBrowsers,
+            error: error.localizedDescription,
+            observation: .confirmed)
+    }
+
+    @MainActor
+    private func confirmedMalformedStatus(
+        error: any Error,
+        session: RemoteBrowserMCPSessionHandle,
+        transport: any RemoteBrowserMCPSessionTransport) async -> BrowserMCPStatus
+    {
+        let detectedBrowsers = self.lastScopedStatus?.detectedBrowsers ?? []
+        await self.endMalformedScope(session: session, transport: transport)
+        return BrowserMCPStatus(
+            isConnected: false,
+            toolCount: 0,
+            detectedBrowsers: detectedBrowsers,
+            error: error.localizedDescription,
+            observation: .confirmed)
+    }
+
+    @MainActor
+    private func endMalformedScope(
+        session: RemoteBrowserMCPSessionHandle,
+        transport: any RemoteBrowserMCPSessionTransport) async
+    {
+        self.scopedSessionState = .ended
+        self.lastScopedStatus = nil
+        try? await transport.endSession(session)
+    }
+
+    @MainActor
+    private func markScopedSessionTerminal() {
+        self.scopedSessionState = .terminal
+        self.lastScopedStatus = nil
     }
 
     private static func validateScopedStatus(_ status: BrowserMCPStatus) throws {
@@ -345,6 +423,14 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             reason: .targetUnavailable,
             message: "Browser execution requires an existing caller-scoped connection.",
             hint: "Connect this exact foreground-authorized session or provide a valid handoff when it opens.")
+    }
+
+    private static func terminalSessionFailure(_ error: any Error) -> DesktopActionFailure {
+        .preDispatchRefusal(
+            route: .bridge,
+            reason: .transportSessionUnavailable,
+            message: error.localizedDescription,
+            hint: "Open a new authenticated browser session before retrying.")
     }
 
     private static func status(from bridgeStatus: PeekabooBridgeBrowserStatus) throws -> BrowserMCPStatus {

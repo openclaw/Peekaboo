@@ -167,8 +167,120 @@ struct RemoteBrowserMCPSessionTests {
         #expect(indeterminate.toolCount == 0)
     }
 
+    @Test(arguments: RemoteBrowserMCPSessionTransportError.allCases)
+    func `authoritative scope refusal clears refs and blocks later transport`(
+        terminalError: RemoteBrowserMCPSessionTransportError) async throws
+    {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let root = Self.rootClient(transport: transport)
+        let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let context = try await Self.context(browser: root)
+            .openingBrowserSession(named: "mcp:terminal", handoff: grant)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let dispatchedBeforeTerminal = transport.executeCallCount
+        transport.statusFailure = terminalError
+
+        let terminal = await context.browser.status(channel: nil)
+        #expect(terminal.observation == .confirmed)
+        #expect(!terminal.isConnected)
+        #expect(terminal.connectionReceipt == nil)
+        #expect(terminal.providerSessionEpoch == nil)
+        let statusCallsAtTerminal = transport.statusCallCount
+
+        _ = await context.browser.status(channel: nil)
+        let refused = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        #expect(refused.isError)
+        #expect(transport.statusCallCount == statusCallsAtTerminal)
+        #expect(transport.executeCallCount == dispatchedBeforeTerminal)
+
+        await context.releaseSnapshotOwner()
+        #expect(transport.endCallCount == 0)
+    }
+
     @Test
-    func `scoped connection without provider epoch refuses before transport execution`() async throws {
+    func `authoritative execution refusal terminates scope before another call`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let root = Self.rootClient(transport: transport)
+        let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let context = try await Self.context(browser: root)
+            .openingBrowserSession(named: "mcp:execution-terminal", handoff: grant)
+        let tool = BrowserTool(context: context)
+        let listed = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+        let pageReference = try Self.pageReference(from: listed)
+        let dispatchedBeforeTerminal = transport.executeCallCount
+        transport.executeFailure = RemoteBrowserMCPSessionTransportError.sessionEnded
+
+        let refused = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: [
+                "action": "snapshot",
+                "page_id": pageReference,
+            ]))
+        #expect(refused.isError)
+        #expect(transport.executeCallCount == dispatchedBeforeTerminal)
+        let statusCallsAtTerminal = transport.statusCallCount
+
+        let terminal = await context.browser.status(channel: nil)
+        #expect(transport.statusCallCount == statusCallsAtTerminal)
+        #expect(terminal.observation == .confirmed)
+        #expect(terminal.connectionReceipt == nil)
+    }
+
+    @Test
+    func `indeterminate disconnect keeps exact binding for later status`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let root = Self.rootClient(transport: transport)
+        let grant = BrowserMCPHandoffGrant(payload: Data("signed-connect-receipt".utf8))
+        let context = try await Self.context(browser: root)
+            .openingBrowserSession(named: "mcp:disconnect-indeterminate", handoff: grant)
+        let client = context.browser
+        let confirmed = await client.status(channel: nil)
+        let receipt = try #require(confirmed.connectionReceipt)
+        let epoch = try #require(confirmed.providerSessionEpoch)
+        transport.disconnectFailure = CancellationError()
+
+        await client.disconnect()
+        transport.statusFailure = CancellationError()
+        let indeterminate = await client.status(channel: nil)
+
+        #expect(indeterminate.observation == .indeterminate)
+        #expect(indeterminate.connectionReceipt == receipt)
+        #expect(indeterminate.providerSessionEpoch == epoch)
+    }
+
+    @Test
+    func `failed end is attempted once and remains locally terminal`() async throws {
+        let transport = RecordingRemoteBrowserSessionTransport()
+        let root = Self.rootClient(transport: transport)
+        let context = try await Self.context(browser: root)
+            .openingBrowserSession(named: "mcp:end-once", handoff: nil)
+        let client = context.browser
+        transport.endFailure = CancellationError()
+
+        await context.releaseSnapshotOwner()
+        await context.releaseSnapshotOwner()
+
+        #expect(transport.endCallCount == 1)
+        let statusCallsBefore = transport.statusCallCount
+        let ended = await client.status(channel: nil)
+        #expect(ended.observation == .confirmed)
+        #expect(ended.connectionReceipt == nil)
+        #expect(transport.statusCallCount == statusCallsBefore)
+    }
+
+    @Test
+    func `scoped connection without provider epoch terminates before transport execution`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         transport.omitProviderEpoch = true
         let root = Self.rootClient(transport: transport)
@@ -178,15 +290,18 @@ struct RemoteBrowserMCPSessionTests {
         let tool = BrowserTool(context: context)
 
         let status = await context.browser.status(channel: nil)
-        #expect(status.observation == .indeterminate)
+        #expect(status.observation == .confirmed)
         #expect(status.connectionReceipt == nil)
         #expect(status.providerSessionEpoch == nil)
+        let statusCallsAtTerminal = transport.statusCallCount
 
         let response = try await context.execute(
             tool: tool,
             arguments: ToolArguments(raw: ["action": "list_pages"]))
         #expect(response.isError)
+        #expect(transport.statusCallCount == statusCallsAtTerminal)
         #expect(transport.executeCallCount == 0)
+        #expect(transport.endCallCount == 1)
     }
 
     @Test
@@ -260,6 +375,10 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     var omitTargetDigest = false
     var omitProviderEpoch = false
     var statusFailure: (any Error)?
+    var executeFailure: (any Error)?
+    var disconnectFailure: (any Error)?
+    var endFailure: (any Error)?
+    private(set) var endCallCount = 0
     private var epochs: [UUID: BrowserMCPProviderSessionEpoch] = [:]
 
     func openSession(
@@ -309,6 +428,9 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
         expectedSessionBinding: BrowserMCPExecutionSessionBinding,
         elementPreflight: BrowserMCPElementPreflight?) async throws -> DesktopActionResult<ToolResponse>
     {
+        if let executeFailure {
+            throw executeFailure
+        }
         let current = self.connectedStatus(session: session)
         guard current.connectionReceipt == expectedSessionBinding.connectionReceipt,
               current.providerSessionEpoch == expectedSessionBinding.providerSessionEpoch
@@ -338,9 +460,17 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
         return DesktopActionResult(payload: payload, outcome: outcome)
     }
 
-    func disconnect(session _: RemoteBrowserMCPSessionHandle) async {}
+    func disconnect(session _: RemoteBrowserMCPSessionHandle) async throws {
+        if let disconnectFailure {
+            throw disconnectFailure
+        }
+    }
 
-    func endSession(_ session: RemoteBrowserMCPSessionHandle) async {
+    func endSession(_ session: RemoteBrowserMCPSessionHandle) async throws {
+        self.endCallCount += 1
+        if let endFailure {
+            throw endFailure
+        }
         self.endedSessionIDs.append(session.sessionID)
     }
 

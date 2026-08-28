@@ -54,8 +54,32 @@ public protocol RemoteBrowserMCPSessionTransport: AnyObject, Sendable {
         expectedSessionBinding: BrowserMCPExecutionSessionBinding,
         elementPreflight: BrowserMCPElementPreflight?) async throws -> DesktopActionResult<ToolResponse>
 
-    func disconnect(session: RemoteBrowserMCPSessionHandle) async
-    func endSession(_ session: RemoteBrowserMCPSessionHandle) async
+    func disconnect(session: RemoteBrowserMCPSessionHandle) async throws
+    func endSession(_ session: RemoteBrowserMCPSessionHandle) async throws
+}
+
+/// Authenticated Bridge refusals that conclusively end the local session capability.
+///
+/// Cancellation, timeout, response loss, and unclassified envelopes must not be projected as these cases because
+/// their session state remains indeterminate.
+public enum RemoteBrowserMCPSessionTransportError: Error, CaseIterable, Equatable, LocalizedError, Sendable {
+    case invalidSession
+    case sessionEnded
+    case wrongOwner
+    case hostGenerationChanged
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidSession:
+            "The Bridge confirmed that the browser session handle is invalid."
+        case .sessionEnded:
+            "The Bridge confirmed that the browser session has ended."
+        case .wrongOwner:
+            "The Bridge confirmed that the browser session belongs to another authenticated client generation."
+        case .hostGenerationChanged:
+            "The authenticated Bridge host generation changed."
+        }
+    }
 }
 
 enum RemoteBrowserMCPSessionError: LocalizedError {
