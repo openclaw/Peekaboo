@@ -48,8 +48,8 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     @MainActor private var lastScopedStatus: BrowserMCPStatus?
     @MainActor private var pendingScopedSessionOpenAttempt: ScopedSessionOpenAttempt?
     @MainActor private var scopedSessionState = ScopedSessionState.active
-    @MainActor private var scopedSessionEndInFlight = false
-    @MainActor private var scopedSessionEndRetryRequested = false
+    @MainActor private var scopedSessionEndTask: (id: UUID, task: Task<Bool, Never>)?
+    @MainActor private var scopedSessionEndRequestGeneration: UInt64 = 0
 
     var hasScopedSessionTransport: Bool {
         self.sessionTransport != nil
@@ -76,7 +76,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
 
     @MainActor
     public func openBrowserMCPScopedSession(
-        handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPClientProviding
+        handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPScopedSessionEnding
     {
         guard self.sessionHandle == nil,
               let sessionTransport = self.sessionTransport
@@ -270,9 +270,9 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
     }
 
     @MainActor
-    public func endBrowserMCPScopedSession() async {
-        guard let sessionHandle, let sessionTransport else { return }
-        await self.attemptScopedSessionEnd(
+    public func endBrowserMCPScopedSession() async -> Bool {
+        guard let sessionHandle, let sessionTransport else { return true }
+        return await self.finishScopedSessionEnd(
             session: sessionHandle,
             transport: sessionTransport)
     }
@@ -461,28 +461,49 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         session: RemoteBrowserMCPSessionHandle,
         transport: any RemoteBrowserMCPSessionTransport) async
     {
-        await self.attemptScopedSessionEnd(session: session, transport: transport)
+        _ = await self.finishScopedSessionEnd(session: session, transport: transport)
     }
 
     @MainActor
-    private func attemptScopedSessionEnd(
+    private func finishScopedSessionEnd(
         session: RemoteBrowserMCPSessionHandle,
-        transport: any RemoteBrowserMCPSessionTransport) async
+        transport: any RemoteBrowserMCPSessionTransport) async -> Bool
     {
         switch self.scopedSessionState {
         case .active, .cleanupDebt:
             break
         case .terminal, .ended:
-            return
+            return true
         }
-        guard !self.scopedSessionEndInFlight else {
-            self.scopedSessionEndRetryRequested = true
-            return
+        self.scopedSessionEndRequestGeneration &+= 1
+        if let pending = self.scopedSessionEndTask {
+            return await pending.task.value
         }
-        self.scopedSessionEndInFlight = true
+        let requestGeneration = self.scopedSessionEndRequestGeneration
+        let endID = UUID()
+        let task = Task { @MainActor in
+            let cleanupConfirmed = await self.performScopedSessionEnd(
+                session: session,
+                transport: transport,
+                requestGeneration: requestGeneration)
+            if self.scopedSessionEndTask?.id == endID {
+                self.scopedSessionEndTask = nil
+            }
+            return cleanupConfirmed
+        }
+        self.scopedSessionEndTask = (endID, task)
+        return await task.value
+    }
+
+    @MainActor
+    private func performScopedSessionEnd(
+        session: RemoteBrowserMCPSessionHandle,
+        transport: any RemoteBrowserMCPSessionTransport,
+        requestGeneration: UInt64) async -> Bool
+    {
         self.lastScopedStatus = nil
+        var handledRequestGeneration = requestGeneration
         repeat {
-            self.scopedSessionEndRetryRequested = false
             self.scopedSessionState = .cleanupDebt
             do {
                 try await transport.endSession(session)
@@ -497,8 +518,12 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
             } catch {
                 self.scopedSessionState = .cleanupDebt
             }
-        } while self.scopedSessionState == .cleanupDebt && self.scopedSessionEndRetryRequested
-        self.scopedSessionEndInFlight = false
+            guard self.scopedSessionState == .cleanupDebt,
+                  self.scopedSessionEndRequestGeneration != handledRequestGeneration
+            else { break }
+            handledRequestGeneration = self.scopedSessionEndRequestGeneration
+        } while true
+        return self.scopedSessionState != .cleanupDebt
     }
 
     @MainActor

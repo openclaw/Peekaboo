@@ -1422,7 +1422,7 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
         case .handoffAuthorizationCapacityExceeded:
             "The bounded browser handoff authorization store is full."
         case .authenticatedSessionCapacityExceeded:
-            "The bounded authenticated browser session store is full while cleanup remains pending."
+            "The bounded authenticated browser session store is full. End a session, or retry after cleanup completes."
         case .invalidHandoffAuthorization:
             "The browser handoff authorization is missing, consumed, or belongs to another exact connection."
         case .sessionEnded:

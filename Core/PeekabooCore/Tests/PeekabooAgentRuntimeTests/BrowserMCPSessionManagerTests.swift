@@ -473,8 +473,8 @@ struct BrowserMCPSessionManagerTests {
             _ = try await context.openingBrowserSession(named: "mcp:over-capacity")
         }
         let agent = try PeekabooAgentService(services: Self.services(browser: root))
-        #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
-            _ = try agent.browserClient(forAgentSessionID: "over-capacity")
+        await #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
+            _ = try await agent.browserClient(forAgentSessionID: "over-capacity")
         }
 
         #expect(await root.retryPendingAuthenticatedSessionCleanup())
@@ -1927,9 +1927,9 @@ struct BrowserMCPSessionManagerTests {
         let root = BrowserMCPService(authenticatedSessionPool: pool)
         let services = Self.services(browser: root)
         let agent = try PeekabooAgentService(services: services)
-        let first = try #require(agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
-        let resumed = try #require(agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
-        let other = try #require(agent.browserClient(forAgentSessionID: "session-b") as? BrowserMCPService)
+        let first = try #require(await agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
+        let resumed = try #require(await agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
+        let other = try #require(await agent.browserClient(forAgentSessionID: "session-b") as? BrowserMCPService)
         let firstCapabilities = try #require(first.browserCapabilitySession)
         let resumedCapabilities = try #require(resumed.browserCapabilitySession)
         let otherCapabilities = try #require(other.browserCapabilitySession)
@@ -1937,11 +1937,279 @@ struct BrowserMCPSessionManagerTests {
         #expect(firstCapabilities === resumedCapabilities)
         #expect(firstCapabilities !== otherCapabilities)
         await agent.endBrowserClient(forAgentSessionID: "session-a")
-        let restarted = try #require(agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
+        let restarted = try #require(await agent.browserClient(forAgentSessionID: "session-a") as? BrowserMCPService)
         let restartedCapabilities = try #require(restarted.browserCapabilitySession)
         #expect(restartedCapabilities !== firstCapabilities)
         await agent.endBrowserClient(forAgentSessionID: "session-a")
         await agent.endBrowserClient(forAgentSessionID: "session-b")
+    }
+
+    @Test
+    func `remote Agent sessions coalesce resume and never dispatch through shared root`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+
+        let firstOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "session-a")
+        }
+        await openBarrier.waitUntilBlocked()
+        let resumedOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: "session-a")
+        }
+        await Task.yield()
+        #expect(root.openCount == 1)
+        await openBarrier.release()
+        let first = try await firstOpen.value
+        let resumed = try await resumedOpen.value
+        let other = try await agent.browserClient(forAgentSessionID: "session-b")
+
+        #expect(first !== root)
+        #expect(first === resumed)
+        #expect(first !== other)
+        #expect(root.openCount == 2)
+        let firstCapabilities = try #require(agent.remoteBrowserCapabilities["session-a"])
+        let resumedCapabilities = try #require(agent.remoteBrowserCapabilities["session-a"])
+        let otherCapabilities = try #require(agent.remoteBrowserCapabilities["session-b"])
+        #expect(firstCapabilities === resumedCapabilities)
+        #expect(firstCapabilities !== otherCapabilities)
+
+        _ = try await first.execute(toolName: "list_pages", arguments: [:], channel: nil)
+        let firstChild = try #require(first as? AgentRemoteScopedBrowserChild)
+        #expect(firstChild.executeCount == 1)
+        #expect(root.rootExecuteCount == 0)
+
+        #expect(await agent.endBrowserClient(forAgentSessionID: "session-a"))
+        #expect(await agent.endBrowserClient(forAgentSessionID: "session-b"))
+        #expect(root.children.allSatisfy { $0.endCount == 1 })
+    }
+
+    @Test
+    func `remote Agent teardown closes an in flight open before the child becomes usable`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let sessionID = "opening-then-ended"
+
+        let opening = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: sessionID)
+        }
+        await openBarrier.waitUntilBlocked()
+        let firstEnding = Task { @MainActor in
+            await agent.endBrowserClient(forAgentSessionID: sessionID)
+        }
+        await Task.yield()
+        #expect(agent.remoteBrowserCleanupDebt.contains(sessionID))
+        #expect(agent.remoteBrowserEndingTasks.count == 1)
+        let secondEnding = Task { @MainActor in
+            await agent.endBrowserClient(forAgentSessionID: sessionID)
+        }
+        await Task.yield()
+        #expect(agent.remoteBrowserEndingTasks.count == 1)
+
+        await openBarrier.release()
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await opening.value
+        }
+        #expect(await firstEnding.value)
+        let endedChild = try #require(root.children.first)
+        #expect(endedChild.endCount == 1)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserCapabilities.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+
+        let restarted = try await agent.browserClient(forAgentSessionID: sessionID)
+        let restartedChild = try #require(restarted as? AgentRemoteScopedBrowserChild)
+        #expect(await secondEnding.value)
+        #expect(agent.remoteBrowserClients[sessionID] === restartedChild)
+        #expect(endedChild.endCount == 1)
+        #expect(restartedChild.endCount == 0)
+        #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
+        #expect(restartedChild.endCount == 1)
+    }
+
+    @Test
+    func `remote Agent refuses a browser root without scoped session support`() async throws {
+        let root = AgentLegacyRemoteBrowserRoot()
+        let services = Self.services(browser: root)
+        let agent = try PeekabooAgentService(services: AgentRemoteBrowserServices(base: services))
+
+        await #expect(throws: BrowserMCPConnectionError.receiptBindingUnsupported) {
+            _ = try await agent.browserClient(forAgentSessionID: "must-not-borrow-root")
+        }
+        #expect(root.executeCount == 0)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+    }
+
+    @Test
+    func `remote Agent capacity counts active and opening sessions and reopens after release`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let capacity = BrowserMCPAuthenticatedSessionPool.sessionCapacity
+        var activeSessionIDs: [String] = []
+        for index in 0..<(capacity - 1) {
+            let sessionID = "capacity-active-\(index)"
+            _ = try await agent.browserClient(forAgentSessionID: sessionID)
+            activeSessionIDs.append(sessionID)
+        }
+
+        let openBarrier = SequenceBarrier()
+        root.openBarrier = openBarrier
+        let pendingSessionID = "capacity-pending"
+        let pendingOpen = Task { @MainActor in
+            try await agent.browserClient(forAgentSessionID: pendingSessionID)
+        }
+        await openBarrier.waitUntilBlocked()
+        #expect(agent.remoteBrowserClients.count == capacity - 1)
+        #expect(agent.remoteBrowserOpeningTasks.count == 1)
+        #expect(root.openCount == capacity)
+
+        await #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
+            _ = try await agent.browserClient(forAgentSessionID: "capacity-overflow")
+        }
+        #expect(root.openCount == capacity)
+
+        let releasedSessionID = activeSessionIDs.removeFirst()
+        #expect(await agent.endBrowserClient(forAgentSessionID: releasedSessionID))
+        let replacementSessionID = "capacity-replacement"
+        let replacement = try await agent.browserClient(forAgentSessionID: replacementSessionID)
+        await #expect(throws: BrowserMCPConnectionError.authenticatedSessionCapacityExceeded) {
+            _ = try await agent.browserClient(forAgentSessionID: "capacity-overflow-again")
+        }
+
+        await openBarrier.release()
+        let pending = try await pendingOpen.value
+        #expect(pending !== replacement)
+        #expect(agent.remoteBrowserClients.count == capacity)
+        #expect(agent.remoteBrowserOpeningTasks.isEmpty)
+        #expect(root.openCount == capacity + 1)
+
+        for sessionID in activeSessionIDs + [replacementSessionID, pendingSessionID] {
+            #expect(await agent.endBrowserClient(forAgentSessionID: sessionID))
+        }
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(root.children.allSatisfy { $0.endCount == 1 })
+    }
+
+    @Test
+    func `remote Agent cleanup debt blocks resume until exact child cleanup succeeds`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        root.nextEndResults = [[false, true], [true]]
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let first = try await agent.browserClient(forAgentSessionID: "debt-session")
+        let firstChild = try #require(first as? AgentRemoteScopedBrowserChild)
+
+        #expect(await !agent.endBrowserClient(forAgentSessionID: "debt-session"))
+        #expect(agent.browserCleanupDebtPending)
+        #expect(firstChild.endCount == 1)
+        await #expect(throws: BrowserMCPConnectionError.sessionEnded) {
+            _ = try await agent.browserClient(forAgentSessionID: "debt-session")
+        }
+
+        let cleanupBarrier = SequenceBarrier()
+        firstChild.endBarrier = cleanupBarrier
+        let firstDrain = Task { @MainActor in await agent.drainBrowserCleanupDebt() }
+        await cleanupBarrier.waitUntilBlocked()
+        let secondDrain = Task { @MainActor in await agent.drainBrowserCleanupDebt() }
+        await Task.yield()
+        #expect(firstChild.endCount == 2)
+        await cleanupBarrier.release()
+        #expect(await firstDrain.value)
+        #expect(await secondDrain.value)
+        #expect(!agent.browserCleanupDebtPending)
+        #expect(firstChild.endCount == 2)
+        let restarted = try await agent.browserClient(forAgentSessionID: "debt-session")
+        #expect(restarted !== first)
+        #expect(root.openCount == 2)
+        #expect(await agent.endBrowserClient(forAgentSessionID: "debt-session"))
+    }
+
+    @Test
+    func `overlapping remote Agent teardown retries one failed child cleanup`() async throws {
+        let root = AgentRemoteBrowserRoot()
+        root.nextEndResults = [[false, true]]
+        let agent = try PeekabooAgentService(services: Self.services(browser: root))
+        let sessionID = "overlapping-cleanup"
+        let browser = try await agent.browserClient(forAgentSessionID: sessionID)
+        let child = try #require(browser as? AgentRemoteScopedBrowserChild)
+        let endBarrier = SequenceBarrier()
+        child.endBarrier = endBarrier
+
+        let firstEnd = Task { @MainActor in
+            await agent.endBrowserClient(forAgentSessionID: sessionID)
+        }
+        await endBarrier.waitUntilBlocked()
+        let overlappingEnd = Task { @MainActor in
+            await agent.endBrowserClient(forAgentSessionID: sessionID)
+        }
+        await Task.yield()
+        #expect(child.endCount == 1)
+
+        await endBarrier.release()
+        #expect(await !firstEnd.value)
+        #expect(await overlappingEnd.value)
+        #expect(child.endCount == 2)
+        #expect(agent.remoteBrowserClients.isEmpty)
+        #expect(agent.remoteBrowserCapabilities.isEmpty)
+        #expect(agent.remoteBrowserEndingTasks.isEmpty)
+        #expect(agent.remoteBrowserCleanupDebt.isEmpty)
+        #expect(!agent.browserCleanupDebtPending)
+    }
+
+    @Test
+    func `remote Agent deletion and ephemeral completion end their exact scoped children`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooRemoteAgentBrowser-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionManager = try AgentSessionManager(sessionDirectory: directory)
+        let persistentID = "persistent-session"
+        let now = Date()
+        try sessionManager.saveSession(AgentSession(
+            id: persistentID,
+            modelName: "test-model",
+            messages: [.user("Test session")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+        let root = AgentRemoteBrowserRoot()
+        let agent = try PeekabooAgentService(
+            services: Self.services(browser: root),
+            sessionManager: sessionManager)
+
+        let persistent = try await agent.browserClient(forAgentSessionID: persistentID)
+        let persistentChild = try #require(persistent as? AgentRemoteScopedBrowserChild)
+        try await agent.deleteSession(id: persistentID)
+        #expect(persistentChild.endCount == 1)
+        #expect(agent.remoteBrowserClients[persistentID] == nil)
+
+        let ephemeralID = "ephemeral-session"
+        let ephemeral = try await agent.browserClient(forAgentSessionID: ephemeralID)
+        let ephemeralChild = try #require(ephemeral as? AgentRemoteScopedBrowserChild)
+        let context = PeekabooAgentService.SessionContext(
+            id: ephemeralID,
+            isPersistent: false,
+            messages: [],
+            createdAt: now,
+            executionStart: now,
+            metadata: SessionMetadata(),
+            modelIdentity: .init(
+                displayName: "test-model",
+                selection: nil,
+                endpointIdentity: nil,
+                providerIdentity: nil),
+            storedToolExecutionPolicy: .backgroundOnly,
+            toolExecutionPolicy: .backgroundOnly,
+            provider: nil)
+        #expect(await agent.endEphemeralBrowserClientIfNeeded(context))
+        #expect(ephemeralChild.endCount == 1)
+        #expect(agent.remoteBrowserClients[ephemeralID] == nil)
+        #expect(root.rootExecuteCount == 0)
     }
 
     @Test
@@ -1970,7 +2238,7 @@ struct BrowserMCPSessionManagerTests {
         let agent = try PeekabooAgentService(
             services: Self.services(browser: root),
             sessionManager: sessionManager)
-        let first = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        let first = try #require(await agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
         _ = try await first.connect(channel: nil, browserURL: nil)
         firstProvider.removeLeavesProvider = [true, false]
 
@@ -1980,7 +2248,7 @@ struct BrowserMCPSessionManagerTests {
         #expect(firstProvider.removeCount == 2)
         #expect(!agent.browserCleanupDebtPending)
         #expect(root.pendingAuthenticatedSessionCleanupCount == 0)
-        let second = try #require(agent.browserClient(forAgentSessionID: "next-session") as? BrowserMCPService)
+        let second = try #require(await agent.browserClient(forAgentSessionID: "next-session") as? BrowserMCPService)
         _ = try await second.connect(channel: nil, browserURL: nil)
         #expect(secondProvider.addedConfigs.count == 1)
         await agent.endBrowserClient(forAgentSessionID: "next-session")
@@ -2012,7 +2280,7 @@ struct BrowserMCPSessionManagerTests {
         let agent = try PeekabooAgentService(
             services: Self.services(browser: root),
             sessionManager: sessionManager)
-        let first = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        let first = try #require(await agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
         _ = try await first.connect(channel: nil, browserURL: nil)
         firstProvider.removeLeavesProvider = [true, true, false]
 
@@ -2024,7 +2292,7 @@ struct BrowserMCPSessionManagerTests {
         #expect(firstProvider.removeCount == 2)
         #expect(agent.browserCleanupDebtPending)
         #expect(root.pendingAuthenticatedSessionCleanupCount == 1)
-        let second = try #require(agent.browserClient(forAgentSessionID: "blocked-session") as? BrowserMCPService)
+        let second = try #require(await agent.browserClient(forAgentSessionID: "blocked-session") as? BrowserMCPService)
         await #expect(throws: BrowserMCPConnectionError.targetLocked) {
             _ = try await second.connect(channel: nil, browserURL: nil)
         }
@@ -2060,7 +2328,7 @@ struct BrowserMCPSessionManagerTests {
         let agent = try PeekabooAgentService(
             services: Self.services(browser: root),
             sessionManager: sessionManager)
-        let browser = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        let browser = try #require(await agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
         _ = try await browser.connect(channel: nil, browserURL: nil)
         provider.removeLeavesProvider = [true, true, false]
 
@@ -2097,7 +2365,7 @@ struct BrowserMCPSessionManagerTests {
         let agent = try PeekabooAgentService(
             services: Self.services(browser: root),
             sessionManager: sessionManager)
-        let first = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        let first = try #require(await agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
         let firstCapabilities = try #require(first.browserCapabilitySession)
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
 
@@ -2105,7 +2373,7 @@ struct BrowserMCPSessionManagerTests {
 
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("\(sessionID).json").path))
-        let resumed = try #require(agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
+        let resumed = try #require(await agent.browserClient(forAgentSessionID: sessionID) as? BrowserMCPService)
         #expect(resumed.browserCapabilitySession === firstCapabilities)
         await agent.endBrowserClient(forAgentSessionID: sessionID)
     }
@@ -3772,6 +4040,197 @@ extension BrowserMCPSessionManagerTests {
             try? await Task.sleep(for: .milliseconds(10))
         }
         return !FileManager.default.fileExists(atPath: path)
+    }
+}
+
+@MainActor
+private final class AgentRemoteBrowserRoot: BrowserMCPScopedSessionOpening, @unchecked Sendable {
+    var openBarrier: SequenceBarrier?
+    var nextEndResults: [[Bool]] = []
+    private(set) var openCount = 0
+    private(set) var rootExecuteCount = 0
+    private(set) var children: [AgentRemoteScopedBrowserChild] = []
+
+    func openBrowserMCPScopedSession(
+        handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPScopedSessionEnding
+    {
+        #expect(handoff == nil)
+        self.openCount += 1
+        if let openBarrier {
+            self.openBarrier = nil
+            await openBarrier.block()
+        }
+        let endResults = self.nextEndResults.isEmpty ? [true] : self.nextEndResults.removeFirst()
+        let child = AgentRemoteScopedBrowserChild(endResults: endResults)
+        self.children.append(child)
+        return child
+    }
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        await self.status(channel: nil)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        self.rootExecuteCount += 1
+        return .text("shared root")
+    }
+}
+
+@MainActor
+private final class AgentLegacyRemoteBrowserRoot: BrowserMCPClientProviding, @unchecked Sendable {
+    private(set) var executeCount = 0
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        await self.status(channel: nil)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        self.executeCount += 1
+        return .text("shared root")
+    }
+}
+
+@MainActor
+private final class AgentRemoteBrowserServices: PeekabooServiceProviding {
+    let executionHost: PeekabooServiceExecutionHost = .remote
+    private let base: PeekabooServices
+
+    init(base: PeekabooServices) {
+        self.base = base
+    }
+
+    var logging: any LoggingServiceProtocol {
+        self.base.logging
+    }
+
+    var desktopObservation: any DesktopObservationServiceProtocol {
+        self.base.desktopObservation
+    }
+
+    var screenCapture: any ScreenCaptureServiceProtocol {
+        self.base.screenCapture
+    }
+
+    var applications: any ApplicationServiceProtocol {
+        self.base.applications
+    }
+
+    var automation: any UIAutomationServiceProtocol {
+        self.base.automation
+    }
+
+    var windows: any WindowManagementServiceProtocol {
+        self.base.windows
+    }
+
+    var menu: any MenuServiceProtocol {
+        self.base.menu
+    }
+
+    var dock: any DockServiceProtocol {
+        self.base.dock
+    }
+
+    var dialogs: any DialogServiceProtocol {
+        self.base.dialogs
+    }
+
+    var snapshots: any SnapshotManagerProtocol {
+        self.base.snapshots
+    }
+
+    var files: any FileServiceProtocol {
+        self.base.files
+    }
+
+    var clipboard: any ClipboardServiceProtocol {
+        self.base.clipboard
+    }
+
+    var configuration: ConfigurationManager {
+        self.base.configuration
+    }
+
+    var permissions: PermissionsService {
+        self.base.permissions
+    }
+
+    var audioInput: AudioInputService {
+        self.base.audioInput
+    }
+
+    var screens: any ScreenServiceProtocol {
+        self.base.screens
+    }
+
+    var browser: any BrowserMCPClientProviding {
+        self.base.browser
+    }
+
+    var agent: (any AgentServiceProtocol)? {
+        self.base.agent
+    }
+
+    func ensureVisualizerConnection() {}
+}
+
+@MainActor
+private final class AgentRemoteScopedBrowserChild: BrowserMCPScopedSessionEnding, @unchecked Sendable {
+    private var endResults: [Bool]
+    var endBarrier: SequenceBarrier?
+    private(set) var executeCount = 0
+    private(set) var endCount = 0
+
+    init(endResults: [Bool]) {
+        self.endResults = endResults
+    }
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        await self.status(channel: nil)
+    }
+
+    func disconnect() async {}
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        self.executeCount += 1
+        return .text("scoped child")
+    }
+
+    func endBrowserMCPScopedSession() async -> Bool {
+        self.endCount += 1
+        if let endBarrier {
+            self.endBarrier = nil
+            await endBarrier.block()
+        }
+        return self.endResults.isEmpty ? true : self.endResults.removeFirst()
     }
 }
 

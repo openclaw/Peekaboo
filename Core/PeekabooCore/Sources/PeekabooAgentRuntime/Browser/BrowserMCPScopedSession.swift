@@ -12,17 +12,18 @@ public struct BrowserMCPHandoffGrant: Sendable {
     }
 }
 
-/// Additive surface for browser providers that can create a fresh caller-scoped provider child.
+/// Lifecycle surface used by MCP and Agent teardown without coupling the runtime to a concrete transport.
+public protocol BrowserMCPScopedSessionEnding: BrowserMCPClientProviding {
+    @MainActor
+    @discardableResult
+    func endBrowserMCPScopedSession() async -> Bool
+}
+
+/// Additive surface for browser providers that can create a fresh, end-capable caller-scoped provider child.
 public protocol BrowserMCPScopedSessionOpening: BrowserMCPClientProviding {
     @MainActor
     func openBrowserMCPScopedSession(
-        handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPClientProviding
-}
-
-/// Lifecycle surface used by MCP teardown without coupling the Agent runtime to a concrete transport.
-public protocol BrowserMCPScopedSessionEnding: BrowserMCPClientProviding {
-    @MainActor
-    func endBrowserMCPScopedSession() async
+        handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPScopedSessionEnding
 }
 
 extension BrowserMCPProviderSessionEpoch {

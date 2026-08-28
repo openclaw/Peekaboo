@@ -37,6 +37,10 @@ final class StreamingEventDelegate: @unchecked Sendable, AgentEventDelegate {
 
 // MARK: - Peekaboo Agent Service
 
+enum AgentToolConstructionContext {
+    @TaskLocal static var browserCapabilities: BrowserToolCapabilitySession?
+}
+
 /// Service that integrates the new agent architecture with PeekabooCore services
 @available(macOS 14.0, *)
 @MainActor
@@ -49,6 +53,12 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     var snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     var capturePreflightRefusal: MCPToolCapturePreflightRefusal?
     var browserCleanupDebtPending = false
+    var remoteBrowserClients: [String: any BrowserMCPScopedSessionEnding] = [:]
+    var remoteBrowserCapabilities: [String: BrowserToolCapabilitySession] = [:]
+    var remoteBrowserOpeningTasks:
+        [String: (id: UUID, task: Task<any BrowserMCPScopedSessionEnding, any Error>)] = [:]
+    var remoteBrowserEndingTasks: [String: (id: UUID, task: Task<Bool, Never>)] = [:]
+    var remoteBrowserCleanupDebt = Set<String>()
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
     var isVerbose: Bool = false

@@ -194,7 +194,8 @@ public struct MCPToolContext: @unchecked Sendable {
         self.permissionsStatusProvider = permissionsStatusProvider ?? permissions
         self.clipboard = clipboard
         self.browser = browser
-        self.browserCapabilities = (browser as? BrowserMCPService)?.browserCapabilitySession
+        self.browserCapabilities = AgentToolConstructionContext.browserCapabilities
+            ?? (browser as? BrowserMCPService)?.browserCapabilitySession
             ?? BrowserToolCapabilitySession()
         self.browserCleanupOwner = browserCleanupOwner
         self.snapshotMutationCoordinator = snapshotMutationCoordinator
@@ -690,8 +691,8 @@ public struct MCPToolContext: @unchecked Sendable {
         let directCleanupConfirmed = await ownedBrowser?.endAuthenticatedBrowserSession() ?? true
         let pendingCleanupDrained = await self.browserCleanupOwner?.retryPendingAuthenticatedSessionCleanup()
             ?? directCleanupConfirmed
-        await scopedBrowser?.endBrowserMCPScopedSession()
-        return (directCleanupConfirmed || pendingCleanupDrained) && pendingCleanupDrained
+        let scopedCleanupConfirmed = await scopedBrowser?.endBrowserMCPScopedSession() ?? true
+        return (directCleanupConfirmed || pendingCleanupDrained) && pendingCleanupDrained && scopedCleanupConfirmed
     }
 
     func replacingSnapshotOwner(with owner: MCPToolSnapshotOwner) -> Self {

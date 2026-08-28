@@ -12,11 +12,13 @@ extension PeekabooAgentService {
         for model: LanguageModel,
         snapshotOwner: MCPToolSnapshotOwner = MCPToolSnapshotOwner(),
         browserClient: (any BrowserMCPClientProviding)? = nil,
+        browserCapabilities: BrowserToolCapabilitySession? = nil,
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async -> [AgentTool]
     {
         let filtered = self.filteredAgentTools(
             snapshotOwner: snapshotOwner,
             browserClient: browserClient,
+            browserCapabilities: browserCapabilities,
             executionPolicy: executionPolicy)
 
         self.logToolsetDetails(filtered, model: model)
@@ -36,12 +38,15 @@ extension PeekabooAgentService {
     private func filteredAgentTools(
         snapshotOwner: MCPToolSnapshotOwner,
         browserClient: (any BrowserMCPClientProviding)? = nil,
+        browserCapabilities: BrowserToolCapabilitySession? = nil,
         executionPolicy: MCPToolExecutionPolicy) -> [AgentTool]
     {
         let tools = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
             Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
                 Self.$toolConstructionBrowserClient.withValue(browserClient) {
-                    self.createAgentTools()
+                    AgentToolConstructionContext.$browserCapabilities.withValue(browserCapabilities) {
+                        self.createAgentTools()
+                    }
                 }
             }
         }

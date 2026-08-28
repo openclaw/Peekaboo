@@ -104,6 +104,7 @@ struct RemoteBrowserMCPSessionTests {
     @Test
     func `cancelled MCP teardown still closes remote scope`() async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
+        transport.checkEndCancellation = true
         let context = Self.context(browser: Self.rootClient(transport: transport))
         let server = try await PeekabooMCPServer(toolContext: context)
 
@@ -151,7 +152,7 @@ struct RemoteBrowserMCPSessionTests {
         _ = try await root.openBrowserMCPScopedSession(handoff: handoff)
         #expect(transport.openedClaimIDs.count == 3)
         #expect(transport.openedClaimIDs[2] != transport.openedClaimIDs[1])
-        await (scoped as? any BrowserMCPScopedSessionEnding)?.endBrowserMCPScopedSession()
+        _ = await scoped.endBrowserMCPScopedSession()
     }
 
     @Test
@@ -570,7 +571,7 @@ struct RemoteBrowserMCPSessionTests {
         #expect(transport.statusCallCount == statusCallsAtTerminal)
         #expect(transport.executeCallCount == dispatchedBeforeTerminal)
 
-        await context.releaseSnapshotOwner()
+        #expect(await context.releaseSnapshotOwner())
         #expect(transport.endCallCount == 0)
     }
 
@@ -639,7 +640,7 @@ struct RemoteBrowserMCPSessionTests {
             CancellationError(),
         ]
 
-        await context.releaseSnapshotOwner()
+        #expect(await !context.releaseSnapshotOwner())
         #expect(transport.endCallCount == 1)
         let statusCallsBefore = transport.statusCallCount
         let cleanupDebt = await client.status(channel: nil)
@@ -647,12 +648,12 @@ struct RemoteBrowserMCPSessionTests {
         #expect(cleanupDebt.connectionReceipt == nil)
         #expect(transport.statusCallCount == statusCallsBefore)
 
-        await context.releaseSnapshotOwner()
+        #expect(await !context.releaseSnapshotOwner())
         #expect(transport.endCallCount == 2)
-        await context.releaseSnapshotOwner()
+        #expect(await context.releaseSnapshotOwner())
         #expect(transport.endCallCount == 3)
         #expect(transport.endedSessionIDs.count == 1)
-        await context.releaseSnapshotOwner()
+        #expect(await context.releaseSnapshotOwner())
         #expect(transport.endCallCount == 3)
     }
 
@@ -662,8 +663,7 @@ struct RemoteBrowserMCPSessionTests {
         transport.pauseFirstEnd = true
         transport.endErrors = [URLError(.timedOut)]
         let root = Self.rootClient(transport: transport)
-        let scoped = try await root.openBrowserMCPScopedSession(handoff: nil)
-        let ending = try #require(scoped as? any BrowserMCPScopedSessionEnding)
+        let ending = try await root.openBrowserMCPScopedSession(handoff: nil)
 
         let firstEnd = Task { @MainActor in
             await ending.endBrowserMCPScopedSession()
@@ -672,9 +672,9 @@ struct RemoteBrowserMCPSessionTests {
         let overlappingEnd = Task { @MainActor in
             await ending.endBrowserMCPScopedSession()
         }
-        await overlappingEnd.value
         transport.resumeFirstEnd()
-        await firstEnd.value
+        #expect(await firstEnd.value)
+        #expect(await overlappingEnd.value)
 
         #expect(transport.endCallCount == 2)
         #expect(transport.endedSessionIDs.count == 1)
@@ -831,6 +831,7 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     var openErrors: [any Error] = []
     var openHandles: [RemoteBrowserMCPSessionHandle] = []
     var endErrors: [any Error] = []
+    var checkEndCancellation = false
     var pauseFirstEnd = false
     private(set) var endCallCount = 0
     private var firstEndContinuation: CheckedContinuation<Void, Never>?
@@ -929,6 +930,9 @@ private final class RecordingRemoteBrowserSessionTransport: RemoteBrowserMCPSess
     }
 
     func endSession(_ session: RemoteBrowserMCPSessionHandle) async throws {
+        if self.checkEndCancellation {
+            try Task.checkCancellation()
+        }
         self.endCallCount += 1
         if self.pauseFirstEnd, self.endCallCount == 1 {
             await withCheckedContinuation { continuation in

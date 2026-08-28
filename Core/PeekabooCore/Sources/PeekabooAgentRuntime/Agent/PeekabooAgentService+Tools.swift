@@ -73,32 +73,178 @@ extension PeekabooAgentService {
             capturePreflightRefusal: self.capturePreflightRefusal)
     }
 
-    func browserClient(forAgentSessionID sessionID: String) throws -> any BrowserMCPClientProviding {
+    func browserClient(forAgentSessionID sessionID: String) async throws -> any BrowserMCPClientProviding {
         guard let root = self.services.browser as? BrowserMCPService,
               root.supportsAuthenticatedSessionBootstrap
-        else { return self.services.browser }
+        else {
+            return try await self.remoteBrowserClient(forAgentSessionID: sessionID)
+        }
         guard let scoped = root.authenticatedSession(named: "agent:\(sessionID)") else {
             throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
         }
         return scoped
     }
 
+    private func remoteBrowserClient(forAgentSessionID sessionID: String) async throws
+        -> any BrowserMCPClientProviding
+    {
+        let root = self.services.browser
+        guard let opening = root as? any BrowserMCPScopedSessionOpening else {
+            guard self.services.executionHost == .local else {
+                throw BrowserMCPConnectionError.receiptBindingUnsupported
+            }
+            return root
+        }
+        guard self.remoteBrowserEndingTasks[sessionID] == nil,
+              !self.remoteBrowserCleanupDebt.contains(sessionID)
+        else {
+            throw BrowserMCPConnectionError.sessionEnded
+        }
+        if let client = self.remoteBrowserClients[sessionID] {
+            return client
+        }
+        if let pending = self.remoteBrowserOpeningTasks[sessionID] {
+            return try await self.finishRemoteBrowserOpening(
+                forAgentSessionID: sessionID,
+                openingID: pending.id,
+                task: pending.task)
+        }
+        guard self.remoteBrowserClients.count + self.remoteBrowserOpeningTasks.count <
+            BrowserMCPAuthenticatedSessionPool.sessionCapacity
+        else {
+            throw BrowserMCPConnectionError.authenticatedSessionCapacityExceeded
+        }
+        let openingID = UUID()
+        let task = Task { @MainActor () throws -> any BrowserMCPScopedSessionEnding in
+            let scoped = try await opening.openBrowserMCPScopedSession(handoff: nil)
+            guard scoped !== root else {
+                throw BrowserMCPConnectionError.receiptBindingUnsupported
+            }
+            return scoped
+        }
+        self.remoteBrowserOpeningTasks[sessionID] = (openingID, task)
+        return try await self.finishRemoteBrowserOpening(
+            forAgentSessionID: sessionID,
+            openingID: openingID,
+            task: task)
+    }
+
+    private func finishRemoteBrowserOpening(
+        forAgentSessionID sessionID: String,
+        openingID: UUID,
+        task: Task<any BrowserMCPScopedSessionEnding, any Error>) async throws
+        -> any BrowserMCPClientProviding
+    {
+        let scoped: any BrowserMCPScopedSessionEnding
+        do {
+            scoped = try await task.value
+        } catch {
+            if self.remoteBrowserOpeningTasks[sessionID]?.id == openingID {
+                self.remoteBrowserOpeningTasks.removeValue(forKey: sessionID)
+            }
+            throw error
+        }
+        if self.remoteBrowserOpeningTasks[sessionID]?.id == openingID {
+            self.remoteBrowserOpeningTasks.removeValue(forKey: sessionID)
+            self.remoteBrowserClients[sessionID] = scoped
+            self.remoteBrowserCapabilities[sessionID] = BrowserToolCapabilitySession()
+        }
+        guard self.remoteBrowserEndingTasks[sessionID] == nil,
+              !self.remoteBrowserCleanupDebt.contains(sessionID),
+              let stored = self.remoteBrowserClients[sessionID],
+              stored === scoped
+        else {
+            throw BrowserMCPConnectionError.sessionEnded
+        }
+        return stored
+    }
+
     @discardableResult
     func endBrowserClient(forAgentSessionID sessionID: String) async -> Bool {
-        guard let root = self.services.browser as? BrowserMCPService else { return true }
-        let directCleanupConfirmed = await root.endAuthenticatedSession(named: "agent:\(sessionID)")
-        let pendingCleanupDrained = await root.retryPendingAuthenticatedSessionCleanup()
-        self.browserCleanupDebtPending = !pendingCleanupDrained
-        return (directCleanupConfirmed || pendingCleanupDrained) && pendingCleanupDrained
+        if let root = self.services.browser as? BrowserMCPService {
+            let directCleanupConfirmed = await root.endAuthenticatedSession(named: "agent:\(sessionID)")
+            let pendingCleanupDrained = await root.retryPendingAuthenticatedSessionCleanup()
+            self.browserCleanupDebtPending = !pendingCleanupDrained
+            return (directCleanupConfirmed || pendingCleanupDrained) && pendingCleanupDrained
+        }
+        let cleanupConfirmed = await self.endRemoteBrowserClient(forAgentSessionID: sessionID)
+        self.browserCleanupDebtPending = !self.remoteBrowserCleanupDebt.isEmpty
+        return cleanupConfirmed
+    }
+
+    private func endRemoteBrowserClient(forAgentSessionID sessionID: String) async -> Bool {
+        if let ending = self.remoteBrowserEndingTasks[sessionID] {
+            let cleanupConfirmed = await ending.task.value
+            guard !cleanupConfirmed else { return true }
+            guard self.remoteBrowserEndingTasks[sessionID]?.id != ending.id else { return false }
+            return await self.endRemoteBrowserClient(forAgentSessionID: sessionID)
+        }
+        let opening = self.remoteBrowserOpeningTasks[sessionID]
+        guard opening != nil || self.remoteBrowserClients[sessionID] != nil else {
+            self.remoteBrowserCapabilities.removeValue(forKey: sessionID)
+            self.remoteBrowserCleanupDebt.remove(sessionID)
+            return true
+        }
+        self.remoteBrowserCleanupDebt.insert(sessionID)
+        let endingID = UUID()
+        let task = Task { @MainActor in
+            if let opening {
+                do {
+                    let scoped = try await opening.task.value
+                    guard self.remoteBrowserEndingTasks[sessionID]?.id == endingID else { return false }
+                    if self.remoteBrowserOpeningTasks[sessionID]?.id == opening.id {
+                        self.remoteBrowserOpeningTasks.removeValue(forKey: sessionID)
+                        self.remoteBrowserClients[sessionID] = scoped
+                        self.remoteBrowserCapabilities[sessionID] = BrowserToolCapabilitySession()
+                    }
+                } catch {
+                    if self.remoteBrowserEndingTasks[sessionID]?.id == endingID {
+                        if self.remoteBrowserOpeningTasks[sessionID]?.id == opening.id {
+                            self.remoteBrowserOpeningTasks.removeValue(forKey: sessionID)
+                        }
+                        self.remoteBrowserEndingTasks.removeValue(forKey: sessionID)
+                        self.remoteBrowserCapabilities.removeValue(forKey: sessionID)
+                        self.remoteBrowserCleanupDebt.remove(sessionID)
+                        self.browserCleanupDebtPending = !self.remoteBrowserCleanupDebt.isEmpty
+                    }
+                    return true
+                }
+            }
+            guard self.remoteBrowserEndingTasks[sessionID]?.id == endingID,
+                  let client = self.remoteBrowserClients[sessionID]
+            else { return false }
+            let capabilities = self.remoteBrowserCapabilities[sessionID]
+            await capabilities?.end()
+            let cleanupConfirmed = await client.endBrowserMCPScopedSession()
+            guard self.remoteBrowserEndingTasks[sessionID]?.id == endingID else { return false }
+            let generationCleanupConfirmed = cleanupConfirmed && self.remoteBrowserClients[sessionID] === client
+            self.remoteBrowserEndingTasks.removeValue(forKey: sessionID)
+            if generationCleanupConfirmed {
+                self.remoteBrowserClients.removeValue(forKey: sessionID)
+                self.remoteBrowserCapabilities.removeValue(forKey: sessionID)
+                self.remoteBrowserCleanupDebt.remove(sessionID)
+            }
+            self.browserCleanupDebtPending = !self.remoteBrowserCleanupDebt.isEmpty
+            return generationCleanupConfirmed
+        }
+        self.remoteBrowserEndingTasks[sessionID] = (endingID, task)
+        return await task.value
     }
 
     @discardableResult
     func drainBrowserCleanupDebt() async -> Bool {
-        guard let root = self.services.browser as? BrowserMCPService else {
-            self.browserCleanupDebtPending = false
-            return true
+        let localCleanupDrained: Bool = if let root = self.services.browser as? BrowserMCPService {
+            await root.retryPendingAuthenticatedSessionCleanup()
+        } else {
+            true
         }
-        let drained = await root.retryPendingAuthenticatedSessionCleanup()
+        var remoteCleanupDrained = true
+        for sessionID in self.remoteBrowserCleanupDebt.sorted() {
+            let cleanupConfirmed = await self.endRemoteBrowserClient(forAgentSessionID: sessionID)
+            remoteCleanupDrained = cleanupConfirmed && remoteCleanupDrained
+        }
+        remoteCleanupDrained = remoteCleanupDrained && self.remoteBrowserCleanupDebt.isEmpty
+        let drained = localCleanupDrained && remoteCleanupDrained
         self.browserCleanupDebtPending = !drained
         return drained
     }

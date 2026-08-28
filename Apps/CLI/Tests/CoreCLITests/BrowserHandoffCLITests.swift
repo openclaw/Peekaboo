@@ -614,15 +614,16 @@ BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding, @unchecked Sendab
 
     func openBrowserMCPScopedSession(
         handoff: BrowserMCPHandoffGrant?
-    ) async throws -> any BrowserMCPClientProviding {
+    ) async throws -> any BrowserMCPScopedSessionEnding {
         self.openedReceiptData = handoff?.payload
         return HandoffToolFixtureBrowser(cleanupOwner: self)
     }
 
-    func endBrowserMCPScopedSession() async {
-        guard !self.sessionEnded else { return }
+    func endBrowserMCPScopedSession() async -> Bool {
+        guard !self.sessionEnded else { return true }
         self.sessionEnded = true
         self.cleanupOwner?.sessionCleanupCount += 1
+        return true
     }
 
     func disconnect() async {}
