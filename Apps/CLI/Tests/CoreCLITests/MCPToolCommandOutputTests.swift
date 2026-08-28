@@ -1,3 +1,4 @@
+import Commander
 import MCP
 import PeekabooFoundation
 import TachikomaMCP
@@ -5,6 +6,44 @@ import Testing
 @testable import PeekabooCLI
 
 struct MCPToolCommandOutputTests {
+    @Test(arguments: [false, true])
+    func `Tool errors use exit status one by default`(jsonOutput: Bool) {
+        let exitCode = #expect(throws: ExitCode.self) {
+            try MCPToolCommandOutput.output(
+                tool: "fixture",
+                response: .error("fixture failure"),
+                jsonOutput: jsonOutput,
+                logger: .shared
+            )
+        }
+        #expect(exitCode == ExitCode(1))
+    }
+
+    @Test(arguments: [false, true])
+    func `Tool errors honor an explicit exit status`(jsonOutput: Bool) {
+        let exitCode = #expect(throws: ExitCode.self) {
+            try MCPToolCommandOutput.output(
+                tool: "fixture",
+                response: .error("fixture failure"),
+                jsonOutput: jsonOutput,
+                logger: .shared,
+                errorExitCode: ExitCode(2)
+            )
+        }
+        #expect(exitCode == ExitCode(2))
+    }
+
+    @Test(arguments: [false, true])
+    func `Successful tool output does not throw`(jsonOutput: Bool) throws {
+        try MCPToolCommandOutput.output(
+            tool: "fixture",
+            response: .text("fixture success"),
+            jsonOutput: jsonOutput,
+            logger: .shared,
+            errorExitCode: ExitCode(2)
+        )
+    }
+
     @Test
     func `Browser CLI envelope projects canonical failure and exact target metadata`() throws {
         let outcome = DesktopActionOutcome.indeterminate(
