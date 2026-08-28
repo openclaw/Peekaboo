@@ -955,6 +955,7 @@ public enum BrowserMCPCallMapper {
         action: BrowserAction,
         arguments: ToolArguments) -> BrowserToolActionSemantics
     {
+        let semanticArguments = self.argumentsForEffectiveSemantics(arguments)
         let calls: [BrowserMCPMappedCall]
         switch action {
         case .status, .disconnect:
@@ -962,11 +963,13 @@ public enum BrowserMCPCallMapper {
         case .connect:
             return .mutating
         case .call:
-            guard let call = try? self.mapRawCall(arguments: arguments) else { return .mutating }
+            guard let call = try? self.mapRawCall(arguments: semanticArguments) else { return .mutating }
             calls = [call]
         default:
-            guard let mapped = try? self.mapSequence(action: action, arguments: arguments) else {
-                return self.fallbackActionSemantics(action: action, arguments: arguments)
+            guard let mapped = try? self.mapSequence(action: action, arguments: semanticArguments) else {
+                return BrowserMCPUserActivationPolicy.backgroundCatalogActions.contains(action)
+                    ? self.fallbackActionSemantics(action: action, arguments: semanticArguments)
+                    : .mutating
             }
             calls = mapped
         }
@@ -974,6 +977,15 @@ public enum BrowserMCPCallMapper {
             return .mutating
         }
         return self.sequenceActionSemantics(calls)
+    }
+
+    private static func argumentsForEffectiveSemantics(_ arguments: ToolArguments) -> ToolArguments {
+        guard arguments.getValue(for: "page_id") != nil, arguments.getInt("page_id") == nil else {
+            return arguments
+        }
+        var raw = arguments.rawDictionary
+        raw["page_id"] = 0
+        return ToolArguments(raw: raw)
     }
 
     public static func actionSemantics(

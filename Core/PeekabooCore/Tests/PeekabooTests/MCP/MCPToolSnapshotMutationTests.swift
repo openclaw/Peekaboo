@@ -44,7 +44,7 @@ struct MCPToolSnapshotMutationTests {
         #expect(Self.effect("clipboard", ["action": "clear"]) == .mutation)
         #expect(Self.effect("clipboard", ["action": "restore"]) == .mutation)
         #expect(Self.effect("clipboard", ["action": "load"]) == .none)
-        #expect(Self.effect("browser", ["action": "snapshot"]) == .none)
+        #expect(Self.effect("browser", ["action": "snapshot"]) == .mutation)
         #expect(Self.effect("browser", ["action": "click"]) == .mutation)
         #expect(Self.effect("agent", [:]) == .none)
         #expect(Self.effect("press", [:]) == .mutation)

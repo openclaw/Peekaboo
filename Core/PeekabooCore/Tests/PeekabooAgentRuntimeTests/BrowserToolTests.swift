@@ -752,6 +752,77 @@ struct BrowserToolTests {
     }
 
     @Test
+    func `Browser tool uses browser client from context`() async throws {
+        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
+            isConnected: true,
+            toolCount: 1,
+            detectedBrowsers: []))
+        let services = PeekabooServices()
+        let context = MCPToolContext(
+            automation: services.automation,
+            menu: services.menu,
+            windows: services.windows,
+            applications: services.applications,
+            dialogs: services.dialogs,
+            dock: services.dock,
+            screenCapture: services.screenCapture,
+            desktopObservation: services.desktopObservation,
+            snapshots: services.snapshots,
+            screens: services.screens,
+            agent: nil,
+            permissions: services.permissions,
+            clipboard: services.clipboard,
+            browser: client,
+            executionPolicy: .unrestricted)
+        let tool = BrowserTool(context: context, instructionAudience: .commandLine)
+
+        _ = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "console",
+            "page_id": 1,
+        ]))
+
+        #expect(client.executedTools.last?.toolName == "list_console_messages")
+    }
+
+    @Test
+    func `Browser execution publishes exact connection and progress evidence`() async throws {
+        let payload = BrowserMCPExecutionEvidence.attaching(
+            to: .text("ok"),
+            connectionReceipt: BrowserMCPConnectionReceipt(
+                channel: .stable,
+                processIdentifier: 42,
+                processStartIdentity: 1001,
+                bundleIdentifier: "com.google.Chrome",
+                browserURL: "http://127.0.0.1:9222/",
+                webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
+                devToolsBrowserID: "browser-a"),
+            completedCallCount: 1,
+            dispatchedCallCount: 1)
+        let client = OutcomeBrowserMCPClient(result: DesktopActionResult(payload: payload, outcome: nil))
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+            arguments: ToolArguments(raw: ["action": "list_pages"]))
+
+        let meta = try #require(response.meta?.objectValue)
+        let execution = try #require(meta[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(execution["completed_call_count"] == .int(1))
+        #expect(execution["dispatched_call_count"] == .int(1))
+        let receipt = try #require(execution["connection_receipt"]?.objectValue)
+        #expect(receipt["channel"] == .string("stable"))
+        #expect(receipt["pid"] == .int(42))
+        #expect(receipt["process_start_identity_decimal"] == .string("1001"))
+        #expect(receipt["browser_id"] == .string("browser-a"))
+    }
+
+    private static func text(from response: ToolResponse) -> String {
+        guard case let .text(text: text, annotations: _, _meta: _) = response.content.first else {
+            return ""
+        }
+        return text
+    }
+}
+
+extension BrowserToolTests {
+    @Test
     func `Browser snapshot mutation policy includes mapped and raw user activation semantics`() {
         func effect(_ raw: [String: Any]) -> MCPToolSnapshotEffect {
             MCPToolSnapshotMutationPolicy.effect(
@@ -827,79 +898,26 @@ struct BrowserToolTests {
             "mcp_tool": "take_snapshot",
             "page_id": "bp1_opaque",
         ]) == .mutation)
-    }
-
-    @Test
-    func `Browser tool uses browser client from context`() async throws {
-        let client = MockBrowserMCPClient(status: BrowserMCPStatus(
-            isConnected: true,
-            toolCount: 1,
-            detectedBrowsers: []))
-        let services = PeekabooServices()
-        let context = MCPToolContext(
-            automation: services.automation,
-            menu: services.menu,
-            windows: services.windows,
-            applications: services.applications,
-            dialogs: services.dialogs,
-            dock: services.dock,
-            screenCapture: services.screenCapture,
-            desktopObservation: services.desktopObservation,
-            snapshots: services.snapshots,
-            screens: services.screens,
-            agent: nil,
-            permissions: services.permissions,
-            clipboard: services.clipboard,
-            browser: client,
-            executionPolicy: .unrestricted)
-        let tool = BrowserTool(context: context, instructionAudience: .commandLine)
-
-        _ = try await tool.execute(arguments: ToolArguments(raw: [
+        #expect(effect([
+            "action": "snapshot",
+            "page_id": "bp1_opaque",
+        ]) == .mutation)
+        #expect(effect([
+            "action": "wait_for",
+            "page_id": "bp1_opaque",
+            "text": "ready",
+        ]) == .mutation)
+        #expect(effect([
             "action": "console",
-            "page_id": 1,
-        ]))
-
-        #expect(client.executedTools.last?.toolName == "list_console_messages")
+            "page_id": "bp1_opaque",
+        ]) == .none)
+        #expect(effect([
+            "action": "network",
+            "page_id": "bp1_opaque",
+            "request_id": 1,
+        ]) == .none)
     }
 
-    @Test
-    func `Browser execution publishes exact connection and progress evidence`() async throws {
-        let payload = BrowserMCPExecutionEvidence.attaching(
-            to: .text("ok"),
-            connectionReceipt: BrowserMCPConnectionReceipt(
-                channel: .stable,
-                processIdentifier: 42,
-                processStartIdentity: 1001,
-                bundleIdentifier: "com.google.Chrome",
-                browserURL: "http://127.0.0.1:9222/",
-                webSocketDebuggerURL: "ws://127.0.0.1:9222/devtools/browser/browser-a",
-                devToolsBrowserID: "browser-a"),
-            completedCallCount: 1,
-            dispatchedCallCount: 1)
-        let client = OutcomeBrowserMCPClient(result: DesktopActionResult(payload: payload, outcome: nil))
-        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
-            arguments: ToolArguments(raw: ["action": "list_pages"]))
-
-        let meta = try #require(response.meta?.objectValue)
-        let execution = try #require(meta[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
-        #expect(execution["completed_call_count"] == .int(1))
-        #expect(execution["dispatched_call_count"] == .int(1))
-        let receipt = try #require(execution["connection_receipt"]?.objectValue)
-        #expect(receipt["channel"] == .string("stable"))
-        #expect(receipt["pid"] == .int(42))
-        #expect(receipt["process_start_identity_decimal"] == .string("1001"))
-        #expect(receipt["browser_id"] == .string("browser-a"))
-    }
-
-    private static func text(from response: ToolResponse) -> String {
-        guard case let .text(text: text, annotations: _, _meta: _) = response.content.first else {
-            return ""
-        }
-        return text
-    }
-}
-
-extension BrowserToolTests {
     @Test
     func `background MCP browser status explains scoped connection bootstrap`() async throws {
         let client = MockBrowserMCPClient(status: BrowserMCPStatus(
