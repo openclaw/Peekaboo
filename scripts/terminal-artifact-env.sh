@@ -43,30 +43,45 @@ TERMINAL_ARTIFACT_SECRET_NAMES=(
   ZDOTDIR
 )
 
-terminal_artifact_run_build() {
+terminal_artifact_run_build() (
   local -a scrub_args=(-u PEEKABOO_OP_SERVICE_TOKEN_FILE -u PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE)
   local secret_name environment_name
 
+  # Scrub before launching env: its loader sees inherited variables before -u runs.
+  # The subshell keeps the caller's environment intact, including on child failure.
+  builtin unset PEEKABOO_OP_SERVICE_TOKEN_FILE PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE || return
   for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+    builtin unset "$secret_name" || return
     scrub_args+=(-u "$secret_name")
   done
   while IFS= read -r environment_name; do
-    case "$environment_name" in BASH_FUNC_*|BASH_ENV|ENV|CDPATH|GLOBIGNORE) scrub_args+=(-u "$environment_name") ;; esac
+    case "$environment_name" in
+      BASH_FUNC_*|BASH_ENV|ENV|CDPATH|GLOBIGNORE)
+        builtin unset "$environment_name" || return
+        scrub_args+=(-u "$environment_name")
+        ;;
+    esac
   done < <(builtin compgen -v)
   /usr/bin/env "${scrub_args[@]}" PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$@"
-}
+)
 
-terminal_artifact_run_orchestrator() {
+terminal_artifact_run_orchestrator() (
   local -a scrub_args=()
   local secret_name environment_name
   for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+    builtin unset "$secret_name" || return
     scrub_args+=(-u "$secret_name")
   done
   while IFS= read -r environment_name; do
-    case "$environment_name" in BASH_FUNC_*|BASH_ENV|ENV|CDPATH|GLOBIGNORE) scrub_args+=(-u "$environment_name") ;; esac
+    case "$environment_name" in
+      BASH_FUNC_*|BASH_ENV|ENV|CDPATH|GLOBIGNORE)
+        builtin unset "$environment_name" || return
+        scrub_args+=(-u "$environment_name")
+        ;;
+    esac
   done < <(builtin compgen -v)
   /usr/bin/env "${scrub_args[@]}" PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin "$@"
-}
+)
 
 terminal_artifact_assert_build_env_is_clean() {
   local secret_name

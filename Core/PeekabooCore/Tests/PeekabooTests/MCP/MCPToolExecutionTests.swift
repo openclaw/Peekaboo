@@ -569,13 +569,20 @@ struct MCPToolExecutionTests {
         #expect(detectedContext?.windowID == 42)
     }
 
-    @Test
-    func `See tool PID target with window index uses shared observation parser`() async throws {
-        let graph = try await MainActor.run {
-            try Self.makeWindowedTestGraph()
-        }
+    @Test(arguments: [1, 2], [false, true])
+    @MainActor
+    func `See tool PID target with window index uses shared observation parser`(
+        windowIndex: Int,
+        mismatchedProcessGeneration: Bool) async throws
+    {
+        let graph = try Self.makeWindowedTestGraph()
         let app = try #require(graph.applications.first)
+        let processIdentity = try #require(app.processIdentity)
         let windows = try #require(graph.nodes.first?.windows)
+        let expectedWindowID = windowIndex == 1 ? 41 : 42
+        let selectedWindow = try #require(windows.first { $0.windowID == expectedWindowID })
+        let windowIdentity = try #require(selectedWindow.mutationIdentity)
+        #expect(windowIdentity.processIdentity == processIdentity)
         let detectionResult = ElementDetectionResult(
             snapshotId: "snapshot-pid-window",
             screenshotPath: "/tmp/peekaboo-see-pid-window-test.png",
@@ -587,29 +594,63 @@ struct MCPToolExecutionTests {
                     bounds: CGRect(x: 10, y: 10, width: 80, height: 30)),
             ]),
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "mock"))
-        let automation = await MainActor.run {
-            MockAutomationService(accessibilityGranted: true, detectionResult: detectionResult)
-        }
-        let applications = await MainActor.run {
-            MockApplicationService(graph: graph)
-        }
-        let screenCapture = await MainActor.run {
-            MockScreenCaptureService(
-                screenRecordingGranted: true,
-                windowMetadata: Self.captureMetadata(application: app, windows: windows))
-        }
-        let context = await MCPToolTestHelpers.makeLegacyContext(
+        let automation = MockAutomationService(accessibilityGranted: true, detectionResult: detectionResult)
+        let applications = MockApplicationService(graph: graph)
+        let screenCapture = MockScreenCaptureService(
+            screenRecordingGranted: true,
+            windowMetadata: Self.captureMetadata(application: app, windows: windows))
+        let screens = MockScreenService(screens: [])
+        let snapshots = InMemorySnapshotManager()
+        let liveProcessStartIdentity = processIdentity.processStartIdentity + (mismatchedProcessGeneration ? 1 : 0)
+        let observation = DesktopObservationService(
+            screenCapture: screenCapture,
+            automation: automation,
+            applications: applications,
+            screens: screens,
+            snapshotManager: snapshots,
+            // A host process can reuse this synthetic PID; the lane must use the fixture's generation.
+            processStartIdentityProvider: { pid in
+                pid == processIdentity.processIdentifier ? liveProcessStartIdentity : nil
+            },
+            windowMutationIdentityProvider: { windowID in
+                windows.first { $0.windowID == Int(windowID) }?.mutationIdentity
+            })
+        let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             screenCapture: screenCapture,
-            applications: applications)
+            applications: applications,
+            screens: screens,
+            snapshots: snapshots,
+            desktopObservation: observation)
         let tool = SeeTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
-            "app_target": "PID:\(app.processIdentifier):2",
+            "app_target": "PID:\(app.processIdentifier):\(windowIndex)",
         ]))
 
-        #expect(response.isError == false)
-        #expect(await MainActor.run { screenCapture.lastWindowID } == 42)
+        let responseText = response.content.compactMap { content -> String? in
+            guard case let .text(text, _, _) = content else { return nil }
+            return text
+        }.joined(separator: "\n")
+        if mismatchedProcessGeneration {
+            #expect(response.isError, "See PID/window-index response: \(responseText)")
+            #expect(responseText == "Failed to capture UI state: Desktop observation target changed during capture: " +
+                "the resolved PID no longer matched its process-generation lane")
+            #expect(screenCapture.lastWindowID == nil)
+            #expect(screenCapture.captureAttemptCount == 0)
+            #expect(automation.lastWindowContext == nil)
+            #expect(try await snapshots.listSnapshots().isEmpty)
+            #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+        } else {
+            #expect(response.isError == false, "See PID/window-index response: \(responseText)")
+            #expect(screenCapture.lastWindowID == CGWindowID(expectedWindowID))
+            #expect(screenCapture.captureAttemptCount == 1)
+            #expect(screenCapture.lastAppIdentifier == nil)
+            let detectedContext = try #require(automation.lastWindowContext)
+            #expect(detectedContext.applicationProcessId == processIdentity.processIdentifier)
+            #expect(detectedContext.windowID == expectedWindowID)
+            #expect(detectedContext.windowMutationIdentity == windowIdentity)
+        }
     }
 
     @MainActor

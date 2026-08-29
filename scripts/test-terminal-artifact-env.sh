@@ -7,93 +7,186 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/terminal-artifact-env.sh"
 
 TEST_DIR="$(mktemp -d /tmp/peekaboo-terminal-env-test.XXXXXX)"
-trap 'rm -rf "$TEST_DIR"' EXIT
+trap 'rm -rf -- "$TEST_DIR"' EXIT
 
 fail() {
   printf 'test-terminal-artifact-env: %s\n' "$*" >&2
   exit 1
 }
 
-cat > "$TEST_DIR/probe" <<EOF
+cat > "$TEST_DIR/probe" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-source "$ROOT_DIR/scripts/terminal-artifact-env.sh"
+source "$1"
+printf 'entered\n' > "$2/child-entered"
 terminal_artifact_assert_build_env_is_clean
-printf 'clean\n'
-EOF
-cat > "$TEST_DIR/orchestrator-probe" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-[[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]
-[[ -z "${APP_STORE_CONNECT_API_KEY_P8+x}" ]]
-[[ -z "${NPM_TOKEN+x}" ]]
-printf 'orchestrator-clean\n'
+for name in CDPATH GLOBIGNORE BASH_FUNC_terminal_fixture; do
+  [[ -z "${!name+x}" ]]
+done
+[[ "$PATH" == /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin ]]
+[[ "$HOME" == "$2/home" && "$TMPDIR" == "$2/tmp" ]]
+[[ "$DEVELOPER_DIR" == "$2/developer" ]]
+[[ "$MAC_RELEASE_CODESIGN_KEYCHAIN" == "$2/keychain" && "$CODESIGN_KEYCHAIN" == "$2/keychain" ]]
+[[ "$PEEKABOO_USE_RESOLVED_VERSIONS" == 1 && "$TERMINAL_FIXTURE_ALLOWED" == $'allowed value\nsecond line' ]]
+if [[ "$3" == build ]]; then
+  [[ -z "${PEEKABOO_OP_SERVICE_TOKEN_FILE+x}" && -z "${PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE+x}" ]]
+else
+  [[ "$PEEKABOO_OP_SERVICE_TOKEN_FILE" == "$2/primary-custody" ]]
+  [[ "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE" == "$2/legacy-custody" ]]
+fi
+[[ "$5" == 'argument one' && "$6" == 'argument=two' ]]
+printf 'child-clean=true allowed-values-preserved=true arguments-preserved=true\n'
+exit "$4"
 EOF
 chmod 755 "$TEST_DIR/probe"
-chmod 755 "$TEST_DIR/orchestrator-probe"
 mkdir -p "$TEST_DIR/hostile-bin"
 cat > "$TEST_DIR/hostile-bin/env" <<'EOF'
 #!/bin/sh
-printf '%s\n' "${OP_SERVICE_ACCOUNT_TOKEN:-missing}" > "${HOSTILE_ENV_MARKER:?}"
+printf 'invoked\n' > "${HOSTILE_ENV_MARKER:?}"
 exit 97
 EOF
 chmod 755 "$TEST_DIR/hostile-bin/env"
 
-for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
-  printf -v "$secret_name" sentinel
-  export "${secret_name?}"
-done
-
-[[ "$(terminal_artifact_run_build "$TEST_DIR/probe")" == clean ]] || \
-  fail 'build child observed a release credential variable'
-original_path="$PATH"
-export HOSTILE_ENV_MARKER="$TEST_DIR/hostile-env-marker"
-PATH="$TEST_DIR/hostile-bin:$PATH"
-orchestrator_output="$(terminal_artifact_run_orchestrator "$TEST_DIR/orchestrator-probe")"
-PATH="$original_path"
-unset HOSTILE_ENV_MARKER
-[[ "$orchestrator_output" == orchestrator-clean ]] || \
-  fail 'orchestrator did not preserve only its service token'
-[[ ! -e "$TEST_DIR/hostile-env-marker" ]] || fail 'orchestrator resolved env through hostile PATH'
-
-if terminal_artifact_assert_build_env_is_clean >/dev/null 2>&1; then
-  fail 'dirty parent environment was not detected'
-fi
-for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
-  unset "$secret_name"
-done
-
-function_marker="$TEST_DIR/imported-function-marker"
 startup_marker="$TEST_DIR/startup-marker"
 printf 'printf "startup" > %q\n' "$startup_marker" > "$TEST_DIR/hostile-bash-env"
-FUNCTION_MARKER="$function_marker" /bin/bash --noprofile --norc -c '
-  dirname() { printf "%s\n" "${OP_SERVICE_ACCOUNT_TOKEN:-missing}" > "$FUNCTION_MARKER"; }
+# Prove the harmless hook is effective before testing that it is stripped.
+BASH_ENV="$TEST_DIR/hostile-bash-env" /bin/bash --noprofile --norc -c ':'
+[[ -f "$startup_marker" && "$(<"$startup_marker")" == startup ]] || fail 'startup-hook control did not execute'
+rm "$startup_marker"
+
+run_dirty_fixture() (
+  local lane="$1" child_exit="$2" secret_name
+  for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+    printf -v "$secret_name" sentinel
+    export "${secret_name?}"
+  done
+  export BASH_ENV="$TEST_DIR/hostile-bash-env" ENV="$TEST_DIR/hostile-bash-env"
+  export CDPATH=sentinel GLOBIGNORE=sentinel BASH_FUNC_terminal_fixture=sentinel
+  export PEEKABOO_OP_SERVICE_TOKEN_FILE="$TEST_DIR/primary-custody"
+  export PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE="$TEST_DIR/legacy-custody"
+  export HOME="$TEST_DIR/home" TMPDIR="$TEST_DIR/tmp" DEVELOPER_DIR="$TEST_DIR/developer"
+  export MAC_RELEASE_CODESIGN_KEYCHAIN="$TEST_DIR/keychain" CODESIGN_KEYCHAIN="$TEST_DIR/keychain"
+  export PEEKABOO_USE_RESOLVED_VERSIONS=1 TERMINAL_FIXTURE_ALLOWED=$'allowed value\nsecond line'
+  export HOSTILE_ENV_MARKER="$TEST_DIR/hostile-env-marker"
+  PATH="$TEST_DIR/hostile-bin:$PATH"
+
+  # Observe shell state before the native loader can strip DYLD variables for us.
+  # Forward to the real executable so the child environment is also verified.
+  # shellcheck disable=SC2329 # Called indirectly by the sourced sanitizer.
+  /usr/bin/env() {
+    local name
+    printf 'entered\n' > "$TEST_DIR/env-entered"
+    for name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}" CDPATH GLOBIGNORE BASH_FUNC_terminal_fixture; do
+      [[ -z "${!name+x}" ]] || { printf 'pre-exec variable remains: %s\n' "$name" >&2; return 91; }
+    done
+    if [[ "$lane" == build ]]; then
+      [[ -z "${PEEKABOO_OP_SERVICE_TOKEN_FILE+x}" && -z "${PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE+x}" ]] || return 92
+    else
+      [[ "$PEEKABOO_OP_SERVICE_TOKEN_FILE" == "$TEST_DIR/primary-custody" &&
+         "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE" == "$TEST_DIR/legacy-custody" ]] || return 92
+    fi
+    command /usr/bin/env "$@"
+  }
+
+  local result=0
+  "terminal_artifact_run_$lane" "$TEST_DIR/probe" "$ROOT_DIR/scripts/terminal-artifact-env.sh" \
+    "$TEST_DIR" "$lane" "$child_exit" 'argument one' 'argument=two' || result=$?
+  # Sanitizing a child must not mutate its caller, even after a failed command.
+  for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+    case "$secret_name" in
+      BASH_ENV|ENV) [[ "${!secret_name}" == "$TEST_DIR/hostile-bash-env" ]] || return 93 ;;
+      *) [[ "${!secret_name}" == sentinel ]] || return 93 ;;
+    esac
+  done
+  [[ "$PEEKABOO_OP_SERVICE_TOKEN_FILE" == "$TEST_DIR/primary-custody" &&
+     "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE" == "$TEST_DIR/legacy-custody" ]] || return 93
+  return "$result"
+)
+
+for lane in build orchestrator; do
+  for child_exit in 0 37; do
+    rm -f "$TEST_DIR/env-entered" "$TEST_DIR/child-entered"
+    fixture_exit=0
+    run_dirty_fixture "$lane" "$child_exit" > "$TEST_DIR/probe-output" || fixture_exit=$?
+    [[ -e "$TEST_DIR/env-entered" ]] || fail "$lane did not reach the pre-exec boundary (exit $fixture_exit)"
+    [[ -e "$TEST_DIR/child-entered" ]] || fail "$lane did not reach the child assertion (exit $fixture_exit)"
+    [[ "$fixture_exit" == "$child_exit" ]] || fail "$lane changed child exit $child_exit to $fixture_exit"
+    [[ "$(<"$TEST_DIR/probe-output")" == 'child-clean=true allowed-values-preserved=true arguments-preserved=true' ]] || \
+      fail "$lane child environment assertion failed"
+    [[ ! -e "$TEST_DIR/hostile-env-marker" ]] || fail "$lane resolved env through hostile PATH"
+    [[ ! -e "$startup_marker" ]] || fail "$lane processed a startup hook"
+    # This runs outside the poisoned subshell, including after the exit-37 case.
+    mkdir "$TEST_DIR/cleanup-probe"
+    rm -rf "$TEST_DIR/cleanup-probe"
+    [[ ! -e "$TEST_DIR/cleanup-probe" ]] || fail "$lane left cleanup poisoned"
+    printf 'test-terminal-artifact-env: %s exit=%s pre-exec-clean=true child-clean=true cleanup-clean=true\n' \
+      "$lane" "$fixture_exit"
+  done
+done
+
+# Check every name independently, including forbidden variables set to empty.
+for secret_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+  for marker_value in sentinel ''; do
+    assertion_exit=0
+    (
+      for protected_name in "${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+        builtin unset "$protected_name"
+      done
+      printf -v "$secret_name" '%s' "$marker_value"
+      terminal_artifact_assert_build_env_is_clean
+    ) > "$TEST_DIR/assertion-output" 2>&1 || assertion_exit=$?
+    [[ "$assertion_exit" == 1 ]] || fail "dirty $secret_name was not detected (exit $assertion_exit)"
+    [[ "$(<"$TEST_DIR/assertion-output")" == "Build environment contains forbidden credential variable: $secret_name" ]] || \
+      fail "dirty $secret_name did not reach the intended assertion"
+  done
+done
+
+# Use the real entrypoint and source libraries in an isolated fixture tree. Its
+# helper lookup must fail closed without consulting an operator's helper checkout.
+entry_root="$TEST_DIR/entrypoint"
+mkdir -p "$entry_root/scripts" "$TEST_DIR/entry-home" "$TEST_DIR/entry-tmp"
+sed "s|/tmp/peekaboo-|$TEST_DIR/entry-tmp/peekaboo-|g" \
+  "$ROOT_DIR/scripts/build-terminal-artifacts.sh" > "$entry_root/scripts/build-terminal-artifacts.sh"
+for library in source-provenance terminal-artifact-env terminal-artifact-policy native-only-policy release-version; do
+  cp "$ROOT_DIR/scripts/$library.sh" "$entry_root/scripts/"
+done
+entry_wrapper="$entry_root/scripts/build-terminal-artifacts.sh"
+chmod 755 "$entry_wrapper"
+
+function_marker="$TEST_DIR/imported-function-marker"
+FUNCTION_MARKER="$function_marker" HOME="$TEST_DIR/entry-home" /bin/bash --noprofile --norc -c '
+  dirname() { printf "invoked\n" > "$FUNCTION_MARKER"; }
   export -f dirname
-  if BASH_ENV="$2" OP_SERVICE_ACCOUNT_TOKEN=sentinel "$1" check-helper >/dev/null 2>&1; then
-    exit 95
-  fi
-' bash "$ROOT_DIR/scripts/build-terminal-artifacts.sh" "$TEST_DIR/hostile-bash-env"
+  result=0
+  BASH_ENV="$2" OP_SERVICE_ACCOUNT_TOKEN=sentinel "$1" check-helper > "$3" 2>&1 || result=$?
+  [[ "$result" == 1 && "$(<"$3")" == "Service-token invocation refuses an exported-function environment." ]]
+' bash "$entry_wrapper" "$TEST_DIR/hostile-bash-env" "$TEST_DIR/function-rejection"
 [[ ! -e "$function_marker" ]] || fail 'entrypoint invoked an imported function with service authority'
 [[ ! -e "$startup_marker" ]] || fail 'entrypoint processed BASH_ENV with service authority'
 
 caller_owned_token_file="$TEST_DIR/caller-owned-token"
 printf 'caller-owned\n' > "$caller_owned_token_file"
-PEEKABOO_OP_SERVICE_TOKEN_FILE="$caller_owned_token_file" \
-  "$ROOT_DIR/scripts/build-terminal-artifacts.sh" check-helper >/dev/null
+helper_exit=0
+HOME="$TEST_DIR/entry-home" PEEKABOO_OP_SERVICE_TOKEN_FILE="$caller_owned_token_file" \
+  "$entry_wrapper" check-helper > "$TEST_DIR/helper-output" 2>&1 || helper_exit=$?
+[[ "$helper_exit" == 1 && "$(<"$TEST_DIR/helper-output")" == \
+  'build-terminal-artifacts: trusted mac-release helper is missing' ]] || \
+  fail 'isolated non-all child did not reach the missing-helper boundary'
 [[ "$(cat "$caller_owned_token_file")" == caller-owned ]] || \
   fail 'non-all child deleted or changed its caller-owned token custody file'
 
 before_token_files="$TEST_DIR/token-files-before"
 after_token_files="$TEST_DIR/token-files-after"
-find /tmp -maxdepth 1 -type f -name 'peekaboo-op-token.*' -print | sort > "$before_token_files"
+find "$TEST_DIR/entry-tmp" -maxdepth 1 -type f -name 'peekaboo-op-token.*' -print | sort > "$before_token_files"
 caller_owned_molty_file="$TEST_DIR/caller-owned-molty-token"
 printf 'caller-owned-molty\n' > "$caller_owned_molty_file"
-if OP_SERVICE_ACCOUNT_TOKEN=first-token MOLTY_OP_SERVICE_ACCOUNT_TOKEN=second-token \
+custody_exit=0
+HOME="$TEST_DIR/entry-home" OP_SERVICE_ACCOUNT_TOKEN=first-token MOLTY_OP_SERVICE_ACCOUNT_TOKEN=second-token \
   PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE="$caller_owned_molty_file" \
-  "$ROOT_DIR/scripts/build-terminal-artifacts.sh" check-helper >/dev/null 2>&1; then
-  fail 'conflicting second-token custody unexpectedly succeeded'
-fi
-find /tmp -maxdepth 1 -type f -name 'peekaboo-op-token.*' -print | sort > "$after_token_files"
+  "$entry_wrapper" check-helper > "$TEST_DIR/custody-output" 2>&1 || custody_exit=$?
+[[ "$custody_exit" == 1 && "$(<"$TEST_DIR/custody-output")" == 'Conflicting legacy service-token custody.' ]] || \
+  fail 'conflicting second-token custody did not reach its intended assertion'
+find "$TEST_DIR/entry-tmp" -maxdepth 1 -type f -name 'peekaboo-op-token.*' -print | sort > "$after_token_files"
 [[ -z "$(comm -13 "$before_token_files" "$after_token_files")" ]] || \
   fail 'first token file leaked after second-token custody failure'
 [[ "$(cat "$caller_owned_molty_file")" == caller-owned-molty ]] || \
@@ -105,24 +198,30 @@ for secret_name in OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN; do
   grep -Fwq "$secret_name" <<< "$release_entry_prefix" || \
     fail "release wrapper does not de-export $secret_name before its environment scan"
 done
+sed "s|/tmp/peekaboo-|$TEST_DIR/entry-tmp/peekaboo-|g" \
+  "$release_wrapper" > "$entry_root/scripts/mac-release"
+release_wrapper="$entry_root/scripts/mac-release"
+chmod 755 "$release_wrapper"
 cat > "$TEST_DIR/release-helper-probe" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s:%s\n' "${OP_SERVICE_ACCOUNT_TOKEN:-}" "${MOLTY_OP_SERVICE_ACCOUNT_TOKEN:-}"
+[[ "${OP_SERVICE_ACCOUNT_TOKEN:-}" == primary && "${MOLTY_OP_SERVICE_ACCOUNT_TOKEN:-}" == legacy ]]
+printf 'service-tokens-preserved=true\n'
 EOF
 chmod 755 "$TEST_DIR/release-helper-probe"
-if /bin/bash --noprofile --norc -c '
+/bin/bash --noprofile --norc -c '
   hostile_release_function() { return 97; }
   export -f hostile_release_function
+  result=0
   OP_SERVICE_ACCOUNT_TOKEN=primary MOLTY_OP_SERVICE_ACCOUNT_TOKEN=legacy \
-    MAC_RELEASE_TOOL="$2" "$1" >/dev/null 2>&1
-' bash "$release_wrapper" "$TEST_DIR/release-helper-probe"; then
-  fail 'credential-bearing release wrapper accepted an exported-function environment'
-fi
+    MAC_RELEASE_TOOL="$2" "$1" > "$3" 2>&1 || result=$?
+  [[ "$result" == 1 && "$(<"$3")" == "Service-token invocation refuses an exported-function environment." ]]
+' bash "$release_wrapper" "$TEST_DIR/release-helper-probe" "$TEST_DIR/release-function-rejection" || \
+  fail 'credential-bearing release wrapper did not reject the exported-function environment'
 release_probe_output="$(OP_SERVICE_ACCOUNT_TOKEN=primary MOLTY_OP_SERVICE_ACCOUNT_TOKEN=legacy \
   MAC_RELEASE_TOOL="$TEST_DIR/release-helper-probe" \
   /usr/bin/env -u BASH_FUNC_raw_exported_probe%% "$release_wrapper")"
-[[ "$release_probe_output" == primary:legacy ]] || \
+[[ "$release_probe_output" == service-tokens-preserved=true ]] || \
   fail 'release wrapper did not re-export service credentials only for the selected helper'
 
 wrapper="$ROOT_DIR/scripts/build-terminal-artifacts.sh"

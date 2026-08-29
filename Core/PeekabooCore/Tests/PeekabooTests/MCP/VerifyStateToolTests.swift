@@ -668,23 +668,48 @@ struct VerifyStateToolTests {
     @Test
     func `Exact window ID reused by the target process remains unknown`() async throws {
         let fixture = VerifyStateFixture()
-        let context = await fixture.context(results: [])
-        let owners = LockedWindowOwnerSequence([9001, 4242])
+        let windows = LockedSystemWindowIdentitySequence([
+            fixture.systemWindowIdentity(ownerProcessIdentifier: 9001, bounds: fixture.window.bounds),
+            fixture.systemWindowIdentity(
+                ownerProcessIdentifier: fixture.application.processIdentifier,
+                bounds: fixture.window.bounds),
+        ])
+        let applications = VerifyStateApplicationService(
+            applications: [fixture.application],
+            windows: [fixture.window],
+            onListApplications: { callCount in
+                if callCount == 2 {
+                    #expect(windows.callCount == 1)
+                }
+            })
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: fixture.automation,
+            applications: applications)
         let tool = fixture.tool(
             context: context,
-            windowOwnerProcessIdentifierProvider: { _ in owners.next() })
+            windowIdentityProvider: { _ in windows.next() })
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "pid": Int(fixture.application.processIdentifier),
             "window_id": fixture.window.windowID,
             "predicates": [["kind": "window_exists", "expected": true]],
-            "timeout_ms": 150,
+            // The reuse observation needs a second 100 ms poll, including executor/actor hops.
+            "timeout_ms": 500,
             "stable_samples": 1,
         ]))
 
         #expect(Self.stringMeta("status", response) == "unknown")
         #expect(Self.stringMeta("reason", response)?.contains("changed owner") == true)
+        #expect(Self.stringMeta("reason", response)?.contains("PID 9001, not target PID 4242") == true)
         #expect(Self.intMeta("stable_samples", response) == 0)
+        #expect(Self.intMeta("required_stable_samples", response) == 1)
+        #expect(try #require(Self.intMeta("sample_count", response)) >= 2)
+        #expect(applications.listApplicationsCallCount >= 2)
+        // Prove the target-owned replacement was read, not just the initial foreign owner.
+        #expect(windows.callCount >= 2)
+        #expect(applications.listWindowsCallCount == 0)
+        #expect(fixture.automation.contexts.isEmpty)
+        Self.expectUnknownWindowPredicate(response, expected: true)
     }
 }
 
@@ -738,28 +763,52 @@ extension VerifyStateToolTests {
             bundleIdentifier: fixture.application.bundleIdentifier,
             name: fixture.application.name,
             windowCount: 1)
+        let identities = LockedProcessIdentityMap([initial.processIdentifier: 11])
+        let windows = LockedSystemWindowIdentitySequence([
+            fixture.systemWindowIdentity(
+                ownerProcessIdentifier: initial.processIdentifier,
+                bounds: fixture.window.bounds),
+        ])
         let applications = VerifyStateApplicationService(
             applications: [initial, relaunched],
             windows: [fixture.window],
-            applicationLists: [[initial], [relaunched]])
+            applicationLists: [[initial], [relaunched]],
+            onListApplications: { callCount in
+                if callCount == 2 {
+                    #expect(windows.callCount == 1)
+                    identities.set(22, for: relaunched.processIdentifier)
+                }
+            })
         let context = await MCPToolTestHelpers.makeContext(
             automation: fixture.automation,
             applications: applications)
-        let identities = LockedProcessIdentityMap([4242: 11, 4343: 22])
         let tool = fixture.tool(
             context: context,
-            processStartIdentityProvider: identities.identity(for:))
+            processStartIdentityProvider: identities.identity(for:),
+            windowIdentityProvider: { _ in windows.next() })
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "app": #require(fixture.application.bundleIdentifier),
             "window_id": fixture.window.windowID,
             "predicates": [["kind": "window_exists", "expected": true]],
-            "timeout_ms": 150,
+            // Leave bounded room after the 100 ms poll interval to record the rejected swap.
+            "timeout_ms": 500,
         ]))
 
         #expect(Self.stringMeta("status", response) == "unknown")
         #expect(Self.stringMeta("reason", response)?.contains("pinned PID 4242") == true)
+        #expect(Self.stringMeta("reason", response)?.contains("to PID 4343") == true)
         #expect(Self.intMeta("stable_samples", response) == 0)
+        #expect(Self.intMeta("required_stable_samples", response) == 2)
+        #expect(try #require(Self.intMeta("sample_count", response)) >= 2)
+        #expect(applications.listApplicationsCallCount >= 2)
+        #expect(identities.identity(for: initial.processIdentifier) == 11)
+        #expect(identities.identity(for: relaunched.processIdentifier) == 22)
+        // Selector drift must be rejected before observing any replacement window.
+        #expect(windows.callCount == 1)
+        #expect(applications.listWindowsCallCount == 0)
+        #expect(fixture.automation.contexts.isEmpty)
+        Self.expectUnknownWindowPredicate(response, expected: true)
     }
 
     @Test
