@@ -41,7 +41,7 @@ var targets: [Target] = [
         path: "Sources/PeekabooCLI",
         swiftSettings: cliConcurrencySettings),
     .executableTarget(
-        name: "peekaboo",
+        name: "PeekabooExec",
         dependencies: [
             "PeekabooCLI",
         ],
@@ -149,7 +149,7 @@ let package = Package(
     products: [
         .executable(
             name: "peekaboo",
-            targets: ["peekaboo"]),
+            targets: ["PeekabooExec"]),
         .executable(
             name: "peekaboo-certification-controller",
             targets: ["PeekabooCertificationController"]),
