@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target_ref:
-        description: Exact 40-character commit SHA to validate
+        description: Expected 40-character SHA of the selected workflow revision
         required: true
         type: string
   pull_request:
@@ -63,18 +63,45 @@ jobs:
       - name: Validate exact source and hosted environment
         id: source
         env:
-          TARGET_REF: ${{ inputs.target_ref || github.event.pull_request.head.sha }}
+          SOURCE_EVENT: ${{ github.event_name }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          [[ "$TARGET_REF" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'target_ref must be an exact 40-hex SHA' >&2; exit 1; }
+          case "$SOURCE_EVENT" in
+            workflow_dispatch)
+              [[ "$TARGET_REF" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'target_ref must be an exact 40-hex SHA' >&2; exit 1; }
+              [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Invalid workflow revision SHA' >&2; exit 1; }
+              source_sha="$(printf '%s' "$WORKFLOW_COMMIT" | tr 'A-F' 'a-f')"
+              expected_sha="$(printf '%s' "$TARGET_REF" | tr 'A-F' 'a-f')"
+              [[ "$expected_sha" == "$source_sha" ]] || { echo 'target_ref must match the selected workflow revision' >&2; exit 1; }
+              ;;
+            pull_request)
+              [[ "$PR_HEAD_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Invalid PR head SHA' >&2; exit 1; }
+              source_sha="$(printf '%s' "$PR_HEAD_SHA" | tr 'A-F' 'a-f')"
+              ;;
+            *) echo 'Unsupported source event' >&2; exit 1 ;;
+          esac
           [[ "$GITHUB_ACTIONS" == true && "$RUNNER_ENVIRONMENT" == github-hosted && "$RUNNER_OS" == macOS ]]
-          printf 'sha=%s\n' "$(printf '%s' "$TARGET_REF" | tr 'A-F' 'a-f')" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
           printf 'VALIDATION_RESULTS=%s/release-validation-results\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           printf 'PEEKABOO_CONFIG_DIR=%s/peekaboo-release-validation\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
+      - name: Check out selected workflow revision
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v7
         with:
-          ref: ${{ steps.source.outputs.sha }}
+          ref: ${{ github.sha }}
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out PR event head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
           submodules: recursive
           fetch-depth: 1
           persist-credentials: false

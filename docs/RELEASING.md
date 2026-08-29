@@ -87,6 +87,12 @@ workflow against the exact publication commit:
 gh workflow run release-validation.yml --ref main -f target_ref=<full-40-character-publication-SHA>
 ```
 
+Manual dispatch checks out only the selected workflow ref's resolved `github.sha`; `target_ref` is an expected-source
+assertion and must match that SHA exactly after hex normalization. If `main` moves before the dispatch resolves it,
+the mismatch fails before checkout or tests. To validate another reviewed revision, select its trusted branch or tag
+with `--ref` and supply the matching full SHA. An arbitrary historical or fork SHA cannot be tested under the `main`
+workflow context. PR runs independently check out only the event's PR head; a manual input cannot override it.
+
 This read-only, secretless macOS lane runs unfiltered suites for PeekabooCore, AutomationKit, Protocols, Visualizer,
 UICore, Inspector, Playground, and all five pinned submodules. It keeps per-package logs, exit status, built-in skips,
 submodule revisions, and actual toolchain metadata. Its workflow-specific PR trigger validates changes to the lane;

@@ -1,10 +1,72 @@
 import Darwin
 import Foundation
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooBridge
 
 @Suite(.serialized)
 struct PeekabooBridgeClientSocketFailureTests {
+    @Test(arguments: [false, true])
+    func `late response after timeout or cancellation cannot replace the next response`(cancel: Bool) async throws {
+        let peer = try ConcurrentGatedBridgePeer()
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 2)
+        do {
+            async let negotiation = client.handshake(
+                client: .init(
+                    bundleIdentifier: "dev.peekaboo.closed-peer-tests",
+                    teamIdentifier: nil,
+                    processIdentifier: getpid()),
+                protocolVersion: .init(major: 1, minor: 28))
+            let handshakeRequest = try await peer.nextRequest()
+            let isHandshake = if case .handshake = try handshakeRequest.decode() {
+                true
+            } else {
+                false
+            }
+            try #require(isHandshake)
+            try await peer.respond(.handshake(BridgeTestFixtures.handshake(
+                negotiatedVersion: .init(major: 1, minor: 28),
+                supportedOperations: [.getFocusedWindow, .listApplications])), to: handshakeRequest)
+            _ = try await negotiation
+
+            let pending = Task { try await client.getFocusedWindow() }
+            do {
+                let expiredRequest = try await peer.nextRequest()
+                #expect(try expiredRequest.decode().operation == .getFocusedWindow)
+                if cancel {
+                    pending.cancel()
+                }
+                do {
+                    _ = try await pending.value
+                    Issue.record("Expected the gated request to time out or be cancelled")
+                } catch let error as POSIXError {
+                    #expect(!cancel)
+                    #expect(error.code == .ETIMEDOUT)
+                } catch is CancellationError {
+                    #expect(cancel)
+                }
+
+                async let applications = client.listApplications()
+                let currentRequest = try await peer.nextRequest()
+                #expect(try currentRequest.decode().operation == .listApplications)
+                // Release the stale connection only after its successor is also waiting for a response.
+                try await peer.respond(.window(nil), to: expiredRequest)
+                try await peer.respond(.applications([]), to: currentRequest)
+                let result = try await applications
+                #expect(result.isEmpty)
+                #expect(await peer.acceptedConnectionCount == 3)
+            } catch {
+                pending.cancel()
+                _ = await pending.result
+                throw error
+            }
+        } catch {
+            await peer.stop()
+            throw error
+        }
+        await peer.stop()
+    }
+
     @Test
     func `client write after peer close returns EPIPE with socket scoped SIGPIPE protection`() async throws {
         let socketPath = "/tmp/pb-closed-peer-\(UUID().uuidString).sock"

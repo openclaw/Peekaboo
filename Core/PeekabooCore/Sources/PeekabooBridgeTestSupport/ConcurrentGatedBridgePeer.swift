@@ -6,6 +6,7 @@ import PeekabooBridge
 ///
 /// Unlike ``ScriptedBridgePeer``, every accepted connection is drained independently. Tests can therefore await
 /// exact request arrival and complete connections in a different order without using scheduling delays.
+/// Socket waits suspend so idle peers cannot starve the cooperative executor running the test.
 public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
     public struct Request: Sendable {
         public let id: UInt64
@@ -60,18 +61,18 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
             }
 
             await withTaskGroup(of: Void.self) { group in
-                while let accepted = Self.acceptConnection(descriptors: descriptors) {
+                while let accepted = await Self.acceptConnection(descriptors: descriptors) {
                     await state.recordAcceptedConnection()
                     group.addTask {
                         defer { descriptors.closeClient(id: accepted.id) }
                         Self.disableSigPipe(fd: accepted.descriptor)
-                        let data = Self.readRequest(from: accepted.descriptor)
+                        let data = await Self.readRequest(from: accepted.descriptor)
                         guard !data.isEmpty, !descriptors.isCancelled else { return }
                         let action = await state.publish(.init(id: accepted.id, data: data))
                         guard !descriptors.isCancelled else { return }
                         switch action {
                         case let .respond(responseData):
-                            Self.write(responseData, to: accepted.descriptor)
+                            await Self.write(responseData, to: accepted.descriptor)
                         case .close:
                             break
                         }
@@ -128,19 +129,30 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
     }
 
     private func cancelDescriptors() {
-        guard self.descriptors.cancel() else { return }
-        Self.wakeListener(at: self.socketPath)
+        self.descriptors.cancel()
     }
 
     private nonisolated static func acceptConnection(
-        descriptors: DescriptorState) -> (id: UInt64, descriptor: Int32)?
+        descriptors: DescriptorState) async -> (id: UInt64, descriptor: Int32)?
     {
         while let listener = descriptors.listenerForAccept {
             let client = accept(listener, nil, nil)
             if client >= 0 {
+                guard Self.makeNonblocking(client) else {
+                    Darwin.close(client)
+                    return nil
+                }
                 return descriptors.register(client: client)
             }
             if errno == EINTR {
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
+                    return nil
+                }
                 continue
             }
             return nil
@@ -163,28 +175,18 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
         let bindResult = withUnsafePointer(to: &address) { pointer in
             Darwin.bind(descriptor, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
         }
-        guard bindResult == 0, listen(descriptor, SOMAXCONN) == 0 else {
+        guard bindResult == 0,
+              listen(descriptor, SOMAXCONN) == 0,
+              Self.makeNonblocking(descriptor)
+        else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }
 
-    private nonisolated static func wakeListener(at socketPath: String) {
-        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { return }
-        defer { Darwin.close(descriptor) }
-
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
-        let copied = socketPath.withCString { source in
-            strlcpy(&address.sun_path.0, source, MemoryLayout.size(ofValue: address.sun_path))
-        }
-        guard copied < MemoryLayout.size(ofValue: address.sun_path) else { return }
-
-        let length = socklen_t(MemoryLayout.size(ofValue: address))
-        _ = withUnsafePointer(to: &address) { pointer in
-            Darwin.connect(descriptor, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
-        }
+    private nonisolated static func makeNonblocking(_ descriptor: Int32) -> Bool {
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0 else { return false }
+        return fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0
     }
 
     private nonisolated static func disableSigPipe(fd: Int32) {
@@ -192,7 +194,7 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
         _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout.size(ofValue: one)))
     }
 
-    private nonisolated static func readRequest(from descriptor: Int32) -> Data {
+    private nonisolated static func readRequest(from descriptor: Int32) async -> Data {
         var result = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -206,23 +208,36 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
             if count < 0, errno == EINTR {
                 continue
             }
+            if count < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
+                    return result
+                }
+                continue
+            }
             return result
         }
     }
 
-    private nonisolated static func write(_ data: Data, to descriptor: Int32) {
-        data.withUnsafeBytes { bytes in
-            guard let baseAddress = bytes.baseAddress else { return }
-            var offset = 0
-            while offset < bytes.count {
-                let count = Darwin.write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
-                if count > 0 {
-                    offset += count
-                } else if count < 0, errno == EINTR {
-                    continue
-                } else {
+    private nonisolated static func write(_ data: Data, to descriptor: Int32) async {
+        var offset = 0
+        while offset < data.count {
+            let count = data.withUnsafeBytes { bytes in
+                Darwin.write(descriptor, bytes.baseAddress?.advanced(by: offset), bytes.count - offset)
+            }
+            if count > 0 {
+                offset += count
+            } else if count < 0, errno == EINTR {
+                continue
+            } else if count < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
                     return
                 }
+            } else {
+                return
             }
         }
     }
@@ -328,14 +343,13 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
             Darwin.close(client)
         }
 
-        func cancel() -> Bool {
+        func cancel() {
             self.lock.withLock {
-                guard !self.cancelled else { return false }
+                guard !self.cancelled else { return }
                 self.cancelled = true
                 for client in self.clients.values {
                     _ = shutdown(client, SHUT_RDWR)
                 }
-                return self.listener != nil
             }
         }
 

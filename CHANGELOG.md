@@ -26,6 +26,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Keep blocking Bridge socket waits off Swift's cooperative executor so concurrent requests can progress without changing deadlines, cancellation, or receipt validation.
 - Recognize the canonical signed OpenClaw Bridge socket for modern receipt-backed protocol negotiation while preserving signer validation and custom-socket protocol 1.28 compatibility.
 - Bound debug CLI build-staleness config discovery to the starting directory's ancestors so missing or inaccessible Git metadata cannot cause an endless startup traversal.
 - Share the owner-only credential file between app and CLI, trim surrounding whitespace in app edits and legacy imports, ignore unchanged Settings bindings, recover legacy app keys only on explicit import, and keep failed edits visibly unsaved without Keychain prompts. Thanks @vincentkoc for #651.

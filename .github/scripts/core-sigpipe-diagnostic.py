@@ -61,6 +61,7 @@ def capture(debugger, lldb, request):
     report = Path(request["report"])
     facts = {key: request[key] for key in ("helper", "bundle", "toolchain_record")}
     facts["original_suite"] = "failed; diagnostic reproduction is not test-pass proof"
+    facts["stage"] = "configure-debugger"
     process = None
     try:
         # No lldbinit, symbol-file scripts, automatic backtrace, or process output is retained.
@@ -85,53 +86,76 @@ def capture(debugger, lldb, request):
                 raise RuntimeError("Cannot suppress diagnostic process IO")
         deadline = time.monotonic() + request["timeout_seconds"]
         error = lldb.SBError()
+        facts["stage"] = "launch-helper"
         process = target.Launch(launch, error)
         if error.Fail() or not process.IsValid():
             raise RuntimeError("Cannot launch helper")
+        facts["stage"] = "await-entry-stop"
         while process.GetState() in (lldb.eStateLaunching, lldb.eStateRunning):
             if time.monotonic() >= deadline:
                 raise TimeoutError()
             time.sleep(0.1)
         if process.GetState() != lldb.eStateStopped:
             raise RuntimeError("Helper did not stop at entry")
+        entry_stop_id = process.GetStopID()
+        facts.update(stage="configure-sigpipe", entry_stop_id=entry_stop_id)
         signals = process.GetUnixSignals()
         sigpipe = signals.GetSignalNumberFromName("SIGPIPE")
         # Pass through normally if resumed; never install SIG_IGN in the test process.
         if (sigpipe != 13 or not signals.SetShouldSuppress(sigpipe, False)
                 or not signals.SetShouldStop(sigpipe, True) or signals.GetShouldSuppress(sigpipe)):
             raise RuntimeError("Cannot establish SIGPIPE stop/pass policy")
+        facts["stage"] = "resume-helper"
         if process.Continue().Fail():
             raise RuntimeError("Cannot resume helper")
+        facts.update(stage="await-new-stop", observed_running=False)
         while time.monotonic() < deadline:
             state = process.GetState()
+            if state == lldb.eStateRunning:
+                facts["observed_running"] = True
             if state == lldb.eStateExited:
-                facts.update(outcome="exited-without-sigpipe", helper_exit_code=process.GetExitStatus())
+                facts.update(stage="helper-exited", outcome="exited-without-sigpipe",
+                             helper_exit_code=process.GetExitStatus())
                 break
-            if state == lldb.eStateStopped:
-                signalled = [thread for thread in process
-                             if thread.GetStopReason() == lldb.eStopReasonSignal
-                             and thread.GetStopReasonDataAtIndex(0) == sigpipe]
+            if state in (lldb.eStateStopped, lldb.eStateCrashed):
+                stop_id = process.GetStopID()
+                # Async Continue can leave the public state at entry until a new natural stop arrives.
+                if stop_id <= entry_stop_id:
+                    time.sleep(0.1)
+                    continue
+                facts.update(stage="post-resume-stop", stop_id=stop_id, process_state=int(state))
+                stopped = []
+                for thread in process:
+                    reason = int(thread.GetStopReason())
+                    # Only a signal reason's first word is a signal number; exception data may contain addresses.
+                    signal_code = (int(thread.GetStopReasonDataAtIndex(0))
+                                   if reason == lldb.eStopReasonSignal and thread.GetStopReasonDataCount() > 0 else None)
+                    stopped.append((thread, reason, signal_code))
+                signalled = [item for item in stopped if item[2] == sigpipe]
                 if signalled:
-                    facts.update(outcome="sigpipe-reproduced", signal_code=13, threads=[])
-                    # Bounded symbol/source-only records; no addresses, arguments, variables or registers.
-                    threads = chain(signalled, (thread for thread in process if thread not in signalled))
-                    for index, thread in enumerate(threads):
-                        if index == 128:
-                            facts["threads_truncated"] = True
-                            break
-                        frames = []
-                        for frame in islice(thread, 128):
-                            line = frame.GetLineEntry()
-                            frames.append({"function": frame.GetFunctionName(),
-                                           "file": line.GetFileSpec().GetFilename() if line.IsValid() else None,
-                                           "line": line.GetLine() if line.IsValid() else None})
-                        facts["threads"].append({"index": index, "sigpipe": thread in signalled,
-                                                 "frames": frames, "frames_truncated": thread.GetNumFrames() > 128})
+                    facts.update(outcome="sigpipe-reproduced", signal_code=13)
                 else:
                     facts["outcome"] = "stopped-without-sigpipe"
+                facts["threads"] = []
+                # Bounded symbol/source-only records, including unexpected new stops. Never resume those stops.
+                threads = chain(signalled, (item for item in stopped if item[2] != sigpipe))
+                for index, (thread, reason, signal_code) in enumerate(threads):
+                    if index == 128:
+                        facts["threads_truncated"] = True
+                        break
+                    frames = []
+                    for frame in islice(thread, 128):
+                        line = frame.GetLineEntry()
+                        frames.append({"function": frame.GetFunctionName(),
+                                       "file": line.GetFileSpec().GetFilename() if line.IsValid() else None,
+                                       "line": line.GetLine() if line.IsValid() else None})
+                    facts["threads"].append({"index": index, "sigpipe": signal_code == sigpipe,
+                                             "reason_code": reason, "signal_code": signal_code,
+                                             "frames": frames, "frames_truncated": thread.GetNumFrames() > 128})
                 break
-            if state in (lldb.eStateCrashed, lldb.eStateDetached, lldb.eStateInvalid):
-                facts["outcome"] = "unexpected-process-state"
+            if state in (lldb.eStateDetached, lldb.eStateInvalid):
+                facts.update(stage="post-resume-terminal-state", outcome="unexpected-process-state",
+                             process_state=int(state))
                 break
             time.sleep(0.1)
         else:

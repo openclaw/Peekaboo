@@ -24,19 +24,12 @@ public struct InspectorConfiguration {
 public struct InspectorView: View {
     @State private var overlayManager = OverlayManager()
     @State private var showPermissionAlert = false
-    @State private var permissionStatus: PermissionStatus = .checking
+    @State private var permissions = InspectorPermissionState(
+        check: { AXPermissionHelpers.hasAccessibilityPermissions() },
+        prompt: { AXPermissionHelpers.askForAccessibilityIfNeeded() })
     @State private var permissionCheckTimer: Timer?
 
     private let configuration: InspectorConfiguration
-    @MainActor
-    private static var permissionStatusProvider: () -> Bool = {
-        AXPermissionHelpers.hasAccessibilityPermissions()
-    }
-
-    @MainActor
-    private static var permissionPromptProvider: () -> Bool = {
-        AXPermissionHelpers.askForAccessibilityIfNeeded()
-    }
 
     public enum PermissionStatus {
         case checking
@@ -54,9 +47,9 @@ public struct InspectorView: View {
 
             Divider()
 
-            if self.permissionStatus == .denied {
+            if self.permissions.status == .denied {
                 PermissionDeniedView()
-            } else if self.permissionStatus == .checking {
+            } else if self.permissions.status == .checking {
                 ProgressView("Checking permissions...")
                     .padding()
             } else {
@@ -122,24 +115,12 @@ public struct InspectorView: View {
     }
 
     private func checkPermissions(prompt: Bool = false) {
-        let accessEnabled = if prompt {
-            InspectorView.permissionPromptProvider()
-        } else {
-            InspectorView.permissionStatusProvider()
+        let statusChanged = withAnimation {
+            self.permissions.checkPermissions(prompt: prompt)
         }
 
-        let newStatus: PermissionStatus = accessEnabled ? .granted : .denied
-
-        // Only update if status changed
-        if self.permissionStatus != newStatus {
-            withAnimation {
-                self.permissionStatus = newStatus
-            }
-
-            // If granted, refresh elements immediately
-            if newStatus == .granted {
-                self.overlayManager.refreshAllApplications()
-            }
+        if statusChanged, self.permissions.status == .granted {
+            self.overlayManager.refreshAllApplications()
         }
     }
 
@@ -175,29 +156,3 @@ public struct InspectorView: View {
         // as it needs to manage actual window creation
     }
 }
-
-#if DEBUG
-@MainActor
-extension InspectorView {
-    static func setPermissionProvidersForTesting(
-        check: @escaping () -> Bool,
-        prompt: @escaping () -> Bool)
-    {
-        self.permissionStatusProvider = check
-        self.permissionPromptProvider = prompt
-    }
-
-    static func resetPermissionProvidersForTesting() {
-        self.permissionStatusProvider = { AXPermissionHelpers.hasAccessibilityPermissions() }
-        self.permissionPromptProvider = { AXPermissionHelpers.askForAccessibilityIfNeeded() }
-    }
-
-    mutating func test_checkPermissions(prompt: Bool) {
-        self.checkPermissions(prompt: prompt)
-    }
-
-    func test_permissionStatus() -> PermissionStatus {
-        self.permissionStatus
-    }
-}
-#endif

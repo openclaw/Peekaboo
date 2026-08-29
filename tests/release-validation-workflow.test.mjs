@@ -41,10 +41,23 @@ test('only manual exact-source validation and preparation-file PRs trigger the l
   assert.equal(triggers.match(/^  \w+:/gm)?.length, 2);
   assert.match(triggers, /  pull_request:\n    paths:\n      - '\.github\/workflows\/release-validation\.yml'\n      - '\.github\/scripts\/core-sigpipe-diagnostic\.py'\n      - 'tests\/release-validation-workflow\.test\.mjs'\n$/);
   const source = step('Validate exact source and hosted environment');
-  assert.match(source, /TARGET_REF: \$\{\{ inputs\.target_ref \|\| github\.event\.pull_request\.head\.sha }}/);
+  assert.match(source, /SOURCE_EVENT: \$\{\{ github\.event_name }}/);
+  assert.match(source, /TARGET_REF: \$\{\{ inputs\.target_ref }}/);
+  assert.match(source, /WORKFLOW_COMMIT: \$\{\{ github\.sha }}/);
+  assert.match(source, /PR_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha }}/);
   assert.match(source, /\[\[ "\$TARGET_REF" =~ \^\[0-9a-fA-F\]\{40\}\$ \]\] \|\| .*exit 1/);
-  assert.match(workflow, /ref: \$\{\{ steps\.source\.outputs\.sha }}/);
-  assert.match(workflow, /submodules: recursive\n          fetch-depth: 1\n          persist-credentials: false/);
+  const checkouts = steps.filter((entry) => /uses: actions\/checkout@/.test(entry));
+  assert.deepEqual(checkouts.map((entry) => [
+    entry.match(/^        if: (.+)$/m)?.[1], entry.match(/^          ref: (.+)$/m)?.[1],
+  ]), [
+    ["github.event_name == 'workflow_dispatch'", '${{ github.sha }}'],
+    ["github.event_name == 'pull_request'", '${{ github.event.pull_request.head.sha }}'],
+  ]);
+  for (const checkout of checkouts) {
+    assert.match(checkout, /submodules: recursive\n          fetch-depth: 1\n          persist-credentials: false/);
+    assert.doesNotMatch(checkout, /inputs\.|steps\.|\|\|/, 'Checkout authority must be a direct event-specific GitHub ref');
+    assert.ok(steps.indexOf(checkout) > steps.indexOf(source), 'Source assertion must precede checkout');
+  }
   const checkoutProof = script('Verify checkout and pinned submodules');
   assert.match(checkoutProof, /actual_sha="\$\(git rev-parse HEAD\)"\n\[\[ "\$actual_sha" == "\$EXPECTED_SHA" \]\]/);
   assert.match(checkoutProof, /git submodule status --recursive/);
@@ -61,7 +74,8 @@ test('invalid refs cannot become shell commands, refs, or multiline outputs', (t
   for (const value of ['', 'main', 'a'.repeat(39), 'a'.repeat(41), 'g'.repeat(40), 'a'.repeat(40) + '\nsha=main', '$(touch injected)', '`touch injected`']) {
     const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', script('Validate exact source and hosted environment')], {
       cwd: root,
-      env: { PATH: '/usr/bin:/bin', TARGET_REF: value, GITHUB_OUTPUT: join(root, 'output') },
+      env: { PATH: '/usr/bin:/bin', SOURCE_EVENT: 'workflow_dispatch', TARGET_REF: value,
+        WORKFLOW_COMMIT: 'abcdef0123'.repeat(4), GITHUB_OUTPUT: join(root, 'output') },
       encoding: 'utf8',
     });
     assert.equal(result.status, 1, value);
@@ -72,12 +86,59 @@ test('invalid refs cannot become shell commands, refs, or multiline outputs', (t
   for (const value of ['abcdef0123'.repeat(4), 'ABCDEF0123'.repeat(4)]) {
     const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', script('Validate exact source and hosted environment')], {
       cwd: root,
-      env: { PATH: '/usr/bin:/bin', TARGET_REF: value, GITHUB_OUTPUT: join(root, 'output') },
+      env: { PATH: '/usr/bin:/bin', SOURCE_EVENT: 'workflow_dispatch', TARGET_REF: value,
+        WORKFLOW_COMMIT: 'abcdef0123'.repeat(4), GITHUB_OUTPUT: join(root, 'output') },
       encoding: 'utf8',
     });
     assert.equal(result.status, 1, 'A valid ref must still require the real hosted environment');
     assert.match(result.stderr, /GITHUB_ACTIONS: unbound variable/);
   }
+});
+
+test('manual expected SHA cannot select code and PR source ignores manual inputs', (t) => {
+  const root = fixture(t);
+  const source = script('Validate exact source and hosted environment');
+  const hostGuard = '[[ "$GITHUB_ACTIONS"';
+  assert.equal(source.split(hostGuard).length, 2);
+  // Exercise the actual decision block without supplying any synthetic hosted identity.
+  const decision = source.slice(0, source.indexOf(hostGuard)) + 'printf "%s\\n" "$source_sha"\n';
+  const workflowSHA = 'abcdef0123'.repeat(4);
+  const prSHA = '123456abcd'.repeat(4);
+  const evaluate = (overrides, throughHost = false) => spawnSync('/bin/bash', [
+    '--noprofile', '--norc', '-c', throughHost ? source : decision,
+  ], {
+    cwd: root,
+    env: { PATH: '/usr/bin:/bin', SOURCE_EVENT: 'workflow_dispatch', TARGET_REF: workflowSHA,
+      WORKFLOW_COMMIT: workflowSHA, PR_HEAD_SHA: prSHA, ...overrides },
+    encoding: 'utf8',
+  });
+  for (const value of [workflowSHA, workflowSHA.toUpperCase()]) {
+    const accepted = evaluate({ TARGET_REF: value });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(accepted.stdout, workflowSHA + '\n');
+    const guarded = evaluate({ TARGET_REF: value }, true);
+    assert.equal(guarded.status, 1);
+    assert.match(guarded.stderr, /GITHUB_ACTIONS: unbound variable/);
+  }
+  for (const overrides of [{ TARGET_REF: prSHA }, { WORKFLOW_COMMIT: prSHA }]) {
+    const rejected = evaluate(overrides, true);
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /target_ref must match the selected workflow revision/);
+    assert.doesNotMatch(rejected.stderr, /GITHUB_ACTIONS/);
+    assert.equal(rejected.stdout, '');
+  }
+  for (const input of ['', workflowSHA, '$(touch injected)', 'not-a-sha']) {
+    const accepted = evaluate({ SOURCE_EVENT: 'pull_request', TARGET_REF: input });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(accepted.stdout, prSHA + '\n');
+  }
+  const prGuard = evaluate({ SOURCE_EVENT: 'pull_request', TARGET_REF: workflowSHA }, true);
+  assert.equal(prGuard.status, 1);
+  assert.match(prGuard.stderr, /GITHUB_ACTIONS: unbound variable/);
+  assert.equal(evaluate({ SOURCE_EVENT: 'pull_request', PR_HEAD_SHA: 'main' }).status, 1);
+  assert.equal(evaluate({ WORKFLOW_COMMIT: 'main' }).status, 1);
+  assert.equal(evaluate({ SOURCE_EVENT: 'push' }).status, 1);
+  assert.equal(existsSync(join(root, 'injected')), false);
 });
 
 test('the complete supplemental inventory is bounded and uses independent hosted jobs', () => {
@@ -169,8 +230,11 @@ if [[ "$FIXTURE_FAILURE" == '${name}' ]]; then exit 23; fi
         PATH: `${bin}:/usr/bin:/bin`, VALIDATION_RESULTS: results, GITHUB_ENV: outputEnv,
         FIXTURE_VERSION: version, FIXTURE_FAILURE: failure, FIXTURE_CALLS: calls,
       },
-      encoding: 'utf8', timeout: 10000, maxBuffer: 2 * 1024 * 1024,
+      // Only a fixture-process watchdog; native builds can delay local tool launches.
+      encoding: 'utf8', timeout: 30000, maxBuffer: 2 * 1024 * 1024,
     });
+    assert.equal(result.error?.code ?? null, null, `${version} / ${failure}: fixture launch error`);
+    assert.equal(result.signal, null, `${version} / ${failure}: fixture terminated by signal`);
     assert.equal(result.status, expectedExit, `${version} / ${failure}: ${result.stderr}`);
     if (failure !== 'sw_vers') {
       assert.equal(readFileSync(calls, 'utf8'), 'started\ncompleted\n', 'Version producer must complete exactly once');
@@ -291,21 +355,47 @@ class Frame:
     def GetFilename(self): return 'Fixture.swift'
     def GetLine(self): return 42
 class Thread(list):
-    def GetStopReason(self): return 99
-    def GetStopReasonDataAtIndex(self, index): return 13
+    def __init__(self, process): super().__init__([Frame()]); self.process = process
+    def GetStopReason(self): return self.process.reason
+    def GetStopReasonDataCount(self): return 1 if self.process.reason == 99 else 2
+    def GetStopReasonDataAtIndex(self, index):
+        assert self.process.reason == 99 and index == 0, 'Do not read exception payloads or other stop data'
+        return self.process.signal
     def GetNumFrames(self): return len(self)
 class Process(list):
     def __init__(self, scenario):
-        super().__init__([Thread([Frame()]), Thread([Frame()])])
+        super().__init__([Thread(self), Thread(self)])
         self.state, self.scenario, self.killed = 1, scenario, False
+        self.stop_id, self.reason, self.signal = 7, 101, None
+        self.observations, self.continues = iter(()), 0
     def IsValid(self): return True
-    def GetState(self): return self.state
+    def GetState(self):
+        observation = next(self.observations, None)
+        if observation is not None: self.state, self.stop_id, self.reason, self.signal = observation
+        return self.state
+    def GetStopID(self): return self.stop_id
     def GetUnixSignals(self): return self
     def GetSignalNumberFromName(self, name): assert name == 'SIGPIPE'; return 13
     def SetShouldSuppress(self, sig, value): assert sig == 13 and value is False; return True
     def SetShouldStop(self, sig, value): assert sig == 13 and value is True; return True
     def GetShouldSuppress(self, sig): return False
-    def Continue(self): self.state = {'signal': 1, 'exit': 2, 'timeout': 3}[self.scenario]; return Error()
+    def Continue(self):
+        self.continues += 1
+        assert self.continues == 1, 'Never resume an unexpected new stop'
+        entry = (1, 7, 101, None)
+        running = (3, 7, 101, None)
+        sigpipe = (1, 11, 99, 13)  # Stop IDs can skip values; running may never be observed.
+        exited = (2, 7, 101, None)
+        self.observations = iter({
+            'stale-signal': [entry, entry, sigpipe], 'signal': [sigpipe],
+            'running-signal': [entry, running, sigpipe], 'exit': [exited],
+            'stale-exit': [entry, entry, exited], 'timeout': [running], 'stale-timeout': [entry],
+            'unexpected-signal': [entry, (1, 12, 99, 5)],
+            'unexpected-breakpoint': [entry, (1, 12, 100, None)],
+            'unexpected-exception': [entry, (1, 12, 102, None)],
+            'unexpected-crash': [entry, (5, 12, 102, None)],
+        }[self.scenario])
+        return Error()
     def GetExitStatus(self): return 7
     def Kill(self): self.killed = True; self.state = 2; return Error()
 class Target:
@@ -334,18 +424,34 @@ lldb = NS(SBError=Error, SBCommandReturnObject=Error, eLaunchFlagStopAtEntry=4, 
           eStateDetached=6, eStateInvalid=7)
 request = dict(helper='fixture-helper', bundle='fixture-bundle', root=str(root), timeout_seconds=480,
                report=str(results / 'capture.json'), toolchain_record='fixture-toolchain.txt')
-for scenario, expected in [('signal', 'sigpipe-reproduced'), ('exit', 'exited-without-sigpipe'), ('timeout', 'diagnostic-timeout')]:
+for scenario, expected in [
+    ('stale-signal', 'sigpipe-reproduced'), ('signal', 'sigpipe-reproduced'),
+    ('running-signal', 'sigpipe-reproduced'), ('exit', 'exited-without-sigpipe'),
+    ('stale-exit', 'exited-without-sigpipe'), ('timeout', 'diagnostic-timeout'),
+    ('stale-timeout', 'diagnostic-timeout'), ('unexpected-signal', 'stopped-without-sigpipe'),
+    ('unexpected-breakpoint', 'stopped-without-sigpipe'), ('unexpected-exception', 'stopped-without-sigpipe'),
+    ('unexpected-crash', 'stopped-without-sigpipe'),
+]:
     clock = iter(range(0, 10000, 100))
     d.time = NS(monotonic=lambda: next(clock), sleep=lambda _: None)
     process = Process(scenario)
     d.capture(Debugger(process), lldb, request)
     report = json.loads(Path(request['report']).read_text())
-    assert report['outcome'] == expected, report
-    assert process.killed == (scenario != 'exit')
-    if scenario == 'signal':
+    assert report['outcome'] == expected, (scenario, report)
+    assert process.continues == 1
+    assert process.killed == (expected != 'exited-without-sigpipe')
+    if expected in ('sigpipe-reproduced', 'stopped-without-sigpipe'):
+        assert report['stage'] == 'post-resume-stop'
+        assert report['entry_stop_id'] == 7 and report['stop_id'] > 7
+        assert report['process_state'] == (5 if scenario == 'unexpected-crash' else 1)
         assert len(report['threads']) == 2
         assert report['threads'][0]['frames'] == [dict(function='Fixture.closedPeerWrite()', file='Fixture.swift', line=42)]
-    if scenario == 'exit': assert report['helper_exit_code'] == 7
+        assert report['threads'][0]['reason_code'] == process.reason
+        assert report['threads'][0]['signal_code'] == process.signal
+        assert all(set(thread) == {'index', 'sigpipe', 'reason_code', 'signal_code', 'frames', 'frames_truncated'}
+                   for thread in report['threads'])
+    if expected == 'exited-without-sigpipe': assert report['helper_exit_code'] == 7
+    if expected == 'diagnostic-timeout': assert 'threads' not in report
 assert (status.read_bytes(), log.read_bytes()) == original
 print('gating, symbol/source-only capture, no-repro, timeout, cleanup and fatal original state verified')
 `, diagnosticPath], {
@@ -393,8 +499,11 @@ results.mkdir(exist_ok=True)
 raise SystemExit(d.diagnose(Path.cwd(), results))
 `, diagnosticPath], {
       cwd: root, env: { PATH: `${bin}:${process.env.PATH}`, PYTHONDONTWRITEBYTECODE: '1', FIXTURE_MODE: mode },
-      encoding: 'utf8', timeout: 15000,
+      // Allows startup of the fake probes/debugger, not a longer real diagnostic deadline.
+      encoding: 'utf8', timeout: 30000,
     });
+    assert.equal(result.error?.code ?? null, null, `${mode}: fixture launch error`);
+    assert.equal(result.signal, null, `${mode}: fixture terminated by signal`);
     assert.equal(result.status, exit, result.stderr);
     assert.equal(result.stdout + result.stderr, '', 'Debugger/test output must never be captured');
     const request = JSON.parse(readFileSync(join(root, 'results/core-sigpipe-diagnostic-request.json'), 'utf8'));
