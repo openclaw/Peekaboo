@@ -2,10 +2,10 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import PeekabooAutomationKit
-import PeekabooBridge
 import PeekabooFoundation
 import Testing
 import UniformTypeIdentifiers
+@testable import PeekabooBridge
 @testable import PeekabooCore
 
 @MainActor
@@ -37,6 +37,11 @@ struct RemoteCaptureGateOwnershipTests {
         } else {
             #expect(handshake.operationAttestation == nil)
             #expect(handshake.operationSessionAttestation == nil)
+        }
+        if handshake.supportedOperations.contains(.ownsSnapshot) {
+            #expect(handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.producerBoundSnapshotReferences) == true)
+            #expect(handshake.enabledOperations?.contains(.ownsSnapshot) == true)
         }
         return client
     }
@@ -537,24 +542,23 @@ extension RemoteCaptureGateOwnershipTests {
         await host.stop()
     }
 
-    @Test
-    func `remote ROI publishes its snapshot only after client validation`() async throws {
+    @Test(arguments: [true, false])
+    func `remote ROI publishes its snapshot only after client validation`(validArtifact: Bool) async throws {
         let socketPath = "/tmp/peekaboo-remote-snapshot-roi-\(UUID().uuidString).sock"
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-remote-snapshot-roi-public-\(UUID().uuidString).png")
         defer {
             try? FileManager.default.removeItem(at: outputURL)
         }
-        let snapshotID = "validated-roi-\(UUID().uuidString)"
         let snapshots = InMemorySnapshotManager(options: .init(copyArtifactsOnStore: true))
-        let observation = ROIFileObservationService(mode: .validWithElements)
+        let observation = ROIFileObservationService(mode: validArtifact ? .validWithElements : .mismatchedArtifact)
         let server = self.makeROIServer(
             services: StubServices(snapshots: snapshots, desktopObservation: observation),
             allowedOperations: [
                 .desktopObservation,
+                .createSnapshot,
+                .ownsSnapshot,
                 .storeObservationSnapshot,
-                .storeScreenshot,
-                .storeDetectionResult,
             ])
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
@@ -563,27 +567,64 @@ extension RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = try await RemoteDesktopObservationService(
-            client: self.makeNegotiatedClient(
-                socketPath: socketPath,
-                requestTimeoutSec: 1),
+        let client = try await self.makeNegotiatedClient(socketPath: socketPath, requestTimeoutSec: 1)
+        let snapshotID = try await client.createSnapshot()
+        let creationReceipt = try #require(await client.lastOperationReceipt())
+        defer { Task { try? await snapshots.cleanSnapshot(snapshotId: snapshotID) } }
+        #expect(try await client.ownsSnapshot(snapshotId: snapshotID))
+        observation.beforeReturning = {
+            let detection = try await snapshots.getDetectionResult(snapshotId: snapshotID)
+            let snapshot = try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID)
+            #expect(detection == nil)
+            #expect(snapshot?.screenshotPath == nil)
+            #expect(!FileManager.default.fileExists(atPath: outputURL.path))
+        }
+        let remote = RemoteDesktopObservationService(
+            client: client,
             supportsExactWindowROIObservation: true)
 
-        let result = try await remote.observe(DesktopObservationRequest(
+        let request = DesktopObservationRequest(
             target: .windowID(42),
             capture: DesktopCaptureOptions(
                 roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
             output: DesktopObservationOutputOptions(
                 path: outputURL.path,
                 saveSnapshot: true,
-                snapshotID: snapshotID)))
+                snapshotID: snapshotID))
+        guard validArtifact else {
+            await #expect(throws: CaptureROIError.hostDidNotApplyROI) {
+                _ = try await remote.observe(request)
+            }
+            #expect(observation.lastOutputOptions?.saveSnapshot == false)
+            #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) == nil)
+            #expect(try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID)?.screenshotPath == nil)
+            #expect(!FileManager.default.fileExists(atPath: outputURL.path))
+            let hostPath = try #require(observation.lastPath)
+            #expect(!FileManager.default.fileExists(atPath: hostPath))
+            let lastReceipt = try #require(await client.lastOperationReceipt())
+            #expect(lastReceipt.payload.operation == .desktopObservation)
+            #expect(try await client.ownsSnapshot(snapshotId: snapshotID))
+            await host.stop()
+            return
+        }
+        let result = try await remote.observe(request)
 
         #expect(observation.lastOutputOptions?.saveSnapshot == false)
+        #expect(observation.lastOutputOptions?.snapshotID == snapshotID)
+        #expect(result.elements?.snapshotId == snapshotID)
+        let publicationReceipt = try #require(await client.lastOperationReceipt())
+        #expect(publicationReceipt.payload.operation == .storeObservationSnapshot)
+        let expectedClientInstanceID = await client.operationClientInstanceID
+        #expect(publicationReceipt.payload.clientInstanceID == expectedClientInstanceID)
+        #expect(publicationReceipt.payload.sessionID == creationReceipt.payload.sessionID)
+        #expect(publicationReceipt.payload.listenerInstanceID == creationReceipt.payload.listenerInstanceID)
+        #expect(publicationReceipt.payload.host == creationReceipt.payload.host)
         #expect(result.files.rawScreenshotPath == nil)
         #expect(!FileManager.default.fileExists(atPath: outputURL.path))
         let snapshot = try #require(try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID))
         #expect(snapshot.captureCoordinateContext?.viewport?.requestedWindowRelativeBounds ==
             CGRect(x: 0, y: 0, width: 10, height: 10))
+        #expect(snapshot.captureCoordinateContext?.referenceID == snapshotID)
         #expect(snapshot.windowID == 42)
         #expect(snapshot.windowMutationIdentity?.windowID == 42)
         let storedScreenshotPath = try #require(snapshot.screenshotPath)
@@ -609,12 +650,11 @@ extension RemoteCaptureGateOwnershipTests {
         let outputURL = outputDirectory.appendingPathComponent("existing.png")
         let existingData = Data("existing-public-output".utf8)
         try existingData.write(to: outputURL, options: .atomic)
-        let snapshotID = "rollback-roi-\(UUID().uuidString)"
         let snapshots = InMemorySnapshotManager(options: .init(copyArtifactsOnStore: true))
         let observation = ROIFileObservationService(mode: .validWithElements)
         let server = self.makeROIServer(
             services: StubServices(snapshots: snapshots, desktopObservation: observation),
-            allowedOperations: [.desktopObservation])
+            allowedOperations: [.desktopObservation, .createSnapshot, .ownsSnapshot])
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -622,10 +662,12 @@ extension RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = try await RemoteDesktopObservationService(
-            client: self.makeNegotiatedClient(
-                socketPath: socketPath,
-                requestTimeoutSec: 1),
+        let client = try await self.makeNegotiatedClient(socketPath: socketPath, requestTimeoutSec: 1)
+        let snapshotID = try await client.createSnapshot()
+        defer { Task { try? await snapshots.cleanSnapshot(snapshotId: snapshotID) } }
+        #expect(try await client.ownsSnapshot(snapshotId: snapshotID))
+        let remote = RemoteDesktopObservationService(
+            client: client,
             supportsExactWindowROIObservation: true)
 
         let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
@@ -641,8 +683,18 @@ extension RemoteCaptureGateOwnershipTests {
         }
 
         #expect(error?.code == .operationNotSupported)
+        #expect(error?.message == "Operation storeObservationSnapshot is not supported by this host")
+        #expect(error?.operationMayHaveCompleted == false)
+        #expect(observation.lastOutputOptions?.saveSnapshot == false)
+        #expect(observation.lastOutputOptions?.snapshotID == snapshotID)
+        let hostPath = try #require(observation.lastPath)
+        #expect(!FileManager.default.fileExists(atPath: hostPath))
         #expect(try Data(contentsOf: outputURL) == existingData)
-        #expect(try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID) == nil)
+        let reserved = try #require(try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID))
+        #expect(reserved.screenshotPath == nil)
+        #expect(reserved.captureCoordinateContext == nil)
+        #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) == nil)
+        #expect(try await client.ownsSnapshot(snapshotId: snapshotID))
         #expect(try FileManager.default.contentsOfDirectory(atPath: outputDirectory.path) == ["existing.png"])
         await host.stop()
     }
@@ -656,16 +708,15 @@ extension RemoteCaptureGateOwnershipTests {
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
         let outputURL = outputDirectory.appendingPathComponent("conflicted.png")
         try Data("replace-before-install".utf8).write(to: outputURL, options: .atomic)
-        let snapshotID = "snapshot-only-roi-\(UUID().uuidString)"
         let snapshots = InMemorySnapshotManager(options: .init(copyArtifactsOnStore: true))
         let observation = ROIFileObservationService(mode: .validWithElements)
         let server = self.makeROIServer(
             services: StubServices(snapshots: snapshots, desktopObservation: observation),
             allowedOperations: [
                 .desktopObservation,
+                .createSnapshot,
+                .ownsSnapshot,
                 .storeObservationSnapshot,
-                .storeScreenshot,
-                .storeDetectionResult,
             ])
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
@@ -674,10 +725,12 @@ extension RemoteCaptureGateOwnershipTests {
             requestTimeoutSec: 1)
         try await host.startChecked()
         defer { Task { await host.stop() } }
-        let remote = try await RemoteDesktopObservationService(
-            client: self.makeNegotiatedClient(
-                socketPath: socketPath,
-                requestTimeoutSec: 1),
+        let client = try await self.makeNegotiatedClient(socketPath: socketPath, requestTimeoutSec: 1)
+        let snapshotID = try await client.createSnapshot()
+        defer { Task { try? await snapshots.cleanSnapshot(snapshotId: snapshotID) } }
+        #expect(try await client.ownsSnapshot(snapshotId: snapshotID))
+        let remote = RemoteDesktopObservationService(
+            client: client,
             supportsExactWindowROIObservation: true,
             artifactInstallationPreflight: {
                 try FileManager.default.removeItem(at: outputURL)
@@ -696,11 +749,18 @@ extension RemoteCaptureGateOwnershipTests {
 
         #expect(result.files.rawScreenshotPath == nil)
         #expect(result.capture.savedPath == nil)
+        #expect(result.elements?.snapshotId == snapshotID)
+        let publicationReceipt = try #require(await client.lastOperationReceipt())
+        #expect(publicationReceipt.payload.operation == .storeObservationSnapshot)
+        let expectedClientInstanceID = await client.operationClientInstanceID
+        #expect(publicationReceipt.payload.clientInstanceID == expectedClientInstanceID)
         #expect(result.diagnostics.warnings.contains {
             $0.contains("Snapshot publication succeeded") && $0.contains("could not be published")
         })
         let snapshot = try #require(try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID))
         let storedPath = try #require(snapshot.screenshotPath)
+        #expect(snapshot.captureCoordinateContext?.referenceID == snapshotID)
+        #expect(try Data(contentsOf: URL(fileURLWithPath: storedPath)) == ROIFileObservationService.croppedData)
         #expect(FileManager.default.fileExists(atPath: storedPath))
         var isDirectory: ObjCBool = false
         #expect(FileManager.default.fileExists(atPath: outputURL.path, isDirectory: &isDirectory))
@@ -1011,6 +1071,7 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
     let mode: Mode
     private(set) var lastPath: String?
     private(set) var lastOutputOptions: DesktopObservationOutputOptions?
+    var beforeReturning: (@MainActor () async throws -> Void)?
 
     init(mode: Mode) {
         self.mode = mode
@@ -1080,7 +1141,9 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
                 files: DesktopObservationFiles(rawScreenshotPath: path))
         }
 
-        return try self.validResult(for: request, path: path)
+        let result = try self.validResult(for: request, path: path)
+        try await self.beforeReturning?()
+        return result
     }
 
     private func validResult(for request: DesktopObservationRequest, path: String) throws -> DesktopObservationResult {

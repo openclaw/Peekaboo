@@ -145,11 +145,12 @@ those app-only services are injected separately; moving them into the embedded r
 - New listeners bind and secure a private temporary socket, then publish it atomically without replacing an existing
   path.
 - Shutdown removes the socket only when its filesystem identity still matches the listener that created it.
-- Connect, request read, and response write paths are nonblocking and deadline-bound so abandoned clients release their
-  connection tasks instead of exhausting the host.
-- Authenticated connections acquire one bounded request admission before the host reads or decodes their body. The
-  default limit is 32 concurrent requests (`maximumConcurrentRequests`), and draining or saturated listeners close the
-  connection without allocating a max-sized JSON payload or invoking the decoder.
+- Socket descriptors are nonblocking and deadline-bound. Client, host, and certification transport waits run off
+  Swift's cooperative executor; their owners await actual I/O completion before closing descriptors or releasing permits.
+- Accepted connections are bounded before liveness/task allocation. Authenticated connections acquire a separate bounded
+  body-read permit before reading or decoding a request. Decoded requests then acquire request admission, whose default
+  limit is 32 concurrent requests (`maximumConcurrentRequests`). Saturated decoded requests use a separately bounded
+  refusal lane without claiming or dispatching the operation; stalled bodies cannot consume request admission.
 - Listener acceptance is kernel-readiness-driven: one coalesced notification drains the queued connection backlog to
   `EAGAIN`, while source cancellation owns descriptor closure and bounded shutdown waits for queued handlers to drain.
 

@@ -158,6 +158,18 @@ jobs:
       - name: Check workflow contract
         run: node --test tests/release-validation-workflow.test.mjs
 
+      - name: Install safe-suite system tools
+        if: matrix.group == 'full-safe'
+        timeout-minutes: 10
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: |
+          set -euo pipefail
+          result_dir="$VALIDATION_RESULTS/full-safe"
+          mkdir -p "$result_dir"
+          brew install ripgrep 2>&1 | tee "$result_dir/system-tools-install.log"
+          rg --version | tee "$result_dir/ripgrep-version.txt"
+
       - name: Set up repository-pinned pnpm
         if: matrix.group == 'full-safe'
         timeout-minutes: 5

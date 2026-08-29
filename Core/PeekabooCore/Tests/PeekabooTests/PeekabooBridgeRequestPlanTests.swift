@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
     @Test
     func `Every wire operation has one complete static descriptor`() {
         let operations = PeekabooBridgeOperation.allCases
-        #expect(operations.count == 114)
+        #expect(operations.count == 116)
 
         let descriptors = operations.map(Semantics.operationDescriptor(for:))
         #expect(descriptors.map(\.operation) == operations)

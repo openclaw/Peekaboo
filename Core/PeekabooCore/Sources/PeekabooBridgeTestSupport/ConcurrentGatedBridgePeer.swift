@@ -17,8 +17,15 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
         }
     }
 
+    public struct ReadCompletion: Sendable {
+        public let connectionID: UInt64
+        public let byteCount: Int
+        public let reachedEOF: Bool
+    }
+
     public enum PeerError: Error {
         case stopped
+        case timedOut
         case unknownRequest(UInt64)
     }
 
@@ -66,9 +73,13 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
                     group.addTask {
                         defer { descriptors.closeClient(id: accepted.id) }
                         Self.disableSigPipe(fd: accepted.descriptor)
-                        let data = await Self.readRequest(from: accepted.descriptor)
-                        guard !data.isEmpty, !descriptors.isCancelled else { return }
-                        let action = await state.publish(.init(id: accepted.id, data: data))
+                        let read = await Self.readRequest(from: accepted.descriptor)
+                        await state.recordReadCompletion(.init(
+                            connectionID: accepted.id,
+                            byteCount: read.data.count,
+                            reachedEOF: read.reachedEOF))
+                        guard read.reachedEOF, !read.data.isEmpty, !descriptors.isCancelled else { return }
+                        let action = await state.publish(.init(id: accepted.id, data: read.data))
                         guard !descriptors.isCancelled else { return }
                         switch action {
                         case let .respond(responseData):
@@ -99,6 +110,25 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
     public func nextRequest() async throws -> Request {
         guard let request = await self.state.nextRequest() else { throw PeerError.stopped }
         return request
+    }
+
+    /// Waits for actual connection drains, including empty reads that never publish a request.
+    public func waitForReadCompletions(
+        _ count: Int,
+        timeout: Duration = .seconds(2)) async throws -> [ReadCompletion]
+    {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while true {
+            let progress = await self.state.readProgress()
+            if progress.reads.count >= count {
+                return progress.reads
+            }
+            if progress.stopped {
+                throw PeerError.stopped
+            }
+            guard ContinuousClock.now < deadline else { throw PeerError.timedOut }
+            try await Task.sleep(for: .milliseconds(1))
+        }
     }
 
     public func respond(_ response: PeekabooBridgeResponse, to request: Request) async throws {
@@ -194,7 +224,7 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
         _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout.size(ofValue: one)))
     }
 
-    private nonisolated static func readRequest(from descriptor: Int32) async -> Data {
+    private nonisolated static func readRequest(from descriptor: Int32) async -> (data: Data, reachedEOF: Bool) {
         var result = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -212,11 +242,11 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
                 do {
                     try await Task.sleep(for: .milliseconds(1))
                 } catch {
-                    return result
+                    return (result, false)
                 }
                 continue
             }
-            return result
+            return (result, count == 0)
         }
     }
 
@@ -245,6 +275,7 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
     private actor State {
         private(set) var acceptedConnectionCount = 0
         private(set) var requests: [Data] = []
+        private var readCompletions: [ReadCompletion] = []
         private var queuedRequests: [Request] = []
         private var requestWaiters: [CheckedContinuation<Request?, Never>] = []
         private var responseWaiters: [UInt64: CheckedContinuation<ResponseAction, Never>] = [:]
@@ -252,6 +283,14 @@ public final class ConcurrentGatedBridgePeer: @unchecked Sendable {
 
         func recordAcceptedConnection() {
             self.acceptedConnectionCount += 1
+        }
+
+        func recordReadCompletion(_ read: ReadCompletion) {
+            self.readCompletions.append(read)
+        }
+
+        func readProgress() -> (reads: [ReadCompletion], stopped: Bool) {
+            (self.readCompletions, self.stopped)
         }
 
         func publish(_ request: Request) async -> ResponseAction {

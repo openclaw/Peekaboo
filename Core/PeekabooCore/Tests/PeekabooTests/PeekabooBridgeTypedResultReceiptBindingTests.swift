@@ -727,6 +727,152 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
     }
 
     @Test
+    func `signed perform action failures preserve refusal and attributed dispatch outcomes`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let request = Self.performActionRequest
+        let failures = [
+            DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Button unavailable before dispatch."),
+            Self.performActionPartialFailure(fixture: fixture),
+        ]
+        for (sequence, failure) in failures.enumerated() {
+            let response = Self.performActionFailureResponse(failure)
+            let target: PeekabooBridgeOperationTargetReceipt? = failure.outcome.dispatchState.mutationDispatched
+                ? .window(fixture.windowIdentity) : nil
+            let bundle = try await fixture.session.signedBundle(
+                authority: fixture.authority,
+                sequence: UInt64(sequence),
+                request: request,
+                response: response,
+                target: target,
+                outcome: failure.outcome.projection)
+            try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                bundle.receipt.payload,
+                request: request,
+                response: response)
+            try bundle.validate(trustAnchor: .listenerAttestation(fixture.authority.attestation))
+            #expect(bundle.receipt.payload.target == target)
+            #expect(bundle.receipt.payload.outcome == failure.outcome.projection)
+            #expect(bundle.receipt.payload.selectedLeafEvidence == nil)
+            let decoded = try JSONDecoder.peekabooBridgeDecoder().decode(
+                PeekabooBridgeResponse.self,
+                from: bundle.canonicalResponse)
+            guard case let .projectedAction(projected) = decoded,
+                  case let .error(envelope) = projected.response
+            else {
+                Issue.record("Expected canonical perform-action failure bytes")
+                continue
+            }
+            #expect(envelope.desktopActionFailure == failure)
+        }
+    }
+
+    @Test
+    func `signed perform action errors reject contradictory outcomes and invalid dispatch progress`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let validFailure = Self.performActionPartialFailure(fixture: fixture)
+        let wrongCount = DesktopActionFailure.partial(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2),
+            message: "A single AX action cannot dispatch two units.")
+        let wrongDelivery = DesktopActionFailure.partial(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: .one,
+            message: "AX actions cannot claim foreground global events.")
+        let responses: [PeekabooBridgeResponse] = [
+            .projectedAction(.init(
+                response: .error(.init(code: .internalError, actionFailure: validFailure)),
+                outcome: DesktopActionOutcome.refused(route: .bridge, reason: .targetUnavailable).projection)),
+            .projectedAction(.init(
+                response: .error(.init(code: .internalError, message: "Missing canonical failure outcome.")),
+                outcome: validFailure.outcome.projection)),
+            Self.performActionFailureResponse(wrongCount),
+            Self.performActionFailureResponse(wrongDelivery),
+        ]
+        for (sequence, response) in responses.enumerated() {
+            let bundle = try await Self.signedBundle(
+                fixture: fixture,
+                sequence: UInt64(sequence),
+                request: Self.performActionRequest,
+                response: response,
+                target: .window(fixture.windowIdentity))
+            #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch("projected error outcome")) {
+                try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                    bundle.receipt.payload,
+                    request: Self.performActionRequest,
+                    response: response)
+            }
+            #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch("projected error outcome")) {
+                try bundle.validate(trustAnchor: .listenerAttestation(fixture.authority.attestation))
+            }
+        }
+    }
+
+    @Test
+    func `signed perform action failure rejects a mismatched attributed target`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let failure = Self.performActionPartialFailure(fixture: fixture).attributed(to: .init(
+            processIdentifier: fixture.windowIdentity.ownerProcessIdentifier,
+            processStartIdentity: fixture.windowIdentity.ownerProcessStartIdentity,
+            windowID: fixture.windowIdentity.windowID + 1))
+        let bundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 0,
+            request: Self.performActionRequest,
+            response: Self.performActionFailureResponse(failure),
+            target: .window(fixture.windowIdentity))
+        #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch("canonical target attribution evidence")) {
+            try bundle.validate(trustAnchor: .listenerAttestation(fixture.authority.attestation))
+        }
+    }
+
+    @Test
+    func `perform action failure rejects forged signatures and altered canonical response bytes`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let failure = Self.performActionPartialFailure(fixture: fixture)
+        let response = Self.performActionFailureResponse(failure)
+        let bundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 0,
+            request: Self.performActionRequest,
+            response: response,
+            target: .window(fixture.windowIdentity))
+        try bundle.validate(trustAnchor: .listenerAttestation(fixture.authority.attestation))
+        var signature = bundle.receipt.signature
+        signature[signature.startIndex] ^= 1
+        let forgedBundle = try OperationReceiptSessionFixture.bundle(
+            authority: fixture.authority,
+            sessionAttestation: fixture.session.attestation,
+            receipt: .init(payload: bundle.receipt.payload, signature: signature),
+            request: Self.performActionRequest,
+            response: response)
+        #expect(throws: PeekabooBridgeOperationReceiptError.invalidOperationSignature) {
+            try forgedBundle.validate(trustAnchor: .listenerAttestation(fixture.authority.attestation))
+        }
+
+        let alteredBundle = try OperationReceiptSessionFixture.bundle(
+            authority: fixture.authority,
+            sessionAttestation: fixture.session.attestation,
+            receipt: bundle.receipt,
+            request: Self.performActionRequest,
+            response: Self.performActionFailureResponse(.preDispatchRefusal(
+                route: .bridge,
+                reason: .targetUnavailable,
+                message: "Forged safe refusal replacing the signed partial failure.")))
+        #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch("the exported verification bundle")) {
+            try alteredBundle.validate(trustAnchor: .listenerAttestation(fixture.authority.attestation))
+        }
+    }
+
+    @Test
     func `signed perform action result is bound to target action and value semantics`() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -746,6 +892,10 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             request: request,
             response: validResponse,
             target: .window(fixture.windowIdentity))
+        try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+            validBundle.receipt.payload,
+            request: request,
+            response: validResponse)
         try validBundle.validate()
 
         let forgedResults = [
@@ -763,12 +913,21 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
                 newValue: "after"),
         ]
         for (offset, result) in forgedResults.enumerated() {
+            let response = Self.performActionResponse(result)
             let bundle = try await Self.signedBundle(
                 fixture: fixture,
                 sequence: UInt64(offset + 1),
                 request: request,
-                response: Self.performActionResponse(result),
+                response: response,
                 target: .window(fixture.windowIdentity))
+            #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "perform-action response request semantics"))
+            {
+                try PeekabooBridgeOperationReceiptSemantics.validateReceiptCarriage(
+                    bundle.receipt.payload,
+                    request: request,
+                    response: response)
+            }
             #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch(
                 "perform-action response request semantics"))
             {
@@ -960,6 +1119,33 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         .projectedAction(.init(
             response: .typeResult(result),
             outcome: outcome.projection))
+    }
+
+    private static var performActionRequest: PeekabooBridgeRequest {
+        .projectedAction(.init(request: .performAction(.init(
+            target: "B1",
+            actionName: "AXPress",
+            snapshotId: SnapshotReferenceFixtures.first.rawValue))))
+    }
+
+    private static func performActionPartialFailure(fixture: Fixture) -> DesktopActionFailure {
+        .partial(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: .one,
+            message: "The fixture AX action only partially completed.",
+            hint: "Observe before retrying.",
+            causeDescription: "fixture partial completion")
+            .attributed(to: .init(
+                processIdentifier: fixture.windowIdentity.ownerProcessIdentifier,
+                processStartIdentity: fixture.windowIdentity.ownerProcessStartIdentity,
+                windowID: fixture.windowIdentity.windowID))
+    }
+
+    private static func performActionFailureResponse(_ failure: DesktopActionFailure) -> PeekabooBridgeResponse {
+        .projectedAction(.init(
+            response: .error(.init(code: .internalError, actionFailure: failure)),
+            outcome: failure.outcome.projection))
     }
 
     private static func performActionResponse(_ result: ElementActionResult) -> PeekabooBridgeResponse {

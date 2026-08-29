@@ -1,5 +1,4 @@
 import Darwin
-import Dispatch
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
@@ -338,22 +337,6 @@ extension PeekabooBridgeClient {
         }
     }
 
-    private nonisolated static func onBlockingQueue(
-        _ operation: @escaping @Sendable () throws -> PeekabooBridgeBlockingResponse)
-        async throws -> PeekabooBridgeBlockingResponse
-    {
-        // Blocking socket waits must not occupy Swift's cooperative executor.
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    try continuation.resume(returning: operation())
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-
     private func exchange(
         _ preparedRequest: PeekabooBridgePreparedRequest,
         plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
@@ -397,7 +380,7 @@ extension PeekabooBridgeClient {
                 nil
             }
             blockingResponse = try await withTaskCancellationHandler {
-                try await Self.onBlockingQueue {
+                try await PeekabooBridgeBlockingIO.run {
                     try Self.sendBlocking(
                         .init(
                             socketPath: socketPath,

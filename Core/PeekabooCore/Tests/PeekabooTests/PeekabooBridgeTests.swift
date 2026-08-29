@@ -690,38 +690,44 @@ struct PeekabooBridgeTests {
     }
 
     @Test
-    func `element actions are advertised with automation capability`() async throws {
+    func `element actions are advertised with authenticated generation bound automation capability`() async throws {
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: StubServices(),
                 hostKind: .gui,
                 allowlistedTeams: [],
-                allowlistedBundles: [])
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in Self.inputPermissions })
         }
-
-        let identity = PeekabooBridgeClientIdentity(
-            bundleIdentifier: "dev.peeka.cli",
-            teamIdentifier: "TEAMID",
-            processIdentifier: getpid(),
-            hostname: Host.current().name)
-
-        let request = PeekabooBridgeRequest.handshake(
-            .init(
-                protocolVersion: PeekabooBridgeConstants.protocolVersion,
-                client: identity,
-                requestedHostKind: .gui))
-
-        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(request)
-        let responseData = await server.decodeAndHandle(requestData, peer: nil)
-        let response = try self.decode(responseData)
-
-        guard case let .handshake(handshake) = response else {
-            Issue.record("Expected handshake response, got \(response)")
-            return
-        }
+        let fixture = try await Self.startTrustedHost(server: server)
+        defer { Task { await fixture.host.stop() } }
+        let handshake = fixture.handshake
 
         #expect(handshake.supportedOperations.contains(.setValue))
         #expect(handshake.supportedOperations.contains(.performAction))
+        #expect(handshake.enabledOperations?.contains(.setValue) == true)
+        #expect(handshake.enabledOperations?.contains(.performAction) == true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.processGenerationBoundElementMutations) == true)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.setValueResultTargetBinding) == true)
+        #expect(handshake.operationAttestation != nil)
+        #expect(handshake.operationSessionAttestation != nil)
+
+        let receiptless = try await self.decode(server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.handshake(.init(
+                protocolVersion: PeekabooBridgeConstants.protocolVersion,
+                client: Self.remoteClientIdentity,
+                requestedHostKind: .gui))),
+            peer: nil))
+        guard case let .handshake(receiptlessHandshake) = receiptless else {
+            Issue.record("Expected receiptless handshake, got \(receiptless)")
+            return
+        }
+        #expect(!receiptlessHandshake.supportedOperations.contains(.setValue))
+        #expect(!receiptlessHandshake.supportedOperations.contains(.performAction))
+        #expect(receiptlessHandshake.operationSessionAttestation == nil)
+        await fixture.host.stop()
     }
 
     @Test
@@ -963,13 +969,22 @@ struct PeekabooBridgeTests {
     @Test
     func `automation targeted type forwards process-generation receipt`() async throws {
         let stub = await MainActor.run { StubServices() }
+        await MainActor.run {
+            stub.automationStub.uiAutomationOutcomeScript.append(
+                Self.eventTypingOutcome(characterCount: 5, mechanism: .processTargetedEvents),
+                for: .typeActions)
+        }
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: stub,
                 hostKind: .gui,
                 allowlistedTeams: [],
-                allowlistedBundles: [])
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in Self.inputPermissions },
+                processStartIdentityProvider: { _ in 1235 })
         }
+        let fixture = try await Self.startTrustedHost(server: server)
+        defer { Task { await fixture.host.stop() } }
         let identity = ApplicationProcessIdentity(processIdentifier: 9010, processStartIdentity: 1235)
         let request = PeekabooBridgeRequest.targetedTypeActions(.init(
             actions: [.text("hello")],
@@ -978,15 +993,22 @@ struct PeekabooBridgeTests {
             targetProcessIdentifier: identity.processIdentifier,
             expectedProcessIdentity: identity))
 
-        let response = try await self.decode(server.decodeAndHandle(
-            JSONEncoder.peekabooBridgeEncoder().encode(request),
-            peer: nil))
+        let response = try await fixture.client.send(request)
 
-        guard case .typeResult = response else {
+        guard case let .typeResult(result) = response else {
             Issue.record("Expected type result, got \(response)")
             return
         }
+        #expect(result.totalCharacters == 5)
+        #expect(result.keyPresses == 5)
+        #expect(result.specialKeyPresses == 0)
         #expect(await stub.automationStub.lastProcessTargetedTypeIdentity == identity)
+        try await Self.expectReceipt(
+            client: fixture.client,
+            handshake: fixture.handshake,
+            operation: .targetedTypeActions,
+            target: .process(identity))
+        await fixture.host.stop()
     }
 
     @Test
@@ -997,8 +1019,12 @@ struct PeekabooBridgeTests {
                 services: stub,
                 hostKind: .gui,
                 allowlistedTeams: [],
-                allowlistedBundles: [])
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in Self.inputPermissions },
+                processStartIdentityProvider: { _ in 1235 })
         }
+        let fixture = try await Self.startTrustedHost(server: server)
+        defer { Task { await fixture.host.stop() } }
         let request = PeekabooBridgeRequest.targetedTypeActions(.init(
             actions: [.text("hello")],
             cadence: .fixed(milliseconds: 0),
@@ -1006,16 +1032,20 @@ struct PeekabooBridgeTests {
             targetProcessIdentifier: 9010,
             expectedProcessIdentity: .init(processIdentifier: 9011, processStartIdentity: 1235)))
 
-        let response = try await self.decode(server.decodeAndHandle(
-            JSONEncoder.peekabooBridgeEncoder().encode(request),
-            peer: nil))
+        let reply = try await fixture.client.sendCarryingActionOutcome(request, throwsActionFailures: false)
+        let response = reply.response
 
         guard case let .error(error) = response else {
             Issue.record("Expected error, got \(response)")
             return
         }
         #expect(error.code == .invalidRequest)
+        #expect(error.actionOutcome?.state == .refused)
+        #expect(error.actionOutcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(error.actionOutcome?.retrySafety == .safe)
         #expect(await stub.automationStub.lastProcessTargetedTypeIdentity == nil)
+        #expect(await stub.automationStub.uiAutomationOutcomeScript.callCount(for: .typeActions) == 0)
+        await fixture.host.stop()
     }
 
     @Test
@@ -1268,6 +1298,62 @@ extension PeekabooBridgeTests {
     private static let legacyUnprojectedVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 22)
     private static let legacyProjectedVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 28)
 
+    private static var inputPermissions: PermissionsStatus {
+        PermissionsStatus(screenRecording: false, accessibility: true, postEvent: true)
+    }
+
+    private static func eventTypingOutcome(
+        characterCount: Int,
+        mechanism: DesktopActionOutcome.Delivery.Mechanism) -> DesktopActionOutcome
+    {
+        .dispatchedUnverified(
+            delivery: .init(mechanism: mechanism, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(characterCount))
+    }
+
+    private static func startTrustedHost(server: PeekabooBridgeServer) async throws
+        -> (host: PeekabooBridgeHost, client: PeekabooBridgeClient, handshake: PeekabooBridgeHandshakeResponse)
+    {
+        let socketPath = "/tmp/peekaboo-ui-contract-\(UUID().uuidString).sock"
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        do {
+            let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+            let handshake = try await client.handshake(client: Self.remoteClientIdentity)
+            return (host, client, handshake)
+        } catch {
+            await host.stop()
+            throw error
+        }
+    }
+
+    private static func expectReceipt(
+        client: PeekabooBridgeClient,
+        handshake: PeekabooBridgeHandshakeResponse,
+        operation: PeekabooBridgeOperation,
+        target: PeekabooBridgeOperationTargetReceipt) async throws
+    {
+        let bundle = try #require(await client.lastOperationReceiptBundle())
+        let listener = try #require(handshake.operationAttestation)
+        let session = try #require(handshake.operationSessionAttestation)
+        try bundle.validate(trustAnchor: .listenerAttestation(listener))
+        let receipt = bundle.receipt.payload
+        #expect(receipt.operation == operation)
+        #expect(receipt.target == target)
+        #expect(receipt.sessionID == session.sessionID)
+        #expect(receipt.clientInstanceID == session.clientInstanceID)
+        #expect(receipt.client == session.client)
+        #expect(receipt.requestID == PeekabooBridgeOperationReceiptCoding.deterministicRequestID(
+            sessionID: session.sessionID,
+            sequence: receipt.sessionSequence))
+        #expect(receipt.selectedLeafEvidence == nil)
+    }
+
     private static func negotiatedTrustedClient(
         socketPath: String,
         protocolVersion: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants.protocolVersion) async throws
@@ -1284,12 +1370,23 @@ extension PeekabooBridgeTests {
         let targetProcessGeneration = try #require(
             SystemIdentityResolver.processStartIdentity(targetProcessIdentifier))
         let socketPath = "/tmp/peekaboo-focused-element-\(UUID().uuidString).sock"
+        let targetBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let services = await MainActor.run { StubServices() }
+        await MainActor.run {
+            services.automationStub.uiAutomationOutcomeScript.append(
+                Self.eventTypingOutcome(characterCount: 6, mechanism: .windowTargetedEvents),
+                for: .typeActions)
+        }
         let server = await MainActor.run {
             PeekabooBridgeServer(
-                services: StubServices(),
+                services: services,
                 hostKind: .gui,
                 allowlistedTeams: [],
-                allowlistedBundles: [])
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in Self.inputPermissions },
+                windowOwnerProcessIdentifierProvider: { _ in targetProcessIdentifier },
+                windowBoundsProvider: { _ in targetBounds },
+                processStartIdentityProvider: { _ in targetProcessGeneration })
         }
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
@@ -1299,37 +1396,51 @@ extension PeekabooBridgeTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         let handshake = try await client.handshake(client: PeekabooBridgeClientIdentity(
             bundleIdentifier: "dev.peeka.cli",
             teamIdentifier: "TEAMID",
             processIdentifier: getpid()))
         #expect(handshake.supportedOperations.contains(.exactWindowTargetedTypeActions))
         #expect(handshake.supportedOperations.contains(.exactWindowTargetedHotkey))
+        let supportsComposite = handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.compositeTypeDelivery) == true
+        #expect(supportsComposite)
         let remote = await MainActor.run {
             RemoteUIAutomationService(
                 client: client,
-                supportsExactWindowTargetedKeyboard: true)
+                supportsExactWindowTargetedKeyboard: true,
+                supportsExactWindowCompositeTypeDelivery: supportsComposite)
         }
 
         let focused = await remote.getFocusedElement(targetProcessIdentifier: targetProcessIdentifier)
         let focusedIdentity = try #require(focused.flatMap(FocusedElementIdentity.init))
-        let targetBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
-        _ = try await remote.typeActions(
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 999_999,
+            ownerProcessIdentifier: targetProcessIdentifier,
+            ownerProcessStartIdentity: targetProcessGeneration,
+            capturedBounds: targetBounds)
+        let result = try await remote.typeActions(
             [.text("atomic")],
             cadence: .fixed(milliseconds: 0),
             snapshotId: "snapshot",
             target: ExactWindowKeyboardTarget(
-                windowIdentity: WindowMutationIdentity(
-                    windowID: 999_999,
-                    ownerProcessIdentifier: targetProcessIdentifier,
-                    ownerProcessStartIdentity: targetProcessGeneration,
-                    capturedBounds: targetBounds),
+                windowIdentity: windowIdentity,
                 windowBounds: targetBounds,
                 focusedElement: focusedIdentity))
 
         #expect(focused?.processId == Int(targetProcessIdentifier))
         #expect(focused?.applicationName == "Editor")
+        #expect(result.totalCharacters == 6)
+        #expect(result.keyPresses == 6)
+        #expect(result.specialKeyPresses == 0)
+        try await Self.expectReceipt(
+            client: client,
+            handshake: handshake,
+            operation: .exactWindowTargetedTypeActions,
+            target: .window(windowIdentity))
+        #expect(await client.lastOperationReceipt()?.payload.focusedElement == focusedIdentity)
+        await host.stop()
     }
 
     @Test
@@ -1343,6 +1454,13 @@ extension PeekabooBridgeTests {
         await MainActor.run {
             services.automationStub.exactKeyboardDelayNanoseconds = 150_000_000
             services.automationStub.recordsExactKeyboardEvents = true
+            services.automationStub.uiAutomationOutcomeScript.append(
+                Self.eventTypingOutcome(characterCount: 6, mechanism: .windowTargetedEvents),
+                for: .typeActions)
+            services.automationStub.uiAutomationOutcomeScript.append(.dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one), for: .click)
         }
         let server = await MainActor.run {
             PeekabooBridgeServer(
@@ -1351,6 +1469,7 @@ extension PeekabooBridgeTests {
                 allowlistedTeams: [],
                 allowlistedBundles: [],
                 postEventAccessEvaluator: { true },
+                permissionStatusEvaluator: { _ in Self.inputPermissions },
                 windowOwnerProcessIdentifierProvider: { _ in targetProcessIdentifier },
                 windowBoundsProvider: { _ in targetBounds },
                 processStartIdentityProvider: { _ in targetProcessGeneration })
@@ -1365,8 +1484,8 @@ extension PeekabooBridgeTests {
 
         let typeClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
         let clickClient = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
-        _ = try await typeClient.handshake(client: Self.remoteClientIdentity)
-        _ = try await clickClient.handshake(client: Self.remoteClientIdentity)
+        let typeHandshake = try await typeClient.handshake(client: Self.remoteClientIdentity)
+        let clickHandshake = try await clickClient.handshake(client: Self.remoteClientIdentity)
         let typeTask = Task {
             try await typeClient.typeActions(
                 [.text("atomic")],
@@ -1402,10 +1521,32 @@ extension PeekabooBridgeTests {
                 expectedWindowBounds: targetBounds)
         }
 
-        _ = try await typeTask.value
+        let typeResult = try await typeTask.value
         try await clickTask.value
+        #expect(typeResult.totalCharacters == 6)
+        #expect(typeResult.keyPresses == 6)
         let events = await MainActor.run { services.automationStub.exactKeyboardEvents }
         #expect(events == ["type-start", "type-end", "retarget"])
+        for (client, handshake, operation, windowID) in [
+            (typeClient, typeHandshake, PeekabooBridgeOperation.exactWindowTargetedTypeActions, 999_999),
+            (clickClient, clickHandshake, PeekabooBridgeOperation.exactWindowTargetedClick, 888_888),
+        ] {
+            try await Self.expectReceipt(
+                client: client,
+                handshake: handshake,
+                operation: operation,
+                target: .window(.init(
+                    windowID: windowID,
+                    ownerProcessIdentifier: targetProcessIdentifier,
+                    ownerProcessStartIdentity: targetProcessGeneration,
+                    capturedBounds: targetBounds)))
+        }
+        let typeReceipt = try #require(await typeClient.lastOperationReceipt())
+        let clickReceipt = try #require(await clickClient.lastOperationReceipt())
+        #expect(typeReceipt.payload.requestID != clickReceipt.payload.requestID)
+        #expect(typeReceipt.payload.sessionID != clickReceipt.payload.sessionID)
+        #expect(typeReceipt.payload.clientInstanceID != clickReceipt.payload.clientInstanceID)
+        await host.stop()
     }
 
     @Test
@@ -1661,6 +1802,13 @@ extension PeekabooBridgeTests {
             processIdentifier: 4242,
             processStartIdentity: 1)
 
+        try await Self.expectLegacyTextRefusals(
+            client: client,
+            processIdentity: expectedProcessIdentity,
+            windowIdentity: expectedWindowIdentity,
+            windowBounds: expectedWindowBounds)
+        #expect(await stub.automationStub.uiAutomationOutcomeScript.callCount(for: .typeActions) == 0)
+
         do {
             try await remote.click(
                 target: .coordinates(CGPoint(x: 10, y: 20)),
@@ -1677,7 +1825,7 @@ extension PeekabooBridgeTests {
 
         do {
             _ = try await remote.typeActions(
-                [.text("targeted")],
+                [.key(.return), .key(.tab)],
                 cadence: .fixed(milliseconds: 0),
                 snapshotId: "snapshot",
                 expectedProcessIdentity: expectedProcessIdentity)
@@ -1690,7 +1838,7 @@ extension PeekabooBridgeTests {
 
         do {
             _ = try await remote.typeActions(
-                [.text("exact")],
+                [.key(.return), .key(.tab), .key(.escape)],
                 cadence: .fixed(milliseconds: 0),
                 snapshotId: "snapshot",
                 expectedWindowIdentity: expectedWindowIdentity,
@@ -1726,6 +1874,9 @@ extension PeekabooBridgeTests {
         } catch {
             Issue.record("Expected exact hotkey indeterminate error, got \(error)")
         }
+        #expect(await stub.automationStub.uiAutomationOutcomeScript.callCount(for: .typeActions) == 2)
+        #expect(await client.lastOperationReceipt() == nil)
+        await host.stop()
     }
 
     private static func operationValidLegacyIndeterminateFailure(
@@ -1752,6 +1903,39 @@ extension PeekabooBridgeTests {
         expected: DesktopActionFailure)
     {
         #expect(failure == expected.routed(to: .bridge))
+    }
+
+    private static func expectLegacyTextRefusals(
+        client: PeekabooBridgeClient,
+        processIdentity: ApplicationProcessIdentity,
+        windowIdentity: WindowMutationIdentity,
+        windowBounds: CGRect) async throws
+    {
+        // Protocol 1.28 can still deliver event-only keys, but cannot attest AX-capable typing.
+        let textRequests: [PeekabooBridgeRequest] = [
+            .targetedTypeActions(.init(
+                actions: [.text("targeted")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: "snapshot",
+                targetProcessIdentifier: processIdentity.processIdentifier,
+                expectedProcessIdentity: processIdentity)),
+            .exactWindowTargetedTypeActions(.init(
+                actions: [.text("exact")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: "snapshot",
+                expectedWindowIdentity: windowIdentity,
+                expectedWindowBounds: windowBounds,
+                expectedFocusedElement: nil)),
+        ]
+        for request in textRequests {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await client.send(request)
+            }
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.outcome.retrySafety == .safe)
+            #expect(failure?.outcome.refusalReason == .runtimeIncompatible)
+        }
     }
 
     @Test
@@ -1820,7 +2004,7 @@ extension PeekabooBridgeTests {
         let call = await MainActor.run { services.automationStub.lastSetValue }
         #expect(call?.target == "T1")
         #expect(call?.value == .string("hello"))
-        #expect(call?.snapshotId == "S1")
+        #expect(call?.snapshotId == SnapshotReferenceFixtures.first.rawValue)
     }
 
     @Test
@@ -1868,11 +2052,11 @@ extension PeekabooBridgeTests {
         let call = await MainActor.run { services.automationStub.lastPerformAction }
         #expect(call?.target == "B1")
         #expect(call?.actionName == "AXPress")
-        #expect(call?.snapshotId == "S1")
+        #expect(call?.snapshotId == SnapshotReferenceFixtures.first.rawValue)
     }
 
     @Test
-    func `remote automation preserves snapshot failures conservatively`() async throws {
+    func `legacy snapshot click failures stay indeterminate and element actions refuse before dispatch`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-snapshot-actions-\(UUID().uuidString).sock"
         let services = await MainActor.run { StubServices() }
         let server = await MainActor.run {
@@ -1927,13 +2111,13 @@ extension PeekabooBridgeTests {
                 target: "T1",
                 value: .string("hello"),
                 snapshotId: SnapshotReferenceFixtures.first.rawValue)
-            Issue.record("Expected missing snapshot error")
+            Issue.record("Expected legacy set-value refusal before snapshot lookup")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .refused)
             #expect(failure.outcome.dispatchState == .none)
             #expect(failure.outcome.retrySafety == .safe)
             #expect(failure.outcome.refusalReason == .runtimeIncompatible)
-            #expect(failure.message.contains("verifiable set-value result"))
+            #expect(failure.message.contains("setValue requires an attested exact-target result"))
             #expect(failure.causeDescription == nil)
         }
 
@@ -1945,13 +2129,20 @@ extension PeekabooBridgeTests {
                 target: "B404",
                 actionName: "AXPress",
                 snapshotId: SnapshotReferenceFixtures.first.rawValue)
-            Issue.record("Expected missing element error")
+            Issue.record("Expected legacy perform-action refusal before element lookup")
         } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .indeterminate)
-            #expect(failure.outcome.retrySafety == .unsafe)
-            #expect(failure.message.contains("B404"))
-            #expect(failure.causeDescription?.contains("elementNotFound") == true)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.message.contains("performAction requires an attested exact-target result"))
+            #expect(failure.causeDescription == nil)
         }
+        #expect(await services.automationStub.uiAutomationOutcomeScript.callCount(for: .setValue) == 0)
+        #expect(await services.automationStub.uiAutomationOutcomeScript.callCount(for: .performAction) == 0)
+        #expect(await services.automationStub.lastSetValue == nil)
+        #expect(await services.automationStub.lastPerformAction == nil)
+        await host.stop()
     }
 
     @Test

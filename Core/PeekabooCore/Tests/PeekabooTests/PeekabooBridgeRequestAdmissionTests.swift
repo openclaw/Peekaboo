@@ -48,31 +48,24 @@ struct PeekabooBridgeRequestAdmissionTests {
             var partialReaders: [Int32] = []
             defer { partialReaders.forEach { close($0) } }
             for _ in 0..<4 {
-                try partialReaders.append(Self.connect(socketPath))
+                try await partialReaders.append(Self.connect(socketPath))
             }
             #expect(try await Self.waitUntil { await host.activeBodyReadCountForTesting() == 4 })
             #expect(await host.activeRequestCountForTesting() == 0)
             #expect(decodes.isEmpty)
 
-            let waitingFD = try Self.connect(socketPath)
+            let waitingFD = try await Self.connect(socketPath)
             defer { close(waitingFD) }
             let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
                 PeekabooBridgeRequest.permissionsStatus)
-            try PeekabooBridgeSocketIO.writeAll(
-                fd: waitingFD,
-                data: requestData,
-                deadline: Date().addingTimeInterval(1))
-            #expect(shutdown(waitingFD, SHUT_WR) == 0)
+            try await Self.writeRequest(requestData, to: waitingFD)
             try await Task.sleep(for: .milliseconds(50))
             #expect(decodes.isEmpty)
             #expect(await host.activeRequestCountForTesting() == 0)
             #expect(await host.activeBodyReadCountForTesting() == 4)
 
             close(partialReaders.removeFirst())
-            let responseData = try PeekabooBridgeSocketIO.readAll(
-                fd: waitingFD,
-                maxBytes: 1024 * 1024,
-                deadline: Date().addingTimeInterval(1))
+            let responseData = try await Self.readResponse(from: waitingFD)
             guard case .permissionsStatus = try JSONDecoder.peekabooBridgeDecoder().decode(
                 PeekabooBridgeResponse.self,
                 from: responseData)
@@ -91,6 +84,39 @@ struct PeekabooBridgeRequestAdmissionTests {
             throw error
         }
         await host.stop()
+    }
+
+    @Test
+    func `stopping a host drains occupied body readers before releasing connections`() async throws {
+        let root = URL(fileURLWithPath: "/tmp/pbr-stop-\(UUID().uuidString)", isDirectory: true)
+        let socketPath = root.appendingPathComponent("bridge.sock").path
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(services: StubServices(), allowlistedTeams: [], allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2,
+            maximumConcurrentRequests: 1)
+        try await host.startChecked()
+        var clients: [Int32] = []
+        defer { clients.forEach { close($0) } }
+        do {
+            for _ in 0..<4 {
+                try await clients.append(Self.connect(socketPath))
+            }
+            try #require(try await Self.waitUntil { await host.activeBodyReadCountForTesting() == 4 })
+            #expect(await host.activeRequestCountForTesting() == 0)
+            await host.stop()
+            #expect(await host.activeBodyReadCountForTesting() == 0)
+            #expect(await host.activeConnectionCountForTesting() == 0)
+            #expect(await host.activeRequestCountForTesting() == 0)
+        } catch {
+            await host.stop()
+            throw error
+        }
     }
 
     @Test
@@ -115,7 +141,7 @@ struct PeekabooBridgeRequestAdmissionTests {
         var clients: [Int32] = []
         defer { clients.forEach { close($0) } }
         for _ in 0..<24 {
-            try clients.append(Self.connect(socketPath))
+            try await clients.append(Self.connect(socketPath))
         }
         #expect(try await Self.waitUntil { await host.activeConnectionCountForTesting() == 8 })
         let capacity = await host.acceptedConnectionCapacityForTesting()
@@ -436,15 +462,11 @@ struct PeekabooBridgeRequestAdmissionTests {
         try await host.startChecked()
         await host.stopAcceptingRequestsForTesting()
 
-        let fd = try Self.connect(socketPath)
+        let fd = try await Self.connect(socketPath)
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
             PeekabooBridgeRequest.permissionsStatus)
-        _ = requestData.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-        _ = shutdown(fd, SHUT_WR)
-        let responseData = try PeekabooBridgeSocketIO.readAll(
-            fd: fd,
-            maxBytes: 1024 * 1024,
-            deadline: Date().addingTimeInterval(1))
+        try await Self.writeRequest(requestData, to: fd)
+        let responseData = try await Self.readResponse(from: fd)
         close(fd)
 
         guard case let .error(envelope) = try JSONDecoder.peekabooBridgeDecoder().decode(
@@ -545,7 +567,28 @@ struct PeekabooBridgeRequestAdmissionTests {
         }
     }
 
-    private static func connect(_ socketPath: String) throws -> Int32 {
+    private static func writeRequest(_ data: Data, to fd: Int32) async throws {
+        let deadline = Date().addingTimeInterval(1)
+        try await PeekabooBridgeBlockingIO.run {
+            try PeekabooBridgeSocketIO.writeAll(fd: fd, data: data, deadline: deadline)
+        }
+        #expect(shutdown(fd, SHUT_WR) == 0)
+    }
+
+    private static func readResponse(from fd: Int32) async throws -> Data {
+        let deadline = Date().addingTimeInterval(1)
+        return try await PeekabooBridgeBlockingIO.run {
+            try PeekabooBridgeSocketIO.readAll(fd: fd, maxBytes: 1024 * 1024, deadline: deadline)
+        }
+    }
+
+    private static func connect(_ socketPath: String) async throws -> Int32 {
+        try await PeekabooBridgeBlockingIO.run {
+            try self.connectBlocking(socketPath)
+        }
+    }
+
+    private static func connectBlocking(_ socketPath: String) throws -> Int32 {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         do {

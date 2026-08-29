@@ -13,7 +13,7 @@ extension PeekabooBridgeHost {
     {
         do {
             guard let liveIdentity = try? context.authentication.liveIdentity(fd) else {
-                try self.writeUnauthorizedResponse(fd: fd, context: context)
+                try await self.writeUnauthorizedResponse(fd: fd, context: context)
                 return
             }
             let hasProvisionalSession = context.operationReceiptAuthority?.hasProvisionalSession(
@@ -22,7 +22,7 @@ extension PeekabooBridgeHost {
                 ? nil
                 : context.authentication.coldPeer(liveIdentity, context.allowedTeamIDs)
             guard hasProvisionalSession || initialColdPeer != nil else {
-                try self.writeUnauthorizedResponse(fd: fd, context: context)
+                try await self.writeUnauthorizedResponse(fd: fd, context: context)
                 return
             }
             guard await self.waitForCapacityPermit(
@@ -30,7 +30,7 @@ extension PeekabooBridgeHost {
                 limiter: context.bodyReadLimiter,
                 timeoutSec: context.requestTimeoutSec)
             else {
-                try self.writePreDecodeBusyResponse(fd: fd, context: context)
+                try await self.writePreDecodeBusyResponse(fd: fd, context: context)
                 return
             }
             var holdsBodyReadPermit = true
@@ -40,16 +40,19 @@ extension PeekabooBridgeHost {
                 }
             }
 
-            let requestData = try PeekabooBridgeSocketIO.readAll(
-                fd: fd,
-                maxBytes: context.maxMessageBytes,
-                deadline: Date().addingTimeInterval(context.requestTimeoutSec))
+            let readDeadline = Date().addingTimeInterval(context.requestTimeoutSec)
+            let requestData = try await PeekabooBridgeBlockingIO.run {
+                try PeekabooBridgeSocketIO.readAll(
+                    fd: fd,
+                    maxBytes: context.maxMessageBytes,
+                    deadline: readDeadline)
+            }
             let request: PeekabooBridgeRequest
             do {
                 request = try await context.server.decodeRequest(requestData)
             } catch {
                 let responseData = await context.server.encodeDecodingFailure(error)
-                try PeekabooBridgeSocketIO.writeAll(
+                try await self.writeResponse(
                     fd: fd,
                     data: responseData,
                     deadline: Date().addingTimeInterval(context.requestTimeoutSec))
@@ -78,7 +81,7 @@ extension PeekabooBridgeHost {
                 authorizationPin = nil
             }
             guard let peer else {
-                try self.writeUnauthorizedResponse(fd: fd, context: context)
+                try await self.writeUnauthorizedResponse(fd: fd, context: context)
                 return
             }
 
@@ -94,7 +97,7 @@ extension PeekabooBridgeHost {
                     limiter: context.admissionRefusalLimiter,
                     timeoutSec: context.requestTimeoutSec)
                 else {
-                    try self.writeRefusalOverflowResponse(fd: fd, context: context)
+                    try await self.writeRefusalOverflowResponse(fd: fd, context: context)
                     return
                 }
                 defer { context.admissionRefusalLimiter.finish() }
@@ -103,7 +106,7 @@ extension PeekabooBridgeHost {
                 {
                     await context.server.encodeAdmissionRefusal(request, peer: peer)
                 }
-                try PeekabooBridgeSocketIO.writeAll(
+                try await self.writeResponse(
                     fd: fd,
                     data: responseData,
                     deadline: Date().addingTimeInterval(context.requestTimeoutSec))
@@ -132,12 +135,18 @@ extension PeekabooBridgeHost {
                 return
             }
 
-            try PeekabooBridgeSocketIO.writeAll(
+            try await self.writeResponse(
                 fd: fd,
                 data: responseData,
                 deadline: Date().addingTimeInterval(context.requestTimeoutSec))
         } catch {
             self.logger.error("bridge socket request failed: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
+    private nonisolated static func writeResponse(fd: Int32, data: Data, deadline: Date) async throws {
+        try await PeekabooBridgeBlockingIO.run {
+            try PeekabooBridgeSocketIO.writeAll(fd: fd, data: data, deadline: deadline)
         }
     }
 
@@ -165,14 +174,14 @@ extension PeekabooBridgeHost {
 
     private nonisolated static func writePreDecodeBusyResponse(
         fd: Int32,
-        context: PeekabooBridgeClientContext) throws
+        context: PeekabooBridgeClientContext) async throws
     {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .serverBusy,
             message: "Bridge request body admission is temporarily saturated",
             details: "No request body was decoded or dispatched.",
             operationMayHaveCompleted: false)
-        try PeekabooBridgeSocketIO.writeAll(
+        try await self.writeResponse(
             fd: fd,
             data: PeekabooBridgeResponse.encodeError(envelope),
             deadline: Date().addingTimeInterval(context.requestTimeoutSec))
@@ -180,14 +189,14 @@ extension PeekabooBridgeHost {
 
     private nonisolated static func writeRefusalOverflowResponse(
         fd: Int32,
-        context: PeekabooBridgeClientContext) throws
+        context: PeekabooBridgeClientContext) async throws
     {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .serverBusy,
             message: "Bridge refusal-signing capacity is temporarily saturated",
             details: "The decoded request was not claimed or dispatched.",
             operationMayHaveCompleted: false)
-        try PeekabooBridgeSocketIO.writeAll(
+        try await self.writeResponse(
             fd: fd,
             data: PeekabooBridgeResponse.encodeError(envelope),
             deadline: Date().addingTimeInterval(context.requestTimeoutSec))
@@ -195,7 +204,7 @@ extension PeekabooBridgeHost {
 
     private nonisolated static func writeUnauthorizedResponse(
         fd: Int32,
-        context: PeekabooBridgeClientContext) throws
+        context: PeekabooBridgeClientContext) async throws
     {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .unauthorizedClient,
@@ -206,7 +215,7 @@ extension PeekabooBridgeHost {
                 .joined(separator: ", "))) or launch the host with \
             PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1 for local development.
             """)
-        try PeekabooBridgeSocketIO.writeAll(
+        try await self.writeResponse(
             fd: fd,
             data: PeekabooBridgeResponse.encodeError(envelope),
             deadline: Date().addingTimeInterval(context.requestTimeoutSec))

@@ -61,6 +61,130 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
     }
 
     func testExactValueReadHonorsProvidedRemainingBudget() async throws {
+        let confirmation = try self.exactValueConfirmation()
+        let runnerCalls = LockedCounter()
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(),
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { _ in
+                XCTFail("An exhausted observation must not fall back to a value read")
+                return .failure(.processMismatch)
+            },
+            exactFocusedValueRunner: { processIdentifier, generation, timeout, _ in
+                runnerCalls.increment()
+                XCTAssertEqual(processIdentifier, confirmation.focusedElement.processIdentifier)
+                XCTAssertEqual(generation, confirmation.processStartIdentity)
+                XCTAssertEqual(timeout, .milliseconds(40))
+                return nil
+            },
+            processStartIdentityProvider: { _ in 33 })
+
+        let value = await service.exactFocusedValue(for: confirmation, timeout: .milliseconds(40))
+        XCTAssertNil(value)
+        XCTAssertEqual(runnerCalls.value, 1)
+
+        for exhaustedBudget in [Duration.zero, .milliseconds(-1)] {
+            let exhaustedValue = await service.exactFocusedValue(for: confirmation, timeout: exhaustedBudget)
+            XCTAssertNil(exhaustedValue)
+        }
+        XCTAssertEqual(runnerCalls.value, 1, "Exhausted budgets must not enqueue new observations")
+    }
+
+    func testCancelledExactValueReadDoesNotAwaitHeldReader() async throws {
+        let confirmation = try self.exactValueConfirmation()
+        let entered = expectation(description: "fake value reader entered its owned gate")
+        let completed = expectation(description: "caller completed while value reader was held")
+        let drained = expectation(description: "released value reader finished cleanup")
+        let callerDrained = expectation(description: "value caller finished cleanup")
+        let released = LockedBoolean()
+        let release = DispatchSemaphore(value: 0)
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(),
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { _ in
+                entered.fulfill()
+                release.wait()
+                defer { drained.fulfill() }
+                return .success(ExactWindowFocusSnapshot(
+                    processIdentifier: confirmation.focusedElement.processIdentifier,
+                    windowID: 42,
+                    frame: confirmation.focusedElement.frame,
+                    role: confirmation.focusedElement.role,
+                    identifier: confirmation.focusedElement.identifier,
+                    value: "safe"))
+            },
+            processStartIdentityProvider: { _ in 33 })
+        let observation = Task { @MainActor in
+            defer {
+                completed.fulfill()
+                callerDrained.fulfill()
+            }
+            // Cancellation owns completion here; the observation deadline is deliberately not the watchdog.
+            let value = await service.exactFocusedValue(for: confirmation, timeout: .seconds(60))
+            XCTAssertNil(value)
+            XCTAssertFalse(released.value, "Caller must not join the noncooperative value reader")
+        }
+        defer {
+            observation.cancel()
+            release.signal()
+        }
+
+        // These bounds diagnose stuck fixtures; no elapsed-time assertion defines the remaining budget.
+        await fulfillment(of: [entered], timeout: 5)
+        observation.cancel()
+        await fulfillment(of: [completed], timeout: 5)
+        released.setTrue()
+        release.signal()
+        await fulfillment(of: [drained, callerDrained], timeout: 5)
+    }
+
+    func testExactValueReadTimeoutDoesNotAwaitHeldReader() async throws {
+        let confirmation = try self.exactValueConfirmation()
+        let completed = expectation(description: "value timeout completed before releasing fake work")
+        let released = LockedBoolean()
+        let release = DispatchSemaphore(value: 0)
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(),
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { _ in
+                release.wait()
+                return .failure(.processMismatch)
+            },
+            processStartIdentityProvider: { _ in 33 })
+        let observation = Task { @MainActor in
+            defer { completed.fulfill() }
+            let value = await service.exactFocusedValue(for: confirmation, timeout: .milliseconds(40))
+            XCTAssertNil(value)
+            XCTAssertFalse(released.value, "Timeout must not join held work")
+        }
+        defer {
+            observation.cancel()
+            release.signal()
+        }
+
+        await fulfillment(of: [completed], timeout: 5)
+        released.setTrue()
+        release.signal()
+
+        // A same-generation lane marker drains even if the timeout won before the fake reader could start.
+        let cleanup = TypeService(
+            snapshotManager: InMemorySnapshotManager(),
+            randomSource: SystemTypingCadenceRandomSource(),
+            exactFocusedElementValueReader: { _ in
+                .success(ExactWindowFocusSnapshot(
+                    processIdentifier: confirmation.focusedElement.processIdentifier,
+                    windowID: 42,
+                    frame: confirmation.focusedElement.frame,
+                    role: confirmation.focusedElement.role,
+                    identifier: confirmation.focusedElement.identifier,
+                    value: "drained"))
+            },
+            processStartIdentityProvider: { _ in 33 })
+        let drained = await cleanup.exactFocusedValue(for: confirmation, timeout: .seconds(5))
+        XCTAssertEqual(drained, "drained")
+    }
+
+    private func exactValueConfirmation() throws -> ExactLiteralTypingEffectConfirmation {
         let processIdentifier: pid_t = 930_011
         let bounds = CGRect(x: 0, y: 0, width: 500, height: 400)
         let focusedElement = FocusedElementIdentity(
@@ -77,35 +201,9 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
                 capturedBounds: bounds),
             bounds: bounds,
             focusedElement: focusedElement)
-        let confirmation = try XCTUnwrap(ExactLiteralTypingEffectConfirmation.plan(
+        return try XCTUnwrap(ExactLiteralTypingEffectConfirmation.plan(
             actions: [.clear, .text("safe")],
             target: target))
-        let started = LockedBoolean()
-        let release = DispatchSemaphore(value: 0)
-        let service = TypeService(
-            randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { _ in
-                started.setTrue()
-                release.wait()
-                return .success(ExactWindowFocusSnapshot(
-                    processIdentifier: processIdentifier,
-                    windowID: 42,
-                    frame: focusedElement.frame,
-                    role: focusedElement.role,
-                    identifier: focusedElement.identifier,
-                    value: "safe"))
-            },
-            processStartIdentityProvider: { _ in 33 })
-        defer { release.signal() }
-        let start = ContinuousClock.now
-
-        let value = await service.exactFocusedValue(
-            for: confirmation,
-            timeout: .milliseconds(40))
-
-        XCTAssertNil(value)
-        XCTAssertTrue(started.value)
-        XCTAssertLessThan(Self.seconds(start.duration(to: .now)), 0.15)
     }
 
     func testSamePIDAndWindowIDReuseWithSameBoundsDispatchesNoKeyboardEvents() async throws {

@@ -96,7 +96,8 @@ workflow context. PR runs independently check out only the event's PR head; a ma
 This read-only, secretless macOS lane runs unfiltered suites for PeekabooCore, AutomationKit, Protocols, Visualizer,
 UICore, Inspector, Playground, and all five pinned submodules. It keeps per-package logs, exit status, built-in skips,
 submodule revisions, and actual toolchain metadata. A separate `full-safe` matrix job uses Node 24, the exact repository
-pnpm pin, and a frozen dependency install, then invokes the unchanged `pnpm run test:safe` command once. It covers the
+pnpm pin, and a frozen dependency install. It also installs and records ripgrep, which the shell contracts require,
+then invokes the unchanged `pnpm run test:safe` command once. It covers the
 artifact/script contracts, synthetic background-certification checks, public SwiftPM consumer build, Foundation suite,
 and full safe CLI configuration with the repository's existing compile exclusions and ambient-state opt-out. It retains
 the command definition, combined stage/test output, command and log-writer exits, failures/skips index, and actual

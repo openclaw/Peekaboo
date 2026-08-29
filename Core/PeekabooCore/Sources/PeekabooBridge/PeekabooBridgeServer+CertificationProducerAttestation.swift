@@ -12,10 +12,10 @@ extension PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Certification producer attestation requires signed Bridge operation receipts")
         }
-        return try await Task.detached(priority: .userInitiated) {
+        return try await PeekabooBridgeBlockingIO.run {
             try PeekabooBridgeCertificationProducerTransport.perform(
                 request: request,
                 listenerAttestation: listenerAttestation)
-        }.value
+        }
     }
 }

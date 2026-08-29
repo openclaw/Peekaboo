@@ -734,7 +734,7 @@ enum PeekabooBridgeOperationResultSemantics {
                 return
             case let (.certificationProducerAttestation(request), .certificationProducerAttestation(result)):
                 try result.validateEnvelope(request: request)
-            case (.typeActions, .error), (.setValue, .error):
+            case (.typeActions, .error), (.setValue, .error), (.performAction, .error):
                 // A canonical failure has no success payload to bind. Its outcome, target receipt,
                 // and dispatch count are validated by the failure and receipt contracts instead.
                 return

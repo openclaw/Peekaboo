@@ -177,6 +177,11 @@ test('full safe lane shares source gates and runs only the complete pinned comma
   const safe = step('Run full repository safe suite');
   const install = step('Record safe-suite runtime and frozen dependency install');
   const pnpm = step('Set up repository-pinned pnpm');
+  const tools = step('Install safe-suite system tools');
+  assert.match(tools, /if: matrix.group == 'full-safe'\n        timeout-minutes: 10/);
+  assert.match(tools, /HOMEBREW_NO_AUTO_UPDATE: '1'/);
+  assert.match(script('Install safe-suite system tools'), /^brew install ripgrep 2>&1 \| tee /m);
+  assert.match(script('Install safe-suite system tools'), /^rg --version \| tee /m);
   assert.match(safe, /if: matrix.group == 'full-safe'\n        id: safe\n        timeout-minutes: \$\{\{ matrix.test_minutes }}/);
   assert.match(install, /if: matrix.group == 'full-safe'\n        id: safe-install\n        timeout-minutes: 10/);
   assert.match(pnpm, /if: matrix.group == 'full-safe'\n        timeout-minutes: 5\n        uses: pnpm\/action-setup@v6\.0\.9/);
@@ -194,13 +199,52 @@ test('full safe lane shares source gates and runs only the complete pinned comma
   }
   assert.match(step('Run complete package suites serially'), /if: matrix.group != 'full-safe'/);
   const ordered = ['Validate exact source and hosted environment', 'Verify checkout and pinned submodules',
-    'Select installed Xcode 26.x and record actual toolchain', 'Set up repository-pinned pnpm',
+    'Select installed Xcode 26.x and record actual toolchain', 'Install safe-suite system tools',
+    'Set up repository-pinned pnpm',
     'Record safe-suite runtime and frozen dependency install', 'Run full repository safe suite'];
   assert.deepEqual(ordered.map((name) => steps.indexOf(step(name))),
     ordered.map((name) => steps.indexOf(step(name))).sort((a, b) => a - b));
   assert.match(step('Summarize full safe suite and verify canonical workspace lock'),
     /if: always\(\) && steps.source.outcome == 'success' && matrix.group == 'full-safe'/);
   assert.match(step('Retain per-package evidence'), /if: always\(\) && steps.source.outcome == 'success'/);
+});
+
+test('safe system tools are installed and recorded before test execution', (t) => {
+  const root = fixture(t);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'brew'), `#!/bin/bash
+printf '%s\\n' "$*" >> "$FIXTURE_CALLS"
+[[ "$*" == 'install ripgrep' ]] || exit 99
+echo 'fixture system tool install'
+exit "$FIXTURE_INSTALL_EXIT"
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'rg'), `#!/bin/bash
+printf 'rg %s\\n' "$*" >> "$FIXTURE_CALLS"
+[[ "$*" == '--version' ]] || exit 99
+echo 'ripgrep fixture version'
+exit "$FIXTURE_VERSION_EXIT"
+`, { mode: 0o755 });
+  for (const [installExit, versionExit] of [[0, 0], [17, 0], [0, 29]]) {
+    const results = join(root, `tools-${installExit}-${versionExit}`);
+    const calls = results + '-calls';
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c',
+      script('Install safe-suite system tools')], {
+      cwd: root, env: { PATH: `${bin}:/usr/bin:/bin`, VALIDATION_RESULTS: results,
+        FIXTURE_CALLS: calls, FIXTURE_INSTALL_EXIT: String(installExit), FIXTURE_VERSION_EXIT: String(versionExit) },
+      encoding: 'utf8', timeout: 30000,
+    });
+    assert.equal(result.error?.code ?? null, null, 'Fixture process launch must complete');
+    assert.equal(result.status, installExit || versionExit, result.stderr);
+    assert.equal(readFileSync(calls, 'utf8'), installExit ? 'install ripgrep\n' : 'install ripgrep\nrg --version\n');
+    assert.equal(readFileSync(join(results, 'full-safe/system-tools-install.log'), 'utf8'),
+      'fixture system tool install\n');
+    if (installExit === 0) {
+      assert.equal(readFileSync(join(results, 'full-safe/ripgrep-version.txt'), 'utf8'), 'ripgrep fixture version\n');
+    } else {
+      assert.equal(existsSync(join(results, 'full-safe/ripgrep-version.txt')), false);
+    }
+  }
 });
 
 test('full safe command preserves exact failures, all emitted logs and incomplete evidence', (t) => {

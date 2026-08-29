@@ -15,8 +15,13 @@ struct SnapshotManagerTests {
     func `Create and retrieve snapshot`() async throws {
         // Create a snapshot
         let snapshotId = try await snapshotManager.createSnapshot()
-        #expect(!snapshotId.isEmpty)
-        #expect(snapshotId.contains("-")) // Should have timestamp-suffix format
+        #expect(SnapshotReference(rawValue: snapshotId)?.rawValue == snapshotId)
+        #expect(snapshotId.hasPrefix("ps1_"))
+        #expect(snapshotId.utf8.count == 36)
+        #expect(snapshotId.utf8.dropFirst(4).allSatisfy {
+            (48...57).contains($0) || (97...102).contains($0)
+        })
+        #expect(try await self.snapshotManager.ownsSnapshot(snapshotId: snapshotId))
 
         // Verify it shows up in the list
         let snapshots = try await snapshotManager.listSnapshots()
@@ -24,6 +29,7 @@ struct SnapshotManagerTests {
 
         // Clean up
         try await self.snapshotManager.cleanSnapshot(snapshotId: snapshotId)
+        #expect(try await !self.snapshotManager.ownsSnapshot(snapshotId: snapshotId))
     }
 
     @Test

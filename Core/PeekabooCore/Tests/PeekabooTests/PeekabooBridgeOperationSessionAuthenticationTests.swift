@@ -388,6 +388,7 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
                     #expect(failure.outcome.refusalReason == .transportSessionUnavailable)
                 }
                 #expect(identityProvider.lookupCount == 2)
+                try await Self.expectEmptyReplacementConnection(peer, handshake: handshakeRequest)
                 #expect(await peer.acceptedConnectionCount == 2)
 
                 do {
@@ -401,6 +402,7 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
                 }
                 #expect(identityProvider.lookupCount == 2)
                 #expect(await peer.acceptedConnectionCount == 2)
+                #expect(await peer.requests == [handshakeRequest.data])
             } catch {
                 await peer.stop()
                 throw error
@@ -1312,6 +1314,21 @@ enum TrustedBridgeClientFixture {
                     codeSignatureHash: hash,
                     sourceCommit: signingSourceCommit)
             }))
+    }
+}
+
+extension PeekabooBridgeOperationSessionAuthenticationTests {
+    fileprivate static func expectEmptyReplacementConnection(
+        _ peer: ConcurrentGatedBridgePeer,
+        handshake: ConcurrentGatedBridgePeer.Request) async throws
+    {
+        let reads = try await peer.waitForReadCompletions(2)
+        try #require(reads.count == 2)
+        let allReadsReachedEOF = reads.allSatisfy(\.reachedEOF)
+        #expect(allReadsReachedEOF)
+        #expect(reads.first?.connectionID == handshake.id)
+        #expect(reads.map(\.byteCount) == [handshake.data.count, 0])
+        #expect(await peer.requests == [handshake.data])
     }
 }
 

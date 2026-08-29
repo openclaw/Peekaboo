@@ -121,19 +121,35 @@ struct WatchCaptureSessionTests {
             decoder: decoder,
             decodeTimeout: .milliseconds(30))
 
-        let releaseTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
+        let completed = VideoDecoderTestSignal()
+        let callerDrained = VideoDecoderTestSignal()
+        let frameTask = Task { @MainActor in
+            defer {
+                completed.signal()
+                callerDrained.signal()
+            }
+            return try await source.nextFrame()
+        }
+        defer {
+            frameTask.cancel()
             decoder.release()
         }
-        let started = ContinuousClock.now
-        let frame = try await source.nextFrame()
-        let elapsed = started.duration(to: .now)
 
-        #expect(frame?.cgImage == nil)
-        #expect(elapsed < .milliseconds(150))
-        #expect(decoder.cancelCount == 1)
-        #expect(source.captureDiagnostics.decodeFailures == 1)
-        await releaseTask.value
+        #expect(await decoder.entered.waitWithWatchdog(), "Decoder did not enter its owned gate")
+        let completedWhileHeld = await completed.waitWithWatchdog()
+        #expect(completedWhileHeld, "Caller joined held decode work instead of returning on timeout")
+        #expect(decoder.isHeld)
+        if completedWhileHeld {
+            let frame = try await frameTask.value
+            #expect(frame?.cgImage == nil)
+            #expect(decoder.cancelCount == 1)
+            #expect(source.captureDiagnostics.decodeFailures == 1)
+        }
+
+        decoder.release()
+        #expect(await decoder.finished.waitWithWatchdog(), "Released decoder did not finish cleanup")
+        #expect(await callerDrained.waitWithWatchdog(), "Released frame caller did not finish cleanup")
+        #expect(decoder.observedTaskCancellation)
     }
 
     @Test
@@ -1186,6 +1202,10 @@ private final class NoncooperativeVideoFrameDecoder: @unchecked Sendable, VideoF
     private let image: CGImage
     private var releaseContinuation: CheckedContinuation<Void, Never>?
     private var cancellationCount = 0
+    private var released = false
+    private var taskWasCancelled = false
+    let entered = VideoDecoderTestSignal()
+    let finished = VideoDecoderTestSignal()
 
     init(image: CGImage) {
         self.image = image
@@ -1193,10 +1213,19 @@ private final class NoncooperativeVideoFrameDecoder: @unchecked Sendable, VideoF
 
     func image(at time: CMTime) async throws -> (image: CGImage, actualTime: CMTime) {
         await withCheckedContinuation { continuation in
-            self.lock.lock()
-            self.releaseContinuation = continuation
-            self.lock.unlock()
+            let alreadyReleased = self.lock.withLock {
+                if !self.released {
+                    self.releaseContinuation = continuation
+                }
+                return self.released
+            }
+            self.entered.signal()
+            if alreadyReleased {
+                continuation.resume()
+            }
         }
+        self.lock.withLock { self.taskWasCancelled = Task.isCancelled }
+        self.finished.signal()
         return (self.image, time)
     }
 
@@ -1212,12 +1241,46 @@ private final class NoncooperativeVideoFrameDecoder: @unchecked Sendable, VideoF
         return self.cancellationCount
     }
 
+    var isHeld: Bool {
+        self.lock.withLock { self.releaseContinuation != nil && !self.released }
+    }
+
+    var observedTaskCancellation: Bool {
+        self.lock.withLock { self.taskWasCancelled }
+    }
+
     func release() {
         self.lock.lock()
+        self.released = true
         let continuation = self.releaseContinuation
         self.releaseContinuation = nil
         self.lock.unlock()
         continuation?.resume()
+    }
+}
+
+/// A one-observer signal; the watchdog bounds fixture failure/cleanup, never the decode deadline.
+private struct VideoDecoderTestSignal: Sendable {
+    private let events = AsyncStream<Bool>.makeStream()
+
+    func signal() {
+        self.events.continuation.yield(true)
+        self.events.continuation.finish()
+    }
+
+    func waitWithWatchdog() async -> Bool {
+        let watchdog = Task.detached {
+            do {
+                try await Task.sleep(for: .seconds(5))
+                self.events.continuation.yield(false)
+            } catch {}
+        }
+        defer {
+            watchdog.cancel()
+            self.events.continuation.finish()
+        }
+        var iterator = self.events.stream.makeAsyncIterator()
+        return await iterator.next() ?? false
     }
 }
 
