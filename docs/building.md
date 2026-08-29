@@ -41,6 +41,12 @@ pnpm run build:swift:all
 ./scripts/build-cli-standalone.sh [--install]
 ```
 
+The universal CLI build uses `--triple x86_64-apple-macosx15.0` for Intel compilation and binary-directory lookup,
+matching the CLI package's existing `.macOS(.v15)` minimum. It also sets Swift Build's aggregate deployment minimum,
+preventing the SDK's macOS 27 default from producing an Intel architecture deprecation warning. ARM compilation still
+uses `--arch arm64`; supported
+architectures and the minimum macOS version are unchanged. Commander dependency identity warnings are separate.
+
 ## Commander dependency resolution
 
 The vendored AXorcist manifest always declares remote Commander at exact version `0.2.4`, independent of checkout

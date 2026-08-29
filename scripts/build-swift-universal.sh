@@ -6,6 +6,8 @@ PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SWIFT_PROJECT_PATH="$PROJECT_ROOT/Apps/CLI"
 # shellcheck source=scripts/source-provenance.sh
 source "$PROJECT_ROOT/scripts/source-provenance.sh"
+# shellcheck source=scripts/resolve-swift-binary-path.sh
+source "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh"
 FINAL_BINARY_NAME="peekaboo"
 FINAL_BINARY_PATH="$PROJECT_ROOT/$FINAL_BINARY_NAME"
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-}}"
@@ -177,7 +179,7 @@ echo "✅ arm64 build complete: $ARM64_BINARY_TEMP"
 echo "🏗️ Building for x86_64 (Intel)..."
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch x86_64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
+    swift build "${SWIFT_RESOLUTION_ARGS[@]}" "${SWIFT_X86_64_TARGET_ARGS[@]}" -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
 X86_64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" x86_64 release "$FINAL_BINARY_NAME")

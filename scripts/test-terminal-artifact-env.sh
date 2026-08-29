@@ -327,4 +327,6 @@ for architecture in arm64 x86_64; do
     fail "qualification Node omits $architecture signature inspection"
 done
 
+/bin/bash "$ROOT_DIR/scripts/test-swift-build-target.sh"
+
 printf 'test-terminal-artifact-env: ok\n'
