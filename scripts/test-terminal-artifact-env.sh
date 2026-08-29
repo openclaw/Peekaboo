@@ -262,8 +262,11 @@ fi
 for build_script in scripts/build-swift-arm.sh scripts/build-swift-universal.sh; do
   rg -Fq 'PEEKABOO_USE_RESOLVED_VERSIONS' "$ROOT_DIR/$build_script" || \
     fail "$build_script cannot enforce the canonical CLI dependency graph"
-  rg -Fq -- '--only-use-versions-from-resolved-file' "$ROOT_DIR/$build_script" || \
+  rg -Fq 'SWIFT_RESOLUTION_ARGS=(--only-use-versions-from-resolved-file)' "$ROOT_DIR/$build_script" || \
     fail "$build_script omits fail-closed Swift dependency resolution"
+  if rg -Fq -- '--skip-update' "$ROOT_DIR/$build_script"; then
+    fail "$build_script uses deprecated Swift dependency resolution flags"
+  fi
 done
 rg -Fq 'cp "$CANONICAL_LOCK" "$cli_lock"' "$wrapper" || \
   fail 'terminal CLI build is not seeded from the canonical tracked dependency graph'

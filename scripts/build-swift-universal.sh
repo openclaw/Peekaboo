@@ -18,13 +18,13 @@ ARM64_BINARY_TEMP="$PROJECT_ROOT/${FINAL_BINARY_NAME}-arm64"
 X86_64_BINARY_TEMP="$PROJECT_ROOT/${FINAL_BINARY_NAME}-x86_64"
 
 # Swift compiler flags for size optimization.
-# Keep WMO off by default; Swift 6.3.2 can hang or crash the release build here.
+# SwiftPM controls WMO; Swift 6.3.2 can hang or crash release builds here.
 # Override SWIFT_OPTIMIZATION_FLAGS when explicitly testing a different compiler.
 SWIFT_OPTIMIZATION_FLAGS="${SWIFT_OPTIMIZATION_FLAGS:--Xswiftc -Osize -Xlinker -dead_strip}"
 SWIFT_RESOLUTION_ARGS=()
 case "${PEEKABOO_USE_RESOLVED_VERSIONS:-0}" in
     1|true|yes|on)
-        SWIFT_RESOLUTION_ARGS=(--only-use-versions-from-resolved-file --skip-update)
+        SWIFT_RESOLUTION_ARGS=(--only-use-versions-from-resolved-file)
         ;;
     0|false|no|off|'') ;;
     *)
