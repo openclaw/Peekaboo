@@ -52,9 +52,9 @@ jobs:
       - name: Prepare Swift Argument Parser fork
         run: |
           sudo mkdir -p /Users/steipete/Projects
-          sudo chown $USER /Users/steipete
+          sudo chown "$USER" /Users/steipete
           sudo mkdir -p /Users/steipete/Projects
-          sudo chown $USER /Users/steipete/Projects
+          sudo chown "$USER" /Users/steipete/Projects
           if [ -d /Users/steipete/Projects/swift-argument-parser ]; then
             cd /Users/steipete/Projects/swift-argument-parser
             git fetch origin approachable-concurrency
@@ -188,9 +188,9 @@ jobs:
       - name: Prepare Swift Argument Parser fork
         run: |
           sudo mkdir -p /Users/steipete/Projects
-          sudo chown $USER /Users/steipete
+          sudo chown "$USER" /Users/steipete
           sudo mkdir -p /Users/steipete/Projects
-          sudo chown $USER /Users/steipete/Projects
+          sudo chown "$USER" /Users/steipete/Projects
           if [ -d /Users/steipete/Projects/swift-argument-parser ]; then
             cd /Users/steipete/Projects/swift-argument-parser
             git fetch origin approachable-concurrency
@@ -281,14 +281,12 @@ jobs:
     name: Tachikoma build & tests
     runs-on: macos-26
     needs: peekaboo-cli
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
@@ -310,9 +308,9 @@ jobs:
       - name: Prepare Swift Argument Parser fork
         run: |
           sudo mkdir -p /Users/steipete/Projects
-          sudo chown $USER /Users/steipete
+          sudo chown "$USER" /Users/steipete
           sudo mkdir -p /Users/steipete/Projects
-          sudo chown $USER /Users/steipete/Projects
+          sudo chown "$USER" /Users/steipete/Projects
           if [ -d /Users/steipete/Projects/swift-argument-parser ]; then
             cd /Users/steipete/Projects/swift-argument-parser
             git fetch origin approachable-concurrency
@@ -383,10 +381,20 @@ jobs:
         run: |
           swift build --configuration debug
 
-      - name: Run Tachikoma unit tests
+      - name: Run Tachikoma package tests
         working-directory: Tachikoma
+        env:
+          TACHIKOMA_TEST_MODE: "mock"
+          TACHIKOMA_DISABLE_API_TESTS: "true"
         run: |
-          swift test --no-parallel --filter unit
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/tachikoma-tests.log"
+          swift test --no-parallel 2>&1 | tee "$test_log"
+          # Inspect only completed output; an early-exiting pipe consumer can SIGPIPE Swift.
+          if ! grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"; then
+            echo "::error::Tachikoma produced no positive Swift Testing test count. Check $test_log for zero tests or a missing summary."
+            exit 1
+          fi
 
   mac-apps:
     name: Build macOS apps (Peekaboo + Inspector)

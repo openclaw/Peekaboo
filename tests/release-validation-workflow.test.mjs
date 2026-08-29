@@ -7,6 +7,13 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const workflow = readFileSync(new URL('../.github/workflows/release-validation.yml', import.meta.url), 'utf8');
+const macosWorkflow = readFileSync(new URL('../.github/workflows/macos-ci.yml', import.meta.url), 'utf8');
+const tachikomaJob = macosWorkflow.match(/^  tachikoma:\n[\s\S]*?(?=^  [\w-]+:)/m)?.[0];
+const tachikomaStep = () => {
+  const found = tachikomaJob?.split(/^      - /m).find((value) => value.startsWith('name: Run Tachikoma package tests\n'));
+  assert.ok(found, 'Missing normal macOS CI Tachikoma package step');
+  return found;
+};
 const diagnosticPath = fileURLToPath(new URL('../.github/scripts/core-sigpipe-diagnostic.py', import.meta.url));
 const steps = workflow.split(/^      - /m).slice(1);
 const step = (name) => {
@@ -14,11 +21,12 @@ const step = (name) => {
   assert.ok(found, `Missing step: ${name}`);
   return found;
 };
-const script = (name) => {
-  const body = step(name).match(/^        run: \|\n((?: {10}[^\n]*\n|\n)+)/m)?.[1];
+const scriptFromStep = (name, entry) => {
+  const body = entry.match(/^        run: \|\n((?: {10}[^\n]*\n|\n)+)/m)?.[1];
   assert.ok(body, `Missing Bash body: ${name}`);
   return body.replace(/^ {10}/gm, '');
 };
+const script = (name) => scriptFromStep(name, step(name));
 const allGroups = [...workflow.matchAll(/^          - group: ([\w-]+)\n([\s\S]*?)(?=^          - group:|^    defaults:)/gm)]
   .map(([, name, body]) => ({
     name,
@@ -36,11 +44,112 @@ function fixture(t) {
   return root;
 }
 
+test('normal macOS CI runs the complete serial Tachikoma suite in its existing hosted job', () => {
+  const entry = tachikomaStep();
+  const command = scriptFromStep('Run Tachikoma package tests', entry);
+  assert.match(macosWorkflow, /\npermissions:\n  contents: read\n/);
+  assert.equal(macosWorkflow.match(/^\s*permissions:/gm)?.length, 1);
+  assert.match(tachikomaJob, /^  tachikoma:\n    name: Tachikoma build & tests\n    runs-on: macos-26\n    needs: peekaboo-cli\n/);
+  assert.match(tachikomaJob, /uses: actions\/checkout@v7\n        with:\n          submodules: recursive\n          fetch-depth: 1\n          persist-credentials: false\n/);
+  assert.doesNotMatch(macosWorkflow.split('\njobs:\n')[0], /\bsecrets\./,
+    'Workflow-wide secrets must not reach the mock suite');
+  assert.doesNotMatch(tachikomaJob, /\bsecrets\.|(?:OPENAI|ANTHROPIC)_API_KEY/,
+    'Provider credentials must not reach package builds or test discovery');
+  assert.doesNotMatch(tachikomaJob, /^\s*(?:ref|if|continue-on-error|timeout-minutes):|self-hosted/m);
+  assert.doesNotMatch(tachikomaJob, /^\s*(?:export\s+)?(?:CI|HOME|RUNNER_\w+|GITHUB_\w+)\s*[:=]/m);
+  assert.match(tachikomaJob, /name: Build Tachikoma\n        working-directory: Tachikoma\n        run: \|\n          swift build --configuration debug\n/);
+  assert.match(macosWorkflow, /\n  mac-apps:\n    name: Build macOS apps \(Peekaboo \+ Inspector\)\n    runs-on: macos-26\n    needs: \[peekaboo-cli, tachikoma\]/);
+  assert.match(macosWorkflow, /name: Run Mac package tests \(secretless hosted runner only\)\n        working-directory: Apps\/Mac\n[\s\S]*?        run: swift test --no-parallel\n/);
+  assert.match(entry, /working-directory: Tachikoma\n        env:\n          TACHIKOMA_TEST_MODE: "mock"\n          TACHIKOMA_DISABLE_API_TESTS: "true"\n        run:/);
+  assert.equal(macosWorkflow.match(/TACHIKOMA_TEST_MODE:/g)?.length, 1);
+  assert.equal(macosWorkflow.match(/TACHIKOMA_DISABLE_API_TESTS:/g)?.length, 1);
+  assert.match(command, /^set -euo pipefail\n/);
+  assert.match(command, /^test_log="\$RUNNER_TEMP\/tachikoma-tests\.log"$/m);
+  assert.deepEqual(command.match(/^swift .+$/gm), ['swift test --no-parallel 2>&1 | tee "$test_log"']);
+  assert.doesNotMatch(entry, /--filter\b|--skip\b|--skip-build\b|--disable-swift-testing|--disable-xctest|set \+e|\|\| true/);
+  assert.doesNotMatch(command, /\|[^\n]*grep/, 'Never inspect a live producer with an early-exiting consumer');
+  assert.match(command, /if ! grep -Eq '[^'\n]+' "\$test_log"; then/);
+});
+
+test('normal Tachikoma step requires a positive completed summary and preserves producer and log failures', (t) => {
+  const root = fixture(t);
+  const bin = join(root, 'bin');
+  const packageRoot = join(root, 'Tachikoma');
+  mkdirSync(bin);
+  mkdirSync(packageRoot);
+  const entry = tachikomaStep();
+  const command = scriptFromStep('Run Tachikoma package tests', entry);
+  const mockEnv = Object.fromEntries([...entry.matchAll(/^          (TACHIKOMA_\w+): "([^"\n]+)"$/gm)]
+    .map(([, name, value]) => [name, value]));
+  const tail = 'fixture output detail\n'.repeat(32768) + 'fixture output end\n';
+  writeFileSync(join(bin, 'swift'), `#!${process.execPath}
+const { appendFileSync, writeFileSync } = require('node:fs');
+if (process.argv.slice(2).join(' ') !== 'test --no-parallel' ||
+    process.cwd() !== process.env.FIXTURE_PACKAGE ||
+    process.env.TACHIKOMA_TEST_MODE !== 'mock' ||
+    process.env.TACHIKOMA_DISABLE_API_TESTS !== 'true') process.exit(99);
+appendFileSync(process.env.FIXTURE_CALLS, 'swift started\\n');
+writeFileSync(1, process.env.FIXTURE_SUMMARY);
+writeFileSync(1, ${JSON.stringify(tail)});
+writeFileSync(2, 'fixture stderr end\\n');
+appendFileSync(process.env.FIXTURE_CALLS, 'swift completed\\n');
+process.exit(Number(process.env.FIXTURE_SWIFT_EXIT));
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'tee'), `#!/bin/bash
+/usr/bin/tee "$@" || exit $?
+printf 'tee completed\\n' >> "$FIXTURE_CALLS"
+exit "$FIXTURE_TEE_EXIT"
+`, { mode: 0o755 });
+  const positive = '✔ Test run with 17 tests in 3 suites passed after 0.123 seconds.\n';
+  const cases = [
+    ['positive', positive, 0, 0, 0],
+    ['single test', '✔ Test run with 1 test in 1 suite passed after 0.001 seconds.\n', 0, 0, 0],
+    ['without suites', '✔ Test run with 2 tests passed after 0.001 seconds.\n', 0, 0, 0],
+    ['zero', '✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.\n', 0, 0, 1],
+    ['missing', '', 0, 0, 1],
+    ['XCTest only', 'Executed 17 tests, with 0 failures (0 unexpected) in 0.123 seconds\n', 0, 0, 1],
+    ['invalid count', '✔ Test run with -1 tests in 3 suites passed after 0.001 seconds.\n', 0, 0, 1],
+    ['failed summary', '✘ Test run with 17 tests in 3 suites failed after 0.123 seconds.\n', 0, 0, 1],
+    ['Swift failure after positive', positive, 7, 0, 7],
+    ['writer failure after positive', positive, 0, 23, 23],
+    ['both failures after positive', positive, 7, 23, 23],
+  ];
+  for (const [index, [name, summary, swiftExit, teeExit, expectedExit]] of cases.entries()) {
+    const runnerTemp = join(root, `runner temp ${index}`);
+    mkdirSync(runnerTemp);
+    const calls = join(runnerTemp, 'calls');
+    const log = join(runnerTemp, 'tachikoma-tests.log');
+    writeFileSync(log, positive);
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-e', '-c', command], {
+      cwd: packageRoot,
+      env: { PATH: `${bin}:/usr/bin:/bin`, RUNNER_TEMP: runnerTemp, ...mockEnv,
+        FIXTURE_PACKAGE: realpathSync(packageRoot), FIXTURE_CALLS: calls, FIXTURE_SUMMARY: summary,
+        FIXTURE_SWIFT_EXIT: String(swiftExit), FIXTURE_TEE_EXIT: String(teeExit) },
+      // Only a fake-process watchdog; no Swift runtime or hosted identity is used here.
+      encoding: 'utf8', timeout: 30000, maxBuffer: 2 * 1024 * 1024,
+    });
+    assert.equal(result.error?.code ?? null, null, `${name}: fixture launch must complete`);
+    assert.equal(result.signal, null, `${name}: fixture must not terminate by signal`);
+    assert.equal(result.status, expectedExit, `${name}: ${result.stderr}`);
+    assert.equal(result.stderr, '', name);
+    assert.equal(readFileSync(calls, 'utf8'), 'swift started\nswift completed\ntee completed\n', name);
+    const completeOutput = summary + tail + 'fixture stderr end\n';
+    assert.equal(readFileSync(log, 'utf8'), completeOutput, `${name}: all output must drain into the retained log`);
+    if (expectedExit === 1) {
+      assert.ok(result.stdout.startsWith(completeOutput), name);
+      assert.match(result.stdout.slice(completeOutput.length), /::error::Tachikoma produced no positive Swift Testing test count/);
+      assert.ok(result.stdout.slice(completeOutput.length).includes(log), 'Diagnostic must locate the completed log');
+    } else {
+      assert.equal(result.stdout, completeOutput, `${name}: pipeline failure must stop before summary inspection`);
+    }
+  }
+});
+
 test('only manual exact-source validation and preparation-file PRs trigger the lane', () => {
   const triggers = workflow.split('\npermissions:')[0];
   assert.match(triggers, /workflow_dispatch:\n    inputs:\n      target_ref:\n        description: [^\n]+\n        required: true\n        type: string/);
   assert.equal(triggers.match(/^  \w+:/gm)?.length, 2);
-  assert.match(triggers, /  pull_request:\n    paths:\n      - '\.github\/workflows\/release-validation\.yml'\n      - '\.github\/scripts\/core-sigpipe-diagnostic\.py'\n      - 'tests\/release-validation-workflow\.test\.mjs'\n$/);
+  assert.match(triggers, /  pull_request:\n    paths:\n      - '\.github\/workflows\/release-validation\.yml'\n      - '\.github\/workflows\/macos-ci\.yml'\n      - '\.github\/scripts\/core-sigpipe-diagnostic\.py'\n      - 'tests\/release-validation-workflow\.test\.mjs'\n$/);
   const source = step('Validate exact source and hosted environment');
   assert.match(source, /SOURCE_EVENT: \$\{\{ github\.event_name }}/);
   assert.match(source, /TARGET_REF: \$\{\{ inputs\.target_ref }}/);

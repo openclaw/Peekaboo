@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release-validation.yml'
+      - '.github/workflows/macos-ci.yml'
       - '.github/scripts/core-sigpipe-diagnostic.py'
       - 'tests/release-validation-workflow.test.mjs'
 
