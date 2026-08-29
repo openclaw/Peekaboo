@@ -27,9 +27,9 @@ Sparkle key:
 Developer ID release keychain:
 
 - Resolve the release keychain item/path from `$release-private`.
-- If macOS shows `codesign wants to use the release keychain`, enter the keychain item password, not the Developer ID `.p12` password.
-- The Developer ID certificate password is only for importing the `.p12` while creating the keychain.
-- After setup/import, run `security unlock-keychain` and `security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"` so `codesign` can use the identity without GUI prompts.
+- The canonical release keychain is passwordless and never-locking. If macOS shows `codesign wants to use the release keychain`, cancel the prompt and repair that setup through the owning credential workflow; there is no keychain password to enter.
+- The Developer ID certificate password is only for importing a transported `.p12`, not unlocking the local release keychain.
+- The shared release helper owns keychain preparation, partition access, and the signing canary. Do not proceed to packaging until that canary succeeds without GUI prompts.
 
 npm publish token:
 
@@ -125,7 +125,7 @@ confirming the version was not accepted.
 The retained plan must record both completed full preflight and publication eligibility. The driver refuses proof files
 on local-only or reduced-check builds, preventing `--resume-publication` from promoting those artifacts.
 
-Every notarized release payload must sign with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`, not a personal or development identity. This includes Peekaboo.app, nested helpers and frameworks, the standalone and npm CLIs, and the DMG. The tracked release manifest resolves the shared passwordless signing keychain from the `OpenClaw-Core` vault; never copy the keychain path or signing material into the repository. Peekaboo 3.8+ bridge hosts keep accepting transition-era personal-team clients for staged upgrades, but Foundation-signed 3.9.6+ CLIs require a 3.8+ host.
+Every notarized release payload must sign with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`, not a personal or development identity. This includes Peekaboo.app, nested helpers and frameworks, the standalone and npm CLIs, and the DMG. The tracked release manifest and shared credential helper resolve the shared passwordless signing keychain; never copy its machine-specific path or signing material into the repository. Peekaboo 3.8+ bridge hosts keep accepting transition-era personal-team clients for staged upgrades, but Foundation-signed 3.9.6+ CLIs require a 3.8+ host.
 
 If npm upload is slow and TOTP expires, use the stored npm token through a temp npmrc and complete npm web auth immediately when prompted with the configured TOTP. Do not create granular bypass tokens for this; if one was created by mistake, delete it before closeout.
 
