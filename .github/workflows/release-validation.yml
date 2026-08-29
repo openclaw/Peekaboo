@@ -49,6 +49,10 @@ jobs:
               Commander
               Swiftdansi
               TauTUI
+          - group: full-safe
+            job_minutes: 180
+            test_minutes: 150
+            packages: ''
     defaults:
       run:
         shell: bash
@@ -56,9 +60,6 @@ jobs:
       PACKAGE_PATHS: ${{ matrix.packages }}
       PEEKABOO_CONFIG_DISABLE_MIGRATION: '1'
       PEEKABOO_RUN_LIVE_AGENT_TESTS: '0'
-      PEEKABOO_INCLUDE_AUTOMATION_TESTS: 'false'
-      RUN_AUTOMATION_TESTS: 'false'
-      RUN_LOCAL_TESTS: 'false'
     steps:
       - name: Validate exact source and hosted environment
         id: source
@@ -152,15 +153,87 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          package-manager-cache: false
 
       - name: Check workflow contract
         run: node --test tests/release-validation-workflow.test.mjs
 
+      - name: Set up repository-pinned pnpm
+        if: matrix.group == 'full-safe'
+        timeout-minutes: 5
+        uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+          cache: false
+
+      - name: Record safe-suite runtime and frozen dependency install
+        if: matrix.group == 'full-safe'
+        id: safe-install
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          result_dir="$VALIDATION_RESULTS/full-safe"
+          mkdir -p "$result_dir"
+          cp package.json pnpm-lock.yaml "$result_dir/"
+          pnpm --version > "$result_dir/pnpm-version.txt"
+          node --input-type=module <<'NODE' | tee "$result_dir/runtime.txt"
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const results = process.env.VALIDATION_RESULTS + '/full-safe';
+          const actual = readFileSync(results + '/pnpm-version.txt', 'utf8').trim();
+          console.log(`Node: ${process.version}\npnpm: ${actual}\npackageManager: ${pkg.packageManager}`);
+          const pin = /^pnpm@(\d+\.\d+\.\d+)\+sha512\.[0-9a-f]+$/.exec(pkg.packageManager);
+          assert.ok(pin, 'An exact repository pnpm pin with integrity is required');
+          assert.equal(actual, pin[1], 'pnpm must match the repository pin');
+          writeFileSync(results + '/test-safe-definition.txt', pkg.scripts['test:safe'] + '\n');
+          NODE
+          printf 'running\n' > "$result_dir/install-status.txt"
+          install_exit=0
+          pnpm install --frozen-lockfile 2>&1 | tee "$result_dir/install.log" || install_exit=$?
+          printf '%s\n' "$install_exit" > "$result_dir/install-exit-code.txt"
+          if [[ "$install_exit" == 0 ]]; then
+            printf 'passed\n' > "$result_dir/install-status.txt"
+          else
+            printf 'failed\n' > "$result_dir/install-status.txt"
+          fi
+          exit "$install_exit"
+
+      - name: Run full repository safe suite
+        if: matrix.group == 'full-safe'
+        id: safe
+        timeout-minutes: ${{ matrix.test_minutes }}
+        run: |
+          set -euo pipefail
+          result_dir="$VALIDATION_RESULTS/full-safe"
+          mkdir -p "$result_dir"
+          printf 'running\n' > "$result_dir/status.txt"
+          printf 'pnpm run test:safe\n' > "$result_dir/command.txt"
+          pipeline_status=(0 0)
+          pnpm run test:safe 2>&1 | tee "$result_dir/test.log" || pipeline_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipeline_status[0]}" > "$result_dir/exit-code.txt"
+          printf '%s\n' "${pipeline_status[1]}" > "$result_dir/log-exit-code.txt"
+          # Preserve the complete command's exit, and fail separately if evidence could not be written.
+          suite_exit="${pipeline_status[0]}"
+          if [[ "$suite_exit" == 0 ]]; then suite_exit="${pipeline_status[1]}"; fi
+          if [[ "$suite_exit" == 0 ]]; then
+            printf 'passed\n' > "$result_dir/status.txt"
+          else
+            printf 'failed\n' > "$result_dir/status.txt"
+          fi
+          awk 'tolower($0) ~ /skip|fail|error:/ { print }' "$result_dir/test.log" > "$result_dir/failures-skips.txt"
+          exit "$suite_exit"
+
       # Each matrix job has a fresh checkout and no restored package/build cache.
       # Standalone Playground resolution stays here, never in the app-packaging job.
       - name: Run complete package suites serially
+        if: matrix.group != 'full-safe'
         id: suites
         timeout-minutes: ${{ matrix.test_minutes }}
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: 'false'
+          RUN_AUTOMATION_TESTS: 'false'
+          RUN_LOCAL_TESTS: 'false'
         run: |
           set -euo pipefail
           while IFS= read -r package; do
@@ -200,10 +273,13 @@ jobs:
         env:
           DIAGNOSTIC_GROUP: ${{ matrix.group }}
           ORIGINAL_SUITE_OUTCOME: ${{ steps.suites.outcome }}
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: 'false'
+          RUN_AUTOMATION_TESTS: 'false'
+          RUN_LOCAL_TESTS: 'false'
         run: python3 .github/scripts/core-sigpipe-diagnostic.py
 
       - name: Summarize all packages and verify canonical workspace lock
-        if: always() && steps.source.outcome == 'success'
+        if: always() && steps.source.outcome == 'success' && matrix.group != 'full-safe'
         run: |
           set -euo pipefail
           mkdir -p "$VALIDATION_RESULTS"
@@ -218,6 +294,34 @@ jobs:
             done <<< "$PACKAGE_PATHS"
             printf '\nUnfiltered non-live suites; built-in permission/opt-in skips remain in each test.log and failures-skips.txt.\n'
             printf 'A running/not-run status is incomplete, never a pass. No app packaging or release-toolchain proof.\n'
+          } | tee "$VALIDATION_RESULTS/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          cmp "$VALIDATION_RESULTS/workspace-Package.resolved" \
+            Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+      - name: Summarize full safe suite and verify canonical workspace lock
+        if: always() && steps.source.outcome == 'success' && matrix.group == 'full-safe'
+        env:
+          SAFE_STEP_OUTCOME: ${{ steps.safe.outcome }}
+          INSTALL_STEP_OUTCOME: ${{ steps.safe-install.outcome }}
+        run: |
+          set -euo pipefail
+          result_dir="$VALIDATION_RESULTS/full-safe"
+          mkdir -p "$result_dir"
+          outcome=not-run
+          command_exit=unavailable
+          if [[ -f "$result_dir/status.txt" ]]; then outcome="$(cat "$result_dir/status.txt")"; fi
+          if [[ -f "$result_dir/exit-code.txt" ]]; then command_exit="$(cat "$result_dir/exit-code.txt")"; fi
+          if [[ -f "$result_dir/test.log" ]]; then
+            awk 'tolower($0) ~ /skip|fail|error:/ { print }' "$result_dir/test.log" > "$result_dir/failures-skips.txt"
+          fi
+          {
+            printf 'Full pnpm run test:safe: %s; command exit: %s; step: %s; dependency install: %s.\n' \
+              "$outcome" "$command_exit" "$SAFE_STEP_OUTCOME" "$INSTALL_STEP_OUTCOME"
+            printf '\nThe unchanged command is a fail-fast chain. Later stages are not run after a failure.\n'
+            printf 'The complete stage/test output is in full-safe/test.log; failures-skips.txt is only an index.\n'
+            printf 'A running/not-run status or unavailable exit is incomplete, never a pass.\n'
+            printf 'Built-in automation/provider skips and synthetic certification are not live proof.\n'
+            printf 'Hosted compatibility evidence does not replace Xcode 27 preflight or signed isolated desktop proof.\n'
           } | tee "$VALIDATION_RESULTS/summary.md" >> "$GITHUB_STEP_SUMMARY"
           cmp "$VALIDATION_RESULTS/workspace-Package.resolved" \
             Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -19,15 +19,16 @@ const script = (name) => {
   assert.ok(body, `Missing Bash body: ${name}`);
   return body.replace(/^ {10}/gm, '');
 };
-const groups = [...workflow.matchAll(/^          - group: ([\w-]+)\n([\s\S]*?)(?=^          - group:|^    defaults:)/gm)]
+const allGroups = [...workflow.matchAll(/^          - group: ([\w-]+)\n([\s\S]*?)(?=^          - group:|^    defaults:)/gm)]
   .map(([, name, body]) => ({
     name,
     jobMinutes: Number(body.match(/job_minutes: (\d+)/)?.[1]),
     testMinutes: Number(body.match(/test_minutes: (\d+)/)?.[1]),
     packages: body.match(/packages: ([^\n]+)/)?.[1] === '|'
       ? [...body.matchAll(/^              (\S+)$/gm)].map((match) => match[1])
-      : [body.match(/packages: (\S+)/)?.[1]],
+      : body.includes("packages: ''") ? [] : [body.match(/packages: (\S+)/)?.[1]],
   }));
+const groups = allGroups.filter(({ name }) => name !== 'full-safe');
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'release-validation-contract-'));
@@ -142,6 +143,7 @@ test('manual expected SHA cannot select code and PR source ignores manual inputs
 });
 
 test('the complete supplemental inventory is bounded and uses independent hosted jobs', () => {
+  assert.deepEqual(allGroups.map(({ name }) => name), ['core', 'libraries-apps', 'dependencies', 'full-safe']);
   assert.deepEqual(groups.map(({ name, packages }) => ({ name, packages })), [
     { name: 'core', packages: ['Core/PeekabooCore'] },
     { name: 'libraries-apps', packages: [
@@ -166,6 +168,152 @@ test('the complete supplemental inventory is bounded and uses independent hosted
   assert.match(workflow, /swift test --package-path "\$package" --jobs 4 --no-parallel/);
   assert.match(workflow, /cmp "\$VALIDATION_RESULTS\/workspace-Package\.resolved" \\\n            Apps\/Peekaboo\.xcworkspace\/xcshareddata\/swiftpm\/Package\.resolved/);
   assert.doesNotMatch(workflow, /xcodebuild.*(?:-workspace|-scheme)|build-playground|release-macos-app/);
+});
+
+test('full safe lane shares source gates and runs only the complete pinned command', () => {
+  assert.deepEqual(allGroups.find(({ name }) => name === 'full-safe'), {
+    name: 'full-safe', jobMinutes: 180, testMinutes: 150, packages: [],
+  });
+  const safe = step('Run full repository safe suite');
+  const install = step('Record safe-suite runtime and frozen dependency install');
+  const pnpm = step('Set up repository-pinned pnpm');
+  assert.match(safe, /if: matrix.group == 'full-safe'\n        id: safe\n        timeout-minutes: \$\{\{ matrix.test_minutes }}/);
+  assert.match(install, /if: matrix.group == 'full-safe'\n        id: safe-install\n        timeout-minutes: 10/);
+  assert.match(pnpm, /if: matrix.group == 'full-safe'\n        timeout-minutes: 5\n        uses: pnpm\/action-setup@v6\.0\.9/);
+  assert.match(pnpm, /run_install: false\n          cache: false/);
+  assert.doesNotMatch(pnpm, /\n\s+version:/, 'pnpm version must come from package.json');
+  assert.match(workflow, /uses: actions\/setup-node@v6\n        with:\n          node-version: '24'\n          package-manager-cache: false/);
+  assert.match(script('Record safe-suite runtime and frozen dependency install'), /^pnpm install --frozen-lockfile 2>&1 \| tee /m);
+  assert.match(script('Run full repository safe suite'), /^pnpm run test:safe 2>&1 \| tee /m);
+  assert.equal(script('Run full repository safe suite').match(/^pnpm /gm)?.length, 1);
+  assert.doesNotMatch(safe, /env:|swift|--filter|--skip|retry|set \+e|timeout /);
+  const sharedEnv = workflow.split('\n    env:\n')[1].split('\n    steps:')[0];
+  assert.doesNotMatch(sharedEnv + install + safe, /RUN_LOCAL_TESTS|RUN_AUTOMATION_TESTS|PEEKABOO_INCLUDE_AUTOMATION_TESTS|PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS/);
+  for (const name of ['Run complete package suites serially', 'Diagnose Core SIGPIPE without changing the failed result']) {
+    assert.match(step(name), /PEEKABOO_INCLUDE_AUTOMATION_TESTS: 'false'\n          RUN_AUTOMATION_TESTS: 'false'\n          RUN_LOCAL_TESTS: 'false'/);
+  }
+  assert.match(step('Run complete package suites serially'), /if: matrix.group != 'full-safe'/);
+  const ordered = ['Validate exact source and hosted environment', 'Verify checkout and pinned submodules',
+    'Select installed Xcode 26.x and record actual toolchain', 'Set up repository-pinned pnpm',
+    'Record safe-suite runtime and frozen dependency install', 'Run full repository safe suite'];
+  assert.deepEqual(ordered.map((name) => steps.indexOf(step(name))),
+    ordered.map((name) => steps.indexOf(step(name))).sort((a, b) => a - b));
+  assert.match(step('Summarize full safe suite and verify canonical workspace lock'),
+    /if: always\(\) && steps.source.outcome == 'success' && matrix.group == 'full-safe'/);
+  assert.match(step('Retain per-package evidence'), /if: always\(\) && steps.source.outcome == 'success'/);
+});
+
+test('full safe command preserves exact failures, all emitted logs and incomplete evidence', (t) => {
+  const root = fixture(t);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'pnpm'), `#!/bin/bash
+printf '%s\\n' "$*" >> "$FIXTURE_CALLS"
+[[ "$*" == 'run test:safe' ]] || exit 99
+echo 'stage one: fixture passed'
+echo 'stage two: permission fixture skipped' >&2
+echo 'stage three: fixture failure or completion'
+exit "$FIXTURE_EXIT"
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'tee'), `#!/bin/bash
+/usr/bin/tee "$@" || exit $?
+exit "$FIXTURE_TEE_EXIT"
+`, { mode: 0o755 });
+  for (const [commandExit, teeExit] of [[0, 0], [7, 0], [0, 23], [7, 23]]) {
+    const results = join(root, `results-${commandExit}-${teeExit}`);
+    const calls = join(root, `calls-${commandExit}-${teeExit}`);
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', script('Run full repository safe suite')], {
+      cwd: root, env: { PATH: `${bin}:/usr/bin:/bin`, VALIDATION_RESULTS: results,
+        FIXTURE_CALLS: calls, FIXTURE_EXIT: String(commandExit), FIXTURE_TEE_EXIT: String(teeExit) },
+      // Fake subprocess startup watchdog only; the hosted step keeps its own minute deadline.
+      encoding: 'utf8', timeout: 30000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, commandExit || teeExit, result.stderr);
+    assert.equal(readFileSync(calls, 'utf8'), 'run test:safe\n', 'Exactly one full command, no retries or stages');
+    assert.equal(readFileSync(join(results, 'full-safe/command.txt'), 'utf8'), 'pnpm run test:safe\n');
+    assert.equal(readFileSync(join(results, 'full-safe/exit-code.txt'), 'utf8'), `${commandExit}\n`);
+    assert.equal(readFileSync(join(results, 'full-safe/log-exit-code.txt'), 'utf8'), `${teeExit}\n`);
+    assert.equal(readFileSync(join(results, 'full-safe/status.txt'), 'utf8'), commandExit || teeExit ? 'failed\n' : 'passed\n');
+    assert.equal(readFileSync(join(results, 'full-safe/test.log'), 'utf8'), result.stdout);
+    assert.match(readFileSync(join(results, 'full-safe/failures-skips.txt'), 'utf8'), /permission fixture skipped\nstage three: fixture failure/);
+  }
+  const calls = join(root, 'forbidden-calls');
+  for (const target of ['a'.repeat(40), 'b'.repeat(40)]) {
+    const guarded = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c',
+      script('Validate exact source and hosted environment') + script('Run full repository safe suite')], {
+      cwd: root, env: { PATH: `${bin}:/usr/bin:/bin`, SOURCE_EVENT: 'workflow_dispatch',
+        TARGET_REF: target, WORKFLOW_COMMIT: 'a'.repeat(40), FIXTURE_CALLS: calls },
+      encoding: 'utf8', timeout: 30000,
+    });
+    assert.equal(guarded.status, 1);
+    assert.match(guarded.stderr, /GITHUB_ACTIONS: unbound variable|target_ref must match/);
+  }
+  assert.equal(existsSync(calls), false, 'Neither mismatched source nor absent hosted identity may execute pnpm');
+
+  const lock = join(root, 'Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved');
+  mkdirSync(join(lock, '..'), { recursive: true });
+  writeFileSync(lock, 'fixture lock');
+  for (const state of ['not-run', 'running', 'failed']) {
+    const results = join(root, `summary-${state}`);
+    mkdirSync(join(results, 'full-safe'), { recursive: true });
+    writeFileSync(join(results, 'workspace-Package.resolved'), 'fixture lock');
+    if (state !== 'not-run') writeFileSync(join(results, 'full-safe/status.txt'), state + '\n');
+    writeFileSync(join(results, 'full-safe/test.log'), 'original partial output\nfixture skipped\n');
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c',
+      script('Summarize full safe suite and verify canonical workspace lock')], {
+      cwd: root, env: { PATH: '/usr/bin:/bin', VALIDATION_RESULTS: results,
+        GITHUB_STEP_SUMMARY: join(results, 'step-summary'), SAFE_STEP_OUTCOME: 'failure', INSTALL_STEP_OUTCOME: 'success' },
+      encoding: 'utf8', timeout: 30000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const summary = readFileSync(join(results, 'summary.md'), 'utf8');
+    assert.ok(summary.includes(`${state}; command exit: unavailable; step: failure`));
+    assert.match(summary, /incomplete, never a pass/);
+    assert.match(summary, /not live proof/);
+    assert.equal(readFileSync(join(results, 'full-safe/test.log'), 'utf8'), 'original partial output\nfixture skipped\n');
+    assert.equal(readFileSync(join(results, 'full-safe/failures-skips.txt'), 'utf8'), 'fixture skipped\n');
+  }
+});
+
+test('safe dependency install enforces the repository pnpm pin and frozen lock', (t) => {
+  const root = fixture(t);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  symlinkSync(process.execPath, join(bin, 'node'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.21.0+sha512.1234',
+    scripts: { 'test:safe': 'fixture complete safe definition' } }));
+  writeFileSync(join(root, 'pnpm-lock.yaml'), 'fixture lock');
+  writeFileSync(join(bin, 'pnpm'), `#!/bin/bash
+if [[ "$*" == '--version' ]]; then echo "$FIXTURE_VERSION"; exit 0; fi
+printf '%s\\n' "$*" >> "$FIXTURE_CALLS"
+[[ "$*" == 'install --frozen-lockfile' ]] || exit 99
+echo 'fixture frozen install output'
+exit "$FIXTURE_EXIT"
+`, { mode: 0o755 });
+  for (const [version, installExit] of [['11.21.0', 0], ['11.21.0', 17], ['11.20.0', 0]]) {
+    const results = join(root, `install-${version}-${installExit}`);
+    const calls = results + '-calls';
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c',
+      script('Record safe-suite runtime and frozen dependency install')], {
+      cwd: root, env: { PATH: `${bin}:/usr/bin:/bin`, VALIDATION_RESULTS: results,
+        FIXTURE_CALLS: calls, FIXTURE_VERSION: version, FIXTURE_EXIT: String(installExit) },
+      encoding: 'utf8', timeout: 30000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, version === '11.21.0' ? installExit : 1, result.stderr);
+    assert.match(readFileSync(join(results, 'full-safe/runtime.txt'), 'utf8'), /Node: v\d+/);
+    assert.equal(readFileSync(join(results, 'full-safe/pnpm-lock.yaml'), 'utf8'), 'fixture lock');
+    if (version === '11.21.0') {
+      assert.equal(readFileSync(calls, 'utf8'), 'install --frozen-lockfile\n');
+      assert.equal(readFileSync(join(results, 'full-safe/install-exit-code.txt'), 'utf8'), `${installExit}\n`);
+      assert.equal(readFileSync(join(results, 'full-safe/install-status.txt'), 'utf8'), installExit ? 'failed\n' : 'passed\n');
+      assert.equal(readFileSync(join(results, 'full-safe/test-safe-definition.txt'), 'utf8'), 'fixture complete safe definition\n');
+    } else {
+      assert.match(result.stderr, /pnpm must match the repository pin/);
+      assert.equal(existsSync(calls), false, 'Wrong pnpm must fail before install');
+    }
+  }
 });
 
 test('permissions, configuration and toolchain preserve the secretless hosted boundary', () => {

@@ -80,8 +80,8 @@ Run `pnpm run test:automation` and live provider tests when the release changes 
 fixture desktop and explicitly scoped provider credentials rather than the operator's saved app state. Before committing,
 run the repository autoreview workflow until no accepted actionable findings remain.
 
-For complete non-live package coverage beyond `test:safe` and the normal macOS CI filters, run the supplemental hosted
-workflow against the exact publication commit:
+For the complete safe gate on a fresh hosted runner plus non-live package coverage beyond the normal macOS CI filters,
+run the supplemental hosted workflow against the exact publication commit:
 
 ```bash
 gh workflow run release-validation.yml --ref main -f target_ref=<full-40-character-publication-SHA>
@@ -95,11 +95,21 @@ workflow context. PR runs independently check out only the event's PR head; a ma
 
 This read-only, secretless macOS lane runs unfiltered suites for PeekabooCore, AutomationKit, Protocols, Visualizer,
 UICore, Inspector, Playground, and all five pinned submodules. It keeps per-package logs, exit status, built-in skips,
-submodule revisions, and actual toolchain metadata. Its workflow-specific PR trigger validates changes to the lane;
+submodule revisions, and actual toolchain metadata. A separate `full-safe` matrix job uses Node 24, the exact repository
+pnpm pin, and a frozen dependency install, then invokes the unchanged `pnpm run test:safe` command once. It covers the
+artifact/script contracts, synthetic background-certification checks, public SwiftPM consumer build, Foundation suite,
+and full safe CLI configuration with the repository's existing compile exclusions and ambient-state opt-out. It retains
+the command definition, combined stage/test output, command and log-writer exits, failures/skips index, and actual
+source/toolchain. The command's existing fail-fast chain stops at its first failed stage; later stages are not covered,
+and missing exit evidence or an interrupted run is never a pass. Each matrix job has its own checkout and package state.
+
+Its workflow-specific PR trigger validates changes to the lane;
 publication requires a separate exact-source dispatch. The normal macOS CI still owns the complete Mac app suite and
 its genuinely hosted-only credential tests. Never spoof hosted-runner identity on a personal Mac. Hosted Xcode 26.x
-compatibility coverage does not replace the Xcode 27 release preflight, signed live automation, or provider integration
-proof; report exclusions and unavailable live environments explicitly.
+compatibility coverage does not replace the Xcode 27 release preflight or signed isolated desktop and provider integration
+proof. Built-in automation/provider skips and synthetic certification checks are not live proof; report exclusions and
+unavailable live environments explicitly. Do not rerun the full safe gate against the operator's saved state: a temporary
+HOME is not a secretless OS account.
 
 ### Terminal-only artifact set
 
