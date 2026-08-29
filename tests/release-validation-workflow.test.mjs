@@ -123,6 +123,64 @@ test('permissions, configuration and toolchain preserve the secretless hosted bo
   assert.doesNotMatch(toolchain, /Xcode_27|xcode-select|xcodes install|curl|wget/);
 });
 
+test('toolchain validation drains version output and preserves producer failures', (t) => {
+  const root = fixture(t);
+  const bin = join(root, 'bin');
+  const toolchains = join(root, 'toolchains');
+  mkdirSync(bin);
+  mkdirSync(join(toolchains, 'Xcode_26.6.app', 'Contents', 'Developer'), { recursive: true });
+  // Substitute only fixture-owned installation paths; every tool probe is a fake executable.
+  const command = script('Select installed Xcode 26.x and record actual toolchain')
+    .replaceAll('/Applications/', `${toolchains}/`);
+  const tail = 'version detail\n'.repeat(32768);
+  writeFileSync(join(bin, 'xcodebuild'), `#!${process.execPath}
+const { appendFileSync, writeFileSync } = require('node:fs');
+appendFileSync(process.env.FIXTURE_CALLS, 'started\\n');
+writeFileSync(1, process.env.FIXTURE_VERSION + '\\n');
+writeFileSync(1, ${JSON.stringify(tail)});
+writeFileSync(1, 'Build version 17F113\\n');
+appendFileSync(process.env.FIXTURE_CALLS, 'completed\\n');
+process.exit(process.env.FIXTURE_FAILURE === 'xcodebuild' ? 23 : 0);
+`, { mode: 0o755 });
+  for (const name of ['sw_vers', 'xcrun', 'swift']) {
+    writeFileSync(join(bin, name), `#!/bin/bash
+echo '${name} fixture output'
+if [[ "$FIXTURE_FAILURE" == '${name}' ]]; then exit 23; fi
+`, { mode: 0o755 });
+  }
+  const cases = [
+    ['Xcode 26.6', '', 0],
+    ['Xcode 26.4.1', '', 0],
+    ['Xcode 27.0', '', 1],
+    ['Xcode 126.6', '', 1],
+    ['Xcode 26.6 unexpected suffix', '', 1],
+    ...['sw_vers', 'xcodebuild', 'xcrun', 'swift'].map((name) => ['Xcode 26.6', name, 23]),
+  ];
+  for (const [index, [version, failure, expectedExit]] of cases.entries()) {
+    const results = join(root, `results-${index}`);
+    mkdirSync(results);
+    const calls = join(results, 'calls');
+    const outputEnv = join(results, 'output-env');
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', command], {
+      cwd: root,
+      env: {
+        PATH: `${bin}:/usr/bin:/bin`, VALIDATION_RESULTS: results, GITHUB_ENV: outputEnv,
+        FIXTURE_VERSION: version, FIXTURE_FAILURE: failure, FIXTURE_CALLS: calls,
+      },
+      encoding: 'utf8', timeout: 10000, maxBuffer: 2 * 1024 * 1024,
+    });
+    assert.equal(result.status, expectedExit, `${version} / ${failure}: ${result.stderr}`);
+    if (failure !== 'sw_vers') {
+      assert.equal(readFileSync(calls, 'utf8'), 'started\ncompleted\n', 'Version producer must complete exactly once');
+      const record = readFileSync(join(results, 'toolchain.txt'), 'utf8');
+      const completeVersion = `${version}\n${tail}Build version 17F113\n`;
+      assert.ok(record.includes(completeVersion), 'The complete version/build output must survive in the record');
+      assert.ok(result.stdout.includes(completeVersion), 'The complete version/build output must reach the log');
+    }
+    assert.equal(existsSync(outputEnv), expectedExit === 0, 'Only successful validation can export the toolchain');
+  }
+});
+
 test('suite failures remain failures, later packages run, and skips remain visible', (t) => {
   const root = fixture(t);
   const bin = join(root, 'bin');
