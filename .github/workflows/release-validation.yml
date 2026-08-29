@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release-validation.yml'
+      - '.github/scripts/core-sigpipe-diagnostic.py'
       - 'tests/release-validation-workflow.test.mjs'
 
 permissions:
@@ -26,7 +27,7 @@ jobs:
       matrix:
         include:
           - group: core
-            job_minutes: 100
+            job_minutes: 120
             test_minutes: 90
             packages: Core/PeekabooCore
           - group: libraries-apps
@@ -131,6 +132,7 @@ jobs:
       # Each matrix job has a fresh checkout and no restored package/build cache.
       # Standalone Playground resolution stays here, never in the app-packaging job.
       - name: Run complete package suites serially
+        id: suites
         timeout-minutes: ${{ matrix.test_minutes }}
         run: |
           set -euo pipefail
@@ -164,6 +166,14 @@ jobs:
             echo '::endgroup::'
           done <<< "$PACKAGE_PATHS"
           exit "$failed"
+
+      - name: Diagnose Core SIGPIPE without changing the failed result
+        if: failure() && matrix.group == 'core' && steps.suites.outcome == 'failure'
+        timeout-minutes: 10
+        env:
+          DIAGNOSTIC_GROUP: ${{ matrix.group }}
+          ORIGINAL_SUITE_OUTCOME: ${{ steps.suites.outcome }}
+        run: python3 .github/scripts/core-sigpipe-diagnostic.py
 
       - name: Summarize all packages and verify canonical workspace lock
         if: always() && steps.source.outcome == 'success'

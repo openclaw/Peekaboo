@@ -679,6 +679,14 @@ struct PeekabooAgentStepLimitTests {
     @Test
     @MainActor
     func `Unknown zero-token cost remains unknown across session continuation`() async throws {
+        let provider = MalformedToolResponseProvider(finishReason: .stop, toolCalls: [])
+        let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+        configuration.setProviderFactoryOverride { _, _ in provider }
+
+        let previousConfiguration = TachikomaConfiguration.default
+        TachikomaConfiguration.default = configuration
+        defer { TachikomaConfiguration.default = previousConfiguration }
+
         let model = LanguageModel.openai(.gpt55)
         let (agentService, sessionStore) = try self.makeAgentService(defaultModel: model)
         defer { sessionStore.cleanup() }
@@ -687,6 +695,7 @@ struct PeekabooAgentStepLimitTests {
             model: model,
             label: "cost-coverage-test",
             logBehavior: .verboseOnly)
+        #expect(context.provider as? MalformedToolResponseProvider === provider)
 
         do {
             try agentService.saveExecutionSession(
@@ -699,10 +708,14 @@ struct PeekabooAgentStepLimitTests {
                 status: "failed")
 
             let firstSession = try #require(try await agentService.getSessionInfo(sessionId: context.id))
+            #expect(firstSession.metadata.totalCost == nil)
+            #expect(firstSession.metadata.customData["agent_usage_observed"] == "true")
+            #expect(firstSession.metadata.customData["agent_usage_cost_complete"] == "false")
             let continuation = agentService.makeContinuationContext(
                 from: firstSession,
                 userMessage: "Continue.",
                 model: model)
+            #expect(continuation.provider as? MalformedToolResponseProvider === provider)
             try agentService.saveExecutionSession(
                 context: continuation,
                 model: model,
@@ -719,6 +732,8 @@ struct PeekabooAgentStepLimitTests {
             #expect(finalSession.metadata.totalCost == nil)
             #expect(finalSession.metadata.customData["agent_usage_observed"] == "true")
             #expect(finalSession.metadata.customData["agent_usage_cost_complete"] == "false")
+            #expect(provider.generateRequestCount == 0)
+            #expect(provider.streamRequestCount == 0)
             try await agentService.deleteSession(id: context.id)
         } catch {
             try? await agentService.deleteSession(id: context.id)

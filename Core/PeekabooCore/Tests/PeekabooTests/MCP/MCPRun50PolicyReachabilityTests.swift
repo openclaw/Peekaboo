@@ -176,7 +176,7 @@ struct MCPRun50PolicyReachabilityTests {
 
     @Test
     @MainActor
-    func `background text paste rejects a conflicting result target without false attribution`() async throws {
+    func `background text paste rejects conflicts and retains authorized target attribution`() async throws {
         let automation = Run50PasteAutomationService()
         automation.outcomeTargetIdentity = try DesktopTargetIdentity(processIdentity: .init(
             processIdentifier: 90,
@@ -200,7 +200,15 @@ struct MCPRun50PolicyReachabilityTests {
         #expect(meta["state"] == .string(DesktopActionOutcome.State.indeterminate.rawValue))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
-        #expect(meta["target_receipt"] == nil)
+        #expect(automation.targetedTypeActionsCalls.count == 1)
+        #expect(automation.targetedTypeActionsCalls.first?.expectedProcessIdentity == Self.application.processIdentity)
+        let authorizedIdentity = try DesktopTargetIdentity(processIdentity: #require(Self.application.processIdentity))
+        let authorizedReceipt = try Value(authorizedIdentity.actionTargetReceipt)
+        let conflictingReceipt = try Value(#require(automation.outcomeTargetIdentity).actionTargetReceipt)
+        // Failure attribution retains request authority, not proof of delivery to the reported target.
+        #expect(meta["target_receipt"] == authorizedReceipt)
+        #expect(meta["target_receipt"] != conflictingReceipt)
+        #expect(meta["target_identity"] == nil)
         guard case let .text(message, _, _)? = response.content.first else {
             Issue.record("Expected conflicting paste target error")
             return

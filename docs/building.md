@@ -41,6 +41,24 @@ pnpm run build:swift:all
 ./scripts/build-cli-standalone.sh [--install]
 ```
 
+## Shared CodeQL build graph
+
+The workspace's `CodeQL` scheme builds the CLI, certification controller, Mac app, Playground, and Inspector
+in one graph so shared dependencies are analyzed without separate builds. Its CLI scheme references select
+the public SwiftPM products `peekaboo` and `peekaboo-certification-controller`.
+
+The CLI package's internal project name is `PeekabooCLIPackage`, and the `peekaboo` product uses the
+`PeekabooExec` entry target in `Sources/PeekabooExec`. Keep both internal names distinct from the Mac app's
+`Peekaboo` identity under case folding. Xcode 26 derives executable intermediate directories from the package
+and product names: renaming only the Swift entry target does not separate `peekaboo.build/Debug/peekaboo.build`
+from the app's `Peekaboo.build/Debug/Peekaboo.build` on a case-insensitive volume. Colliding file lists can compile
+the app's sources and generated assets as the CLI. The package name separates those directories; the entry
+target name also separates the Swift module where the build system uses it. Public binaries, `PeekabooCLI`
+imports, source paths, and embedded Info.plist/source stamps remain unchanged.
+
+Run `pnpm run test:codeql-build-graph` to check product coverage, internal ownership, and the CLI's exact
+`PeekabooMain.swift` entrypoint. These structural checks do not replace a successful hosted CodeQL build.
+
 ## Debug build-staleness checks
 
 Debug CLI builds leave staleness checks disabled unless Git config contains

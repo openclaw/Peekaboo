@@ -172,6 +172,9 @@ struct BrowserToolCapabilityIntegrationTests {
                 "mcp_tool": "list_pages",
             ]))
         let pageReference = try Self.pageReference(from: listed)
+        // Page listing and snapshots can also grant provider user activation and own shared mutation barriers.
+        #expect(coordinator.sharedPrepareCount == 1)
+        #expect(coordinator.completionCount == 1)
         let snapshot = try await context.execute(
             tool: tool,
             arguments: ToolArguments(raw: [
@@ -180,10 +183,12 @@ struct BrowserToolCapabilityIntegrationTests {
                 "page_id": pageReference,
             ]))
         let elementReference = try Self.elementReference(from: snapshot)
+        #expect(coordinator.sharedPrepareCount == 2)
+        #expect(coordinator.completionCount == 2)
         let evaluateArguments = #"{"function":"(el) => el.textContent","args":["\#(elementReference)"],"# +
             #""uid":"domain-value"}"#
 
-        _ = try await context.execute(
+        let evaluated = try await context.execute(
             tool: tool,
             arguments: ToolArguments(raw: [
                 "action": "call",
@@ -192,14 +197,15 @@ struct BrowserToolCapabilityIntegrationTests {
                 "mcp_args_json": evaluateArguments,
             ]))
 
+        #expect(!evaluated.isError)
         let call = try #require(client.sequences.last?.last)
         #expect(call.toolName == "evaluate_script")
         #expect(call.arguments["pageId"] as? Int == 7)
         #expect(call.arguments["args"] as? [String] == ["1_0"])
         #expect(call.arguments["uid"] as? String == "domain-value")
-        #expect(coordinator.sharedPrepareCount == 1)
+        #expect(coordinator.sharedPrepareCount == 3)
         #expect(coordinator.concurrentPrepareCount == 0)
-        #expect(coordinator.completionCount == 1)
+        #expect(coordinator.completionCount == 3)
     }
 
     @Test

@@ -141,8 +141,10 @@ if includeAutomationTests {
 
 
 
+// Xcode derives intermediate paths from the package and executable product names.
+// Keep this project distinct from Peekaboo.xcodeproj even on case-insensitive volumes.
 let package = Package(
-    name: "peekaboo",
+    name: "PeekabooCLIPackage",
     platforms: [
         .macOS(.v15),
     ],

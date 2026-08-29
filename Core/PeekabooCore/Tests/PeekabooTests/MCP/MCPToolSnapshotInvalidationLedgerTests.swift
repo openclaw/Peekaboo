@@ -78,6 +78,10 @@ struct MCPToolSnapshotInvalidationLedgerTests {
             browserEndResults: [true, true],
             recordDebt: false)
         let server = try await PeekabooMCPServer(toolContext: fixture.context)
+        #expect(fixture.browser.openedSessions.count == 1)
+        let child = try #require(fixture.browser.openedSessions.first)
+        #expect(child !== fixture.browser)
+        #expect(await server.browserClientForTesting() === child)
         let serverOwner = await server.snapshotOwnerForTesting()
         let serverSnapshots = MCPToolUISnapshotStore(owner: serverOwner)
         _ = await serverSnapshots.createSnapshot(id: "server-release-owner")
@@ -91,7 +95,8 @@ struct MCPToolSnapshotInvalidationLedgerTests {
         #expect(await server.stopForTesting())
 
         #expect(fixture.coordinator.completionAttempts == 2)
-        #expect(fixture.browser.endCount == 2)
+        #expect(child.endCount == 2)
+        #expect(fixture.browser.endCount == 0)
         #expect(await fixture.gate.pendingInvalidation() == nil)
         #expect(await !serverSnapshots.hasOwnerState())
     }
@@ -280,12 +285,26 @@ private final class SequencedReleaseMutationCoordinator: MCPToolSnapshotMutation
 }
 
 @MainActor
-private final class SnapshotReleaseBrowserClient: BrowserMCPAuthenticatedSessionEnding, @unchecked Sendable {
+private final class SnapshotReleaseBrowserClient: BrowserMCPScopedSessionOpening, BrowserMCPScopedSessionEnding,
+    @unchecked Sendable
+{
     private var endResults: [Bool]
     private(set) var endCount = 0
+    private(set) var openedSessions: [SnapshotReleaseBrowserClient] = []
 
     init(endResults: [Bool]) {
         self.endResults = endResults
+    }
+
+    func openBrowserMCPScopedSession(
+        handoff: BrowserMCPHandoffGrant?) async throws -> any BrowserMCPScopedSessionEnding
+    {
+        guard handoff == nil else {
+            throw BrowserMCPConnectionError.receiptBindingUnsupported
+        }
+        let child = SnapshotReleaseBrowserClient(endResults: self.endResults)
+        self.openedSessions.append(child)
+        return child
     }
 
     func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
@@ -306,7 +325,7 @@ private final class SnapshotReleaseBrowserClient: BrowserMCPAuthenticatedSession
         .text("unused")
     }
 
-    func endAuthenticatedBrowserSession() async -> Bool {
+    func endBrowserMCPScopedSession() async -> Bool {
         self.endCount += 1
         return self.endResults.isEmpty ? true : self.endResults.removeFirst()
     }

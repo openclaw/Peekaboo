@@ -40,10 +40,12 @@ function privateDirectory(prefix) {
 }
 
 function writePrivate(filePath, value) {
-  fs.writeFileSync(filePath, typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`, {
-    mode: 0o600,
+  // Child processes poll these markers; never expose an empty or partial document.
+  const temporary = `${filePath}.tmp`;
+  fs.writeFileSync(temporary, typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`, {
+    flag: 'wx', mode: 0o600,
   });
-  fs.chmodSync(filePath, 0o600);
+  fs.renameSync(temporary, filePath);
 }
 
 function writeExecutable(filePath, source) {
@@ -182,7 +184,6 @@ fs.writeFileSync(contamination, '', { mode: 0o600 });
 let sequence = 0;
 let epoch = 0;
 let sealed = false;
-const startedAt = Date.now();
 const processReceipt = { pid: process.pid, start_identity: String(process.pid) + '00', code_signature_hash: 'a'.repeat(40) };
 const server = net.createServer((socket) => {
   let input = '';
@@ -212,8 +213,9 @@ const tick = () => {
   sequence += 1;
   epoch += 1;
   const active = producer.foreground.active;
+  // The fake external producer acts only after the owner emits the perform window.
   const activity = producer.revision === 2
-    && (process.env.FAKE_EARLY_ACTIVITY === '1' || Date.now() - startedAt > 450) ? 3 : 0;
+    && (process.env.FAKE_EARLY_ACTIVITY === '1' || fs.existsSync(process.env.FAKE_FOREGROUND_ACTIVITY_PATH)) ? 3 : 0;
   write(heartbeatPath, {
     sequence,
     monotonicMicroseconds: Number(process.hrtime.bigint() / 1000n),
@@ -343,6 +345,10 @@ if (args[0] === '--attest-monitor') {
     ready_at_milliseconds: Date.now(),
   });
   await wait(plan.start_path);
+  const startDelayMilliseconds = Number(process.env.FAKE_CONTROLLER_START_DELAY_MILLISECONDS ?? 0);
+  if (startDelayMilliseconds > 0) {
+    await new Promise((resolve) => setTimeout(resolve, startDelayMilliseconds));
+  }
   write(root + '/mutation-started.json', {
     version: 1, phase: 'mutation-started', execution_nonce: plan.execution_nonce,
     controller_id: plan.controller_id,
@@ -357,11 +363,17 @@ if (args[0] === '--attest-monitor') {
     },
     timestamp_milliseconds: Date.now(),
   });
-  const mutationDelayMilliseconds = process.env.FAKE_CONTROLLER_EXIT_EARLY === plan.controller_id
-    ? 10
-    : Number(process.env.FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS ?? 900);
-  await new Promise((resolve) => setTimeout(resolve, mutationDelayMilliseconds));
-  if (process.env.FAKE_CONTROLLER_EXIT_EARLY === plan.controller_id) process.exit(9);
+  if (process.env.FAKE_CONTROLLER_EXIT_EARLY === plan.controller_id) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    process.exit(9);
+  }
+  if (process.env.FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS !== undefined) {
+    const mutationDelayMilliseconds = Number(process.env.FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS);
+    await new Promise((resolve) => setTimeout(resolve, mutationDelayMilliseconds));
+  } else {
+    // Default fixtures model overlap by ownership; explicit delays still exercise timing failures.
+    await wait(process.env.FAKE_EXTERNAL_RESTORE_STARTED_PATH);
+  }
   write(root + '/mutation-completed.json', {
     version: 1, phase: 'mutation-completed', execution_nonce: plan.execution_nonce,
     controller_id: plan.controller_id,
@@ -457,6 +469,10 @@ if (args[0] === '--attest-monitor') {
     ready_at_milliseconds: Date.now(),
   });
   await wait(plan.observation_request_path);
+  const readbackDelayMilliseconds = Number(process.env.FAKE_OBSERVER_READBACK_DELAY_MILLISECONDS ?? 0);
+  if (readbackDelayMilliseconds > 0) {
+    await new Promise((resolve) => setTimeout(resolve, readbackDelayMilliseconds));
+  }
   const observation = {
     version: 1,
     execution_nonce: plan.execution_nonce,
@@ -569,6 +585,8 @@ function fixture() {
   const peekaboo = path.join(root, 'fake-peekaboo');
   const catalogPath = path.join(root, 'catalog.json');
   const finalizerLog = path.join(root, 'finalizer.log');
+  const foregroundActivity = path.join(root, 'foreground-activity.json');
+  const externalRestoreStarted = path.join(root, 'external-restore-started.json');
   writeExecutable(monitor, fakeMonitorSource);
   writeExecutable(controllerExecutable, fakeControllerSource);
   writeExecutable(finalizer, fakeFinalizerSource);
@@ -625,7 +643,7 @@ function fixture() {
   };
   const planPath = path.join(root, 'plan.json');
   writePrivate(planPath, plan);
-  return { root, runs, plan, planPath, finalizer, finalizerLog };
+  return { root, runs, plan, planPath, finalizer, finalizerLog, foregroundActivity, externalRestoreStarted };
 }
 
 function coordinatorEnvironment(fix, extra = {}) {
@@ -636,6 +654,8 @@ function coordinatorEnvironment(fix, extra = {}) {
     FAKE_SENTINEL_PID: String(SENTINEL_PID),
     FAKE_SENTINEL_WINDOW: String(SENTINEL_WINDOW),
     FAKE_FOREGROUND_PID: String(FOREGROUND_PID),
+    FAKE_FOREGROUND_ACTIVITY_PATH: fix.foregroundActivity,
+    FAKE_EXTERNAL_RESTORE_STARTED_PATH: fix.externalRestoreStarted,
     ...extra,
   };
 }
@@ -666,6 +686,12 @@ async function runInteractive(fix, {
       onEvent?.(event);
       if (event.event === 'external-foreground-window') {
         const window = JSON.parse(fs.readFileSync(event.window_path));
+        const activityPath = window.phase === 'perform' ? fix.foregroundActivity : fix.externalRestoreStarted;
+        writePrivate(activityPath, {
+          execution_nonce: event.execution_nonce,
+          monitor_instance_id: event.monitor_instance_id,
+          timestamp_milliseconds: Date.now(),
+        });
         const phase = window.phase === 'perform' ? 'task-complete' : 'restore-complete';
         const filePath = window.phase === 'perform' ? window.task_complete_path : window.restore_complete_path;
         const publish = () => writePrivate(filePath, {
@@ -957,7 +983,11 @@ test('greater-than-20-second asymmetric external window retains the bounded cont
     );
     const startedAt = Date.now();
     const run = await runInteractive(fix, {
-      env: { FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS: '24000' },
+      env: {
+        // Cross the former 450 ms activity timer before operations-start, without input.
+        FAKE_CONTROLLER_START_DELAY_MILLISECONDS: '600',
+        FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS: '24000',
+      },
       markerDelayMilliseconds: { perform: performDelayMilliseconds, restore: 25 },
     });
     assert.equal(run.code, 0, run.stderr);
@@ -965,11 +995,31 @@ test('greater-than-20-second asymmetric external window retains the bounded cont
     assert.deepEqual(run.events.filter((event) => event.event === 'external-foreground-window')
       .map((event) => event.phase), ['perform', 'restore']);
     const completion = run.events.at(-1);
+    assert.equal(completion.event, 'test-runtime-complete');
+    assert.equal(completion.certification_eligible, false);
+    const { fences } = JSON.parse(fs.readFileSync(path.join(completion.run_root, 'monitor/monitor-evidence.json')));
+    assert.deepEqual(fences.map(({ name, heartbeat }) => [name, heartbeat.attributedForegroundEventCount]), [
+      ['baseline-stable', 0], ['grant-stable', 0], ['operations-start', 0],
+      ['operations-complete', 3], ['revoke-stable', 0], ['final-stable', 0],
+    ]);
+    const operationsStart = fences.find(({ name }) => name === 'operations-start').heartbeat;
+    const operationsComplete = fences.find(({ name }) => name === 'operations-complete').heartbeat;
+    const activity = JSON.parse(fs.readFileSync(fix.foregroundActivity));
+    assert.equal(activity.execution_nonce, completion.execution_nonce);
+    assert.equal(activity.monitor_instance_id, completion.monitor_instance_id);
+    assert.ok(activity.timestamp_milliseconds >= operationsStart.wallClockMilliseconds);
+    assert.ok(activity.timestamp_milliseconds <= operationsComplete.wallClockMilliseconds);
+    assert.ok(operationsComplete.wallClockMilliseconds - operationsStart.wallClockMilliseconds >= 20_000);
     for (const controllerID of ['controller-a', 'controller-b']) {
       const controllerPlan = JSON.parse(fs.readFileSync(path.join(
         completion.run_root, 'controllers', controllerID, 'plan.json',
       )));
       const characterCount = [...controllerPlan.type_text].length;
+      const controllerRoot = controllerPlan.artifacts_directory;
+      const mutationStarted = JSON.parse(fs.readFileSync(path.join(controllerRoot, 'mutation-started.json')));
+      const mutationCompleted = JSON.parse(fs.readFileSync(path.join(controllerRoot, 'mutation-completed.json')));
+      assert.ok(mutationStarted.timestamp_milliseconds <= operationsStart.wallClockMilliseconds);
+      assert.ok(mutationCompleted.timestamp_milliseconds > operationsComplete.wallClockMilliseconds);
       const typingDurationMilliseconds = characterCount * controllerPlan.typing_delay_milliseconds;
       assert.equal(characterCount, 1000);
       assert.equal(typingDurationMilliseconds, 50_000);
@@ -1041,7 +1091,10 @@ test('semantic discriminator rejects empty, oversized, and NUL values before lau
 test('sorted-key fake lifecycle reaches ineligible test completion with bounded typing', async () => {
   const fix = fixture();
   try {
-    const run = await runInteractive(fix);
+    const run = await runInteractive(fix, {
+      // Exceed the former 900 ms fake mutation lifetime before operations-complete.
+      env: { FAKE_OBSERVER_READBACK_DELAY_MILLISECONDS: '1000' },
+    });
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.events.filter((event) => event.event === 'external-foreground-window')
       .map((event) => event.phase), ['perform', 'restore']);
@@ -1272,6 +1325,23 @@ test('controller exit before owner release aborts the live run', async () => {
     const run = await runInteractive(fix, { env: { FAKE_CONTROLLER_EXIT_EARLY: 'controller-a' } });
     assert.notEqual(run.code, 0);
     assert.match(run.stderr, /controller-a exited before its owner release/);
+    assert.equal(fs.readFileSync(fix.finalizerLog, 'utf8'), '');
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('controller mutation completing before the operations fences fails closed', async () => {
+  const fix = fixture();
+  try {
+    const run = await runInteractive(fix, {
+      env: { FAKE_CONTROLLER_MUTATION_DELAY_MILLISECONDS: '1' },
+      markerDelayMilliseconds: { perform: 100 },
+    });
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /a controller mutation completed before the operations-(?:start|complete) fence/);
+    assert.equal(run.events.some((event) => event.event === 'external-foreground-window'
+      && event.phase === 'restore'), false);
     assert.equal(fs.readFileSync(fix.finalizerLog, 'utf8'), '');
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });

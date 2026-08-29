@@ -7,8 +7,7 @@
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
       <BuildActionEntries>
-         <!-- Compile SwiftPM's internal modules here. The public executable products are linked and tested by macOS CI;
-              their case-folded wrapper names collide with the Peekaboo app target on hosted case-insensitive runners. -->
+         <!-- The distinct CLI package identity keeps public-product builds separate from app intermediates. -->
          <BuildActionEntry
             buildForTesting = "YES"
             buildForRunning = "YES"
@@ -17,9 +16,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "PeekabooExec"
-               BuildableName = "PeekabooExec"
-               BlueprintName = "PeekabooExec"
+               BlueprintIdentifier = "peekaboo"
+               BuildableName = "peekaboo"
+               BlueprintName = "peekaboo"
                ReferencedContainer = "container:CLI">
             </BuildableReference>
          </BuildActionEntry>
@@ -31,9 +30,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "PeekabooCertificationController"
-               BuildableName = "PeekabooCertificationController"
-               BlueprintName = "PeekabooCertificationController"
+               BlueprintIdentifier = "peekaboo-certification-controller"
+               BuildableName = "peekaboo-certification-controller"
+               BlueprintName = "peekaboo-certification-controller"
                ReferencedContainer = "container:CLI">
             </BuildableReference>
          </BuildActionEntry>

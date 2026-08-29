@@ -12,6 +12,8 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
     func `one deadline spans approval and MCP startup then clears late state`() async throws {
         let manager = DeadlineBrowserMCPManager()
         let browser = Self.browser(bundleIdentifier: "com.google.Chrome")
+        let attempt = BrowserMCPConnectionAttempt.standalone(timeout: .seconds(2))
+        let attempts = AuthorityCounter()
         let session = BrowserMCPSessionManager(
             serverName: "test-browser",
             manager: manager,
@@ -22,17 +24,20 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             // The whole target runs concurrently on the main actor. Keep enough budget for this operation to
             // enter provider startup even under the broad suite, then let the deliberately blocked provider prove
             // that the same deadline cancels and tears it down.
-            connectionAttempt: { .standalone(timeout: .seconds(2)) },
+            connectionAttempt: {
+                attempts.increment()
+                return attempt
+            },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             channelEndpointResolver: BrowserMCPChannelEndpointResolver(
-                resolveInitial: { _, attempt in
-                    attempt.state.markPermissionDispatchStarted()
+                resolveInitial: { _, resolvingAttempt in
+                    #expect(resolvingAttempt.deadline == attempt.deadline)
+                    #expect(resolvingAttempt.state === attempt.state)
+                    resolvingAttempt.state.markPermissionDispatchStarted()
                     return Self.endpoint()
                 },
                 revalidate: { _, _ in }),
             environment: [:])
-        let clock = ContinuousClock()
-        let started = clock.now
 
         do {
             _ = try await session.connect(channel: .stable)
@@ -40,14 +45,25 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
             #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
         } catch {
             Issue.record("Expected canonical deadline failure, got \(error)")
         }
 
-        #expect(started.duration(to: clock.now) < .seconds(1))
+        let finished = ContinuousClock.now
+        #expect(finished >= attempt.deadline)
+        // Allow cleanup/scheduling time after the shared deadline, not a second startup budget.
+        #expect(attempt.deadline.duration(to: finished) < .seconds(1))
+        #expect(attempts.value == 1)
+        #expect(attempt.state.didStartPermissionDispatch)
+        #expect(attempt.state.didStartConnectionDispatch)
         #expect(manager.addServerCancellationCount == 1)
         #expect(manager.removeServerCount == 1)
-        #expect(await (session.status(channel: .stable)).connectionReceipt == nil)
+        #expect(!manager.connected)
+        let status = await session.status(channel: .stable)
+        #expect(!status.isConnected)
+        #expect(status.connectionReceipt == nil)
+        #expect(status.providerSessionEpoch == nil)
     }
 
     @Test

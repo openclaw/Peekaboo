@@ -39,6 +39,7 @@ let package = Package(
         .testTarget(
             name: "PeekabooProtocolsTests",
             dependencies: ["PeekabooProtocols"],
+            path: "Tests/PeekabooProtocolsTests",
             swiftSettings: approachableConcurrencySettings),
     ],
     swiftLanguageModes: [.v6])

@@ -235,6 +235,8 @@ struct PeekabooBridgeCertificationProducerTransportTests {
             return
         }
         #expect(error.code == .unauthorizedClient)
+        #expect(error.message == "Certification operations require the authenticated Foundation-signed Peekaboo CLI")
+        #expect(!error.operationMayHaveCompleted)
         let bundle = try OperationReceiptSessionFixture.bundle(
             authority: authority,
             sessionAttestation: session.attestation,
@@ -243,7 +245,20 @@ struct PeekabooBridgeCertificationProducerTransportTests {
             response: attested.response)
         try bundle.validateIntegrity()
         #expect(bundle.receipt.payload.operation == .certificationProducerAttestation)
-        #expect(bundle.receipt.payload.target == .global)
+        // Caller authorization refuses before producer transport can attest any target.
+        #expect(bundle.receipt.payload.target == nil)
+        #expect(bundle.receipt.payload.targetAttributionFailure == nil)
+        #expect(bundle.receipt.payload.targetAttributionEvidence == nil)
+        let outcome = try #require(bundle.receipt.payload.outcome?.outcome)
+        #expect(outcome.state == .refused)
+        #expect(outcome.route == .bridge)
+        #expect(outcome.delivery == nil)
+        #expect(outcome.evidence == .requestRefused)
+        #expect(outcome.dispatchState == .none)
+        #expect(outcome.retrySafety == .safe)
+        #expect(outcome.refusalReason == .transportSessionUnavailable)
+        #expect(error.actionOutcome == bundle.receipt.payload.outcome)
+        #expect(error.actionTargetReceipt == nil)
     }
 
     @Test

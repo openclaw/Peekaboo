@@ -96,7 +96,8 @@ struct PeekabooBridgeCaptureWindowIDValidationTests {
             return
         }
         #expect(error.code == .invalidRequest)
-        #expect(error.context?.hasPrefix("bridge_target_attribution:") == true)
+        #expect(error.message == "captureWindow windowId must be between 1 and \(CGWindowID.max)")
+        #expect(error.context == nil)
         #expect(!error.operationMayHaveCompleted)
         #expect(await MainActor.run { services.screenCaptureStub.lastWindowId } == nil)
 
@@ -104,14 +105,27 @@ struct PeekabooBridgeCaptureWindowIDValidationTests {
         try bundle.validate()
         #expect(bundle.receipt.payload.operation == .captureWindow)
         #expect(bundle.receipt.payload.target == nil)
-        #expect(bundle.receipt.payload.targetAttributionFailure != nil)
-        #expect(bundle.receipt.payload.outcome == nil)
+        // Identifier validation refuses before capture can produce target evidence.
+        #expect(bundle.receipt.payload.targetAttributionFailure == nil)
+        #expect(bundle.receipt.payload.targetAttributionEvidence == nil)
+        let outcome = try #require(bundle.receipt.payload.outcome?.outcome)
+        #expect(outcome.state == .refused)
+        #expect(outcome.route == .bridge)
+        #expect(outcome.delivery == nil)
+        #expect(outcome.evidence == .requestRefused)
+        #expect(outcome.dispatchState == .none)
+        #expect(outcome.retrySafety == .safe)
+        #expect(outcome.refusalReason == .invalidRequest)
         let certifiedResponse = try self.decode(bundle.canonicalResponse)
         guard case let .error(certifiedError) = certifiedResponse else {
             Issue.record("Expected receipt to certify the invalid-request refusal")
             return
         }
         #expect(certifiedError.code == .invalidRequest)
+        #expect(certifiedError.message == error.message)
+        #expect(certifiedError.context == nil)
+        #expect(certifiedError.actionOutcome == bundle.receipt.payload.outcome)
+        #expect(certifiedError.actionTargetReceipt == nil)
         #expect(!certifiedError.operationMayHaveCompleted)
     }
 

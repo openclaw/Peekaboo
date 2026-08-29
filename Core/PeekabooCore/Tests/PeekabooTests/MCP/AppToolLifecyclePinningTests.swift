@@ -31,15 +31,47 @@ struct AppToolLifecyclePinningTests {
             ]))
 
         #expect(!response.isError)
+        #expect(service.mutationInventoryCount == 1)
         if action == "quit" {
+            #expect(service.quitCalls.count == 1)
             #expect(service.quitCalls.first?.expectedIdentity == ApplicationProcessIdentity(
                 processIdentifier: 4070,
                 processStartIdentity: 70))
         } else {
+            #expect(service.hideRequests.count == 1)
             #expect(service.hideRequests.first?.expectedIdentity == ApplicationProcessIdentity(
                 processIdentifier: 4070,
                 processStartIdentity: 70))
         }
+    }
+
+    @Test(arguments: ["quit", "hide"])
+    @MainActor
+    func `background app mutations refuse incomplete inventory before dispatch`(action: String) async throws {
+        let service = LifecyclePinningApplicationService(applications: [
+            ServiceApplicationInfo(
+                processIdentifier: 4070,
+                processStartIdentity: 70,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"),
+        ])
+        service.mutationInventoryIsComplete = false
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: service,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: AppTool(context: context),
+            arguments: ToolArguments(raw: ["action": action, "name": "TextEdit"]))
+
+        #expect(response.isError)
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: response)
+        #expect(response.meta?.objectValue?["target_receipt"] == nil)
+        #expect(service.mutationInventoryCount == 1)
+        #expect(service.findCalls.isEmpty)
+        #expect(service.quitCalls.isEmpty)
+        #expect(service.hideRequests.isEmpty)
+        #expect(service.terminationCount == 0)
     }
 
     @Test
@@ -67,6 +99,8 @@ struct AppToolLifecyclePinningTests {
                 ]))
 
             #expect(response.isError, "Expected \(action) to reject the replacement generation")
+            #expect(service.mutationInventoryCount == 1)
+            #expect(service.findCalls == ["PID:4070", "PID:4070", "PID:4070"])
             #expect(service.quitCalls.isEmpty)
             #expect(service.hideRequests.isEmpty)
             #expect(service.terminationCount == 0)
@@ -444,6 +478,8 @@ struct AppToolLifecyclePinningTests {
             ]))
 
         #expect(response.isError)
+        #expect(service.hideRequests.count == 1)
+        #expect(service.hideRequests.first?.expectedIdentity == identity)
         let target = try #require(response.meta?.objectValue?["target_receipt"]?.objectValue)
         #expect(target["pid"] == .int(4070))
         #expect(target["process_start_identity_decimal"] == .string(String(identity.processStartIdentity)))
@@ -512,11 +548,14 @@ struct AppToolLifecyclePinningTests {
 
 @MainActor
 private final class LifecyclePinningApplicationService: ApplicationServiceProtocol,
+    ApplicationMutationInventoryProviding,
     ApplicationServiceActionResultProviding,
     ApplicationServiceTargetedActionResultProviding
 {
     let supportsProcessGenerationPinnedApplicationActivation = true
     let applications: [ServiceApplicationInfo]
+    var mutationInventoryIsComplete = true
+    private(set) var mutationInventoryCount = 0
     private var currentProcessGenerations: [Int32: UInt64]
     private(set) var quitCalls: [ApplicationQuitRequest] = []
     private(set) var activationCalls: [String] = []
@@ -555,6 +594,13 @@ private final class LifecyclePinningApplicationService: ApplicationServiceProtoc
             data: ServiceApplicationListData(applications: self.applications),
             summary: .init(brief: "fixture", status: .success),
             metadata: .init(duration: 0))
+    }
+
+    func applicationMutationInventory() async throws -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo> {
+        self.mutationInventoryCount += 1
+        return self.mutationInventoryIsComplete
+            ? .complete(self.applications)
+            : .partial(self.applications, warnings: ["Fixture application enumeration was incomplete."])
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {

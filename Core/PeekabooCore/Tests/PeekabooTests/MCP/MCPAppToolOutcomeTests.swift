@@ -207,6 +207,11 @@ struct MCPAppToolOutcomeTests {
 
         #expect(response.isError)
         try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(expected, in: response)
+        #expect(service.quitRequests.count == 1)
+        #expect(service.quitRequests.first?.identifier == "PID:123")
+        #expect(service.quitRequests.first?.expectedIdentity == ApplicationProcessIdentity(
+            processIdentifier: 123,
+            processStartIdentity: 456))
         let target = try #require(response.meta?.objectValue?["target_receipt"]?.objectValue)
         #expect(target["pid"] == .int(123))
         #expect(target["process_start_identity_decimal"] == .string("456"))
@@ -690,7 +695,11 @@ struct MCPAppToolOutcomeTests {
 }
 
 @MainActor
-private final class NoopApplicationService: StubApplicationService {
+private final class NoopApplicationService: StubApplicationService, ApplicationMutationInventoryProviding {
+    func applicationMutationInventory() async throws -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo> {
+        try await .complete(self.listApplications().data.applications)
+    }
+
     override func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
         _ = try await super.quitApplication(request: request)
         return false

@@ -76,25 +76,31 @@ struct MCPClipboardOutcomeTests {
     }
 
     @Test
-    func `background-only clipboard mutations stop at policy before the leaf`() async throws {
+    func `background-only clipboard mutations stop at schema or policy before the leaf`() async throws {
         let clipboard = ResultClipboardService()
         clipboard.slots["fixture"] = Self.result("restored")
         let context = await MCPToolTestHelpers.makeContext(
             clipboard: clipboard,
             executionPolicy: .backgroundOnly)
         let tool = ClipboardTool(context: context)
-        let cases: [[String: Any]] = [
-            ["action": "set", "text": "updated"],
-            ["action": "clear"],
-            ["action": "restore", "slot": "fixture"],
+        let cases: [(arguments: [String: Any], reason: DesktopActionOutcome.RefusalReason, errorCode: String)] = [
+            // The background catalog omits text, so schema validation precedes the policy gate.
+            (["action": "set", "text": "updated"], .invalidRequest, "VALIDATION_ERROR"),
+            (["action": "set"], .foregroundConsentRequired, MCPToolExecutionPolicy.refusalErrorCode),
+            (["action": "clear"], .foregroundConsentRequired, MCPToolExecutionPolicy.refusalErrorCode),
+            (
+                ["action": "restore", "slot": "fixture"],
+                .foregroundConsentRequired,
+                MCPToolExecutionPolicy.refusalErrorCode),
         ]
 
-        for arguments in cases {
-            let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: arguments))
+        for testCase in cases {
+            let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: testCase.arguments))
             #expect(response.isError)
             try MCPToolTestHelpers.expectCanonicalRefusalMetadata(
-                reason: .foregroundConsentRequired,
+                reason: testCase.reason,
                 in: response)
+            #expect(response.meta?.objectValue?["error_code"] == .string(testCase.errorCode))
         }
         #expect(clipboard.setCallCount == 0)
         #expect(clipboard.clearCallCount == 0)

@@ -228,10 +228,11 @@ struct AgentEnhancementIntegrationTests {
         #expect(!ActionVerifier.shouldVerify(toolName: "window", arguments: ["action": "list"], options: options))
         #expect(ActionVerifier.shouldVerify(toolName: "window", arguments: ["action": "move"], options: options))
         #expect(ActionVerifier.shouldVerify(toolName: "space", arguments: ["action": "switch"], options: options))
-        #expect(!ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "snapshot"], options: options))
-        #expect(!ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "wait_for"], options: options))
+        // The pinned provider can grant user activation even without visibly fronting the page.
+        #expect(ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "snapshot"], options: options))
+        #expect(ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "wait_for"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "connect"], options: options))
-        #expect(!ActionVerifier.shouldVerify(
+        #expect(ActionVerifier.shouldVerify(
             toolName: "browser",
             arguments: ["action": "select_page", "bring_to_front": "false"],
             options: options))
