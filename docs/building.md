@@ -41,6 +41,14 @@ pnpm run build:swift:all
 ./scripts/build-cli-standalone.sh [--install]
 ```
 
+## Commander dependency resolution
+
+The vendored AXorcist manifest always declares remote Commander at exact version `0.2.4`, independent of checkout
+location or a neighboring `Commander` directory. Custom SwiftPM `--scratch-path` layouts therefore cannot implicitly
+turn that dependency into a filesystem package. Peekaboo's CLI selects its Commander submodule through an explicit
+root-package path dependency; keep local overrides at the consuming workspace rather than adding path detection back
+to AXorcist.
+
 ## Shared CodeQL build graph
 
 The workspace's `CodeQL` scheme builds the CLI, certification controller, Mac app, Playground, and Inspector

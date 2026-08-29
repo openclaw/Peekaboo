@@ -23,6 +23,8 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Pin the vendored AXorcist update so custom SwiftPM scratch paths cannot silently replace Commander's versioned dependency with a sibling checkout.
+- Distinguish browser handoff parent and receipt metadata refusals from inspection failures, and document the unchanged zero-ACL/xattr requirements, including OS provenance, without fallback.
 - Keep client, host, and certification Bridge socket waits off Swift's cooperative executor so concurrent requests can progress without changing deadlines, cancellation, or receipt validation.
 - Preserve authenticated Bridge element-action refusals and partial failure details instead of treating their valid error receipts as indeterminate transport failures.
 - Recognize the canonical signed OpenClaw Bridge socket for modern receipt-backed protocol negotiation while preserving signer validation and custom-socket protocol 1.28 compatibility.
