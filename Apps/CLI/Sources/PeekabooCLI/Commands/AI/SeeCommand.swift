@@ -577,7 +577,8 @@ RuntimeBackedCommand {
         )
         SeeCommandPreparationContext.didCapture?()
         logger.verbose(
-            "Capture completed successfully", category: "Capture",
+            "Capture completed successfully",
+            category: "Capture",
             metadata: [
                 "snapshotId": captureResult.snapshotId,
                 "elementCount": captureResult.elements.all.count,

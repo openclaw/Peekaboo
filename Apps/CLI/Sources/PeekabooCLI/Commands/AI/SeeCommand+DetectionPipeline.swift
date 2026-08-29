@@ -350,7 +350,8 @@ extension SeeCommand {
         }
 
         self.logger.verbose(
-            "Using desktop observation pipeline", category: "Capture",
+            "Using desktop observation pipeline",
+            category: "Capture",
             metadata: [
                 "target": self.observationTargetDescription(target),
             ]
@@ -367,7 +368,8 @@ extension SeeCommand {
                 "No observation-backed menu bar popover found; falling back", category: "Capture"
             )
             self.logger.operationComplete(
-                "capture_phase", success: false,
+                "capture_phase",
+                success: false,
                 metadata: [
                     "mode": mode.rawValue,
                     "fallback": "legacy_menubar",
@@ -430,7 +432,8 @@ extension SeeCommand {
     private func logObservationSpans(_ timings: ObservationTimings) {
         for span in timings.spans {
             self.logger.verbose(
-                "Desktop observation span", category: "Performance",
+                "Desktop observation span",
+                category: "Performance",
                 metadata: [
                     "span": span.name,
                     "duration_ms": Int(span.durationMS.rounded()),

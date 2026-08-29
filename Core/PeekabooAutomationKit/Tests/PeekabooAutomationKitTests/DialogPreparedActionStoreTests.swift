@@ -202,15 +202,15 @@ struct DialogPreparedActionStoreTests {
     func `window server presence falls back to the full catalog`() throws {
         let identity = try self.receipt().target.identity
         var queries: [(CGWindowListOption, CGWindowID)] = []
-        let presence = DialogService.windowServerPresence(identity, windowListProvider: {
-            options,
-            relativeToWindow in
-            queries.append((options, relativeToWindow))
-            if options.contains(.optionIncludingWindow) {
-                return []
-            }
-            return [Self.windowDictionary(identity: identity)]
-        })
+        let presence = DialogService.windowServerPresence(
+            identity,
+            windowListProvider: { options, relativeToWindow in
+                queries.append((options, relativeToWindow))
+                if options.contains(.optionIncludingWindow) {
+                    return []
+                }
+                return [Self.windowDictionary(identity: identity)]
+            })
 
         #expect(presence == .present)
         #expect(queries.count == 2)

@@ -35,12 +35,11 @@ struct BackgroundInputDriverWindowRoutingTests {
     @Test
     func `Exact window lookup stays stale when both catalogs omit it`() {
         var queries: [(CGWindowListOption, CGWindowID)] = []
-        let candidates = BackgroundInputDriver.mouseWindowRouteCandidates(exactWindowID: 42) {
-            options,
-            relativeToWindow in
-            queries.append((options, relativeToWindow))
-            return []
-        }
+        let candidates = BackgroundInputDriver
+            .mouseWindowRouteCandidates(exactWindowID: 42) { options, relativeToWindow in
+                queries.append((options, relativeToWindow))
+                return []
+            }
 
         #expect(throws: (any Error).self) {
             try BackgroundInputDriver.resolveTargetWindowID(
@@ -57,15 +56,14 @@ struct BackgroundInputDriverWindowRoutingTests {
     @Test
     func `Targetless lookup remains on screen only`() throws {
         var queries: [(CGWindowListOption, CGWindowID)] = []
-        let candidates = BackgroundInputDriver.mouseWindowRouteCandidates(exactWindowID: nil) {
-            options,
-            relativeToWindow in
-            queries.append((options, relativeToWindow))
-            return [Self.windowDictionary(
-                windowID: 42,
-                processIdentifier: 123,
-                bounds: CGRect(x: 0, y: 0, width: 200, height: 200))]
-        }
+        let candidates = BackgroundInputDriver
+            .mouseWindowRouteCandidates(exactWindowID: nil) { options, relativeToWindow in
+                queries.append((options, relativeToWindow))
+                return [Self.windowDictionary(
+                    windowID: 42,
+                    processIdentifier: 123,
+                    bounds: CGRect(x: 0, y: 0, width: 200, height: 200))]
+            }
 
         let resolved = try BackgroundInputDriver.resolveTargetWindowID(
             at: CGPoint(x: 50, y: 50),

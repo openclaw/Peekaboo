@@ -421,9 +421,9 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             return nextResult
         }
 
-        let totals = actions.reduce(into: (characters: 0, keyPresses: 0, specialKeyPresses: 0)) {
-            partial,
-            action in
+        let totals = actions.reduce(
+            into: (characters: 0, keyPresses: 0, specialKeyPresses: 0)
+        ) { partial, action in
             switch action {
             case let .text(text):
                 partial.characters += text.count
