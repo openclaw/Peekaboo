@@ -180,8 +180,10 @@ test('full safe lane shares source gates and runs only the complete pinned comma
   const tools = step('Install safe-suite system tools');
   assert.match(tools, /if: matrix.group == 'full-safe'\n        timeout-minutes: 10/);
   assert.match(tools, /HOMEBREW_NO_AUTO_UPDATE: '1'/);
-  assert.match(script('Install safe-suite system tools'), /^brew install ripgrep 2>&1 \| tee /m);
+  assert.match(script('Install safe-suite system tools'), /^brew install ripgrep uv 2>&1 \| tee /m);
   assert.match(script('Install safe-suite system tools'), /^rg --version \| tee /m);
+  assert.match(script('Install safe-suite system tools'), /^uv --version \| tee /m);
+  assert.deepEqual(steps.filter((entry) => /\bbrew install\b|\brg --version\b|\buv --version\b/.test(entry)), [tools]);
   assert.match(safe, /if: matrix.group == 'full-safe'\n        id: safe\n        timeout-minutes: \$\{\{ matrix.test_minutes }}/);
   assert.match(install, /if: matrix.group == 'full-safe'\n        id: safe-install\n        timeout-minutes: 10/);
   assert.match(pnpm, /if: matrix.group == 'full-safe'\n        timeout-minutes: 5\n        uses: pnpm\/action-setup@v6\.0\.9/);
@@ -209,41 +211,92 @@ test('full safe lane shares source gates and runs only the complete pinned comma
   assert.match(step('Retain per-package evidence'), /if: always\(\) && steps.source.outcome == 'success'/);
 });
 
-test('safe system tools are installed and recorded before test execution', (t) => {
+test('safe system tools retain complete versions and failures before frozen install and safe execution', (t) => {
   const root = fixture(t);
   const bin = join(root, 'bin');
   mkdirSync(bin);
   writeFileSync(join(bin, 'brew'), `#!/bin/bash
 printf '%s\\n' "$*" >> "$FIXTURE_CALLS"
-[[ "$*" == 'install ripgrep' ]] || exit 99
+[[ "$*" == 'install ripgrep uv' && "$HOMEBREW_NO_AUTO_UPDATE" == 1 ]] || exit 99
 echo 'fixture system tool install'
 exit "$FIXTURE_INSTALL_EXIT"
 `, { mode: 0o755 });
-  writeFileSync(join(bin, 'rg'), `#!/bin/bash
-printf 'rg %s\\n' "$*" >> "$FIXTURE_CALLS"
-[[ "$*" == '--version' ]] || exit 99
-echo 'ripgrep fixture version'
-exit "$FIXTURE_VERSION_EXIT"
+  const versions = { rg: 'ripgrep fixture version\n', uv: 'uv fixture version\n' };
+  for (const name of ['rg', 'uv']) {
+    versions[name] += `${name} version detail\n`.repeat(8192) + `${name} version end\n`;
+    writeFileSync(join(root, `${name}-expected.txt`), versions[name]);
+    writeFileSync(join(bin, name), `#!${process.execPath}
+const { appendFileSync, writeFileSync } = require('node:fs');
+if (process.argv.slice(2).join(' ') !== '--version') process.exit(99);
+appendFileSync(process.env.FIXTURE_CALLS, '${name} --version\\n');
+writeFileSync(1, ${JSON.stringify(versions[name])});
+appendFileSync(process.env.FIXTURE_CALLS, '${name} completed\\n');
+process.exit(Number(process.env.FIXTURE_${name.toUpperCase()}_EXIT));
 `, { mode: 0o755 });
-  for (const [installExit, versionExit] of [[0, 0], [17, 0], [0, 29]]) {
-    const results = join(root, `tools-${installExit}-${versionExit}`);
+  }
+  symlinkSync(process.execPath, join(bin, 'node'));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@11.21.0+sha512.1234',
+    scripts: { 'test:safe': 'fixture complete safe definition' } }));
+  writeFileSync(join(root, 'pnpm-lock.yaml'), 'fixture lock');
+  writeFileSync(join(bin, 'pnpm'), `#!/bin/bash
+set -euo pipefail
+cmp rg-expected.txt "$VALIDATION_RESULTS/full-safe/ripgrep-version.txt"
+cmp uv-expected.txt "$VALIDATION_RESULTS/full-safe/uv-version.txt"
+printf 'pnpm %s\\n' "$*" >> "$FIXTURE_CALLS"
+case "$*" in
+  --version) echo '11.21.0' ;;
+  'install --frozen-lockfile') echo 'fixture frozen install output' ;;
+  'run test:safe') echo 'fixture safe output' ;;
+  *) exit 99 ;;
+esac
+`, { mode: 0o755 });
+  writeFileSync(join(bin, 'tee'), `#!/bin/bash
+/usr/bin/tee "$@" || exit $?
+if [[ "$1" == */"$FIXTURE_TEE_FAILURE" ]]; then exit 23; fi
+`, { mode: 0o755 });
+  const cases = [[0, 0, 0, ''], [17, 0, 0, ''], [0, 29, 0, ''], [0, 0, 31, ''],
+    ...['system-tools-install.log', 'ripgrep-version.txt', 'uv-version.txt'].map((file) => [0, 0, 0, file])];
+  for (const [index, [installExit, rgExit, uvExit, teeFailure]] of cases.entries()) {
+    const results = join(root, `tools-${index}`);
     const calls = results + '-calls';
     const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c',
-      script('Install safe-suite system tools')], {
+      'set -euo pipefail\nfor command; do /bin/bash --noprofile --norc -c "$command"; done', 'fixture',
+      ...['Install safe-suite system tools', 'Record safe-suite runtime and frozen dependency install',
+        'Run full repository safe suite'].map(script)], {
       cwd: root, env: { PATH: `${bin}:/usr/bin:/bin`, VALIDATION_RESULTS: results,
-        FIXTURE_CALLS: calls, FIXTURE_INSTALL_EXIT: String(installExit), FIXTURE_VERSION_EXIT: String(versionExit) },
-      encoding: 'utf8', timeout: 30000,
+        HOMEBREW_NO_AUTO_UPDATE: '1', FIXTURE_CALLS: calls, FIXTURE_INSTALL_EXIT: String(installExit),
+        FIXTURE_RG_EXIT: String(rgExit), FIXTURE_UV_EXIT: String(uvExit), FIXTURE_TEE_FAILURE: teeFailure },
+      // Only a fake subprocess watchdog; every tool and pnpm command is a fixture.
+      encoding: 'utf8', timeout: 30000, maxBuffer: 2 * 1024 * 1024,
     });
     assert.equal(result.error?.code ?? null, null, 'Fixture process launch must complete');
-    assert.equal(result.status, installExit || versionExit, result.stderr);
-    assert.equal(readFileSync(calls, 'utf8'), installExit ? 'install ripgrep\n' : 'install ripgrep\nrg --version\n');
-    assert.equal(readFileSync(join(results, 'full-safe/system-tools-install.log'), 'utf8'),
-      'fixture system tool install\n');
-    if (installExit === 0) {
-      assert.equal(readFileSync(join(results, 'full-safe/ripgrep-version.txt'), 'utf8'), 'ripgrep fixture version\n');
-    } else {
-      assert.equal(existsSync(join(results, 'full-safe/ripgrep-version.txt')), false);
+    assert.equal(result.signal, null, 'Fixture must not terminate by signal');
+    const expectedExit = installExit || rgExit || uvExit || (teeFailure ? 23 : 0);
+    assert.equal(result.status, expectedExit, result.stderr);
+    assert.equal(result.stderr, '');
+    let expectedCalls = 'install ripgrep uv\n';
+    let expectedOutput = 'fixture system tool install\n';
+    assert.equal(readFileSync(join(results, 'full-safe/system-tools-install.log'), 'utf8'), expectedOutput);
+    let stopped = installExit !== 0 || teeFailure === 'system-tools-install.log';
+    for (const [name, file, exit] of [['rg', 'ripgrep-version.txt', rgExit], ['uv', 'uv-version.txt', uvExit]]) {
+      const record = join(results, 'full-safe', file);
+      assert.equal(existsSync(record), !stopped);
+      if (!stopped) {
+        assert.equal(readFileSync(record, 'utf8'), versions[name]);
+        expectedCalls += `${name} --version\n${name} completed\n`;
+        expectedOutput += versions[name];
+        stopped = exit !== 0 || teeFailure === file;
+      }
     }
+    if (expectedExit === 0) {
+      expectedCalls += 'pnpm --version\npnpm install --frozen-lockfile\npnpm run test:safe\n';
+      expectedOutput += `Node: ${process.version}\npnpm: 11.21.0\npackageManager: pnpm@11.21.0+sha512.1234\n`;
+      expectedOutput += 'fixture frozen install output\nfixture safe output\n';
+    }
+    assert.equal(readFileSync(calls, 'utf8'), expectedCalls);
+    assert.equal(result.stdout, expectedOutput, 'Complete producer output must reach the log before later stages');
+    assert.equal(existsSync(join(results, 'full-safe/install-exit-code.txt')), expectedExit === 0);
+    assert.equal(existsSync(join(results, 'full-safe/exit-code.txt')), expectedExit === 0);
   }
 });
 

@@ -167,8 +167,9 @@ jobs:
           set -euo pipefail
           result_dir="$VALIDATION_RESULTS/full-safe"
           mkdir -p "$result_dir"
-          brew install ripgrep 2>&1 | tee "$result_dir/system-tools-install.log"
+          brew install ripgrep uv 2>&1 | tee "$result_dir/system-tools-install.log"
           rg --version | tee "$result_dir/ripgrep-version.txt"
+          uv --version | tee "$result_dir/uv-version.txt"
 
       - name: Set up repository-pinned pnpm
         if: matrix.group == 'full-safe'
