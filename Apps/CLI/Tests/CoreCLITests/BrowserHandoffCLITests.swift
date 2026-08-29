@@ -240,7 +240,9 @@ struct BrowserHandoffCLITests {
                 fileURL: linkedParent.appendingPathComponent("handoff.json")
             )
 
-            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+                "parent path components must be existing non-symbolic-link directories"
+            )) { try store.validateCanSave() }
         }
 
         do {
@@ -255,7 +257,9 @@ struct BrowserHandoffCLITests {
             try FileManager.default.moveItem(at: parent, to: displaced)
             try Self.createPrivateDirectory(at: parent)
 
-            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.save(fixture) }
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+                "parent directory or one of its ancestors changed after validation"
+            )) { try store.save(fixture) }
             #expect(!FileManager.default.fileExists(atPath: parent.appendingPathComponent("handoff.json").path))
             #expect(!FileManager.default.fileExists(atPath: displaced.appendingPathComponent("handoff.json").path))
         }
@@ -275,7 +279,9 @@ struct BrowserHandoffCLITests {
             try Self.createPrivateDirectory(at: ancestor)
             try Self.createPrivateDirectory(at: parent)
 
-            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.save(fixture) }
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+                "parent directory or one of its ancestors changed after validation"
+            )) { try store.save(fixture) }
             #expect(!FileManager.default.fileExists(atPath: parent.appendingPathComponent("handoff.json").path))
             let oldReceipt = displaced.appendingPathComponent("parent/handoff.json")
             #expect(!FileManager.default.fileExists(atPath: oldReceipt.path))
@@ -302,7 +308,9 @@ struct BrowserHandoffCLITests {
         try FileManager.default.moveItem(at: parent, to: displaced)
         try Self.createPrivateDirectory(at: parent)
 
-        #expect(throws: BrowserHandoffReceiptStoreError.self) {
+        #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+            "parent directory or one of its ancestors changed after validation"
+        )) {
             try command.validateBeforeRuntime()
         }
     }
@@ -342,7 +350,9 @@ struct BrowserHandoffCLITests {
             let store = try BrowserHandoffReceiptStore(fileURL: destination)
             try store.validateCanSave()
 
-            #expect(throws: BrowserHandoffReceiptStoreError.self) {
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+                "parent directory or one of its ancestors changed after validation"
+            )) {
                 try store.save(fixture, afterPublication: {
                     try FileManager.default.moveItem(at: ancestor, to: displaced)
                     try Self.createPrivateDirectory(at: ancestor)
@@ -358,7 +368,7 @@ struct BrowserHandoffCLITests {
 
     @Test
     @MainActor
-    func `store rejects symlinks hardlinks widened modes ACLs and nonprivate parents`() async throws {
+    func `handoff path diagnostics reject unsafe paths`() async throws {
         let fixture = try await Self.canonicalHandoffData()
 
         do {
@@ -366,12 +376,13 @@ struct BrowserHandoffCLITests {
             defer { try? FileManager.default.removeItem(at: directory) }
             let target = directory.appendingPathComponent("target.json")
             let link = directory.appendingPathComponent("handoff.json")
-            try fixture.write(to: target)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+            _ = try Self.cleanReceiptStore(fixture, at: target)
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
             let store = try BrowserHandoffReceiptStore(fileURL: link)
-            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.load() }
-            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath("symbolic links are not accepted")) {
+                try store.load()
+            }
+            #expect(throws: BrowserHandoffReceiptStoreError.alreadyExists) { try store.validateCanSave() }
         }
 
         do {
@@ -379,11 +390,12 @@ struct BrowserHandoffCLITests {
             defer { try? FileManager.default.removeItem(at: directory) }
             let file = directory.appendingPathComponent("handoff.json")
             let alias = directory.appendingPathComponent("alias.json")
-            try fixture.write(to: file)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            #expect(link(file.path, alias.path) == 0)
-            #expect(throws: BrowserHandoffReceiptStoreError.self) {
-                try BrowserHandoffReceiptStore(fileURL: file).load()
+            let store = try Self.cleanReceiptStore(fixture, at: file)
+            try #require(link(file.path, alias.path) == 0)
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+                "file must be one owner-only regular file with mode 0600 and a bounded size"
+            )) {
+                try store.load()
             }
         }
 
@@ -391,51 +403,142 @@ struct BrowserHandoffCLITests {
             let directory = try Self.privateDirectory()
             defer { try? FileManager.default.removeItem(at: directory) }
             let file = directory.appendingPathComponent("handoff.json")
-            try fixture.write(to: file)
+            let store = try Self.cleanReceiptStore(fixture, at: file)
             try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
-            #expect(throws: BrowserHandoffReceiptStoreError.self) {
-                try BrowserHandoffReceiptStore(fileURL: file).load()
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+                "file must be one owner-only regular file with mode 0600 and a bounded size"
+            )) {
+                try store.load()
             }
         }
 
         do {
             let directory = try Self.privateDirectory()
-            defer { try? FileManager.default.removeItem(at: directory) }
-            let file = directory.appendingPathComponent("handoff.json")
-            try fixture.write(to: file)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            try Self.addReadableACL(to: file)
-            #expect(throws: BrowserHandoffReceiptStoreError.self) {
-                try BrowserHandoffReceiptStore(fileURL: file).load()
-            }
-        }
-
-        do {
-            let directory = try Self.privateDirectory(mode: 0o755)
             defer { try? FileManager.default.removeItem(at: directory) }
             let store = try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
-            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
-        }
-
-        do {
-            let directory = try Self.privateDirectory()
-            defer { try? FileManager.default.removeItem(at: directory) }
-            try Self.addExtendedAttribute(to: directory)
-            let store = try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("handoff.json"))
-            #expect(throws: BrowserHandoffReceiptStoreError.self) { try store.validateCanSave() }
-        }
-
-        do {
-            let directory = try Self.privateDirectory()
-            defer { try? FileManager.default.removeItem(at: directory) }
-            let file = directory.appendingPathComponent("handoff.json")
-            try fixture.write(to: file)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            try Self.addExtendedAttribute(to: file)
-            #expect(throws: BrowserHandoffReceiptStoreError.self) {
-                try BrowserHandoffReceiptStore(fileURL: file).load()
+            try store.validateCanSave()
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+            #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+                "parent directory must be owned by the current user with mode 0700"
+            )) {
+                try store.validateCanSave()
             }
         }
+    }
+
+    @Test(arguments: BrowserHandoffPathSubject.allCases, [
+        BrowserHandoffPathInspection.extendedACL, .extendedAttributes,
+    ])
+    @MainActor
+    func `handoff path diagnostics reject metadata before runtime`(
+        subject: BrowserHandoffPathSubject,
+        inspection: BrowserHandoffPathInspection
+    ) async throws {
+        let fixture = try await Self.canonicalHandoffData()
+        let directory = try Self.privateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try Self.cleanReceiptStore(fixture, at: directory.appendingPathComponent("handoff.json"))
+        let url = subject == .parent ? directory : store.fileURL
+        let expected: BrowserHandoffReceiptStoreError
+        var privateValue: String?
+        if inspection == .extendedACL {
+            try Self.addReadableACL(to: url)
+            expected = .extendedACL(subject)
+        } else {
+            privateValue = try Self.addExtendedAttribute(to: url)
+            expected = .extendedAttributes(subject)
+        }
+
+        do {
+            _ = try store.load()
+            Issue.record("Expected the deliberately added metadata to be refused")
+        } catch let error as BrowserHandoffReceiptStoreError {
+            #expect(error == expected)
+            let diagnostic = error.localizedDescription + (error.envelopeHint ?? "") + String(describing: error)
+            // Assert only a Boolean so a failing test never prints the private fixture value.
+            let disclosedValue = privateValue.map { diagnostic.contains($0) } ?? false
+            #expect(!disclosedValue)
+        }
+
+        let inputError = BrowserHandoffCLIInputError.invalidReceipt(expected.localizedDescription)
+        #expect(inputError.envelopeCode == .VALIDATION_ERROR)
+        #expect(inputError.envelopeRetrySafe == true)
+        #expect(inputError.envelopeMutationDispatched == false)
+        #expect(inputError.envelopeHint?.contains("do not fall back") == true)
+        var runtimeConstructed = false
+        let factory = CommanderRuntimeExecutor.RuntimeFactory { _ in
+            runtimeConstructed = true
+            throw StopBeforeRuntimeConstruction()
+        }
+        await #expect(throws: inputError) {
+            try await CommanderRuntimeExecutor.resolveAndRun(
+                arguments: [
+                    "peekaboo", "mcp", "serve",
+                    "--browser-handoff", store.fileURL.path,
+                    "--bridge-socket", "/private/tmp/peekaboo-handoff.sock",
+                ],
+                runtimeFactory: factory
+            )
+        }
+        if subject == .parent {
+            #expect(throws: expected) { try store.validateCanSave() }
+            await #expect(throws: expected) {
+                try await CommanderRuntimeExecutor.resolveAndRun(
+                    arguments: [
+                        "peekaboo", "browser", "connect", "--foreground",
+                        "--handoff-file", directory.appendingPathComponent("unused.json").path,
+                        "--bridge-socket", "/private/tmp/peekaboo-handoff.sock",
+                    ],
+                    runtimeFactory: factory
+                )
+            }
+        }
+        #expect(!runtimeConstructed)
+    }
+
+    @Test(arguments: BrowserHandoffPathSubject.allCases)
+    func `handoff path diagnostics distinguish inspection failures`(subject: BrowserHandoffPathSubject) {
+        #expect(throws: BrowserHandoffReceiptStoreError.inspectionFailed(subject, .extendedACL)) {
+            try BrowserHandoffReceiptStore.requireNoExtendedACL(-1, subject: subject)
+        }
+        #expect(throws: BrowserHandoffReceiptStoreError.inspectionFailed(subject, .extendedAttributes)) {
+            try BrowserHandoffReceiptStore.requireNoExtendedAttributes(-1, subject: subject)
+        }
+    }
+
+    @Test(arguments: BrowserHandoffPathSubject.allCases)
+    func `handoff path diagnostics keep distinct hints and envelope`(subject: BrowserHandoffPathSubject) {
+        let attributes = BrowserHandoffReceiptStoreError.extendedAttributes(subject)
+        let acl = BrowserHandoffReceiptStoreError.extendedACL(subject)
+        #expect(attributes.errorDescription ==
+            "Browser handoff \(subject.rawValue) is unsafe: extended attributes are not accepted.")
+        #expect(acl.errorDescription ==
+            "Browser handoff \(subject.rawValue) is unsafe: extended access controls are not accepted.")
+        #expect(attributes.envelopeHint?.contains("zero extended attributes, including OS provenance") == true)
+        #expect(attributes.envelopeHint?.contains("not compatible") == true)
+        #expect(acl.envelopeHint?.contains("zero extended ACLs") == true)
+        #expect(acl.envelopeHint?.contains("OS provenance") == false)
+
+        let inspections = BrowserHandoffPathInspection.allCases.map {
+            BrowserHandoffReceiptStoreError.inspectionFailed(subject, $0)
+        }
+        for error in inspections {
+            #expect(error.errorDescription?.contains(subject.rawValue) == true)
+            #expect(error.errorDescription?.contains("could not be inspected") == true)
+            #expect(error.errorDescription?.contains("are not accepted") == false)
+            #expect(error.envelopeHint?.contains("does not establish whether") == true)
+            #expect(error.envelopeHint?.contains("OS provenance") == false)
+        }
+        for error in [attributes, acl] + inspections {
+            #expect(error.envelopeCode == .FILE_IO_ERROR)
+            #expect(error.envelopeEffect == nil)
+            #expect(error.envelopeRetrySafe == true)
+            #expect(error.envelopeMutationDispatched == false)
+            #expect(error.envelopeHint?.contains("without fallback") == true)
+            #expect(error.envelopeHint?.contains("Use a standardized absolute path") == false)
+        }
+        let unrelated = BrowserHandoffReceiptStoreError.unsafePath("extended attributes are not accepted")
+        #expect(unrelated.envelopeHint?.contains("OS provenance") == false)
     }
 
     @Test
@@ -449,7 +552,7 @@ struct BrowserHandoffCLITests {
         let store = try BrowserHandoffReceiptStore(fileURL: file)
         try store.save(fixture)
 
-        #expect(throws: BrowserHandoffReceiptStoreError.self) {
+        #expect(throws: BrowserHandoffReceiptStoreError.unsafePath("file changed while it was being read")) {
             try store.load {
                 try FileManager.default.moveItem(at: file, to: displaced)
                 try fixture.write(to: file)
@@ -459,17 +562,21 @@ struct BrowserHandoffCLITests {
 
         var noncanonical = fixture
         noncanonical.append(UInt8(ascii: "\n"))
-        #expect(throws: BrowserHandoffReceiptStoreError.self) {
+        #expect(throws: BrowserHandoffReceiptStoreError.invalidReceipt("receipt bundle bytes are not canonical")) {
             try BrowserHandoffReceiptStore.validateCanonicalReceipt(noncanonical)
         }
         let oversized = Data(
             repeating: UInt8(ascii: "x"),
             count: Int(BrowserHandoffReceiptStore.maximumReceiptBytes) + 1
         )
-        #expect(throws: BrowserHandoffReceiptStoreError.self) {
+        #expect(throws: BrowserHandoffReceiptStoreError.invalidReceipt(
+            "receipt must be nonempty and at most \(BrowserHandoffReceiptStore.maximumReceiptBytes) bytes"
+        )) {
             try BrowserHandoffReceiptStore.validateCanonicalReceipt(oversized)
         }
-        #expect(throws: BrowserHandoffReceiptStoreError.self) {
+        #expect(throws: BrowserHandoffReceiptStoreError.unsafePath(
+            "path must be absolute, nonempty, and already in standardized component form"
+        )) {
             _ = try BrowserHandoffReceiptStore(resolvingAbsolutePath: "relative.json")
         }
 
@@ -577,9 +684,10 @@ struct BrowserHandoffCLITests {
         let receipt = directory.appendingPathComponent("handoff.json")
         try Data("{}".utf8).write(to: receipt)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: receipt.path)
+        let expected = BrowserHandoffReceiptStoreError.invalidReceipt("receipt bundle is not internally valid")
         var runtimeConstructed = false
 
-        await #expect(throws: BrowserHandoffCLIInputError.self) {
+        await #expect(throws: BrowserHandoffCLIInputError.invalidReceipt(expected.localizedDescription)) {
             try await CommanderRuntimeExecutor.resolveAndRun(
                 arguments: [
                     "peekaboo", "mcp", "serve",
@@ -588,7 +696,7 @@ struct BrowserHandoffCLITests {
                 ],
                 runtimeFactory: .init { _ in
                     runtimeConstructed = true
-                    return CommandRuntime(options: CommandRuntimeOptions(), services: PeekabooServices())
+                    throw StopBeforeRuntimeConstruction()
                 }
             )
         }
@@ -671,7 +779,9 @@ struct BrowserHandoffCLITests {
             )
         }
     }
+}
 
+extension BrowserHandoffCLITests {
     @MainActor
     private static func browserCommand(
         action: String,
@@ -692,18 +802,18 @@ struct BrowserHandoffCLITests {
         )
     }
 
-    private static func privateDirectory(mode: Int = 0o700) throws -> URL {
+    private static func privateDirectory() throws -> URL {
         let baseDirectory = try Self.canonicalExistingDirectory(FileManager.default.temporaryDirectory)
         let directory = baseDirectory.appendingPathComponent(
             "peekaboo-browser-handoff-\(UUID().uuidString)",
             isDirectory: true
         )
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: mode]
-        )
-        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: directory.path)
+        do {
+            try Self.createPrivateDirectory(at: directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
         return directory
     }
 
@@ -726,10 +836,21 @@ struct BrowserHandoffCLITests {
             attributes: [.posixPermissions: 0o700]
         )
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        // Ambient ACLs or attributes are a failing fixture precondition, never the intended negative case.
+        try BrowserHandoffReceiptStore(fileURL: directory.appendingPathComponent("baseline.json")).validateCanSave()
     }
 
-    private static func addExtendedAttribute(to url: URL) throws {
-        let value = Data("test".utf8)
+    private static func cleanReceiptStore(_ data: Data, at file: URL) throws -> BrowserHandoffReceiptStore {
+        try data.write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        let store = try BrowserHandoffReceiptStore(fileURL: file)
+        _ = try store.load()
+        return store
+    }
+
+    private static func addExtendedAttribute(to url: URL) throws -> String {
+        let privateValue = UUID().uuidString
+        let value = Data(privateValue.utf8)
         let result = value.withUnsafeBytes { bytes in
             url.path.withCString { path in
                 "dev.peekaboo.browser-handoff-test".withCString { name in
@@ -738,12 +859,15 @@ struct BrowserHandoffCLITests {
             }
         }
         guard result == 0 else { throw CocoaError(.fileWriteUnknown) }
+        return privateValue
     }
 
     private static func addReadableACL(to url: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/chmod")
         process.arguments = ["+a", "everyone allow read", url.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }

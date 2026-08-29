@@ -77,6 +77,7 @@ peekaboo mcp serve --allow-foreground
 peekaboo mcp serve --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock"
 
 # Transfer one exact foreground-approved browser connection into a background Bridge-scoped MCP server
+# Mode 0700 is necessary but not sufficient: the parent and receipt must also have zero extended ACLs/xattrs.
 mkdir -m 700 /private/tmp/peekaboo-browser-handoff
 peekaboo browser connect --channel stable --foreground \
   --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock" \
@@ -85,6 +86,14 @@ peekaboo mcp serve \
   --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock" \
   --browser-handoff /private/tmp/peekaboo-browser-handoff/receipt.json
 ```
+
+Handoff storage requires a current-user-owned parent directory with mode `0700` and a current-user-owned regular,
+single-link receipt with mode `0600`. Both must have zero extended ACLs and zero extended attributes, including OS
+provenance; symlink paths are refused. `mkdir -m 700` establishes the parent mode only and is not sufficient proof of
+admission. Newly created directories and files can carry OS metadata, and mode changes do not remove it. Detected
+attributes, detected ACLs, and inspection failures have distinct diagnostics naming the parent or receipt, without
+reading or printing attribute values. These diagnostics do not make metadata-producing environments compatible:
+handoff remains fail-closed with no fallback, and receipt loading fails before runtime construction.
 
 The `see` tool publishes a closed `capture_engine` choice: `auto` (default), `modern`, or `classic`. `classic` is the
 request-local no-ScreenCaptureKit recovery path and remains bound to the same selected Bridge host.

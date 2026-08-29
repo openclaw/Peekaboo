@@ -254,8 +254,10 @@ final class BrowserHandoffReceiptStore: @unchecked Sendable {
 
     fileprivate static func validatedFileMetadata(_ descriptor: Int32, expectedSize: off_t? = nil) throws -> stat {
         var info = stat()
-        guard fstat(descriptor, &info) == 0,
-              info.st_mode & S_IFMT == S_IFREG,
+        guard fstat(descriptor, &info) == 0 else {
+            throw BrowserHandoffReceiptStoreError.inspectionFailed(.receipt, .fileStatus)
+        }
+        guard info.st_mode & S_IFMT == S_IFREG,
               info.st_uid == geteuid(),
               info.st_mode & 0o777 == 0o600,
               info.st_nlink == 1,
@@ -267,28 +269,31 @@ final class BrowserHandoffReceiptStore: @unchecked Sendable {
                 "file must be one owner-only regular file with mode 0600 and a bounded size"
             )
         }
-        try self.requireNoExtendedACL(descriptor)
-        try self.requireNoExtendedAttributes(descriptor)
+        try self.requireNoExtendedACL(descriptor, subject: .receipt)
+        try self.requireNoExtendedAttributes(descriptor, subject: .receipt)
         var after = stat()
-        guard fstat(descriptor, &after) == 0, self.sameFile(info, after) else {
+        guard fstat(descriptor, &after) == 0 else {
+            throw BrowserHandoffReceiptStoreError.inspectionFailed(.receipt, .fileStatus)
+        }
+        guard self.sameFile(info, after) else {
             throw BrowserHandoffReceiptStoreError.unsafePath("file metadata changed during validation")
         }
         return after
     }
 
-    fileprivate static func requireNoExtendedACL(_ descriptor: Int32) throws {
+    static func requireNoExtendedACL(_ descriptor: Int32, subject: BrowserHandoffPathSubject) throws {
         errno = 0
         guard let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) else {
             if errno == ENOENT {
                 return
             }
-            throw BrowserHandoffReceiptStoreError.unsafePath("access controls could not be inspected")
+            throw BrowserHandoffReceiptStoreError.inspectionFailed(subject, .extendedACL)
         }
         acl_free(UnsafeMutableRawPointer(acl))
-        throw BrowserHandoffReceiptStoreError.unsafePath("extended access-control entries are not accepted")
+        throw BrowserHandoffReceiptStoreError.extendedACL(subject)
     }
 
-    fileprivate static func requireNoExtendedAttributes(_ descriptor: Int32) throws {
+    static func requireNoExtendedAttributes(_ descriptor: Int32, subject: BrowserHandoffPathSubject) throws {
         while true {
             errno = 0
             let count = flistxattr(descriptor, nil, 0, XATTR_SHOWCOMPRESSION)
@@ -299,9 +304,9 @@ final class BrowserHandoffReceiptStore: @unchecked Sendable {
                 continue
             }
             if count > 0 {
-                throw BrowserHandoffReceiptStoreError.unsafePath("extended attributes are not accepted")
+                throw BrowserHandoffReceiptStoreError.extendedAttributes(subject)
             }
-            throw BrowserHandoffReceiptStoreError.unsafePath("extended attributes could not be inspected")
+            throw BrowserHandoffReceiptStoreError.inspectionFailed(subject, .extendedAttributes)
         }
     }
 
@@ -476,8 +481,10 @@ private final class BrowserHandoffReceiptDirectoryBinding: @unchecked Sendable {
 
     private func validatePrivateDirectory(_ descriptor: Int32) throws {
         var before = stat()
-        guard fstat(descriptor, &before) == 0,
-              before.st_mode & S_IFMT == S_IFDIR,
+        guard fstat(descriptor, &before) == 0 else {
+            throw BrowserHandoffReceiptStoreError.inspectionFailed(.parent, .fileStatus)
+        }
+        guard before.st_mode & S_IFMT == S_IFDIR,
               before.st_uid == geteuid(),
               before.st_mode & 0o777 == 0o700,
               before.st_nlink >= 1
@@ -486,12 +493,13 @@ private final class BrowserHandoffReceiptDirectoryBinding: @unchecked Sendable {
                 "parent directory must be owned by the current user with mode 0700"
             )
         }
-        try BrowserHandoffReceiptStore.requireNoExtendedACL(descriptor)
-        try BrowserHandoffReceiptStore.requireNoExtendedAttributes(descriptor)
+        try BrowserHandoffReceiptStore.requireNoExtendedACL(descriptor, subject: .parent)
+        try BrowserHandoffReceiptStore.requireNoExtendedAttributes(descriptor, subject: .parent)
         var after = stat()
-        guard fstat(descriptor, &after) == 0,
-              Self.sameDirectoryMetadata(before, after)
-        else {
+        guard fstat(descriptor, &after) == 0 else {
+            throw BrowserHandoffReceiptStoreError.inspectionFailed(.parent, .fileStatus)
+        }
+        guard Self.sameDirectoryMetadata(before, after) else {
             throw BrowserHandoffReceiptStoreError.unsafePath(
                 "parent directory metadata changed during validation"
             )
@@ -582,9 +590,23 @@ final class BrowserHandoffReceiptStoreCache: @unchecked Sendable {
     }
 }
 
+enum BrowserHandoffPathSubject: String, CaseIterable {
+    case parent = "parent directory"
+    case receipt = "receipt file"
+}
+
+enum BrowserHandoffPathInspection: String, CaseIterable {
+    case fileStatus = "file status"
+    case extendedACL = "extended access controls"
+    case extendedAttributes = "extended attributes"
+}
+
 enum BrowserHandoffReceiptStoreError: LocalizedError, ResultEnvelopeError, Equatable {
     case alreadyExists
     case unsafePath(String)
+    case extendedACL(BrowserHandoffPathSubject)
+    case extendedAttributes(BrowserHandoffPathSubject)
+    case inspectionFailed(BrowserHandoffPathSubject, BrowserHandoffPathInspection)
     case invalidReceipt(String)
     case writeFailed(String)
 
@@ -594,6 +616,12 @@ enum BrowserHandoffReceiptStoreError: LocalizedError, ResultEnvelopeError, Equat
             "A browser handoff receipt already exists at that path."
         case let .unsafePath(reason):
             "Browser handoff receipt path is unsafe: \(reason)."
+        case let .extendedACL(subject):
+            "Browser handoff \(subject.rawValue) is unsafe: extended access controls are not accepted."
+        case let .extendedAttributes(subject):
+            "Browser handoff \(subject.rawValue) is unsafe: extended attributes are not accepted."
+        case let .inspectionFailed(subject, inspection):
+            "Browser handoff \(subject.rawValue) could not be verified: \(inspection.rawValue) could not be inspected."
         case let .invalidReceipt(reason):
             "Browser handoff receipt is invalid: \(reason)."
         case let .writeFailed(reason):
@@ -604,7 +632,7 @@ enum BrowserHandoffReceiptStoreError: LocalizedError, ResultEnvelopeError, Equat
     nonisolated var envelopeCode: ErrorCode? {
         switch self {
         case .alreadyExists, .invalidReceipt: .VALIDATION_ERROR
-        case .unsafePath, .writeFailed: .FILE_IO_ERROR
+        case .unsafePath, .extendedACL, .extendedAttributes, .inspectionFailed, .writeFailed: .FILE_IO_ERROR
         }
     }
 
@@ -626,6 +654,17 @@ enum BrowserHandoffReceiptStoreError: LocalizedError, ResultEnvelopeError, Equat
             "Use a new path; Peekaboo never overwrites capability material."
         case .unsafePath:
             "Use a standardized absolute path in an existing owner-only directory with mode 0700."
+        case .extendedACL:
+            "Both the parent directory and receipt must have zero extended ACLs; " +
+                "owner-only modes alone are insufficient. " +
+                "Handoff remains refused without fallback."
+        case .extendedAttributes:
+            "Both the parent directory and receipt must have zero extended attributes, including OS provenance. " +
+                "Modes 0700/0600 alone are insufficient; environments that attach metadata are not compatible. " +
+                "Handoff remains refused without fallback."
+        case .inspectionFailed:
+            "Inspection failure does not establish whether extended ACLs or attributes are present. " +
+                "Handoff remains refused without fallback because path safety could not be verified."
         case .invalidReceipt:
             "Create a fresh handoff with an authenticated current Bridge host."
         case .writeFailed:

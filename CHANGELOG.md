@@ -25,6 +25,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Distinguish browser handoff parent and receipt metadata refusals from inspection failures, and document the unchanged zero-ACL/xattr requirements, including OS provenance, without fallback.
 - Bound debug CLI build-staleness config discovery to the starting directory's ancestors so missing or inaccessible Git metadata cannot cause an endless startup traversal.
 - Share the owner-only credential file between app and CLI, trim surrounding whitespace in app edits and legacy imports, ignore unchanged Settings bindings, recover legacy app keys only on explicit import, and keep failed edits visibly unsaved without Keychain prompts. Thanks @vincentkoc for #651.
 - Hide and pre-dispatch refuse every pinned browser-provider route that can grant browser user activation under default background authority, while explicit foreground calls report truthful foreground browser-protocol outcomes.

@@ -67,6 +67,15 @@ generation, exact target receipt, claim, and provider epoch before creating a se
 disconnect, and end stay bound to that namespace, and no request can fall back to the Bridge's root browser connection.
 Older or incompatible hosts refuse the handoff before MCP serving begins.
 
+The handoff path requires a current-user-owned parent directory with mode `0700` and a current-user-owned regular,
+single-link receipt with mode `0600`. Both must have zero extended ACLs and zero extended attributes, including OS
+provenance; symlink paths are refused. `mkdir -m 700` establishes the necessary parent mode but is not sufficient:
+newly created directories and files can carry OS metadata, and mode changes do not remove it. Diagnostics distinguish
+detected attributes, detected ACLs, and inspection failures, naming the parent or receipt without reading or printing
+attribute values. This is diagnostic guidance, not compatibility with metadata-producing environments. An unsafe
+parent is refused before connect runtime construction; an unsafe newly created receipt fails publication and triggers
+the existing reserved-target disconnect. MCP receipt loading fails before runtime construction, with no fallback.
+
 `browser upload-file` requires `--page-id`, a fresh file-input `--uid`, and an absolute `--path` to a current-user
 regular file no larger than 100 MiB. Peekaboo never grants Chrome DevTools MCP unrestricted filesystem access. The daemon
 copies the already-open source into its private browser-session temporary root, preserves only the source basename, and
