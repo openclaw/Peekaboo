@@ -48,7 +48,9 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 - The tracked release notes are publication authority: full preflight requires them to match the root changelog section,
   and the GitHub draft body is created from those exact bytes.
 - Update submodule repositories first only when their code or release metadata changed, then commit the gitlink here.
-- Use the supported Xcode 26.x release toolchain; do not substitute an older SDK for publication builds.
+- Use Xcode 27 for the 4.3.0 publication build and record its exact build, Swift compiler, and SDK versions. The selected
+  beta build must pass the same complete release gates; hosted Xcode 26.x tests provide additional compatibility coverage,
+  not proof of the Xcode 27 publication build. Do not change the machine's global toolchain selection during release.
 
 ## 2. Validate the preparation patch
 
@@ -74,8 +76,24 @@ The dry run validates metadata consistency, docs/links, generated v4 help, retir
 accepts the candidate's `Unreleased` changelog headings; full preflight requires exact `YYYY-MM-DD` headings and a
 clean, current publication commit on `main`.
 
-Run `pnpm run test:automation` and live provider tests when the release changes those surfaces. Before committing,
+Run `pnpm run test:automation` and live provider tests when the release changes those surfaces, using an isolated
+fixture desktop and explicitly scoped provider credentials rather than the operator's saved app state. Before committing,
 run the repository autoreview workflow until no accepted actionable findings remain.
+
+For complete non-live package coverage beyond `test:safe` and the normal macOS CI filters, run the supplemental hosted
+workflow against the exact publication commit:
+
+```bash
+gh workflow run release-validation.yml --ref main -f target_ref=<full-40-character-publication-SHA>
+```
+
+This read-only, secretless macOS lane runs unfiltered suites for PeekabooCore, AutomationKit, Protocols, Visualizer,
+UICore, Inspector, Playground, and all five pinned submodules. It keeps per-package logs, exit status, built-in skips,
+submodule revisions, and actual toolchain metadata. Its workflow-specific PR trigger validates changes to the lane;
+publication requires a separate exact-source dispatch. The normal macOS CI still owns the complete Mac app suite and
+its genuinely hosted-only credential tests. Never spoof hosted-runner identity on a personal Mac. Hosted Xcode 26.x
+compatibility coverage does not replace the Xcode 27 release preflight, signed live automation, or provider integration
+proof; report exclusions and unavailable live environments explicitly.
 
 ### Terminal-only artifact set
 
@@ -159,8 +177,9 @@ notarization before publication.
 Remove generated `Apps/Playground/Package.resolved` and standalone Playground Xcode-workspace locks before building;
 the helper refuses them so a local resolver cannot silently replace the graph recorded in fixture provenance.
 The build and final manifests also record and revalidate the canonicalized `DEVELOPER_DIR`, complete
-`xcodebuild -version`, macOS SDK version, and `swiftc --version`. This receipt does not make an unsupported toolchain
-supported; an Xcode 27 beta build remains visibly distinct from the documented Xcode 26.x publication baseline.
+`xcodebuild -version`, macOS SDK version, and `swiftc --version`. The 4.3.0 publication toolchain is Xcode 27; retain its
+exact beta/build identity in proof rather than conflating it with hosted Xcode 26.x compatibility results. A toolchain
+receipt does not replace successful universal builds, tests, runtime-library validation, signing, or notarization.
 The published `terminal-artifacts.json` is portable schema 7 with `root:"."`; every path is relative to its own
 directory. It retains its validator, canonical tree generator, commit-materialized controller/monitor/lock snapshot,
 rich universal Foundation-signed controller and monitor records, and pinned Node runtime. Copying the sealed directory to another absolute

@@ -23,6 +23,11 @@ public enum PeekabooBridgeConstants {
         self.applicationSupportSocketPath(appDirectoryName: "Claude", socketName: self.socketName)
     }
 
+    /// Canonical socket hosted by OpenClaw.app.
+    public static var openClawSocketPath: String {
+        self.applicationSupportSocketPath(appDirectoryName: "OpenClaw", socketName: self.socketName)
+    }
+
     /// Socket hosted by Clawdbot.app (fallback host).
     public static var clawdbotSocketPath: String {
         self.applicationSupportSocketPath(appDirectoryName: "clawdbot", socketName: self.socketName)
@@ -39,6 +44,7 @@ public enum PeekabooBridgeConstants {
             self.peekabooSocketPath,
             self.daemonSocketPath,
             self.claudeSocketPath,
+            self.openClawSocketPath,
             self.clawdbotSocketPath,
         ].map { NSString(string: $0).standardizingPath }
         if exactPaths.contains(standardized) {

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [4.3.0] - 2026-08-29
 
 ### Highlights
 
@@ -26,11 +26,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
-- Bound retained native application metadata to eight operations per host process through timeout/cancellation and autorelease cleanup, shed overload as partial rows, and keep exact-target AX reads independent.
-- Keep public SwiftPM consumers on versioned Commander dependencies with custom scratch directories by pinning AXorcist 0.1.8.
-- Include nested dialog static text and nonblank AX text metadata fallbacks in `dialog list`, preserving dialog scope and control order.
-- Accept canonical v2 prebuilt Playground fixtures in native validation with strict source, lock, toolchain, bundle, and Foundation signature checks, retaining v1 only for the current invocation's local build.
-- Distinguish browser handoff parent and receipt metadata refusals from inspection failures, and document the unchanged zero-ACL/xattr requirements, including OS provenance, without fallback.
+- Recognize the canonical signed OpenClaw Bridge socket for modern receipt-backed protocol negotiation while preserving signer validation and custom-socket protocol 1.28 compatibility.
 - Bound debug CLI build-staleness config discovery to the starting directory's ancestors so missing or inaccessible Git metadata cannot cause an endless startup traversal.
 - Share the owner-only credential file between app and CLI, trim surrounding whitespace in app edits and legacy imports, ignore unchanged Settings bindings, recover legacy app keys only on explicit import, and keep failed edits visibly unsaved without Keychain prompts. Thanks @vincentkoc for #651.
 - Hide and pre-dispatch refuse every pinned browser-provider route that can grant browser user activation under default background authority, while explicit foreground calls report truthful foreground browser-protocol outcomes.
@@ -81,6 +77,11 @@
 - Deduplicate runtime flags and improve unknown-command, browser reconnect, help, `learn`, schema, and background-automation guidance.
 - Validate contradictory window and Space selectors before runtime-host discovery so malformed requests cannot start support services or mask the actionable error.
 - Explain that exact transient sheets may require read-only owning-process Accessibility inspection before screenshot/OCR fallback, without granting partial app trees mutation authority.
+- Bound retained native application metadata to eight operations per host process through timeout/cancellation and autorelease cleanup, shed overload as partial rows, and keep exact-target AX reads independent.
+- Keep public SwiftPM consumers on versioned Commander dependencies with custom scratch directories by pinning AXorcist 0.1.8.
+- Include nested dialog static text and nonblank AX text metadata fallbacks in `dialog list`, preserving dialog scope and control order.
+- Accept canonical v2 prebuilt Playground fixtures in native validation with strict source, lock, toolchain, bundle, and Foundation signature checks, retaining v1 only for the current invocation's local build.
+- Distinguish browser handoff parent and receipt metadata refusals from inspection failures, and document the unchanged zero-ACL/xattr requirements, including OS provenance, without fallback.
 
 ## [4.2.2] - 2026-08-20
 
