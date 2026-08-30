@@ -232,7 +232,7 @@ set -euo pipefail
 source "$FIXTURE_SANITIZER"
 for name in "\${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
   case "$name" in
-    DYLD_*) ;; # macOS strips these at protected native process entry.
+    DYLD_*) [[ -z "\${!name+x}" ]] ;;
     BASH_ENV|ENV) [[ "\${!name}" == "$PWD/startup" ]] ;;
     *) [[ "\${!name}" == sentinel ]] ;;
   esac
@@ -311,7 +311,22 @@ check_parent() {
   [[ "$PATH" == "$parent_path" && "$(command -v codesign)" == "$PWD/signing-shim/codesign" ]]
   [[ "$MAC_RELEASE_CODESIGN_KEYCHAIN" == "$HOME/keychain" && "$CODESIGN_KEYCHAIN" == "$HOME/keychain" && "$CODESIGN_IDENTITY" == fixture ]]
   [[ "$PEEKABOO_OP_SERVICE_TOKEN_FILE" == "$HOME/primary" && "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE" == "$HOME/legacy" ]]
-  codesign # Only the asserted fixture shim; it checks synthetic authority.
+  (
+    trap - EXIT
+    # Only this fake signing child sheds loader poison; the parent retains it.
+    for name in "\${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+      case "$name" in DYLD_*) builtin unset "$name" ;; esac
+    done
+    for name in "\${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+      case "$name" in
+        DYLD_*) [[ -z "\${!name+x}" ]] || { printf 'signing pre-native variable remains: %s\\n' "$name" >&2; exit 91; } ;;
+      esac
+    done
+    codesign # Only the asserted fixture shim; it checks synthetic authority.
+  )
+  for name in "\${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
+    case "$name" in DYLD_*) [[ "\${!name}" == sentinel ]] || exit 93 ;; esac
+  done
   [[ ! -e "$HOME/startup-ran" ]]
   [[ ! -e "$HOME/shim-ran" ]]
   printf 'parent-retained=true preflight=%s eligible=%s exit=%s\\n' "$RELEASE_PREFLIGHT_COMPLETED" "$RELEASE_PUBLICATION_ELIGIBLE" "$result"
@@ -324,6 +339,8 @@ trap check_parent EXIT
     env: {
       PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin',
       HOME: join(root, 'home'), TMPDIR: join(root, 'tmp'), LANG: 'C',
+      // Harmless hooks exercise the protected startup prefix; DYLD is seeded later.
+      BASH_ENV: join(root, 'startup'), ENV: join(root, 'startup'),
       FIXTURE_SANITIZER: sanitizerPath, FIXTURE_PROBE: join(root, 'probe')
     },
     probeArgs: ['argument one', 'quote" and $literal', '', 'line one\nline two']
@@ -333,18 +350,35 @@ trap check_parent EXIT
 test('direct preparation test launcher preserves child exits and refuses unavailable commands', (t) => {
   const launch = safeTestsLaunch();
   const fixture = environmentFixture(t);
-  // Replace only the executable/argv at spawnSync's seam. Run the exact launcher
-  // glue and real sanitizer; never run installed pnpm test or native tools.
-  const args = [...launch.args.slice(0, -2), fixture.env.FIXTURE_PROBE, ...fixture.probeArgs];
-  fixture.write('direct.sh', `${fixture.prelude}\n"$@"\n`);
+  // Run the captured body after interpreter startup, retaining its $0/$1... argv.
+  // A shell subshell isolates body cleanup without another poisoned native entry.
+  const directBody = `${fixture.prelude}
+/usr/bin/env() {
+  local name
+  for name in "\${TERMINAL_ARTIFACT_SECRET_NAMES[@]}" CDPATH GLOBIGNORE BASH_FUNC_fixture \\
+    MAC_RELEASE_CODESIGN_KEYCHAIN CODESIGN_KEYCHAIN CODESIGN_IDENTITY \\
+    PEEKABOO_OP_SERVICE_TOKEN_FILE PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE; do
+    [[ -z "\${!name+x}" ]] || { printf 'direct pre-native variable remains: %s\\n' "$name" >&2; return 91; }
+  done
+  printf 'direct-pre-native-clean=true\\n'
+  command /usr/bin/env "$@"
+}
+(
+  # The parent's EXIT trap must not inspect the body's scrubbed BASH_ENV/ENV.
+  trap - EXIT
+${launch.args[4]}
+)
+`;
+  const args = [...launch.args.slice(0, 4), directBody, ...launch.args.slice(5, -2)];
   for (const childExit of [0, 37]) {
-    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-p', 'direct.sh', launch.command, ...args], {
+    const result = spawnSync(launch.command, [...args, fixture.env.FIXTURE_PROBE, ...fixture.probeArgs], {
       cwd: fixture.root, env: { ...fixture.env, FIXTURE_CHILD_EXIT: String(childExit) }, encoding: 'utf8'
     });
     t.diagnostic(JSON.stringify({ lane: 'direct', childExit, status: result.status,
       stdout: result.stdout, stderr: result.stderr }));
     assert.equal(result.status, childExit, result.stdout + result.stderr);
     assert.equal(result.stderr, '');
+    assert.match(result.stdout, /direct-pre-native-clean=true/);
     assert.match(result.stdout, /test-child-clean=true tool-boundary-safe=true arguments-preserved=true/);
     assert.match(result.stdout, /tool=bash resolution=trusted/);
     for (const tool of [fixture.rejectedTool, fixture.absentTool]) {
@@ -354,19 +388,20 @@ test('direct preparation test launcher preserves child exits and refuses unavail
     assert.match(result.stdout, new RegExp(`parent-retained=true preflight=false eligible=false exit=${childExit}`));
   }
   for (const command of [fixture.rejectedTool, fixture.absentTool]) {
-    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-p', 'direct.sh', launch.command,
-      ...launch.args.slice(0, -2), command, 'test'], {
+    const result = spawnSync(launch.command, [...args, command, 'test'], {
       cwd: fixture.root, env: fixture.env, encoding: 'utf8'
     });
     t.diagnostic(JSON.stringify({ lane: 'direct', command, status: result.status,
       stdout: result.stdout, stderr: result.stderr }));
     assert.equal(result.status, 127, result.stdout + result.stderr);
     assert.ok(result.stderr.includes(command), 'missing-command diagnostic names the tool');
+    assert.match(result.stdout, /direct-pre-native-clean=true/);
     assert.doesNotMatch(result.stdout, /test-child-clean=true/);
     assert.match(result.stdout, /later-signing-child-authority-retained=true/);
     assert.match(result.stdout, /parent-retained=true preflight=false eligible=false exit=127/);
     assert.equal(existsSync(join(fixture.root, 'home/shim-ran')), false);
   }
+  t.diagnostic('direct scenarios completed: 4');
 });
 
 test('actual driver preflight gate sanitizes normal and reuse commands before eligibility', (t) => {
@@ -485,6 +520,7 @@ ${eligibility}
       assert.equal(existsSync(join(fixture.root, 'home/shim-ran')), false);
     }
   }
+  t.diagnostic('driver-gate scenarios completed: 8');
 });
 
 test('repository release source surfaces remain internally consistent', () => {
