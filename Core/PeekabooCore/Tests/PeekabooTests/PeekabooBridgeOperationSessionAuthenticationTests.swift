@@ -588,7 +588,9 @@ struct PeekabooBridgeOperationSessionAuthenticationTests {
         }
         await host.stop()
     }
+}
 
+extension PeekabooBridgeOperationSessionAuthenticationTests {
     @Test
     func `exact session lookup rejects every live identity mismatch without consuming sequence`() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

@@ -127,6 +127,19 @@ let failure = DesktopActionFailure.refused(
     message: "Consumer contract probe")
 precondition(!pendingReservationDisposition(for: failure))
 
+// Compile the six-label factory shipped in v4.2.2 without constructing services.
+func releasedRawEvidenceFactory() -> DesktopTargetIdentity.Evidence {
+    DesktopTargetEvidenceAdapter.evidence(
+        processIdentifier: 4242,
+        processStartIdentity: nil,
+        windowID: 7,
+        windowIdentity: nil,
+        windowBounds: nil,
+        focusedElement: nil)
+}
+
+_ = releasedRawEvidenceFactory
+
 @MainActor
 func makeEmbeddedRuntime() -> PeekabooEmbeddedBridgeRuntime {
     PeekabooEmbeddedBridgeRuntime.make(configuration: .init(

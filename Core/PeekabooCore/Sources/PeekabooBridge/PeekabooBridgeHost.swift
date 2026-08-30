@@ -111,121 +111,6 @@ private func waitForPeekabooBridgeRequestsToDrain(
     return true
 }
 
-/// Converts listener readability into a coalesced async sequence.
-///
-/// A UNIX listener is level-triggered: one notification can represent several queued clients, so the accept loop
-/// drains until `EAGAIN` before waiting for the next event. Keeping the source alive for the listener lifetime avoids
-/// a polling sleep and lets shutdown explicitly finish the sequence before the descriptor is closed.
-final class PeekabooBridgeListenerReadiness: @unchecked Sendable {
-    let events: AsyncStream<Void>
-
-    private let continuation: AsyncStream<Void>.Continuation
-    private let cancellationEvents: AsyncStream<Void>
-    private let source: any DispatchSourceRead
-    private let lock = NSLock()
-    private var isCancelled = false
-    private var isFinishing = false
-    private var isSuspended = false
-    private var notificationCount = 0
-
-    init(fileDescriptor: Int32) {
-        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let cancellationPair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        self.events = pair.stream
-        self.continuation = pair.continuation
-        self.cancellationEvents = cancellationPair.stream
-        self.source = DispatchSource.makeReadSource(
-            fileDescriptor: fileDescriptor,
-            queue: DispatchQueue.global(qos: .userInitiated))
-        self.source.setEventHandler { [weak self] in
-            self?.notifyReadable()
-        }
-        self.source.setCancelHandler {
-            close(fileDescriptor)
-            cancellationPair.continuation.yield(())
-            cancellationPair.continuation.finish()
-        }
-        self.source.activate()
-    }
-
-    deinit {
-        self.cancel()
-    }
-
-    func cancel() {
-        self.lock.lock()
-        guard !self.isCancelled else {
-            self.lock.unlock()
-            return
-        }
-        self.isCancelled = true
-        let mustResume = self.isSuspended
-        self.isSuspended = false
-        self.lock.unlock()
-
-        // A cancelled Dispatch source does not deliver its cancellation while suspended.
-        if mustResume {
-            self.source.resume()
-        }
-        self.continuation.finish()
-        self.source.cancel()
-    }
-
-    /// Stops the async consumer before source cancellation closes the descriptor.
-    func finishEvents() {
-        self.lock.lock()
-        guard !self.isFinishing else {
-            self.lock.unlock()
-            return
-        }
-        self.isFinishing = true
-        self.lock.unlock()
-        self.continuation.finish()
-    }
-
-    /// Waits until all queued source handlers have drained, making it safe for the owner to close the descriptor.
-    func waitUntilCancelled() async {
-        for await _ in self.cancellationEvents {
-            return
-        }
-    }
-
-    /// Re-enables listener notifications after the accept queue has been drained to `EAGAIN`.
-    func rearm() {
-        self.lock.lock()
-        guard !self.isCancelled, !self.isFinishing, self.isSuspended else {
-            self.lock.unlock()
-            return
-        }
-        self.isSuspended = false
-        self.lock.unlock()
-        self.source.resume()
-    }
-
-    #if DEBUG
-    var notificationCountForTesting: Int {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        return self.notificationCount
-    }
-    #endif
-
-    private func notifyReadable() {
-        self.lock.lock()
-        guard !self.isCancelled, !self.isFinishing, !self.isSuspended else {
-            self.lock.unlock()
-            return
-        }
-        // Dispatch read sources are level-triggered. Suspend until the async consumer drains accept(), otherwise a
-        // queued client can repeatedly invoke this lightweight handler faster than the consumer gets scheduled.
-        self.isSuspended = true
-        self.notificationCount += 1
-        self.source.suspend()
-        self.lock.unlock()
-        self.continuation.yield(())
-    }
-}
-
 enum PeekabooBridgeAcceptLoop {
     typealias ClientHandler = @Sendable (Int32, PeekabooBridgeConnectionLiveness) async -> Void
     typealias ConnectionAcceptor = @Sendable (Int32) async -> AcceptResult
@@ -779,7 +664,9 @@ public final actor PeekabooBridgeHost {
         self.ownershipCleanupTask != nil
     }
     #endif
+}
 
+extension PeekabooBridgeHost {
     private nonisolated static func acquireLease(path: String) throws -> SocketLease {
         let leasePath = "\(path).lock"
         var created = true
@@ -1532,35 +1419,57 @@ public final actor PeekabooBridgeHost {
                 let boundPath = withUnsafePointer(to: &address.sun_path.0) {
                     String(cString: $0)
                 }
-                if boundPath == path {
+                switch self.legacyBoundPathOwnerState(
+                    boundPath: boundPath,
+                    path: path,
+                    targetIdentity: targetIdentity,
+                    pid: pid)
+                {
+                case .held:
                     return .held
-                }
-                if boundPath.hasPrefix("/") {
-                    if self.socketStatus(path: boundPath)?.identity == targetIdentity {
-                        return .held
-                    }
-                    continue
-                }
-
-                if let currentDirectory = self.processCurrentDirectory(pid: pid) {
-                    let baseURL = URL(fileURLWithPath: currentDirectory, isDirectory: true)
-                    let resolvedPath = URL(
-                        fileURLWithPath: boundPath,
-                        relativeTo: baseURL).standardizedFileURL.path
-                    if self.socketStatus(path: resolvedPath)?.identity == targetIdentity {
-                        return .held
-                    }
-                }
-
-                // The kernel retains a relative UNIX socket name but not the process's bind-time cwd.
-                // If the process changed directories, matching the final component is the strongest safe
-                // signal available. Treat it as incomplete inspection instead of deleting a possibly live socket.
-                if (boundPath as NSString).lastPathComponent == (path as NSString).lastPathComponent {
+                case .indeterminate:
                     inspectionWasIncomplete = true
+                case .unheld:
+                    break
                 }
             }
         }
         return inspectionWasIncomplete ? .indeterminate : .unheld
+    }
+
+    private nonisolated static func legacyBoundPathOwnerState(
+        boundPath: String,
+        path: String,
+        targetIdentity: SocketIdentity,
+        pid: pid_t) -> LegacySocketOwnerState
+    {
+        if boundPath == path {
+            return .held
+        }
+        if boundPath.hasPrefix("/") {
+            if self.socketStatus(path: boundPath)?.identity == targetIdentity {
+                return .held
+            }
+            return .unheld
+        }
+
+        if let currentDirectory = self.processCurrentDirectory(pid: pid) {
+            let baseURL = URL(fileURLWithPath: currentDirectory, isDirectory: true)
+            let resolvedPath = URL(
+                fileURLWithPath: boundPath,
+                relativeTo: baseURL).standardizedFileURL.path
+            if self.socketStatus(path: resolvedPath)?.identity == targetIdentity {
+                return .held
+            }
+        }
+
+        // The kernel retains a relative UNIX socket name but not the process's bind-time cwd.
+        // If the process changed directories, matching the final component is the strongest safe
+        // signal available. Treat it as incomplete inspection instead of deleting a possibly live socket.
+        if (boundPath as NSString).lastPathComponent == (path as NSString).lastPathComponent {
+            return .indeterminate
+        }
+        return .unheld
     }
 
     private nonisolated static func processCurrentDirectory(pid: pid_t) -> String? {

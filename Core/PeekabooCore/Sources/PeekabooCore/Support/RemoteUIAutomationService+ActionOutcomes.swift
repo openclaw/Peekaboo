@@ -88,8 +88,7 @@ UIAutomationGlobalPointerActionResultProviding {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
     {
         guard self.supportsExactWindowTargetedClicks else {
@@ -102,8 +101,7 @@ UIAutomationGlobalPointerActionResultProviding {
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds,
+                windowEvidence: windowEvidence,
                 allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
         }
     }

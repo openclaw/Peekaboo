@@ -56,10 +56,10 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
         let deadline = clock.now.advanced(by: .seconds(5))
         while clock.now < deadline {
             guard process.isRunning else {
-                let details = String(
-                    decoding: standardError.fileHandleForReading.readDataToEndOfFile(),
-                    as: UTF8.self
-                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
+                let details = (String(bytes: errorData, encoding: .utf8) ??
+                    "Invalid UTF-8 stderr (base64): \(errorData.base64EncodedString())")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 let suffix = details.isEmpty ? "" : ": \(details)"
                 throw RuntimeError("Peekaboo marker fixture exited before registration\(suffix)")
             }

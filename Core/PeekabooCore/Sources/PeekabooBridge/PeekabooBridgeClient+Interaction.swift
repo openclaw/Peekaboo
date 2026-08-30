@@ -230,16 +230,14 @@ extension PeekabooBridgeClient {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws
     {
         _ = try await self.clickWithOutcome(
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds,
+            windowEvidence: windowEvidence,
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
     }
 

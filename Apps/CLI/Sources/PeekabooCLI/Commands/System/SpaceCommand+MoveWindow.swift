@@ -109,34 +109,12 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
                     actionResult,
                     expectedWindow: expectedWindow
                 )
-                AutomationEventLogger.log(
-                    .space,
-                    "move_window window_id=\(windowID) mode=current title=\"\(windowInfo.title)\""
+                self.outputMoveToCurrentSpace(
+                    windowID: windowID,
+                    windowInfo: windowInfo,
+                    outcome: outcome,
+                    targetIdentity: targetIdentity
                 )
-                if self.jsonOutput {
-                    let data = WindowSpaceActionResult(
-                        action: "move-window",
-                        success: true,
-                        window_id: windowID,
-                        window_title: windowInfo.title,
-                        space_id: nil,
-                        space_number: nil,
-                        moved_to_current: true,
-                        followed: nil
-                    )
-                    outputSuccessCodable(
-                        data: data,
-                        outcome: outcome,
-                        targetIdentity: targetIdentity,
-                        logger: self.logger
-                    )
-                } else {
-                    print(ActionOutcomeHumanRenderer.statusLine(
-                        for: outcome,
-                        operation: "Space move-window"
-                    ))
-                    print("Moved window '\(windowInfo.title)' to current Space")
-                }
                 return
             }
 
@@ -232,6 +210,42 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
         } catch {
             handleError(error)
             throw ExitCode(1)
+        }
+    }
+
+    private func outputMoveToCurrentSpace(
+        windowID: CGWindowID,
+        windowInfo: ServiceWindowInfo,
+        outcome: DesktopActionOutcome,
+        targetIdentity: DesktopTargetIdentity
+    ) {
+        AutomationEventLogger.log(
+            .space,
+            "move_window window_id=\(windowID) mode=current title=\"\(windowInfo.title)\""
+        )
+        if self.jsonOutput {
+            let data = WindowSpaceActionResult(
+                action: "move-window",
+                success: true,
+                window_id: windowID,
+                window_title: windowInfo.title,
+                space_id: nil,
+                space_number: nil,
+                moved_to_current: true,
+                followed: nil
+            )
+            outputSuccessCodable(
+                data: data,
+                outcome: outcome,
+                targetIdentity: targetIdentity,
+                logger: self.logger
+            )
+        } else {
+            print(ActionOutcomeHumanRenderer.statusLine(
+                for: outcome,
+                operation: "Space move-window"
+            ))
+            print("Moved window '\(windowInfo.title)' to current Space")
         }
     }
 

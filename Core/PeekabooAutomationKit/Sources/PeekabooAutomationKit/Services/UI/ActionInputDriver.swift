@@ -642,7 +642,9 @@ struct ActionInputDriver: ActionInputDriving {
     private nonisolated static func isNumericRole(_ role: String?) -> Bool {
         role == "AXSlider"
     }
+}
 
+extension ActionInputDriver {
     private func scrollActionNames(for direction: PeekabooFoundation.ScrollDirection) -> [String] {
         switch direction {
         case .up:

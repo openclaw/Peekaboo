@@ -60,35 +60,7 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresApplicationLaunchOptions, !self.supportsApplicationLaunchOptions(for: handshake) {
-            return false
-        }
-
-        if options.requiresSafeBackgroundApplicationLaunchNoOp,
-           !self.supportsSafeBackgroundApplicationLaunchNoOp(for: handshake) {
-            return false
-        }
-
-        if options.requiresNewApplicationInstanceLaunch,
-           !self.supportsNewApplicationInstanceLaunch(for: handshake) {
-            return false
-        }
-
-        if options.requiresApplicationWindowReadiness,
-           !self.supportsApplicationWindowReadiness(for: handshake) {
-            return false
-        }
-
-        if options.requiresApplicationRelaunch, !self.supportsApplicationRelaunch(for: handshake) {
-            return false
-        }
-
-        if options.requiresSurvivingApplicationHost, handshake.hostKind != .onDemand {
-            return false
-        }
-
-        if options.requiresProcessGenerationPinnedApplicationQuit,
-           !self.supportsProcessGenerationPinnedApplicationQuit(for: handshake) {
+        if !self.supportsApplicationLifecycleRequirements(for: handshake, options: options) {
             return false
         }
 
@@ -123,6 +95,45 @@ enum BridgeCapabilityPolicy {
 
         if options.requiresProducerBoundSnapshotReferences,
            !self.supportsProducerBoundSnapshotReferences(for: handshake) {
+            return false
+        }
+
+        return true
+    }
+
+    private static func supportsApplicationLifecycleRequirements(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        if options.requiresApplicationLaunchOptions, !self.supportsApplicationLaunchOptions(for: handshake) {
+            return false
+        }
+
+        if options.requiresSafeBackgroundApplicationLaunchNoOp,
+           !self.supportsSafeBackgroundApplicationLaunchNoOp(for: handshake) {
+            return false
+        }
+
+        if options.requiresNewApplicationInstanceLaunch,
+           !self.supportsNewApplicationInstanceLaunch(for: handshake) {
+            return false
+        }
+
+        if options.requiresApplicationWindowReadiness,
+           !self.supportsApplicationWindowReadiness(for: handshake) {
+            return false
+        }
+
+        if options.requiresApplicationRelaunch, !self.supportsApplicationRelaunch(for: handshake) {
+            return false
+        }
+
+        if options.requiresSurvivingApplicationHost, handshake.hostKind != .onDemand {
+            return false
+        }
+
+        if options.requiresProcessGenerationPinnedApplicationQuit,
+           !self.supportsProcessGenerationPinnedApplicationQuit(for: handshake) {
             return false
         }
 

@@ -640,7 +640,11 @@ struct DialogCommandTests {
         #expect(target["window_id"] as? Int == 73)
         #expect(receipt["window_id"] as? Int == 73)
     }
+}
 
+// MARK: - Foreground dialog authority
+
+extension DialogCommandTests {
     @Test
     func `targetless dialog input preserves no auto focus inside the execution service`() async throws {
         let dialogService = StubDialogService(elements: DialogElements(

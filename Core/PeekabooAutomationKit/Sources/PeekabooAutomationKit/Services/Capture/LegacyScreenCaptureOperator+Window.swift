@@ -87,10 +87,11 @@ extension LegacyScreenCaptureOperator {
         let selectorResolutionProofs = try self.selectorResolutionProofs(
             app: app,
             windows: appWindows,
-            selectedIndex: resolvedIndex,
             requestedIndex: windowIndex,
-            selectedBounds: bounds,
-            selectedIdentity: mutationIdentity)
+            selectedWindow: SelectedWindowProofContext(
+                index: resolvedIndex,
+                bounds: bounds,
+                identity: mutationIdentity))
         let scalePlan = self.scalePlan(for: bounds, preference: scale)
         let imageData: Data
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
@@ -317,14 +318,21 @@ extension LegacyScreenCaptureOperator {
         return CGRect(x: 0, y: 0, width: image.width, height: image.height)
     }
 
+    private struct SelectedWindowProofContext {
+        let index: Int
+        let bounds: CGRect
+        let identity: WindowMutationIdentity?
+    }
+
     private func selectorResolutionProofs(
         app: ServiceApplicationInfo,
         windows: [[String: Any]],
-        selectedIndex: Int,
         requestedIndex: Int?,
-        selectedBounds: CGRect,
-        selectedIdentity: WindowMutationIdentity?) throws -> [SelectorResolutionProof]?
+        selectedWindow: SelectedWindowProofContext) throws -> [SelectorResolutionProof]?
     {
+        let selectedIndex = selectedWindow.index
+        let selectedBounds = selectedWindow.bounds
+        let selectedIdentity = selectedWindow.identity
         guard let processIdentity = app.processIdentity,
               let selectedIdentity,
               selectedIdentity.processIdentity == processIdentity

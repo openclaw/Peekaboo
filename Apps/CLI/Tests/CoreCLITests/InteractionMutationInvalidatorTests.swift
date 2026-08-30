@@ -494,7 +494,11 @@ struct InteractionMutationInvalidatorTests {
         #expect(!published)
         #expect(await snapshots.getMostRecentSnapshot() == nil)
     }
+}
 
+// MARK: - Invalidation failure and cleanup
+
+extension InteractionMutationInvalidatorTests {
     @Test
     func `Command wrapper retries failed invalidation with the original cutoff`() async throws {
         let snapshots = RetrySnapshotManager()

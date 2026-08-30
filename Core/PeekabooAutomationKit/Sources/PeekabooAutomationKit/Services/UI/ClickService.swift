@@ -169,13 +169,14 @@ public final class ClickService {
     // MARK: - Private Methods
 
     private func performActionClick(
-        target: ClickTarget,
-        clickType: ClickType,
-        snapshotId: String?,
-        captureReceipt: DesktopOperationPlan.CaptureReceipt,
-        validatesProcessIdentity: Bool,
-        allowsAccessibilityValueDelivery: Bool) async throws -> UIInputExecutionResult.Action
+        _ request: ClickExecutionRequest,
+        captureReceipt: DesktopOperationPlan.CaptureReceipt) async throws -> UIInputExecutionResult.Action
     {
+        let target = request.target
+        let clickType = request.clickType
+        let snapshotId = request.snapshotID
+        let validatesProcessIdentity = request.validatesProcessIdentity
+        let allowsAccessibilityValueDelivery = request.allowsAccessibilityValueDelivery
         let targetProcessIdentifier = captureReceipt.processIdentifier
         guard let element = try await self.resolveAutomationElement(
             target: target,
@@ -1418,13 +1419,7 @@ extension ClickService {
                         throw PeekabooError.operationError(message: "Click target was not prepared")
                     }
                     do {
-                        return try await self.performActionClick(
-                            target: target,
-                            clickType: clickType,
-                            snapshotId: snapshotID,
-                            captureReceipt: mutationReceipt,
-                            validatesProcessIdentity: validatesProcessIdentity,
-                            allowsAccessibilityValueDelivery: request.allowsAccessibilityValueDelivery)
+                        return try await self.performActionClick(request, captureReceipt: mutationReceipt)
                     } catch let error as ActionInputError
                         where strategy == .actionFirst &&
                         targetProcessIdentifier != nil &&

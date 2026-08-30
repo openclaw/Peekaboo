@@ -134,15 +134,17 @@ struct MenuForegroundAuthorityTests {
         #expect(fixture.menu.listMenusRequests == ["PID:42"])
     }
 
+    private struct Fixture {
+        let application: ServiceApplicationInfo
+        let services: PeekabooServices
+        let applications: StubApplicationService
+        let windows: OutcomeStubWindowService
+        let menu: OutcomeStubMenuService
+    }
+
     private static func fixture(
         menuIdentifiers: [String] = ["PID:42"]
-    ) -> (
-        application: ServiceApplicationInfo,
-        services: PeekabooServices,
-        applications: StubApplicationService,
-        windows: OutcomeStubWindowService,
-        menu: OutcomeStubMenuService
-    ) {
+    ) -> Fixture {
         let application = ServiceApplicationInfo(
             processIdentifier: 42,
             processStartIdentity: 7,
@@ -179,7 +181,13 @@ struct MenuForegroundAuthorityTests {
             windows: windows,
             menu: menu
         )
-        return (application, services, applications, windows, menu)
+        return Fixture(
+            application: application,
+            services: services,
+            applications: applications,
+            windows: windows,
+            menu: menu
+        )
     }
 
     private static func expectFocusPreservingFailure(_ result: CommandRunResult) throws {

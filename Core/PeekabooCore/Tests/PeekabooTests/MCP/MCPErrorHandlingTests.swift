@@ -271,35 +271,6 @@ struct MCPErrorHandlingTests {
 
 struct MCPProtocolErrorTests {
     @Test
-    func `Invalid MCP message format`() {
-        // Test various malformed MCP messages
-        let invalidMessages = [
-            "not json at all",
-            "{}", // Missing required fields
-            "{\"method\": \"unknown\"}", // Unknown method
-            "{\"jsonrpc\": \"1.0\"}", // Wrong version
-        ]
-
-        // These would be tested through the actual MCP protocol handler
-        // For now, we verify the strings are indeed invalid JSON-RPC
-        for message in invalidMessages {
-            if message == "{}" || message.contains("{") {
-                // Valid JSON structure but invalid MCP protocol
-                continue
-            }
-
-            let data = Data(message.utf8)
-            do {
-                _ = try JSONSerialization.jsonObject(with: data)
-                // If it's valid JSON, that's fine for some test cases
-            } catch {
-                // Invalid JSON is also a protocol error
-                #expect(error is NSError)
-            }
-        }
-    }
-
-    @Test
     func `Tool response size limits`() async throws {
         struct LargeTool: MCPTool {
             let name = "large"

@@ -251,7 +251,11 @@ public struct MCPToolContext: @unchecked Sendable {
             executionHost: services.executionHost,
             capturePreflightRefusal: capturePreflightRefusal)
     }
+}
 
+// MARK: - Tool execution and mutation lanes
+
+extension MCPToolContext {
     @MainActor
     public func execute(
         tool: any MCPTool,
@@ -261,18 +265,8 @@ public struct MCPToolContext: @unchecked Sendable {
         let mutationLane = self.mutationLane(for: tool.name, arguments: arguments)
         let mutationExecutionGate = mutationLane.gate
         let usesCoordinatorBarrier = mutationLane.usesCoordinatorBarrier
-        if let rejection = MCPToolArgumentValidator.rejection(
-            tool: tool,
-            arguments: arguments,
-            snapshotEffect: effect)
-        {
+        if let rejection = self.executionRejection(tool, arguments: arguments, snapshotEffect: effect) {
             return rejection
-        }
-        if let rejection = self.executionPolicy.rejection(toolName: tool.name, arguments: arguments) {
-            return rejection
-        }
-        if let capturePreflightResponse = self.capturePreflightResponse(tool: tool, arguments: arguments) {
-            return capturePreflightResponse
         }
         await self.uiSnapshots.synchronizeImplicitLatestInvalidationWatermark(
             self.snapshots.effectiveImplicitLatestInvalidationWatermark)
@@ -363,18 +357,9 @@ public struct MCPToolContext: @unchecked Sendable {
                 }
                 return response
             }
-            response = Self.validatedBackgroundMutationResponse(
-                response,
-                toolName: tool.name,
-                effect: effect,
-                executionPolicy: self.executionPolicy)
-            try Self.checkCancellationUnlessResponseIsCanonical(response)
-            let completionCertificate = Self.mutationCompletionCertificate(response: response)
-            let completedScope = scope.completed(
-                at: Date(),
-                preserving: response.isError ? nil : Self.refreshedSnapshotID(scope: scope, response: response),
-                confirmedMutationCompletedAt: completionCertificate.completedAt,
-                observationPreservationAllowed: completionCertificate.preservationAllowed)
+            let completion = try self.validatedMutationCompletion(scope, response: response, toolName: tool.name)
+            response = completion.response
+            let completedScope = completion.scope
             let completionSucceeded = await self.completeMutation(
                 completedScope,
                 succeeded: !response.isError,
@@ -438,6 +423,24 @@ public struct MCPToolContext: @unchecked Sendable {
             await self.releaseMutationLane(mutationLane)
             throw error
         }
+    }
+
+    private func executionRejection(
+        _ tool: any MCPTool,
+        arguments: ToolArguments,
+        snapshotEffect: MCPToolSnapshotEffect) -> ToolResponse?
+    {
+        if let rejection = MCPToolArgumentValidator.rejection(
+            tool: tool,
+            arguments: arguments,
+            snapshotEffect: snapshotEffect)
+        {
+            return rejection
+        }
+        if let rejection = self.executionPolicy.rejection(toolName: tool.name, arguments: arguments) {
+            return rejection
+        }
+        return self.capturePreflightResponse(tool: tool, arguments: arguments)
     }
 
     private func mutationLane(
@@ -749,7 +752,11 @@ public struct MCPToolContext: @unchecked Sendable {
             executionHost: self.executionHost,
             capturePreflightRefusal: self.capturePreflightRefusal)
     }
+}
 
+// MARK: - Target authorization and mutation completion
+
+extension MCPToolContext {
     struct BackgroundTargetAuthorization {
         let arguments: ToolArguments
         let rejection: ToolResponse?
@@ -1091,6 +1098,26 @@ public struct MCPToolContext: @unchecked Sendable {
         } catch {
             return false
         }
+    }
+
+    private func validatedMutationCompletion(
+        _ scope: MCPToolSnapshotMutationScope,
+        response: ToolResponse,
+        toolName: String) throws -> (response: ToolResponse, scope: MCPToolSnapshotMutationScope)
+    {
+        let response = Self.validatedBackgroundMutationResponse(
+            response,
+            toolName: toolName,
+            effect: scope.effect,
+            executionPolicy: self.executionPolicy)
+        try Self.checkCancellationUnlessResponseIsCanonical(response)
+        let completionCertificate = Self.mutationCompletionCertificate(response: response)
+        let completedScope = scope.completed(
+            at: Date(),
+            preserving: response.isError ? nil : Self.refreshedSnapshotID(scope: scope, response: response),
+            confirmedMutationCompletedAt: completionCertificate.completedAt,
+            observationPreservationAllowed: completionCertificate.preservationAllowed)
+        return (response, completedScope)
     }
 
     private static func mutationCompletionCertificate(

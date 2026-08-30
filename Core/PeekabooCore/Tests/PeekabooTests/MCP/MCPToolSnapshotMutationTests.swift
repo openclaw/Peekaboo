@@ -797,7 +797,11 @@ struct MCPToolSnapshotMutationTests {
         let completion = try #require(coordinator.completions.first)
         #expect(completion.scope.startedAt >= releasedAt)
     }
+}
 
+// MARK: - Snapshot publication and watermarks
+
+extension MCPToolSnapshotMutationTests {
     @Test
     func `UI snapshot watermark preserves explicit history without resurfacing stale latest`() async {
         let manager = self.uiSnapshots

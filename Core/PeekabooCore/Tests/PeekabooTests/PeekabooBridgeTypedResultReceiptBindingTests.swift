@@ -630,10 +630,11 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
         #expect(plan.typedResponseRule.typeActionDispatchUnits == .exact(2))
 
-        let valid: [(
+        typealias DeliveryShape = (
             keyPresses: Int,
             specialKeyPresses: Int,
-            mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
+            mechanism: DesktopActionOutcome.Delivery.Mechanism)
+        let valid: [DeliveryShape] = [
             (0, 0, .accessibilityValue),
             (1, 0, .composite),
             (1, 1, .composite),
@@ -656,10 +657,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             try bundle.validate()
         }
 
-        let forged: [(
-            keyPresses: Int,
-            specialKeyPresses: Int,
-            mechanism: DesktopActionOutcome.Delivery.Mechanism)] = [
+        let forged: [DeliveryShape] = [
             (0, 1, .accessibilityValue),
             (1, 2, .composite),
             (2, 0, .windowTargetedEvents),

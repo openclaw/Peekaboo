@@ -150,36 +150,50 @@ extension DialogCommand {
                     )
                     let compositeResult = context.actionSequence.result(payload: ())
 
-                    if self.jsonOutput {
-                        let outputData = DialogDismissResult(
-                            action: "dialog_dismiss",
-                            method: result.details["method"] ?? "unknown",
-                            button: result.details["button"],
-                            pid: result.details["pid"].flatMap(Int32.init),
-                            process_start_identity: result.details["process_start_identity"].flatMap(UInt64.init),
-                            process_start_identity_decimal: result.details["process_start_identity_decimal"],
-                            window_id: result.details["window_id"].flatMap(Int.init)
-                        )
-                        outputSuccessCodable(
-                            data: outputData,
-                            outcome: compositeResult.outcome,
-                            targetIdentity: compositeResult.targetIdentity,
-                            logger: self.outputLogger
-                        )
-                    } else {
-                        print(ActionOutcomeHumanRenderer.statusLine(
-                            for: compositeResult.outcome ?? outcome,
-                            operation: "Dialog dismissal"
-                        ))
-                    }
-                    let method = result.details["method"] ?? (self.force ? "escape" : "button")
-                    let dismissedButton = result.details["button"] ?? "none"
-                    AutomationEventLogger.log(
-                        .dialog,
-                        "action=dismiss method=\(method) button='\(dismissedButton)' "
-                            + "app='\(context.appHint ?? "unknown")'"
+                    self.outputDismissResult(
+                        result,
+                        compositeResult: compositeResult,
+                        outcome: outcome,
+                        appHint: context.appHint
                     )
                 }
+            )
+        }
+
+        private func outputDismissResult(
+            _ result: DialogActionResult,
+            compositeResult: UIAutomationActionResult<Void>,
+            outcome: DesktopActionOutcome,
+            appHint: String?
+        ) {
+            if self.jsonOutput {
+                let outputData = DialogDismissResult(
+                    action: "dialog_dismiss",
+                    method: result.details["method"] ?? "unknown",
+                    button: result.details["button"],
+                    pid: result.details["pid"].flatMap(Int32.init),
+                    process_start_identity: result.details["process_start_identity"].flatMap(UInt64.init),
+                    process_start_identity_decimal: result.details["process_start_identity_decimal"],
+                    window_id: result.details["window_id"].flatMap(Int.init)
+                )
+                outputSuccessCodable(
+                    data: outputData,
+                    outcome: compositeResult.outcome,
+                    targetIdentity: compositeResult.targetIdentity,
+                    logger: self.outputLogger
+                )
+            } else {
+                print(ActionOutcomeHumanRenderer.statusLine(
+                    for: compositeResult.outcome ?? outcome,
+                    operation: "Dialog dismissal"
+                ))
+            }
+            let method = result.details["method"] ?? (self.force ? "escape" : "button")
+            let dismissedButton = result.details["button"] ?? "none"
+            AutomationEventLogger.log(
+                .dialog,
+                "action=dismiss method=\(method) button='\(dismissedButton)' "
+                    + "app='\(appHint ?? "unknown")'"
             )
         }
     }

@@ -2,6 +2,7 @@ import Commander
 import CoreGraphics
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -112,7 +113,7 @@ struct CaptureLiveBehaviorTests {
         live.captureFocus = .foreground
         live.runtime = runtime
         let liveScope = try await live.resolveScope()
-        try await live.focusIfNeeded(
+        let liveOutcome = try await live.focusIfNeeded(
             appIdentifier: #require(liveScope.applicationIdentifier),
             windowID: liveScope.windowId,
             windowMutationIdentity: liveScope.windowMutationIdentity,
@@ -125,13 +126,19 @@ struct CaptureLiveBehaviorTests {
         action.captureFocus = .foreground
         action.runtime = runtime
         let actionScope = try await action.resolveScope()
-        try await action.focusIfNeeded(
+        let actionOutcome = try await action.focusIfNeeded(
             appIdentifier: #require(actionScope.applicationIdentifier),
             windowID: actionScope.windowId,
             windowMutationIdentity: actionScope.windowMutationIdentity,
             focusResultProvider: provider
         )
 
+        let expectedOutcome = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            unitCount: .one
+        )
+        #expect(liveOutcome == expectedOutcome)
+        #expect(actionOutcome == expectedOutcome)
         #expect(focusedWindowIDs == [102, 102])
         #expect(try focusedIdentities == [
             #require(liveScope.windowMutationIdentity),
@@ -164,7 +171,7 @@ struct CaptureLiveBehaviorTests {
         )]
         var receivedIdentity: WindowMutationIdentity?
 
-        try await command.focusIfNeeded(
+        let outcome = try await command.focusIfNeeded(
             appIdentifier: #require(scope.applicationIdentifier),
             windowID: scope.windowId,
             windowMutationIdentity: scope.windowMutationIdentity,
@@ -177,6 +184,10 @@ struct CaptureLiveBehaviorTests {
             }
         )
 
+        #expect(outcome == .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            unitCount: .one
+        ))
         #expect(receivedIdentity == originalIdentity)
         #expect(receivedIdentity != replacementIdentity)
     }

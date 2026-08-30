@@ -261,237 +261,6 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
     }
 
-    private func outputClickResult(
-        _ context: ClickCommandOutputContext,
-        targetIdentity: DesktopTargetIdentity?
-    ) async throws {
-        let coordinateResolution = context.coordinateResolution
-        let explicitWindowResolution = context.explicitWindowResolution
-        let appName = await resultApplicationName(
-            snapshotId: context.snapshotId,
-            coordinateResolution: coordinateResolution
-        )
-        let details = try await clickOutputDetails(
-            clickTarget: context.clickTarget,
-            waitResult: context.waitResult,
-            snapshotId: context.snapshotId,
-            coordinateResolution: coordinateResolution
-        )
-        let result = ClickResult(
-            clickedElement: details.clickedElement,
-            clickLocation: details.location,
-            waitTime: context.waitResult.waitTime,
-            executionTime: Date().timeIntervalSince(context.startTime),
-            targetApp: appName,
-            targetWindowId: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID ??
-                targetIdentity?.exactWindow?.identity.windowID,
-            targetWindowTitle: explicitWindowResolution?.windowInfo.title ?? coordinateResolution?.targetWindowTitle,
-            coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
-            inputCoordinates: coordinateResolution?.inputPoint,
-            screenCoordinates: coordinateResolution?.screenPoint,
-            targetPoint: details.targetPointDiagnostics,
-            deliveryMode: self.deliveryMode.rawValue,
-            clickType: self.requestedClickType.rawValue,
-            modifiers: self.modifiers?.values,
-            cursorRestoration: context.modifierClickResult?.cursorRestoration.rawValue,
-            focusRestoration: context.modifierClickResult?.focusRestoration.rawValue
-        )
-        self.output(
-            result,
-            effect: self.clickEffect(for: context.clickTarget),
-            outcome: context.actionResult.outcome,
-            targetIdentity: targetIdentity
-        ) {
-            if let actionOutcome = context.actionResult.outcome {
-                print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Click"))
-            } else {
-                print(self.clickEffect(for: context.clickTarget) == .confirmed
-                    ? "✅ Click confirmed by Accessibility"
-                    : "⚠️ Click dispatched; application effect is unverifiable")
-            }
-            self.printClickDetails(result)
-        }
-    }
-
-    private func clickOutputDetails(
-        clickTarget: ClickTarget,
-        waitResult: WaitForElementResult,
-        snapshotId: String,
-        coordinateResolution: InteractionCoordinateResolution?
-    ) async throws
-    -> (location: CGPoint, clickedElement: String?, targetPointDiagnostics: InteractionTargetPointDiagnostics?) {
-        switch clickTarget {
-        case let .elementId(id):
-            guard let element = waitResult.element else {
-                return (.zero, "Element ID: \(id)", nil)
-            }
-            return try await self.elementOutputDetails(
-                element: element,
-                elementId: id,
-                snapshotId: snapshotId
-            )
-
-        case let .coordinates(point):
-            let diagnostics = if let coordinateResolution {
-                InteractionTargetPointDiagnostics(
-                    source: InteractionTargetPointSource.coordinates.rawValue,
-                    elementId: nil,
-                    snapshotId: nil,
-                    original: InteractionPoint(coordinateResolution.inputPoint),
-                    resolved: InteractionPoint(coordinateResolution.screenPoint),
-                    windowAdjustment: nil,
-                    coordinate: coordinateResolution.diagnostics
-                )
-            } else {
-                InteractionTargetPointResolver.coordinate(point, source: .coordinates).diagnostics
-            }
-            return (point, nil, diagnostics)
-
-        case let .query(query):
-            guard let element = waitResult.element else {
-                return (.zero, "Element matching: \(query)", nil)
-            }
-            return try await self.elementOutputDetails(
-                element: element,
-                elementId: element.id,
-                snapshotId: snapshotId
-            )
-        }
-    }
-
-    private func elementOutputDetails(
-        element: DetectedElement,
-        elementId: String,
-        snapshotId: String
-    ) async throws
-    -> (location: CGPoint, clickedElement: String?, targetPointDiagnostics: InteractionTargetPointDiagnostics?) {
-        let resolvedSnapshotId = snapshotId.isEmpty ? nil : snapshotId
-        do {
-            let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
-                element: element,
-                elementId: elementId,
-                snapshotId: resolvedSnapshotId,
-                snapshots: self.services.snapshots
-            )
-            return (resolution.point, formatElementInfo(element), resolution.diagnostics)
-        } catch let error as CancellationError {
-            throw error
-        } catch {
-            // The click already succeeded; its target may have closed or moved before result formatting.
-            self.logger.debug("Post-click target diagnostics unavailable: \(error.localizedDescription)")
-            let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
-            let diagnostics = InteractionTargetPointDiagnostics(
-                source: InteractionTargetPointSource.element.rawValue,
-                elementId: elementId,
-                snapshotId: resolvedSnapshotId,
-                original: InteractionPoint(point),
-                resolved: InteractionPoint(point),
-                windowAdjustment: nil
-            )
-            return (point, formatElementInfo(element), diagnostics)
-        }
-    }
-
-    private func frontmostApplicationName() async -> String {
-        await (try? self.services.applications.getFrontmostApplication().name) ?? "Unknown"
-    }
-
-    private func resultApplicationName(
-        snapshotId: String,
-        coordinateResolution: InteractionCoordinateResolution? = nil
-    ) async -> String {
-        if let targetApplicationName = coordinateResolution?.targetApplicationName {
-            return targetApplicationName
-        }
-        if let processIdentifier = coordinateResolution?.targetProcessIdentifier {
-            return await applicationName(processIdentifier: processIdentifier) ?? "PID \(processIdentifier)"
-        }
-        if let windowID = coordinateResolution?.targetWindowID {
-            return "window \(windowID)"
-        }
-
-        guard self.usesBackgroundDelivery else {
-            return await self.frontmostApplicationName()
-        }
-
-        if let pid = target.pid {
-            return await applicationName(processIdentifier: pid) ?? "PID \(pid)"
-        }
-
-        if let appIdentifier = target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !appIdentifier.isEmpty {
-            return await (try? self.services.applications.findApplication(identifier: appIdentifier).name) ??
-                appIdentifier
-        }
-
-        guard !snapshotId.isEmpty,
-              let snapshot = try? await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId)
-        else {
-            if let detectionResult = try? await services.snapshots.getDetectionResult(snapshotId: snapshotId) {
-                if let applicationName = detectionResult.metadata.windowContext?.applicationName {
-                    return applicationName
-                }
-                if let processId = detectionResult.metadata.windowContext?.applicationProcessId {
-                    return await applicationName(processIdentifier: processId) ?? "PID \(processId)"
-                }
-            }
-            return await self.frontmostApplicationName()
-        }
-
-        if let applicationName = snapshot.applicationName {
-            return applicationName
-        }
-
-        if let processId = snapshot.applicationProcessId {
-            return await applicationName(processIdentifier: processId) ?? "PID \(processId)"
-        }
-
-        return await self.frontmostApplicationName()
-    }
-
-    private func applicationName(processIdentifier: Int32) async -> String? {
-        guard let output = try? await services.applications.listApplications() else {
-            return nil
-        }
-        return output.data.applications.first { $0.processIdentifier == processIdentifier }?.name
-    }
-
-    private func printClickDetails(_ result: ClickResult) {
-        print("🎯 App: \(result.targetApp)")
-        if let deliveryMode = result.deliveryMode {
-            print("🎯 Mode: \(deliveryMode)")
-        }
-        if let coordinateSpace = result.coordinateSpace {
-            print("🎯 Coordinate space: \(coordinateSpace)")
-        }
-        if let windowID = result.targetWindowId {
-            if let title = result.targetWindowTitle, !title.isEmpty {
-                print("🪟 Window: \(windowID) (\(title))")
-            } else {
-                print("🪟 Window: \(windowID)")
-            }
-        }
-        if let info = result.clickedElement {
-            print("📱 Clicked: \(info)")
-        }
-        if let modifiers = result.modifiers, !modifiers.isEmpty {
-            print("⌨️  Modifiers: \(modifiers.joined(separator: ","))")
-        }
-        if let cursorRestoration = result.cursorRestoration {
-            print("🖱️  Cursor restoration: \(cursorRestoration)")
-        }
-        if let focusRestoration = result.focusRestoration {
-            print("🪟 Focus restoration: \(focusRestoration)")
-        }
-        let x = result.clickLocation["x"] ?? 0
-        let y = result.clickLocation["y"] ?? 0
-        print("📍 Location: (\(Int(x)), \(Int(y)))")
-        if result.waitTime > 0 {
-            print("⏳ Waited: \(String(format: "%.1f", result.waitTime))s")
-        }
-        print("⏱️  Completed in \(String(format: "%.2f", result.executionTime))s")
-    }
-
     private func clickEffect(for target: ClickTarget) -> ActionEffect {
         guard self.usesBackgroundDelivery, self.requestedClickType == .single else { return .unverifiable }
         switch target {
@@ -1076,6 +845,241 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     }
 
     // Error handling is provided by ErrorHandlingCommand protocol
+}
+
+// MARK: - Click result presentation
+
+extension ClickCommand {
+    private func outputClickResult(
+        _ context: ClickCommandOutputContext,
+        targetIdentity: DesktopTargetIdentity?
+    ) async throws {
+        let coordinateResolution = context.coordinateResolution
+        let explicitWindowResolution = context.explicitWindowResolution
+        let appName = await resultApplicationName(
+            snapshotId: context.snapshotId,
+            coordinateResolution: coordinateResolution
+        )
+        let details = try await clickOutputDetails(
+            clickTarget: context.clickTarget,
+            waitResult: context.waitResult,
+            snapshotId: context.snapshotId,
+            coordinateResolution: coordinateResolution
+        )
+        let result = ClickResult(
+            clickedElement: details.clickedElement,
+            clickLocation: details.location,
+            waitTime: context.waitResult.waitTime,
+            executionTime: Date().timeIntervalSince(context.startTime),
+            targetApp: appName,
+            targetWindowId: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID ??
+                targetIdentity?.exactWindow?.identity.windowID,
+            targetWindowTitle: explicitWindowResolution?.windowInfo.title ?? coordinateResolution?.targetWindowTitle,
+            coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
+            inputCoordinates: coordinateResolution?.inputPoint,
+            screenCoordinates: coordinateResolution?.screenPoint,
+            targetPoint: details.targetPointDiagnostics,
+            deliveryMode: self.deliveryMode.rawValue,
+            clickType: self.requestedClickType.rawValue,
+            modifiers: self.modifiers?.values,
+            cursorRestoration: context.modifierClickResult?.cursorRestoration.rawValue,
+            focusRestoration: context.modifierClickResult?.focusRestoration.rawValue
+        )
+        self.output(
+            result,
+            effect: self.clickEffect(for: context.clickTarget),
+            outcome: context.actionResult.outcome,
+            targetIdentity: targetIdentity
+        ) {
+            if let actionOutcome = context.actionResult.outcome {
+                print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Click"))
+            } else {
+                print(self.clickEffect(for: context.clickTarget) == .confirmed
+                    ? "✅ Click confirmed by Accessibility"
+                    : "⚠️ Click dispatched; application effect is unverifiable")
+            }
+            self.printClickDetails(result)
+        }
+    }
+
+    private func clickOutputDetails(
+        clickTarget: ClickTarget,
+        waitResult: WaitForElementResult,
+        snapshotId: String,
+        coordinateResolution: InteractionCoordinateResolution?
+    ) async throws
+    -> (location: CGPoint, clickedElement: String?, targetPointDiagnostics: InteractionTargetPointDiagnostics?) {
+        switch clickTarget {
+        case let .elementId(id):
+            guard let element = waitResult.element else {
+                return (.zero, "Element ID: \(id)", nil)
+            }
+            return try await self.elementOutputDetails(
+                element: element,
+                elementId: id,
+                snapshotId: snapshotId
+            )
+
+        case let .coordinates(point):
+            let diagnostics = if let coordinateResolution {
+                InteractionTargetPointDiagnostics(
+                    source: InteractionTargetPointSource.coordinates.rawValue,
+                    elementId: nil,
+                    snapshotId: nil,
+                    original: InteractionPoint(coordinateResolution.inputPoint),
+                    resolved: InteractionPoint(coordinateResolution.screenPoint),
+                    windowAdjustment: nil,
+                    coordinate: coordinateResolution.diagnostics
+                )
+            } else {
+                InteractionTargetPointResolver.coordinate(point, source: .coordinates).diagnostics
+            }
+            return (point, nil, diagnostics)
+
+        case let .query(query):
+            guard let element = waitResult.element else {
+                return (.zero, "Element matching: \(query)", nil)
+            }
+            return try await self.elementOutputDetails(
+                element: element,
+                elementId: element.id,
+                snapshotId: snapshotId
+            )
+        }
+    }
+
+    private func elementOutputDetails(
+        element: DetectedElement,
+        elementId: String,
+        snapshotId: String
+    ) async throws
+    -> (location: CGPoint, clickedElement: String?, targetPointDiagnostics: InteractionTargetPointDiagnostics?) {
+        let resolvedSnapshotId = snapshotId.isEmpty ? nil : snapshotId
+        do {
+            let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
+                element: element,
+                elementId: elementId,
+                snapshotId: resolvedSnapshotId,
+                snapshots: self.services.snapshots
+            )
+            return (resolution.point, formatElementInfo(element), resolution.diagnostics)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            // The click already succeeded; its target may have closed or moved before result formatting.
+            self.logger.debug("Post-click target diagnostics unavailable: \(error.localizedDescription)")
+            let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
+            let diagnostics = InteractionTargetPointDiagnostics(
+                source: InteractionTargetPointSource.element.rawValue,
+                elementId: elementId,
+                snapshotId: resolvedSnapshotId,
+                original: InteractionPoint(point),
+                resolved: InteractionPoint(point),
+                windowAdjustment: nil
+            )
+            return (point, formatElementInfo(element), diagnostics)
+        }
+    }
+
+    private func frontmostApplicationName() async -> String {
+        await (try? self.services.applications.getFrontmostApplication().name) ?? "Unknown"
+    }
+
+    private func resultApplicationName(
+        snapshotId: String,
+        coordinateResolution: InteractionCoordinateResolution? = nil
+    ) async -> String {
+        if let targetApplicationName = coordinateResolution?.targetApplicationName {
+            return targetApplicationName
+        }
+        if let processIdentifier = coordinateResolution?.targetProcessIdentifier {
+            return await applicationName(processIdentifier: processIdentifier) ?? "PID \(processIdentifier)"
+        }
+        if let windowID = coordinateResolution?.targetWindowID {
+            return "window \(windowID)"
+        }
+
+        guard self.usesBackgroundDelivery else {
+            return await self.frontmostApplicationName()
+        }
+
+        if let pid = target.pid {
+            return await applicationName(processIdentifier: pid) ?? "PID \(pid)"
+        }
+
+        if let appIdentifier = target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !appIdentifier.isEmpty {
+            return await (try? self.services.applications.findApplication(identifier: appIdentifier).name) ??
+                appIdentifier
+        }
+
+        guard !snapshotId.isEmpty,
+              let snapshot = try? await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId)
+        else {
+            if let detectionResult = try? await services.snapshots.getDetectionResult(snapshotId: snapshotId) {
+                if let applicationName = detectionResult.metadata.windowContext?.applicationName {
+                    return applicationName
+                }
+                if let processId = detectionResult.metadata.windowContext?.applicationProcessId {
+                    return await applicationName(processIdentifier: processId) ?? "PID \(processId)"
+                }
+            }
+            return await self.frontmostApplicationName()
+        }
+
+        if let applicationName = snapshot.applicationName {
+            return applicationName
+        }
+
+        if let processId = snapshot.applicationProcessId {
+            return await applicationName(processIdentifier: processId) ?? "PID \(processId)"
+        }
+
+        return await self.frontmostApplicationName()
+    }
+
+    private func applicationName(processIdentifier: Int32) async -> String? {
+        guard let output = try? await services.applications.listApplications() else {
+            return nil
+        }
+        return output.data.applications.first { $0.processIdentifier == processIdentifier }?.name
+    }
+
+    private func printClickDetails(_ result: ClickResult) {
+        print("🎯 App: \(result.targetApp)")
+        if let deliveryMode = result.deliveryMode {
+            print("🎯 Mode: \(deliveryMode)")
+        }
+        if let coordinateSpace = result.coordinateSpace {
+            print("🎯 Coordinate space: \(coordinateSpace)")
+        }
+        if let windowID = result.targetWindowId {
+            if let title = result.targetWindowTitle, !title.isEmpty {
+                print("🪟 Window: \(windowID) (\(title))")
+            } else {
+                print("🪟 Window: \(windowID)")
+            }
+        }
+        if let info = result.clickedElement {
+            print("📱 Clicked: \(info)")
+        }
+        if let modifiers = result.modifiers, !modifiers.isEmpty {
+            print("⌨️  Modifiers: \(modifiers.joined(separator: ","))")
+        }
+        if let cursorRestoration = result.cursorRestoration {
+            print("🖱️  Cursor restoration: \(cursorRestoration)")
+        }
+        if let focusRestoration = result.focusRestoration {
+            print("🪟 Focus restoration: \(focusRestoration)")
+        }
+        let x = result.clickLocation["x"] ?? 0
+        let y = result.clickLocation["y"] ?? 0
+        print("📍 Location: (\(Int(x)), \(Int(y)))")
+        if result.waitTime > 0 {
+            print("⏳ Waited: \(String(format: "%.1f", result.waitTime))s")
+        }
+        print("⏱️  Completed in \(String(format: "%.2f", result.executionTime))s")
+    }
 }
 
 extension ClickCommand {

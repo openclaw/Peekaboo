@@ -76,7 +76,9 @@ struct PeekabooBridgeAppleScriptCompatibilityTests {
         #expect(envelope.code == .operationNotSupported)
     }
 
+    /// Intentionally exercises the deprecated v4.2.2 client contract before transport.
     @Test
+    @available(*, deprecated)
     func `Legacy client probe API refuses before transport`() async {
         let client = PeekabooBridgeClient(
             socketPath: "/tmp/peekaboo-legacy-probe-\(UUID().uuidString).sock")

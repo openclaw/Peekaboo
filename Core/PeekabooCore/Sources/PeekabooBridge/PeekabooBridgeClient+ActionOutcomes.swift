@@ -130,8 +130,7 @@ extension PeekabooBridgeClient {
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds,
+            windowEvidence: ExactWindowClickEvidence(identity: expectedWindowIdentity, bounds: expectedWindowBounds),
             allowsAccessibilityValueDelivery:
             self.targetedClickAccessibilityValueDeliveryEnabled ? true : nil)
     }
@@ -140,16 +139,14 @@ extension PeekabooBridgeClient {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
     {
         try await self.clickWithOutcome(
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds,
+            windowEvidence: windowEvidence,
             allowsAccessibilityValueDelivery: Optional(allowsAccessibilityValueDelivery))
     }
 
@@ -157,8 +154,7 @@ extension PeekabooBridgeClient {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool?) async throws -> UIAutomationActionResult<Void>
     {
         try await self.actionResult(
@@ -166,10 +162,10 @@ extension PeekabooBridgeClient {
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-                targetWindowID: expectedWindowIdentity.windowID,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds,
+                targetProcessIdentifier: windowEvidence.identity.ownerProcessIdentifier,
+                targetWindowID: windowEvidence.identity.windowID,
+                expectedWindowIdentity: windowEvidence.identity,
+                expectedWindowBounds: windowEvidence.bounds,
                 allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)),
             expectedResponse: "exact-window click")
         { response in

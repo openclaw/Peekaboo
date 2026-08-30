@@ -201,6 +201,32 @@ struct AutomationKitTestSupportTests {
     }
 
     @Test
+    func `exact click policy capability refusal precedes bounds validation and outcome consumption`() async throws {
+        let script = UIAutomationOutcomeScript(defaultResponse: .outcome(Self.outcome(evidence: .deliveryAccepted)))
+        let service = PlainScriptedAutomationService(outcomeScript: script)
+        let provider: any UIAutomationActionOutcomeProviding = service
+        let evidence = ExactWindowClickEvidence(
+            identity: AutomationTestFixtures.windowIdentity(),
+            bounds: .zero)
+
+        for policy in [false, true] {
+            do {
+                _ = try await provider.clickWithOutcome(
+                    target: .elementId("field"),
+                    clickType: .single,
+                    snapshotId: nil,
+                    windowEvidence: evidence,
+                    allowsAccessibilityValueDelivery: policy)
+                Issue.record("Expected exact-window capability refusal before invalid-bounds validation")
+            } catch let PeekabooError.serviceUnavailable(message) {
+                #expect(message == "This automation test double does not support exact-window clicks")
+            }
+            #expect(service.clickCount == 0)
+            #expect(script.totalCallCount == 0)
+        }
+    }
+
+    @Test
     func `legacy targeted click permits value delivery but refuses explicit opt out`() async throws {
         let script = UIAutomationOutcomeScript(defaultResponse: .outcome(Self.outcome(evidence: .deliveryAccepted)))
         let service = PlainScriptedAutomationService(outcomeScript: script)

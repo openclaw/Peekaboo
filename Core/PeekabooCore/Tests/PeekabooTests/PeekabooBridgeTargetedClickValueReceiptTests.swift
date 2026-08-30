@@ -62,6 +62,22 @@ struct PeekabooBridgeTargetedClickValueReceiptTests {
             let receipt = try #require(await client.lastOperationReceipt())
             #expect(receipt.payload.operation == .exactWindowTargetedClick)
             #expect(receipt.payload.target == .window(identity))
+            let evidence = ExactWindowClickEvidence(identity: identity, bounds: bounds)
+            let allowedRequest = Self.request(evidence: evidence, policy: true)
+            let allowedHash = try PeekabooBridgeOperationReceiptCoding.sha256(allowedRequest)
+            #expect(receipt.payload.requestSHA256 == allowedHash)
+
+            let explicitResult = try await client.clickWithOutcome(
+                target: .elementId("field"),
+                clickType: .single,
+                snapshotId: SnapshotReferenceFixtures.first.rawValue,
+                windowEvidence: evidence,
+                allowsAccessibilityValueDelivery: true)
+            #expect(explicitResult.outcome == result.outcome)
+            #expect(explicitResult.targetIdentity == result.targetIdentity)
+            let explicitReceipt = try #require(await client.lastOperationReceipt())
+            #expect(explicitReceipt.payload.requestSHA256 == receipt.payload.requestSHA256)
+            #expect(explicitReceipt.payload.requestID != receipt.payload.requestID)
 
             await MainActor.run {
                 services.automationStub.actionOutcome = .confirmedChange(
@@ -80,18 +96,37 @@ struct PeekabooBridgeTargetedClickValueReceiptTests {
                 target: .elementId("field"),
                 clickType: .single,
                 snapshotId: SnapshotReferenceFixtures.first.rawValue,
-                expectedWindowIdentity: identity,
-                expectedWindowBounds: bounds,
+                windowEvidence: ExactWindowClickEvidence(identity: identity, bounds: bounds),
                 allowsAccessibilityValueDelivery: false)
             #expect(actionResult.outcome?.delivery?.mechanism == .accessibilityAction)
             #expect(await MainActor.run {
                 services.automationStub.lastAllowsAccessibilityValueDelivery == false
             })
+            #expect(actionResult.targetIdentity?.exactWindow == exactWindow)
+            #expect(actionResult.outcome?.dispatchState.unitCount == .one)
+            let deniedReceipt = try #require(await client.lastOperationReceipt())
+            let deniedRequest = Self.request(evidence: evidence, policy: false)
+            let deniedHash = try PeekabooBridgeOperationReceiptCoding.sha256(deniedRequest)
+            #expect(deniedReceipt.payload.requestSHA256 == deniedHash)
+            #expect(deniedReceipt.payload.requestSHA256 != receipt.payload.requestSHA256)
+            #expect(deniedReceipt.payload.target == .window(identity))
         } catch {
             await host.stop()
             throw error
         }
         await host.stop()
+    }
+
+    private static func request(evidence: ExactWindowClickEvidence, policy: Bool?) -> PeekabooBridgeRequest {
+        .projectedAction(.init(request: .targetedClick(.init(
+            target: .elementId("field"),
+            clickType: .single,
+            snapshotId: SnapshotReferenceFixtures.first.rawValue,
+            targetProcessIdentifier: evidence.identity.ownerProcessIdentifier,
+            targetWindowID: evidence.identity.windowID,
+            expectedWindowIdentity: evidence.identity,
+            expectedWindowBounds: evidence.bounds,
+            allowsAccessibilityValueDelivery: policy))))
     }
 
     private static var clientIdentity: PeekabooBridgeClientIdentity {

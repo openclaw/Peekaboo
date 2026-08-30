@@ -235,14 +235,21 @@ struct SharedInputActivityToken: Equatable, Sendable {
 
 @MainActor
 enum CursorRestorationOwnership {
+    struct Receipt {
+        let original: CGPoint
+        let lastWritten: CGPoint
+        let activityToken: SharedInputActivityToken
+    }
+
     static func restore(
-        original: CGPoint,
-        lastWritten: CGPoint,
-        activityToken: SharedInputActivityToken,
+        _ receipt: Receipt,
         currentActivity: () -> SharedInputActivityToken,
         currentLocation: () -> CGPoint?,
         move: (CGPoint) throws -> Void) throws -> SharedDesktopRestorationStatus
     {
+        let original = receipt.original
+        let lastWritten = receipt.lastWritten
+        let activityToken = receipt.activityToken
         guard currentActivity() == activityToken else {
             return .preservedNewerState
         }
@@ -318,9 +325,10 @@ extension SyntheticInputDriving {
         activityToken: SharedInputActivityToken) throws -> SharedDesktopRestorationStatus
     {
         try CursorRestorationOwnership.restore(
-            original: original,
-            lastWritten: lastWritten,
-            activityToken: activityToken,
+            CursorRestorationOwnership.Receipt(
+                original: original,
+                lastWritten: lastWritten,
+                activityToken: activityToken),
             currentActivity: self.sharedInputActivityToken,
             currentLocation: self.currentLocation,
             move: self.move)
@@ -452,9 +460,10 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         activityToken: SharedInputActivityToken) throws -> SharedDesktopRestorationStatus
     {
         try CursorRestorationOwnership.restore(
-            original: original,
-            lastWritten: lastWritten,
-            activityToken: activityToken,
+            CursorRestorationOwnership.Receipt(
+                original: original,
+                lastWritten: lastWritten,
+                activityToken: activityToken),
             currentActivity: self.sharedInputActivityToken,
             currentLocation: self.currentLocation,
             move: self.move)

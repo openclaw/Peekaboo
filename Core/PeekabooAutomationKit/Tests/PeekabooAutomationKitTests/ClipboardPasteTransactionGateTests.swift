@@ -59,7 +59,9 @@ struct ClipboardPasteTransactionGateTests {
             "-MFcntl=:flock,O_CREAT,O_RDWR",
             "-MIO::Handle",
             "-e",
-            #"my $p = "$ENV{HOME}/Library/Application Support/Peekaboo/clipboard-paste-transaction.lock"; sysopen(my $f, $p, O_CREAT|O_RDWR, 0600) or die $!; flock($f, LOCK_EX) or die $!; STDOUT->autoflush(1); print "locked\n"; <STDIN>;"#,
+            #"my $p = "$ENV{HOME}/Library/Application Support/Peekaboo/clipboard-paste-transaction.lock"; "# +
+                #"sysopen(my $f, $p, O_CREAT|O_RDWR, 0600) or die $!; flock($f, LOCK_EX) or die $!; "# +
+                #"STDOUT->autoflush(1); print "locked\n"; <STDIN>;"#,
         ]
         var environment = ProcessInfo.processInfo.environment
         environment["TMPDIR"] = childTemporaryDirectory.path
@@ -76,7 +78,7 @@ struct ClipboardPasteTransactionGateTests {
             }
         }
         let readiness = try #require(try childOutput.fileHandleForReading.read(upToCount: 7))
-        #expect(String(decoding: readiness, as: UTF8.self) == "locked\n")
+        #expect(readiness == Data("locked\n".utf8))
 
         var operationRan = false
         let transaction = Task { @MainActor in

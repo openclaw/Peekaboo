@@ -149,8 +149,7 @@ enum CertificationControllerLifecycleGate {
     ) async throws {
         try await self.wait(
             at: url,
-            markerName: "start",
-            keys: ["version", "execution_nonce", "controller_id", "phase"],
+            marker: MarkerExpectation(name: "start", keys: ["version", "execution_nonce", "controller_id", "phase"]),
             timeout: timeout,
             pollInterval: pollInterval
         ) { data in
@@ -167,8 +166,7 @@ enum CertificationControllerLifecycleGate {
     ) async throws {
         try await self.wait(
             at: url,
-            markerName: "release",
-            keys: ["version", "execution_nonce", "phase"],
+            marker: MarkerExpectation(name: "release", keys: ["version", "execution_nonce", "phase"]),
             timeout: timeout,
             pollInterval: pollInterval
         ) { data in
@@ -187,8 +185,10 @@ enum CertificationControllerLifecycleGate {
     ) async throws {
         try await self.wait(
             at: url,
-            markerName: "final-bounds start",
-            keys: ["version", "execution_nonce", "monitor_instance_id", "controller_id", "phase"],
+            marker: MarkerExpectation(
+                name: "final-bounds start",
+                keys: ["version", "execution_nonce", "monitor_instance_id", "controller_id", "phase"]
+            ),
             timeout: timeout,
             pollInterval: pollInterval
         ) { data in
@@ -201,10 +201,14 @@ enum CertificationControllerLifecycleGate {
         }
     }
 
+    private struct MarkerExpectation {
+        let name: String
+        let keys: Set<String>
+    }
+
     private static func wait(
         at url: URL,
-        markerName: String,
-        keys: Set<String>,
+        marker: MarkerExpectation,
         timeout: Duration,
         pollInterval: Duration,
         validate: (Data) throws -> Void
@@ -216,7 +220,7 @@ enum CertificationControllerLifecycleGate {
                 let data = try CertificationPrivateArtifacts.readPlan(at: url)
                 let object = try JSONSerialization.jsonObject(with: data)
                 guard let dictionary = object as? [String: Any],
-                      Set(dictionary.keys) == keys
+                      Set(dictionary.keys) == marker.keys
                 else {
                     throw CertificationControllerError.runtimeRefusal(
                         "Controller lifecycle marker keys are not closed."
@@ -227,13 +231,13 @@ enum CertificationControllerLifecycleGate {
             }
             guard errno == ENOENT else {
                 throw CertificationControllerError.unsafePrivatePath(
-                    "Cannot inspect controller \(markerName) marker at \(url.path)."
+                    "Cannot inspect controller \(marker.name) marker at \(url.path)."
                 )
             }
             try await deadline.sleep(upTo: pollInterval)
         }
         throw CertificationControllerError.runtimeRefusal(
-            "Timed out waiting for the owner-private controller \(markerName) marker at \(url.path)."
+            "Timed out waiting for the owner-private controller \(marker.name) marker at \(url.path)."
         )
     }
 }

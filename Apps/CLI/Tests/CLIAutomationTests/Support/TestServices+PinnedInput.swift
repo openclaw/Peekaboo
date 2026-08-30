@@ -49,19 +49,18 @@ extension StubAutomationService {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds _: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool
     ) async throws {
         self.targetedClickCalls.append(TargetedClickCall(
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            targetWindowID: expectedWindowIdentity.windowID,
+            targetProcessIdentifier: windowEvidence.identity.ownerProcessIdentifier,
+            targetWindowID: windowEvidence.identity.windowID,
             expectedProcessIdentity: ApplicationProcessIdentity(
-                processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-                processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity
+                processIdentifier: windowEvidence.identity.ownerProcessIdentifier,
+                processStartIdentity: windowEvidence.identity.ownerProcessStartIdentity
             ),
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
         ))

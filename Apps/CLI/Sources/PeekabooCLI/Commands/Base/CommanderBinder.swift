@@ -170,6 +170,40 @@ enum CommanderCLIBinder {
             options.logLevel = level
         }
         try Self.applyCaptureEnginePreference(to: &options, values: values, seeSkipsPixels: seeSkipsPixels)
+        try Self.applyRuntimeTransportOptions(
+            &options,
+            commandType: commandType,
+            parsedValues: parsedValues,
+            environment: environment
+        )
+        if commandType == SetValueCommand.self {
+            options.requiredElementActionOperations.insert(.setValue)
+        } else if commandType == ActionCommand.self {
+            options.requiredElementActionOperations.insert(.performAction)
+        }
+        if commandType == SeeCommand.self, values.flag("noScreenshot") {
+            options.requiresInspectAccessibilityTree = true
+        }
+        if commandType == BrowserCommand.self {
+            options.requiresBrowserMCP = true
+            options.requiresBrowserHandoffBridge = !commandValues.optionValues("handoffFile").isEmpty
+        }
+        try BrowserHandoffCLIInput.configureRuntimeOptions(
+            &options,
+            commandType: commandType,
+            values: commandValues,
+            environment: environment
+        )
+        return options
+    }
+
+    private static func applyRuntimeTransportOptions(
+        _ options: inout CommandRuntimeOptions,
+        commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues,
+        environment: [String: String]
+    ) throws {
+        let values = CommanderBindableValues(parsedValues: parsedValues)
         if let rawInputStrategy = values.singleOption("inputStrategy")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !rawInputStrategy.isEmpty {
@@ -220,25 +254,6 @@ enum CommanderCLIBinder {
         if let socketPath = explicitBridgeSocket, !socketPath.isEmpty {
             options.bridgeSocketPath = socketPath
         }
-        if commandType == SetValueCommand.self {
-            options.requiredElementActionOperations.insert(.setValue)
-        } else if commandType == ActionCommand.self {
-            options.requiredElementActionOperations.insert(.performAction)
-        }
-        if commandType == SeeCommand.self, values.flag("noScreenshot") {
-            options.requiresInspectAccessibilityTree = true
-        }
-        if commandType == BrowserCommand.self {
-            options.requiresBrowserMCP = true
-            options.requiresBrowserHandoffBridge = !commandValues.optionValues("handoffFile").isEmpty
-        }
-        try BrowserHandoffCLIInput.configureRuntimeOptions(
-            &options,
-            commandType: commandType,
-            values: commandValues,
-            environment: environment
-        )
-        return options
     }
 
     private static func applySeeRuntimeOptions(

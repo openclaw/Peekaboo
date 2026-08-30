@@ -1330,8 +1330,7 @@ extension PeekabooBridgeServer {
                 target: payload.target,
                 clickType: payload.clickType,
                 snapshotId: payload.snapshotId,
-                expectedWindowIdentity: expectedIdentity,
-                expectedWindowBounds: expectedBounds,
+                windowEvidence: ExactWindowClickEvidence(identity: expectedIdentity, bounds: expectedBounds),
                 allowsAccessibilityValueDelivery: payload.allowsAccessibilityValueDelivery != false)
             return .init(response: .ok)
         }
@@ -1339,8 +1338,7 @@ extension PeekabooBridgeServer {
             target: payload.target,
             clickType: payload.clickType,
             snapshotId: payload.snapshotId,
-            expectedWindowIdentity: expectedIdentity,
-            expectedWindowBounds: expectedBounds,
+            windowEvidence: ExactWindowClickEvidence(identity: expectedIdentity, bounds: expectedBounds),
             allowsAccessibilityValueDelivery: payload.allowsAccessibilityValueDelivery != false)
         return try Self.handledActionResponse(
             response: .ok,

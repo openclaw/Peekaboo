@@ -107,6 +107,8 @@ public enum DesktopTargetEvidenceAdapter {
             windowID: receipt.windowID)
     }
 
+    // Keep the six-label API shipped in v4.2.2 source-compatible.
+    // swiftlint:disable:next function_parameter_count
     public static func evidence(
         processIdentifier: Int32?,
         processStartIdentity: UInt64?,

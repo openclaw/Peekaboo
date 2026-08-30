@@ -5,6 +5,14 @@ import Tachikoma
 /// Service for generating intelligent session titles using AI
 @MainActor
 final class SessionTitleGenerator {
+    private struct ModelSelection: Sendable {
+        let providers: [String]
+        let hasOpenAI: Bool
+        let hasAnthropic: Bool
+        let hasProviderSelection: Bool
+        let configuredDefault: String?
+    }
+
     private let configuration = ConfigurationManager.shared
 
     /// Generate a concise title for a task
@@ -20,6 +28,12 @@ final class SessionTitleGenerator {
         let hasProviderSelection = self.configuration.hasConfiguredAIProviderList() ||
             self.configuration.hasExplicitAIProviderList()
         let configuredDefault = self.configuration.getAgentModel()
+        let selection = ModelSelection(
+            providers: providerTokens,
+            hasOpenAI: hasOpenAI,
+            hasAnthropic: hasAnthropic,
+            hasProviderSelection: hasProviderSelection,
+            configuredDefault: configuredDefault)
 
         return await withTaskGroup(of: String.self) { group in
             group.addTask { await Self.timeoutTitle() }
@@ -27,11 +41,7 @@ final class SessionTitleGenerator {
             group.addTask {
                 await self.generateTitleCandidate(
                     for: task,
-                    providers: providerTokens,
-                    hasOpenAI: hasOpenAI,
-                    hasAnthropic: hasAnthropic,
-                    hasProviderSelection: hasProviderSelection,
-                    configuredDefault: configuredDefault)
+                    selection: selection)
             }
 
             for await result in group {
@@ -63,19 +73,15 @@ final class SessionTitleGenerator {
 
     private func generateTitleCandidate(
         for task: String,
-        providers: [String],
-        hasOpenAI: Bool,
-        hasAnthropic: Bool,
-        hasProviderSelection: Bool,
-        configuredDefault: String?) async -> String
+        selection: ModelSelection) async -> String
     {
         do {
             let model = Self.selectModel(
-                providers: providers,
-                hasOpenAI: hasOpenAI,
-                hasAnthropic: hasAnthropic,
-                hasProviderSelection: hasProviderSelection,
-                configuredDefault: configuredDefault)
+                providers: selection.providers,
+                hasOpenAI: selection.hasOpenAI,
+                hasAnthropic: selection.hasAnthropic,
+                hasProviderSelection: selection.hasProviderSelection,
+                configuredDefault: selection.configuredDefault)
             let prompt = self.buildPrompt(for: task)
 
             let result = try await generateText(

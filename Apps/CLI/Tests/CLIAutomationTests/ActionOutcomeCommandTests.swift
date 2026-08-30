@@ -803,7 +803,11 @@ struct ActionOutcomeCommandTests {
         #expect(error["retry_safe"] as? Bool == true)
         #expect(error["mutation_dispatched"] as? Bool == false)
     }
+}
 
+// MARK: - Snapshot leases and press outcomes
+
+extension ActionOutcomeCommandTests {
     @Test
     func `explicit snapshot refuses a second mutation after observe before retry outcome`() async throws {
         let automation = OutcomeStubAutomationService()

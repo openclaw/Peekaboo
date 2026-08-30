@@ -551,7 +551,9 @@ struct InMemorySnapshotManagerTests {
         #expect(SnapshotReference(rawValue: next) != nil)
     }
 
+    /// Intentionally exercises the deprecated v4.2.2 synchronous seeding contract.
     @Test
+    @available(*, deprecated)
     func `legacy seeded initializer remains source compatible and rejects malformed authority`() async throws {
         let fixture = AutomationTestFixtures.detectionResult(snapshotID: SnapshotReferenceFixtures.first.rawValue)
         let manager = InMemorySnapshotManager(detectionResult: fixture)
@@ -565,7 +567,9 @@ struct InMemorySnapshotManagerTests {
         #expect(try await rejected.listSnapshots().isEmpty)
     }
 
+    /// Intentionally exercises authority validation in the deprecated v4.2.2 initializer.
     @Test
+    @available(*, deprecated)
     func `legacy seeded initializer rejects mismatched embedded coordinate authority`() async throws {
         let snapshotID = SnapshotReferenceFixtures.first.rawValue
         let malformed = ElementDetectionResult(
@@ -840,7 +844,9 @@ struct InMemorySnapshotManagerTests {
             ownerProcessIdentifier: 123,
             ownerProcessStartIdentity: 789))
     }
+}
 
+extension InMemorySnapshotManagerTests {
     private static func screenshotRequest(snapshotId: String, path: String) -> SnapshotScreenshotRequest {
         SnapshotScreenshotRequest(
             snapshotId: snapshotId,

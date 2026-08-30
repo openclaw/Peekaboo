@@ -603,7 +603,11 @@ struct CLIActionResultConsumerTests {
         try Self.expectPostDispatchDockLaunchFailure(result, cause: "verification failed")
         #expect(dock.launchCalls == ["Fixture"])
     }
+}
 
+// MARK: - Result validation and post-dispatch failures
+
+extension CLIActionResultConsumerTests {
     @Test
     func `menu non-success outcomes exit nonzero with their target identity`() async throws {
         let fixture = Self.menuFixture()

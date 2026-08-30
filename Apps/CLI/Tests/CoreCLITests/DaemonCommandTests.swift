@@ -588,7 +588,11 @@ struct DaemonCommandTests {
         #expect(FileManager.default.fileExists(atPath: liveRecordPath))
         #expect(FileManager.default.fileExists(atPath: unrelatedPath))
     }
+}
 
+// MARK: - Daemon routing and promotion
+
+extension DaemonCommandTests {
     @Test
     func `compatible historical daemon wins over incompatible historical candidate`() throws {
         let incompatible = Self.target(

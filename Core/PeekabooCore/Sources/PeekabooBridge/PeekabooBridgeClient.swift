@@ -770,77 +770,10 @@ public actor PeekabooBridgeClient {
         replacingOperationSessionID: UUID?,
         connectedHost: PeekabooBridgeConnectedHostIdentity?) throws -> PeekabooBridgeClientHandshakeCandidate
     {
-        let listenerAttestation: PeekabooBridgeListenerAttestation?
-        let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
-        let sessionAttestation: PeekabooBridgeOperationSessionAttestation?
-        let receiptlessAuthenticatedHost: PeekabooBridgeConnectedHostIdentity?
-        let authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
-        if handshake.negotiatedVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
-            guard handshake.hostCapabilities?.contains(
-                PeekabooBridgeHostCapability.attestedOperationReceipts) == true,
-                handshake.hostCapabilities?.contains(
-                    PeekabooBridgeHostCapability.desktopActionOutcomeProjection) == true,
-                let advertisedListenerAttestation = handshake.operationAttestation,
-                let advertisedSessionAttestation = handshake.operationSessionAttestation
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .unauthorizedClient,
-                    message: "Protocol 1.29 Bridge host omitted required operation receipt capabilities")
-            }
-            guard let connectedHost,
-                  let liveCodeSignatureHash = connectedHost.liveIdentity.codeSignatureHash,
-                  !liveCodeSignatureHash.isEmpty,
-                  let signingIdentity = connectedHost.signingIdentity,
-                  signingIdentity.codeSignatureHash == liveCodeSignatureHash,
-                  let signingTeamIdentifier = signingIdentity.teamIdentifier,
-                  self.trustedHostTeamIDs?.contains(signingTeamIdentifier) == true,
-                  connectedHost.liveIdentity.processIdentifier == advertisedListenerAttestation.host.processIdentifier,
-                  connectedHost.liveIdentity.processStartIdentity ==
-                  advertisedListenerAttestation.host.processStartIdentity,
-                  liveCodeSignatureHash == advertisedListenerAttestation.host.codeSignatureHash
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .unauthorizedClient,
-                    message: "Bridge listener does not match the trusted connected host")
-            }
-            do {
-                try advertisedListenerAttestation.validateSignature()
-                try self.validateOperationSession(
-                    advertisedSessionAttestation,
-                    listenerAttestation: advertisedListenerAttestation,
-                    replacingSessionID: replacingOperationSessionID)
-            } catch {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .unauthorizedClient,
-                    message: "Bridge operation session attestation is invalid",
-                    details: error.localizedDescription)
-            }
-            guard let advertisedHostIdentity = handshake.hostIdentity,
-                  advertisedHostIdentity.processIdentifier == advertisedListenerAttestation.host.processIdentifier,
-                  advertisedHostIdentity.processStartIdentity ==
-                  advertisedListenerAttestation.host.processStartIdentity,
-                  advertisedHostIdentity.codeSignatureHash == advertisedListenerAttestation.host.codeSignatureHash
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .unauthorizedClient,
-                    message: "Bridge listener attestation contradicts the advertised host identity")
-            }
-            listenerAttestation = advertisedListenerAttestation
-            listenerLiveIdentity = connectedHost.liveIdentity
-            sessionAttestation = advertisedSessionAttestation
-            receiptlessAuthenticatedHost = nil
-            authenticatedHostIdentity = Self.authenticatedHostIdentity(
-                advertised: advertisedHostIdentity,
-                listener: advertisedListenerAttestation,
-                signingIdentity: signingIdentity)
-        } else {
-            listenerAttestation = nil
-            listenerLiveIdentity = nil
-            sessionAttestation = nil
-            receiptlessAuthenticatedHost = self.trustedHostTeamIDs == nil ? nil : connectedHost
-            authenticatedHostIdentity = nil
-        }
-
+        let authentication = try self.handshakeAuthentication(
+            handshake,
+            replacingOperationSessionID: replacingOperationSessionID,
+            connectedHost: connectedHost)
         let exactInputAdvertised = handshake.supportedOperations.contains(.exactDialogEnterText)
         let exactForceDismissAdvertised = handshake.supportedOperations.contains(.exactDialogForceDismiss)
         let legacyInputAdvertised = handshake.supportedOperations.contains(.dialogEnterText)
@@ -933,6 +866,98 @@ public actor PeekabooBridgeClient {
             requestPinnedExactWindowScrollReceiptEnabled:
             Self.supportsRequestPinnedExactWindowScrollReceipt(handshake),
             compositeTypeDeliveryEnabled: Self.supportsCompositeTypeDelivery(handshake),
+            listenerAttestation: authentication.listenerAttestation,
+            listenerLiveIdentity: authentication.listenerLiveIdentity,
+            sessionAttestation: authentication.sessionAttestation,
+            authenticatedHostIdentity: authentication.authenticatedHostIdentity,
+            receiptlessAuthenticatedHost: authentication.receiptlessAuthenticatedHost)
+    }
+
+    private struct HandshakeAuthentication {
+        let listenerAttestation: PeekabooBridgeListenerAttestation?
+        let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
+        let sessionAttestation: PeekabooBridgeOperationSessionAttestation?
+        let authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
+        let receiptlessAuthenticatedHost: PeekabooBridgeConnectedHostIdentity?
+    }
+
+    private func handshakeAuthentication(
+        _ handshake: PeekabooBridgeHandshakeResponse,
+        replacingOperationSessionID: UUID?,
+        connectedHost: PeekabooBridgeConnectedHostIdentity?) throws -> HandshakeAuthentication
+    {
+        let listenerAttestation: PeekabooBridgeListenerAttestation?
+        let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
+        let sessionAttestation: PeekabooBridgeOperationSessionAttestation?
+        let receiptlessAuthenticatedHost: PeekabooBridgeConnectedHostIdentity?
+        let authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
+        if handshake.negotiatedVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
+            guard handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.attestedOperationReceipts) == true,
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.desktopActionOutcomeProjection) == true,
+                let advertisedListenerAttestation = handshake.operationAttestation,
+                let advertisedSessionAttestation = handshake.operationSessionAttestation
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .unauthorizedClient,
+                    message: "Protocol 1.29 Bridge host omitted required operation receipt capabilities")
+            }
+            guard let connectedHost,
+                  let liveCodeSignatureHash = connectedHost.liveIdentity.codeSignatureHash,
+                  !liveCodeSignatureHash.isEmpty,
+                  let signingIdentity = connectedHost.signingIdentity,
+                  signingIdentity.codeSignatureHash == liveCodeSignatureHash,
+                  let signingTeamIdentifier = signingIdentity.teamIdentifier,
+                  self.trustedHostTeamIDs?.contains(signingTeamIdentifier) == true,
+                  connectedHost.liveIdentity.processIdentifier == advertisedListenerAttestation.host.processIdentifier,
+                  connectedHost.liveIdentity.processStartIdentity ==
+                  advertisedListenerAttestation.host.processStartIdentity,
+                  liveCodeSignatureHash == advertisedListenerAttestation.host.codeSignatureHash
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .unauthorizedClient,
+                    message: "Bridge listener does not match the trusted connected host")
+            }
+            do {
+                try advertisedListenerAttestation.validateSignature()
+                try self.validateOperationSession(
+                    advertisedSessionAttestation,
+                    listenerAttestation: advertisedListenerAttestation,
+                    replacingSessionID: replacingOperationSessionID)
+            } catch {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .unauthorizedClient,
+                    message: "Bridge operation session attestation is invalid",
+                    details: error.localizedDescription)
+            }
+            guard let advertisedHostIdentity = handshake.hostIdentity,
+                  advertisedHostIdentity.processIdentifier == advertisedListenerAttestation.host.processIdentifier,
+                  advertisedHostIdentity.processStartIdentity ==
+                  advertisedListenerAttestation.host.processStartIdentity,
+                  advertisedHostIdentity.codeSignatureHash == advertisedListenerAttestation.host.codeSignatureHash
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .unauthorizedClient,
+                    message: "Bridge listener attestation contradicts the advertised host identity")
+            }
+            listenerAttestation = advertisedListenerAttestation
+            listenerLiveIdentity = connectedHost.liveIdentity
+            sessionAttestation = advertisedSessionAttestation
+            receiptlessAuthenticatedHost = nil
+            authenticatedHostIdentity = Self.authenticatedHostIdentity(
+                advertised: advertisedHostIdentity,
+                listener: advertisedListenerAttestation,
+                signingIdentity: signingIdentity)
+        } else {
+            listenerAttestation = nil
+            listenerLiveIdentity = nil
+            sessionAttestation = nil
+            receiptlessAuthenticatedHost = self.trustedHostTeamIDs == nil ? nil : connectedHost
+            authenticatedHostIdentity = nil
+        }
+
+        return HandshakeAuthentication(
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
             sessionAttestation: sessionAttestation,

@@ -111,11 +111,13 @@ extension AppCommand {
                 let succeededCount = results.count(where: \.success)
                 let batchOutcome = Self.resolveBatchOutcome(
                     actionOutcomes: actionOutcomes,
-                    succeededCount: succeededCount,
-                    attemptedCount: results.count,
-                    plannedCount: quitApps.count,
-                    wasCancelled: wasCancelled,
-                    cancellationInterruptedAttempt: cancellationInterruptedAttempt
+                    progress: BatchProgress(
+                        succeededCount: succeededCount,
+                        attemptedCount: results.count,
+                        plannedCount: quitApps.count,
+                        wasCancelled: wasCancelled,
+                        cancellationInterruptedAttempt: cancellationInterruptedAttempt
+                    )
                 )
                 let aggregateOutcome = batchOutcome.outcome
                 let singleFailureHint = results.count == 1 ? caughtFailureHints[0] : nil
@@ -211,29 +213,33 @@ extension AppCommand {
             let interruptionEffect: DesktopActionOutcome.Effect?
         }
 
+        private struct BatchProgress {
+            let succeededCount: Int
+            let attemptedCount: Int
+            let plannedCount: Int
+            let wasCancelled: Bool
+            let cancellationInterruptedAttempt: Bool
+        }
+
         private static func resolveBatchOutcome(
             actionOutcomes: [DesktopActionOutcome?],
-            succeededCount: Int,
-            attemptedCount: Int,
-            plannedCount: Int,
-            wasCancelled: Bool,
-            cancellationInterruptedAttempt: Bool
+            progress: BatchProgress
         ) -> BatchOutcome {
-            if wasCancelled,
+            if progress.wasCancelled,
                let interruption = DesktopActionSequenceAccumulator.interruptedBatch(
                    completedOutcomes: actionOutcomes,
-                   succeededCount: succeededCount,
-                   attemptedCount: attemptedCount,
-                   plannedCount: plannedCount,
-                   inFlightAttemptMayHaveDispatched: cancellationInterruptedAttempt
+                   succeededCount: progress.succeededCount,
+                   attemptedCount: progress.attemptedCount,
+                   plannedCount: progress.plannedCount,
+                   inFlightAttemptMayHaveDispatched: progress.cancellationInterruptedAttempt
                ) {
                 return BatchOutcome(outcome: interruption.outcome, interruptionEffect: interruption.effect)
             }
             return BatchOutcome(
                 outcome: DesktopActionSequenceAccumulator.completedBatch(
                     outcomes: actionOutcomes,
-                    succeededCount: succeededCount,
-                    attemptedCount: attemptedCount
+                    succeededCount: progress.succeededCount,
+                    attemptedCount: progress.attemptedCount
                 ),
                 interruptionEffect: nil
             )

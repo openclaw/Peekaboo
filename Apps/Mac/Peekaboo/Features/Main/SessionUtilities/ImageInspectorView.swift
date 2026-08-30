@@ -36,7 +36,7 @@ struct ImageInspectorView: View {
             GeometryReader { geometry in
                 Image(nsImage: self.image)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
                     .scaleEffect(self.zoomLevel)
                     .offset(self.imageOffset)
                     .frame(width: geometry.size.width, height: geometry.size.height)

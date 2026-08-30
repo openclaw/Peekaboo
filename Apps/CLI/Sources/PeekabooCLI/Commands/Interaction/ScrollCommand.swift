@@ -98,30 +98,7 @@ RuntimeBackedCommand {
                 },
                 outcome: { $0.outcome }
             )
-            let scrollDelivery: DesktopActionOutcome.Delivery? = self.focusOptions.foreground
-                ? .init(mechanism: .globalEvents, mode: .foreground)
-                : nil
-            let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
-                route: actionRoute,
-                delivery: scrollDelivery,
-                unitCount: nil
-            )
-            if self.focusOptions.foreground {
-                try actionSequence.recordExactTargetLeaf(
-                    outcome: actionResult.outcome,
-                    targetIdentity: actionResult.targetIdentity,
-                    operation: "Scroll",
-                    receiptlessStep: receiptlessStep,
-                    defaultDispatchedUnitCount: nil
-                )
-            } else {
-                try actionSequence.record(
-                    actionResult,
-                    operation: "Scroll",
-                    receiptlessStep: receiptlessStep,
-                    defaultDispatchedUnitCount: nil
-                )
-            }
+            try self.recordScrollResult(actionResult, sequence: actionSequence, route: actionRoute)
             let compositeResult = actionSequence.result(payload: ())
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: self.resolvedRuntime.interactionMutationTargets,
@@ -219,6 +196,37 @@ RuntimeBackedCommand {
             )
             self.handleError(preservedError)
             throw ExitCode.failure
+        }
+    }
+
+    private func recordScrollResult(
+        _ actionResult: UIAutomationActionResult<Void>,
+        sequence: CommandActionSequenceAccumulator,
+        route: DesktopActionOutcome.Route
+    ) throws {
+        let scrollDelivery: DesktopActionOutcome.Delivery? = self.focusOptions.foreground
+            ? .init(mechanism: .globalEvents, mode: .foreground)
+            : nil
+        let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
+            route: route,
+            delivery: scrollDelivery,
+            unitCount: nil
+        )
+        if self.focusOptions.foreground {
+            try sequence.recordExactTargetLeaf(
+                outcome: actionResult.outcome,
+                targetIdentity: actionResult.targetIdentity,
+                operation: "Scroll",
+                receiptlessStep: receiptlessStep,
+                defaultDispatchedUnitCount: nil
+            )
+        } else {
+            try sequence.record(
+                actionResult,
+                operation: "Scroll",
+                receiptlessStep: receiptlessStep,
+                defaultDispatchedUnitCount: nil
+            )
         }
     }
 

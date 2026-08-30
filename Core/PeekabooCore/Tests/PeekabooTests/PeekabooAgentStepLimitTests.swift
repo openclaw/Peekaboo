@@ -906,7 +906,11 @@ struct PeekabooAgentStepLimitTests {
 
         try await agentService.deleteSession(id: error.sessionId)
     }
+}
 
+// MARK: - Checkpoint and service fixtures
+
+extension PeekabooAgentStepLimitTests {
     @MainActor
     private func assertCheckpointAfterProviderFailure(
         streaming: Bool,

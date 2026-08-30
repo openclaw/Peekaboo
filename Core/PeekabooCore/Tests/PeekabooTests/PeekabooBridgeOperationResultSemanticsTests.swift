@@ -685,7 +685,9 @@ struct PeekabooBridgeOperationResultSemanticsTests {
                 response: generationlessResponse)
         }
     }
+}
 
+extension PeekabooBridgeOperationResultSemanticsTests {
     @Test
     func `Successful nil outcome becomes dispatched-unverified without inventing confirmation`() throws {
         let request = PeekabooBridgeRequest.moveMouse(.init(
@@ -934,10 +936,11 @@ struct PeekabooBridgeOperationResultSemanticsTests {
             request: request))
 
         for invalidCount in [1, 3] {
-            let invalid = try DesktopActionFailure.indeterminate(
+            let invalidUnits = try #require(DesktopActionOutcome.DispatchUnitCount(invalidCount))
+            let invalid = DesktopActionFailure.indeterminate(
                 route: .bridge,
                 evidence: .completionUnknown,
-                unitCount: #require(DesktopActionOutcome.DispatchUnitCount(invalidCount)),
+                unitCount: invalidUnits,
                 message: "Invalid mixed Dock progress.")
             #expect(!PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
                 invalid.outcome,

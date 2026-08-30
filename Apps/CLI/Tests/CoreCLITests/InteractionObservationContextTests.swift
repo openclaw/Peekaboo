@@ -460,7 +460,11 @@ struct InteractionObservationContextTests {
         #expect(explicit == "explicit-snapshot")
         #expect(await snapshots.getMostRecentSnapshot() == "explicit-snapshot")
     }
+}
 
+// MARK: - Observation refresh and target resolution
+
+extension InteractionObservationContextTests {
     @Test
     func `Missing implicit element refreshes observation snapshot`() async throws {
         let snapshots = CoreSnapshotManagerStub()

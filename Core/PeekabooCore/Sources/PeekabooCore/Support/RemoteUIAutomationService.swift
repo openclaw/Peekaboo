@@ -299,8 +299,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws
     {
         guard self.supportsExactWindowTargetedClicks else {
@@ -318,8 +317,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds,
+                windowEvidence: windowEvidence,
                 allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)

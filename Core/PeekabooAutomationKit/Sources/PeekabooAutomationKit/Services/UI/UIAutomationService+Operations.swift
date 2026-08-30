@@ -337,16 +337,14 @@ extension UIAutomationService {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws
     {
         _ = try await self.clickWithOutcome(
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds,
+            windowEvidence: windowEvidence,
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
     }
 
@@ -361,8 +359,7 @@ extension UIAutomationService {
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds,
+            windowEvidence: ExactWindowClickEvidence(identity: expectedWindowIdentity, bounds: expectedWindowBounds),
             allowsAccessibilityValueDelivery: true)
     }
 
@@ -370,13 +367,12 @@ extension UIAutomationService {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
     {
         let exactWindow = try UIAutomationTarget.ExactWindow(
-            identity: expectedWindowIdentity,
-            bounds: expectedWindowBounds)
+            identity: windowEvidence.identity,
+            bounds: windowEvidence.bounds)
         let automationTarget: UIAutomationTarget = .exactWindow(exactWindow)
         self.logger.debug("Delegating exact-window background click to ClickService")
         let result = try await self.normalizingSnapshotErrors {
@@ -394,7 +390,7 @@ extension UIAutomationService {
             actionAnchor: result.anchorPoint,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier)
+            targetProcessIdentifier: windowEvidence.identity.ownerProcessIdentifier)
 
         return UIAutomationActionResult(
             payload: (),

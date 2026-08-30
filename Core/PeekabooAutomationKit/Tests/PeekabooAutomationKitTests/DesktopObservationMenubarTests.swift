@@ -364,7 +364,7 @@ final class DesktopObservationMenubarTests: XCTestCase {
         let capture = MenuBarRecordingScreenCaptureService()
         capture.windowCaptureResult = fixture.capture
         capture.windowCaptureSuspension = captureSuspension
-        let service = try DesktopObservationService(
+        let service = DesktopObservationService(
             screenCapture: capture,
             automation: MenuBarRecordingAutomationService(),
             targetResolver: MenuBarActionTargetResolver(result: UIAutomationActionResult(
@@ -449,7 +449,7 @@ final class DesktopObservationMenubarTests: XCTestCase {
         let detectionSuspension = MenuBarObservationSuspension()
         let capture = MenuBarRecordingScreenCaptureService()
         capture.windowCaptureResult = fixture.capture
-        let automation = try MenuBarRecordingAutomationService(
+        let automation = MenuBarRecordingAutomationService(
             actionResult: UIAutomationActionResult(
                 payload: Self.detectionResult(for: fixture.target),
                 outcome: .dispatchedUnverified(
@@ -458,7 +458,7 @@ final class DesktopObservationMenubarTests: XCTestCase {
                     unitCount: .one),
                 targetIdentity: fixture.targetIdentity),
             detectionSuspension: detectionSuspension)
-        let service = try DesktopObservationService(
+        let service = DesktopObservationService(
             screenCapture: capture,
             automation: automation,
             targetResolver: MenuBarActionTargetResolver(result: UIAutomationActionResult(
@@ -490,14 +490,14 @@ final class DesktopObservationMenubarTests: XCTestCase {
         let capture = MenuBarRecordingScreenCaptureService()
         capture.windowCaptureResult = fixture.capture
         capture.windowCaptureSuspension = captureSuspension
-        let automation = try MenuBarRecordingAutomationService(actionResult: UIAutomationActionResult(
+        let automation = MenuBarRecordingAutomationService(actionResult: UIAutomationActionResult(
             payload: Self.detectionResult(for: fixture.target),
             outcome: .dispatchedUnverified(
                 delivery: .init(mechanism: .accessibilityAction, mode: .background),
                 evidence: .deliveryAccepted,
                 unitCount: .one),
             targetIdentity: fixture.targetIdentity))
-        let service = try DesktopObservationService(
+        let service = DesktopObservationService(
             screenCapture: capture,
             automation: automation,
             targetResolver: MenuBarActionTargetResolver(result: UIAutomationActionResult(
@@ -576,7 +576,9 @@ final class DesktopObservationMenubarTests: XCTestCase {
             XCTAssertEqual(automation.detectCalls, 1)
         }
     }
+}
 
+extension DesktopObservationMenubarTests {
     func testPopoverResolverPrefersHintedOwnerNearMenuBar() {
         let screen = ScreenInfo(
             index: 0,

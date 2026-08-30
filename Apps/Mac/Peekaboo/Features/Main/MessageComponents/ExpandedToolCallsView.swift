@@ -44,7 +44,7 @@ struct ExpandedToolCallsView: View {
                                 }, label: {
                                     Image(nsImage: image)
                                         .resizable()
-                                        .aspectRatio(contentMode: .fit)
+                                        .scaledToFit()
                                         .frame(maxHeight: 200)
                                         .cornerRadius(8)
                                         .overlay(

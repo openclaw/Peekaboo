@@ -91,8 +91,10 @@ enum AutomationServiceBridge {
                         target: target,
                         clickType: clickType,
                         snapshotId: snapshotId,
-                        expectedWindowIdentity: expectedWindowIdentity,
-                        expectedWindowBounds: expectedWindowBounds,
+                        windowEvidence: ExactWindowClickEvidence(
+                            identity: expectedWindowIdentity,
+                            bounds: expectedWindowBounds
+                        ),
                         allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
                     )
                 }
@@ -100,8 +102,10 @@ enum AutomationServiceBridge {
                     target: target,
                     clickType: clickType,
                     snapshotId: snapshotId,
-                    expectedWindowIdentity: expectedWindowIdentity,
-                    expectedWindowBounds: expectedWindowBounds,
+                    windowEvidence: ExactWindowClickEvidence(
+                        identity: expectedWindowIdentity,
+                        bounds: expectedWindowBounds
+                    ),
                     allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
                 )
             } else {

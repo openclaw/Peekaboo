@@ -639,7 +639,11 @@ struct PasteCommandTests {
         #expect(clipboard.setCallCount == 0)
         #expect(clipboard.restoreCallCount == 0)
     }
+}
 
+// MARK: - Clipboard failures and transaction lifetime
+
+extension PasteCommandTests {
     @Test
     @MainActor
     func `Clipboard read failure is not treated as an empty clipboard`() async throws {

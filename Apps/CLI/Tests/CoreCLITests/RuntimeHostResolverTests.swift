@@ -755,7 +755,11 @@ struct RuntimeHostResolverTests {
             options: Self.captureOptions()
         ) == nil)
     }
+}
 
+// MARK: - Candidate permissions and protocol compatibility
+
+extension RuntimeHostResolverTests {
     @Test
     func `Candidate validation rejects permission-less hosts even without permission tags`() async {
         // Hosts that report permissions but predate permissionTags fall back to the client-side

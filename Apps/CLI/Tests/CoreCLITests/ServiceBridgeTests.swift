@@ -556,8 +556,7 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol, CompositeT
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds _: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool
     ) async throws {
         self.policyAwareClickEntryCount += 1
@@ -568,8 +567,8 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol, CompositeT
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            targetWindowID: expectedWindowIdentity.windowID,
+            targetProcessIdentifier: windowEvidence.identity.ownerProcessIdentifier,
+            targetWindowID: windowEvidence.identity.windowID,
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
         ))
     }

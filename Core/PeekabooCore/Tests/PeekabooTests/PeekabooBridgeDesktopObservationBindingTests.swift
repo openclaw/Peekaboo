@@ -730,7 +730,9 @@ struct PeekabooBridgeDesktopObservationBindingTests: DesktopObservationBindingFi
             request: request,
             result: result) == "capture scale")
     }
+}
 
+extension PeekabooBridgeDesktopObservationBindingTests {
     private static func forgeries() -> [Forgery] {
         self.targetSelectorForgeries() + self.globalTargetForgeries() + self.popoverForgeries()
     }

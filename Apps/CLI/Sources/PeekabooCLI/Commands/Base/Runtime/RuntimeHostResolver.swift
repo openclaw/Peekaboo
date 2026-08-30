@@ -25,22 +25,9 @@ enum RuntimeHostResolver {
         configurationInput: PeekabooAutomation.Configuration.InputConfig?,
         dependencies: Dependencies
     ) async throws -> Resolution {
-        var deferredScreenCaptureKitSafetyBlocker = false
-        var captureEngineSafetyOverride: CaptureEnginePreference?
-        var toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal?
+        var captureSafety = CaptureSafetyResolution()
         var handshakeCache: RemoteHandshakeCache?
-        if self.requiresCallerLocalModernOwnerClaim(options: options, environment: environment) {
-            do {
-                if let owner = try dependencies.inspectScreenCaptureKitOwner(),
-                   !self.screenCaptureKitOwnerIsCurrentProcess(owner) {
-                    throw self.ownerRefusal(owner: owner, callerLocal: true)
-                }
-            } catch let error as PreDispatchActionError {
-                throw error
-            } catch {
-                throw self.ownerRefusal(error: error, callerLocal: true, selectedSocket: options.bridgeSocketPath)
-            }
-        }
+        try self.inspectCallerLocalOwner(options: options, environment: environment, dependencies: dependencies)
         let safetyPlan: RemoteCandidatePlan?
         if self.requiresCallerLocalScreenCaptureKitSafetyCheck(options: options, environment: environment) {
             let plan = await dependencies.remoteCandidatePlan(options, environment)
@@ -57,26 +44,12 @@ enum RuntimeHostResolver {
                 // discovered old host therefore blocks every later SCK leaf even if another old
                 // host appears, disappears, or reuses the same socket before the runtime restarts.
                 dependencies.recordScreenCaptureKitSafetyBlocker(oldHost)
-                switch self.screenCaptureKitSafetyDisposition(
-                    for: oldHost, plan: plan, options: options, environment: environment
-                ) {
-                case .refuse: throw self.ownerCapabilityRefusal(host: oldHost, selectedSocket: plan.explicitSocket)
-                case .deferLocalRuntime:
-                    toolCapturePreflightRefusal = self.dynamicToolCapturePreflightRefusal(
-                        host: oldHost,
-                        selectedSocket: plan.explicitSocket
-                    )
-                    deferredScreenCaptureKitSafetyBlocker = true
-                case .deferToolCapture:
-                    toolCapturePreflightRefusal = self.dynamicToolCapturePreflightRefusal(
-                        host: oldHost,
-                        selectedSocket: plan.explicitSocket
-                    )
-                case .routeAutomaticCapture:
-                    // The blocker tombstone belongs to this caller process. Clamp the transported
-                    // request so a different Bridge process cannot fall back from classic to SCK.
-                    captureEngineSafetyOverride = .legacy
-                }
+                captureSafety = try self.resolveCaptureSafety(
+                    oldHost: oldHost,
+                    plan: plan,
+                    options: options,
+                    environment: environment
+                )
             }
         } else {
             safetyPlan = nil
@@ -110,16 +83,11 @@ enum RuntimeHostResolver {
                     preconditionFailure("Local-only snapshot affinity selected a remote owner")
                 }
             }
-            return Resolution(
+            return self.localResolution(
                 services: localSnapshotServices ?? dependencies.makeLocalServices(options),
                 hostDescription: "local (in-process)",
-                selectedRemoteSocketPath: nil,
-                selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: [],
-                applicationRelaunchAllowed: true,
-                requiredHostFailure: nil,
-                captureEngineSafetyOverride: captureEngineSafetyOverride,
-                toolCapturePreflightRefusal: toolCapturePreflightRefusal
+                captureSafety: captureSafety
             )
         }
 
@@ -161,36 +129,26 @@ enum RuntimeHostResolver {
                 permissionRejections: &permissionRejections,
                 probe: dependencies.snapshotAffinityProbe
             )
-            resolution.captureEngineSafetyOverride = captureEngineSafetyOverride
-            resolution.toolCapturePreflightRefusal = toolCapturePreflightRefusal
+            resolution.captureEngineSafetyOverride = captureSafety.engineOverride
+            resolution.toolCapturePreflightRefusal = captureSafety.toolPreflightRefusal
             return resolution
         }
 
-        if deferredScreenCaptureKitSafetyBlocker {
-            return Resolution(
+        if captureSafety.defersLocalRuntime {
+            return self.localResolution(
                 services: dependencies.makeLocalServices(options),
                 hostDescription: "local (ScreenCaptureKit blocked by a pre-lease Bridge host)",
-                selectedRemoteSocketPath: nil,
-                selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
-                applicationRelaunchAllowed: true,
-                requiredHostFailure: nil,
-                captureEngineSafetyOverride: captureEngineSafetyOverride,
-                toolCapturePreflightRefusal: toolCapturePreflightRefusal
+                captureSafety: captureSafety
             )
         }
 
-        let preferredScreenCaptureKitOwner: ScreenCaptureKitOwnerLease.OwnerReceipt?
-        if self.shouldPreferScreenCaptureKitOwnerHost(options: options, environment: environment) {
-            do {
-                preferredScreenCaptureKitOwner = try dependencies.inspectScreenCaptureKitOwner()
-            } catch {
-                let selectedSocket = candidatePlan.explicitSocket
-                throw self.ownerRefusal(error: error, callerLocal: false, selectedSocket: selectedSocket)
-            }
-        } else {
-            preferredScreenCaptureKitOwner = nil
-        }
+        let preferredScreenCaptureKitOwner = try self.preferredCaptureOwner(
+            options: options,
+            environment: environment,
+            dependencies: dependencies,
+            selectedSocket: candidatePlan.explicitSocket
+        )
 
         if preferredScreenCaptureKitOwner == nil,
            case let .local(localSnapshotInvalidationPaths) = initialRoutingDecision(
@@ -199,16 +157,11 @@ enum RuntimeHostResolver {
                configurationInput: configurationInput,
                knownSnapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths
            ) {
-            return Resolution(
+            return self.localResolution(
                 services: dependencies.makeLocalServices(options),
                 hostDescription: "local (in-process)",
-                selectedRemoteSocketPath: nil,
-                selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: localSnapshotInvalidationPaths,
-                applicationRelaunchAllowed: true,
-                requiredHostFailure: nil,
-                captureEngineSafetyOverride: captureEngineSafetyOverride,
-                toolCapturePreflightRefusal: toolCapturePreflightRefusal
+                captureSafety: captureSafety
             )
         }
 
@@ -225,9 +178,100 @@ enum RuntimeHostResolver {
             inspectScreenCaptureKitSafety: dependencies.inspectScreenCaptureKitSafety,
             recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker
         ))
-        resolution.captureEngineSafetyOverride = captureEngineSafetyOverride
-        resolution.toolCapturePreflightRefusal = toolCapturePreflightRefusal
+        resolution.captureEngineSafetyOverride = captureSafety.engineOverride
+        resolution.toolCapturePreflightRefusal = captureSafety.toolPreflightRefusal
         return resolution
+    }
+
+    private static func localResolution(
+        services: any PeekabooServiceProviding,
+        hostDescription: String,
+        snapshotInvalidationRemoteSocketPaths: [String],
+        captureSafety: CaptureSafetyResolution
+    ) -> Resolution {
+        Resolution(
+            services: services,
+            hostDescription: hostDescription,
+            selectedRemoteSocketPath: nil,
+            selectedRemoteHostProcessIdentifier: nil,
+            snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+            applicationRelaunchAllowed: true,
+            requiredHostFailure: nil,
+            captureEngineSafetyOverride: captureSafety.engineOverride,
+            toolCapturePreflightRefusal: captureSafety.toolPreflightRefusal
+        )
+    }
+
+    private struct CaptureSafetyResolution {
+        var defersLocalRuntime = false
+        var engineOverride: CaptureEnginePreference?
+        var toolPreflightRefusal: MCPToolCapturePreflightRefusal?
+    }
+
+    private static func inspectCallerLocalOwner(
+        options: CommandRuntimeOptions,
+        environment: [String: String],
+        dependencies: Dependencies
+    ) throws {
+        if self.requiresCallerLocalModernOwnerClaim(options: options, environment: environment) {
+            do {
+                if let owner = try dependencies.inspectScreenCaptureKitOwner(),
+                   !self.screenCaptureKitOwnerIsCurrentProcess(owner) {
+                    throw self.ownerRefusal(owner: owner, callerLocal: true)
+                }
+            } catch let error as PreDispatchActionError {
+                throw error
+            } catch {
+                throw self.ownerRefusal(error: error, callerLocal: true, selectedSocket: options.bridgeSocketPath)
+            }
+        }
+    }
+
+    private static func resolveCaptureSafety(
+        oldHost: ScreenCaptureKitOwnerUnawareHost,
+        plan: RemoteCandidatePlan,
+        options: CommandRuntimeOptions,
+        environment: [String: String]
+    ) throws -> CaptureSafetyResolution {
+        var resolution = CaptureSafetyResolution()
+        switch self.screenCaptureKitSafetyDisposition(
+            for: oldHost, plan: plan, options: options, environment: environment
+        ) {
+        case .refuse: throw self.ownerCapabilityRefusal(host: oldHost, selectedSocket: plan.explicitSocket)
+        case .deferLocalRuntime:
+            resolution.toolPreflightRefusal = self.dynamicToolCapturePreflightRefusal(
+                host: oldHost,
+                selectedSocket: plan.explicitSocket
+            )
+            resolution.defersLocalRuntime = true
+        case .deferToolCapture:
+            resolution.toolPreflightRefusal = self.dynamicToolCapturePreflightRefusal(
+                host: oldHost,
+                selectedSocket: plan.explicitSocket
+            )
+        case .routeAutomaticCapture:
+            // The blocker tombstone belongs to this caller process. Clamp the transported
+            // request so a different Bridge process cannot fall back from classic to SCK.
+            resolution.engineOverride = .legacy
+        }
+        return resolution
+    }
+
+    private static func preferredCaptureOwner(
+        options: CommandRuntimeOptions,
+        environment: [String: String],
+        dependencies: Dependencies,
+        selectedSocket: String?
+    ) throws -> ScreenCaptureKitOwnerLease.OwnerReceipt? {
+        if self.shouldPreferScreenCaptureKitOwnerHost(options: options, environment: environment) {
+            do {
+                return try dependencies.inspectScreenCaptureKitOwner()
+            } catch {
+                throw self.ownerRefusal(error: error, callerLocal: false, selectedSocket: selectedSocket)
+            }
+        } else {
+            return nil
+        }
     }
 
     private static func resolveRemoteRouting(
@@ -411,7 +455,11 @@ enum RuntimeHostResolver {
             )
         )
     }
+}
 
+// MARK: - Routing policy and remote service construction
+
+extension RuntimeHostResolver {
     static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
         if options.requiresExactWindowPixelFocusTyping {
             return "No compatible Bridge host advertises atomic exact-window pixel-focus typing. " +

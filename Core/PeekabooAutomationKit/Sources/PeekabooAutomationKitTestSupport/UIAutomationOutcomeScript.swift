@@ -256,8 +256,7 @@ extension ScriptedUIAutomationActionOutcomeProviding {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
     {
         guard let service = self as? any ExactWindowTargetedClickServiceProtocol,
@@ -270,15 +269,14 @@ extension ScriptedUIAutomationActionOutcomeProviding {
                     fallback: "This automation test double does not support exact-window clicks"))
         }
         let targetIdentity = try self.outcomeTargetIdentity(
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds)
+            expectedWindowIdentity: windowEvidence.identity,
+            expectedWindowBounds: windowEvidence.bounds)
         let outcome = try self.uiAutomationOutcomeScript.nextOutcome(for: .click)
         try await service.click(
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds,
+            windowEvidence: windowEvidence,
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
         return UIAutomationActionResult(
             payload: (),

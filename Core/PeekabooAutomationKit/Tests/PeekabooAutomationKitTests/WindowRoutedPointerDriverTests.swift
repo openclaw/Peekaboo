@@ -462,7 +462,9 @@ struct WindowRoutedPointerDriverTests {
             #expect(posted == 0)
         }
     }
+}
 
+extension WindowRoutedPointerDriverTests {
     @Test
     @MainActor
     func `wrong owner or changed window receipt is refused before posting`() async {

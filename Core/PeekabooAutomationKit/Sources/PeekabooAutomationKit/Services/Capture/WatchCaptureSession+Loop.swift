@@ -162,23 +162,7 @@ extension WatchCaptureSession {
                 attemptResult = try await self.captureFrameOrStop(deadlineNs: timing.deadlineNs)
             } catch {
                 if let delay = ScreenCaptureKitTransientError.retryDelayNanoseconds(after: error) {
-                    state.captureFailures += 1
-                    state.consecutiveTransientCaptureFailures += 1
-                    guard state.consecutiveTransientCaptureFailures <= 3 else {
-                        throw error
-                    }
-                    let boundedError = CaptureDiagnosticSanitizer.sanitize(error.localizedDescription) ??
-                        "Transient ScreenCaptureKit capture failure"
-                    self.lastCaptureErrorDescription = boundedError
-                    self.framesDropped += 1
-                    if !state.transientCaptureWarningEmitted {
-                        state.transientCaptureWarningEmitted = true
-                        self.warnings.append(
-                            WatchWarning(
-                                code: .transientCaptureFailure,
-                                message: "Dropped a frame after a transient ScreenCaptureKit capture failure",
-                                details: ["error": boundedError]))
-                    }
+                    try self.recordTransientCaptureFailure(error, state: &state)
                     // SCK can report a temporary TCC denial while another CLI capture is settling.
                     // Treat that as a dropped live frame; the next sample or fallback frame can recover.
                     self.recordRequestedCadence(
@@ -212,24 +196,7 @@ extension WatchCaptureSession {
             let timestampMs = capture.metadata.videoTimestampMs ?? Int(elapsedNs / 1_000_000)
 
             guard let cgImage = capture.cgImage else {
-                self.framesDropped += 1
-                if self.sourceKind != .video {
-                    state.captureFailures += 1
-                }
-                state.consecutiveDecodeFailures += 1
-                if self.sourceKind == .video, state.consecutiveDecodeFailures >= 32 {
-                    let diagnostics = self.captureSourceDiagnostics
-                    var details = ["count": "\(diagnostics.decodeFailures)"]
-                    if let first = diagnostics.firstDecodeError {
-                        details["first_error"] = first
-                    }
-                    if let last = diagnostics.lastDecodeError {
-                        details["last_error"] = last
-                    }
-                    self.warnings.append(WatchWarning(
-                        code: .videoDecodeFailure,
-                        message: "Stopped video sampling after 32 consecutive undecodable samples",
-                        details: details))
+                if self.recordDecodeFailure(state: &state) {
                     break
                 }
                 if self.hitFrameCap(videoFrameAttempts: state.frameAttempts) || self.hitSizeCap() {
@@ -315,6 +282,53 @@ extension WatchCaptureSession {
             framesDiffFiltered: state.framesDiffFiltered,
             requestedCadenceDurationNs: state.requestedCadenceDurationNs,
             requestedCadenceIntervals: state.requestedCadenceIntervals)
+    }
+
+    private func recordTransientCaptureFailure(
+        _ error: any Error,
+        state: inout SessionState) throws
+    {
+        state.captureFailures += 1
+        state.consecutiveTransientCaptureFailures += 1
+        guard state.consecutiveTransientCaptureFailures <= 3 else {
+            throw error
+        }
+        let boundedError = CaptureDiagnosticSanitizer.sanitize(error.localizedDescription) ??
+            "Transient ScreenCaptureKit capture failure"
+        self.lastCaptureErrorDescription = boundedError
+        self.framesDropped += 1
+        if !state.transientCaptureWarningEmitted {
+            state.transientCaptureWarningEmitted = true
+            self.warnings.append(
+                WatchWarning(
+                    code: .transientCaptureFailure,
+                    message: "Dropped a frame after a transient ScreenCaptureKit capture failure",
+                    details: ["error": boundedError]))
+        }
+    }
+
+    private func recordDecodeFailure(state: inout SessionState) -> Bool {
+        self.framesDropped += 1
+        if self.sourceKind != .video {
+            state.captureFailures += 1
+        }
+        state.consecutiveDecodeFailures += 1
+        if self.sourceKind == .video, state.consecutiveDecodeFailures >= 32 {
+            let diagnostics = self.captureSourceDiagnostics
+            var details = ["count": "\(diagnostics.decodeFailures)"]
+            if let first = diagnostics.firstDecodeError {
+                details["first_error"] = first
+            }
+            if let last = diagnostics.lastDecodeError {
+                details["last_error"] = last
+            }
+            self.warnings.append(WatchWarning(
+                code: .videoDecodeFailure,
+                message: "Stopped video sampling after 32 consecutive undecodable samples",
+                details: details))
+            return true
+        }
+        return false
     }
 
     func keepAllFrame(

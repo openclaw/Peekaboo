@@ -338,13 +338,12 @@ extension WindowCommand {
                     windowInfo: finalWindowInfo
                 )
 
-                let warning: String? = if outcome.info == nil {
-                    "Could not read back the window frame after maximize; reported bounds may be stale."
-                } else if !outcome.stabilized {
-                    "The window frame was still changing after maximize; reported bounds may be approximate."
-                } else {
-                    nil
-                }
+                let presentation = Self.readbackPresentation(
+                    alreadyMaximized: outcome.alreadyMaximized,
+                    hasReadback: outcome.info != nil,
+                    stabilized: outcome.stabilized
+                )
+                let warning = presentation.warning
                 let data = createWindowActionResult(
                     action: "maximize",
                     windowInfo: finalWindowInfo,
@@ -352,15 +351,7 @@ extension WindowCommand {
                     warning: warning
                 )
 
-                let effect: ActionEffect = if outcome.alreadyMaximized {
-                    .confirmed
-                } else if outcome.info == nil {
-                    .unverifiable
-                } else if !outcome.stabilized {
-                    .partial
-                } else {
-                    .confirmed
-                }
+                let effect = presentation.effect
                 let targetIdentity = actionResult?.targetIdentity ?? (try? DesktopTargetIdentity(
                     exactWindow: UIAutomationTarget.ExactWindow(window: windowInfo)
                 ))
@@ -410,6 +401,30 @@ extension WindowCommand {
                 handleError(error)
                 throw ExitCode(1)
             }
+        }
+
+        private static func readbackPresentation(
+            alreadyMaximized: Bool,
+            hasReadback: Bool,
+            stabilized: Bool
+        ) -> (warning: String?, effect: ActionEffect) {
+            let warning: String? = if !hasReadback {
+                "Could not read back the window frame after maximize; reported bounds may be stale."
+            } else if !stabilized {
+                "The window frame was still changing after maximize; reported bounds may be approximate."
+            } else {
+                nil
+            }
+            let effect: ActionEffect = if alreadyMaximized {
+                .confirmed
+            } else if !hasReadback {
+                .unverifiable
+            } else if !stabilized {
+                .partial
+            } else {
+                .confirmed
+            }
+            return (warning, effect)
         }
     }
 }

@@ -132,18 +132,21 @@ struct FocusDispatchAccountingTests {
 
         try await FocusRaiseSettlement.run(
             attemptCount: 2,
-            requiresStrictDispatchOwnership: true,
-            prepareAttempt: {},
-            dispatchRaise: { raiseCount += 1 },
-            verifyFocus: {
-                verificationCount += 1
-                #expect(!exactFocusSettled)
-                await Task.yield()
-                exactFocusSettled = true
-            },
-            completeRaise: {
-                #expect(exactFocusSettled)
-                completionCount += 1
+            performAttempt: {
+                try await FocusRaiseSettlement.attempt(
+                    requiresStrictDispatchOwnership: true,
+                    prepareAttempt: {},
+                    dispatchRaise: { raiseCount += 1 },
+                    verifyFocus: {
+                        verificationCount += 1
+                        #expect(!exactFocusSettled)
+                        await Task.yield()
+                        exactFocusSettled = true
+                    },
+                    completeRaise: {
+                        #expect(exactFocusSettled)
+                        completionCount += 1
+                    })
             },
             sleepBeforeRetry: { retryCount += 1 },
             fallbackError: FocusDispatchProbeError.rejected)
@@ -165,14 +168,17 @@ struct FocusDispatchAccountingTests {
         await #expect(throws: FocusDispatchProbeError.self) {
             try await FocusRaiseSettlement.run(
                 attemptCount: 3,
-                requiresStrictDispatchOwnership: true,
-                prepareAttempt: {},
-                dispatchRaise: { raiseCount += 1 },
-                verifyFocus: {
-                    verificationCount += 1
-                    throw FocusDispatchProbeError.rejected
+                performAttempt: {
+                    try await FocusRaiseSettlement.attempt(
+                        requiresStrictDispatchOwnership: true,
+                        prepareAttempt: {},
+                        dispatchRaise: { raiseCount += 1 },
+                        verifyFocus: {
+                            verificationCount += 1
+                            throw FocusDispatchProbeError.rejected
+                        },
+                        completeRaise: { completionCount += 1 })
                 },
-                completeRaise: { completionCount += 1 },
                 sleepBeforeRetry: { retryCount += 1 },
                 fallbackError: FocusDispatchProbeError.rejected)
         }
@@ -191,19 +197,22 @@ struct FocusDispatchAccountingTests {
 
         try await FocusRaiseSettlement.run(
             attemptCount: 2,
-            requiresStrictDispatchOwnership: false,
-            prepareAttempt: {},
-            dispatchRaise: {
-                attempt += 1
-                events.append("raise\(attempt)")
+            performAttempt: {
+                try await FocusRaiseSettlement.attempt(
+                    requiresStrictDispatchOwnership: false,
+                    prepareAttempt: {},
+                    dispatchRaise: {
+                        attempt += 1
+                        events.append("raise\(attempt)")
+                    },
+                    verifyFocus: {
+                        events.append("verify\(attempt)")
+                        if attempt == 1 {
+                            throw FocusDispatchProbeError.rejected
+                        }
+                    },
+                    completeRaise: { events.append("complete\(attempt)") })
             },
-            verifyFocus: {
-                events.append("verify\(attempt)")
-                if attempt == 1 {
-                    throw FocusDispatchProbeError.rejected
-                }
-            },
-            completeRaise: { events.append("complete\(attempt)") },
             sleepBeforeRetry: { events.append("retry\(attempt)") },
             fallbackError: FocusDispatchProbeError.rejected)
 
@@ -224,14 +233,17 @@ struct FocusDispatchAccountingTests {
         await #expect(throws: FocusDispatchProbeError.self) {
             try await FocusRaiseSettlement.run(
                 attemptCount: 3,
-                requiresStrictDispatchOwnership: false,
-                prepareAttempt: {},
-                dispatchRaise: { raiseCount += 1 },
-                verifyFocus: {
-                    verificationCount += 1
-                    throw FocusDispatchProbeError.rejected
+                performAttempt: {
+                    try await FocusRaiseSettlement.attempt(
+                        requiresStrictDispatchOwnership: false,
+                        prepareAttempt: {},
+                        dispatchRaise: { raiseCount += 1 },
+                        verifyFocus: {
+                            verificationCount += 1
+                            throw FocusDispatchProbeError.rejected
+                        },
+                        completeRaise: { completionCount += 1 })
                 },
-                completeRaise: { completionCount += 1 },
                 sleepBeforeRetry: { retryCount += 1 },
                 fallbackError: FocusDispatchProbeError.rejected)
         }
@@ -240,6 +252,102 @@ struct FocusDispatchAccountingTests {
         #expect(completionCount == 3)
         #expect(verificationCount == 3)
         #expect(retryCount == 2)
+    }
+
+    @Test(arguments: [-1, 0, 1, 2])
+    @MainActor
+    func `settlement constructs fallback only without attempts and preserves the last verification error`(
+        attemptCount: Int) async
+    {
+        var fallbackCount = 0
+        var verificationCount = 0
+        var retryCount = 0
+        @MainActor func fallbackError() -> FocusError {
+            fallbackCount += 1
+            return .focusVerificationFailed(712)
+        }
+
+        do {
+            try await FocusRaiseSettlement.run(
+                attemptCount: attemptCount,
+                performAttempt: {
+                    try await FocusRaiseSettlement.attempt(
+                        requiresStrictDispatchOwnership: false,
+                        prepareAttempt: { #expect(attemptCount > 0) },
+                        dispatchRaise: {},
+                        verifyFocus: {
+                            verificationCount += 1
+                            if attemptCount == 2 {
+                                throw FocusError.focusVerificationTimeout(UInt32(verificationCount))
+                            }
+                        },
+                        completeRaise: {})
+                },
+                sleepBeforeRetry: { retryCount += 1 },
+                fallbackError: fallbackError())
+            #expect(attemptCount == 1)
+        } catch FocusError.focusVerificationFailed(712) {
+            #expect(attemptCount <= 0)
+        } catch FocusError.focusVerificationTimeout(2) {
+            #expect(attemptCount == 2)
+        } catch {
+            Issue.record("Unexpected settlement error: \(error)")
+        }
+
+        #expect(fallbackCount == (attemptCount <= 0 ? 1 : 0))
+        #expect(verificationCount == max(attemptCount, 0))
+        #expect(retryCount == (attemptCount == 2 ? 1 : 0))
+    }
+
+    @Test(arguments: [false, true], ["prepare", "raise", "verify", "complete"])
+    @MainActor
+    func `settlement cancellation preserves completion and retry ordering without evaluating fallback`(
+        strict: Bool,
+        cancelledPhase: String) async
+    {
+        var events: [String] = []
+        @MainActor func record(_ phase: String) throws {
+            events.append(phase)
+            if phase == cancelledPhase {
+                throw CancellationError()
+            }
+        }
+        @MainActor func fallbackError() -> FocusDispatchProbeError {
+            Issue.record("Cancellation must not evaluate fallback")
+            return .rejected
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await FocusRaiseSettlement.run(
+                attemptCount: 2,
+                performAttempt: {
+                    try await FocusRaiseSettlement.attempt(
+                        requiresStrictDispatchOwnership: strict,
+                        prepareAttempt: { try record("prepare") },
+                        dispatchRaise: { try record("raise") },
+                        verifyFocus: { try record("verify") },
+                        completeRaise: { try record("complete") })
+                },
+                sleepBeforeRetry: { events.append("retry") },
+                fallbackError: fallbackError())
+        }
+
+        let expected: [String] = switch cancelledPhase {
+        case "prepare":
+            ["prepare"]
+        case "raise":
+            ["prepare", "raise"]
+        case "verify" where !strict:
+            [
+                "prepare", "raise", "complete", "verify", "retry",
+                "prepare", "raise", "complete", "verify",
+            ]
+        case "verify":
+            ["prepare", "raise", "verify"]
+        default:
+            strict ? ["prepare", "raise", "verify", "complete"] : ["prepare", "raise", "complete"]
+        }
+        #expect(events == expected)
     }
 
     @Test

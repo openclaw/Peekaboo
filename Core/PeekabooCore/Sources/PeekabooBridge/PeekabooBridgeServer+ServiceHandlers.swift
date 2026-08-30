@@ -23,31 +23,7 @@ extension PeekabooBridgeServer {
             let running = try await self.services.applications.isApplicationRunning(identifier: payload.identifier)
             return .init(response: .bool(running))
         case let .launchApplication(payload):
-            let request = ApplicationLaunchRequest(
-                applicationIdentifier: payload.identifier,
-                activates: true)
-            let resultAware = self.services.applications is any ApplicationServiceActionResultProviding
-            let result: DesktopActionResult<ServiceApplicationInfo> = if let results = self.services
-                .applications as? any ApplicationServiceActionResultProviding
-            {
-                try await results.launchApplicationActionResult(request: request)
-            } else {
-                try await DesktopActionResult(
-                    payload: self.services.applications.launchApplication(identifier: payload.identifier),
-                    outcome: nil)
-            }
-            self.automationActivityObserver?(pid_t(result.payload.processIdentifier))
-            let outcome = try Self.applicationMutationOutcome(
-                result.outcome,
-                resultAware: resultAware,
-                mode: .foreground,
-                operation: "Launch application",
-                targetReceipt: result.payload.processIdentity?.actionTargetReceipt)
-            return .init(
-                response: .application(result.payload),
-                mutation: .init(
-                    outcome: outcome,
-                    target: .responseResolved))
+            return try await self.handleApplicationLaunch(payload)
         case let .launchApplicationWithOptions(payload):
             return try await self.handleApplicationLaunchWithOptions(payload)
         case let .relaunchApplicationWithOptions(payload):
@@ -113,44 +89,7 @@ extension PeekabooBridgeServer {
                     outcome: outcome,
                     target: .handlerResolved(target)))
         case let .quitApplication(payload):
-            guard let expectedIdentity = payload.expectedIdentity else {
-                throw PeekabooError.invalidInput(
-                    "Bridge application quit requires a process-generation identity " +
-                        "(protocol 1.16 or newer); update the client")
-            }
-            guard expectedIdentity.processIdentifier != getpid() else {
-                throw PeekabooError.serviceUnavailable("A runtime host cannot quit itself")
-            }
-            let request = ApplicationQuitRequest(
-                identifier: payload.identifier,
-                force: payload.force,
-                expectedIdentity: expectedIdentity)
-            do {
-                let result = try await self.services.applications.quitApplicationResult(request: request)
-                try ApplicationActionResultSemantics.requireConsistentQuitResult(
-                    result,
-                    expectedIdentity: expectedIdentity,
-                    operation: "Quit application",
-                    missingOutcomeRoute: .bridge)
-                let outcome = try Self.applicationMutationOutcome(
-                    result.outcome,
-                    resultAware: self.services.applications is any ApplicationServiceActionResultProviding,
-                    mode: .background,
-                    operation: "Quit application",
-                    targetReceipt: expectedIdentity.actionTargetReceipt)
-                return .init(
-                    response: .bool(result.payload),
-                    mutation: .init(
-                        outcome: outcome,
-                        target: .requestPinned))
-            } catch let failure as DesktopActionFailure {
-                guard !PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
-                      Self.isNativeQuitRequestRejection(failure)
-                else { throw failure }
-                return .init(
-                    response: .bool(false),
-                    mutation: .init(outcome: failure.outcome, target: .requestPinned))
-            }
+            return try await self.handleApplicationQuit(payload)
         case let .hideApplication(payload):
             return try await self.handleApplicationHide(payload)
         case .unhideApplication:
@@ -913,64 +852,9 @@ extension PeekabooBridgeServer {
                 response: .dialogResult(result),
                 mutation: .init(outcome: outcome, target: .requestPinned))
         case let .exactDialogEnterText(payload):
-            let usesBackgroundExecution = PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics
-            if usesBackgroundExecution, !self.services.dialogs.supportsBackgroundExactDialogInput {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .runtimeIncompatible,
-                    message: "The selected dialog provider cannot guarantee background AXValue input.",
-                    hint: "Update the runtime host or use protocol 1.28 foreground compatibility explicitly.")
-            }
-            let result = if usesBackgroundExecution {
-                try await self.services.dialogs.enterText(payload)
-            } else {
-                try await self.services.dialogs.enterTextForegroundCompatible(payload)
-            }
-            try Self.throwExactDialogRefusalIfReported(result, operation: "Exact dialog input")
-            guard result.success,
-                  result.action == .enterText,
-                  let outcome = result.outcome,
-                  !usesBackgroundExecution || Self.isCanonicalBackgroundExactDialogInputOutcome(outcome),
-                  let targetReceipt = result.targetReceipt,
-                  payload.target.processIdentifier.map({
-                      $0 == targetReceipt.processIdentifier
-                  }) ?? true,
-                  payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
-            else {
-                throw DesktopActionFailure.indeterminate(
-                    delivery: result.outcome?.delivery,
-                    evidence: .completionUnknown,
-                    unitCount: result.outcome?.dispatchState.unitCount,
-                    message: "Exact dialog input did not return both its canonical outcome and target receipt.",
-                    hint: "Observe the dialog before retrying and update the execution host.")
-            }
-            return .init(
-                response: .dialogResult(result),
-                mutation: .init(outcome: outcome, target: .responseResolved))
+            return try await self.handleExactDialogEnterText(payload)
         case let .exactDialogForceDismiss(payload):
-            let result = try await self.services.dialogs.forceDismissDialog(payload)
-            try Self.throwExactDialogRefusalIfReported(result, operation: "Exact forced dialog dismissal")
-            guard result.success,
-                  result.action == .dismiss,
-                  let outcome = result.outcome,
-                  outcome.state == .dispatchedUnverified,
-                  outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground),
-                  outcome.dispatchState.unitCount == .one,
-                  let targetReceipt = result.targetReceipt,
-                  // The unresolved selector has no process-generation claim to compare here;
-                  // targetReceipt is the host's canonical resolved generation.
-                  payload.target.processIdentifier.map({ $0 == targetReceipt.processIdentifier }) ?? true,
-                  payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
-            else {
-                throw DesktopActionFailure.indeterminate(
-                    delivery: result.outcome?.delivery,
-                    evidence: .completionUnknown,
-                    unitCount: result.outcome?.dispatchState.unitCount,
-                    message: "Exact forced dialog dismissal returned invalid outcome or target evidence.",
-                    hint: "Observe the dialog before retrying and update the execution host.")
-            }
-            return .init(
-                response: .dialogResult(result),
-                mutation: .init(outcome: outcome, target: .responseResolved))
+            return try await self.handleExactDialogForceDismiss(payload)
         default:
             throw Self.invalidRequest(for: request)
         }
@@ -1036,14 +920,7 @@ extension PeekabooBridgeServer {
     func handleSnapshotRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {
         switch request {
         case let .createSnapshot(payload):
-            let id = if payload.explicitOnly == true {
-                try await self.services.snapshots.createExplicitSnapshot()
-            } else if let pendingAt = payload.pendingAt {
-                try await self.services.snapshots.createSnapshot(pendingAt: pendingAt)
-            } else {
-                try await self.services.snapshots.createSnapshot()
-            }
-            return .snapshotId(id)
+            return try await self.handleCreateSnapshot(payload)
         case let .storeDetectionResult(payload):
             try await self.services.snapshots.storeDetectionResult(
                 snapshotId: payload.snapshotId,
@@ -1135,6 +1012,159 @@ extension PeekabooBridgeServer {
                 message: "No recent snapshot found")
         }
 
+        return .snapshotId(id)
+    }
+
+    private func handleApplicationLaunch(
+        _ payload: PeekabooBridgeAppIdentifierRequest) async throws -> PeekabooBridgeHandledResponse
+    {
+        let request = ApplicationLaunchRequest(
+            applicationIdentifier: payload.identifier,
+            activates: true)
+        let resultAware = self.services.applications is any ApplicationServiceActionResultProviding
+        let result: DesktopActionResult<ServiceApplicationInfo> = if let results = self.services
+            .applications as? any ApplicationServiceActionResultProviding
+        {
+            try await results.launchApplicationActionResult(request: request)
+        } else {
+            try await DesktopActionResult(
+                payload: self.services.applications.launchApplication(identifier: payload.identifier),
+                outcome: nil)
+        }
+        self.automationActivityObserver?(pid_t(result.payload.processIdentifier))
+        let outcome = try Self.applicationMutationOutcome(
+            result.outcome,
+            resultAware: resultAware,
+            mode: .foreground,
+            operation: "Launch application",
+            targetReceipt: result.payload.processIdentity?.actionTargetReceipt)
+        return .init(
+            response: .application(result.payload),
+            mutation: .init(
+                outcome: outcome,
+                target: .responseResolved))
+    }
+
+    private func handleApplicationQuit(
+        _ payload: PeekabooBridgeQuitAppRequest) async throws -> PeekabooBridgeHandledResponse
+    {
+        guard let expectedIdentity = payload.expectedIdentity else {
+            throw PeekabooError.invalidInput(
+                "Bridge application quit requires a process-generation identity " +
+                    "(protocol 1.16 or newer); update the client")
+        }
+        guard expectedIdentity.processIdentifier != getpid() else {
+            throw PeekabooError.serviceUnavailable("A runtime host cannot quit itself")
+        }
+        let request = ApplicationQuitRequest(
+            identifier: payload.identifier,
+            force: payload.force,
+            expectedIdentity: expectedIdentity)
+        do {
+            let result = try await self.services.applications.quitApplicationResult(request: request)
+            try ApplicationActionResultSemantics.requireConsistentQuitResult(
+                result,
+                expectedIdentity: expectedIdentity,
+                operation: "Quit application",
+                missingOutcomeRoute: .bridge)
+            let outcome = try Self.applicationMutationOutcome(
+                result.outcome,
+                resultAware: self.services.applications is any ApplicationServiceActionResultProviding,
+                mode: .background,
+                operation: "Quit application",
+                targetReceipt: expectedIdentity.actionTargetReceipt)
+            return .init(
+                response: .bool(result.payload),
+                mutation: .init(
+                    outcome: outcome,
+                    target: .requestPinned))
+        } catch let failure as DesktopActionFailure {
+            guard !PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+                  Self.isNativeQuitRequestRejection(failure)
+            else { throw failure }
+            return .init(
+                response: .bool(false),
+                mutation: .init(outcome: failure.outcome, target: .requestPinned))
+        }
+    }
+
+    private func handleExactDialogEnterText(
+        _ payload: DialogInputExecutionRequest) async throws -> PeekabooBridgeHandledResponse
+    {
+        let usesBackgroundExecution = PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics
+        if usesBackgroundExecution, !self.services.dialogs.supportsBackgroundExactDialogInput {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "The selected dialog provider cannot guarantee background AXValue input.",
+                hint: "Update the runtime host or use protocol 1.28 foreground compatibility explicitly.")
+        }
+        let result = if usesBackgroundExecution {
+            try await self.services.dialogs.enterText(payload)
+        } else {
+            try await self.services.dialogs.enterTextForegroundCompatible(payload)
+        }
+        try Self.throwExactDialogRefusalIfReported(result, operation: "Exact dialog input")
+        guard result.success,
+              result.action == .enterText,
+              let outcome = result.outcome,
+              !usesBackgroundExecution || Self.isCanonicalBackgroundExactDialogInputOutcome(outcome),
+              let targetReceipt = result.targetReceipt,
+              payload.target.processIdentifier.map({
+                  $0 == targetReceipt.processIdentifier
+              }) ?? true,
+              payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount,
+                message: "Exact dialog input did not return both its canonical outcome and target receipt.",
+                hint: "Observe the dialog before retrying and update the execution host.")
+        }
+        return .init(
+            response: .dialogResult(result),
+            mutation: .init(outcome: outcome, target: .responseResolved))
+    }
+
+    private func handleExactDialogForceDismiss(
+        _ payload: DialogForcedDismissExecutionRequest) async throws -> PeekabooBridgeHandledResponse
+    {
+        let result = try await self.services.dialogs.forceDismissDialog(payload)
+        try Self.throwExactDialogRefusalIfReported(result, operation: "Exact forced dialog dismissal")
+        guard result.success,
+              result.action == .dismiss,
+              let outcome = result.outcome,
+              outcome.state == .dispatchedUnverified,
+              outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground),
+              outcome.dispatchState.unitCount == .one,
+              let targetReceipt = result.targetReceipt,
+              // The unresolved selector has no process-generation claim to compare here;
+              // targetReceipt is the host's canonical resolved generation.
+              payload.target.processIdentifier.map({ $0 == targetReceipt.processIdentifier }) ?? true,
+              payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount,
+                message: "Exact forced dialog dismissal returned invalid outcome or target evidence.",
+                hint: "Observe the dialog before retrying and update the execution host.")
+        }
+        return .init(
+            response: .dialogResult(result),
+            mutation: .init(outcome: outcome, target: .responseResolved))
+    }
+
+    private func handleCreateSnapshot(
+        _ payload: PeekabooBridgeCreateSnapshotRequest) async throws -> PeekabooBridgeResponse
+    {
+        let id = if payload.explicitOnly == true {
+            try await self.services.snapshots.createExplicitSnapshot()
+        } else if let pendingAt = payload.pendingAt {
+            try await self.services.snapshots.createSnapshot(pendingAt: pendingAt)
+        } else {
+            try await self.services.snapshots.createSnapshot()
+        }
         return .snapshotId(id)
     }
 }

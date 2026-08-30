@@ -184,12 +184,14 @@ struct CertificationMonitorSealPayloadTests {
             foregroundRestored: true,
             sentinelRestored: true)
 
-        let placeholder = Self.evidence(
+        let fixture = EvidenceFixture(
             source: source,
             sentinel: sentinel,
             foregroundTarget: foregroundTarget,
             sample: sample,
-            restoration: restoration,
+            restoration: restoration)
+        let placeholder = Self.evidence(
+            fixture: fixture,
             fences: Self.fences(
                 baselineCommitment: self.zeroSHA256,
                 historyCommitment: self.zeroSHA256,
@@ -199,11 +201,7 @@ struct CertificationMonitorSealPayloadTests {
         let baselineCommitment = try PeekabooBridgeCertificationMonitorSealPayload
             .derivedBaselineCommitmentSHA256(for: placeholder)
         let historySeed = Self.evidence(
-            source: source,
-            sentinel: sentinel,
-            foregroundTarget: foregroundTarget,
-            sample: sample,
-            restoration: restoration,
+            fixture: fixture,
             fences: Self.fences(
                 baselineCommitment: baselineCommitment,
                 historyCommitment: self.zeroSHA256,
@@ -213,11 +211,7 @@ struct CertificationMonitorSealPayloadTests {
         let historyCommitment = try PeekabooBridgeCertificationMonitorSealPayload
             .derivedHistoryCommitmentSHA256(for: historySeed)
         let evidence = Self.evidence(
-            source: source,
-            sentinel: sentinel,
-            foregroundTarget: foregroundTarget,
-            sample: sample,
-            restoration: restoration,
+            fixture: fixture,
             fences: Self.fences(
                 baselineCommitment: baselineCommitment,
                 historyCommitment: historyCommitment,
@@ -234,12 +228,16 @@ struct CertificationMonitorSealPayloadTests {
                 evidenceSHA256: evidenceSHA256))
     }
 
+    private struct EvidenceFixture {
+        let source: PeekabooBridgeCertificationMonitorSealPayload.Source
+        let sentinel: PeekabooBridgeCertificationMonitorSealPayload.WindowTarget
+        let foregroundTarget: PeekabooBridgeCertificationMonitorSealPayload.WindowTarget
+        let sample: PeekabooBridgeCertificationMonitorSealPayload.MonitorSample
+        let restoration: PeekabooBridgeCertificationMonitorSealPayload.RestorationSummary
+    }
+
     private static func evidence(
-        source: PeekabooBridgeCertificationMonitorSealPayload.Source,
-        sentinel: PeekabooBridgeCertificationMonitorSealPayload.WindowTarget,
-        foregroundTarget: PeekabooBridgeCertificationMonitorSealPayload.WindowTarget,
-        sample: PeekabooBridgeCertificationMonitorSealPayload.MonitorSample,
-        restoration: PeekabooBridgeCertificationMonitorSealPayload.RestorationSummary,
+        fixture: EvidenceFixture,
         fences: [PeekabooBridgeCertificationMonitorSealPayload.Fence],
         baselineCommitment: String,
         historyCommitment: String) -> PeekabooBridgeCertificationMonitorSealPayload.Evidence
@@ -247,15 +245,15 @@ struct CertificationMonitorSealPayloadTests {
         .init(
             executionNonce: self.executionNonce,
             monitorInstanceID: self.monitorInstanceID,
-            source: source,
+            source: fixture.source,
             monitorProcess: self.monitorProcess,
-            sentinel: sentinel,
+            sentinel: fixture.sentinel,
             foregroundController: self.foregroundController,
-            foregroundTarget: foregroundTarget,
+            foregroundTarget: fixture.foregroundTarget,
             producerSets: self.producerSets(),
             fences: fences,
-            baselineSample: sample,
-            finalSample: sample,
+            baselineSample: fixture.sample,
+            finalSample: fixture.sample,
             foregroundPlan: self.foregroundPlan(),
             violationRecords: [],
             contaminationRecords: [],
@@ -267,7 +265,7 @@ struct CertificationMonitorSealPayloadTests {
                 baseline: [],
                 final: [],
                 newReports: []),
-            restoration: restoration)
+            restoration: fixture.restoration)
     }
 
     private static func producerSets() -> PeekabooBridgeCertificationMonitorSealPayload.ProducerSets {
@@ -330,11 +328,12 @@ struct CertificationMonitorSealPayloadTests {
         historyCommitment: String,
         tamper: Tamper) -> [PeekabooBridgeCertificationMonitorSealPayload.Fence]
     {
-        let definitions: [(
+        typealias FenceDefinition = (
             PeekabooBridgeCertificationMonitorSealPayload.FenceName,
             UInt64,
             PeekabooBridgeCertificationMonitorSealPayload.MonitorPhase,
-            Bool)] = [
+            Bool)
+        let definitions: [FenceDefinition] = [
             (.baselineStable, 1, .setup, false),
             (.grantStable, 2, .setup, true),
             (.operationsStart, 2, .running, true),

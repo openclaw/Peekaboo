@@ -69,5 +69,19 @@ struct PeekabooBridgeTargetedClickValueSemanticsTests {
             focus,
             response: .ok,
             request: optedOut))
+
+        let exactOptedOut = PeekabooBridgeRequest.targetedClick(.init(
+            target: .elementId("field"),
+            clickType: .single,
+            snapshotId: SnapshotReferenceFixtures.first.rawValue,
+            targetProcessIdentifier: identity.ownerProcessIdentifier,
+            targetWindowID: identity.windowID,
+            expectedWindowIdentity: identity,
+            expectedWindowBounds: bounds,
+            allowsAccessibilityValueDelivery: false))
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            focus,
+            response: .ok,
+            request: exactOptedOut))
     }
 }

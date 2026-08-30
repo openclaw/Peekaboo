@@ -226,22 +226,25 @@ private final class FocusReadbackFixture {
             dispatch: { options, record in
                 try await FocusRaiseSettlement.run(
                     attemptCount: options.retryCount,
-                    requiresStrictDispatchOwnership: false,
-                    prepareAttempt: {},
-                    dispatchRaise: {
-                        self.dispatchCount += 1
-                        _ = try FocusDispatchAccounting.acceptingBool(
-                            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
-                            onDispatch: record,
-                            operation: { true })
-                        self.afterDispatch()
+                    performAttempt: {
+                        try await FocusRaiseSettlement.attempt(
+                            requiresStrictDispatchOwnership: false,
+                            prepareAttempt: {},
+                            dispatchRaise: {
+                                self.dispatchCount += 1
+                                _ = try FocusDispatchAccounting.acceptingBool(
+                                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                                    onDispatch: record,
+                                    operation: { true })
+                                self.afterDispatch()
+                            },
+                            verifyFocus: {
+                                if self.settlementFails {
+                                    throw FocusError.focusVerificationTimeout(712)
+                                }
+                            },
+                            completeRaise: {})
                     },
-                    verifyFocus: {
-                        if self.settlementFails {
-                            throw FocusError.focusVerificationTimeout(712)
-                        }
-                    },
-                    completeRaise: {},
                     sleepBeforeRetry: { Issue.record("Unexpected mutation retry") },
                     fallbackError: FocusError.focusVerificationFailed(712))
             },

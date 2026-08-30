@@ -2648,8 +2648,7 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws
     {
         self.lastAllowsAccessibilityValueDelivery = allowsAccessibilityValueDelivery
@@ -2657,8 +2656,8 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds)
+            expectedWindowIdentity: windowEvidence.identity,
+            expectedWindowBounds: windowEvidence.bounds)
     }
 
     func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?) async

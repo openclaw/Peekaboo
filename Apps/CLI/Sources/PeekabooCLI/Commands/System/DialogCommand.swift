@@ -211,6 +211,17 @@ struct DialogCommand: ParsableCommand {
         )
     }
 
+    private static func executionErrorCode(_ error: PeekabooError) -> ErrorCode {
+        switch error {
+        case .timeout:
+            .TIMEOUT
+        case .invalidInput:
+            .INVALID_INPUT
+        default:
+            .UNKNOWN_ERROR
+        }
+    }
+
     static func execute(
         runtime: CommandRuntime,
         target: InteractionTargetOptions,
@@ -343,14 +354,7 @@ struct DialogCommand: ParsableCommand {
                 handleGenericError(error, jsonOutput: jsonOutput, logger: logger)
                 throw ExitCode(1)
             }
-            let code: ErrorCode = switch error {
-            case .timeout:
-                .TIMEOUT
-            case .invalidInput:
-                .INVALID_INPUT
-            default:
-                .UNKNOWN_ERROR
-            }
+            let code = Self.executionErrorCode(error)
             if jsonOutput {
                 outputError(message: error.localizedDescription, code: code, logger: logger)
             } else {

@@ -321,8 +321,7 @@ public protocol UIAutomationActionOutcomeProviding: UIAutomationServiceProtocol 
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
 
     func typeWithOutcome(
@@ -423,8 +422,7 @@ extension UIAutomationActionOutcomeProviding {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws -> UIAutomationActionResult<Void>
     {
         guard allowsAccessibilityValueDelivery else {
@@ -435,8 +433,8 @@ extension UIAutomationActionOutcomeProviding {
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds)
+            expectedWindowIdentity: windowEvidence.identity,
+            expectedWindowBounds: windowEvidence.bounds)
     }
 
     public var supportsRequestPinnedExactWindowScrollReceipt: Bool {
@@ -749,8 +747,7 @@ public protocol ExactWindowTargetedClickServiceProtocol: TargetedClickServicePro
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws
 }
 
@@ -774,8 +771,7 @@ extension ExactWindowTargetedClickServiceProtocol {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds: CGRect,
+        windowEvidence: ExactWindowClickEvidence,
         allowsAccessibilityValueDelivery: Bool) async throws
     {
         guard allowsAccessibilityValueDelivery else {
@@ -786,8 +782,8 @@ extension ExactWindowTargetedClickServiceProtocol {
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds)
+            expectedWindowIdentity: windowEvidence.identity,
+            expectedWindowBounds: windowEvidence.bounds)
     }
 }
 

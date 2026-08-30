@@ -155,25 +155,10 @@ RuntimeBackedCommand {
         let mutationCoordinator = runtime.toolSnapshotMutationCoordinator
         let snapshotManager = runtime.services.snapshots
 
-        logger.operationStart(
-            "see_command",
-            metadata: [
-                "app": self.app ?? "none",
-                "mode": self.mode?.rawValue ?? "auto",
-                "annotate": self.annotate,
-                "menubar": self.menubar,
-                "hasAnalyzePrompt": self.analyze != nil,
-            ]
-        )
+        self.logSeeStart()
 
         do {
-            try self.validateBeforeRuntime()
-            if let requiredHostFailure = runtime.requiredHostFailure {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: requiredHostFailure
-                )
-            }
+            try self.validateObservationRuntime(runtime)
             if self.usesPixelOnlyCapture {
                 try await self.runPixelOnlyCapture()
                 logger.operationComplete("see_command", metadata: ["success": true, "pixelOnly": true])
@@ -318,6 +303,29 @@ RuntimeBackedCommand {
             self.handleSeeError(error)
             throw ExitCode.failure
         }
+    }
+
+    private func validateObservationRuntime(_ runtime: CommandRuntime) throws {
+        try self.validateBeforeRuntime()
+        if let requiredHostFailure = runtime.requiredHostFailure {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: requiredHostFailure
+            )
+        }
+    }
+
+    private func logSeeStart() {
+        self.logger.operationStart(
+            "see_command",
+            metadata: [
+                "app": self.app ?? "none",
+                "mode": self.mode?.rawValue ?? "auto",
+                "annotate": self.annotate,
+                "menubar": self.menubar,
+                "hasAnalyzePrompt": self.analyze != nil,
+            ]
+        )
     }
 
     var usesPixelOnlyCapture: Bool {

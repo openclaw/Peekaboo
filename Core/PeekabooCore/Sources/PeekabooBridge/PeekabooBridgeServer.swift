@@ -221,81 +221,19 @@ public final class PeekabooBridgeServer {
             hostCapabilities,
             supportedVersions: supportedVersions,
             supportsExplicitSnapshotPublication: services.snapshots.supportsExplicitSnapshotPublication)
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionReceiptVersion,
-           self.allowedOperations.isSuperset(of: [
-               .browserStatus,
-               .browserConnect,
-               .browserDisconnect,
-               .browserExecute,
-           ])
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.browserConnectionReceipts)
-        }
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion,
-           (services as? any PeekabooBridgeBrowserConnectionResultProviding)?
-               .supportsNativeBrowserConnectionBinding == true,
-               self.allowedOperations.isSuperset(of: [
-                   .browserStatus,
-                   .browserConnect,
-                   .browserDisconnect,
-                   .browserExecute,
-               ])
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
-        }
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionHandoffVersion,
-           browserSessionBootstrapProvider?.supportsBrowserSessionBootstrap == true,
-           self.allowedOperations.isSuperset(of: [
-               .browserStatus,
-               .browserConnect,
-               .browserExecute,
-               .browserSessionBootstrap,
-               .browserSessionControl,
-           ]),
-           resolvedHostCapabilities.contains(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.browserConnectionHandoff)
-        } else {
-            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.browserConnectionHandoff)
-        }
+        Self.updateBrowserCapabilities(
+            to: &resolvedHostCapabilities,
+            services: services,
+            supportedVersions: supportedVersions,
+            allowedOperations: self.allowedOperations,
+            browserSessionBootstrapProvider: browserSessionBootstrapProvider)
         self.supportsBrowserHandoffMaintenance = resolvedHostCapabilities.contains(
             PeekabooBridgeHostCapability.browserConnectionHandoff)
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion,
-           services.snapshots.supportsProducerBoundSnapshotReferences,
-           self.allowedOperations.contains(.ownsSnapshot)
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.producerBoundSnapshotReferences)
-        }
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion,
-           (services.automation as? any TargetedClickServiceProtocol)?
-               .supportsTargetedClickAccessibilityValueDelivery == true,
-               self.allowedOperations.contains(.targetedClick)
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)
-        }
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.setValueResultTargetBindingVersion,
-           (services.automation as? any ElementActionAutomationServiceProtocol)?
-               .supportsSetValueResultTargetBinding == true,
-               self.allowedOperations.contains(.setValue),
-               supportedVersions.upperBound < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
-               Self.supportsProcessGenerationBoundElementMutationProvider(services.automation)
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.setValueResultTargetBinding)
-        } else {
-            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.setValueResultTargetBinding)
-        }
-        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .performAction]
-        if supportedVersions.upperBound >=
-            PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
-            Self.supportsProcessGenerationBoundElementMutationProvider(services.automation),
-            !elementMutationOperations.isDisjoint(with: self.allowedOperations)
-        {
-            resolvedHostCapabilities.insert(
-                PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
-        } else {
-            resolvedHostCapabilities.remove(
-                PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
-        }
+        Self.updateSnapshotAndElementCapabilities(
+            to: &resolvedHostCapabilities,
+            services: services,
+            supportedVersions: supportedVersions,
+            allowedOperations: self.allowedOperations)
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
             (try? screenCaptureKitProcessCapabilityRegistrar()) != nil
         resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
@@ -356,38 +294,11 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)
         }
-        let compositeTypeOperations: Set<PeekabooBridgeOperation> = [
-            .targetedTypeActions,
-            .exactWindowTargetedTypeActions,
-            .exactWindowPixelFocusType,
-        ]
-        if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion,
-           !self.allowedOperations.isDisjoint(with: compositeTypeOperations),
-           (services.automation as? any UIAutomationActionOutcomeProviding) != nil,
-           (services.automation as? any CompositeTypeDeliveryServiceProtocol)?
-               .supportsExactWindowCompositeTypeDelivery == true
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
-        } else {
-            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.compositeTypeDelivery)
-        }
-        if self.allowedOperations.contains(.launchApplicationWithOptions),
-           services.applications.supportsSafeBackgroundApplicationLaunchNoOp
-        {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp)
-        }
-        if self.allowedOperations.contains(.activateApplication),
-           services.applications.supportsProcessGenerationPinnedApplicationActivation
-        {
-            resolvedHostCapabilities.insert(
-                PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation)
-        }
-        if self.allowedOperations.contains(.hideApplication),
-           services.applications.supportsProcessGenerationPinnedApplicationHide
-        {
-            resolvedHostCapabilities.insert(
-                PeekabooBridgeHostCapability.processGenerationPinnedApplicationHide)
-        }
+        Self.updateInputAndLifecycleCapabilities(
+            to: &resolvedHostCapabilities,
+            services: services,
+            supportedVersions: supportedVersions,
+            allowedOperations: self.allowedOperations)
         self.hostCapabilities = resolvedHostCapabilities
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
@@ -1367,4 +1278,136 @@ private func protocolHostCapabilities(
         capabilities.insert(PeekabooBridgeHostCapability.browserConnectionHandoff)
     }
     return capabilities
+}
+
+extension PeekabooBridgeServer {
+    private static func updateBrowserCapabilities(
+        to resolvedHostCapabilities: inout Set<String>,
+        services: any PeekabooBridgeServiceProviding,
+        supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
+        allowedOperations: Set<PeekabooBridgeOperation>,
+        browserSessionBootstrapProvider: (any PeekabooBridgeBrowserSessionBootstrapProviding)?)
+    {
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionReceiptVersion,
+           allowedOperations.isSuperset(of: [
+               .browserStatus,
+               .browserConnect,
+               .browserDisconnect,
+               .browserExecute,
+           ])
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.browserConnectionReceipts)
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion,
+           (services as? any PeekabooBridgeBrowserConnectionResultProviding)?
+               .supportsNativeBrowserConnectionBinding == true,
+               allowedOperations.isSuperset(of: [
+                   .browserStatus,
+                   .browserConnect,
+                   .browserDisconnect,
+                   .browserExecute,
+               ])
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionHandoffVersion,
+           browserSessionBootstrapProvider?.supportsBrowserSessionBootstrap == true,
+           allowedOperations.isSuperset(of: [
+               .browserStatus,
+               .browserConnect,
+               .browserExecute,
+               .browserSessionBootstrap,
+               .browserSessionControl,
+           ]),
+           resolvedHostCapabilities.contains(PeekabooBridgeHostCapability.nativeBrowserConnectionBinding)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.browserConnectionHandoff)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.browserConnectionHandoff)
+        }
+    }
+
+    private static func updateSnapshotAndElementCapabilities(
+        to resolvedHostCapabilities: inout Set<String>,
+        services: any PeekabooBridgeServiceProviding,
+        supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
+        allowedOperations: Set<PeekabooBridgeOperation>)
+    {
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion,
+           services.snapshots.supportsProducerBoundSnapshotReferences,
+           allowedOperations.contains(.ownsSnapshot)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.producerBoundSnapshotReferences)
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.targetedClickAccessibilityValueDeliveryVersion,
+           (services.automation as? any TargetedClickServiceProtocol)?
+               .supportsTargetedClickAccessibilityValueDelivery == true,
+               allowedOperations.contains(.targetedClick)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery)
+        }
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.setValueResultTargetBindingVersion,
+           (services.automation as? any ElementActionAutomationServiceProtocol)?
+               .supportsSetValueResultTargetBinding == true,
+               allowedOperations.contains(.setValue),
+               supportedVersions.upperBound < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
+               supportsProcessGenerationBoundElementMutationProvider(services.automation)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.setValueResultTargetBinding)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.setValueResultTargetBinding)
+        }
+        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .performAction]
+        if supportedVersions.upperBound >=
+            PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
+            Self.supportsProcessGenerationBoundElementMutationProvider(services.automation),
+            !elementMutationOperations.isDisjoint(with: allowedOperations)
+        {
+            resolvedHostCapabilities.insert(
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
+        } else {
+            resolvedHostCapabilities.remove(
+                PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
+        }
+    }
+
+    private static func updateInputAndLifecycleCapabilities(
+        to resolvedHostCapabilities: inout Set<String>,
+        services: any PeekabooBridgeServiceProviding,
+        supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
+        allowedOperations: Set<PeekabooBridgeOperation>)
+    {
+        let compositeTypeOperations: Set<PeekabooBridgeOperation> = [
+            .targetedTypeActions,
+            .exactWindowTargetedTypeActions,
+            .exactWindowPixelFocusType,
+        ]
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion,
+           !allowedOperations.isDisjoint(with: compositeTypeOperations),
+           (services.automation as? any UIAutomationActionOutcomeProviding) != nil,
+           (services.automation as? any CompositeTypeDeliveryServiceProtocol)?
+               .supportsExactWindowCompositeTypeDelivery == true
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.compositeTypeDelivery)
+        }
+        if allowedOperations.contains(.launchApplicationWithOptions),
+           services.applications.supportsSafeBackgroundApplicationLaunchNoOp
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp)
+        }
+        if allowedOperations.contains(.activateApplication),
+           services.applications.supportsProcessGenerationPinnedApplicationActivation
+        {
+            resolvedHostCapabilities.insert(
+                PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation)
+        }
+        if allowedOperations.contains(.hideApplication),
+           services.applications.supportsProcessGenerationPinnedApplicationHide
+        {
+            resolvedHostCapabilities.insert(
+                PeekabooBridgeHostCapability.processGenerationPinnedApplicationHide)
+        }
+    }
 }

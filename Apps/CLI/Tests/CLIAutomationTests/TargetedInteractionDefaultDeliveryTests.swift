@@ -405,9 +405,11 @@ struct TargetedInteractionDefaultDeliveryTests {
                 in: context.services,
                 processIdentifier: processIdentifier,
                 processStartIdentity: processStartIdentity,
-                windowID: malformed.windowID,
-                windowBounds: bounds,
-                capturedBounds: malformed.capturedBounds
+                window: KeyboardSnapshotWindow(
+                    windowID: malformed.windowID,
+                    bounds: bounds,
+                    capturedBounds: malformed.capturedBounds
+                )
             )
 
             await #expect(throws: ValidationError.self) {
@@ -423,9 +425,11 @@ struct TargetedInteractionDefaultDeliveryTests {
             in: context.services,
             processIdentifier: processIdentifier,
             processStartIdentity: processStartIdentity,
-            windowID: 42,
-            windowBounds: bounds,
-            capturedBounds: bounds
+            window: KeyboardSnapshotWindow(
+                windowID: 42,
+                bounds: bounds,
+                capturedBounds: bounds
+            )
         )
         let target = try await KeyboardDeliverySupport.requireBackgroundKeyboardTarget(
             target: InteractionTargetOptions(),
@@ -740,20 +744,24 @@ struct TargetedInteractionDefaultDeliveryTests {
         #expect(payload.data.deliveryMode == "background")
     }
 
+    private struct KeyboardSnapshotWindow {
+        let windowID: Int
+        let bounds: CGRect
+        let capturedBounds: CGRect?
+    }
+
     private func storeKeyboardSnapshot(
         in services: PeekabooServices,
         processIdentifier: pid_t,
         processStartIdentity: UInt64,
-        windowID: Int,
-        windowBounds: CGRect,
-        capturedBounds: CGRect?
+        window: KeyboardSnapshotWindow
     ) async throws -> String {
         let snapshotID = try await services.snapshots.createSnapshot()
         let identity = WindowMutationIdentity(
-            windowID: windowID,
+            windowID: window.windowID,
             ownerProcessIdentifier: processIdentifier,
             ownerProcessStartIdentity: processStartIdentity,
-            capturedBounds: capturedBounds
+            capturedBounds: window.capturedBounds
         )
         try await services.snapshots.storeDetectionResult(
             snapshotId: snapshotID,
@@ -770,8 +778,8 @@ struct TargetedInteractionDefaultDeliveryTests {
                         applicationBundleId: "com.apple.TextEdit",
                         applicationProcessId: processIdentifier,
                         windowTitle: "Document",
-                        windowID: windowID,
-                        windowBounds: windowBounds,
+                        windowID: window.windowID,
+                        windowBounds: window.bounds,
                         windowMutationIdentity: identity
                     )
                 )

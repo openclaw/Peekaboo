@@ -51,7 +51,8 @@ extension ConfigCommand {
             guard provider != nil || Self.isValidRawCredentialKey(self.keyOrProvider) else {
                 self.output.error(
                     code: "INVALID_CREDENTIAL_KEY",
-                    message: "Credential keys must be nonempty and cannot contain whitespace, '=', or control characters."
+                    message: "Credential keys must be nonempty and cannot contain " +
+                        "whitespace, '=', or control characters."
                 )
                 throw ExitCode.failure
             }
