@@ -6,21 +6,18 @@ import PeekabooFoundation
         seconds: TimeInterval,
         operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
     {
-        guard seconds.isFinite, seconds > 0 else {
-            throw CaptureError.detectionTimedOut(seconds)
-        }
-
-        let state = ElementDetectionTimeoutState<T>()
+        let state = try ElementDetectionDeadline<T>(seconds: seconds)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 state.install(continuation)
 
                 let workTask = Task { @MainActor in
+                    guard state.claimWork() else { return }
                     do {
                         let value = try await operation()
-                        state.resume(with: .success(value))
+                        state.complete(with: .success(value))
                     } catch {
-                        state.resume(with: .failure(error))
+                        state.complete(with: .failure(error))
                     }
                 }
 
@@ -28,8 +25,8 @@ import PeekabooFoundation
                 // caller resumption, but it cannot publish success merely by starving the deadline task.
                 let timeoutTask = Task.detached {
                     do {
-                        try await Task.sleep(nanoseconds: self.nanoseconds(for: seconds))
-                        state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
+                        try await state.waitForDeadline()
+                        state.timeOut()
                     } catch {
                         // Cancellation means work finished or the parent task was cancelled.
                     }
@@ -38,7 +35,7 @@ import PeekabooFoundation
                 state.setTasks(work: workTask, timeout: timeoutTask)
             }
         } onCancel: {
-            state.resume(with: .failure(CancellationError()))
+            state.cancel()
         }
     }
 
@@ -51,24 +48,20 @@ import PeekabooFoundation
         maximumPendingOperationCount: Int? = nil,
         operation: @escaping @Sendable () throws -> T) async throws -> T
     {
-        guard seconds.isFinite, seconds > 0 else {
-            throw CaptureError.detectionTimedOut(seconds)
-        }
-
-        let state = DetachedAXOperationState<T>()
+        let state = try ElementDetectionDeadline<T>(seconds: seconds)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 state.install(continuation)
 
                 let timeoutTask = Task.detached {
                     do {
-                        try await Task.sleep(nanoseconds: self.nanoseconds(for: seconds))
-                        state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
+                        try await state.waitForDeadline()
+                        state.timeOut()
                     } catch {
                         // Cancellation means work finished or the caller was cancelled.
                     }
                 }
-                state.setTimeoutTask(timeoutTask)
+                state.setTasks(timeout: timeoutTask)
 
                 let processStartIdentity = targetProcessStartIdentity ??
                     SystemIdentityResolver.processStartIdentity(targetProcessIdentifier)
@@ -85,19 +78,15 @@ import PeekabooFoundation
                             return .failure(error)
                         }
                     }
-                    state.resume(with: result)
+                    state.complete(with: result)
                 }
                 if !enqueued {
-                    state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
+                    state.timeOut()
                 }
             }
         } onCancel: {
-            state.resume(with: .failure(CancellationError()))
+            state.cancel()
         }
-    }
-
-    private static func nanoseconds(for seconds: TimeInterval) -> UInt64 {
-        UInt64(min(seconds, TimeInterval(UInt64.max) / 1_000_000_000) * 1_000_000_000)
     }
 
     @_spi(Testing) public static var retainedIdleLaneCount: Int {
@@ -186,123 +175,5 @@ private final class AXObservationWorkerPool: @unchecked Sendable {
         for (key, _) in idle.prefix(excess) {
             self.lanes.removeValue(forKey: key)
         }
-    }
-}
-
-private final class DetachedAXOperationState<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<T, any Error>?
-    private var timeoutTask: Task<Void, Never>?
-    private var finished = false
-    private var started = false
-
-    func install(_ continuation: CheckedContinuation<T, any Error>) {
-        self.lock.lock()
-        let alreadyFinished = self.finished
-        if !alreadyFinished {
-            self.continuation = continuation
-        }
-        self.lock.unlock()
-
-        if alreadyFinished {
-            continuation.resume(throwing: CancellationError())
-        }
-    }
-
-    func setTimeoutTask(_ task: Task<Void, Never>) {
-        self.lock.lock()
-        if self.finished {
-            self.lock.unlock()
-            task.cancel()
-            return
-        }
-        self.timeoutTask = task
-        self.lock.unlock()
-    }
-
-    func claimWork() -> Bool {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        guard !self.finished, !self.started else { return false }
-        self.started = true
-        return true
-    }
-
-    func resume(with result: Result<T, any Error>) {
-        let continuation: CheckedContinuation<T, any Error>?
-        let timeoutTask: Task<Void, Never>?
-
-        self.lock.lock()
-        if self.finished {
-            self.lock.unlock()
-            return
-        }
-        self.finished = true
-        continuation = self.continuation
-        timeoutTask = self.timeoutTask
-        self.continuation = nil
-        self.timeoutTask = nil
-        self.lock.unlock()
-
-        timeoutTask?.cancel()
-        continuation?.resume(with: result)
-    }
-}
-
-private final class ElementDetectionTimeoutState<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<T, any Error>?
-    private var workTask: Task<Void, Never>?
-    private var timeoutTask: Task<Void, Never>?
-    private var finished = false
-
-    func install(_ continuation: CheckedContinuation<T, any Error>) {
-        self.lock.lock()
-        let shouldResumeCancellation = self.finished
-        if !shouldResumeCancellation {
-            self.continuation = continuation
-        }
-        self.lock.unlock()
-
-        if shouldResumeCancellation {
-            continuation.resume(throwing: CancellationError())
-        }
-    }
-
-    func setTasks(work: Task<Void, Never>, timeout: Task<Void, Never>) {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-
-        if self.finished {
-            work.cancel()
-            timeout.cancel()
-        } else {
-            self.workTask = work
-            self.timeoutTask = timeout
-        }
-    }
-
-    func resume(with result: Result<T, any Error>) {
-        let continuation: CheckedContinuation<T, any Error>?
-        let workTask: Task<Void, Never>?
-        let timeoutTask: Task<Void, Never>?
-
-        self.lock.lock()
-        if self.finished {
-            self.lock.unlock()
-            return
-        }
-        self.finished = true
-        continuation = self.continuation
-        workTask = self.workTask
-        timeoutTask = self.timeoutTask
-        self.continuation = nil
-        self.workTask = nil
-        self.timeoutTask = nil
-        self.lock.unlock()
-
-        workTask?.cancel()
-        timeoutTask?.cancel()
-        continuation?.resume(with: result)
     }
 }
