@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -217,12 +217,14 @@ function safeTestsLaunch() {
 
 function environmentFixture(t) {
   const root = mkdtempSync('/tmp/peekaboo preflight env ');
+  const rejectedTool = `peekaboo-rejected-${root.slice(-6)}`;
+  const absentTool = `peekaboo-absent-${root.slice(-6)}`;
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const dir of ['home', 'tmp', 'scripts', 'signing-shim']) mkdirSync(join(root, dir));
   const write = (path, text) => writeFileSync(join(root, path), text);
   write('startup', 'printf "unexpected startup\\n" > "$HOME/startup-ran"\n');
-  for (const tool of ['node', 'pnpm', 'npm', 'python3', 'codesign']) {
-    write(`signing-shim/${tool}`, '#!/bin/bash\nprintf "unexpected shim\\n" >&2\nexit 98\n');
+  for (const tool of ['node', 'pnpm', 'npm', 'python3', 'git', 'codesign', 'bash', rejectedTool]) {
+    write(`signing-shim/${tool}`, '#!/bin/bash\nprintf "unexpected shim\\n" > "$HOME/shim-ran"\nexit 98\n');
     chmodSync(join(root, `signing-shim/${tool}`), 0o755);
   }
   write('signing-shim/codesign', `#!/bin/bash -p
@@ -243,20 +245,38 @@ printf 'later-signing-child-authority-retained=true\\n'
   write('probe', `#!/bin/bash
 set -euo pipefail
 source "$FIXTURE_SANITIZER"
+assertion=protected-variables
+trap 'printf "preflight-probe: assertion=%s tool=%s exit=%s\\n" "$assertion" "\${tool:-none}" "$?" >&2' ERR
 terminal_artifact_assert_build_env_is_clean
 for name in MAC_RELEASE_CODESIGN_KEYCHAIN CODESIGN_KEYCHAIN CODESIGN_IDENTITY \\
   PEEKABOO_OP_SERVICE_TOKEN_FILE PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE CDPATH GLOBIGNORE BASH_FUNC_fixture; do
-  [[ -z "\${!name+x}" ]] || exit 91
+  assertion="unset-$name"
+  [[ -z "\${!name+x}" ]]
 done
+assertion=exact-trusted-path
 [[ "$PATH" == /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin ]]
+assertion=allowed-values
 [[ "$SWIFTPM_MIRROR_CONFIG" == "$HOME/verified-source-mapping.json" ]]
 [[ "$DEVELOPER_DIR" == "$HOME/developer" && "$PEEKABOO_USE_RESOLVED_VERSIONS" == 1 ]]
-for tool in node pnpm npm python3 codesign; do
-  resolved="$(command -v "$tool")"
-  case "$resolved" in /opt/homebrew/bin/*|/usr/local/bin/*|/usr/bin/*|/bin/*) ;; *) exit 92 ;; esac
+assertion=tool-resolution
+for tool in node pnpm npm python3 git codesign bash ${rejectedTool} ${absentTool}; do
+  # Safe refusal is not evidence that a required build command is installed.
+  if resolved="$(command -v "$tool")"; then
+    case "$resolved" in
+      /opt/homebrew/bin/*|/usr/local/bin/*|/usr/bin/*|/bin/*) ;;
+      *) printf 'preflight-probe: tool=%s unsafe-resolution\\n' "$tool" >&2; exit 92 ;;
+    esac
+    [[ "$tool" != peekaboo-rejected-* && "$tool" != peekaboo-absent-* ]]
+    printf 'tool=%s resolution=trusted\\n' "$tool"
+  else
+    lookup_exit=$?
+    [[ "$lookup_exit" == 1 && "$tool" != bash ]]
+    printf 'tool=%s resolution=unavailable safe-refusal=true\\n' "$tool"
+  fi
 done
+assertion=arguments
 [[ "$#" == 4 && "$1" == 'argument one' && "$2" == 'quote" and $literal' && -z "$3" && "$4" == $'line one\\nline two' ]]
-printf 'test-child-clean=true tools-resolved=true arguments-preserved=true\\n'
+printf 'test-child-clean=true tool-boundary-safe=true arguments-preserved=true\\n'
 exit "$FIXTURE_CHILD_EXIT"
 `);
   chmodSync(join(root, 'probe'), 0o755);
@@ -278,6 +298,8 @@ export BASH_ENV="$PWD/startup" ENV="$PWD/startup"
 export PATH="$PWD/signing-shim:$PATH"
 parent_path="$PATH"
 [[ "$(command -v codesign)" == "$PWD/signing-shim/codesign" ]]
+[[ "$(command -v ${rejectedTool})" == "$PWD/signing-shim/${rejectedTool}" ]]
+if command -v ${absentTool} >/dev/null; then exit 94; fi
 check_parent() {
   local result=$? name
   for name in "\${TERMINAL_ARTIFACT_SECRET_NAMES[@]}"; do
@@ -291,13 +313,14 @@ check_parent() {
   [[ "$PEEKABOO_OP_SERVICE_TOKEN_FILE" == "$HOME/primary" && "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE" == "$HOME/legacy" ]]
   codesign # Only the asserted fixture shim; it checks synthetic authority.
   [[ ! -e "$HOME/startup-ran" ]]
+  [[ ! -e "$HOME/shim-ran" ]]
   printf 'parent-retained=true preflight=%s eligible=%s exit=%s\\n' "$RELEASE_PREFLIGHT_COMPLETED" "$RELEASE_PUBLICATION_ELIGIBLE" "$result"
   exit "$result"
 }
 trap check_parent EXIT
 `;
   return {
-    root, write, prelude,
+    root, write, prelude, rejectedTool, absentTool,
     env: {
       PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin',
       HOME: join(root, 'home'), TMPDIR: join(root, 'tmp'), LANG: 'C',
@@ -307,7 +330,7 @@ trap check_parent EXIT
   };
 }
 
-test('direct preparation test launcher uses the real sanitizer with child exits 0 and 37', (t) => {
+test('direct preparation test launcher preserves child exits and refuses unavailable commands', (t) => {
   const launch = safeTestsLaunch();
   const fixture = environmentFixture(t);
   // Replace only the executable/argv at spawnSync's seam. Run the exact launcher
@@ -322,9 +345,27 @@ test('direct preparation test launcher uses the real sanitizer with child exits 
       stdout: result.stdout, stderr: result.stderr }));
     assert.equal(result.status, childExit, result.stdout + result.stderr);
     assert.equal(result.stderr, '');
-    assert.match(result.stdout, /test-child-clean=true tools-resolved=true arguments-preserved=true/);
+    assert.match(result.stdout, /test-child-clean=true tool-boundary-safe=true arguments-preserved=true/);
+    assert.match(result.stdout, /tool=bash resolution=trusted/);
+    for (const tool of [fixture.rejectedTool, fixture.absentTool]) {
+      assert.ok(result.stdout.includes(`tool=${tool} resolution=unavailable safe-refusal=true`));
+    }
     assert.match(result.stdout, /later-signing-child-authority-retained=true/);
     assert.match(result.stdout, new RegExp(`parent-retained=true preflight=false eligible=false exit=${childExit}`));
+  }
+  for (const command of [fixture.rejectedTool, fixture.absentTool]) {
+    const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-p', 'direct.sh', launch.command,
+      ...launch.args.slice(0, -2), command, 'test'], {
+      cwd: fixture.root, env: fixture.env, encoding: 'utf8'
+    });
+    t.diagnostic(JSON.stringify({ lane: 'direct', command, status: result.status,
+      stdout: result.stdout, stderr: result.stderr }));
+    assert.equal(result.status, 127, result.stdout + result.stderr);
+    assert.ok(result.stderr.includes(command), 'missing-command diagnostic names the tool');
+    assert.doesNotMatch(result.stdout, /test-child-clean=true/);
+    assert.match(result.stdout, /later-signing-child-authority-retained=true/);
+    assert.match(result.stdout, /parent-retained=true preflight=false eligible=false exit=127/);
+    assert.equal(existsSync(join(fixture.root, 'home/shim-ran')), false);
   }
 });
 
@@ -378,6 +419,28 @@ console.log('preflight-build-authority-retained=true');
 process.exit(passed ? 0 : 37);
 `);
   fixture.write('gate.sh', `${fixture.prelude}
+# Observe the real sanitizer before native exec; dispatch only the fixture's
+# Node argv through the running test interpreter (or a missing fixture command).
+# This avoids depending on an installed Node on the production PATH.
+/usr/bin/env() {
+  local name arg replacements=0
+  local -a forwarded=()
+  for name in "\${TERMINAL_ARTIFACT_SECRET_NAMES[@]}" CDPATH GLOBIGNORE BASH_FUNC_fixture \\
+    PEEKABOO_OP_SERVICE_TOKEN_FILE PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE; do
+    [[ -z "\${!name+x}" ]] || { printf 'pre-native variable remains: %s\\n' "$name" >&2; return 91; }
+  done
+  for arg in "$@"; do
+    if [[ "$arg" == node ]]; then
+      forwarded+=("$FIXTURE_GATE_COMMAND")
+      replacements=$((replacements + 1))
+    else
+      forwarded+=("$arg")
+    fi
+  done
+  [[ "$replacements" == 1 ]] || { printf 'fixture Node dispatch missing\\n' >&2; return 92; }
+  printf 'gate-pre-native-clean=true fixture-node-dispatch=true\\n'
+  command /usr/bin/env "\${forwarded[@]}"
+}
 SKIP_CHECKS=false UNIVERSAL=true REUSE_BUILT_CLI="$FIXTURE_REUSE"
 PROJECT_ROOT="$PWD" CLI_SIGN_IDENTITY=fixture-release-identity
 CREATE_GITHUB_RELEASE=true PUBLISH_NPM=true
@@ -389,7 +452,8 @@ ${eligibility}
     for (const childExit of [0, 37]) {
       const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-p', 'gate.sh'], {
         cwd: fixture.root, encoding: 'utf8',
-        env: { ...fixture.env, FIXTURE_REUSE: reuse, FIXTURE_CHILD_EXIT: String(childExit) }
+        env: { ...fixture.env, FIXTURE_REUSE: reuse, FIXTURE_CHILD_EXIT: String(childExit),
+          FIXTURE_GATE_COMMAND: process.execPath }
       });
       t.diagnostic(JSON.stringify({ lane: 'driver-gate', reuse, childExit, status: result.status,
         stdout: result.stdout, stderr: result.stderr }));
@@ -397,12 +461,28 @@ ${eligibility}
       // failed complete preflight to release exit 1 and never grants eligibility.
       assert.equal(result.status, childExit === 0 ? 0 : 1, result.stdout + result.stderr);
       assert.equal(result.stderr, '');
-      assert.match(result.stdout, /test-child-clean=true tools-resolved=true arguments-preserved=true/);
+      assert.match(result.stdout, /gate-pre-native-clean=true fixture-node-dispatch=true/);
+      assert.match(result.stdout, /test-child-clean=true tool-boundary-safe=true arguments-preserved=true/);
       assert.match(result.stdout, /preflight-build-authority-retained=true/);
       assert.match(result.stdout, /later-signing-child-authority-retained=true/);
       assert.match(result.stdout, childExit === 0
         ? /parent-retained=true preflight=true eligible=true exit=0/
         : /parent-retained=true preflight=false eligible=false exit=1/);
+    }
+    for (const command of [fixture.rejectedTool, fixture.absentTool]) {
+      const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-p', 'gate.sh'], {
+        cwd: fixture.root, encoding: 'utf8',
+        env: { ...fixture.env, FIXTURE_REUSE: reuse, FIXTURE_GATE_COMMAND: command }
+      });
+      t.diagnostic(JSON.stringify({ lane: 'driver-gate', reuse, command, status: result.status,
+        stdout: result.stdout, stderr: result.stderr }));
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.ok(result.stderr.includes(command), 'missing-command diagnostic names the tool');
+      assert.match(result.stdout, /gate-pre-native-clean=true fixture-node-dispatch=true/);
+      assert.doesNotMatch(result.stdout, /test-child-clean=true|preflight-build-authority-retained=true/);
+      assert.match(result.stdout, /later-signing-child-authority-retained=true/);
+      assert.match(result.stdout, /parent-retained=true preflight=false eligible=false exit=1/);
+      assert.equal(existsSync(join(fixture.root, 'home/shim-ran')), false);
     }
   }
 });

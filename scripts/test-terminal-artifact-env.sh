@@ -19,30 +19,46 @@ cat > "$TEST_DIR/probe" <<'EOF'
 set -euo pipefail
 source "$1"
 printf 'entered\n' > "$2/child-entered"
+assertion=protected-variables
+trap 'printf "terminal-env-probe: assertion=%s tool=%s exit=%s\n" "$assertion" "${tool:-none}" "$?" >&2' ERR
 terminal_artifact_assert_build_env_is_clean
 for name in CDPATH GLOBIGNORE BASH_FUNC_terminal_fixture; do
+  assertion="unset-$name"
   [[ -z "${!name+x}" ]]
 done
+assertion=exact-trusted-path
 [[ "$PATH" == /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin ]]
+assertion=allowed-values
 [[ "$HOME" == "$2/home" && "$TMPDIR" == "$2/tmp" ]]
 [[ "$DEVELOPER_DIR" == "$2/developer" ]]
 [[ "$MAC_RELEASE_CODESIGN_KEYCHAIN" == "$2/keychain" && "$CODESIGN_KEYCHAIN" == "$2/keychain" ]]
 [[ "$CODESIGN_IDENTITY" == fixture-identity ]]
 [[ "$SWIFTPM_MIRROR_CONFIG" == "$2/verified-source-mapping.json" ]]
 [[ "$PEEKABOO_USE_RESOLVED_VERSIONS" == 1 && "$TERMINAL_FIXTURE_ALLOWED" == $'allowed value\nsecond line' ]]
-for tool in node pnpm npm python3 git codesign; do
-  resolved="$(command -v "$tool")"
-  case "$resolved" in
-    /opt/homebrew/bin/*|/usr/local/bin/*|/usr/bin/*|/bin/*) ;;
-    *) exit 94 ;;
-  esac
+assertion=tool-resolution
+for tool in node pnpm npm python3 git codesign bash "peekaboo-rejected-${2##*.}" "peekaboo-absent-${2##*.}"; do
+  # This checks the environment boundary, not the host's build-tool readiness.
+  if resolved="$(command -v "$tool")"; then
+    case "$resolved" in
+      /opt/homebrew/bin/*|/usr/local/bin/*|/usr/bin/*|/bin/*) ;;
+      *) printf 'terminal-env-probe: tool=%s unsafe-resolution\n' "$tool" >&2; exit 94 ;;
+    esac
+    [[ "$tool" != peekaboo-rejected-* && "$tool" != peekaboo-absent-* ]]
+    printf 'tool=%s resolution=trusted\n' "$tool"
+  else
+    lookup_exit=$?
+    [[ "$lookup_exit" == 1 && "$tool" != bash ]]
+    printf 'tool=%s resolution=unavailable safe-refusal=true\n' "$tool"
+  fi
 done
+assertion=custody
 if [[ "$3" == build ]]; then
   [[ -z "${PEEKABOO_OP_SERVICE_TOKEN_FILE+x}" && -z "${PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE+x}" ]]
 else
   [[ "$PEEKABOO_OP_SERVICE_TOKEN_FILE" == "$2/primary-custody" ]]
   [[ "$PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE" == "$2/legacy-custody" ]]
 fi
+assertion=arguments
 [[ "$5" == 'argument one' && "$6" == 'argument=two' ]]
 printf 'child-clean=true allowed-values-preserved=true arguments-preserved=true\n'
 exit "$4"
@@ -55,7 +71,7 @@ printf 'invoked\n' > "${HOSTILE_ENV_MARKER:?}"
 exit 97
 EOF
 chmod 755 "$TEST_DIR/hostile-bin/env"
-for tool in codesign node pnpm npm python3 git; do
+for tool in codesign node pnpm npm python3 git bash "peekaboo-rejected-${TEST_DIR##*.}"; do
   cp "$TEST_DIR/hostile-bin/env" "$TEST_DIR/hostile-bin/$tool"
 done
 
@@ -84,6 +100,8 @@ run_dirty_fixture() (
   PATH="$TEST_DIR/hostile-bin:$PATH"
   local parent_path="$PATH"
   [[ "$(command -v codesign)" == "$TEST_DIR/hostile-bin/codesign" ]] || return 94
+  [[ "$(command -v "peekaboo-rejected-${TEST_DIR##*.}")" == "$TEST_DIR/hostile-bin/peekaboo-rejected-${TEST_DIR##*.}" ]] || return 94
+  if command -v "peekaboo-absent-${TEST_DIR##*.}" >/dev/null; then return 94; fi
 
   # Observe shell state before the native loader can strip DYLD variables for us.
   # Forward to the real executable so the child environment is also verified.
@@ -127,12 +145,12 @@ for lane in build orchestrator; do
     rm -f "$TEST_DIR/env-entered" "$TEST_DIR/child-entered"
     fixture_exit=0
     run_dirty_fixture "$lane" "$child_exit" > "$TEST_DIR/probe-output" || fixture_exit=$?
+    cat "$TEST_DIR/probe-output"
     [[ -e "$TEST_DIR/env-entered" ]] || fail "$lane did not reach the pre-exec boundary (exit $fixture_exit)"
     [[ -e "$TEST_DIR/child-entered" ]] || fail "$lane did not reach the child assertion (exit $fixture_exit)"
     [[ "$fixture_exit" == "$child_exit" ]] || fail "$lane changed child exit $child_exit to $fixture_exit"
-    [[ "$(<"$TEST_DIR/probe-output")" == 'child-clean=true allowed-values-preserved=true arguments-preserved=true' ]] || \
+    [[ "$(<"$TEST_DIR/probe-output")" == *$'\nchild-clean=true allowed-values-preserved=true arguments-preserved=true' ]] || \
       fail "$lane child environment assertion failed"
-    cat "$TEST_DIR/probe-output"
     [[ ! -e "$TEST_DIR/hostile-env-marker" ]] || fail "$lane resolved env through hostile PATH"
     [[ ! -e "$startup_marker" ]] || fail "$lane processed a startup hook"
     # This runs outside the poisoned subshell, including after the exit-37 case.
@@ -141,6 +159,19 @@ for lane in build orchestrator; do
     [[ ! -e "$TEST_DIR/cleanup-probe" ]] || fail "$lane left cleanup poisoned"
     printf 'test-terminal-artifact-env: %s exit=%s pre-exec-clean=true child-clean=true cleanup-clean=true\n' \
       "$lane" "$fixture_exit"
+  done
+done
+
+# Safe lookup refusal must still fail when a caller actually needs the command.
+for lane in build orchestrator; do
+  for availability in rejected absent; do
+    missing_tool="peekaboo-$availability-${TEST_DIR##*.}"
+    command_exit=0
+    PATH="$TEST_DIR/hostile-bin:$PATH" "terminal_artifact_run_$lane" "$missing_tool" \
+      > "$TEST_DIR/missing-output" 2>&1 || command_exit=$?
+    [[ "$command_exit" == 127 ]] || fail "$lane $availability command exit=$command_exit (expected 127)"
+    [[ ! -e "$TEST_DIR/hostile-env-marker" ]] || fail "$lane invoked the rejected command"
+    printf 'test-terminal-artifact-env: %s tool-case=%s actual-command-exit=127 safe-refusal=true\n' "$lane" "$availability"
   done
 done
 

@@ -45,7 +45,7 @@ public final class VideoFrameSource: CaptureFrameSource {
             endMs: endMs,
             resolutionCap: resolutionCap.map(Double.init))
 
-        let asset = AVAsset(url: url)
+        let asset = AVURLAsset(url: url)
         let duration: CMTime = if #available(macOS 13.0, *) {
             try await asset.load(.duration)
         } else {
