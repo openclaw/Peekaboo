@@ -372,3 +372,11 @@ AppleDouble entries, and every ZIP must reproduce the retained canonical tree by
 The retained receipts also preserve the exact notarization submissions, bind every universal Mach-O architecture,
 anchor the controller/monitor source aggregate inside signed code, and require the final DMG to remount with the exact
 notarized Peekaboo app and no unapproved root payloads.
+
+The synthetic `scripts/test-terminal-manifest-portability.sh` fixture copies disposable, metadata-bearing inputs without
+extended attributes before setting source modes to 444/555 and recording trees or packaging archives. Its final synthetic
+DMG is read-only before receipt binding so verification mounts cannot add checksum cache attributes. Validation and
+relocation must preserve the candidate's bytes, modes, and absence of xattrs; metadata is never cleared from a sealed
+candidate. Run it in a macOS environment whose shell and Node runtime create xattr-free temporary files and directories;
+a host that adds provenance to those nodes still fails the strict policy, even in a headless shell. The test also covers
+byte, symlink, and xattr tampering without live signing.

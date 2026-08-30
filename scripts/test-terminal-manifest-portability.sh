@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TEST_DIR="$(mktemp -d /tmp/peekaboo-terminal-portability-test.XXXXXX)"
 cleanup() {
   [[ "${PEEKABOO_KEEP_PORTABILITY_FIXTURE:-0}" == 1 ]] && return
@@ -16,27 +16,39 @@ X64_CDHASH=2222222222222222222222222222222222222222
 NODE_BIN="$(command -v node)"
 sha() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
 size() { /usr/bin/stat -f%z "$1"; }
+fail() { printf 'test-terminal-manifest-portability: %s\n' "$*" >&2; exit 1; }
+# shellcheck source=scripts/terminal-artifact-policy.sh
+source "$ROOT_DIR/scripts/terminal-artifact-policy.sh"
+
+# Exercise metadata-bearing inputs without changing tracked files or sealed payloads.
+raw_inputs="$TEST_DIR/copy-inputs"
+source_input="$raw_inputs/qualification-source"
+mkdir -p "$raw_inputs/tools" "$source_input/src" "$source_input/scripts/support" \
+  "$source_input/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm"
+for tool in validate-terminal-artifact-manifest.mjs artifact-tree-manifest.rb \
+  terminal-archive-policy.mjs terminal-dmg-payload.mjs qualification-node.entitlements; do
+  cp -X "$ROOT_DIR/scripts/$tool" "$raw_inputs/tools/"
+  /usr/bin/xattr -w com.openclaw.peekaboo.copy-input benign "$raw_inputs/tools/$tool"
+done
 
 candidate="$TEST_DIR/candidate-one"
-mkdir -p "$candidate/tools" "$candidate/notary/submissions" "$candidate/qualification" \
-  "$candidate/qualification-source/src" "$candidate/qualification-source/scripts/support" \
-  "$candidate/qualification-source/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm"
-cp "$ROOT_DIR/scripts/validate-terminal-artifact-manifest.mjs" "$candidate/tools/"
-cp "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$candidate/tools/"
-cp "$ROOT_DIR/scripts/terminal-archive-policy.mjs" "$candidate/tools/"
-cp "$ROOT_DIR/scripts/terminal-dmg-payload.mjs" "$candidate/tools/"
+mkdir -p "$candidate/tools" "$candidate/notary/submissions" "$candidate/qualification"
+cp -X "$raw_inputs/tools/validate-terminal-artifact-manifest.mjs" "$candidate/tools/"
+cp -X "$raw_inputs/tools/artifact-tree-manifest.rb" "$candidate/tools/"
+cp -X "$raw_inputs/tools/terminal-archive-policy.mjs" "$candidate/tools/"
+cp -X "$raw_inputs/tools/terminal-dmg-payload.mjs" "$candidate/tools/"
 
-printf 'controller fixture source\n' > "$candidate/qualification-source/src/controller.swift"
-controller_source_sha="$(sha "$candidate/qualification-source/src/controller.swift")"
-printf 'monitor fixture source\n' > "$candidate/qualification-source/scripts/support/background-computer-use-probe.swift"
-monitor_source_sha="$(sha "$candidate/qualification-source/scripts/support/background-computer-use-probe.swift")"
+printf 'controller fixture source\n' > "$source_input/src/controller.swift"
+controller_source_sha="$(sha "$source_input/src/controller.swift")"
+printf 'monitor fixture source\n' > "$source_input/scripts/support/background-computer-use-probe.swift"
+monitor_source_sha="$(sha "$source_input/scripts/support/background-computer-use-probe.swift")"
 printf '{"pins":[],"version":3}\n' > \
-  "$candidate/qualification-source/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved"
-lock_sha="$(sha "$candidate/qualification-source/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved")"
+  "$source_input/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+lock_sha="$(sha "$source_input/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved")"
 files_json="$(jq -cn --arg sha "$controller_source_sha" '[{path:"src/controller.swift",sha256:$sha}]')"
 jq -n --argjson files "$files_json" '{current_build_source:{controller_source_manifest:$files}}' > \
-  "$candidate/qualification-source/scripts/multi-target-certification-catalog.json"
-catalog_sha="$(sha "$candidate/qualification-source/scripts/multi-target-certification-catalog.json")"
+  "$source_input/scripts/multi-target-certification-catalog.json"
+catalog_sha="$(sha "$source_input/scripts/multi-target-certification-catalog.json")"
 source_aggregate="$(FILES_JSON="$files_json" "$NODE_BIN" -e '
 const crypto=require("crypto");
 const canonical=v=>Array.isArray(v)?v.map(canonical):(v&&typeof v==="object"?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v);
@@ -46,10 +58,18 @@ process.stdout.write(crypto.createHash("sha256").update(Buffer.concat([domain,Bu
 jq -n --arg catalogSHA "$catalog_sha" --arg aggregate "$source_aggregate" --argjson files "$files_json" '
   {version:1,catalog_path:"scripts/multi-target-certification-catalog.json",catalog_sha256:$catalogSHA,
    aggregate_sha256:$aggregate,files:$files}' > "$candidate/controller-source-manifest.json"
+for input in "$source_input" "$source_input/src" "$source_input/src/controller.swift"; do
+  /usr/bin/xattr -w com.openclaw.peekaboo.copy-input benign "$input"
+done
+cp -RX "$source_input" "$candidate/qualification-source"
+terminal_artifact_assert_no_xattrs "$candidate" || fail 'copied fixture inputs contain extended attributes'
+# Establish the final modes only after copying; receipts and archives must stay immutable.
 find "$candidate/qualification-source" -type d -exec chmod 555 {} +
 find "$candidate/qualification-source" -type f -exec chmod 444 {} +
 /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$candidate/qualification-source" > \
   "$candidate/qualification-source-tree.json"
+jq -e 'all(.entries[]; if .type == "directory" then .mode == "0555" else .mode == "0444" end)' \
+  "$candidate/qualification-source-tree.json" >/dev/null || fail 'source snapshot modes differ'
 
 cat > "$TEST_DIR/producer.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -70,20 +90,23 @@ for architecture in arm64 x86_64; do
 done
 /usr/bin/lipo -create "$TEST_DIR/producer-arm64" "$TEST_DIR/producer-x86_64" -output "$TEST_DIR/producer-universal"
 /usr/bin/lipo -create "$TEST_DIR/runtime-arm64" "$TEST_DIR/runtime-x86_64" -output "$TEST_DIR/runtime-universal"
-cp "$TEST_DIR/producer-universal" "$candidate/qualification/peekaboo-certification-controller"
-cp "$TEST_DIR/producer-universal" "$candidate/qualification/background-computer-use-probe"
+for input in "$TEST_DIR/producer-universal" "$TEST_DIR/runtime-arm64" "$TEST_DIR/runtime-universal"; do
+  /usr/bin/xattr -w com.openclaw.peekaboo.copy-input benign "$input"
+done
+cp -X "$TEST_DIR/producer-universal" "$candidate/qualification/peekaboo-certification-controller"
+cp -X "$TEST_DIR/producer-universal" "$candidate/qualification/background-computer-use-probe"
 /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$candidate/qualification" > "$candidate/qualification-tree.json"
 
 cli_package="$TEST_DIR/peekaboo-macos-universal"
 mkdir -p "$cli_package"
-cp "$TEST_DIR/producer-universal" "$cli_package/peekaboo"
+cp -X "$TEST_DIR/producer-universal" "$cli_package/peekaboo"
 printf 'fixture license\n' > "$cli_package/LICENSE"
 printf '%s\n' "$VERSION" > "$cli_package/VERSION"
 /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$cli_package" > "$candidate/cli-tree.json"
 /usr/bin/tar -czf "$candidate/peekaboo-macos-universal.tar.gz" -C "$TEST_DIR" peekaboo-macos-universal
 cli_notary="$TEST_DIR/cli-notary"
 mkdir -p "$cli_notary"
-cp "$TEST_DIR/producer-universal" "$cli_notary/peekaboo"
+cp -X "$TEST_DIR/producer-universal" "$cli_notary/peekaboo"
 /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$cli_notary" > "$candidate/cli-notary-tree.json"
 
 make_info_plist() {
@@ -103,7 +126,7 @@ EOF
 
 peekaboo_app="$TEST_DIR/Peekaboo.app"
 mkdir -p "$peekaboo_app/Contents/MacOS" "$peekaboo_app/Contents/Resources"
-cp "$TEST_DIR/runtime-arm64" "$peekaboo_app/Contents/MacOS/Peekaboo"
+cp -X "$TEST_DIR/runtime-arm64" "$peekaboo_app/Contents/MacOS/Peekaboo"
 make_info_plist "$peekaboo_app/Contents/Info.plist" Peekaboo boo.peekaboo.mac "$SOURCE_COMMIT"
 printf 'icon\n' > "$peekaboo_app/Contents/Resources/AppIcon.icns"
 /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$peekaboo_app" > "$candidate/peekaboo-app-tree.json"
@@ -111,7 +134,7 @@ printf 'icon\n' > "$peekaboo_app/Contents/Resources/AppIcon.icns"
 
 playground_app="$TEST_DIR/Playground.app"
 mkdir -p "$playground_app/Contents/MacOS" "$playground_app/Contents/Resources"
-cp "$TEST_DIR/runtime-arm64" "$playground_app/Contents/MacOS/Playground"
+cp -X "$TEST_DIR/runtime-arm64" "$playground_app/Contents/MacOS/Playground"
 make_info_plist "$playground_app/Contents/Info.plist" Playground boo.peekaboo.playground.debug
 jq -n --arg source "$SOURCE_COMMIT" --arg lockSHA "$lock_sha" --arg version "$VERSION" '
  {version:2,source_commit:$source,source_tree:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -125,11 +148,11 @@ jq -n --arg source "$SOURCE_COMMIT" --arg lockSHA "$lock_sha" --arg version "$VE
 
 node_app="$TEST_DIR/PeekabooQualificationNode.app"
 mkdir -p "$node_app/Contents/MacOS" "$node_app/Contents/Resources"
-cp "$TEST_DIR/runtime-universal" "$node_app/Contents/MacOS/node"
+cp -X "$TEST_DIR/runtime-universal" "$node_app/Contents/MacOS/node"
 make_info_plist "$node_app/Contents/Info.plist" node boo.peekaboo.qualification-node
 /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 24.15.0' "$node_app/Contents/Info.plist"
 printf 'fixture node license\n' > "$node_app/Contents/Resources/LICENSE"
-cp "$ROOT_DIR/scripts/qualification-node.entitlements" \
+cp -X "$raw_inputs/tools/qualification-node.entitlements" \
   "$node_app/Contents/Resources/qualification-node.entitlements"
 node_binary_sha="$(sha "$node_app/Contents/MacOS/node")"; node_binary_size="$(size "$node_app/Contents/MacOS/node")"
 node_license_sha="$(sha "$node_app/Contents/Resources/LICENSE")"
@@ -148,18 +171,21 @@ jq -n --arg binarySHA "$node_binary_sha" --argjson binarySize "$node_binary_size
 
 volume="$TEST_DIR/volume"
 mkdir -p "$volume/.background"
-cp -R "$peekaboo_app" "$volume/Peekaboo.app"
+cp -RX "$peekaboo_app" "$volume/Peekaboo.app"
 printf 'finder\n' > "$volume/.DS_Store"; printf 'volume icon\n' > "$volume/.VolumeIcon.icns"
 printf 'background\n' > "$volume/.background/background.png"; ln -s /Applications "$volume/Applications"
+raw_dmg="$raw_inputs/Peekaboo-$VERSION.dmg"
 COPYFILE_DISABLE=1 /usr/bin/hdiutil create -quiet -fs HFS+ -format UDZO -volname 'Peekaboo Fixture' \
-  -srcfolder "$volume" "$candidate/Peekaboo-$VERSION.dmg"
-"$NODE_BIN" "$ROOT_DIR/scripts/terminal-dmg-payload.mjs" --dmg "$candidate/Peekaboo-$VERSION.dmg" \
+  -srcfolder "$volume" "$raw_dmg"
+"$NODE_BIN" "$ROOT_DIR/scripts/terminal-dmg-payload.mjs" --dmg "$raw_dmg" \
   --expected-app-tree "$candidate/peekaboo-app-tree.json" --tree-generator "$ROOT_DIR/scripts/artifact-tree-manifest.rb" > \
   "$candidate/peekaboo-dmg-payload.json"
-/usr/bin/xattr -cr "$candidate"
+cp -X "$raw_dmg" "$candidate/Peekaboo-$VERSION.dmg"
+# Prevent mount-time checksum cache writes before binding this synthetic image to receipts.
+chmod 444 "$candidate/Peekaboo-$VERSION.dmg"
 
 submission_bytes="$TEST_DIR/submission"; printf 'retained fixture submission\n' > "$submission_bytes"
-submission_sha="$(sha "$submission_bytes")"; cp "$submission_bytes" "$candidate/notary/submissions/$submission_sha"
+submission_sha="$(sha "$submission_bytes")"; cp -X "$submission_bytes" "$candidate/notary/submissions/$submission_sha"
 receipt() {
   local output="$1" kind="$2" identifier="$3" final_type="$4" final_path="$5" suffix="$6" arch_kind="$7"
   local architectures cdhashes scalar final_sha final_size
@@ -284,11 +310,25 @@ validate_root() {
     PEEKABOO_TERMINAL_VALIDATOR_FIXTURE_TOOLS="$fake_tools" "$NODE_BIN" \
     "$root/tools/validate-terminal-artifact-manifest.mjs" "$root/terminal-artifacts.json"
 }
+candidate_tree="$TEST_DIR/candidate-tree.json"
+/usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$candidate" > "$candidate_tree"
+assert_candidate_unchanged() {
+  local root="$1"
+  terminal_artifact_assert_no_xattrs "$root" || fail 'candidate contains extended attributes'
+  /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$root" > "$TEST_DIR/observed-candidate-tree.json"
+  cmp -s "$candidate_tree" "$TEST_DIR/observed-candidate-tree.json" || fail 'candidate bytes or modes changed'
+}
+assert_candidate_unchanged "$candidate"
 validate_root "$candidate" >/dev/null
+assert_candidate_unchanged "$candidate"
+printf 'test-terminal-manifest-portability: metadata-free candidate and read-only source receipt validated\n'
 relocated="$TEST_DIR/different/absolute/inode-tree"; mkdir -p "$(dirname "$relocated")"
 /usr/bin/ditto --norsrc "$candidate" "$relocated"
 cmp -s "$candidate/terminal-artifacts.json" "$relocated/terminal-artifacts.json"
+assert_candidate_unchanged "$relocated"
 validate_root "$relocated" >/dev/null
+assert_candidate_unchanged "$relocated"
+printf 'test-terminal-manifest-portability: relocated candidate validated\n'
 
 for mutation in byte symlink xattr; do
   mutated="$TEST_DIR/mutated-$mutation"; /usr/bin/ditto --norsrc "$candidate" "$mutated"
@@ -296,12 +336,22 @@ for mutation in byte symlink xattr; do
     byte)
       chmod u+w "$mutated/qualification-source/src/controller.swift"
       printf 'tamper\n' >> "$mutated/qualification-source/src/controller.swift"
+      expected_error='portable source tree differs'
       ;;
-    symlink) mv "$mutated/tools/terminal-archive-policy.mjs" "$mutated/tools/terminal-archive-policy.real"; ln -s terminal-archive-policy.real "$mutated/tools/terminal-archive-policy.mjs" ;;
-    xattr) /usr/bin/xattr -w com.openclaw.peekaboo.fixture value "$mutated/checksums.txt" ;;
+    symlink)
+      mv "$mutated/tools/terminal-archive-policy.mjs" "$mutated/tools/terminal-archive-policy.real"
+      ln -s terminal-archive-policy.real "$mutated/tools/terminal-archive-policy.mjs"
+      expected_error='tools/terminal-archive-policy.mjs is not one regular unsymlinked file'
+      ;;
+    xattr)
+      /usr/bin/xattr -w com.openclaw.peekaboo.fixture value "$mutated/checksums.txt"
+      expected_error='artifact root contains unbound xattrs'
+      ;;
   esac
-  if validate_root "$mutated" >/dev/null 2>&1; then
-    printf 'test-terminal-manifest-portability: %s mutation was accepted\n' "$mutation" >&2; exit 1
+  if validate_root "$mutated" >"$TEST_DIR/mutation-$mutation.log" 2>&1; then
+    fail "$mutation mutation was accepted"
   fi
+  grep -Fq "$expected_error" "$TEST_DIR/mutation-$mutation.log" || fail "$mutation failed for an unexpected reason"
+  printf 'test-terminal-manifest-portability: %s mutation rejected (%s)\n' "$mutation" "$expected_error"
 done
 printf 'test-terminal-manifest-portability: ok\n'
