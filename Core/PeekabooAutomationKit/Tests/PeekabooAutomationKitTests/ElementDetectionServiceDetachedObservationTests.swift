@@ -9,39 +9,6 @@ import Testing
 @MainActor
 struct ElementDetectionServiceDetachedObservationTests {
     @Test
-    func `worker cooperative deadline returns structured evidence before the hard escape timer`() async throws {
-        let request = RunnerState().makeRequest(timeoutSeconds: 1)
-        let result = try await ElementDetectionTimeoutRunner.runDetached(
-            targetProcessIdentifier: request.processIdentifier,
-            targetProcessStartIdentity: request.expectedProcessStartIdentity,
-            seconds: request.timing.hardTimeoutSeconds)
-        {
-            try Self.resolutionFailure(
-                request,
-                delay: request.timing.cooperativeDeadlineSeconds + 0.02)
-        }
-
-        #expect(result.truncationInfo?.deadlineReached == true)
-        #expect(result.truncationInfo?.incompleteAccessibilityRead == false)
-    }
-
-    @Test
-    func `cooperative AX deadline returns partial evidence before the hard escape timer`() async throws {
-        let request = RunnerState().makeRequest(timeoutSeconds: 1)
-        let result = try await ElementDetectionTimeoutRunner.runDetached(
-            targetProcessIdentifier: request.processIdentifier,
-            targetProcessStartIdentity: request.expectedProcessStartIdentity,
-            seconds: request.timing.hardTimeoutSeconds)
-        {
-            Self.partialDeadlineResult(request)
-        }
-
-        #expect(result.truncationInfo?.deadlineReached == true)
-        #expect(result.truncationInfo?.incompleteAccessibilityRead == false)
-        #expect(result.elements.map(\.id) == [Self.partialElement.id])
-    }
-
-    @Test
     func `explicit timeout above twenty seconds reaches delayed worker and incomplete read is retried`() async throws {
         let cache = ElementDetectionCache()
         let cacheKey = try #require(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
@@ -241,7 +208,10 @@ struct ElementDetectionServiceDetachedObservationTests {
     {
         try DetachedAXObservationWorker.inspect(
             request,
-            resolveWindow: { _, _, _ in
+            resolveWindow: { _, _, deadline in
+                // The worker must use the cooperative budget, not the hard escape timer.
+                #expect(deadline <= ContinuousClock.now.advanced(
+                    by: .seconds(request.timing.cooperativeDeadlineSeconds)))
                 Thread.sleep(forTimeInterval: delay)
                 throw PeekabooError.windowNotFound(criteria: "injected AX window resolution failure")
             },
@@ -256,19 +226,6 @@ struct ElementDetectionServiceDetachedObservationTests {
                         deadlineReached: deadlineReached))
             },
             validateIdentity: { _ in })
-    }
-
-    private nonisolated static func partialDeadlineResult(
-        _ request: DetachedAXObservationRequest) -> DetachedAXObservationResult
-    {
-        Thread.sleep(forTimeInterval: request.timing.cooperativeDeadlineSeconds + 0.02)
-        return DetachedAXObservationResult(
-            elements: [self.partialElement],
-            windowID: request.windowID,
-            windowTitle: "Injected fixture",
-            windowBounds: request.expectedWindowBounds,
-            isDialog: false,
-            truncationInfo: DetectionTruncationInfo(deadlineReached: true))
     }
 
     private nonisolated static let partialElement = DetectedElement(

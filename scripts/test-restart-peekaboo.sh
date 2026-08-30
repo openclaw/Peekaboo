@@ -151,10 +151,29 @@ new_case() {
   local name="$1"
   local case_dir="${TEST_DIR}/${name}"
 
+  printf 'test-restart-peekaboo: case=%s\n' "${name}" >&2
   mkdir -p "${case_dir}"
   cp -R "${TEMPLATE_BIN}" "${case_dir}/bin"
   cp -R "${TEMPLATE_SOURCE}" "${case_dir}/source"
   printf '%s\n' "${case_dir}"
+}
+
+run_build_signing_case() {
+  local name="$1"
+  local output="${build_signing_dir}/${name}.log"
+  local exit_code
+  shift
+
+  printf 'test-restart-peekaboo: build-signing=%s\n' "${name}"
+  # Only the external child is conditional; caller assertions retain errexit.
+  if "$@" >"${output}" 2>&1; then
+    return 0
+  else
+    exit_code=$?
+    cat "${output}" >&2
+    printf 'test-restart-peekaboo: build-signing=%s exit=%s\n' "${name}" "${exit_code}" >&2
+    return "${exit_code}"
+  fi
 }
 
 run_restart() {
@@ -964,14 +983,40 @@ mkdir -p "${DERIVED_DATA_PATH}"
 printf '%s\n' "$@" >"${PEEKABOO_TEST_XCODEBUILD_ARGS}"
 EOF
 chmod +x "${build_signing_dir}/bin/xcodebuild"
-env \
+# Signing argv belongs to this fixture; workspace ownership has its own real-owner tests.
+cat >"${build_signing_dir}/bin/python3" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+fixture_dir="$(cd "$(dirname "$0")/.." && pwd -P)"
+if [[ "$#" -lt 4 || "${1:-}" != "${fixture_dir}/source/scripts/setup-swift-workspace.py" ||
+  "${2:-}" != run || "${3:-}" != -- || "${4:-}" != xcodebuild ]]; then
+  printf 'test-restart-peekaboo: unexpected workspace invocation\n' >&2
+  exit 64
+fi
+shift 4
+exec "${fixture_dir}/bin/xcodebuild" "$@"
+EOF
+chmod +x "${build_signing_dir}/bin/python3"
+
+if run_build_signing_case workspace-command-refusal env \
+  DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
+  PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/rejected-args" \
+  "${build_signing_dir}/bin/python3" \
+  "${build_signing_source}/scripts/setup-swift-workspace.py" run -- unexpected-command; then
+  fail 'workspace fixture accepted an unexpected command'
+else
+  [[ "$?" -eq 64 ]] || fail 'workspace fixture did not return its invocation refusal'
+fi
+[[ ! -e "${build_signing_dir}/rejected-args" ]] || fail 'rejected workspace command reached fake xcodebuild'
+
+run_build_signing_case developer-id env \
   PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
   PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/developer-id-args" \
   CONFIGURATION=Release \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
   DEBUG_CODE_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)' \
   DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
-  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
+  "${build_signing_source}/scripts/build-mac-debug.sh"
 grep -Fxq 'CODE_SIGN_STYLE=Manual' "${build_signing_dir}/developer-id-args" || \
   fail 'Developer ID build did not request manual signing'
 grep -Fxq "PEEKABOO_SOURCE_COMMIT=${build_signing_commit}" \
@@ -981,7 +1026,7 @@ if grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/developer-id-args
   fail 'Developer ID build still requested automatic signing'
 fi
 
-env \
+run_build_signing_case unsigned env \
   PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
   PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/unsigned-args" \
   PEEKABOO_BUILD_UNSIGNED=1 \
@@ -989,7 +1034,7 @@ env \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
   DEBUG_CODE_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)' \
   DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
-  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
+  "${build_signing_source}/scripts/build-mac-debug.sh"
 grep -Fxq 'CODE_SIGNING_ALLOWED=NO' "${build_signing_dir}/unsigned-args" || \
   fail 'explicit unsigned build did not disable Xcode signing'
 grep -Fxq 'CODE_SIGNING_REQUIRED=NO' "${build_signing_dir}/unsigned-args" || \
@@ -998,31 +1043,31 @@ if grep -Eq '^(CODE_SIGN_STYLE|DEVELOPMENT_TEAM)=' "${build_signing_dir}/unsigne
   fail 'explicit unsigned build still requested Xcode identity or provisioning'
 fi
 
-env \
+run_build_signing_case development env \
   PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
   PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/development-args" \
   CONFIGURATION=Debug \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
   DEBUG_CODE_SIGN_IDENTITY='Apple Development' \
   DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
-  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
+  "${build_signing_source}/scripts/build-mac-debug.sh"
 grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/development-args" || \
   fail 'Apple Development build did not retain automatic signing'
 
 touch "${build_signing_source}/untracked-build-input"
-env \
+run_build_signing_case dirty-source env \
   PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
   PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/dirty-args" \
   CONFIGURATION=Debug \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
   DEBUG_CODE_SIGN_IDENTITY='Apple Development' \
   DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
-  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
+  "${build_signing_source}/scripts/build-mac-debug.sh"
 grep -Fxq 'PEEKABOO_SOURCE_COMMIT=unknown' "${build_signing_dir}/dirty-args" || \
   fail 'Dirty debug app build did not remain explicitly unstamped'
 
 rm -f "${build_signing_dir}/strict-dirty-args"
-if env \
+if run_build_signing_case strict-dirty-source env \
   PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
   PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/strict-dirty-args" \
   PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1 \
@@ -1030,7 +1075,7 @@ if env \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
   DEBUG_CODE_SIGN_IDENTITY='Apple Development' \
   DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
-  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null 2>&1; then
+  "${build_signing_source}/scripts/build-mac-debug.sh"; then
   fail 'Strict dirty debug app build unexpectedly succeeded'
 fi
 [[ ! -e "${build_signing_dir}/strict-dirty-args" ]] || \

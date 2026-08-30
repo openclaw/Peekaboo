@@ -24,18 +24,18 @@ Swift packages, source builds, and pnpm helper scripts.
 ```bash
 # Clone
 git clone --recurse-submodules https://github.com/openclaw/Peekaboo.git
-cd peekaboo
+cd Peekaboo
 
 # Install JS deps
 pnpm install
 
-# Build everything (CLI + Swift support scripts)
-pnpm run build:all
-
 # Swift CLI only (debug)
+pnpm run build:cli
+
+# Signed release binary (Apple Silicon)
 pnpm run build:swift
 
-# Release binary (universal)
+# Signed release binary (universal)
 pnpm run build:swift:all
 
 # Standalone helper
