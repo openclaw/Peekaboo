@@ -66,7 +66,7 @@
     ],
     "coordinator": {
       "path": "scripts/run-live-multi-target-certification.mjs",
-      "sha256": "09b34808bd4dc65490c5f3274f480209407b678bd154232e7bf97e107217faa0"
+      "sha256": "5531e676c4cee4c0a94ecbf5d303ab4a557c75483278990c646b2bf645feb3d1"
     },
     "receipt_validator": {
       "path": "Apps/CLI/Sources/PeekabooCLI/Commands/Core/BridgeCommand+Receipt.swift",

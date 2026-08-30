@@ -184,6 +184,7 @@ fs.writeFileSync(contamination, '', { mode: 0o600 });
 let sequence = 0;
 let epoch = 0;
 let sealed = false;
+let preMutationHeartbeat;
 const processReceipt = { pid: process.pid, start_identity: String(process.pid) + '00', code_signature_hash: 'a'.repeat(40) };
 const server = net.createServer((socket) => {
   let input = '';
@@ -241,6 +242,16 @@ const tick = () => {
     monitorInstanceID: monitorID,
     historyCommitmentSHA256: fs.readFileSync(historyPath, 'utf8').trim(),
   });
+  const preMutationPath = process.env.FAKE_PRE_MUTATION_HEARTBEAT_PATH;
+  if (preMutationPath && !fs.existsSync(preMutationPath)
+      && fs.readFileSync(arg('--phase'), 'utf8').trim() === 'running') {
+    if (!preMutationHeartbeat) {
+      preMutationHeartbeat = JSON.parse(fs.readFileSync(heartbeatPath));
+    } else if (Date.now() > preMutationHeartbeat.wallClockMilliseconds) {
+      // Release the fake controllers on a later tick so the stale sample is unambiguous.
+      write(preMutationPath, preMutationHeartbeat);
+    }
+  }
   if (fs.existsSync(sealRequest)) {
     const request = JSON.parse(fs.readFileSync(sealRequest));
     const evidence = JSON.parse(fs.readFileSync(request.draft_path));
@@ -345,6 +356,9 @@ if (args[0] === '--attest-monitor') {
     ready_at_milliseconds: Date.now(),
   });
   await wait(plan.start_path);
+  if (process.env.FAKE_PRE_MUTATION_HEARTBEAT_PATH) {
+    await wait(process.env.FAKE_PRE_MUTATION_HEARTBEAT_PATH);
+  }
   const startDelayMilliseconds = Number(process.env.FAKE_CONTROLLER_START_DELAY_MILLISECONDS ?? 0);
   if (startDelayMilliseconds > 0) {
     await new Promise((resolve) => setTimeout(resolve, startDelayMilliseconds));
@@ -661,9 +675,9 @@ function coordinatorEnvironment(fix, extra = {}) {
 }
 
 async function runInteractive(fix, {
-  markerMode = 'valid', env = {}, markerDelayMilliseconds = {}, onEvent = null,
+  markerMode = 'valid', env = {}, markerDelayMilliseconds = {}, onEvent = null, nodeArguments = [],
 } = {}) {
-  const child = spawn(process.execPath, [coordinator, '--plan', fix.planPath], {
+  const child = spawn(process.execPath, [...nodeArguments, coordinator, '--plan', fix.planPath], {
     env: coordinatorEnvironment(fix, env),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -966,6 +980,74 @@ test('21-second asymmetric window budget rejects the former two-window-only form
     assert.notEqual(run.status, 0);
     assert.match(run.stderr, /does not cover controller typing, both external windows/);
     assert.deepEqual(fs.readdirSync(fix.runs), []);
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('operations-start rejects a heartbeat sampled before both mutation markers', async (context) => {
+  const fix = fixture();
+  try {
+    const stalePath = path.join(fix.root, 'pre-mutation-heartbeat.json');
+    const handoffPath = path.join(fix.root, 'stale-heartbeat-handoff.json');
+    const preload = path.join(fix.root, 'stale-heartbeat-read.mjs');
+    writeExecutable(preload, String.raw`
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.dirname(fileURLToPath(import.meta.url));
+const read = fs.readFileSync.bind(fs);
+let delivered = false;
+fs.readFileSync = (file, ...args) => {
+  if (!delivered && typeof file === 'string' && file.endsWith('/monitor/heartbeat.json')) {
+    const runRoot = path.dirname(path.dirname(file));
+    const markers = ['controller-a', 'controller-b'].map((id) =>
+      path.join(runRoot, 'controllers', id, 'mutation-started.json'));
+    if (markers.every((marker) => fs.existsSync(marker))) {
+      const retained = read(path.join(root, 'pre-mutation-heartbeat.json'));
+      fs.writeFileSync(path.join(root, 'stale-heartbeat-handoff.json'), JSON.stringify({
+        heartbeat: JSON.parse(retained),
+        mutation_starts: markers.map((marker) => JSON.parse(read(marker)).timestamp_milliseconds),
+      }), { flag: 'wx', mode: 0o600 });
+      delivered = true;
+      return args[0] ? retained.toString(args[0]) : retained;
+    }
+  }
+  return read(file, ...args);
+};
+`);
+    const run = await runInteractive(fix, {
+      env: { FAKE_PRE_MUTATION_HEARTBEAT_PATH: stalePath },
+      nodeArguments: ['--import', preload],
+    });
+    assert.equal(run.code, 0, run.stderr);
+    const completion = run.events.at(-1);
+    assert.equal(completion.event, 'test-runtime-complete');
+    assert.equal(completion.certification_eligible, false);
+    const handoff = JSON.parse(fs.readFileSync(handoffPath));
+    const { fences } = JSON.parse(fs.readFileSync(path.join(completion.run_root, 'monitor/monitor-evidence.json')));
+    const grant = fences.find(({ name }) => name === 'grant-stable').heartbeat;
+    const start = fences.find(({ name }) => name === 'operations-start').heartbeat;
+    const complete = fences.find(({ name }) => name === 'operations-complete').heartbeat;
+    assert.ok(handoff.heartbeat.sequence > grant.sequence, 'control must advance beyond grant-stable');
+    assert.ok(handoff.heartbeat.wallClockMilliseconds < Math.min(...handoff.mutation_starts),
+      'control must deliver a real pre-mutation sample, not a same-millisecond tie');
+    context.diagnostic(JSON.stringify({
+      stale_sample: handoff.heartbeat.wallClockMilliseconds,
+      mutation_starts: handoff.mutation_starts,
+      operations_start: start.wallClockMilliseconds,
+      operations_complete: complete.wallClockMilliseconds,
+    }));
+    for (const [index, id] of ['controller-a', 'controller-b'].entries()) {
+      assert.ok(handoff.mutation_starts[index] <= start.wallClockMilliseconds,
+        `${id} mutation must precede operations-start even when the first read is stale`);
+      const ended = JSON.parse(fs.readFileSync(path.join(
+        completion.run_root, 'controllers', id, 'mutation-completed.json',
+      )));
+      assert.ok(ended.timestamp_milliseconds > complete.wallClockMilliseconds);
+    }
+    assert.ok(start.sequence > handoff.heartbeat.sequence);
+    assert.deepEqual(fs.readFileSync(fix.finalizerLog, 'utf8').trim().split('\n'), ['prepare', 'finalize']);
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });
   }

@@ -950,7 +950,7 @@ function heartbeatIsClosed(value) {
 
 async function waitForHeartbeat({
   name, filePath, deadline, nonce, monitorID, afterSequence, afterEpoch,
-  afterMonotonicMicroseconds, afterWallClockMilliseconds,
+  afterMonotonicMicroseconds, afterWallClockMilliseconds, notBeforeWallClockMilliseconds,
   revision, foreground, target, historyCommitment, requireActivity = false, children,
 }) {
   return waitFor(`stable monitor fence ${name}`, deadline, () => {
@@ -1004,6 +1004,7 @@ async function waitForHeartbeat({
         || heartbeat.foregroundActivityObserved !== false) {
       throw new CoordinatorError(`foreground activity occurred before the ${name} fence`);
     }
+    if (heartbeat.wallClockMilliseconds < notBeforeWallClockMilliseconds) return undefined;
     return structuredClone(heartbeat);
   }, children.processes);
 }
@@ -1726,6 +1727,8 @@ async function runCoordinator(
     let lastMonotonicMicroseconds = null;
     let lastWallClockMilliseconds = null;
     const capture = async (name, revision, foreground, requireActivity = false) => {
+      // A newer sequence can still predate the readiness/observation we just awaited.
+      const notBeforeWallClockMilliseconds = Date.now();
       const heartbeat = await waitForHeartbeat({
         name,
         filePath: shared.heartbeat,
@@ -1736,6 +1739,7 @@ async function runCoordinator(
         afterEpoch: lastEpoch,
         afterMonotonicMicroseconds: lastMonotonicMicroseconds,
         afterWallClockMilliseconds: lastWallClockMilliseconds,
+        notBeforeWallClockMilliseconds,
         revision,
         foreground,
         target: plan.monitor.foreground_target,
