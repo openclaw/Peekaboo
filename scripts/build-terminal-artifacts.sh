@@ -622,9 +622,12 @@ EOF
 
 verify_foundation_signature() {
   local target="$1"
+  local architecture="${2:-}"
   local details authority team_id
-  /usr/bin/codesign --verify --strict -R="$EXPECTED_REQUIREMENT" "$target"
-  details="$(terminal_artifact_signature_details "$target")"
+  local -a verify_args=(--verify --strict)
+  [[ -z "$architecture" ]] || verify_args+=(--arch "$architecture")
+  /usr/bin/codesign "${verify_args[@]}" -R="$EXPECTED_REQUIREMENT" "$target" || return 1
+  details="$(terminal_artifact_signature_details "$target" "$architecture")" || return 1
   authority="$(terminal_artifact_signature_field_from_details "$details" Authority)"
   team_id="$(terminal_artifact_signature_field_from_details "$details" TeamIdentifier)"
   [[ "$authority" == "$EXPECTED_IDENTITY" && "$team_id" == "$EXPECTED_TEAM_ID" ]]
@@ -766,8 +769,11 @@ sign_code_phase() {
   [[ -z "$nested_bundle" ]] || fail "unsupported Playground nested bundle: $nested_bundle"
   while IFS= read -r -d '' candidate; do
     [[ "$candidate" == "$playground_main" ]] && continue
-    /usr/bin/file -b "$candidate" | /usr/bin/grep -q Mach-O && sign_leaf "$candidate"
-  done < <(find "$signing_root/Playground.app/Contents" -type f -perm -111 -print0)
+    file_description="$(/usr/bin/file -b "$candidate")" || fail "could not classify Playground payload: $candidate"
+    if [[ "$file_description" == *Mach-O* ]]; then
+      sign_leaf "$candidate"
+    fi
+  done < <(find "$signing_root/Playground.app/Contents" -type f -print0)
   sign_leaf "$signing_root/Playground.app"
   "$ROOT_DIR/scripts/codesign-with-retry.sh" --force --options runtime --timestamp="$TIMESTAMP_URL" \
     --entitlements "$ROOT_DIR/scripts/qualification-node.entitlements" \
@@ -820,6 +826,18 @@ sign_code_phase() {
   MAC_RELEASE_CODESIGN_IDENTITY="$EXPECTED_IDENTITY" MAC_RELEASE_CODESIGN_TEAM_ID="$EXPECTED_TEAM_ID" \
     "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" \
     "$signing_root/qualification/background-computer-use-probe" "$signing_root/qualification"
+  # Deep bundle verification does not establish the signer of each nested code slice.
+  while IFS= read -r -d '' candidate; do
+    file_description="$(/usr/bin/file -b "$candidate")" || fail "could not classify signed payload: $candidate"
+    [[ "$file_description" == *Mach-O* ]] || continue
+    candidate_architectures="$(/usr/bin/lipo -archs "$candidate")" || \
+      fail "could not inspect signed Mach-O architectures: $candidate"
+    [[ -n "$candidate_architectures" ]] || fail "signed Mach-O has no architectures: $candidate"
+    for architecture in $candidate_architectures; do
+      verify_foundation_signature "$candidate" "$architecture" || \
+        fail "Mach-O $architecture signer mismatch: $candidate"
+    done
+  done < <(find "$signing_root" -type f -print0)
   native_only_verify_macho "$signing_root/qualification/peekaboo-certification-controller" \
     'signed certification controller' /usr/bin/nm /usr/bin/strings >/dev/null || \
     fail 'signed controller violates native-only policy'
