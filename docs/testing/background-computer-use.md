@@ -361,11 +361,37 @@ artifact finalizer for signing and notarization. Manifest schema v2 binds the fi
 `Apps/Playground` source tree, marketing version, configuration, bundle identifier, root workspace/scheme, and the path
 plus SHA-256 of the tracked canonical `Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved`. It also records
 the canonical Developer directory and exact Xcode, macOS SDK, and Swift compiler versions. Standalone Playground
-lockfiles are not accepted.
+lockfiles are not accepted. The native preflight and terminal finalizer share the strict v2 receipt validator in
+`scripts/source-provenance.sh`: exactly one JSON object with the 14 documented fields, numeric schema version 2,
+and an immutable regular receipt. Native preflight independently checks the clean current checkout, exact Playground
+tree, tracked unchanged canonical lock, selected toolchain, and actual bundle identifier/version/executable metadata.
+It verifies the app with `codesign --verify --deep --strict` and an Apple-anchored requirement for the OpenClaw Foundation
+Developer ID, team `FWJYW4S8P8`, and Debug identifier `boo.peekaboo.playground.debug`. Supplied artifacts are never
+restamped, normalized, or re-signed.
+
+The default local build still uses the standalone Playground project and creates a v1 receipt. That narrow exception
+belongs only to the fresh app built and signed by the current harness invocation; it retains exact current commit/tree,
+bundle metadata, and Foundation signature checks. A supplied v1 app is refused, even if it was built by an earlier
+harness invocation. There is no environment variable or flag that grants local-build ownership.
+
+To validate a supplied fixture without running the live harness:
+
+```bash
+scripts/test-background-computer-use.sh --validate-playground-only \
+  --playground-app /absolute/path/Playground.app --skip-playground-build
+```
+
+This uses the same production preflight and exits before probe compilation/execution, CLI or Bridge calls, permissions,
+keychain lookup, artifact setup, launches, or cleanup traps. Toolchain queries use the selected `DEVELOPER_DIR` (or
+`xcode-select -p`), canonicalized before comparison. External-tool doubles are accepted only in explicit headless test
+mode and are rejected on live paths. The live report's closed source evidence includes `source_provenance_sha256`;
+the helper is privately snapshotted, checked for drift, and verified against retained helper bytes by the reporter.
 
 Final terminal qualification also requires `--terminal-artifact-manifest` beside the prebuilt Playground. Portable schema 7
 binds the zipped app, its exact post-staple tree receipt, Foundation identity/notary receipt, and the pinned universal
-Node 24.15.0 qualification app. The harness extracts and verifies that Node app before any candidate action and runs
+Node 24.15.0 qualification app. **That terminal-manifest/pinned-Node integration is not yet implemented by this native
+harness; fixture validation alone does not establish terminal qualification.** The qualification consumer must extract
+and verify that Node app before any candidate action and run
 qualification JavaScript only with `PeekabooQualificationNode.app/Contents/MacOS/node`; ambient `node`, PATH, and an
 OpenClaw installation are not fallbacks. Terminal app payloads permit no extended attributes, `__MACOSX`, or `._*`
 AppleDouble entries, and every ZIP must reproduce the retained canonical tree byte-for-byte.

@@ -102,3 +102,70 @@ peekaboo_short_source_commit() {
     printf '%s\n' unknown
   fi
 }
+
+# Read-only receipts must be regular files, including when the caller owns them.
+peekaboo_is_immutable_receipt() {
+  local receipt="${1:?receipt required}" mode
+  [[ -f "$receipt" && ! -L "$receipt" ]] || return 1
+  mode="$(/usr/bin/stat -f '%Lp' "$receipt")" || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 0222) == 0 ))
+}
+
+# Expected values come from the caller's trusted checkout/build context, never
+# from the candidate receipt. Signing and notarization remain caller-owned.
+peekaboo_verify_playground_v2_receipt() {
+  local receipt="${1:?receipt required}"
+  peekaboo_is_immutable_receipt "$receipt" || return 1
+  jq -se \
+    --arg sourceCommit "${2:?source commit required}" \
+    --arg sourceTree "${3:?source tree required}" \
+    --arg lockPath "${4:?canonical lock path required}" \
+    --arg lockSHA "${5:?canonical lock hash required}" \
+    --arg marketingVersion "${6:?marketing version required}" \
+    --arg developerDir "${7:?developer directory required}" \
+    --arg xcodebuildVersion "${8:?Xcode version required}" \
+    --arg sdkVersion "${9:?SDK version required}" \
+    --arg swiftcVersion "${10:?Swift version required}" '
+      length == 1 and (.[0] |
+      type == "object" and keys == [
+        "bundle_identifier", "configuration", "dependency_lock_path", "dependency_lock_sha256",
+        "developer_dir", "marketing_version", "scheme", "sdk_version", "source_commit",
+        "source_tree", "swiftc_version", "version", "workspace", "xcodebuild_version"
+      ] and .version == 2 and .source_commit == $sourceCommit and .source_tree == $sourceTree and
+      .dependency_lock_path == $lockPath and .dependency_lock_sha256 == $lockSHA and
+      .workspace == "Apps/Peekaboo.xcworkspace" and .scheme == "Playground" and
+      .configuration == "Debug" and .bundle_identifier == "boo.peekaboo.playground.debug" and
+      .marketing_version == $marketingVersion and .developer_dir == $developerDir and
+      .xcodebuild_version == $xcodebuildVersion and .sdk_version == $sdkVersion and
+      .swiftc_version == $swiftcVersion)
+    ' "$receipt" >/dev/null
+}
+
+# Check this boundary before general checkout cleanliness so lock failures are
+# actionable, including an ignored/untracked or assume-unchanged resolver file.
+peekaboo_playground_lock_sha256() {
+  local root="${1:?repository root required}"
+  local relative=Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved
+  local lock="$root/$relative" competing digest committed_digest
+  [[ -f "$lock" && ! -L "$lock" ]] || {
+    echo 'Canonical Playground dependency lock missing or symlinked.' >&2; return 1;
+  }
+  git -C "$root" ls-files --error-unmatch "$relative" >/dev/null 2>&1 || {
+    echo 'Canonical Playground dependency lock is not tracked.' >&2; return 1;
+  }
+  for competing in \
+    Apps/Playground/Package.resolved \
+    Apps/Playground/Playground.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved; do
+    [[ ! -e "$root/$competing" && ! -L "$root/$competing" ]] || {
+      echo "Noncanonical Playground dependency lock: $competing" >&2; return 1;
+    }
+  done
+  digest="$(shasum -a 256 "$lock" | awk '{print $1}')" || return 1
+  committed_digest="$(git -C "$root" show "HEAD:$relative" | shasum -a 256 | awk '{print $1}')" || return 1
+  [[ "$digest" == "$committed_digest" ]] &&
+    git -C "$root" diff --quiet --cached HEAD -- "$relative" &&
+    git -C "$root" diff --quiet -- "$relative" || {
+      echo 'Canonical Playground dependency lock differs from HEAD.' >&2; return 1;
+    }
+  printf '%s\n' "$digest"
+}

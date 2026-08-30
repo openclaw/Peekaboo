@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -257,6 +260,49 @@ test("post-run provenance drift is part of the canonical verdict", () => {
   const report = makePassingReport(catalog);
   report.provenance_stable = false;
   assert.ok(rules(validateCertification(catalog, report)).has("provenance_stability"));
+});
+
+test("source helper evidence is required and bound to the retained helper bytes", (t) => {
+  const missing = makePassingReport(catalog);
+  delete missing.provenance.source_artifacts.source_provenance_sha256;
+  assert.ok(rules(validateCertification(catalog, missing)).has("source_artifacts"));
+
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "peekaboo-source-helper-")));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const reporter = path.join(directory, "reporter.mjs");
+  const helper = path.join(directory, "source-provenance.sh");
+  fs.copyFileSync(path.join(root, "scripts/validate-background-computer-use-report.mjs"), reporter);
+  fs.copyFileSync(path.join(root, "scripts/source-provenance.sh"), helper);
+  const catalogPath = path.join(directory, "catalog.json");
+  fs.writeFileSync(catalogPath, JSON.stringify(catalog));
+  const report = makePassingReport(catalog);
+  const digest = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  Object.assign(report.provenance.source_artifacts, {
+    catalog_sha256: digest(catalogPath),
+    reporter_sha256: digest(reporter),
+    source_provenance_sha256: digest(helper),
+  });
+  const reportPath = path.join(directory, "report.json");
+  fs.writeFileSync(reportPath, JSON.stringify(report));
+  const run = () => spawnSync(process.execPath, [reporter, "--catalog", catalogPath, "--report", reportPath], {
+    encoding: "utf8",
+  });
+  const accepted = run();
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(JSON.parse(accepted.stdout).success, true);
+  const original = fs.readFileSync(helper);
+  fs.appendFileSync(helper, "\n# changed helper\n");
+  const changed = run();
+  assert.equal(changed.status, 1, changed.stderr);
+  assert.ok(rules(JSON.parse(changed.stdout)).has("trusted_source_artifacts"));
+  fs.copyFileSync(reporter, helper);
+  assert.ok(rules(JSON.parse(run().stdout)).has("trusted_source_artifacts"));
+  fs.unlinkSync(helper);
+  assert.equal(run().status, 2);
+  const target = path.join(directory, "helper-target.sh");
+  fs.writeFileSync(target, original);
+  fs.symlinkSync(target, helper);
+  assert.equal(run().status, 2);
 });
 
 test("case monitor receipts are run-bound, ordered, and instance-distinct", () => {

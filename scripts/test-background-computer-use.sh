@@ -15,6 +15,10 @@ PEEKABOO_BIN="${PEEKABOO_BIN:-}"
 ARTIFACT_ROOT=""
 PLAYGROUND_APP=""
 SKIP_PLAYGROUND_BUILD=false
+VALIDATE_PLAYGROUND_ONLY=false
+# Never inherit receipt ownership from the caller; only build_playground sets it.
+PLAYGROUND_BUILT_APP=""
+SOURCE_PROVENANCE="$ROOT_DIR/scripts/source-provenance.sh"
 RUN_FOREGROUND_PHASE=false
 SELF_TEST_ONLY=false
 NO_REMOTE=false
@@ -35,6 +39,7 @@ Options:
   --artifacts PATH           Artifact directory (default: .artifacts/background-computer-use/<UTC>)
   --playground-app PATH      Use an existing signed Playground.app
   --skip-playground-build    Require --playground-app and skip xcodebuild
+  --validate-playground-only Validate the supplied fixture and exit without live setup
   --foreground-phase        Also run explicit physical-pointer tests
   --no-remote               Force the exact CLI process to use its local TCC grants
   --bridge-socket PATH      Pin every remote command to one exact Bridge host
@@ -62,6 +67,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-playground-build)
             SKIP_PLAYGROUND_BUILD=true
+            shift
+            ;;
+        --validate-playground-only)
+            VALIDATE_PLAYGROUND_ONLY=true
             shift
             ;;
         --foreground-phase)
@@ -115,7 +124,42 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 2
 fi
 
-for command_name in file git jq node plutil realpath rg swiftc xcodebuild codesign security open uuidgen shasum; do
+if $VALIDATE_PLAYGROUND_ONLY; then
+    if ! $SKIP_PLAYGROUND_BUILD || [[ -z "$PLAYGROUND_APP" ]] || $SELF_TEST_ONLY || $RUN_FOREGROUND_PHASE; then
+        echo "--validate-playground-only requires --playground-app and --skip-playground-build, without live/self-test phases." >&2
+        exit 2
+    fi
+fi
+
+PLAYGROUND_CODESIGN_BIN=/usr/bin/codesign
+PLAYGROUND_XCODEBUILD_BIN=/usr/bin/xcodebuild
+PLAYGROUND_XCRUN_BIN=/usr/bin/xcrun
+PLAYGROUND_XCODE_SELECT_BIN=/usr/bin/xcode-select
+case "${PEEKABOO_PLAYGROUND_TEST_MODE:-0}" in
+    1)
+        $VALIDATE_PLAYGROUND_ONLY || {
+            echo "Playground test mode is restricted to --validate-playground-only." >&2
+            exit 2
+        }
+        PLAYGROUND_CODESIGN_BIN="${PEEKABOO_PLAYGROUND_CODESIGN_BIN:?test codesign required}"
+        PLAYGROUND_XCODEBUILD_BIN="${PEEKABOO_PLAYGROUND_XCODEBUILD_BIN:?test xcodebuild required}"
+        PLAYGROUND_XCRUN_BIN="${PEEKABOO_PLAYGROUND_XCRUN_BIN:?test xcrun required}"
+        PLAYGROUND_XCODE_SELECT_BIN="${PEEKABOO_PLAYGROUND_XCODE_SELECT_BIN:?test xcode-select required}"
+        ;;
+    0|'')
+        for override in PEEKABOO_PLAYGROUND_CODESIGN_BIN PEEKABOO_PLAYGROUND_XCODEBUILD_BIN \
+            PEEKABOO_PLAYGROUND_XCRUN_BIN PEEKABOO_PLAYGROUND_XCODE_SELECT_BIN; do
+            [[ -z "${!override+x}" ]] || { echo "$override is test-only." >&2; exit 2; }
+        done
+        ;;
+    *) echo "PEEKABOO_PLAYGROUND_TEST_MODE must be 0 or 1." >&2; exit 2 ;;
+esac
+
+required_commands=(git jq realpath shasum)
+if ! $VALIDATE_PLAYGROUND_ONLY; then
+    required_commands+=(file node plutil rg swiftc xcodebuild codesign security open uuidgen)
+fi
+for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Missing required command: $command_name" >&2
         exit 2
@@ -177,6 +221,116 @@ sign_playground_app() {
     "$ROOT_DIR/scripts/codesign-with-retry.sh" \
         --force --options runtime --timestamp --sign "$identity" "$app"
 }
+
+build_playground() {
+    local derived_data="$ARTIFACT_ROOT/DerivedData"
+    local build_log="$ARTIFACT_ROOT/playground-build.log"
+    if [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all -- Apps/Playground)" ]]; then
+        echo "Playground sources differ from the committed source tree; refusing a false provenance stamp." >&2
+        return 1
+    fi
+    xcodebuild \
+        -project "$ROOT_DIR/Apps/Playground/Playground.xcodeproj" \
+        -scheme Playground \
+        -configuration Debug \
+        -derivedDataPath "$derived_data" \
+        build CODE_SIGNING_ALLOWED=NO > "$build_log" 2>&1
+
+    PLAYGROUND_APP="$derived_data/Build/Products/Debug/Playground.app"
+    local identity="${PEEKABOO_PLAYGROUND_SIGN_IDENTITY:-}"
+    if [[ -z "$identity" ]]; then
+        identity="$(openclaw_codesign_identity)"
+    fi
+    if [[ -z "$identity" ]]; then
+        echo "No OpenClaw Foundation Developer ID Application identity is available." >&2
+        return 1
+    fi
+
+    mkdir -p "$PLAYGROUND_APP/Contents/Resources"
+    jq -n \
+        --arg sourceCommit "$PLAYGROUND_SOURCE_COMMIT" \
+        --arg sourceTree "$PLAYGROUND_SOURCE_TREE" '
+        {version: 1, source_commit: $sourceCommit, source_tree: $sourceTree}
+    ' > "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
+    chmod 444 "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
+
+    sign_playground_app "$PLAYGROUND_APP" "$identity" || return 1
+    PLAYGROUND_BUILT_APP="$PLAYGROUND_APP"
+}
+
+validate_playground_fixture() {
+    local lock_sha marketing_version developer_dir xcode_version sdk_version swift_version
+    local plist requirement
+    [[ "$PLAYGROUND_APP" == /* ]] || PLAYGROUND_APP="$ROOT_DIR/$PLAYGROUND_APP"
+    [[ -d "$PLAYGROUND_APP" && ! -L "$PLAYGROUND_APP" ]] || {
+        echo "Playground app missing or symlinked: $PLAYGROUND_APP" >&2; return 1;
+    }
+    PLAYGROUND_SOURCE_MANIFEST="$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
+    peekaboo_is_immutable_receipt "$PLAYGROUND_SOURCE_MANIFEST" || {
+        echo 'Playground requires an immutable regular source receipt.' >&2; return 1;
+    }
+    PLAYGROUND_SOURCE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)" || return 1
+    PLAYGROUND_SOURCE_TREE="$(git -C "$ROOT_DIR" rev-parse HEAD:Apps/Playground)" || return 1
+    marketing_version="$(/usr/bin/plutil -extract version raw -o - "$ROOT_DIR/package.json")" || return 1
+    if [[ -n "$PLAYGROUND_BUILT_APP" && "$PLAYGROUND_APP" == "$PLAYGROUND_BUILT_APP" ]]; then
+        # The standalone local builder has a v1 contract; supplied apps never own this exception.
+        [[ -z "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all -- Apps/Playground)" ]] || {
+            echo 'Playground sources changed after the local build.' >&2; return 1;
+        }
+        jq -se --arg sourceCommit "$PLAYGROUND_SOURCE_COMMIT" --arg sourceTree "$PLAYGROUND_SOURCE_TREE" '
+            length == 1 and (.[0] |
+            type == "object" and keys == ["source_commit", "source_tree", "version"] and
+            .version == 1 and .source_commit == $sourceCommit and .source_tree == $sourceTree)
+        ' "$PLAYGROUND_SOURCE_MANIFEST" >/dev/null || {
+            echo 'Locally built Playground lacks its exact current-source v1 receipt.' >&2; return 1;
+        }
+    else
+        lock_sha="$(peekaboo_playground_lock_sha256 "$ROOT_DIR")" || return 1
+        peekaboo_verify_source_commit "$ROOT_DIR" "$PLAYGROUND_SOURCE_COMMIT" || return 1
+        developer_dir="${DEVELOPER_DIR:-$("$PLAYGROUND_XCODE_SELECT_BIN" -p)}"
+        developer_dir="$(realpath "$developer_dir")" || return 1
+        xcode_version="$(DEVELOPER_DIR="$developer_dir" "$PLAYGROUND_XCODEBUILD_BIN" -version)" || return 1
+        sdk_version="$(DEVELOPER_DIR="$developer_dir" "$PLAYGROUND_XCRUN_BIN" --sdk macosx --show-sdk-version)" || return 1
+        swift_version="$(DEVELOPER_DIR="$developer_dir" "$PLAYGROUND_XCRUN_BIN" swiftc --version 2>&1)" || return 1
+        peekaboo_verify_playground_v2_receipt "$PLAYGROUND_SOURCE_MANIFEST" \
+            "$PLAYGROUND_SOURCE_COMMIT" "$PLAYGROUND_SOURCE_TREE" \
+            Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved "$lock_sha" "$marketing_version" \
+            "$developer_dir" "$xcode_version" "$sdk_version" "$swift_version" || {
+            echo 'Supplied Playground requires an exact current-source/toolchain v2 receipt; supplied v1 is refused.' >&2
+            return 1
+        }
+    fi
+    plist="$PLAYGROUND_APP/Contents/Info.plist"
+    [[ -f "$plist" && ! -L "$plist" ]] &&
+        [[ "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$plist")" == "$PLAYGROUND_BUNDLE_ID" ]] &&
+        [[ "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$plist")" == "$marketing_version" ]] &&
+        [[ "$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$plist")" == Playground ]] || {
+        echo 'Playground bundle metadata differs from the fixture contract.' >&2; return 1;
+    }
+    PLAYGROUND_EXECUTABLE_NAME=Playground
+    PLAYGROUND_EXECUTABLE="$PLAYGROUND_APP/Contents/MacOS/$PLAYGROUND_EXECUTABLE_NAME"
+    [[ -f "$PLAYGROUND_EXECUTABLE" && -x "$PLAYGROUND_EXECUTABLE" && ! -L "$PLAYGROUND_EXECUTABLE" ]] || {
+        echo 'Playground executable missing, symlinked, or not executable.' >&2; return 1;
+    }
+    requirement='anchor apple generic and certificate leaf[subject.OU] = "FWJYW4S8P8" and certificate leaf[subject.CN] = "Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)" and identifier "boo.peekaboo.playground.debug"'
+    "$PLAYGROUND_CODESIGN_BIN" --verify --deep --strict "-R=$requirement" "$PLAYGROUND_APP" || return 1
+    PLAYGROUND_SIGNATURE_DETAILS="$("$PLAYGROUND_CODESIGN_BIN" -dv --verbose=2 "$PLAYGROUND_APP" 2>&1)" || return 1
+    [[ "$(sed -n 's/^TeamIdentifier=//p' <<<"$PLAYGROUND_SIGNATURE_DETAILS")" == FWJYW4S8P8 &&
+       "$(sed -n 's/^Identifier=//p' <<<"$PLAYGROUND_SIGNATURE_DETAILS")" == "$PLAYGROUND_BUNDLE_ID" &&
+       "$(awk '/^Authority=/ {sub(/^Authority=/, ""); print; exit}' <<<"$PLAYGROUND_SIGNATURE_DETAILS")" == \
+           'Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)' ]] || {
+        echo 'Playground requires the OpenClaw Foundation Developer ID, team, and identifier.' >&2; return 1;
+    }
+}
+
+if $VALIDATE_PLAYGROUND_ONLY; then
+    # No probe, CLI, permissions, keychain, launch, artifact setup, or cleanup trap.
+    [[ -f "$SOURCE_PROVENANCE" && ! -L "$SOURCE_PROVENANCE" ]] || exit 2
+    source "$SOURCE_PROVENANCE"
+    validate_playground_fixture || exit 2
+    echo 'Playground fixture validation passed.'
+    exit 0
+fi
 
 CERTIFICATION_INVARIANTS_JSON="$(jq -cer '
     .invariants |
@@ -243,11 +397,15 @@ cp -p "$SOURCE_CATALOG" "$SOURCE_INPUT_ROOT/catalog.json"
 cp -p "$SOURCE_REPORTER" "$SOURCE_INPUT_ROOT/reporter.mjs"
 cp -p "$SOURCE_PROBE" "$SOURCE_INPUT_ROOT/probe.swift"
 cp -p "$SOURCE_HARNESS" "$SOURCE_INPUT_ROOT/harness.sh"
+[[ -f "$SOURCE_PROVENANCE" && ! -L "$SOURCE_PROVENANCE" ]] || exit 2
+cp -p "$SOURCE_PROVENANCE" "$SOURCE_INPUT_ROOT/source-provenance.sh"
 chmod 400 "$SOURCE_INPUT_ROOT"/*
 CATALOG_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/catalog.json" | awk '{print $1}')"
 REPORTER_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/reporter.mjs" | awk '{print $1}')"
 PROBE_SOURCE_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/probe.swift" | awk '{print $1}')"
 HARNESS_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/harness.sh" | awk '{print $1}')"
+SOURCE_PROVENANCE_SHA256_INITIAL="$(shasum -a 256 "$SOURCE_INPUT_ROOT/source-provenance.sh" | awk '{print $1}')"
+source "$SOURCE_INPUT_ROOT/source-provenance.sh"
 CERTIFICATION_CATALOG="$SOURCE_INPUT_ROOT/catalog.json"
 CERTIFICATION_REPORTER="$SOURCE_INPUT_ROOT/reporter.mjs"
 CERTIFICATION_INVARIANTS_JSON="$(jq -cer '
@@ -1394,40 +1552,6 @@ fi
 PLAYGROUND_SOURCE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 PLAYGROUND_SOURCE_TREE="$(git -C "$ROOT_DIR" rev-parse HEAD:Apps/Playground)"
 
-build_playground() {
-    local derived_data="$ARTIFACT_ROOT/DerivedData"
-    local build_log="$ARTIFACT_ROOT/playground-build.log"
-    if [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all -- Apps/Playground)" ]]; then
-        echo "Playground sources differ from the committed source tree; refusing a false provenance stamp." >&2
-        return 1
-    fi
-    xcodebuild \
-        -project "$ROOT_DIR/Apps/Playground/Playground.xcodeproj" \
-        -scheme Playground \
-        -configuration Debug \
-        -derivedDataPath "$derived_data" \
-        build CODE_SIGNING_ALLOWED=NO > "$build_log" 2>&1
-
-    PLAYGROUND_APP="$derived_data/Build/Products/Debug/Playground.app"
-    local identity="${PEEKABOO_PLAYGROUND_SIGN_IDENTITY:-}"
-    if [[ -z "$identity" ]]; then
-        identity="$(openclaw_codesign_identity)"
-    fi
-    if [[ -z "$identity" ]]; then
-        echo "No OpenClaw Foundation Developer ID Application identity is available." >&2
-        return 1
-    fi
-
-    mkdir -p "$PLAYGROUND_APP/Contents/Resources"
-    jq -n \
-        --arg sourceCommit "$PLAYGROUND_SOURCE_COMMIT" \
-        --arg sourceTree "$PLAYGROUND_SOURCE_TREE" '
-        {version: 1, source_commit: $sourceCommit, source_tree: $sourceTree}
-    ' > "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
-    chmod 444 "$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
-
-    sign_playground_app "$PLAYGROUND_APP" "$identity"
-}
 
 if $SKIP_PLAYGROUND_BUILD; then
     if [[ -z "$PLAYGROUND_APP" ]]; then
@@ -1438,33 +1562,8 @@ elif [[ -z "$PLAYGROUND_APP" ]]; then
     build_playground
 fi
 
-if [[ "$PLAYGROUND_APP" != /* ]]; then
-    PLAYGROUND_APP="$ROOT_DIR/$PLAYGROUND_APP"
-fi
-if [[ ! -d "$PLAYGROUND_APP" ]]; then
-    echo "Playground app not found: $PLAYGROUND_APP" >&2
-    exit 2
-fi
-PLAYGROUND_SOURCE_MANIFEST="$PLAYGROUND_APP/Contents/Resources/PeekabooPlaygroundSource.json"
-if ! jq -e \
-    --arg sourceCommit "$PLAYGROUND_SOURCE_COMMIT" \
-    --arg sourceTree "$PLAYGROUND_SOURCE_TREE" '
-    type == "object" and keys == ["source_commit", "source_tree", "version"] and
-    .version == 1 and .source_commit == $sourceCommit and .source_tree == $sourceTree
-' "$PLAYGROUND_SOURCE_MANIFEST" >/dev/null; then
-    echo "Playground app lacks an exact current-source manifest; rebuild it from this checkout." >&2
-    exit 2
-fi
-codesign --verify --deep --strict "$PLAYGROUND_APP"
-codesign -dv --verbose=2 "$PLAYGROUND_APP" > "$ARTIFACT_ROOT/playground-signature.txt" 2>&1
-if ! rg -q '^TeamIdentifier=' "$ARTIFACT_ROOT/playground-signature.txt" || \
-   rg -q '^TeamIdentifier=not set$' "$ARTIFACT_ROOT/playground-signature.txt"; then
-    echo "Playground must have a team-signed identity, not an ad-hoc signature." >&2
-    exit 2
-fi
-PLAYGROUND_EXECUTABLE_NAME="$(plutil -extract CFBundleExecutable raw \
-    "$PLAYGROUND_APP/Contents/Info.plist")"
-PLAYGROUND_EXECUTABLE="$PLAYGROUND_APP/Contents/MacOS/$PLAYGROUND_EXECUTABLE_NAME"
+validate_playground_fixture || exit 2
+printf '%s\n' "$PLAYGROUND_SIGNATURE_DETAILS" > "$ARTIFACT_ROOT/playground-signature.txt"
 
 MONITOR_PID=""
 PLAYGROUND_PID=""
@@ -3454,10 +3553,13 @@ for source_and_digest in \
     "$SOURCE_CATALOG:$CATALOG_SHA256_INITIAL" \
     "$SOURCE_REPORTER:$REPORTER_SHA256_INITIAL" \
     "$SOURCE_PROBE:$PROBE_SOURCE_SHA256_INITIAL" \
-    "$SOURCE_HARNESS:$HARNESS_SHA256_INITIAL"; do
+    "$SOURCE_HARNESS:$HARNESS_SHA256_INITIAL" \
+    "$SOURCE_PROVENANCE:$SOURCE_PROVENANCE_SHA256_INITIAL" \
+    "$SOURCE_INPUT_ROOT/source-provenance.sh:$SOURCE_PROVENANCE_SHA256_INITIAL"; do
     source_path="${source_and_digest%:*}"
     expected_digest="${source_and_digest##*:}"
-    if [[ "$(shasum -a 256 "$source_path" | awk '{print $1}')" != "$expected_digest" ]]; then
+    if [[ ! -f "$source_path" || -L "$source_path" ]] ||
+       [[ "$(shasum -a 256 "$source_path" | awk '{print $1}')" != "$expected_digest" ]]; then
         record_failure "certification source input changed after its private snapshot: $source_path"
         PROVENANCE_STABLE=false
     fi
@@ -3504,6 +3606,7 @@ SOURCE_ARTIFACTS_JSON="$(jq -cn \
     --arg probeSourceSHA256 "$PROBE_SOURCE_SHA256_INITIAL" \
     --arg probeExecutableSHA256 "$PROBE_EXECUTABLE_SHA256_INITIAL" \
     --arg harnessSHA256 "$HARNESS_SHA256_INITIAL" \
+    --arg sourceProvenanceSHA256 "$SOURCE_PROVENANCE_SHA256_INITIAL" \
     --arg cliExecutableSHA256 "$PEEKABOO_EXECUTABLE_SHA256" \
     --arg cliCodeSignatureHash "$PEEKABOO_CODE_SIGNATURE_HASH" \
     --arg cliExecutableDevice "$PEEKABOO_EXECUTABLE_DEVICE" \
@@ -3521,6 +3624,7 @@ SOURCE_ARTIFACTS_JSON="$(jq -cn \
         probe_source_sha256: $probeSourceSHA256,
         probe_executable_sha256: $probeExecutableSHA256,
         harness_sha256: $harnessSHA256,
+        source_provenance_sha256: $sourceProvenanceSHA256,
         cli_executable_sha256: $cliExecutableSHA256,
         cli_code_signature_hash: $cliCodeSignatureHash,
         cli_executable_device: $cliExecutableDevice,

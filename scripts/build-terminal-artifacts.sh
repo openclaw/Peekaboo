@@ -306,29 +306,10 @@ tree_digest() {
 verify_playground_manifest() {
   local app="$1"
   local manifest="$app/Contents/Resources/PeekabooPlaygroundSource.json"
-  [[ -f "$manifest" && ! -L "$manifest" ]] || return 1
-  jq -e \
-    --arg sourceCommit "$SOURCE_COMMIT" \
-    --arg sourceTree "$(git -C "$ROOT_DIR" rev-parse HEAD:Apps/Playground)" \
-    --arg lockPath "$CANONICAL_LOCK_RELATIVE" \
-    --arg lockSHA "$DEPENDENCY_LOCK_SHA256" \
-    --arg marketingVersion "$VERSION" \
-    --arg developerDir "$EFFECTIVE_DEVELOPER_DIR" \
-    --arg xcodebuildVersion "$XCODEBUILD_VERSION" \
-    --arg sdkVersion "$SDK_VERSION" \
-    --arg swiftcVersion "$SWIFTC_VERSION" '
-      type == "object" and keys == [
-        "bundle_identifier", "configuration", "dependency_lock_path", "dependency_lock_sha256",
-        "developer_dir", "marketing_version", "scheme", "sdk_version", "source_commit",
-        "source_tree", "swiftc_version", "version", "workspace", "xcodebuild_version"
-      ] and .version == 2 and .source_commit == $sourceCommit and .source_tree == $sourceTree and
-      .dependency_lock_path == $lockPath and .dependency_lock_sha256 == $lockSHA and
-      .workspace == "Apps/Peekaboo.xcworkspace" and .scheme == "Playground" and
-      .configuration == "Debug" and .bundle_identifier == "boo.peekaboo.playground.debug" and
-      .marketing_version == $marketingVersion and .developer_dir == $developerDir and
-      .xcodebuild_version == $xcodebuildVersion and .sdk_version == $sdkVersion and
-      .swiftc_version == $swiftcVersion
-    ' "$manifest" >/dev/null
+  peekaboo_verify_playground_v2_receipt "$manifest" \
+    "$SOURCE_COMMIT" "$(git -C "$ROOT_DIR" rev-parse HEAD:Apps/Playground)" \
+    "$CANONICAL_LOCK_RELATIVE" "$DEPENDENCY_LOCK_SHA256" "$VERSION" \
+    "$EFFECTIVE_DEVELOPER_DIR" "$XCODEBUILD_VERSION" "$SDK_VERSION" "$SWIFTC_VERSION"
 }
 
 verify_node_source_manifest() {

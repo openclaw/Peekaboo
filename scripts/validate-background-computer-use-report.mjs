@@ -220,6 +220,7 @@ function isExactSourceArtifacts(value) {
     "probe_executable_sha256",
     "probe_source_sha256",
     "reporter_sha256",
+    "source_provenance_sha256",
   ];
   return keys.length === expected.length
     && keys.every((key, index) => key === expected[index])
@@ -231,6 +232,7 @@ function isExactSourceArtifacts(value) {
       value.probe_executable_sha256,
       value.probe_source_sha256,
       value.reporter_sha256,
+      value.source_provenance_sha256,
     ].every((digest) => typeof digest === "string" && exactSHA256.test(digest))
     && typeof value.cli_code_signature_hash === "string"
     && exactSourceCommit.test(value.cli_code_signature_hash)
@@ -396,16 +398,17 @@ function validateProvenance(report, failures, trustedSourceArtifacts) {
     failures.push(failure(
       "certification",
       "source_artifacts",
-      "Catalog, reporter, probe, harness, and Playground provenance must be exact digests",
+      "Catalog, reporter, probe, harness, source helper, and Playground provenance must be exact digests",
     ));
   }
   if (trustedSourceArtifacts
       && (provenance.source_artifacts?.catalog_sha256 !== trustedSourceArtifacts.catalog_sha256
-        || provenance.source_artifacts?.reporter_sha256 !== trustedSourceArtifacts.reporter_sha256)) {
+        || provenance.source_artifacts?.reporter_sha256 !== trustedSourceArtifacts.reporter_sha256
+        || provenance.source_artifacts?.source_provenance_sha256 !== trustedSourceArtifacts.source_provenance_sha256)) {
     failures.push(failure(
       "certification",
       "trusted_source_artifacts",
-      "Reported catalog or reporter digest differs from the trusted files used for validation",
+      "Reported catalog, reporter, or source helper digest differs from the trusted files used for validation",
     ));
   }
   if (!["local", "remote"].includes(provenance.event_producer_source)) {
@@ -799,6 +802,7 @@ export function makePassingReport(catalog) {
         probe_source_sha256: "3".repeat(64),
         probe_executable_sha256: "4".repeat(64),
         harness_sha256: "5".repeat(64),
+        source_provenance_sha256: "a".repeat(64),
         playground_source_tree: sourceCommit,
         playground_executable_sha256: "6".repeat(64),
         playground_code_signature_hash: "7".repeat(40),
@@ -838,9 +842,14 @@ function runCLI() {
   const report = args.selfTest
     ? makePassingReport(catalog)
     : JSON.parse(fs.readFileSync(args.report ?? "", "utf8"));
+  const sourceHelper = new URL("./source-provenance.sh", import.meta.url);
+  if (!args.selfTest && !fs.lstatSync(sourceHelper).isFile()) {
+    throw new Error("Source provenance helper must be a regular, unsymlinked file");
+  }
   const trustedSourceArtifacts = args.selfTest ? null : {
     catalog_sha256: sha256(catalogBytes),
     reporter_sha256: sha256(fs.readFileSync(fileURLToPath(import.meta.url))),
+    source_provenance_sha256: sha256(fs.readFileSync(sourceHelper)),
   };
   const result = validateCertification(catalog, report, trustedSourceArtifacts);
   writeResult(result, args.output);
