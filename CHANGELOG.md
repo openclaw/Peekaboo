@@ -25,6 +25,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Include nested dialog static text and nonblank AX text metadata fallbacks in `dialog list`, preserving dialog scope and control order.
 - Accept canonical v2 prebuilt Playground fixtures in native validation with strict source, lock, toolchain, bundle, and Foundation signature checks, retaining v1 only for the current invocation's local build.
 - Distinguish browser handoff parent and receipt metadata refusals from inspection failures, and document the unchanged zero-ACL/xattr requirements, including OS provenance, without fallback.
 - Bound debug CLI build-staleness config discovery to the starting directory's ancestors so missing or inaccessible Git metadata cannot cause an endless startup traversal.

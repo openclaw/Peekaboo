@@ -152,8 +152,20 @@ extension DialogService {
     }
 
     func dialogStaticTexts(from dialog: Element) -> [String] {
-        let axStaticTexts = dialog.children()?.filter { $0.role() == "AXStaticText" } ?? []
-        let staticTexts = axStaticTexts.compactMap { $0.value() as? String }
+        let axStaticTexts = DialogTraversal.collectUniqueDepthFirst(
+            from: dialog,
+            matching: { $0.role() == "AXStaticText" },
+            children: { element in
+                let role = element.role()
+                guard element == dialog || (role != "AXApplication" && role != "AXWindow") else { return [] }
+                // Only follow structural children within the resolved dialog, not AX navigation alternatives.
+                return element.children(strict: true) ?? []
+            })
+        let staticTexts = axStaticTexts.compactMap { element in
+            [element.value() as? String, element.title(), element.label(), element.descriptionText()]
+                .compactMap(\.self)
+                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
         self.logger.debug("Found \(staticTexts.count) static texts")
         return staticTexts
     }
