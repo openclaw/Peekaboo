@@ -83,6 +83,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          python3 scripts/setup-swift-workspace.py setup
+
           xcodebuild \
             -workspace Apps/Peekaboo.xcworkspace \
             -scheme CodeQL \

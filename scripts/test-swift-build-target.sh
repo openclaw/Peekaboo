@@ -30,6 +30,18 @@ if [[ "$*" == *--show-bin-path* ]]; then
 fi
 EOF
 chmod 755 "$TEST_DIR/fake tools/swift"
+# This fixture owns compiler argv only. The workspace helper's source/configuration
+# gates are exercised separately by test-swift-workspace.py, with no real checkout setup.
+PROJECT_ROOT="$TEST_DIR"
+export PROJECT_ROOT
+cat > "$TEST_DIR/fake tools/python3" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[[ "$1" == "$PROJECT_ROOT/scripts/setup-swift-workspace.py" && "$2" == run && "$3" == --release && "$4" == -- ]]
+shift 4
+exec "$@"
+EOF
+chmod 755 "$TEST_DIR/fake tools/python3"
 export PATH="$TEST_DIR/fake tools:/usr/bin:/bin"
 [[ "$(command -v swift)" == "$TEST_DIR/fake tools/swift" ]] || fail 'Swift must be the fixture executable'
 

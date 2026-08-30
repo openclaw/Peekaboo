@@ -25,12 +25,42 @@ cp "$ROOT_DIR/scripts/build-playground-artifact.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/source-provenance.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/test-background-computer-use.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/terminal-artifact-env.sh" "$FIXTURE_ROOT/scripts/"
+cp "$ROOT_DIR/scripts/setup-swift-workspace.py" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/package.json" "$FIXTURE_ROOT/"
 printf '<Workspace version="1.0"/>\n' > "$FIXTURE_ROOT/Apps/Peekaboo.xcworkspace/contents.xcworkspacedata"
 printf 'fixture\n' > "$FIXTURE_ROOT/Apps/Playground/Fixture/source.txt"
 cat > "$FIXTURE_ROOT/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved" <<'EOF'
 {"pins":[{"identity":"fixture","kind":"remoteSourceControl","location":"https://example.invalid/fixture","state":{"revision":"0123456789abcdef0123456789abcdef01234567","version":"1.0.0"}}],"version":3}
 EOF
+
+# The real workspace owner runs around the fake Xcode child. Its complete checkout
+# layout and gitlinks are inert fixture inputs, never production package discovery.
+python3 - "$FIXTURE_ROOT" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+sys.dont_write_bytecode = True
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('workspace', root / 'scripts/setup-swift-workspace.py')
+workspace = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(workspace)
+for package in (*workspace.PACKAGES, 'Commander', 'AXorcist'):
+    (root / package).mkdir(parents=True, exist_ok=True)
+    (root / package / 'Package.swift').touch()
+for context in workspace.WORKSPACES:
+    (root / context).mkdir(parents=True, exist_ok=True)
+    (root / context / 'contents.xcworkspacedata').touch()
+(root / '.gitignore').write_text('**/.swiftpm/\n**/xcshareddata/swiftpm/configuration/\n')
+(root / '.gitmodules').write_text(
+    '[submodule "Commander"]\n path = Commander\n url = https://github.com/steipete/Commander.git\n'
+    '[submodule "AXorcist"]\n path = AXorcist\n url = https://github.com/openclaw/AXorcist.git\n')
+PY
+for module in Commander AXorcist; do
+  git -C "$FIXTURE_ROOT/$module" init -q
+  git -C "$FIXTURE_ROOT/$module" add Package.swift
+  git -C "$FIXTURE_ROOT/$module" -c user.name='Offline Fixture' -c user.email=fixture@example.invalid \
+    -c core.hooksPath=/dev/null -c commit.gpgSign=false commit -qm fixture
+done
 
 git -C "$FIXTURE_ROOT" init -q
 git -C "$FIXTURE_ROOT" config user.name 'Peekaboo Test'

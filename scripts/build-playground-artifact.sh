@@ -209,7 +209,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-terminal_artifact_run_build env DEVELOPER_DIR="$EFFECTIVE_DEVELOPER_DIR" "$XCODEBUILD_BIN" \
+terminal_artifact_run_build env DEVELOPER_DIR="$EFFECTIVE_DEVELOPER_DIR" \
+  python3 "$ROOT_DIR/scripts/setup-swift-workspace.py" run --release -- "$XCODEBUILD_BIN" \
   -workspace "$WORKSPACE" \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \

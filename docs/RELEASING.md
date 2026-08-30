@@ -39,6 +39,7 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 ## 1. Prepare
 
 - Confirm `main` is clean, current, and all submodules are at the intended commits.
+- Run `python3 scripts/setup-swift-workspace.py setup --release` in the publication checkout after submodule initialization; repeat after relocation. See [workspace ownership and recovery](building.md#commander-dependency-resolution). Build helpers generate and verify the same ignored, source-only Commander mapping around compilation; do not copy another checkout's absolute-path configuration into staging or sealed artifacts. Existing canonical locks, clean-source checks, materialized source snapshots, and strict-resolution flags remain authoritative.
 - Update `package.json`, both `version.json` files, `Apps/CLI/Sources/Resources/Info.plist`,
   `Apps/CLI/TestHost/Info.plist`, `PeekabooMCPVersion.current`, the README release-status copy, and
   `MARKETING_VERSION` in the Mac, Inspector, and Playground Xcode projects.
@@ -227,7 +228,15 @@ Load release credentials through the maintainer 1Password workflow, then run int
 ```
 
 The script runs release preparation, builds the universal CLI and npm package, signs/notarizes/staples the macOS app
-and branded DMG, generates checksums and Sparkle metadata, and uploads a draft GitHub release. Install `uv`
+and branded DMG, generates checksums and Sparkle metadata, and uploads a draft GitHub release. The complete preparation
+child uses `terminal-artifact-env.sh` to remove protected credential/startup variables and force
+`PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, excluding the managed codesign shim. Provision the required tools
+on that path. Signing-keychain paths remain available for the preflight's signed CLI build; only its `pnpm test` child
+removes those paths and `CODESIGN_IDENTITY`, using the same sanitizer even when preparation is invoked directly.
+The parent retains its credentials and signing environment on success or failure. This is an environment boundary,
+not OS-account isolation: run safe tests in a fresh VM before introducing task credentials. Workspace mapping and lock
+ownership remain with the existing compilation helpers; do not wrap the whole preflight in the workspace runner.
+Publication eligibility still requires the same complete successful gate. Install `uv`
 with Homebrew before running it; the pinned `dmgbuild` environment writes Finder layout metadata directly. The npm
 step requires `NPM_TOKEN`; the maintainer release command provides it through the manifest's credential pass. A 404
 response to a registry PUT means npm authentication is missing or invalid, not that the package is missing. When the

@@ -15,6 +15,7 @@
 - Add explicit foreground modifier-click with exact target preflight and compare-and-swap cursor and focus restoration, preserving newer user or application state instead of overwriting it.
 
 ### Changed
+- Require explicit checkout-local Swift workspace setup for direct source development, preserving live Commander source in standard gitfile-based submodules without conflicting dependency locations; build, release, and CI helpers own setup automatically.
 - Defer authenticated historical-daemon RPCs until a fallback is actually needed instead of serially probing every stale socket before ordinary CLI commands.
 - Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.

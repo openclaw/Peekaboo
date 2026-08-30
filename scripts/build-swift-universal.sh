@@ -142,6 +142,7 @@ generate_info_plist() {
 }
 
 echo "🧹 Cleaning previous build artifacts..."
+python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" setup
 (cd "$SWIFT_PROJECT_PATH" && swift package reset) || echo "'swift package reset' encountered an issue, attempting rm -rf..."
 rm -rf "$SWIFT_PROJECT_PATH/.build"
 rm -f "$ARM64_BINARY_TEMP" "$X86_64_BINARY_TEMP" "$FINAL_BINARY_PATH.tmp"
@@ -169,7 +170,8 @@ generate_info_plist
 echo "🏗️ Building for arm64 (Apple Silicon)..."
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
+    python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" run --release -- \
+        swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
 ARM64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" arm64 release "$FINAL_BINARY_NAME")
@@ -179,7 +181,8 @@ echo "✅ arm64 build complete: $ARM64_BINARY_TEMP"
 echo "🏗️ Building for x86_64 (Intel)..."
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build "${SWIFT_RESOLUTION_ARGS[@]}" "${SWIFT_X86_64_TARGET_ARGS[@]}" -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
+    python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" run --release -- \
+        swift build "${SWIFT_RESOLUTION_ARGS[@]}" "${SWIFT_X86_64_TARGET_ARGS[@]}" -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
 X86_64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" x86_64 release "$FINAL_BINARY_NAME")

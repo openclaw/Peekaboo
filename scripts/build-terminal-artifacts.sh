@@ -568,7 +568,8 @@ EOF
   "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" "$UNSIGNED_MONITOR" "$UNSIGNED_QUALIFICATION_ROOT"
 
   build_number="$(peekaboo_release_build_number "$VERSION")"
-  terminal_artifact_run_build /usr/bin/env DEVELOPER_DIR="$EFFECTIVE_DEVELOPER_DIR" /usr/bin/xcodebuild \
+  terminal_artifact_run_build /usr/bin/env DEVELOPER_DIR="$EFFECTIVE_DEVELOPER_DIR" \
+    python3 "$ROOT_DIR/scripts/setup-swift-workspace.py" run --release -- /usr/bin/xcodebuild \
     -workspace "$ROOT_DIR/Apps/Peekaboo.xcworkspace" -scheme Peekaboo -configuration Release \
     -destination platform=macOS,arch=arm64 -derivedDataPath "$STAGE_DIR/peekaboo-derived" \
     -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -quiet \

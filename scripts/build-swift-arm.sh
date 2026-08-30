@@ -129,6 +129,7 @@ case "${PEEKABOO_USE_RESOLVED_VERSIONS:-0}" in
 esac
 
 echo "🧹 Cleaning previous build artifacts..."
+python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" setup
 (cd "$SWIFT_PROJECT_PATH" && swift package reset) || echo "'swift package reset' encountered an issue, attempting rm -rf..."
 rm -rf "$SWIFT_PROJECT_PATH/.build"
 rm -f "$FINAL_BINARY_PATH.tmp"
@@ -156,7 +157,8 @@ generate_info_plist
 echo "🏗️ Building for arm64 (Apple Silicon) only..."
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
+    python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" run --release -- \
+        swift build "${SWIFT_RESOLUTION_ARGS[@]}" --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
 ARM64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" arm64 release "$FINAL_BINARY_NAME")

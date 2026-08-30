@@ -97,7 +97,7 @@ else
 fi
 
 # Build the app
-xcodebuild \
+python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" run -- xcodebuild \
     -workspace "$WORKSPACE" \
     -scheme "$SCHEME" \
     -configuration "$CONFIGURATION" \

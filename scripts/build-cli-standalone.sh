@@ -32,7 +32,7 @@ cd "$(dirname "$0")/../Apps/CLI"
 
 # Build for release with optimizations
 echo -e "${BLUE}Building release version...${NC}"
-swift build -c release 2>&1 | pipe_build_output
+python3 ../../scripts/setup-swift-workspace.py run -- swift build -c release 2>&1 | pipe_build_output
 
 # Get the build output path
 BUILD_PATH=".build/release/peekaboo"

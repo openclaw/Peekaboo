@@ -32,6 +32,9 @@ jobs:
         with:
           bun-version: "latest"
 
+      - name: Configure checkout-local Swift workspace
+        run: python3 scripts/setup-swift-workspace.py setup
+
       - name: Docs lint
         run: |
           node scripts/docs-lint.mjs
@@ -172,6 +175,9 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
+
+      - name: Configure checkout-local Swift workspace
+        run: python3 scripts/setup-swift-workspace.py setup
 
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
@@ -405,6 +411,9 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
+
+      - name: Configure checkout-local Swift workspace
+        run: python3 scripts/setup-swift-workspace.py setup
 
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |

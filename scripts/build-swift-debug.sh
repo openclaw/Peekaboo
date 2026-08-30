@@ -108,6 +108,7 @@ if [[ "$1" == "--clean" ]]; then
 fi
 
 # Only clean if requested
+python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" setup
 if [[ "$CLEAN_BUILD" == "true" ]]; then
     echo "🧹 Cleaning previous build artifacts..."
     rm -rf "$SWIFT_PROJECT_PATH/.build"
@@ -138,7 +139,7 @@ fi
 
 (
     cd "$SWIFT_PROJECT_PATH"
-    swift build 2>&1 | pipe_build_output
+    python3 "$PROJECT_ROOT/scripts/setup-swift-workspace.py" run -- swift build 2>&1 | pipe_build_output
 )
 if peekaboo_is_exact_source_commit "$SOURCE_COMMIT"; then
     peekaboo_verify_source_commit "$PROJECT_ROOT" "$SOURCE_COMMIT"

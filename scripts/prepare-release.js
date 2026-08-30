@@ -239,6 +239,22 @@ function checkDocs() {
   return true;
 }
 
+function runSafeTests() {
+  log('Running: Swift CLI tests (safe)...', colors.cyan);
+  const result = spawnSync('/bin/bash', [
+    '--noprofile', '--norc', '-p', '-c',
+    `set -euo pipefail
+source "$1"
+shift
+builtin unset MAC_RELEASE_CODESIGN_KEYCHAIN CODESIGN_KEYCHAIN CODESIGN_IDENTITY
+terminal_artifact_run_build "$@"`,
+    'peekaboo-release-tests',
+    join(__dirname, 'terminal-artifact-env.sh'),
+    'pnpm', 'test'
+  ], { cwd: projectRoot, stdio: 'inherit' });
+  return result.status === 0;
+}
+
 function checkSwift() {
   logStep('Swift Checks');
 
@@ -270,7 +286,7 @@ function checkSwift() {
   try {
     // Capture build output to check for warnings. Start from a clean SwiftPM
     // state so an interrupted release build cannot poison the next preflight.
-    swiftBuildOutput = execSync('cd Apps/CLI && swift package reset && swift build --arch arm64 -c release 2>&1', {
+    swiftBuildOutput = execSync('python3 scripts/setup-swift-workspace.py setup && cd Apps/CLI && swift package reset && python3 ../../scripts/setup-swift-workspace.py run --release -- swift build --arch arm64 -c release 2>&1', {
       cwd: projectRoot,
       encoding: 'utf8',
       timeout: 600_000
@@ -297,16 +313,8 @@ function checkSwift() {
     logSuccess('No Swift compiler warnings found');
   }
 
-  // Tests include fixture modes that must never inherit live signing authority.
-  const testCommand = [
-    '/usr/bin/env',
-    '-u MAC_RELEASE_CODESIGN_KEYCHAIN',
-    '-u MAC_RELEASE_CODESIGN_KEYCHAIN_PASSWORD',
-    '-u CODESIGN_KEYCHAIN',
-    '-u CODESIGN_IDENTITY',
-    'pnpm test'
-  ].join(' ');
-  if (!execWithOutput(testCommand, 'Swift CLI tests (safe)')) {
+  // Remove keychain locators only for tests; the later CLI build still signs.
+  if (!runSafeTests()) {
     logError('Swift tests failed');
     return false;
   }

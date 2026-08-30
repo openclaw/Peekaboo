@@ -469,7 +469,7 @@ if [[ "$SKIP_BUILD" == true ]]; then
   log "Skipping build; reusing $APP_BUNDLE"
 else
   log "Building $APP_NAME.app $VERSION"
-  xcodebuild \
+  python3 "$ROOT/scripts/setup-swift-workspace.py" run --release -- xcodebuild \
     -workspace "$WORKSPACE" \
     -scheme "$SCHEME" \
     -configuration "$CONFIGURATION" \

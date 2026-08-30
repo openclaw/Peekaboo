@@ -19,6 +19,13 @@ cp "$ROOT_DIR/scripts/source-provenance.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/release-version.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/release-driver-contract.mjs" "$FIXTURE_ROOT/scripts/"
 
+# This fixture owns driver/reuse control flow, not environment isolation. Keep
+# fake tools reachable here; actual sanitizer coverage lives in the environment
+# and release-preflight contract tests, without a production PATH override.
+cat >"$FIXTURE_ROOT/scripts/terminal-artifact-env.sh" <<'ENV_STUB'
+terminal_artifact_run_build() { "$@"; }
+ENV_STUB
+
 cat >"$FIXTURE_ROOT/scripts/build-terminal-artifacts.sh" <<'HELPER'
 #!/usr/bin/env bash
 set -euo pipefail

@@ -128,6 +128,9 @@ jobs:
           cp Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved \
             "$VALIDATION_RESULTS/workspace-Package.resolved"
 
+      - name: Configure checkout-local Swift workspace
+        run: python3 scripts/setup-swift-workspace.py setup
+
       # Compatibility coverage only; the separately owned release proof uses Xcode 27.
       - name: Select installed Xcode 26.x and record actual toolchain
         run: |

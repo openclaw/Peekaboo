@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `click --modifiers ... --foreground` with exact snapshot preflight and truthful cursor/focus restoration reporting.
 
 ### Changed
+- Require explicit checkout-local Swift workspace setup for direct source development, preserving live Commander source in standard gitfile-based submodules without conflicting dependency locations; build, release, and CI helpers own setup automatically.
 - Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
 - Avoid reopening and hashing Bridge screenshot artifacts twice before CLI or MCP consumption while retaining signed client verification and use-time publication checks.

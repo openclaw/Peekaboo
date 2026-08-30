@@ -20,6 +20,8 @@ source "$SCRIPT_DIR/native-only-policy.sh"
 source "$SCRIPT_DIR/source-provenance.sh"
 # shellcheck source=scripts/release-version.sh
 source "$SCRIPT_DIR/release-version.sh"
+# shellcheck source=scripts/terminal-artifact-env.sh
+source "$SCRIPT_DIR/terminal-artifact-env.sh"
 BUILD_DIR="$PROJECT_ROOT/build"
 RELEASE_DIR="${RELEASE_DIR:-$BUILD_DIR/release}"
 MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$PROJECT_ROOT/.mac-release.env}"
@@ -1252,7 +1254,10 @@ if [ "$SKIP_CHECKS" = false ]; then
     else
         PREPARE_COMMAND=(node scripts/prepare-release.js)
     fi
-    if ! env $PREP_ENV MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" \
+    # Keep package credentials and the managed codesign PATH shim out of the
+    # complete gate. Keychain paths survive for its later signed CLI build.
+    if ! terminal_artifact_run_build /usr/bin/env $PREP_ENV MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" \
+        /bin/bash --noprofile --norc -p -c 'exec "$@"' peekaboo-release-preflight \
         "${PREPARE_COMMAND[@]}"; then
         echo -e "${RED}❌ Pre-release checks failed!${NC}"
         exit 1

@@ -70,6 +70,34 @@ peekaboo_verify_source_commit() {
   fi
 }
 
+# A filesystem package is outside Package.resolved. Bind it to the parent gitlink,
+# not an ambient sibling, remapped origin, or SwiftPM's old version checkout.
+peekaboo_verify_workspace_submodules() {
+  local repository_root="${1:?repository root required}"
+  local module expected_url entry revision actual_root
+  [[ "$(git -C "$repository_root" rev-parse --show-toplevel 2>/dev/null)" == "$repository_root" ]] || return 1
+  [[ -f "$repository_root/.gitmodules" && ! -L "$repository_root/.gitmodules" ]] || return 1
+  for module in Commander AXorcist; do
+    case "$module" in
+      Commander) expected_url=https://github.com/steipete/Commander.git ;;
+      AXorcist) expected_url=https://github.com/openclaw/AXorcist.git ;;
+    esac
+    [[ "$(git config --file "$repository_root/.gitmodules" --get "submodule.$module.path")" == "$module" &&
+       "$(git config --file "$repository_root/.gitmodules" --get "submodule.$module.url")" == "$expected_url" ]] || return 1
+    [[ -d "$repository_root/$module" && ! -L "$repository_root/$module" &&
+       -f "$repository_root/$module/Package.swift" && ! -L "$repository_root/$module/Package.swift" &&
+       -e "$repository_root/$module/.git" && ! -L "$repository_root/$module/.git" ]] || return 1
+    entry="$(git -C "$repository_root" ls-tree HEAD -- "$module")" || return 1
+    [[ "$entry" == "160000 commit "* ]] || return 1
+    revision="${entry#160000 commit }"
+    revision="${revision%%$'\t'*}"
+    peekaboo_is_exact_source_commit "$revision" || return 1
+    actual_root="$(git -C "$repository_root/$module" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    [[ "$actual_root" == "$repository_root/$module" &&
+       "$(git -C "$repository_root/$module" rev-parse HEAD)" == "$revision" ]] || return 1
+  done
+}
+
 # Validates an embedded artifact stamp independently for verify-only workflows,
 # or against the still-clean build checkout when an expected commit is supplied.
 peekaboo_validate_artifact_source_commit() {
