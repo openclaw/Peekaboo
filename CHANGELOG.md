@@ -26,6 +26,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Bound retained native application metadata to eight operations per host process through timeout/cancellation and autorelease cleanup, shed overload as partial rows, and keep exact-target AX reads independent.
 - Keep public SwiftPM consumers on versioned Commander dependencies with custom scratch directories by pinning AXorcist 0.1.8.
 - Include nested dialog static text and nonblank AX text metadata fallbacks in `dialog list`, preserving dialog scope and control order.
 - Accept canonical v2 prebuilt Playground fixtures in native validation with strict source, lock, toolchain, bundle, and Foundation signature checks, retaining v1 only for the current invocation's local build.
@@ -246,7 +247,7 @@
 - Keep raw SwiftPM CLI `--version` output stable with explicit `unknown` build placeholders instead of reading the original working copy and wall clock at runtime; stamped debug and release builds retain rich link-time metadata.
 - Require direct accessibility actions and value mutations to resolve through a current or freshly targeted UI snapshot, revalidate exact process/window receipts, and refuse before dispatch instead of falling through to the user's frontmost app.
 - Probe Bridge diagnostic sockets concurrently under a one-second per-host deadline with bounded cancellation while preserving runtime selection and candidate order, so `bridge status --verbose` neither accumulates nor inherits a wedged host's full handshake latency.
-- Keep application inventory responsive when hidden processes stall LaunchServices metadata: reuse one WindowServer snapshot, cap/coalesce generation-scoped reads behind per-process and overall deadlines, return explicit partial warnings instead of guessing hidden state, and keep incomplete/system-helper rows out of bulk quit and agent context.
+- Keep application inventory responsive when hidden processes stall LaunchServices metadata: reuse one WindowServer snapshot, limit each inventory to eight concurrent metadata waits with per-process and enrichment scheduling deadlines, reject repeats for still-blocked generations, return explicit partial warnings instead of guessing hidden state, and keep incomplete/system-helper rows out of bulk quit and agent context.
 - Require exactly one CLI/MCP `click` target shape, make the MCP schema require a fresh exact-window receipt for background coordinates, reject PID-only shapes before dispatch, and keep explicit foreground pointer calls discoverable.
 - Accept pnpm's documented installer-option separator and build Developer ID companion artifacts with manual Xcode signing instead of failing on conflicting automatic provisioning.
 - Require explicit foreground consent before Dock/menu-bar global UI or targetless frontmost application-menu clicks; keep discovery read-only/background and return typed refusals before lookup or dispatch.

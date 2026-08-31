@@ -247,7 +247,7 @@ struct ApplicationInventoryTimeoutTests {
 
     @Test
     @MainActor
-    func `metadata fanout obeys its concurrency cap`() async throws {
+    func `async-await metadata fanout obeys its concurrency cap independently of native retention`() async throws {
         let processIdentifiers = Array(44001...44012).map(pid_t.init)
         let probe = ApplicationMetadataConcurrencyProbe()
         let service = ApplicationService(

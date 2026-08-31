@@ -21,6 +21,7 @@ enum DetachedApplicationMetadataCoordinator {
         processIdentifier: Int32,
         processStartIdentity: UInt64?,
         timeoutSeconds: TimeInterval,
+        pool: DetachedApplicationMetadataPool = .shared,
         operation: @escaping @Sendable (DetachedApplicationMetadataRequest) throws
             -> DetachedApplicationMetadata = DetachedApplicationMetadataWorker.read) async throws
         -> DetachedApplicationMetadata
@@ -28,18 +29,11 @@ enum DetachedApplicationMetadataCoordinator {
         let request = DetachedApplicationMetadataRequest(
             processIdentifier: processIdentifier,
             expectedProcessStartIdentity: processStartIdentity)
-        return try await ElementDetectionTimeoutRunner.runDetached(
-            targetProcessIdentifier: processIdentifier,
-            targetProcessStartIdentity: processStartIdentity,
-            seconds: timeoutSeconds,
-            maximumPendingOperationCount: 1)
-        {
-            try operation(request)
-        }
+        return try await pool.run(request: request, timeoutSeconds: timeoutSeconds, operation: operation)
     }
 }
 
-/// Reads LaunchServices metadata on a generation-scoped detached lane. `NSRunningApplication`
+/// Reads LaunchServices metadata in the dedicated, generation-scoped metadata pool. `NSRunningApplication`
 /// access is normally cheap, but a wedged or exiting process must not pin the Bridge MainActor or
 /// prevent unrelated applications from appearing in inventory.
 enum DetachedApplicationMetadataWorker {

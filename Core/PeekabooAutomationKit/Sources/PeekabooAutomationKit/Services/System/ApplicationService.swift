@@ -187,7 +187,9 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
     /// Keep this safely below the Bridge's fixed request deadline so partial CG inventory remains usable.
     static let windowAXEnrichmentTimeout: Float = 2.0
 
-    /// One unresponsive LaunchServices record must leave ample time for Bridge response encoding.
+    /// Caller budgets for metadata enrichment, with eight concurrent waits per inventory. The separate
+    /// process-wide metadata pool retains at most eight native operations through autorelease cleanup.
+    /// Synchronous inventory seed collection and final generation validation are not hard-bound here.
     static let applicationMetadataTimeout: TimeInterval = 0.25
     static let applicationInventoryOverallTimeout: TimeInterval = 1
     static let maximumConcurrentApplicationMetadataReads = 8

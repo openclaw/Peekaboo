@@ -14,6 +14,7 @@ private struct ApplicationInventoryCandidate: Sendable {
 private enum ApplicationInventoryOutcome: Sendable {
     case metadata(DetachedApplicationMetadata)
     case timedOut(seconds: TimeInterval)
+    case overloaded
     case skippedAfterOverallDeadline(seconds: TimeInterval)
     case unavailable
     case processChanged
@@ -260,6 +261,11 @@ extension ApplicationService {
             warnings.append(
                 "Application metadata timed out after \(Self.formatInventoryTimeout(seconds))s for PID " +
                     "\(candidate.processIdentifier); hidden state and activation policy are unknown")
+        case .overloaded:
+            guard candidate.processStartIdentity != nil else { return nil }
+            warnings.append(
+                "Application metadata capacity was exhausted for PID \(candidate.processIdentifier); " +
+                    "hidden state and activation policy are unknown")
         case let .skippedAfterOverallDeadline(seconds):
             guard candidate.processStartIdentity != nil else { return nil }
             warnings.append(
@@ -303,6 +309,8 @@ extension ApplicationService {
             return ApplicationInventoryRead(candidate: candidate, outcome: .metadata(metadata))
         } catch is CancellationError {
             throw CancellationError()
+        } catch ApplicationMetadataAdmissionError.overloaded {
+            return ApplicationInventoryRead(candidate: candidate, outcome: .overloaded)
         } catch let CaptureError.detectionTimedOut(seconds) {
             return ApplicationInventoryRead(candidate: candidate, outcome: .timedOut(seconds: seconds))
         } catch let error as PeekabooError {
