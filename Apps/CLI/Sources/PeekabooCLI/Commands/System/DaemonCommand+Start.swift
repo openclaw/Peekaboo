@@ -50,7 +50,7 @@ extension DaemonCommand {
                 runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
             )
 
-            let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
+            let targets = try await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
             let action = DaemonControlPlanner.startAction(
                 targets: targets,
                 explicitSocket: self.bridgeSocket,
@@ -95,7 +95,7 @@ extension DaemonCommand {
             case .available:
                 break
             case .reusableDaemon:
-                if let status = await client.fetchReusableDaemonStatus() {
+                if let status = try await client.fetchReusableDaemonStatus() {
                     guard status.mode == .manual else {
                         throw PeekabooError.operationError(
                             message: "Daemon at \(socketPath) remained in auto mode; retry start when it is idle"
@@ -137,8 +137,7 @@ extension DaemonCommand {
                         expectedPID: legacyTarget.status.pid,
                         requireIdentityMatch: true
                     )
-                    if !stopped,
-                       await legacyTarget.client.fetchReusableDaemonStatus() != nil {
+                    if !stopped {
                         throw PeekabooError.operationError(message: "Legacy daemon refused migration stop request")
                     }
                 } catch is CancellationError {
@@ -148,18 +147,16 @@ extension DaemonCommand {
                     )
                     throw CancellationError()
                 } catch {
-                    if await legacyTarget.client.fetchReusableDaemonStatus() != nil {
-                        let cleanedUp = await DaemonLaunchPolicy.stopReplacement(
-                            client: client,
-                            replacement: replacement
+                    let cleanedUp = await DaemonLaunchPolicy.stopReplacement(
+                        client: client,
+                        replacement: replacement
+                    )
+                    if !cleanedUp {
+                        throw PeekabooError.operationError(
+                            message: "Legacy migration failed and replacement cleanup timed out"
                         )
-                        if !cleanedUp {
-                            throw PeekabooError.operationError(
-                                message: "Legacy migration failed and replacement cleanup timed out"
-                            )
-                        }
-                        throw error
                     }
+                    throw error
                 }
             }
 

@@ -20,7 +20,7 @@ extension DaemonCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
+            let targets = try await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
 
             if let target = DaemonControlPlanner.preferredStatusTarget(
                 targets,

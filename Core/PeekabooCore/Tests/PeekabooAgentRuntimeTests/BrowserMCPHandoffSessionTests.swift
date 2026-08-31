@@ -1308,36 +1308,44 @@ private actor HandoffEndpointResolverSpy {
     }
 }
 
-@MainActor
-private final class HandoffDetectionSpy {
-    private(set) var calls = 0
+private final class HandoffDetectionSpy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var calls: Int {
+        self.lock.withLock { self.count }
+    }
 
     func record() {
-        self.calls += 1
+        self.lock.withLock { self.count += 1 }
     }
 
     func reset() {
-        self.calls = 0
+        self.lock.withLock { self.count = 0 }
     }
 }
 
-@MainActor
-private final class HandoffNativeDetectionSpy {
+private final class HandoffNativeDetectionSpy: @unchecked Sendable {
     private let browser: DetectedBrowser
-    private(set) var calls = 0
+    private let lock = NSLock()
+    private var count = 0
+
+    var calls: Int {
+        self.lock.withLock { self.count }
+    }
 
     init(browser: DetectedBrowser) {
         self.browser = browser
     }
 
     func results(channel: BrowserMCPChannel?) -> [DetectedBrowser] {
-        self.calls += 1
+        self.lock.withLock { self.count += 1 }
         guard channel == nil || channel == self.browser.channel else { return [] }
         return [self.browser]
     }
 
     func reset() {
-        self.calls = 0
+        self.lock.withLock { self.count = 0 }
     }
 }
 

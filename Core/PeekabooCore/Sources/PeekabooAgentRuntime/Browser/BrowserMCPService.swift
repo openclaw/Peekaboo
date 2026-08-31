@@ -1483,7 +1483,7 @@ extension BrowserMCPService {
                 message: "Browser disconnect completion is unknown because provider cleanup was not confirmed.",
                 hint: "Check browser status before deciding whether to disconnect or reconnect again.")
         }
-        return manager.confirmedDisconnectedStatus(channel: nil)
+        return await manager.confirmedDisconnectedStatus(channel: nil)
     }
 }
 

@@ -24,6 +24,7 @@
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Keep daemon health responsive while browser discovery is blocked, report cached browser diagnostics as unconfirmed, and preserve daemon transport failures instead of reporting successful absence or cleanup.
 - Reject late element-detection results and expired queued AX work against one absolute deadline, even when timeout delivery is delayed.
 - Pin the vendored AXorcist update so custom SwiftPM scratch paths cannot silently replace Commander's versioned dependency with a sibling checkout.
 - Avoid main-thread LaunchServices stalls during global application lifecycle tracking, preserving process-instance identity, launch readiness, and stop/restart safety.

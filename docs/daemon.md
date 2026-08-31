@@ -92,7 +92,18 @@ Older daemons may still occupy Peekaboo.app's `bridge.sock`. Current daemon cont
 - Screen Recording, Accessibility, and Event Synthesizing permissions
 - snapshot count and last access
 - tracked windows, AX observers, and poll interval; reconciliation retains only the exact bounds and owner PID needed for move-aware input
-- browser MCP connection, tool count, and detected browsers
+- cached browser MCP connection, tool count, and detected browsers
+
+Daemon health never waits for optional browser discovery or connection validation. It starts at most one diagnostic
+refresh at a time and returns the last completed values with `browser.observation: "indeterminate"`; before the first
+completion, the empty values are unavailable information, not confirmed absence. Human output says `State: unconfirmed`.
+Use `browser status` for a fresh browser observation. Native application metadata reads run on a dedicated background
+queue, while browser connection validation and execution retain their existing ownership and ordering.
+
+A missing or refused socket still reports `running: false`. A timeout, authorization failure, malformed reply, or
+response loss after handshake fails the command with `success: false` and a nonzero exit; it does not prove absence.
+Explicit start/stop use the same strict probes before choosing a target. Shutdown retains its existing wait and PID
+checks, retries read-only observations, and reports an unresolved probe failure rather than claiming successful stop.
 
 See [`peekaboo daemon`](commands/daemon.md) for command flags and [Bridge host](bridge-host.md) for transport and
 security details.

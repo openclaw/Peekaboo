@@ -115,6 +115,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
     private var idleShutdownTask: Task<Void, Never>?
     private var idleShutdownGeneration: UInt64 = 0
     private var shutdownTask: Task<Void, Never>?
+    private let browserDiagnostics = DaemonBrowserDiagnostics()
 
     public init(configuration: Configuration) {
         self.configuration = configuration
@@ -224,7 +225,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
                 cgPollIntervalMs: status.cgPollIntervalMs)
         }
 
-        return await PeekabooDaemonStatus(
+        return PeekabooDaemonStatus(
             running: true,
             pid: getpid(),
             startedAt: self.startTime,
@@ -233,7 +234,9 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
             permissions: permissions,
             snapshots: snapshots,
             windowTracker: windowStatus,
-            browser: try? self.services.browserStatus(channel: nil),
+            browser: self.browserDiagnostics.snapshot { [services] in
+                try await services.browserStatus(channel: nil)
+            },
             activity: self.activityStatus(now: Date()),
             supportsConditionalStop: true)
     }
@@ -293,6 +296,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
     }
 
     private func shutdown() async {
+        self.browserDiagnostics.stop()
         self.idleShutdownTask?.cancel()
         self.idleShutdownTask = nil
 

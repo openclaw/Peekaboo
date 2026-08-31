@@ -13,7 +13,7 @@ extension RuntimeHostResolver {
     typealias RemoteCandidatePlanner = @MainActor (
         _ options: CommandRuntimeOptions,
         _ environment: [String: String]
-    ) async -> RemoteCandidatePlan
+    ) async throws -> RemoteCandidatePlan
     typealias ScreenCaptureKitSafetyInspector = @MainActor @Sendable (
         _ options: CommandRuntimeOptions,
         _ environment: [String: String],
@@ -68,7 +68,7 @@ extension RuntimeHostResolver {
                 if let suppliedCandidates = candidates {
                     resolvedCandidates = suppliedCandidates
                 } else {
-                    let plan = await RuntimeHostResolver.remoteCandidatePlan(
+                    let plan = try await RuntimeHostResolver.remoteCandidatePlan(
                         options: options,
                         environment: environment
                     )

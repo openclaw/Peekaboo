@@ -47,10 +47,10 @@ extension DaemonCommand {
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(1))
                     guard !Task.isCancelled else { return }
-                    let targets = await DaemonControlResolver.validatedHistoricalTargets(
+                    guard let targets = try? await DaemonControlResolver.validatedHistoricalTargets(
                         daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
                         currentBuildScopedSocketPath: config.bridgeSocketPath
-                    )
+                    ) else { return }
                     guard !Task.isCancelled else { return }
                     await DaemonControlResolver.stopIdleHistoricalAutoDaemons(
                         targets,

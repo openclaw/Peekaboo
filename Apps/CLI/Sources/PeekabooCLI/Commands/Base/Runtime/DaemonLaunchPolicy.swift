@@ -505,7 +505,7 @@ enum DaemonLaunchPolicy {
         try Task.checkCancellation()
         let client = DaemonControlClient(socketPath: socketPath)
 
-        if await client.fetchReusableDaemonStatus() != nil {
+        if try await client.fetchReusableDaemonStatus() != nil {
             try Task.checkCancellation()
             return socketPath
         }
@@ -535,7 +535,7 @@ enum DaemonLaunchPolicy {
         )
         let legacyClient = DaemonControlClient(socketPath: PeekabooBridgeConstants.peekabooSocketPath)
         if self.shouldMigrateLegacyDaemon(targetSocketPath: socketPath),
-           let legacyStatus = await legacyClient.fetchReusableDaemonStatus(),
+           let legacyStatus = try await legacyClient.fetchReusableDaemonStatus(),
            let migrationArguments = migratedDaemonArguments(
                socketPath: socketPath,
                status: legacyStatus,
@@ -566,7 +566,7 @@ enum DaemonLaunchPolicy {
                         throw CancellationError()
                     }
                     let fallback = await self.compatibleLegacyFallbackSocketPath {
-                        await legacyClient.fetchReusableDaemonStatus()
+                        try? await legacyClient.fetchReusableDaemonStatus()
                     }
                     try Task.checkCancellation()
                     return fallback
@@ -579,7 +579,7 @@ enum DaemonLaunchPolicy {
                         requireIdentityMatch: true
                     )
                     if !stopped {
-                        if let currentLegacyStatus = await legacyClient.fetchReusableDaemonStatus() {
+                        if let currentLegacyStatus = try await legacyClient.fetchReusableDaemonStatus() {
                             try Task.checkCancellation()
                             let resolution = await self.resolveLegacyStopRace(
                                 legacyStatus: currentLegacyStatus,
@@ -601,7 +601,14 @@ enum DaemonLaunchPolicy {
                     if Task.isCancelled {
                         throw CancellationError()
                     }
-                    if let currentLegacyStatus = await legacyClient.fetchReusableDaemonStatus() {
+                    let currentLegacyStatus: PeekabooDaemonStatus?
+                    do {
+                        currentLegacyStatus = try await legacyClient.fetchReusableDaemonStatus()
+                    } catch {
+                        _ = await self.stopReplacement(client: client, replacement: replacement)
+                        throw error
+                    }
+                    if let currentLegacyStatus {
                         try Task.checkCancellation()
                         let resolution = await self.resolveLegacyStopRace(
                             legacyStatus: currentLegacyStatus,
@@ -613,7 +620,7 @@ enum DaemonLaunchPolicy {
                         return resolution
                     }
                 }
-                let replacementIsReusable = await client.fetchReusableDaemonStatus() != nil
+                let replacementIsReusable = try await client.fetchReusableDaemonStatus() != nil
                 try Task.checkCancellation()
                 return replacementIsReusable ? socketPath : nil
             }
@@ -685,12 +692,12 @@ enum DaemonLaunchPolicy {
     ) async -> String? {
         switch self.legacyStopRaceResolution(for: legacyStatus) {
         case .keepReplacement:
-            return await client.fetchReusableDaemonStatus() != nil ? replacementSocketPath : nil
+            return await (try? client.fetchReusableDaemonStatus()) != nil ? replacementSocketPath : nil
         case let .useLegacy(socketPath):
             let cleanedUp = await self.stopReplacement(client: client, replacement: replacement)
             var replacementIsReusable = false
             if !cleanedUp {
-                replacementIsReusable = await client.fetchReusableDaemonStatus() != nil
+                replacementIsReusable = await (try? client.fetchReusableDaemonStatus()) != nil
             }
             return self.legacyStopRaceSocketPath(
                 replacementCleanupSucceeded: cleanedUp,
@@ -713,7 +720,7 @@ enum DaemonLaunchPolicy {
 
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if await client.fetchReusableDaemonStatus() != nil {
+            if try await client.fetchReusableDaemonStatus() != nil {
                 try Task.checkCancellation()
                 return .reusableDaemon
             }
@@ -780,7 +787,8 @@ enum DaemonLaunchPolicy {
         let deadline = Date().addingTimeInterval(timeout)
         let client = DaemonControlClient(socketPath: socketPath)
         while Date() < deadline {
-            let status = await client.fetchReusableDaemonStatus()
+            // Readiness retries observe only this owned child; a failed probe cannot authorize another launch.
+            let status = try? await client.fetchReusableDaemonStatus()
             if Task.isCancelled {
                 await self.terminateLaunchedProcess(process, exitObserver: exitObserver)
                 throw CancellationError()
@@ -849,21 +857,22 @@ enum DaemonLaunchPolicy {
             TimeInterval(DaemonControlClient.defaultShutdownWaitSeconds)
         )
 
-        while Date() < deadline {
-            guard let status = await client.fetchControllableDaemonStatus(),
-                  status.pid == expectedPID
-            else {
-                return true
+        do {
+            while Date() < deadline {
+                guard let status = try await client.fetchControllableDaemonStatus(), status.pid == expectedPID else {
+                    return true
+                }
+                _ = try? await client.stopDaemon(expectedPID: expectedPID)
+                do {
+                    try await Task.sleep(nanoseconds: 200_000_000)
+                } catch {
+                    break
+                }
             }
-            _ = try? await client.stopDaemon(expectedPID: expectedPID)
-            do {
-                try await Task.sleep(nanoseconds: 200_000_000)
-            } catch {
-                break
-            }
+            return try await client.fetchControllableDaemonStatus()?.pid != expectedPID
+        } catch {
+            return false
         }
-
-        return await client.fetchControllableDaemonStatus()?.pid != expectedPID
     }
 
     static func stopReplacementAfterCancellation(

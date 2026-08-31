@@ -38,32 +38,32 @@ struct DaemonControlClient {
         self.requestTimeoutSec = requestTimeoutSec
     }
 
-    func fetchStatus() async -> PeekabooDaemonStatus? {
+    func fetchStatus() async throws -> PeekabooDaemonStatus? {
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: self.requestTimeoutSec)
+        let handshake: PeekabooBridgeHandshakeResponse
         do {
-            try await self.handshake(client: client)
+            handshake = try await self.handshake(client: client)
+        } catch let error as POSIXError where error.code == .ENOENT || error.code == .ECONNREFUSED {
+            return nil
+        }
+        do {
             return try await client.daemonStatus()
-        } catch let envelope as PeekabooBridgeErrorEnvelope {
-            if envelope.code == .operationNotSupported {
-                return await self.fallbackHandshake(client: client)
-            }
-            return nil
-        } catch {
-            return nil
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.code == .operationNotSupported {
+            return self.fallbackStatus(handshake: handshake)
         }
     }
 
     func stopDaemon(expectedPID: pid_t? = nil) async throws -> Bool {
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: self.requestTimeoutSec)
-        try await self.handshake(client: client)
+        _ = try await self.handshake(client: client)
         if let expectedPID {
             return try await client.daemonStop(expectedPID: expectedPID)
         }
         return try await client.daemonStop()
     }
 
-    private func handshake(client: PeekabooBridgeClient) async throws {
-        _ = try await client.handshake(client: PeekabooBridgeClientIdentity(
+    private func handshake(client: PeekabooBridgeClient) async throws -> PeekabooBridgeHandshakeResponse {
+        try await client.handshake(client: PeekabooBridgeClientIdentity(
             bundleIdentifier: Bundle.main.bundleIdentifier,
             teamIdentifier: nil,
             processIdentifier: getpid(),
@@ -71,8 +71,8 @@ struct DaemonControlClient {
         ))
     }
 
-    func fetchControllableDaemonStatus() async -> PeekabooDaemonStatus? {
-        guard let status = await fetchStatus(),
+    func fetchControllableDaemonStatus() async throws -> PeekabooDaemonStatus? {
+        guard let status = try await fetchStatus(),
               Self.isControllableDaemonStatus(status)
         else {
             return nil
@@ -80,8 +80,8 @@ struct DaemonControlClient {
         return status
     }
 
-    func fetchReusableDaemonStatus() async -> PeekabooDaemonStatus? {
-        guard let status = await fetchStatus(),
+    func fetchReusableDaemonStatus() async throws -> PeekabooDaemonStatus? {
+        guard let status = try await fetchStatus(),
               Self.isReusableDaemonStatus(status)
         else {
             return nil
@@ -90,11 +90,11 @@ struct DaemonControlClient {
     }
 
     static func isControllableDaemonStatus(_ status: PeekabooDaemonStatus) -> Bool {
-        status.mode != nil
+        status.running && status.mode != nil
     }
 
     static func isReusableDaemonStatus(_ status: PeekabooDaemonStatus) -> Bool {
-        status.mode == .auto || status.mode == .manual
+        status.running && (status.mode == .auto || status.mode == .manual)
     }
 
     static func migrationMode(for status: PeekabooDaemonStatus) -> PeekabooDaemonMode? {
@@ -129,21 +129,32 @@ struct DaemonControlClient {
         }
 
         let deadline = Date().addingTimeInterval(TimeInterval(waitSeconds))
+        var probeError: (any Error)?
         while Date() < deadline {
-            if await self.fetchControllableDaemonStatus() == nil {
-                if let expectedPID {
-                    if !Self.isProcessAlive(expectedPID) {
+            do {
+                if try await self.fetchControllableDaemonStatus() == nil {
+                    if let expectedPID {
+                        if !Self.isProcessAlive(expectedPID) {
+                            return true
+                        }
+                    } else if requestError == nil {
                         return true
                     }
-                } else if requestError == nil {
-                    return true
                 }
+                probeError = nil
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                probeError = error
             }
             try await Task.sleep(nanoseconds: 200_000_000)
         }
 
         if let requestError {
             throw requestError
+        }
+        if let probeError {
+            throw probeError
         }
         return false
     }
@@ -155,34 +166,23 @@ struct DaemonControlClient {
         return errno != ESRCH
     }
 
-    private func fallbackHandshake(client: PeekabooBridgeClient) async -> PeekabooDaemonStatus? {
-        let identity = PeekabooBridgeClientIdentity(
-            bundleIdentifier: Bundle.main.bundleIdentifier,
-            teamIdentifier: nil,
-            processIdentifier: getpid(),
-            hostname: Host.current().name
+    private func fallbackStatus(handshake: PeekabooBridgeHandshakeResponse) -> PeekabooDaemonStatus {
+        let bridge = PeekabooDaemonBridgeStatus(
+            socketPath: socketPath,
+            hostKind: handshake.hostKind,
+            allowedOperations: handshake.supportedOperations,
+            availableOperationNames: handshake.supportedOperations.map(\.rawValue).sorted()
         )
-        do {
-            let handshake = try await client.handshake(client: identity)
-            let bridge = PeekabooDaemonBridgeStatus(
-                socketPath: socketPath,
-                hostKind: handshake.hostKind,
-                allowedOperations: handshake.supportedOperations,
-                availableOperationNames: handshake.supportedOperations.map(\.rawValue).sorted()
-            )
-            return PeekabooDaemonStatus(
-                running: true,
-                pid: nil,
-                startedAt: nil,
-                mode: nil,
-                bridge: bridge,
-                permissions: handshake.permissions,
-                snapshots: nil,
-                windowTracker: nil
-            )
-        } catch {
-            return nil
-        }
+        return PeekabooDaemonStatus(
+            running: true,
+            pid: nil,
+            startedAt: nil,
+            mode: nil,
+            bridge: bridge,
+            permissions: handshake.permissions,
+            snapshots: nil,
+            windowTracker: nil
+        )
     }
 }
 
@@ -391,10 +391,10 @@ enum DaemonControlResolver {
             operationNames.contains(PeekabooBridgeOperation.daemonStop.rawValue)
     }
 
-    static func targets(explicitSocket: String?) async -> [DaemonControlTarget] {
+    static func targets(explicitSocket: String?) async throws -> [DaemonControlTarget] {
         if let explicitSocket {
             let client = DaemonControlClient(socketPath: explicitSocket)
-            guard let status = await client.fetchStatus() else { return [] }
+            guard let status = try await client.fetchStatus(), status.running else { return [] }
             return [DaemonControlTarget(client: client, status: status, role: .explicit)]
         }
 
@@ -402,7 +402,7 @@ enum DaemonControlResolver {
         let defaultSocketPaths = self.defaultSocketPaths()
         for (index, socketPath) in defaultSocketPaths.enumerated() {
             let client = DaemonControlClient(socketPath: socketPath)
-            if let status = await client.fetchControllableDaemonStatus() {
+            if let status = try await client.fetchControllableDaemonStatus() {
                 targets.append(DaemonControlTarget(
                     client: client,
                     status: status,
@@ -411,13 +411,13 @@ enum DaemonControlResolver {
             }
         }
 
-        await targets.append(contentsOf: self.validatedHistoricalTargets(
+        try await targets.append(contentsOf: self.validatedHistoricalTargets(
             daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
             currentBuildScopedSocketPath: defaultSocketPaths.dropFirst().first
         ))
 
         let legacyClient = DaemonControlClient(socketPath: PeekabooBridgeConstants.peekabooSocketPath)
-        if let status = await legacyClient.fetchControllableDaemonStatus() {
+        if let status = try await legacyClient.fetchControllableDaemonStatus() {
             targets.append(DaemonControlTarget(
                 client: legacyClient,
                 status: status,
@@ -430,7 +430,7 @@ enum DaemonControlResolver {
     static func validatedHistoricalTargets(
         daemonSocketPath: String,
         currentBuildScopedSocketPath: String?
-    ) async -> [DaemonControlTarget] {
+    ) async throws -> [DaemonControlTarget] {
         ManagedAutoDaemonRegistry.pruneStaleRecords(daemonSocketPath: daemonSocketPath)
         var targets: [DaemonControlTarget] = []
         for socketPath in self.discoveredHistoricalBuildScopedSocketPaths(
@@ -441,7 +441,7 @@ enum DaemonControlResolver {
                 socketPath: socketPath,
                 requestTimeoutSec: self.historicalProbeTimeoutSeconds
             )
-            guard let status = await client.fetchControllableDaemonStatus(),
+            guard let status = try await client.fetchControllableDaemonStatus(),
                   self.isValidatedHistoricalTarget(status: status, socketPath: socketPath)
             else {
                 continue
@@ -688,9 +688,16 @@ enum DaemonStatusPrinter {
             print("")
             print("Browser MCP")
             print("-----------")
-            print("Connected: \(browser.isConnected ? "yes" : "no")")
-            print("Tools: \(browser.toolCount)")
-            print("Detected Chrome: \(browser.detectedBrowsers.count)")
+            if browser.observation == .indeterminate {
+                print("State: unconfirmed")
+                if let error = browser.error {
+                    print(error)
+                }
+            } else {
+                print("Connected: \(browser.isConnected ? "yes" : "no")")
+                print("Tools: \(browser.toolCount)")
+                print("Detected Chrome: \(browser.detectedBrowsers.count)")
+            }
         }
 
         if let activity = status.activity {

@@ -530,7 +530,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             environment: [:])
     }
 
-    private static func browser(bundleIdentifier: String) -> DetectedBrowser {
+    private nonisolated static func browser(bundleIdentifier: String) -> DetectedBrowser {
         DetectedBrowser(
             name: "Google Chrome",
             bundleIdentifier: bundleIdentifier,

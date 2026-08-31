@@ -58,7 +58,14 @@ Shows:
 - permissions (screen recording / accessibility / event synthesizing)
 - snapshot cache summary
 - window tracker stats (tracked windows, last event, polling)
-- browser MCP state (connected, tool count, detected Chrome count)
+- cached browser MCP state (`observation: "indeterminate"`; human output says `State: unconfirmed`)
+
+Health returns without waiting for browser discovery or connection validation. Cached values, including an initially
+empty browser list, do not confirm current browser absence; use `peekaboo browser status` for a fresh observation.
+Missing/refused sockets retain successful `running: false` output. Probe timeouts, authorization failures, and lost or
+invalid replies instead fail nonzero with `success: false` in JSON. Start and stop also refuse unresolved target probes;
+a healthy GUI Bridge is never stopped as a daemon. Stop keeps the existing shutdown deadline and read-only retry/PID
+checks, and does not report successful cleanup while endpoint state remains unknown.
 
 ### Stop
 ```

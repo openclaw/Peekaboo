@@ -46,7 +46,7 @@ struct BridgeDiagnostics {
             )
         }
 
-        let candidatePlan = await RuntimeHostResolver.remoteCandidatePlan(
+        let candidatePlan = try await RuntimeHostResolver.remoteCandidatePlan(
             options: effectiveOptions,
             environment: environment
         )

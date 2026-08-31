@@ -153,7 +153,7 @@ extension RuntimeHostResolver {
         options: CommandRuntimeOptions,
         requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
         fetchReusableDaemonStatus: (String) async -> PeekabooDaemonStatus? = { socketPath in
-            await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus()
+            try? await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus()
         }
     ) async -> RemoteCandidateEvaluation {
         guard requiredProtocolVersion == nil || handshake.negotiatedVersion == requiredProtocolVersion else {

@@ -15,6 +15,38 @@ import Testing
 // swiftlint:disable:next type_body_length
 struct BrowserMCPSessionManagerTests {
     @Test
+    func `blocked browser discovery leaves the main actor available`() async {
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let session = BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: MockBrowserMCPManager(),
+            detectedBrowsers: { _ in
+                #expect(!Thread.isMainThread)
+                entered.signal()
+                // A watchdog makes the baseline fail without stranding the test executor.
+                #expect(release.wait(timeout: .now() + 2) == .success)
+                return []
+            },
+            environment: [:])
+        let heartbeat = Task.detached {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    #expect(entered.wait(timeout: .now() + 2) == .success)
+                    continuation.resume()
+                }
+            }
+            await MainActor.run { _ = release.signal() }
+        }
+
+        let status = await session.status(channel: nil)
+        await heartbeat.value
+        #expect(status.observation == .confirmed)
+        #expect(!status.isConnected)
+        #expect(status.detectedBrowsers.isEmpty)
+    }
+
+    @Test
     func `channel connect refuses ambiguous same-channel processes before spawning MCP`() async {
         let manager = MockBrowserMCPManager()
         let browsers = [
@@ -5301,7 +5333,10 @@ extension BrowserMCPSessionManagerTests {
                 browsers.filter { channel == nil || $0.channel == channel }
             },
             processStartIdentity: { generations[$0] },
-            processBundleIdentifier: { bundles[$0] },
+            processBundleIdentifier: {
+                #expect(!Thread.isMainThread)
+                return bundles[$0]
+            },
             processCodeSignatureValidator: { _, _, channel in .browserTestIdentity(channel: channel) },
             endpointResolver: self.endpointResolver(),
             channelEndpointResolver: channelEndpointResolver ?? self.channelEndpointResolver(),

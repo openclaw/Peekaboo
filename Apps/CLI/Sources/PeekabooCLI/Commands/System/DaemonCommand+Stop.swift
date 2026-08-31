@@ -29,7 +29,7 @@ extension DaemonCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
+            let targets = try await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
 
             guard !targets.isEmpty else {
                 let stopped = PeekabooDaemonStatus(running: false)

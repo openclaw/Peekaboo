@@ -98,6 +98,12 @@ authorization remains the caller's responsibility.
 
 Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionManager`.
 
+Native browser discovery and live process-bundle reads execute on a dedicated background queue; no AppKit application
+objects cross back to MainActor. Explicit browser status still waits for the session gate and validates the connection.
+Daemon health instead returns cached diagnostics marked `indeterminate`, with at most one refresh outstanding. An
+uninitialized or stalled refresh cannot confirm browser absence, and cached receipts never replace fresh execution
+validation.
+
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`. Public MCP and
   standalone Browser contexts default to background-only and require an existing live exact connection receipt;
   they never auto-connect implicitly. The pinned provider grants browser user activation to every Puppeteer page

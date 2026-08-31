@@ -30,7 +30,7 @@ enum RuntimeHostResolver {
         try self.inspectCallerLocalOwner(options: options, environment: environment, dependencies: dependencies)
         let safetyPlan: RemoteCandidatePlan?
         if self.requiresCallerLocalScreenCaptureKitSafetyCheck(options: options, environment: environment) {
-            let plan = await dependencies.remoteCandidatePlan(options, environment)
+            let plan = try await dependencies.remoteCandidatePlan(options, environment)
             safetyPlan = plan
             let resolvedHandshakeCache = dependencies.makeRemoteHandshakeCache()
             handshakeCache = resolvedHandshakeCache
@@ -94,7 +94,7 @@ enum RuntimeHostResolver {
         let candidatePlan = if let safetyPlan {
             safetyPlan
         } else {
-            await dependencies.remoteCandidatePlan(options, environment)
+            try await dependencies.remoteCandidatePlan(options, environment)
         }
         let explicitSocket = candidatePlan.explicitSocket
         let daemonSocketPath = candidatePlan.daemonSocketPath
@@ -354,7 +354,7 @@ enum RuntimeHostResolver {
                 return resolved
             }
 
-            let exactHostExists = await DaemonControlClient(socketPath: buildScopedDaemonSocketPath)
+            let exactHostExists = try await DaemonControlClient(socketPath: buildScopedDaemonSocketPath)
                 .fetchStatus() != nil
             if !exactHostExists,
                DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: context.environment),
@@ -397,7 +397,7 @@ enum RuntimeHostResolver {
         if !prefersExactBuildScopedHost,
            DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: context.environment) {
             let rejectedDefaultSocketOccupant =
-                await DaemonControlClient(socketPath: daemonSocketPath).fetchStatus() != nil
+                try await DaemonControlClient(socketPath: daemonSocketPath).fetchStatus() != nil
             let autoStartSocketPath = DaemonLaunchPolicy.autoStartSocketPath(
                 daemonSocketPath: daemonSocketPath,
                 defaultSocketWasOccupiedAndRejected: rejectedDefaultSocketOccupant,
@@ -513,7 +513,7 @@ extension RuntimeHostResolver {
     static func remoteCandidatePlan(
         options: CommandRuntimeOptions,
         environment: [String: String]
-    ) async -> RemoteCandidatePlan {
+    ) async throws -> RemoteCandidatePlan {
         let explicitSocket = BridgeSocketResolver.explicitBridgeSocket(options: options, environment: environment)
         let daemonSocketPath = DaemonLaunchPolicy.daemonSocketPath(environment: environment)
         let runtimeBuildIdentity = DaemonLaunchPolicy.runtimeBuildIdentity()
@@ -529,7 +529,7 @@ extension RuntimeHostResolver {
             daemonSocketPath: daemonSocketPath
         ) {
             if self.requiresValidatedHistoricalDaemonInventory(options: options) {
-                await DaemonControlResolver.validatedHistoricalTargets(
+                try await DaemonControlResolver.validatedHistoricalTargets(
                     daemonSocketPath: daemonSocketPath,
                     currentBuildScopedSocketPath: buildScopedDaemonSocketPath
                 )
@@ -841,7 +841,7 @@ extension RuntimeHostResolver {
         options: CommandRuntimeOptions,
         requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
         fetchReusableDaemonStatus: (String) async -> PeekabooDaemonStatus? = { socketPath in
-            await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus()
+            try? await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus()
         }
     ) async -> RemoteCandidateValidation? {
         await self.evaluateRemoteCandidate(
