@@ -33,7 +33,7 @@ if (JSON.stringify(actual) !== JSON.stringify([...expected].sort())) {
   process.exit(1);
 }
 
-const expectedAXVersion = "0.1.6";
+const expectedAXVersion = "0.1.8";
 const sourceDependencies = manifest.dependencies.flatMap(dependency => dependency.sourceControl ?? []);
 const axorcist = sourceDependencies.find(dependency => dependency.identity === "axorcist");
 const actualAXVersion = axorcist?.requirement?.exact?.[0];
