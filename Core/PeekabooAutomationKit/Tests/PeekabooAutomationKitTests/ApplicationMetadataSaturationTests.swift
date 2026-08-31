@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import XCTest
 @_spi(Testing) @testable import PeekabooAutomationKit
@@ -100,7 +101,7 @@ final class ApplicationMetadataSaturationTests: XCTestCase {
         let stable: Int32 = 993_000
         let drifting: Int32 = 993_001
         let missing: Int32 = 993_002
-        var driftingReads = 0
+        let driftingReads = AutomationTestLockedValue(0)
         let secondService = self.service(
             pool: pool,
             pids: [stable, drifting, missing],
@@ -109,8 +110,10 @@ final class ApplicationMetadataSaturationTests: XCTestCase {
                     return nil
                 }
                 if pid == drifting {
-                    driftingReads += 1
-                    return driftingReads == 1 ? 2 : 3
+                    return driftingReads.withValue { reads in
+                        reads += 1
+                        return reads == 1 ? 2 : 3
+                    }
                 }
                 return 2
             },
