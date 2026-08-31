@@ -37,12 +37,36 @@ struct TerminalTitleProcessTests {
 
     @Test
     func `timed out child is killed and reaped`() throws {
+        let fileManager = FileManager.default
+        let scratch = fileManager.temporaryDirectory
+            .appendingPathComponent("peekaboo-terminal-title-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: scratch) }
+        try fileManager.createDirectory(at: scratch, withIntermediateDirectories: false)
+        let readyFile = scratch.appendingPathComponent("ready")
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "trap '' TERM; exec /bin/sleep 30"]
+        process.arguments = [
+            "-c", "trap '' TERM && : > \"$1\" && exec /bin/sleep 30",
+            "terminal-title-fixture", readyFile.path,
+        ]
 
         try process.run()
         let pid = process.processIdentifier
+        defer {
+            if process.isRunning {
+                kill(pid, SIGKILL)
+            }
+            process.waitUntilExit()
+        }
+
+        // The timeout must start after the child ignores TERM, even when shell startup is slow.
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(5)
+        while !fileManager.fileExists(atPath: readyFile.path), process.isRunning, clock.now < deadline {
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        try #require(fileManager.fileExists(atPath: readyFile.path), "Child did not become ready to ignore TERM")
 
         #expect(throws: TerminalTitleProcessWaitError.self) {
             try waitForTerminalTitleProcessExit(process, timeoutSeconds: 0.05)
