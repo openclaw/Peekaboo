@@ -15,7 +15,6 @@ private enum ApplicationInventoryOutcome: Sendable {
     case metadata(DetachedApplicationMetadata)
     case timedOut(seconds: TimeInterval)
     case overloaded
-    case skippedAfterOverallDeadline(seconds: TimeInterval)
     case unavailable
     case processChanged
 }
@@ -30,26 +29,47 @@ extension ApplicationService {
     public func applicationMutationInventory() async throws
         -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
     {
-        let processIdentifiers = Array(Set(self.runningApplicationProcessIdentifiersProvider()))
+        let processIdentifiersProvider = self.runningApplicationProcessIdentifiersProvider
+        let generationProvider = self.processStartIdentityProvider
+        let candidateProvider = self.applicationMutationCandidateProvider
+        return try await self.withApplicationInventoryDeadline { deadline in
+            try await DetachedApplicationInventoryWorker.shared.run(
+                seconds: self.remainingInventoryTime(until: deadline))
+            {
+                Self.readMutationInventory(
+                    processIdentifiersProvider: processIdentifiersProvider,
+                    generationProvider: generationProvider,
+                    candidateProvider: candidateProvider)
+            }
+        }
+    }
+
+    private nonisolated static func readMutationInventory(
+        processIdentifiersProvider: RunningApplicationProcessIdentifiersProvider,
+        generationProvider: ProcessStartIdentityProvider,
+        candidateProvider: ApplicationMutationCandidateProvider)
+        -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
+    {
+        let processIdentifiers = Array(Set(processIdentifiersProvider()))
             .filter { $0 > 0 }
             .sorted()
         var applications: [ServiceApplicationInfo] = []
         var warnings: [String] = []
         for processIdentifier in processIdentifiers {
-            guard let generation = self.processStartIdentityProvider(processIdentifier),
+            guard let generation = generationProvider(processIdentifier),
                   generation > 0
             else {
                 warnings.append(
                     "Application PID \(processIdentifier) lacked process-generation identity and was omitted.")
                 continue
             }
-            guard let candidate = self.applicationMutationCandidateProvider(processIdentifier) else {
+            guard let candidate = candidateProvider(processIdentifier) else {
                 warnings.append(
                     "Application PID \(processIdentifier) metadata was unavailable and was omitted.")
                 continue
             }
             guard candidate.processIdentifier == processIdentifier,
-                  self.processStartIdentityProvider(processIdentifier) == generation
+                  generationProvider(processIdentifier) == generation
             else {
                 warnings.append(
                     "Application PID \(processIdentifier) changed process generation during inventory and was omitted.")
@@ -83,50 +103,52 @@ extension ApplicationService {
     }
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
+        try await self.withApplicationInventoryDeadline { deadline in
+            try await self.listApplications(until: deadline)
+        }
+    }
+
+    private func listApplications(until overallDeadline: ContinuousClock.Instant) async throws
+        -> UnifiedToolOutput<ServiceApplicationListData>
+    {
         let startTime = Date()
         self.logger.info("Listing all running applications")
 
-        let processIdentifiers = Array(Set(self.runningApplicationProcessIdentifiersProvider()))
-            .filter { $0 > 0 }
-        let frontmostProcessIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let windowCatalog = self.applicationWindowCatalogProvider()
-        let windowsByProcessIdentifier = Dictionary(grouping: windowCatalog ?? [], by: \.ownerPID)
-        let candidates = processIdentifiers.map { processIdentifier in
-            let rawWindows = windowsByProcessIdentifier[processIdentifier] ?? []
-            let renderableWindows = rawWindows.filter(\.isRenderable)
-            return ApplicationInventoryCandidate(
-                processIdentifier: processIdentifier,
-                processStartIdentity: self.processStartIdentityProvider(processIdentifier),
-                windows: renderableWindows.isEmpty ? rawWindows : renderableWindows,
-                windowCatalogAvailable: windowCatalog != nil,
-                fallbackName: rawWindows.lazy.compactMap(\.applicationName).first,
-                isActive: frontmostProcessIdentifier == processIdentifier)
+        let processIdentifiersProvider = self.runningApplicationProcessIdentifiersProvider
+        let frontmostProvider = self.frontmostProcessIdentifierProvider
+        let windowCatalogProvider = self.applicationWindowCatalogProvider
+        let generationProvider = self.processStartIdentityProvider
+        let candidates = try await DetachedApplicationInventoryWorker.shared.run(
+            seconds: self.remainingInventoryTime(until: overallDeadline))
+        {
+            let processIdentifiers = Array(Set(processIdentifiersProvider()))
+                .filter { $0 > 0 }
+            let frontmostProcessIdentifier = frontmostProvider()
+            let windowCatalog = windowCatalogProvider()
+            let windowsByProcessIdentifier = Dictionary(grouping: windowCatalog ?? [], by: \.ownerPID)
+            return processIdentifiers.map { processIdentifier in
+                let rawWindows = windowsByProcessIdentifier[processIdentifier] ?? []
+                let renderableWindows = rawWindows.filter(\.isRenderable)
+                return ApplicationInventoryCandidate(
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: generationProvider(processIdentifier),
+                    windows: renderableWindows.isEmpty ? rawWindows : renderableWindows,
+                    windowCatalogAvailable: windowCatalog != nil,
+                    fallbackName: rawWindows.lazy.compactMap(\.applicationName).first,
+                    isActive: frontmostProcessIdentifier == processIdentifier)
+            }
         }
         self.logger.debug("Found \(candidates.count) running processes")
 
         let metadataProvider = self.applicationMetadataProvider
         let metadataTimeout = self.applicationMetadataTimeout
-        let overallTimeout = self.applicationInventoryOverallTimeout
-        let overallDeadline = self.applicationInventoryNowProvider().advanced(by: .seconds(overallTimeout))
         let concurrencyLimit = min(self.maximumConcurrentApplicationMetadataReads, candidates.count)
         let reads = try await withThrowingTaskGroup(of: ApplicationInventoryRead.self) { group in
             var results: [ApplicationInventoryRead] = []
             results.reserveCapacity(candidates.count)
             var nextCandidateIndex = 0
             while nextCandidateIndex < concurrencyLimit {
-                guard let timeout = Self.remainingApplicationMetadataTimeout(
-                    now: self.applicationInventoryNowProvider(),
-                    overallDeadline: overallDeadline,
-                    perApplicationTimeout: metadataTimeout)
-                else {
-                    results.append(contentsOf: candidates[nextCandidateIndex...].map { candidate in
-                        ApplicationInventoryRead(
-                            candidate: candidate,
-                            outcome: .skippedAfterOverallDeadline(seconds: overallTimeout))
-                    })
-                    nextCandidateIndex = candidates.count
-                    break
-                }
+                let timeout = try min(metadataTimeout, self.remainingInventoryTime(until: overallDeadline))
                 let candidate = candidates[nextCandidateIndex]
                 nextCandidateIndex += 1
                 group.addTask {
@@ -140,26 +162,14 @@ extension ApplicationService {
             while let read = try await group.next() {
                 results.append(read)
                 if nextCandidateIndex < candidates.count {
-                    if let timeout = Self.remainingApplicationMetadataTimeout(
-                        now: self.applicationInventoryNowProvider(),
-                        overallDeadline: overallDeadline,
-                        perApplicationTimeout: metadataTimeout)
-                    {
-                        let candidate = candidates[nextCandidateIndex]
-                        nextCandidateIndex += 1
-                        group.addTask {
-                            try await Self.readApplicationMetadata(
-                                candidate: candidate,
-                                provider: metadataProvider,
-                                timeout: timeout)
-                        }
-                    } else {
-                        results.append(contentsOf: candidates[nextCandidateIndex...].map { candidate in
-                            ApplicationInventoryRead(
-                                candidate: candidate,
-                                outcome: .skippedAfterOverallDeadline(seconds: overallTimeout))
-                        })
-                        nextCandidateIndex = candidates.count
+                    let timeout = try min(metadataTimeout, self.remainingInventoryTime(until: overallDeadline))
+                    let candidate = candidates[nextCandidateIndex]
+                    nextCandidateIndex += 1
+                    group.addTask {
+                        try await Self.readApplicationMetadata(
+                            candidate: candidate,
+                            provider: metadataProvider,
+                            timeout: timeout)
                     }
                 }
             }
@@ -167,23 +177,29 @@ extension ApplicationService {
         }
         try Task.checkCancellation()
 
-        var applications: [ServiceApplicationInfo] = []
-        var omissionWarnings: [String] = []
-        for read in reads {
-            if let expectedGeneration = read.candidate.processStartIdentity,
-               self.processStartIdentityProvider(read.candidate.processIdentifier) != expectedGeneration
-            {
-                omissionWarnings.append(
-                    "Application PID \(read.candidate.processIdentifier) changed process generation during inventory " +
-                        "and was omitted.")
-                continue
+        let (observedApplications, omissionWarnings) = try await DetachedApplicationInventoryWorker.shared.run(
+            seconds: self.remainingInventoryTime(until: overallDeadline))
+        {
+            var applications: [ServiceApplicationInfo] = []
+            var omissionWarnings: [String] = []
+            for read in reads {
+                if let expectedGeneration = read.candidate.processStartIdentity,
+                   generationProvider(read.candidate.processIdentifier) != expectedGeneration
+                {
+                    omissionWarnings.append(
+                        "Application PID \(read.candidate.processIdentifier) changed process generation " +
+                            "during inventory and was omitted.")
+                    continue
+                }
+                if let application = Self.applicationInfo(from: read) {
+                    applications.append(application)
+                } else {
+                    omissionWarnings.append(Self.applicationOmissionWarning(read))
+                }
             }
-            if let application = self.applicationInfo(from: read) {
-                applications.append(application)
-            } else {
-                omissionWarnings.append(Self.applicationOmissionWarning(read))
-            }
+            return (applications, omissionWarnings)
         }
+        var applications = observedApplications
         applications.sort { app1, app2 -> Bool in
             app1.name == app2.name
                 ? app1.processIdentifier < app2.processIdentifier
@@ -228,7 +244,7 @@ extension ApplicationService {
                 hints: ["Use app name or PID to target specific application"]))
     }
 
-    private func applicationInfo(from read: ApplicationInventoryRead) -> ServiceApplicationInfo? {
+    private nonisolated static func applicationInfo(from read: ApplicationInventoryRead) -> ServiceApplicationInfo? {
         let candidate = read.candidate
         let windowIDs = candidate.windowCatalogAvailable ? candidate.windows.map { Int($0.windowID) } : nil
         var warnings: [String] = candidate.windowCatalogAvailable
@@ -266,11 +282,6 @@ extension ApplicationService {
             warnings.append(
                 "Application metadata capacity was exhausted for PID \(candidate.processIdentifier); " +
                     "hidden state and activation policy are unknown")
-        case let .skippedAfterOverallDeadline(seconds):
-            guard candidate.processStartIdentity != nil else { return nil }
-            warnings.append(
-                "Application metadata was skipped after the \(Self.formatInventoryTimeout(seconds))s inventory " +
-                    "deadline for PID \(candidate.processIdentifier); hidden state and activation policy are unknown")
         case .unavailable:
             guard candidate.processStartIdentity != nil else { return nil }
             warnings.append(
@@ -323,6 +334,38 @@ extension ApplicationService {
         }
     }
 
+    private func withApplicationInventoryDeadline<Value: Sendable>(
+        _ operation: @escaping @MainActor @Sendable (ContinuousClock.Instant) async throws -> Value) async throws
+        -> Value
+    {
+        let deadline = self.applicationInventoryNowProvider()
+            .advanced(by: .seconds(self.applicationInventoryOverallTimeout))
+        do {
+            return try await ElementDetectionTimeoutRunner.run(seconds: self.applicationInventoryOverallTimeout) {
+                let value = try await operation(deadline)
+                try Task.checkCancellation()
+                _ = try self.remainingInventoryTime(until: deadline)
+                return value
+            }
+        } catch CaptureError.detectionTimedOut {
+            throw PeekabooError.timeout(
+                "Application inventory did not complete within its " +
+                    "\(Self.formatInventoryTimeout(self.applicationInventoryOverallTimeout))s observation budget; " +
+                    "native inventory work may still be in progress")
+        }
+    }
+
+    private func remainingInventoryTime(until deadline: ContinuousClock.Instant) throws -> TimeInterval {
+        guard let remaining = Self.remainingApplicationMetadataTimeout(
+            now: self.applicationInventoryNowProvider(),
+            overallDeadline: deadline,
+            perApplicationTimeout: self.applicationInventoryOverallTimeout)
+        else {
+            throw CaptureError.detectionTimedOut(self.applicationInventoryOverallTimeout)
+        }
+        return remaining
+    }
+
     private static func uniqueWarnings(in applications: [ServiceApplicationInfo]) -> [String] {
         applications.reduce(into: []) { result, application in
             for warning in application.metadataWarnings ?? [] where !result.contains(warning) {
@@ -331,7 +374,7 @@ extension ApplicationService {
         }
     }
 
-    private static func applicationOmissionWarning(_ read: ApplicationInventoryRead) -> String {
+    private nonisolated static func applicationOmissionWarning(_ read: ApplicationInventoryRead) -> String {
         let pid = read.candidate.processIdentifier
         guard read.candidate.processStartIdentity != nil else {
             return "Application PID \(pid) lacked process-generation identity and was omitted."
@@ -346,7 +389,7 @@ extension ApplicationService {
         }
     }
 
-    private static func formatInventoryTimeout(_ seconds: TimeInterval) -> String {
+    private nonisolated static func formatInventoryTimeout(_ seconds: TimeInterval) -> String {
         String(format: "%.2f", seconds)
     }
 
@@ -420,7 +463,7 @@ extension ApplicationService {
         throw PeekabooError.appNotFound(identifier)
     }
 
-    static func identifierCandidate(_ app: NSRunningApplication) -> ApplicationIdentifierMatcher.Candidate {
+    nonisolated static func identifierCandidate(_ app: NSRunningApplication) -> ApplicationIdentifierMatcher.Candidate {
         .init(
             processIdentifier: app.processIdentifier,
             bundleIdentifier: app.bundleIdentifier,

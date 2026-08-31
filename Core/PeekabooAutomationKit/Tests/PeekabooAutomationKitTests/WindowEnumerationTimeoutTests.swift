@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import os.log
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -287,10 +288,12 @@ struct WindowEnumerationTimeoutTests {
     @Test
     func `process generation drift discards the complete inventory`() async throws {
         let identity = ApplicationProcessIdentity(processIdentifier: 44, processStartIdentity: 9)
-        var generationReadCount = 0
+        let generationReadCount = AutomationTestLockedValue(0)
         let service = Self.makeService { _ in
-            generationReadCount += 1
-            return generationReadCount == 1 ? identity.processStartIdentity : identity.processStartIdentity + 1
+            generationReadCount.withValue {
+                $0 += 1
+                return $0 == 1 ? identity.processStartIdentity : identity.processStartIdentity + 1
+            }
         }
         let context = WindowEnumerationContext(
             service: service,

@@ -53,8 +53,8 @@ struct ClickCommandActionResultTests {
         }
     }
 
-    @Test
-    func `background exact-window click projects result target and receipt`() async throws {
+    @Test(arguments: ["pid", "app", "snapshot", "unnamed", "coordinates"])
+    func `background exact-window click projects result target and receipt`(selector: String) async throws {
         let outcome = DesktopActionOutcome.dispatchedUnverified(
             route: .bridge,
             delivery: Self.backgroundDelivery,
@@ -62,7 +62,33 @@ struct ClickCommandActionResultTests {
             unitCount: .one,
         )
         let fixture = try await makeFixture(outcome: outcome)
-        let result = try await runBackgroundClick(fixture, exactWindow: true)
+        let applications = try #require(fixture.services.applications as? StubApplicationService)
+        let snapshots = try #require(fixture.services.snapshots as? StubSnapshotManager)
+        try await snapshots.storeDetectionResult(
+            snapshotId: fixture.snapshotID,
+            result: Self.detectionResult(
+                snapshotID: fixture.snapshotID,
+                applicationName: selector == "unnamed" ? nil : "Captured App"
+            )
+        )
+        var arguments = [
+            "click",
+            "--snapshot",
+            fixture.snapshotID,
+            "--window-id",
+            String(Self.windowID),
+            "--json",
+            "--no-remote"
+        ]
+        arguments += selector == "coordinates" ? ["--at", "20,30"] : ["--on", "B1"]
+        if selector == "pid" {
+            arguments += ["--pid", String(Self.processIdentifier)]
+        }
+        if selector == "app" {
+            arguments += ["--app", "TestApp"]
+        }
+        let result = try await InProcessCommandRunner.run(arguments, services: fixture.services)
+        #expect(result.exitStatus == 0, Comment(rawValue: result.stdout))
         let object = try Self.jsonObject(result.stdout)
         let projection = try #require(object["outcome"] as? [String: Any])
         let target = try #require(object["target_identity"] as? [String: Any])
@@ -77,6 +103,37 @@ struct ClickCommandActionResultTests {
         #expect(receipt["window_id"] as? Int == Self.windowID)
         #expect(receipt["pid"] as? Int == Int(Self.processIdentifier))
         #expect(receipt["process_start_identity_decimal"] as? String == String(Self.processStartIdentity))
+        let data = try #require(object["data"] as? [String: Any])
+        let expectedName = switch selector {
+        case "pid", "app", "coordinates": "TestApp"
+        case "unnamed": "PID \(Self.processIdentifier)"
+        default: "Captured App"
+        }
+        #expect(data["targetApp"] as? String == expectedName)
+        #expect(applications.listApplicationsCallCount == 0)
+        #expect(applications.frontmostApplicationCallCount == 0)
+        #expect(snapshots.postInvalidationSnapshotReadCount == 0)
+        #expect(applications.findApplicationRequests
+            .count == (["pid", "app", "coordinates"].contains(selector) ? 1 : 0))
+        let automation = try #require(fixture.services.automation as? StubAutomationService)
+        #expect(automation.targetedClickCalls.count == 1)
+    }
+
+    @Test
+    func `unbound foreground click label does not borrow the frontmost application`() async throws {
+        let fixture = try await makeFixture(automation: StubAutomationService())
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--at", "20,30", "--foreground", "--json", "--no-remote"],
+            services: fixture.services
+        )
+        let object = try Self.jsonObject(result.stdout)
+        let data = try #require(object["data"] as? [String: Any])
+        let applications = try #require(fixture.services.applications as? StubApplicationService)
+        #expect(result.exitStatus == 0)
+        #expect(data["targetApp"] as? String == "Unknown")
+        #expect(applications.listApplicationsCallCount == 0)
+        #expect(applications.findApplicationRequests.isEmpty)
+        #expect(applications.frontmostApplicationCallCount == 0)
     }
 
     @Test
@@ -106,9 +163,10 @@ struct ClickCommandActionResultTests {
         )
         let fixture = try await makeFixture(outcome: outcome)
         let snapshots = try #require(fixture.services.snapshots as? StubSnapshotManager)
-        snapshots.uiAutomationSnapshotCancellation = true
+        snapshots.afterMutationFinish = { withUnsafeCurrentTask { $0?.cancel() } }
 
-        let result = try await runBackgroundClick(fixture, exactWindow: true)
+        let command = Task { try await self.runBackgroundClick(fixture, exactWindow: true) }
+        let result = try await command.value
         let object = try Self.jsonObject(result.stdout)
         let projection = try #require(object["outcome"] as? [String: Any])
         let error = try #require(object["error"] as? [String: Any])
@@ -191,7 +249,10 @@ struct ClickCommandActionResultTests {
         )
     }
 
-    private static func detectionResult(snapshotID: String) -> ElementDetectionResult {
+    private static func detectionResult(
+        snapshotID: String,
+        applicationName: String? = "TestApp"
+    ) -> ElementDetectionResult {
         ElementDetectionResult(
             snapshotId: snapshotID,
             screenshotPath: "/tmp/click-action-result.png",
@@ -208,13 +269,27 @@ struct ClickCommandActionResultTests {
                 elementCount: 1,
                 method: "stub",
                 windowContext: WindowContext(
-                    applicationName: "TestApp",
+                    applicationName: applicationName,
                     applicationBundleId: "com.example.test",
                     applicationProcessId: self.processIdentifier,
                     windowTitle: "Editor",
                     windowID: self.windowID,
                     windowBounds: self.windowBounds,
                     windowMutationIdentity: self.windowIdentity,
+                ),
+                truncationInfo: nil,
+                captureCoordinateContext: CaptureCoordinateContext(
+                    metadata: CaptureMetadata(
+                        size: self.windowBounds.size,
+                        mode: .window,
+                        windowInfo: ServiceWindowInfo(
+                            windowID: self.windowID,
+                            title: "Editor",
+                            bounds: self.windowBounds,
+                            mutationIdentity: self.windowIdentity
+                        )
+                    ),
+                    referenceID: snapshotID
                 ),
             ),
         )

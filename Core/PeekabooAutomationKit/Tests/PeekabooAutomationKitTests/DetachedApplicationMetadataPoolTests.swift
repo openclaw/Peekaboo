@@ -380,10 +380,10 @@ final class MetadataNativeGate: @unchecked Sendable {
         self.condition.withLock { self.entries += 1 }
     }
 
-    func wait() {
+    func wait(watchdogSeconds: TimeInterval = 15) {
         self.condition.lock()
         defer { self.condition.unlock() }
-        let watchdog = Date().addingTimeInterval(15)
+        let watchdog = Date().addingTimeInterval(watchdogSeconds)
         while !self.released {
             guard self.condition.wait(until: watchdog) else { return }
         }

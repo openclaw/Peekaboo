@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -267,12 +268,12 @@ extension ApplicationServiceLifecycleTests {
         let runningApplication = try self.runningApplication()
         let lifecycle = RelaunchLifecycleRecorder(targetPID: runningApplication.processIdentifier)
         let openRecorder = ApplicationOpenRecorder()
-        var generations: [UInt64] = [700, 701]
+        let generations = AutomationTestLockedValue<[UInt64]>([700, 701])
         var quitCalls = 0
         let service = ApplicationService(
             applicationOpenHandler: openRecorder.open,
             relaunchTargetResolver: lifecycle.resolve,
-            processStartIdentityProvider: { _ in generations.removeFirst() },
+            processStartIdentityProvider: { _ in generations.withValue { $0.removeFirst() } },
             applicationQuitHandler: { _, _ in
                 quitCalls += 1
                 return true
@@ -298,7 +299,7 @@ extension ApplicationServiceLifecycleTests {
 
         #expect(quitCalls == 0)
         #expect(openRecorder.calls.isEmpty)
-        #expect(generations.isEmpty)
+        #expect(generations.value.isEmpty)
     }
 
     @Test

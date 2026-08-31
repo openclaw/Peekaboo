@@ -230,6 +230,10 @@ public final class WindowIdentityService {
     /// process. Besides scaling poorly, that placed every read serially on MainActor. The catalog
     /// already carries owner PIDs, so one immutable snapshot can be grouped per application.
     public func getWindowCatalog() -> [WindowIdentityInfo]? {
+        Self.readWindowCatalog()
+    }
+
+    nonisolated static func readWindowCatalog() -> [WindowIdentityInfo]? {
         guard let windowDicts = CGWindowListCopyWindowInfo(
             [.optionAll, .excludeDesktopElements],
             kCGNullWindowID) as? [[String: Any]]

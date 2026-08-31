@@ -16,8 +16,10 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     var mostRecentSnapshotId: String?
     var uiAutomationSnapshotError: PeekabooError?
     var uiAutomationSnapshotCancellation = false
+    private(set) var postInvalidationSnapshotReadCount = 0
     var invalidationError: (any Error)?
     var mutationFinishError: (any Error)?
+    var afterMutationFinish: (@Sendable () -> Void)?
     var snapshotCreationDelay: Duration?
     var preservingInvalidationDelay: Duration?
     private(set) var invalidationCutoffs: [Date] = []
@@ -168,6 +170,7 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
         if requiresFreshObservation {
             self.snapshotsRequiringFreshObservation.insert(lease.snapshotId)
         }
+        self.afterMutationFinish?()
     }
 
     func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
@@ -315,6 +318,9 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     }
 
     func getUIAutomationSnapshot(snapshotId _: String) async throws -> UIAutomationSnapshot? {
+        if !self.invalidationCutoffs.isEmpty {
+            self.postInvalidationSnapshotReadCount += 1
+        }
         if self.uiAutomationSnapshotCancellation {
             throw CancellationError()
         }

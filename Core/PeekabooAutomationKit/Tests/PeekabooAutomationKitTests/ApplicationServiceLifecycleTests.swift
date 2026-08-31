@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -16,7 +17,7 @@ struct ApplicationServiceLifecycleTests {
         var accessibilityActivationCount = 0
         var sleepCount = 0
         var isActive = false
-        var frontmostProcessIdentifier: pid_t?
+        let frontmostProcessIdentifier = AutomationTestLockedValue<pid_t?>(nil)
         var windowServerState = ApplicationService.WindowServerActivationState(
             targetHasVisibleWindow: true,
             frontmostWindowProcessIdentifier: nil)
@@ -30,14 +31,14 @@ struct ApplicationServiceLifecycleTests {
                 accessibilityActivationCount += 1
                 #expect(processIdentifier == targetProcessIdentifier)
                 isActive = true
-                frontmostProcessIdentifier = processIdentifier
+                frontmostProcessIdentifier.value = processIdentifier
                 windowServerState = ApplicationService.WindowServerActivationState(
                     targetHasVisibleWindow: true,
                     frontmostWindowProcessIdentifier: processIdentifier)
                 return true
             },
             applicationActiveProvider: { _ in isActive },
-            frontmostProcessIdentifierProvider: { frontmostProcessIdentifier },
+            frontmostProcessIdentifierProvider: { frontmostProcessIdentifier.value },
             windowServerActivationStateProvider: { _ in windowServerState },
             applicationActivationSleepHandler: { _ in sleepCount += 1 },
             applicationActivationTimeout: .seconds(1))
@@ -60,13 +61,13 @@ struct ApplicationServiceLifecycleTests {
         var nativeActivationCount = 0
         var accessibilityActivationCount = 0
         var isActive = false
-        var frontmostProcessIdentifier: pid_t?
+        let frontmostProcessIdentifier = AutomationTestLockedValue<pid_t?>(nil)
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in runningApplication },
             applicationActivationHandler: { _ in
                 nativeActivationCount += 1
                 isActive = true
-                frontmostProcessIdentifier = processIdentifier
+                frontmostProcessIdentifier.value = processIdentifier
                 return true
             },
             applicationAccessibilityActivationHandler: { _ in
@@ -74,7 +75,7 @@ struct ApplicationServiceLifecycleTests {
                 return true
             },
             applicationActiveProvider: { _ in isActive },
-            frontmostProcessIdentifierProvider: { frontmostProcessIdentifier },
+            frontmostProcessIdentifierProvider: { frontmostProcessIdentifier.value },
             windowServerActivationStateProvider: { _ in
                 ApplicationService.WindowServerActivationState(
                     targetHasVisibleWindow: false,
@@ -329,12 +330,12 @@ struct ApplicationServiceLifecycleTests {
         })
 
         for force in [false, true] {
-            var identities: [UInt64] = [70, 70, 70, 71]
+            let identities = AutomationTestLockedValue<[UInt64]>([70, 70, 70, 71])
             var terminationCalls = 0
             let service = ApplicationService(
                 applicationOpenHandler: { _, _, _ in runningApplication },
                 processStartIdentityProvider: { _ in
-                    identities.isEmpty ? 71 : identities.removeFirst()
+                    identities.withValue { $0.isEmpty ? 71 : $0.removeFirst() }
                 },
                 applicationQuitHandler: { _, _ in
                     terminationCalls += 1
@@ -352,7 +353,7 @@ struct ApplicationServiceLifecycleTests {
             }
 
             #expect(terminationCalls == 0)
-            #expect(identities.isEmpty)
+            #expect(identities.value.isEmpty)
         }
     }
 
@@ -364,11 +365,11 @@ struct ApplicationServiceLifecycleTests {
         })
 
         for force in [false, true] {
-            var identities: [UInt64] = [70, 70, 70, 71]
+            let identities = AutomationTestLockedValue<[UInt64]>([70, 70, 70, 71])
             var terminationCalls = 0
             let service = ApplicationService(
                 applicationOpenHandler: { _, _, _ in runningApplication },
-                processStartIdentityProvider: { _ in identities.removeFirst() },
+                processStartIdentityProvider: { _ in identities.withValue { $0.removeFirst() } },
                 applicationQuitHandler: { _, _ in
                     terminationCalls += 1
                     return true
@@ -381,7 +382,7 @@ struct ApplicationServiceLifecycleTests {
             }
 
             #expect(terminationCalls == 0)
-            #expect(identities.isEmpty)
+            #expect(identities.value.isEmpty)
         }
     }
 
@@ -393,12 +394,12 @@ struct ApplicationServiceLifecycleTests {
         })
 
         for force in [false, true] {
-            var identities: [UInt64] = [70, 70, 70, 71]
+            let identities = AutomationTestLockedValue<[UInt64]>([70, 70, 70, 71])
             var terminationCalls = 0
             let service = ApplicationService(
                 applicationOpenHandler: { _, _, _ in runningApplication },
                 processStartIdentityProvider: { _ in
-                    identities.isEmpty ? 71 : identities.removeFirst()
+                    identities.withValue { $0.isEmpty ? 71 : $0.removeFirst() }
                 },
                 applicationQuitHandler: { _, _ in
                     terminationCalls += 1
@@ -412,7 +413,7 @@ struct ApplicationServiceLifecycleTests {
             }
 
             #expect(terminationCalls == 0)
-            #expect(identities.isEmpty)
+            #expect(identities.value.isEmpty)
         }
     }
 
@@ -422,16 +423,16 @@ struct ApplicationServiceLifecycleTests {
         let runningApplication = try #require(NSWorkspace.shared.runningApplications.first {
             $0.processIdentifier > 0 && !$0.isTerminated
         })
-        var identities: [UInt64] = [70, 71]
+        let identities = AutomationTestLockedValue<[UInt64]>([70, 71])
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in runningApplication },
-            processStartIdentityProvider: { _ in identities.removeFirst() })
+            processStartIdentityProvider: { _ in identities.withValue { $0.removeFirst() } })
 
         let application = try await service.findApplication(
             identifier: "PID:\(runningApplication.processIdentifier)")
 
         #expect(application.processStartIdentity == nil)
-        #expect(identities.isEmpty)
+        #expect(identities.value.isEmpty)
     }
 
     @Test
@@ -465,11 +466,11 @@ struct ApplicationServiceLifecycleTests {
     @MainActor
     func `background no-op returns the selected process generation`() async throws {
         let recorder = ApplicationOpenRecorder()
-        var identities: [UInt64] = [70, 70, 70, 70]
+        let identities = AutomationTestLockedValue<[UInt64]>([70, 70, 70, 70])
         let service = ApplicationService(
             applicationOpenHandler: recorder.open,
             runningApplicationsForURLProvider: { _ in [recorder.runningApplication] },
-            processStartIdentityProvider: { _ in identities.removeFirst() })
+            processStartIdentityProvider: { _ in identities.withValue { $0.removeFirst() } })
 
         let application = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "Finder"))
@@ -477,18 +478,18 @@ struct ApplicationServiceLifecycleTests {
         #expect(application.processIdentity == ApplicationProcessIdentity(
             processIdentifier: recorder.runningApplication.processIdentifier,
             processStartIdentity: 70))
-        #expect(identities.isEmpty)
+        #expect(identities.value.isEmpty)
     }
 
     @Test
     @MainActor
     func `background no-op rejects PID reuse before returning its receipt`() async throws {
         let recorder = ApplicationOpenRecorder()
-        var identities: [UInt64] = [70, 70, 71, 71]
+        let identities = AutomationTestLockedValue<[UInt64]>([70, 70, 71, 71])
         let service = ApplicationService(
             applicationOpenHandler: recorder.open,
             runningApplicationsForURLProvider: { _ in [recorder.runningApplication] },
-            processStartIdentityProvider: { _ in identities.removeFirst() })
+            processStartIdentityProvider: { _ in identities.withValue { $0.removeFirst() } })
 
         do {
             _ = try await service.launchApplication(request: ApplicationLaunchRequest(
@@ -497,7 +498,7 @@ struct ApplicationServiceLifecycleTests {
         } catch let error as ApplicationLifecycleRefusalError {
             #expect(error.userMessage.contains("process generation"))
         }
-        #expect(identities.isEmpty)
+        #expect(identities.value.isEmpty)
     }
 
     @Test

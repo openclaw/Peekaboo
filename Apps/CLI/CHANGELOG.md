@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Require explicit checkout-local Swift workspace setup for direct source development, preserving live Commander source in standard gitfile-based submodules without conflicting dependency locations; build, release, and CI helpers own setup automatically.
+- Share checked Accessibility timeout ownership with AXorcist across dialog, focus, and window-identity probes, rejecting overlapping scopes while retaining unchecked detached-worker scopes.
 - Read `config credential set` secrets from no-echo prompts, stdin, or owner-only files; let `config provider add` also accept non-secret references; retain deprecated argv compatibility.
 - Skip provider discovery and Agent construction for caller-local commands that cannot invoke the Agent.
 - Avoid reopening and hashing Bridge screenshot artifacts twice before CLI or MCP consumption while retaining signed client verification and use-time publication checks.
@@ -28,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse validated classic PNG bytes when capture performs no transform instead of encoding the same image twice.
 
 ### Fixed
+- Bound application inventory from initial PID discovery through final generation validation, keep setup and validation reads off MainActor without queuing blocked native work, and reuse bound click metadata for result labels and diagnostics without post-action application or snapshot lookup.
 - Keep daemon health responsive while browser discovery is blocked, report cached browser diagnostics as unconfirmed, and preserve daemon transport failures instead of reporting successful absence or cleanup.
 - Reject late element-detection results and expired queued AX work against one absolute deadline, even when timeout delivery is delayed.
 - Pin the vendored AXorcist update so custom SwiftPM scratch paths cannot silently replace Commander's versioned dependency with a sibling checkout.
@@ -76,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explain why locked macOS sessions cannot be captured even when `screen list` still reports connected displays.
 - Restore terminal echo when credential prompts receive signals and reject background prompts or insecure credential files.
 - Deduplicate runtime flags and improve unknown-command, browser reconnect, help, `learn`, schema, and background-automation guidance.
+- Validate contradictory window and Space selectors before runtime-host discovery so malformed requests cannot start support services or mask the actionable error.
+- Explain that exact transient sheets may require read-only owning-process Accessibility inspection before screenshot/OCR fallback, without granting partial app trees mutation authority.
+- Bound retained native application metadata to eight operations per host process through timeout/cancellation and autorelease cleanup, shed overload as partial rows, and keep exact-target AX reads independent.
+- Keep public SwiftPM consumers on versioned Commander dependencies with custom scratch directories by pinning AXorcist 0.1.8.
+- Include nested dialog static text and nonblank AX text metadata fallbacks in `dialog list`, preserving dialog scope and control order.
+- Accept canonical v2 prebuilt Playground fixtures in native validation with strict source, lock, toolchain, bundle, and Foundation signature checks, retaining v1 only for the current invocation's local build.
 
 ## [4.2.2] - 2026-08-20
 

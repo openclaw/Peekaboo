@@ -1,5 +1,6 @@
 import AppKit
 import AXorcist
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -206,24 +207,26 @@ struct ApplicationServiceVisibilityLifecycleTests {
         let expectedIdentity = ApplicationProcessIdentity(
             processIdentifier: runningApplication.processIdentifier,
             processStartIdentity: 80)
-        var identityReadCount = 0
+        let identityReadCount = AutomationTestLockedValue(0)
         var visibilityReadCount = 0
-        var visibilityWasRead = false
-        var postVisibilityIdentityReadCount = 0
+        let visibilityWasRead = AutomationTestLockedValue(false)
+        let postVisibilityIdentityReadCount = AutomationTestLockedValue(0)
         var dispatchCount = 0
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in runningApplication },
             processStartIdentityProvider: { _ in
-                identityReadCount += 1
-                if visibilityWasRead {
-                    postVisibilityIdentityReadCount += 1
-                    return postVisibilityIdentityReadCount == 1 ? expectedIdentity.processStartIdentity : 81
+                identityReadCount.withValue { $0 += 1 }
+                if visibilityWasRead.value {
+                    return postVisibilityIdentityReadCount.withValue {
+                        $0 += 1
+                        return $0 == 1 ? expectedIdentity.processStartIdentity : 81
+                    }
                 }
                 return expectedIdentity.processStartIdentity
             },
             applicationHiddenProvider: { _ in
                 visibilityReadCount += 1
-                visibilityWasRead = true
+                visibilityWasRead.value = true
                 return false
             },
             applicationVisibilityHandler: { _, _ in
@@ -246,8 +249,8 @@ struct ApplicationServiceVisibilityLifecycleTests {
                 processStartIdentity: expectedIdentity.processStartIdentity))
         }
 
-        #expect(identityReadCount >= 6)
-        #expect(postVisibilityIdentityReadCount == 2)
+        #expect(identityReadCount.value >= 6)
+        #expect(postVisibilityIdentityReadCount.value == 2)
         #expect(visibilityReadCount == 1)
         #expect(dispatchCount == 0)
     }
@@ -290,15 +293,15 @@ struct ApplicationServiceVisibilityLifecycleTests {
         let identity = ApplicationProcessIdentity(
             processIdentifier: runningApplication.processIdentifier,
             processStartIdentity: 80)
-        var generation = identity.processStartIdentity
+        let generation = AutomationTestLockedValue(identity.processStartIdentity)
         var isHidden = false
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in runningApplication },
-            processStartIdentityProvider: { _ in generation },
+            processStartIdentityProvider: { _ in generation.value },
             applicationHiddenProvider: { _ in isHidden },
             applicationVisibilityHandler: { _, hidden in
                 isHidden = hidden
-                generation += 1
+                generation.withValue { $0 += 1 }
                 return true
             })
 
@@ -325,15 +328,15 @@ struct ApplicationServiceVisibilityLifecycleTests {
         let identity = ApplicationProcessIdentity(
             processIdentifier: runningApplication.processIdentifier,
             processStartIdentity: 80)
-        var generation = identity.processStartIdentity
+        let generation = AutomationTestLockedValue(identity.processStartIdentity)
         var isHidden = true
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in runningApplication },
-            processStartIdentityProvider: { _ in generation },
+            processStartIdentityProvider: { _ in generation.value },
             applicationHiddenProvider: { _ in isHidden },
             applicationNativeVisibilityHandler: { _, _ in
                 isHidden = false
-                generation += 1
+                generation.withValue { $0 += 1 }
                 return false
             })
 

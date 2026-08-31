@@ -7,6 +7,105 @@ import Testing
 
 @Suite(.serialized)
 struct ApplicationInventoryTimeoutTests {
+    @Test(arguments: NativeInventoryPhase.allCases, [false, true])
+    func `blocked native inventory phases release callers and MainActor without releasing native work`(
+        phase: NativeInventoryPhase,
+        cancel: Bool) async throws
+    {
+        let gate = ApplicationInventoryBlockingGate()
+        defer { gate.release() }
+        let nativeReads = AutomationTestLockedValue(0)
+        let heartbeat = AutomationTestLockedValue(false)
+        let service = await Self.blockedInventoryService(phase: phase, cancel: cancel, gate: gate, reads: nativeReads)
+        let task = Task { try await phase.observe(service) }
+        #expect(await gate.startedAsynchronously())
+        let beat = Task { @MainActor in heartbeat.value = !gate.wasReleased }
+        if cancel {
+            task.cancel()
+        }
+        do {
+            _ = try await task.value
+            Issue.record("Blocked \(phase.rawValue) must throw before publishing inventory")
+        } catch is CancellationError {
+            #expect(cancel)
+        } catch let error as PeekabooError {
+            guard case .timeout = error else { throw error }
+            #expect(!cancel)
+        }
+        await beat.value
+        #expect(heartbeat.value)
+        #expect(!gate.wasReleased)
+
+        if !gate.wasReleased {
+            let newerReads = AutomationTestLockedValue(0)
+            let newerService = await MainActor.run {
+                ApplicationService(
+                    applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+                    frontmostProcessIdentifierProvider: { nil },
+                    runningApplicationProcessIdentifiersProvider: {
+                        newerReads.withValue { $0 += 1 }
+                        return []
+                    },
+                    applicationWindowCatalogProvider: { [] })
+            }
+            for _ in 0..<3 {
+                await #expect(throws: PeekabooError.self) { _ = try await newerService.listApplications() }
+                await #expect(throws: PeekabooError.self) { _ = try await newerService.applicationMutationInventory() }
+            }
+            let newerRequest = Task { try await phase.observe(newerService) }
+            await #expect(throws: PeekabooError.self) { _ = try await newerRequest.value }
+            #expect(nativeReads.value == 1)
+            #expect(newerReads.value == 0)
+            gate.release()
+            #expect(gate.waitUntilFinished())
+            // Both callers retain their terminal failure when the old native value arrives late.
+            if cancel {
+                await #expect(throws: CancellationError.self) { _ = try await task.value }
+            } else {
+                await #expect(throws: PeekabooError.self) { _ = try await task.value }
+            }
+            await #expect(throws: PeekabooError.self) { _ = try await newerRequest.value }
+            #expect(newerReads.value == 0)
+            // The provider's finished signal precedes native-slot release; observe recovery before the next case.
+            let recoveryDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+            while true {
+                do {
+                    let recovered = try await newerService.listApplications()
+                    #expect(recovered.data.applications.isEmpty)
+                    #expect(recovered.metadata.warnings.isEmpty)
+                    break
+                } catch let error as PeekabooError {
+                    guard case .timeout = error, ContinuousClock.now < recoveryDeadline else { throw error }
+                    await Task.yield()
+                }
+            }
+            return
+        }
+        gate.release()
+        #expect(gate.waitUntilFinished())
+    }
+
+    @Test
+    @MainActor
+    func `PID discovery consumes the overall budget before empty inventory can be complete`() async throws {
+        let clock = AutomationTestLockedValue(ContinuousClock.now)
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
+            runningApplicationProcessIdentifiersProvider: {
+                clock.withValue { $0 = $0.advanced(by: .seconds(2)) }
+                return []
+            },
+            applicationWindowCatalogProvider: { [] },
+            applicationInventoryNowProvider: { clock.value })
+        await #expect(throws: PeekabooError.self) { _ = try await service.listApplications() }
+        await #expect(throws: PeekabooError.self) { _ = try await service.applicationMutationInventory() }
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(applications: service)
+        await #expect(throws: DesktopTargetPlanningError.applicationInventoryUnavailable(identifier: "Editor")) {
+            _ = try await planner.plan(identifier: "Editor")
+        }
+    }
+
     @Test
     @MainActor
     func `omitted and identity-incomplete live processes make inventory partial`() async throws {
@@ -15,6 +114,7 @@ struct ApplicationInventoryTimeoutTests {
         let changedGeneration = AutomationTestLockedValue<UInt64>(70)
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { pid in
                 pid == changedPID ? changedGeneration.value : nil
             },
@@ -43,6 +143,7 @@ struct ApplicationInventoryTimeoutTests {
         let pid: pid_t = 40003
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { _ in 73 },
             runningApplicationProcessIdentifiersProvider: { [pid] },
             applicationWindowCatalogProvider: { [] },
@@ -74,7 +175,7 @@ struct ApplicationInventoryTimeoutTests {
             processStartIdentity: 74,
             bundleIdentifier: "com.example.fixture",
             name: "Editor")
-        var windowCatalogReadCount = 0
+        let windowCatalogReadCount = AutomationTestLockedValue(0)
         let metadataReadCount = AutomationTestLockedValue(0)
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
@@ -85,10 +186,11 @@ struct ApplicationInventoryTimeoutTests {
                     name: "Editor",
                     isRegularApplication: true)
             },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { _ in 74 },
             runningApplicationProcessIdentifiersProvider: { [pid] },
             applicationWindowCatalogProvider: {
-                windowCatalogReadCount += 1
+                windowCatalogReadCount.withValue { $0 += 1 }
                 return nil
             },
             applicationMetadataProvider: { _, _, _ in
@@ -104,7 +206,7 @@ struct ApplicationInventoryTimeoutTests {
 
         #expect(byName.processIdentity == application.processIdentity)
         #expect(byBundle.processIdentity == application.processIdentity)
-        #expect(windowCatalogReadCount == 0)
+        #expect(windowCatalogReadCount.value == 0)
         #expect(metadataReadCount.value == 0)
     }
 
@@ -114,7 +216,7 @@ struct ApplicationInventoryTimeoutTests {
         let stablePID: pid_t = 40005
         let missingPID: pid_t = 40006
         let driftingPID: pid_t = 40007
-        var driftingReads = 0
+        let driftingReads = AutomationTestLockedValue(0)
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
             applicationMutationCandidateProvider: { pid in
@@ -123,13 +225,16 @@ struct ApplicationInventoryTimeoutTests {
                     bundleIdentifier: "com.example.\(pid)",
                     name: "App \(pid)")
             },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { pid -> UInt64? in
                 switch pid {
                 case stablePID: return 75
                 case missingPID: return nil
                 case driftingPID:
-                    driftingReads += 1
-                    return driftingReads == 1 ? 76 : 77
+                    return driftingReads.withValue {
+                        $0 += 1
+                        return $0 == 1 ? 76 : 77
+                    }
                 default: return nil
                 }
             },
@@ -158,6 +263,7 @@ struct ApplicationInventoryTimeoutTests {
                     bundleIdentifier: "com.example.\(pid)",
                     name: pid == unnamedPID ? "  \n" : "Named App")
             },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { pid in UInt64(pid) + 100 },
             runningApplicationProcessIdentifiersProvider: { [namedPID, unnamedPID] })
 
@@ -177,6 +283,7 @@ struct ApplicationInventoryTimeoutTests {
         let poisonedPID: pid_t = 41002
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { pid in UInt64(pid) + 100 },
             runningApplicationProcessIdentifiersProvider: { [healthyPID, poisonedPID] },
             applicationWindowCatalogProvider: {
@@ -224,6 +331,7 @@ struct ApplicationInventoryTimeoutTests {
         let started = ApplicationInventoryGate()
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { _ in 7 },
             runningApplicationProcessIdentifiersProvider: { [42001, 42002] },
             applicationWindowCatalogProvider: { [] },
@@ -252,6 +360,7 @@ struct ApplicationInventoryTimeoutTests {
         let probe = ApplicationMetadataConcurrencyProbe()
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { _ in 7 },
             runningApplicationProcessIdentifiersProvider: { processIdentifiers },
             applicationWindowCatalogProvider: { [] },
@@ -284,6 +393,7 @@ struct ApplicationInventoryTimeoutTests {
         let lateWorker = ApplicationInventoryBlockingGate()
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { pid in UInt64(pid) + 10 },
             runningApplicationProcessIdentifiersProvider: { Array(processIdentifiers.reversed()) },
             applicationWindowCatalogProvider: { [] },
@@ -324,10 +434,11 @@ struct ApplicationInventoryTimeoutTests {
 
     @Test
     @MainActor
-    func `overall deadline bounds an all-stalled fleet and marks unstarted rows unknown`() async throws {
+    func `overall deadline refuses an inventory that cannot finish observation`() async throws {
         let processIdentifiers = Array(46001...46128).map(pid_t.init)
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { pid in UInt64(pid) + 10 },
             runningApplicationProcessIdentifiersProvider: { processIdentifiers },
             applicationWindowCatalogProvider: { [] },
@@ -339,14 +450,7 @@ struct ApplicationInventoryTimeoutTests {
             applicationInventoryOverallTimeout: 0.11,
             maximumConcurrentApplicationMetadataReads: 8)
 
-        let startedAt = ContinuousClock.now
-        let output = try await service.listApplications()
-        let elapsed = startedAt.duration(to: .now).timeInterval
-
-        #expect(elapsed < 0.3)
-        #expect(output.data.applications.count == processIdentifiers.count)
-        #expect(output.data.applications.allSatisfy { $0.isHiddenKnown == false })
-        #expect(output.metadata.warnings.contains { $0.contains("inventory deadline") })
+        await #expect(throws: PeekabooError.self) { _ = try await service.listApplications() }
     }
 
     @Test
@@ -354,21 +458,18 @@ struct ApplicationInventoryTimeoutTests {
     func `metadata reads launched near the overall deadline receive only its remaining budget`() async throws {
         let processIdentifiers: [pid_t] = [47001, 47002]
         let clockStart = ContinuousClock.now
-        var clockReadCount = 0
+        let clock = AutomationTestLockedValue(clockStart)
         let timeoutRecorder = ApplicationMetadataTimeoutRecorder()
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
             processStartIdentityProvider: { pid in UInt64(pid) + 10 },
             runningApplicationProcessIdentifiersProvider: { processIdentifiers },
             applicationWindowCatalogProvider: { [] },
-            applicationInventoryNowProvider: {
-                defer { clockReadCount += 1 }
-                return clockReadCount < 2
-                    ? clockStart
-                    : clockStart.advanced(by: .milliseconds(90))
-            },
+            applicationInventoryNowProvider: { clock.value },
             applicationMetadataProvider: { pid, _, timeout in
                 await timeoutRecorder.record(processIdentifier: pid, timeout: timeout)
+                clock.value = clockStart.advanced(by: .milliseconds(90))
                 return Self.metadata(name: "App \(pid)")
             },
             applicationMetadataTimeout: 0.5,
@@ -464,6 +565,89 @@ struct ApplicationInventoryTimeoutTests {
         gate.release()
     }
 
+    enum NativeInventoryPhase: String, CaseIterable, Sendable {
+        case listingPID, listingCatalog, listingFinalGeneration
+        case mutationPID, mutationSelector, mutationFinalGeneration
+
+        @MainActor
+        func observe(_ service: ApplicationService) async throws -> [ServiceApplicationInfo] {
+            switch self {
+            case .listingPID, .listingCatalog, .listingFinalGeneration:
+                try await service.listApplications().data.applications
+            case .mutationPID, .mutationSelector, .mutationFinalGeneration:
+                try await service.applicationMutationInventory().items
+            }
+        }
+    }
+
+    @MainActor
+    private static func blockedInventoryService(
+        phase: NativeInventoryPhase,
+        cancel: Bool,
+        gate: ApplicationInventoryBlockingGate,
+        reads: AutomationTestLockedValue<Int>) -> ApplicationService
+    {
+        let pid: pid_t = 42003
+        let generationReads = AutomationTestLockedValue(0)
+        let selectorReads = AutomationTestLockedValue(0)
+        let metadataReads = AutomationTestLockedValue(0)
+        let block: @Sendable (NativeInventoryPhase) -> Void = { boundary in
+            guard phase == boundary else { return }
+            reads.withValue { $0 += 1 }
+            gate.markStarted()
+            gate.waitWithEmergencyRelease()
+            gate.markFinished()
+        }
+        return ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            applicationMutationCandidateProvider: { identifier in
+                #expect(identifier == pid)
+                #expect(generationReads.value == 1)
+                selectorReads.withValue { $0 += 1 }
+                block(.mutationSelector)
+                return ApplicationIdentifierMatcher.Candidate(
+                    processIdentifier: pid,
+                    bundleIdentifier: nil,
+                    name: "Late Mutation App",
+                    isRegularApplication: true)
+            },
+            frontmostProcessIdentifierProvider: { nil },
+            processStartIdentityProvider: { identifier in
+                #expect(identifier == pid)
+                let read = generationReads.withValue { $0 += 1; return $0 }
+                if read == 2 {
+                    if phase == .listingFinalGeneration {
+                        #expect(metadataReads.value == 1)
+                        #expect(selectorReads.value == 0)
+                        block(.listingFinalGeneration)
+                    } else if phase == .mutationFinalGeneration {
+                        #expect(selectorReads.value == 1)
+                        #expect(metadataReads.value == 0)
+                        block(.mutationFinalGeneration)
+                    }
+                }
+                return 7
+            },
+            runningApplicationProcessIdentifiersProvider: {
+                block(.listingPID)
+                block(.mutationPID)
+                return [pid]
+            },
+            applicationWindowCatalogProvider: {
+                #expect(generationReads.value == 0)
+                block(.listingCatalog)
+                return []
+            },
+            applicationMetadataProvider: { identifier, generation, _ in
+                #expect(identifier == pid)
+                #expect(generation == 7)
+                #expect(generationReads.value == 1)
+                metadataReads.withValue { $0 += 1 }
+                return Self.metadata(name: "Late Listing App")
+            },
+            applicationInventoryOverallTimeout: cancel ? 30 : 0.05)
+    }
+
     private static func metadata(name: String) -> DetachedApplicationMetadata {
         DetachedApplicationMetadata(
             bundleIdentifier: "com.example.fixture",
@@ -517,6 +701,22 @@ private final class ApplicationInventoryBlockingGate: @unchecked Sendable {
     private let started = DispatchSemaphore(value: 0)
     private let releaseGate = DispatchSemaphore(value: 0)
     private let finished = DispatchSemaphore(value: 0)
+    private let released = AutomationTestLockedValue(false)
+
+    var wasReleased: Bool {
+        self.released.value
+    }
+
+    func startedAsynchronously() async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async { continuation.resume(returning: self.waitUntilStarted()) }
+        }
+    }
+
+    func waitWithEmergencyRelease() {
+        _ = self.releaseGate.wait(timeout: .now() + 3)
+        self.released.value = true
+    }
 
     func markStarted() {
         self.started.signal()
@@ -531,6 +731,7 @@ private final class ApplicationInventoryBlockingGate: @unchecked Sendable {
     }
 
     func release() {
+        self.released.value = true
         self.releaseGate.signal()
     }
 

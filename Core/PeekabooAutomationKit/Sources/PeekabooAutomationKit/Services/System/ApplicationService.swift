@@ -107,7 +107,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
     typealias RunningApplicationsForURLProvider = @MainActor (_ applicationURL: URL) -> [NSRunningApplication]
     typealias ApplicationSelectorCandidatesProvider = @MainActor () -> [ApplicationIdentifierMatcher.Candidate]
-    typealias ApplicationMutationCandidateProvider = @MainActor (_ processIdentifier: pid_t)
+    typealias ApplicationMutationCandidateProvider = @Sendable (_ processIdentifier: pid_t)
         -> ApplicationIdentifierMatcher.Candidate?
     typealias RelaunchTargetResolver = @MainActor (_ identifier: String) async throws -> ServiceApplicationInfo
     typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws
@@ -117,11 +117,11 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
     typealias ApplicationActivationHandler = @MainActor (_ application: NSRunningApplication) -> Bool
     typealias ApplicationAccessibilityActivationHandler = @MainActor (_ processIdentifier: pid_t) -> Bool
     typealias ApplicationActiveProvider = @MainActor (_ application: NSRunningApplication) -> Bool
-    typealias FrontmostProcessIdentifierProvider = @MainActor () -> pid_t?
+    typealias FrontmostProcessIdentifierProvider = @Sendable () -> pid_t?
     typealias WindowServerActivationStateProvider = @MainActor (_ processIdentifier: pid_t)
         -> WindowServerActivationState
     typealias ApplicationActivationSleepHandler = @MainActor (_ duration: Duration) async throws -> Void
-    typealias ProcessStartIdentityProvider = @MainActor (_ processIdentifier: pid_t) -> UInt64?
+    typealias ProcessStartIdentityProvider = @Sendable (_ processIdentifier: pid_t) -> UInt64?
     typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
     typealias ApplicationHiddenProvider = @MainActor (_ application: NSRunningApplication) throws -> Bool
     typealias ApplicationAccessibilityHideHandler = @MainActor (_ application: NSRunningApplication) throws -> Void
@@ -132,8 +132,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         _ application: NSRunningApplication,
         _ hidden: Bool) throws -> Bool
     typealias ApplicationVisibilitySleepHandler = @MainActor (_ duration: Duration) async throws -> Void
-    typealias RunningApplicationProcessIdentifiersProvider = @MainActor () -> [pid_t]
-    typealias ApplicationWindowCatalogProvider = @MainActor () -> [WindowIdentityInfo]?
+    typealias RunningApplicationProcessIdentifiersProvider = @Sendable () -> [pid_t]
+    typealias ApplicationWindowCatalogProvider = @Sendable () -> [WindowIdentityInfo]?
     typealias ApplicationInventoryNowProvider = @MainActor () -> ContinuousClock.Instant
     typealias ApplicationMetadataProvider = @Sendable (
         _ processIdentifier: pid_t,
@@ -187,9 +187,9 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
     /// Keep this safely below the Bridge's fixed request deadline so partial CG inventory remains usable.
     static let windowAXEnrichmentTimeout: Float = 2.0
 
-    /// Caller budgets for metadata enrichment, with eight concurrent waits per inventory. The separate
+    /// One absolute inventory budget covers seed reads, enrichment, final validation, and publication.
+    /// Metadata has eight concurrent waits per inventory, each limited by the remaining budget. The separate
     /// process-wide metadata pool retains at most eight native operations through autorelease cleanup.
-    /// Synchronous inventory seed collection and final generation validation are not hard-bound here.
     static let applicationMetadataTimeout: TimeInterval = 0.25
     static let applicationInventoryOverallTimeout: TimeInterval = 1
     static let maximumConcurrentApplicationMetadataReads = 8
@@ -281,7 +281,7 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
             NSWorkspace.shared.runningApplications.map(\.processIdentifier)
         },
         applicationWindowCatalogProvider: @escaping ApplicationWindowCatalogProvider = {
-            WindowIdentityService().getWindowCatalog()
+            WindowIdentityService.readWindowCatalog()
         },
         applicationInventoryNowProvider: @escaping ApplicationInventoryNowProvider = { ContinuousClock.now },
         applicationMetadataProvider: @escaping ApplicationMetadataProvider = { pid, generation, timeout in
