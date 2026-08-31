@@ -1193,19 +1193,13 @@ public final class FocusManagementService {
     private func focusedWindow(for app: NSRunningApplication, timeout: TimeInterval) -> Element? {
         guard timeout > 0 else { return nil }
         let axApp = AXApp(app)
-        return try? AXChildWindowMessagingTimeout.performChecked(
-            on: axApp.element,
-            timeout: Float(timeout),
-            operation: { _ in axApp.focusedWindow() })
+        return try? axApp.element.withMessagingTimeout(Float(timeout)) { _ in axApp.focusedWindow() }
     }
 
     private func focusedElement(for app: NSRunningApplication, timeout: TimeInterval) -> Element? {
         guard timeout > 0 else { return nil }
         let axApp = AXApp(app)
-        return try? AXChildWindowMessagingTimeout.performChecked(
-            on: axApp.element,
-            timeout: Float(timeout),
-            operation: { $0.focusedUIElement() })
+        return try? axApp.element.withMessagingTimeout(Float(timeout)) { $0.focusedUIElement() }
     }
 
     nonisolated static func processIdentifier(for element: AXUIElement) -> pid_t? {

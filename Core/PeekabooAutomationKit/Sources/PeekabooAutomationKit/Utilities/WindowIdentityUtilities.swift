@@ -90,10 +90,7 @@ public final class WindowIdentityService {
     // MARK: - CGWindowID Extraction
 
     func getWindowID(from element: Element, messagingTimeout: Float = 0.25) -> CGWindowID? {
-        try? AXChildWindowMessagingTimeout.performChecked(
-            on: element,
-            timeout: messagingTimeout)
-        { childWindow in
+        try? element.withMessagingTimeout(messagingTimeout) { childWindow in
             self.resolver.windowID(from: childWindow)
         }
     }
@@ -127,18 +124,14 @@ public final class WindowIdentityService {
         messagingTimeout: Float) -> AXWindowHandle?
     {
         let appElement = Element(AXUIElementCreateApplication(app.processIdentifier))
-        guard let windows = try? AXChildWindowMessagingTimeout.performChecked(
-            on: appElement,
-            timeout: messagingTimeout,
+        guard let windows = try? appElement.withMessagingTimeout(
+            messagingTimeout,
             operation: { $0.windows() })
         else {
             return nil
         }
         for window in windows {
-            let matches = try? AXChildWindowMessagingTimeout.performChecked(
-                on: window,
-                timeout: messagingTimeout)
-            { childWindow in
+            let matches = try? window.withMessagingTimeout(messagingTimeout) { childWindow in
                 self.resolver.windowID(from: childWindow) == windowID
             }
             if matches == true {
@@ -155,17 +148,13 @@ public final class WindowIdentityService {
     func focusedWindowID(for app: NSRunningApplication, timeout: TimeInterval) -> CGWindowID? {
         guard timeout > 0 else { return nil }
         let axApp = AXApp(app)
-        guard let focusedWindow = try? AXChildWindowMessagingTimeout.performChecked(
-            on: axApp.element,
-            timeout: Float(timeout),
+        guard let focusedWindow = try? axApp.element.withMessagingTimeout(
+            Float(timeout),
             operation: { _ in axApp.focusedWindow() })
         else {
             return nil
         }
-        return try? AXChildWindowMessagingTimeout.performChecked(
-            on: focusedWindow,
-            timeout: Float(timeout))
-        { window in
+        return try? focusedWindow.withMessagingTimeout(Float(timeout)) { window in
             self.resolver.windowID(from: window)
         }
     }
@@ -177,10 +166,7 @@ public final class WindowIdentityService {
 
         // Compute AX identifier lazily.
         let axIdentifier: String? = if let handle = self.findWindow(byID: windowID, messagingTimeout: 1) {
-            try? AXChildWindowMessagingTimeout.performChecked(
-                on: handle.element,
-                timeout: 1)
-            { window in
+            try? handle.element.withMessagingTimeout(1) { window in
                 window.identifier()
             }
         } else {

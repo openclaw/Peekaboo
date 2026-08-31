@@ -250,6 +250,13 @@ VisualizationClient (click animation)
 - **Graceful Degradation**: Fallback strategies for problematic applications
 - **State Validation**: Element existence and accessibility verification
 
+Checked dialog, focus, and window-identity probes use AXorcist's MainActor `Element.withMessagingTimeout` owner.
+Application and returned child references need separate scopes. Dialog scope failures propagate before fallback;
+optional focus/identity probes fail closed, while optional AX identifier failure can retain exact CG metadata.
+After successful setup, the synchronous scope attempts to reset to zero (not the previous timeout); reset failure
+overrides the operation's result or error. Cancellation must be thrown by the operation. Detached raw AX workers retain
+unchecked `AXChildWindowMessagingTimeout` scopes by design so their blocking calls stay off MainActor.
+
 ## Configuration Management
 
 ### Multi-Source Configuration
