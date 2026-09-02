@@ -146,6 +146,12 @@ jobs:
           swift test --no-parallel --filter 'MCPToolExecutionTests|MCPToolErrorHandlingTests|MCPElementActionToolExecutionTests'
           swift test --no-parallel --filter 'MCPDesktopActionOutcomeProjectionTests|MCPCompositeActionOutcomeTests'
 
+      - name: Run browser capability and guidance contracts
+        working-directory: Core/PeekabooCore
+        run: |
+          swift test --no-parallel \
+            --filter 'BrowserToolTests|BrowserToolCapabilityIntegrationTests|RemoteBrowserMCPSessionTests|AgentSystemPromptTests'
+
       - name: Run focused Swift tests
         working-directory: Core/PeekabooCore
         run: |

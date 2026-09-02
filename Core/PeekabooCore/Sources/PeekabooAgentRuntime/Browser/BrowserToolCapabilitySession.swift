@@ -677,8 +677,8 @@ actor BrowserToolCapabilitySession {
 
     private static func actionUsesPage(_ action: BrowserAction, arguments: ToolArguments) -> Bool {
         switch action {
-        case .selectPage, .closePage, .navigate, .waitFor, .snapshot, .click, .fill, .fillForm, .drag, .hover,
-             .type, .pressKey, .uploadFile, .handleDialog, .console, .network, .screenshot, .performanceTrace:
+        case .selectPage, .closePage, .navigate, .waitFor, .snapshot, .click, .domClick, .fill, .fillForm, .drag,
+             .hover, .type, .pressKey, .uploadFile, .handleDialog, .console, .network, .screenshot, .performanceTrace:
             true
         case .call:
             arguments.getValue(for: "page_id") != nil

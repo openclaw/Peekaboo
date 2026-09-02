@@ -32,14 +32,15 @@ public struct BrowserTool: MCPTool {
         return """
         Controls and inspects Chrome web pages through Chrome DevTools MCP.
 
-        Use this for browser page content: DOM/accessibility snapshots, web forms, navigation,
-        console messages, network requests, screenshots, and performance traces. Use Peekaboo's
-        native tools for macOS chrome, menus, dialogs, permissions, and non-browser applications.
+        Use this for page content: DOM/accessibility, forms, navigation, console/network, screenshots, and traces.
+        Use Peekaboo native tools for macOS UI, browser chrome, menus, dialogs, permissions, and other apps.
 
         Chrome DevTools MCP requires Chrome 144+ with remote debugging enabled at
         chrome://inspect/#remote-debugging. The user must accept Chrome's remote debugging prompt.
         Routes that can enter Puppeteer page evaluation are foreground-only because the pinned provider grants browser
         user activation even for headless or background pages.
+        dom_click invokes synthetic element.click(), not trusted pointer input. It still requires foreground authority.
+        It may activate Chrome; verify page effects afterward. double and include_snapshot do not apply.
         Peekaboo starts chrome-devtools-mcp with usage statistics and CrUX lookups disabled.
         """
     }
@@ -937,6 +938,7 @@ public enum BrowserAction: String, CaseIterable, Sendable {
     case waitFor = "wait_for"
     case snapshot
     case click
+    case domClick = "dom_click"
     case fill
     case fillForm = "fill_form"
     case drag
@@ -1049,7 +1051,7 @@ public enum BrowserMCPCallMapper {
         case .call:
             // Invalid/unknown raw calls are rejected later; classify them conservatively until then.
             .mutating
-        case .closePage, .newPage, .navigate, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey,
+        case .closePage, .newPage, .navigate, .click, .domClick, .fill, .fillForm, .drag, .hover, .type, .pressKey,
              .uploadFile, .handleDialog:
             .mutating
         }
@@ -1128,7 +1130,8 @@ public enum BrowserMCPCallMapper {
             throw BrowserToolError.invalidAction(action.rawValue)
         case .listPages, .selectPage, .closePage, .newPage, .navigate, .waitFor:
             try self.pageCall(action: action, arguments: arguments)
-        case .snapshot, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog,
+        case .snapshot, .click, .domClick, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile,
+             .handleDialog,
              .screenshot:
             try self.interactionCall(action: action, arguments: arguments)
         case .console, .network, .performanceTrace:
@@ -1143,7 +1146,7 @@ public enum BrowserMCPCallMapper {
 
     private static func requiresPageID(_ action: BrowserAction) -> Bool {
         switch action {
-        case .navigate, .waitFor, .snapshot, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey,
+        case .navigate, .waitFor, .snapshot, .click, .domClick, .fill, .fillForm, .drag, .hover, .type, .pressKey,
              .uploadFile, .handleDialog, .console, .network, .screenshot, .performanceTrace:
             true
         case .status, .connect, .disconnect, .listPages, .selectPage, .closePage, .newPage, .call:
@@ -1204,6 +1207,19 @@ public enum BrowserMCPCallMapper {
                 "dblClick": arguments.getBool("double") ?? false,
                 "includeSnapshot": arguments.getBool("include_snapshot") ?? false,
             ]))
+        case .domClick:
+            return try BrowserMCPMappedCall(toolName: "evaluate_script", arguments: [
+                "function": """
+                (element) => {
+                  if (typeof element?.click !== 'function') {
+                    throw new Error('The selected element does not support a synthetic DOM click.');
+                  }
+                  element.click();
+                  return true;
+                }
+                """,
+                "args": [self.requiredString("uid", arguments)],
+            ])
         case .fill:
             return try BrowserMCPMappedCall(toolName: "fill", arguments: self.compact([
                 "uid": self.requiredString("uid", arguments),

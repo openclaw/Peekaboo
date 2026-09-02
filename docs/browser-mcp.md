@@ -187,6 +187,7 @@ Common actions:
 - `wait_for`
 - `snapshot`
 - `click`
+- `dom_click`
 - `fill`
 - `type`
 - `press_key`
@@ -226,6 +227,20 @@ compatibility boundary rather than a persistent caller capability namespace. `se
 page visually behind other apps, but remain foreground-authority operations because their provider response formatting
 grants browser user activation. Use `bring_to_front: true` or `background: false` only when visible foreground
 interaction is intentional.
+
+`dom_click` invokes one synthetic `element.click()` via `evaluate_script`, without CDP/Puppeteer pointer input.
+It uses the existing exact connection receipt, caller-owned page and element references, provider child epoch, and
+fresh element preflight under the same execution gate. Newer snapshots, navigation, session end, or connection/epoch
+replacement invalidate the relevant references; copied references from another caller never authorize dispatch.
+The pinned evaluation route still grants browser user activation. Background sessions hide and refuse `dom_click`
+before provider I/O; explicit foreground sessions report foreground browser-protocol delivery. This is not a
+background-safe route or a guarantee that Chrome cannot activate.
+
+Synthetic click is not trusted pointer input: it does not move or hit-test the pointer or emit a pointer-down/up
+sequence, disabled controls may do nothing, and handlers requiring trusted input may not react. `double` and
+`include_snapshot` do not apply. A successful script return is not final-effect proof: inspect the intended page
+afterward to confirm the handler or navigation actually took effect. Accepted or uncertain dispatch remains
+retry-unsafe; do not blindly replay a click after failure or cancellation.
 
 `type` and `press_key` also require an opaque element reference from the newest snapshot as `uid`. Peekaboo holds one browser execution gate while it
 focuses that exact uid and sends the keyboard operation; concurrent page work cannot interleave between those leaves.

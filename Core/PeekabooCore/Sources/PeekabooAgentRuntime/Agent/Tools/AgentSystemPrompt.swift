@@ -336,14 +336,40 @@ public struct AgentSystemPrompt {
             """
             - Open a URL with explicit foreground consent using
               `{ "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }`.
-              In Chrome DevTools flows, `new_page` and `select_page` stay in the background by default.
+              Chrome DevTools page discovery, navigation, and snapshots grant browser user activation in the pinned
+              provider and are available only in this foreground-authorized session.
             """
         } else {
             """
-            - Navigate only through an existing exact browser connection. Create background DevTools pages when the
-              connection supports it; do not call Safari open, browser connect, page fronting, or activation actions.
+            - Page discovery, navigation, snapshots, and DOM element actions are unavailable because the pinned provider
+              grants browser user activation during their internal page evaluation. Do not attempt them in this session.
             """
         }
+        let interactionGuidance = if allowsForeground {
+            """
+            - Trusted browser pointer, form-fill, focused-keyboard, and upload actions can activate standalone Chrome;
+              use them only when foreground browser interaction is intentional.
+            - `dom_click` avoids Puppeteer pointer input, but its `evaluate_script` route still grants browser user
+              activation and must remain foreground-authorized.
+              It is synthetic, not trusted pointer input, and does not guarantee Chrome stays behind other apps.
+              Observe the intended page effect afterward; a successful return is not proof it happened.
+            """
+        } else {
+            """
+            - `dom_click`, raw `evaluate_script`, trusted pointer, form-fill, focused-keyboard, and upload routes are
+              unavailable. Request foreground authority rather than trying to bypass the source-audited catalog.
+            """
+        }
+        let pageScopeGuidance = allowsForeground
+            ? """
+            - Start each Chrome flow with `list_pages` or `new_page`, keep its opaque page reference, and include it as
+              `page_id` in every later page-scoped browser action. Use element references only from that page's newest
+              snapshot. Never copy page or element references across Agent sessions.
+            """
+            : """
+            - Use only actions and arguments advertised by the background browser schema. Do not guess hidden page or
+              element routes, and never copy page or element references across Agent sessions.
+            """
         return """
         **Browser Automation**
         - When the target is Google Chrome and the task concerns page content, forms, DOM/a11y snapshots,
@@ -352,12 +378,12 @@ public struct AgentSystemPrompt {
         - Use native Peekaboo tools (`inspect_ui`, `see`, `click`, `type`, `menu`, `dialog`, `window`) for macOS UI,
           browser chrome, permissions, menus, dialogs, and non-browser apps.
         \(navigationGuidance)
-        - Start each Chrome flow with `list_pages` or `new_page`, retain its opaque page reference, and include it as
-          `page_id` in every later page-scoped browser action. Use element references only from that page's newest
-          snapshot. Never copy page or element references across Agent sessions.
+        \(interactionGuidance)
+        \(pageScopeGuidance)
         - Foreground-capable sessions may use `bring_to_front: true` or `background: false` only when the task
           explicitly requires foreground Chrome; background-only sessions must never emit either form.
-        - If `browser` fails or is unavailable, fall back to native Peekaboo screen/AX tools.
+        - If `browser` fails or is unavailable, native Peekaboo screen/AX tools remain subject to their own authority
+          and exact-target requirements. Never use a fallback to bypass a foreground-consent refusal.
         """
     }
 
@@ -377,6 +403,10 @@ public struct AgentSystemPrompt {
             "Do not emit CLI strings. For example, list applications with `{ \"action\": \"list\" }`; " +
                 "never emit focus or switch payloads in this session."
         }
+        let webNavigationGuidance = allowsForeground
+            ? "When starting a separate Chrome web task, open a new page only through the foreground-authorized " +
+            "browser route."
+            : "Do not open or navigate browser pages; request foreground authority when the task requires either."
         return """
         **Error Recovery**
         - Refresh the view with the appropriate observation tool if an element is missing.
@@ -391,8 +421,7 @@ public struct AgentSystemPrompt {
         - Double-check that each tool call has the necessary data before executing. If you are unsure what payload a
           tool expects, re-read its description for the JSON example.
         - \(pointerGuidance)
-        - When navigating to a new website or starting a separate web task, prefer opening a background page. Reuse
-          the current page only when the user asks to continue there or it is clearly the right place.
+        - \(webNavigationGuidance)
         """
     }
 

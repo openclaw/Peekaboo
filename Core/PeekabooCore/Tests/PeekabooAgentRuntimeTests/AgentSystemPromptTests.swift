@@ -172,11 +172,31 @@ struct AgentSystemPromptTests {
         #expect(prompt.contains("focus, and switch are unavailable in this session"))
         #expect(!prompt.contains(#""action": "open", "name": "Safari""#))
         #expect(prompt.contains("Reuse only an existing exact connection"))
-        #expect(prompt.contains("Create background DevTools pages"))
+        #expect(prompt.contains("Page discovery, navigation, snapshots, and DOM element actions are unavailable"))
+        #expect(prompt.contains("`dom_click`, raw `evaluate_script`"))
+        #expect(prompt.contains("Do not guess hidden page"))
+        #expect(prompt.contains("Do not open or navigate browser pages"))
+        #expect(!prompt.contains("prefer opening a background page"))
         #expect(prompt.contains("Observation never focuses the target by default"))
         #expect(prompt.contains("Only set `web_focus: true`"))
         #expect(!prompt.contains("capture and focus background apps"))
         #expect(!prompt.contains("`launch_app` tool"))
+    }
+
+    @Test
+    func `foreground prompt scopes browser navigation to Chrome and preserves Safari`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate(executionPolicy: .foregroundAllowed)
+
+        #expect(prompt.contains("Trusted browser pointer, form-fill, focused-keyboard, and upload actions"))
+        #expect(prompt.contains("only when foreground browser interaction is intentional"))
+        #expect(prompt.contains("`dom_click` avoids Puppeteer pointer input"))
+        #expect(prompt.contains("must remain foreground-authorized"))
+        #expect(prompt.contains("synthetic, not trusted pointer input"))
+        #expect(prompt.contains("a successful return is not proof"))
+        #expect(prompt.contains("Never use a fallback to bypass a foreground-consent refusal"))
+        #expect(prompt.contains("When starting a separate Chrome web task, open a new page only through"))
+        #expect(prompt.contains(#""action": "open", "name": "Safari""#))
     }
 
     @Test

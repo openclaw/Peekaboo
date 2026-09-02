@@ -444,8 +444,8 @@ struct RemoteBrowserMCPSessionTests {
         #expect(transport.openedHandoffs == [firstHandoff.payload, secondHandoff.payload])
     }
 
-    @Test
-    func `remote MCP mints opaque refs and refuses raw or copied refs before transport`() async throws {
+    @Test(arguments: ["click", "dom_click"])
+    func `remote MCP mints opaque refs and refuses raw or copied refs before transport`(action: String) async throws {
         let transport = RecordingRemoteBrowserSessionTransport()
         let root = Self.rootClient(transport: transport)
         let base = Self.context(browser: root, executionPolicy: .foregroundAllowed)
@@ -494,7 +494,7 @@ struct RemoteBrowserMCPSessionTests {
         let rawElement = try await first.execute(
             tool: firstTool,
             arguments: ToolArguments(raw: [
-                "action": "click",
+                "action": action,
                 "page_id": pageReference,
                 "uid": "1_0",
             ]))
@@ -504,7 +504,7 @@ struct RemoteBrowserMCPSessionTests {
         let clicked = try await first.execute(
             tool: firstTool,
             arguments: ToolArguments(raw: [
-                "action": "click",
+                "action": action,
                 "page_id": pageReference,
                 "uid": elementReference,
             ]))
@@ -512,6 +512,12 @@ struct RemoteBrowserMCPSessionTests {
         #expect(transport.executeCallCount == dispatchCount + 1)
         #expect(transport.elementPreflights.last??.providerPageID == 7)
         #expect(transport.elementPreflights.last??.providerUIDs == ["1_0"])
+        #expect(clicked.meta?.objectValue?["delivery_mode"] == .string("foreground"))
+        let evidence = try #require(clicked.meta?.objectValue?[BrowserMCPExecutionEvidence.metadataKey]?.objectValue)
+        #expect(evidence["completed_call_count"] == .int(1))
+        #expect(evidence["dispatched_call_count"] == .int(1))
+        #expect(evidence["connection_receipt"] != nil)
+        #expect(evidence["provider_session_epoch"] != nil)
     }
 
     @Test

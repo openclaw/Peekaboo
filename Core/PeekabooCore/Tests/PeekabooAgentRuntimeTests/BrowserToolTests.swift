@@ -9,6 +9,37 @@ import Testing
 @MainActor
 struct BrowserToolTests {
     @Test
+    func `DOM click maps one exact element without pointer input`() throws {
+        let calls = try BrowserMCPCallMapper.mapSequence(
+            action: .domClick,
+            arguments: ToolArguments(raw: ["page_id": 12, "uid": "12_4"]))
+        #expect(calls.count == 1)
+        let call = try #require(calls.first)
+        #expect(call.toolName == "evaluate_script")
+        #expect(call.arguments["pageId"] as? Int == 12)
+        #expect(call.arguments["args"] as? [String] == ["12_4"])
+        let function = try #require(call.arguments["function"] as? String)
+        #expect(function.contains("element.click()"))
+        #expect(!function.contains("12_4"))
+        #expect(!function.contains("Input."))
+        #expect(!function.contains("mouse."))
+        #expect(BrowserMCPUserActivationPolicy.decision(for: call).requiresForegroundAuthority)
+    }
+
+    @Test(arguments: ["page_id", "uid"])
+    func `DOM click rejects missing target before provider entry`(missing: String) async throws {
+        let client = UserActivationCountingBrowserMCPClient()
+        var raw: [String: Any] = ["action": "dom_click", "page_id": 12, "uid": "12_4"]
+        raw.removeValue(forKey: missing)
+        let response = try await BrowserTool(client: client, executionPolicy: .foregroundAllowed)
+            .execute(arguments: ToolArguments(raw: raw))
+
+        #expect(response.isError)
+        #expect(client.statusCount == 0)
+        #expect(client.executedSequences.isEmpty)
+    }
+
+    @Test
     func `Browser call mapper maps common actions`() throws {
         let click = try BrowserMCPCallMapper.map(
             action: .click,
@@ -307,8 +338,8 @@ struct BrowserToolTests {
         #expect(meta["mutation_dispatched"] == .bool(true))
     }
 
-    @Test
-    func `Browser tool rejects mutation result without canonical outcome`() async throws {
+    @Test(arguments: ["click", "dom_click"])
+    func `Browser tool rejects mutation result without canonical outcome`(action: String) async throws {
         let legacyMeta: Value = .object([
             "provider_field": .string("legacy"),
             "state": .string("provider-defined"),
@@ -318,7 +349,7 @@ struct BrowserToolTests {
             outcome: nil))
         let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
             .execute(arguments: ToolArguments(raw: [
-                "action": "click",
+                "action": action,
                 "page_id": 7,
                 "uid": "7_9",
             ]))
@@ -328,6 +359,7 @@ struct BrowserToolTests {
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["state"] == .string("indeterminate"))
         #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(meta["delivery_mode"] == .string("foreground"))
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["requires_fresh_observation"] == .bool(true))
         #expect(meta["provider_meta"] == nil)
@@ -354,8 +386,8 @@ struct BrowserToolTests {
         ]))
     }
 
-    @Test
-    func `Browser tool rejects successful payload paired with non-success outcome`() async throws {
+    @Test(arguments: ["click", "dom_click"])
+    func `Browser tool rejects successful payload paired with non-success outcome`(action: String) async throws {
         let delivery = DesktopActionOutcome.Delivery(mechanism: .browserProtocol, mode: .background)
         let cases: [DesktopActionOutcome] = [
             .partial(delivery: delivery, unitCount: .one),
@@ -370,7 +402,7 @@ struct BrowserToolTests {
                 outcome: outcome))
             let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
                 .execute(arguments: ToolArguments(raw: [
-                    "action": "click",
+                    "action": action,
                     "page_id": 7,
                     "uid": "7_9",
                 ]))
@@ -380,6 +412,11 @@ struct BrowserToolTests {
                 "Browser mutation did not return a successful canonical outcome."))
             let meta = try #require(response.meta?.objectValue)
             #expect(meta["state"] == .string(outcome.state.rawValue))
+            if outcome.dispatchState.unitCount != nil {
+                #expect(meta["dispatched_unit_count"] == .int(1))
+                #expect(meta["delivery_mode"] == .string("foreground"))
+                #expect(meta["retry_safe"] == .bool(outcome.retrySafety == .safe))
+            }
         }
     }
 
@@ -412,15 +449,15 @@ struct BrowserToolTests {
         }
     }
 
-    @Test
-    func `Browser tool projects retry safe zero progress refusal`() async throws {
+    @Test(arguments: ["click", "dom_click"])
+    func `Browser tool projects retry safe zero progress refusal`(action: String) async throws {
         let outcome = DesktopActionOutcome.refused(route: .bridge, reason: .targetUnavailable)
         let client = OutcomeBrowserMCPClient(result: .init(
             payload: .error("browser target changed"),
             outcome: outcome))
         let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
             .execute(arguments: ToolArguments(raw: [
-                "action": "click",
+                "action": action,
                 "page_id": 7,
                 "uid": "7_9",
             ]))
@@ -462,8 +499,8 @@ struct BrowserToolTests {
         #expect(meta["requires_fresh_observation"] == .bool(true))
     }
 
-    @Test
-    func `Browser tool projects unknown progress without inventing a unit count`() async throws {
+    @Test(arguments: ["click", "dom_click"])
+    func `Browser tool projects unknown progress without inventing a unit count`(action: String) async throws {
         let outcome = DesktopActionOutcome.indeterminate(
             route: .bridge,
             delivery: .init(mechanism: .browserProtocol, mode: .background),
@@ -473,7 +510,7 @@ struct BrowserToolTests {
             outcome: outcome))
         let response = try await BrowserTool(client: client, executionPolicy: .unrestricted)
             .execute(arguments: ToolArguments(raw: [
-                "action": "click",
+                "action": action,
                 "page_id": 7,
                 "uid": "7_9",
             ]))
@@ -483,6 +520,7 @@ struct BrowserToolTests {
         #expect(meta["state"] == .string("indeterminate"))
         #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
         #expect(meta["dispatched_unit_count"] == nil)
+        #expect(meta["delivery_mode"] == .string("foreground"))
         #expect(meta["retry_safety"] == .string("unsafe"))
         #expect(meta["requires_fresh_observation"] == .bool(true))
     }
@@ -1025,6 +1063,7 @@ extension BrowserToolTests {
             executionPolicy: .backgroundOnly,
             instructionAudience: .commandLine)
         let cases: [[String: Any]] = [
+            ["action": "dom_click", "page_id": 1, "uid": "1_0"],
             ["action": "list_pages"],
             ["action": "snapshot", "page_id": 1],
             ["action": "console", "page_id": 1, "message_id": 1],

@@ -139,7 +139,7 @@ struct MCPPolicyAwareCatalogTests {
             BrowserMCPUserActivationPolicy.backgroundCatalogActions.map(\.rawValue)))
         for hidden in [
             BrowserAction.connect, .listPages, .selectPage, .closePage, .newPage, .navigate, .waitFor, .snapshot,
-            .click, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog,
+            .click, .domClick, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog,
         ] {
             #expect(!actions.contains(.string(hidden.rawValue)))
         }
@@ -169,6 +169,7 @@ struct MCPPolicyAwareCatalogTests {
         #expect(foregroundActions.contains(.string(BrowserAction.connect.rawValue)))
         #expect(foregroundActions.contains(.string(BrowserAction.listPages.rawValue)))
         #expect(foregroundActions.contains(.string(BrowserAction.snapshot.rawValue)))
+        #expect(foregroundActions.contains(.string(BrowserAction.domClick.rawValue)))
         #expect(foregroundProperties["browser_url"] != nil)
         #expect(foregroundProperties["uid"] != nil)
         #expect(foregroundProperties["message_id"] != nil)

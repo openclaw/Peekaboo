@@ -311,6 +311,16 @@ assert.match(
   "evaluate_script no longer enters Puppeteer evaluation",
 );
 assert.match(
+  scriptToolSource,
+  /await evaluatable\.evaluate\(/,
+  "re-audit the synthetic DOM click evaluation route",
+);
+assert.doesNotMatch(
+  scriptToolSource,
+  /\bInput\.|\.mouse\./,
+  "evaluate_script unexpectedly reaches trusted pointer input",
+);
+assert.match(
   waitForHelperSource,
   /this\.#page\.evaluateHandle\(timeout =>/,
   "provider wait-for-action stabilization no longer enters Puppeteer evaluation",
