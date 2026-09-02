@@ -405,18 +405,50 @@ struct BrowserToolCapabilityIntegrationTests {
     func `background capability evaluation refuses before status or provider execution`(action: String) async throws {
         let client = CapabilityBrowserMCPClient()
         let context = Self.context(client: client, executionPolicy: .backgroundOnly)
-        let tool = BrowserTool(context: context)
-        let pageReference = "bp1_" + String(repeating: "a", count: 32)
+        // Exercise the caller's authority ceiling, not the background catalog's closed-property refusal.
+        let toolContext = Self.context(client: client, executionPolicy: .foregroundAllowed)
+        let tool = BrowserTool(context: toolContext)
+        let status = client.connectedStatus()
+        let binding = try BrowserMCPExecutionSessionBinding(
+            connectionReceipt: #require(status.connectionReceipt),
+            providerSessionEpoch: #require(status.providerSessionEpoch))
+        let capabilities = toolContext.browserCapabilities
+        // Mint genuine refs in memory without calling status or entering the provider.
+        let listed = try await capabilities.project(
+            client.response(for: "list_pages"),
+            calls: [BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])],
+            resolved: nil,
+            sessionBinding: binding)
+        let pageReference = try Self.pageReference(from: listed)
+        let snapshotArguments = try await capabilities.resolve(
+            action: .snapshot,
+            arguments: ToolArguments(raw: ["page_id": pageReference]),
+            sessionBinding: binding)
+        let snapshot = try await capabilities.project(
+            client.response(for: "take_snapshot"),
+            calls: [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: ["pageId": 7])],
+            resolved: snapshotArguments,
+            sessionBinding: binding)
+        let elementReference = try Self.elementReference(from: snapshot)
+        let arguments = ToolArguments(raw: action == "call" ? [
+            "action": action,
+            "mcp_tool": "evaluate_script",
+            "page_id": pageReference,
+            "mcp_args_json": #"{"function":"(element) => element.tagName","args":["\#(elementReference)"]}"#,
+        ] : [
+            "action": action,
+            "page_id": pageReference,
+            "uid": elementReference,
+        ])
+        try MCPToolArgumentValidator.validateClosedProperties(tool: tool, arguments: arguments)
+        let resolved = try await capabilities.resolve(
+            action: #require(BrowserAction(rawValue: action)),
+            arguments: arguments,
+            sessionBinding: binding)
+        #expect(resolved.providerPageID == 7)
+        #expect(resolved.providerUIDs == ["1_0"])
 
-        let response = try await context.execute(
-            tool: tool,
-            arguments: ToolArguments(raw: [
-                "action": action,
-                "uid": "be1_" + String(repeating: "b", count: 32),
-                "mcp_tool": "evaluate_script",
-                "page_id": pageReference,
-                "mcp_args_json": #"{"function":"() => navigator.userActivation.isActive"}"#,
-            ]))
+        let response = try await context.execute(tool: tool, arguments: arguments)
 
         #expect(response.isError)
         #expect(response.meta?.objectValue?["refusal_reason"] == .string("foreground_consent_required"))
@@ -1286,7 +1318,7 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
         return self.connectedStatus()
     }
 
-    private func connectedStatus() -> BrowserMCPStatus {
+    fileprivate func connectedStatus() -> BrowserMCPStatus {
         BrowserMCPStatus(
             isConnected: true,
             toolCount: 52,
@@ -1346,7 +1378,7 @@ private final class CapabilityBrowserMCPClient: BrowserMCPClientProviding, Brows
         return try await self.executeSequenceWithOutcome(calls, channel: channel)
     }
 
-    private func response(for toolName: String?) -> ToolResponse {
+    fileprivate func response(for toolName: String?) -> ToolResponse {
         switch toolName {
         case "list_pages": self.pageResponse()
         case "take_snapshot": self.snapshotResponse()
