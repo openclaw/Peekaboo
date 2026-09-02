@@ -106,27 +106,28 @@ struct AppCommandLaunchFlowTests {
 
     @Test
     func `Background no-op launch preserves selected and discovered snapshots`() async throws {
-        let service = self.makeLaunchService(name: "Notes", bundleIdentifier: "com.apple.Notes")
-        let snapshots = try await SnapshotInvalidationFixture.start()
-        defer { Task { await snapshots.host.stop() } }
+        try await CLIBridgeHostFixture.withHosts { hosts in
+            let service = self.makeLaunchService(name: "Notes", bundleIdentifier: "com.apple.Notes")
+            let snapshots = try await SnapshotInvalidationFixture.start(hosts: hosts)
 
-        var command = AppCommand.LaunchSubcommand()
-        command.app = "Notes"
-        command.noFocus = true
-        let runtime = CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(
-                applications: service,
-                snapshots: snapshots.selected
-            ),
-            snapshotInvalidationRemoteSocketPaths: [snapshots.discoveredSocketPath]
-        )
-        try await command.run(using: runtime)
+            var command = AppCommand.LaunchSubcommand()
+            command.app = "Notes"
+            command.noFocus = true
+            let runtime = CommandRuntime(
+                configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+                services: ServicesWithApplicationStub(
+                    applications: service,
+                    snapshots: snapshots.selected
+                ),
+                snapshotInvalidationRemoteSocketPaths: [snapshots.discoveredSocketPath]
+            )
+            try await command.run(using: runtime)
 
-        let request = try #require(service.launchRequests.first)
-        #expect(!request.activates)
-        #expect(await snapshots.selected.getMostRecentSnapshot() != nil)
-        #expect(await snapshots.discovered.getMostRecentSnapshot() != nil)
+            let request = try #require(service.launchRequests.first)
+            #expect(!request.activates)
+            #expect(await snapshots.selected.getMostRecentSnapshot() != nil)
+            #expect(await snapshots.discovered.getMostRecentSnapshot() != nil)
+        }
     }
 
     @Test
@@ -853,20 +854,24 @@ private struct SnapshotInvalidationFixture {
     let selected: InMemorySnapshotManager
     let discovered: InMemorySnapshotManager
     let discoveredSocketPath: String
-    let host: PeekabooBridgeHost
 
-    static func start() async throws -> Self {
+    static func start(hosts: CLIBridgeHostFixture) async throws -> Self {
         let selected = InMemorySnapshotManager()
         let discovered = InMemorySnapshotManager()
         _ = try await selected.createSnapshot()
         _ = try await discovered.createSnapshot()
 
-        let discoveredSocketPath = "/tmp/peekaboo-open-snapshots-\(UUID().uuidString).sock"
+        let discoveredSocketPath = hosts.desktop.root.appendingPathComponent("discovered.sock").path
         let server = PeekabooBridgeServer(
-            services: PeekabooServices(snapshotManager: discovered),
+            services: CLISnapshotBridgeServices(snapshots: discovered, directory: hosts.desktop.root),
             hostKind: .gui,
             allowlistedTeams: [],
             allowlistedBundles: [],
+            allowedOperations: CLISnapshotBridgeServices.snapshotOperations,
+            desktopOperationLaneCoordinator: hosts.desktop.laneCoordinator,
+            screenCaptureKitProcessCapabilityRegistrar: {},
+            screenCaptureKitOwnershipPreparer: {},
+            screenCaptureKitOwnerClaimProvider: CLISnapshotBridgeServices.unexpectedScreenCaptureKitClaim,
             permissionStatusEvaluator: { _ in
                 PermissionsStatus(
                     screenRecording: true,
@@ -882,13 +887,12 @@ private struct SnapshotInvalidationFixture {
             allowedTeamIDs: [],
             requestTimeoutSec: 2
         )
-        try await host.startChecked()
+        try await hosts.start(host)
 
         return Self(
             selected: selected,
             discovered: discovered,
-            discoveredSocketPath: discoveredSocketPath,
-            host: host
+            discoveredSocketPath: discoveredSocketPath
         )
     }
 }

@@ -14,94 +14,94 @@ import Testing
 struct SnapshotHostAffinityRuntimeTests {
     @Test
     func `live authenticated probes retain the sole snapshot producer`() async throws {
-        let missingSnapshots = InMemorySnapshotManager()
-        let ownerSnapshots = InMemorySnapshotManager()
-        let snapshotID = try await ownerSnapshots.createSnapshot()
-        let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
-        let identity = WindowMutationIdentity(
-            windowID: 74,
-            ownerProcessIdentifier: getpid(),
-            ownerProcessStartIdentity: 7,
-            capturedBounds: bounds
-        )
-        let window = ServiceWindowInfo(
-            windowID: identity.windowID,
-            title: "No Elements",
-            bounds: bounds,
-            mutationIdentity: identity
-        )
-        try await ownerSnapshots.storeObservationSnapshot(SnapshotObservationPublicationRequest(
-            screenshot: SnapshotScreenshotRequest(
-                snapshotId: snapshotID,
-                screenshotPath: "/tmp/no-elements.png",
-                applicationBundleId: "boo.peekaboo.fixture",
-                applicationProcessId: identity.ownerProcessIdentifier,
-                applicationName: "Fixture",
-                windowTitle: window.title,
-                windowBounds: bounds,
+        try await CLIBridgeHostFixture.withHosts { hosts in
+            let missingSnapshots = InMemorySnapshotManager()
+            let ownerSnapshots = InMemorySnapshotManager()
+            let snapshotID = try await ownerSnapshots.createSnapshot()
+            let bounds = CGRect(x: 10, y: 20, width: 600, height: 400)
+            let identity = WindowMutationIdentity(
+                windowID: 74,
+                ownerProcessIdentifier: getpid(),
+                ownerProcessStartIdentity: 7,
+                capturedBounds: bounds
+            )
+            let window = ServiceWindowInfo(
                 windowID: identity.windowID,
-                windowMutationIdentity: identity,
-                captureCoordinateContext: CaptureCoordinateContext(
-                    metadata: CaptureMetadata(
-                        size: bounds.size,
-                        mode: .window,
-                        windowInfo: window
-                    ),
-                    referenceID: snapshotID
-                )
-            ),
-            detectionResult: nil,
-            annotatedScreenshotPath: nil
-        ))
-        let synthesized = try #require(try await ownerSnapshots.getDetectionResult(snapshotId: snapshotID))
-        #expect(synthesized.elements.all.isEmpty)
-        _ = try SnapshotTargetReceiptPlanner.assemble(
-            snapshotID: snapshotID,
-            detectionResult: synthesized
-        ).receipt.requireCoordinateAuthority()
+                title: "No Elements",
+                bounds: bounds,
+                mutationIdentity: identity
+            )
+            try await ownerSnapshots.storeObservationSnapshot(SnapshotObservationPublicationRequest(
+                screenshot: SnapshotScreenshotRequest(
+                    snapshotId: snapshotID,
+                    screenshotPath: "/tmp/no-elements.png",
+                    applicationBundleId: "boo.peekaboo.fixture",
+                    applicationProcessId: identity.ownerProcessIdentifier,
+                    applicationName: "Fixture",
+                    windowTitle: window.title,
+                    windowBounds: bounds,
+                    windowID: identity.windowID,
+                    windowMutationIdentity: identity,
+                    captureCoordinateContext: CaptureCoordinateContext(
+                        metadata: CaptureMetadata(
+                            size: bounds.size,
+                            mode: .window,
+                            windowInfo: window
+                        ),
+                        referenceID: snapshotID
+                    )
+                ),
+                detectionResult: nil,
+                annotatedScreenshotPath: nil
+            ))
+            let synthesized = try #require(try await ownerSnapshots.getDetectionResult(snapshotId: snapshotID))
+            #expect(synthesized.elements.all.isEmpty)
+            _ = try SnapshotTargetReceiptPlanner.assemble(
+                snapshotID: snapshotID,
+                detectionResult: synthesized
+            ).receipt.requireCoordinateAuthority()
 
-        let missingSocket = "/tmp/peekaboo-affinity-missing-\(UUID().uuidString).sock"
-        let ownerSocket = "/tmp/peekaboo-affinity-owner-\(UUID().uuidString).sock"
-        let missingHost = try await self.startHost(
-            socketPath: missingSocket,
-            hostKind: .gui,
-            snapshots: missingSnapshots
-        )
-        let ownerHost = try await self.startHost(
-            socketPath: ownerSocket,
-            hostKind: .onDemand,
-            snapshots: ownerSnapshots
-        )
-        defer {
-            Task {
-                await missingHost.stop()
-                await ownerHost.stop()
+            let missingSocket = hosts.desktop.root.appendingPathComponent("missing.sock").path
+            let ownerSocket = hosts.desktop.root.appendingPathComponent("owner.sock").path
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: missingSocket,
+                hostKind: .gui,
+                snapshots: missingSnapshots
+            )
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: ownerSocket,
+                hostKind: .onDemand,
+                snapshots: ownerSnapshots
+            )
+            let candidates = [self.candidate(missingSocket), self.candidate(ownerSocket)]
+            let cache = RuntimeHostResolver.RemoteHandshakeCache(
+                identity: self.identity,
+                clientFactory: { BridgeTestFixtures.authenticatedClient(socketPath: $0) }
+            )
+            for candidate in candidates {
+                let handshake = try await cache.handshake(candidate, identity: self.identity).response
+                #expect(handshake.supportedOperations.contains(.ownsSnapshot))
+                #expect(BridgeCapabilityPolicy.supportsProducerBoundSnapshotReferences(for: handshake))
+                #expect(Set(handshake.supportedOperations).isSubset(of: CLISnapshotBridgeServices.snapshotOperations))
+                #expect(handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership
+                ) != true)
+            }
+
+            let selected = try await RuntimeHostResolver.resolveSnapshotAffinity(
+                snapshotID: snapshotID,
+                candidates: candidates,
+                identity: self.identity,
+                handshakeCache: cache
+            )
+
+            #expect(selected.socketPath == ownerSocket)
+            for candidate in candidates {
+                #expect(cache.entry(for: candidate, identity: self.identity) != nil)
             }
         }
-        let candidates = [self.candidate(missingSocket), self.candidate(ownerSocket)]
-        let cache = RuntimeHostResolver.RemoteHandshakeCache(
-            identity: self.identity,
-            clientFactory: { BridgeTestFixtures.authenticatedClient(socketPath: $0) }
-        )
-        for candidate in candidates {
-            let handshake = try await cache.handshake(candidate, identity: self.identity).response
-            #expect(handshake.supportedOperations.contains(.ownsSnapshot))
-            #expect(BridgeCapabilityPolicy.supportsProducerBoundSnapshotReferences(for: handshake))
-        }
-
-        let selected = try await RuntimeHostResolver.resolveSnapshotAffinity(
-            snapshotID: snapshotID,
-            candidates: candidates,
-            identity: self.identity,
-            handshakeCache: cache
-        )
-
-        #expect(selected.socketPath == ownerSocket)
-        for candidate in candidates {
-            #expect(cache.entry(for: candidate, identity: self.identity) != nil)
-        }
-        await missingHost.stop()
-        await ownerHost.stop()
     }
 
     @Test
@@ -144,91 +144,83 @@ struct SnapshotHostAffinityRuntimeTests {
 
     @Test
     func `two authenticated endpoints from one process count as one snapshot owner`() async throws {
-        let snapshots = InMemorySnapshotManager()
-        let snapshotID = try await snapshots.createSnapshot()
-        let firstSocket = "/tmp/peekaboo-affinity-first-\(UUID().uuidString).sock"
-        let secondSocket = "/tmp/peekaboo-affinity-second-\(UUID().uuidString).sock"
-        let firstHost = try await self.startHost(
-            socketPath: firstSocket,
-            hostKind: .onDemand,
-            snapshots: snapshots
-        )
-        let secondHost = try await self.startHost(
-            socketPath: secondSocket,
-            hostKind: .onDemand,
-            snapshots: snapshots
-        )
-        defer {
-            Task {
-                await firstHost.stop()
-                await secondHost.stop()
-            }
+        try await CLIBridgeHostFixture.withHosts { hosts in
+            let snapshots = InMemorySnapshotManager()
+            let snapshotID = try await snapshots.createSnapshot()
+            let firstSocket = hosts.desktop.root.appendingPathComponent("first.sock").path
+            let secondSocket = hosts.desktop.root.appendingPathComponent("second.sock").path
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: firstSocket,
+                hostKind: .onDemand,
+                snapshots: snapshots
+            )
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: secondSocket,
+                hostKind: .onDemand,
+                snapshots: snapshots
+            )
+            let cache = RuntimeHostResolver.RemoteHandshakeCache(
+                identity: self.identity,
+                clientFactory: { BridgeTestFixtures.authenticatedClient(socketPath: $0) }
+            )
+
+            let selected = try await RuntimeHostResolver.resolveSnapshotAffinity(
+                snapshotID: snapshotID,
+                candidates: [self.candidate(firstSocket), self.candidate(secondSocket)],
+                identity: self.identity,
+                handshakeCache: cache
+            )
+
+            #expect(selected.socketPath == firstSocket)
         }
-        let cache = RuntimeHostResolver.RemoteHandshakeCache(
-            identity: self.identity,
-            clientFactory: { BridgeTestFixtures.authenticatedClient(socketPath: $0) }
-        )
-
-        let selected = try await RuntimeHostResolver.resolveSnapshotAffinity(
-            snapshotID: snapshotID,
-            candidates: [self.candidate(firstSocket), self.candidate(secondSocket)],
-            identity: self.identity,
-            handshakeCache: cache
-        )
-
-        #expect(selected.socketPath == firstSocket)
-        await firstHost.stop()
-        await secondHost.stop()
     }
 
     @Test
     func `same-producer affinity tries every alias for command capability`() async throws {
-        let snapshots = InMemorySnapshotManager()
-        let snapshotID = try await snapshots.createSnapshot()
-        let firstSocket = "/tmp/peekaboo-affinity-limited-\(UUID().uuidString).sock"
-        let secondSocket = "/tmp/peekaboo-affinity-capable-\(UUID().uuidString).sock"
-        let firstHost = try await self.startHost(
-            socketPath: firstSocket,
-            hostKind: .onDemand,
-            snapshots: snapshots,
-            allowedOperations: [.ownsSnapshot]
-        )
-        let secondHost = try await self.startHost(
-            socketPath: secondSocket,
-            hostKind: .onDemand,
-            snapshots: snapshots,
-            allowedOperations: [.ownsSnapshot, .targetedClick]
-        )
-        defer {
-            Task {
-                await firstHost.stop()
-                await secondHost.stop()
-            }
+        try await CLIBridgeHostFixture.withHosts { hosts in
+            let snapshots = InMemorySnapshotManager()
+            let snapshotID = try await snapshots.createSnapshot()
+            let firstSocket = hosts.desktop.root.appendingPathComponent("limited.sock").path
+            let secondSocket = hosts.desktop.root.appendingPathComponent("capable.sock").path
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: firstSocket,
+                hostKind: .onDemand,
+                snapshots: snapshots,
+                allowedOperations: [.ownsSnapshot]
+            )
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: secondSocket,
+                hostKind: .onDemand,
+                snapshots: snapshots,
+                allowedOperations: [.ownsSnapshot, .targetedClick]
+            )
+            var options = CommandRuntimeOptions()
+            options.explicitSnapshotID = snapshotID
+            options.requiresProducerBoundSnapshotReferences = true
+            options.requiresProcessGenerationPinnedClicks = true
+            let dependencies = RuntimeHostResolver.Dependencies(
+                makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
+                claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
+                inspectScreenCaptureKitOwner: { nil },
+                remoteCandidatePlan: { _, _ in
+                    self.plan(candidates: [self.candidate(firstSocket), self.candidate(secondSocket)])
+                },
+                makeRemoteHandshakeCache: { self.authenticatedHandshakeCache() }
+            )
+
+            let resolution = try await RuntimeHostResolver.resolveServices(
+                options: options,
+                environment: [:],
+                configurationInput: nil,
+                dependencies: dependencies
+            )
+
+            #expect(resolution.selectedRemoteSocketPath == secondSocket)
         }
-        var options = CommandRuntimeOptions()
-        options.explicitSnapshotID = snapshotID
-        options.requiresProducerBoundSnapshotReferences = true
-        options.requiresProcessGenerationPinnedClicks = true
-        let dependencies = RuntimeHostResolver.Dependencies(
-            makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
-            claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
-            inspectScreenCaptureKitOwner: { nil },
-            remoteCandidatePlan: { _, _ in
-                self.plan(candidates: [self.candidate(firstSocket), self.candidate(secondSocket)])
-            },
-            makeRemoteHandshakeCache: { self.authenticatedHandshakeCache() }
-        )
-
-        let resolution = try await RuntimeHostResolver.resolveServices(
-            options: options,
-            environment: [:],
-            configurationInput: nil,
-            dependencies: dependencies
-        )
-
-        #expect(resolution.selectedRemoteSocketPath == secondSocket)
-        await firstHost.stop()
-        await secondHost.stop()
     }
 
     @Test
@@ -321,71 +313,73 @@ struct SnapshotHostAffinityRuntimeTests {
 
     @Test
     func `full runtime accepts an explicit socket only when that host owns the snapshot`() async throws {
-        let snapshots = InMemorySnapshotManager()
-        let snapshotID = try await snapshots.createSnapshot()
-        let socketPath = "/tmp/peekaboo-explicit-owner-\(UUID().uuidString).sock"
-        let host = try await self.startHost(
-            socketPath: socketPath,
-            hostKind: .onDemand,
-            snapshots: snapshots
-        )
-        defer { Task { await host.stop() } }
-        var options = CommandRuntimeOptions()
-        options.bridgeSocketPath = socketPath
-        options.explicitSnapshotID = snapshotID
-        let dependencies = RuntimeHostResolver.Dependencies(
-            makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
-            claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
-            inspectScreenCaptureKitOwner: { nil },
-            remoteCandidatePlan: { _, _ in self.explicitPlan(socketPath: socketPath) },
-            makeRemoteHandshakeCache: { self.authenticatedHandshakeCache() }
-        )
+        try await CLIBridgeHostFixture.withHosts { hosts in
+            let snapshots = InMemorySnapshotManager()
+            let snapshotID = try await snapshots.createSnapshot()
+            let socketPath = hosts.desktop.root.appendingPathComponent("owner.sock").path
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: socketPath,
+                hostKind: .onDemand,
+                snapshots: snapshots
+            )
+            var options = CommandRuntimeOptions()
+            options.bridgeSocketPath = socketPath
+            options.explicitSnapshotID = snapshotID
+            let dependencies = RuntimeHostResolver.Dependencies(
+                makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
+                claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
+                inspectScreenCaptureKitOwner: { nil },
+                remoteCandidatePlan: { _, _ in self.explicitPlan(socketPath: socketPath) },
+                makeRemoteHandshakeCache: { self.authenticatedHandshakeCache() }
+            )
 
-        let resolution = try await RuntimeHostResolver.resolveServices(
-            options: options,
-            environment: [:],
-            configurationInput: nil,
-            dependencies: dependencies
-        )
-
-        #expect(resolution.selectedRemoteSocketPath == socketPath)
-        #expect(try await resolution.services.snapshots.ownsSnapshot(snapshotId: snapshotID))
-        await host.stop()
-    }
-
-    @Test
-    func `full runtime refuses an explicit socket that does not own the snapshot`() async throws {
-        let socketPath = "/tmp/peekaboo-explicit-nonowner-\(UUID().uuidString).sock"
-        let host = try await self.startHost(
-            socketPath: socketPath,
-            hostKind: .onDemand,
-            snapshots: InMemorySnapshotManager()
-        )
-        defer { Task { await host.stop() } }
-        var options = CommandRuntimeOptions()
-        options.bridgeSocketPath = socketPath
-        options.explicitSnapshotID = SnapshotReferenceFixtures.first.rawValue
-        let dependencies = RuntimeHostResolver.Dependencies(
-            makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
-            claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
-            inspectScreenCaptureKitOwner: { nil },
-            remoteCandidatePlan: { _, _ in self.explicitPlan(socketPath: socketPath) },
-            makeRemoteHandshakeCache: { self.authenticatedHandshakeCache() }
-        )
-
-        do {
-            _ = try await RuntimeHostResolver.resolveServices(
+            let resolution = try await RuntimeHostResolver.resolveServices(
                 options: options,
                 environment: [:],
                 configurationInput: nil,
                 dependencies: dependencies
             )
-            Issue.record("Expected explicit non-owner refusal")
-        } catch let error as PreDispatchActionError {
-            #expect(error.code == .SNAPSHOT_NOT_FOUND)
-            #expect(error.localizedDescription.contains("no unique live host affinity"))
+
+            #expect(resolution.selectedRemoteSocketPath == socketPath)
+            #expect(try await resolution.services.snapshots.ownsSnapshot(snapshotId: snapshotID))
         }
-        await host.stop()
+    }
+
+    @Test
+    func `full runtime refuses an explicit socket that does not own the snapshot`() async throws {
+        try await CLIBridgeHostFixture.withHosts { hosts in
+            let socketPath = hosts.desktop.root.appendingPathComponent("nonowner.sock").path
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: socketPath,
+                hostKind: .onDemand,
+                snapshots: InMemorySnapshotManager()
+            )
+            var options = CommandRuntimeOptions()
+            options.bridgeSocketPath = socketPath
+            options.explicitSnapshotID = SnapshotReferenceFixtures.first.rawValue
+            let dependencies = RuntimeHostResolver.Dependencies(
+                makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
+                claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
+                inspectScreenCaptureKitOwner: { nil },
+                remoteCandidatePlan: { _, _ in self.explicitPlan(socketPath: socketPath) },
+                makeRemoteHandshakeCache: { self.authenticatedHandshakeCache() }
+            )
+
+            do {
+                _ = try await RuntimeHostResolver.resolveServices(
+                    options: options,
+                    environment: [:],
+                    configurationInput: nil,
+                    dependencies: dependencies
+                )
+                Issue.record("Expected explicit non-owner refusal")
+            } catch let error as PreDispatchActionError {
+                #expect(error.code == .SNAPSHOT_NOT_FOUND)
+                #expect(error.localizedDescription.contains("no unique live host affinity"))
+            }
+        }
     }
 
     @Test
@@ -410,31 +404,32 @@ struct SnapshotHostAffinityRuntimeTests {
 
     @Test
     func `dishonest ownership capability is classified as incompatible`() async throws {
-        let snapshots = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager())
-        snapshots.ownsSnapshotError = PeekabooBridgeErrorEnvelope(
-            code: .operationNotSupported,
-            message: "Injected dishonest capability"
-        )
-        let socketPath = "/tmp/peekaboo-dishonest-owner-\(UUID().uuidString).sock"
-        let host = try await self.startHost(
-            socketPath: socketPath,
-            hostKind: .onDemand,
-            snapshots: snapshots
-        )
-        defer { Task { await host.stop() } }
-        let candidate = self.candidate(socketPath)
-        let cache = self.authenticatedHandshakeCache()
+        try await CLIBridgeHostFixture.withHosts { hosts in
+            let snapshots = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager())
+            snapshots.ownsSnapshotError = PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Injected dishonest capability"
+            )
+            let socketPath = hosts.desktop.root.appendingPathComponent("dishonest.sock").path
+            try await self.startHost(
+                hosts: hosts,
+                socketPath: socketPath,
+                hostKind: .onDemand,
+                snapshots: snapshots
+            )
+            let candidate = self.candidate(socketPath)
+            let cache = self.authenticatedHandshakeCache()
 
-        let result = try await RuntimeHostResolver.liveSnapshotAffinityProbe(
-            candidate,
-            SnapshotReferenceFixtures.first.rawValue,
-            self.identity,
-            cache
-        )
+            let result = try await RuntimeHostResolver.liveSnapshotAffinityProbe(
+                candidate,
+                SnapshotReferenceFixtures.first.rawValue,
+                self.identity,
+                cache
+            )
 
-        #expect(result == .incompatible)
-        #expect(snapshots.ownsCalls == [SnapshotReferenceFixtures.first.rawValue])
-        await host.stop()
+            #expect(result == .incompatible)
+            #expect(snapshots.ownsCalls == [SnapshotReferenceFixtures.first.rawValue])
+        }
     }
 
     @Test
@@ -612,35 +607,31 @@ struct SnapshotHostAffinityRuntimeTests {
     }
 
     private func startHost(
+        hosts: CLIBridgeHostFixture,
         socketPath: String,
         hostKind: PeekabooBridgeHostKind,
         snapshots: any SnapshotManagerProtocol,
         allowedOperations: Set<PeekabooBridgeOperation>? = nil
-    ) async throws -> PeekabooBridgeHost {
-        let services = PeekabooServices(snapshotManager: snapshots)
-        let server = if let allowedOperations {
-            PeekabooBridgeServer(
-                services: services,
-                hostKind: hostKind,
-                allowlistedTeams: [],
-                allowlistedBundles: [],
-                allowedOperations: allowedOperations
-            )
-        } else {
-            PeekabooBridgeServer(
-                services: services,
-                hostKind: hostKind,
-                allowlistedTeams: [],
-                allowlistedBundles: []
-            )
-        }
+    ) async throws {
+        let services = CLISnapshotBridgeServices(snapshots: snapshots, directory: hosts.desktop.root)
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: hostKind,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: allowedOperations ?? CLISnapshotBridgeServices.snapshotOperations,
+            desktopOperationLaneCoordinator: hosts.desktop.laneCoordinator,
+            screenCaptureKitProcessCapabilityRegistrar: {},
+            screenCaptureKitOwnershipPreparer: {},
+            screenCaptureKitOwnerClaimProvider: CLISnapshotBridgeServices.unexpectedScreenCaptureKitClaim,
+            permissionStatusEvaluator: { _ in CLISnapshotBridgeServices.grantedPermissions() }
+        )
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
             allowedTeamIDs: [],
             requestTimeoutSec: 2
         )
-        try await host.startChecked()
-        return host
+        try await hosts.start(host)
     }
 }

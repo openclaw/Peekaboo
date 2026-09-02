@@ -272,6 +272,76 @@ struct SeeCommandTests {
 
 @Suite(.serialized, .tags(.fast))
 struct SeeCommandRuntimeTests {
+    @Test(arguments: [false, true])
+    @MainActor
+    func `config environment restores inherited values`(werePresent: Bool) async throws {
+        let inherited = SeeConfigEnvironment()
+        defer { inherited.restore() }
+        let seeded = SeeConfigEnvironment(values: werePresent ? ["/fixture/inherited", "interactive", "false"] : [
+            nil, nil, nil,
+        ])
+        seeded.restore()
+        let directory = URL(fileURLWithPath: "/fixture/temporary")
+        var resets: [SeeConfigEnvironment] = []
+
+        let result = try await withSeeConfigEnvironment(
+            directory: directory,
+            resetConfiguration: { resets.append(SeeConfigEnvironment()) },
+            body: { receivedDirectory in
+                #expect(receivedDirectory == directory)
+                #expect(SeeConfigEnvironment().values == [directory.path, "1", "1"])
+                return 42
+            }
+        )
+
+        #expect(result == 42)
+        #expect(SeeConfigEnvironment() == seeded)
+        #expect(resets == [SeeConfigEnvironment(values: [directory.path, "1", "1"]), seeded])
+    }
+
+    @Test
+    @MainActor
+    func `config environment restores nested throwing bodies`() async throws {
+        let inherited = SeeConfigEnvironment()
+        defer { inherited.restore() }
+        let seeded = SeeConfigEnvironment(values: ["/fixture/inherited", "", "false"])
+        seeded.restore()
+        let outer = URL(fileURLWithPath: "/fixture/outer")
+        let inner = URL(fileURLWithPath: "/fixture/inner")
+        var resets: [SeeConfigEnvironment] = []
+
+        do {
+            try await withSeeConfigEnvironment(
+                directory: outer,
+                resetConfiguration: { resets.append(SeeConfigEnvironment()) },
+                body: { _ in
+                    do {
+                        try await withSeeConfigEnvironment(
+                            directory: inner,
+                            resetConfiguration: { resets.append(SeeConfigEnvironment()) },
+                            body: { _ in
+                                #expect(SeeConfigEnvironment().values == [inner.path, "1", "1"])
+                                throw SeeConfigEnvironmentTestError.failed
+                            }
+                        )
+                        Issue.record("Expected the inner configuration body to throw")
+                    } catch SeeConfigEnvironmentTestError.failed {}
+                    #expect(SeeConfigEnvironment().values == [outer.path, "1", "1"])
+                    throw SeeConfigEnvironmentTestError.failed
+                }
+            )
+            Issue.record("Expected the outer configuration body to throw")
+        } catch SeeConfigEnvironmentTestError.failed {}
+
+        #expect(SeeConfigEnvironment() == seeded)
+        #expect(resets == [
+            SeeConfigEnvironment(values: [outer.path, "1", "1"]),
+            SeeConfigEnvironment(values: [inner.path, "1", "1"]),
+            SeeConfigEnvironment(values: [outer.path, "1", "1"]),
+            seeded,
+        ])
+    }
+
     @Test
     @MainActor
     func `tree only See propagates its remaining timeout to accessibility inspection`() async throws {
@@ -1040,8 +1110,9 @@ struct SeeCommandRuntimeTests {
         }
     }
 
+    @MainActor
     func withTempConfigEnv<T>(
-        _ body: @escaping (URL) async throws -> T
+        _ body: @escaping @MainActor (URL) async throws -> T
     ) async throws -> T {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
@@ -1049,25 +1120,66 @@ struct SeeCommandRuntimeTests {
         )
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        setenv("PEEKABOO_CONFIG_DIR", tempDir.path, 1)
-        setenv("PEEKABOO_CONFIG_NONINTERACTIVE", "1", 1)
-        setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
-        #if DEBUG
-        ConfigurationManager.shared.resetForTesting()
-        #endif
-
-        defer {
-            unsetenv("PEEKABOO_CONFIG_DIR")
-            unsetenv("PEEKABOO_CONFIG_NONINTERACTIVE")
-            unsetenv("PEEKABOO_CONFIG_DISABLE_MIGRATION")
-            #if DEBUG
-            ConfigurationManager.shared.resetForTesting()
-            #endif
-            try? FileManager.default.removeItem(at: tempDir)
-        }
-
-        return try await body(tempDir)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        return try await withSeeConfigEnvironment(
+            directory: tempDir,
+            resetConfiguration: {
+                #if DEBUG
+                ConfigurationManager.shared.resetForTesting()
+                #endif
+            },
+            body: body
+        )
     }
+}
+
+private struct SeeConfigEnvironment: Equatable {
+    private static let names = [
+        "PEEKABOO_CONFIG_DIR", "PEEKABOO_CONFIG_NONINTERACTIVE", "PEEKABOO_CONFIG_DISABLE_MIGRATION",
+    ]
+
+    let values: [String?]
+
+    init(values: [String?]) {
+        precondition(values.count == Self.names.count)
+        self.values = values
+    }
+
+    init() {
+        self.values = Self.names.map { name in getenv(name).map { String(cString: $0) } }
+    }
+
+    func restore() {
+        for (name, value) in zip(Self.names, self.values) {
+            if let value {
+                setenv(name, value, 1)
+            } else {
+                unsetenv(name)
+            }
+        }
+    }
+}
+
+private enum SeeConfigEnvironmentTestError: Error {
+    case failed
+}
+
+/// Callers belong to the serialized See runtime suite; regression tests inject an inert reset callback.
+/// Run focused proof with --no-parallel: environment changes also affect sibling suites.
+@MainActor
+private func withSeeConfigEnvironment<T>(
+    directory: URL,
+    resetConfiguration: () -> Void,
+    body: @MainActor (URL) async throws -> T
+) async throws -> T {
+    let inherited = SeeConfigEnvironment()
+    SeeConfigEnvironment(values: [directory.path, "1", "1"]).restore()
+    resetConfiguration()
+    defer {
+        inherited.restore()
+        resetConfiguration()
+    }
+    return try await body(directory)
 }
 
 extension SeeCommandRuntimeTests {

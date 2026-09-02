@@ -80,29 +80,30 @@ struct BridgeReceiptCommandTests {
     #if DEBUG
     @Test
     func `validator authenticates a live listener independently from the exported bundle`() async throws {
-        let root = URL(
-            fileURLWithPath: "/tmp/pb-receipt-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        let socketPath = root.appendingPathComponent("bridge.sock").path
-        let exportDirectory = root.appendingPathComponent("exports", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        try await CLIBridgeHostFixture.withHosts { fixture in
+            let root = fixture.desktop.root
+            let socketPath = root.appendingPathComponent("bridge.sock").path
+            let exportDirectory = root.appendingPathComponent("exports", isDirectory: true)
 
-        let server = PeekabooBridgeServer(
-            services: PeekabooServices(),
-            allowlistedTeams: [],
-            allowlistedBundles: []
-        )
-        let host = PeekabooBridgeHost(
-            socketPath: socketPath,
-            server: server,
-            allowedTeamIDs: [],
-            requestTimeoutSec: 2
-        )
-        try await host.startChecked()
+            let server = PeekabooBridgeServer(
+                services: CLISnapshotBridgeServices(snapshots: InMemorySnapshotManager(), directory: root),
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                allowedOperations: [.permissionsStatus],
+                desktopOperationLaneCoordinator: fixture.desktop.laneCoordinator,
+                screenCaptureKitProcessCapabilityRegistrar: {},
+                screenCaptureKitOwnershipPreparer: {},
+                screenCaptureKitOwnerClaimProvider: CLISnapshotBridgeServices.unexpectedScreenCaptureKitClaim,
+                permissionStatusEvaluator: { _ in CLISnapshotBridgeServices.grantedPermissions() }
+            )
+            let host = PeekabooBridgeHost(
+                socketPath: socketPath,
+                server: server,
+                allowedTeamIDs: [],
+                requestTimeoutSec: 2
+            )
+            try await fixture.start(host)
 
-        do {
             let exportingClient = BridgeTestFixtures.authenticatedClient(
                 socketPath: socketPath,
                 requestTimeoutSec: 2,
@@ -134,6 +135,7 @@ struct BridgeReceiptCommandTests {
             )
 
             await host.stop()
+            await host.waitUntilFullyStopped()
             try await host.startChecked()
             await #expect(throws: BridgeReceiptValidationError.invalidBundle) {
                 _ = try await BridgeReceiptVerifier.validate(
@@ -143,11 +145,7 @@ struct BridgeReceiptCommandTests {
                     makeClient: Self.authenticatedClient
                 )
             }
-        } catch {
-            await host.stop()
-            throw error
         }
-        await host.stop()
     }
     #endif
 

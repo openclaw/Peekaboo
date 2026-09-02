@@ -283,6 +283,16 @@ jobs:
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
             --filter 'AgentCommandBasicTests|AgentCommandValidationIntegrationTests'
 
+      - name: Run See configuration environment regressions
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
+            --filter 'SeeCommandRuntimeTests/config environment restores (inherited values|nested throwing bodies)'
+
   tachikoma:
     name: Tachikoma build & tests
     runs-on: macos-26

@@ -6,41 +6,56 @@ import Testing
 
 struct PeekabooBridgeHostUnauthorizedResponseTests {
     @Test
+    @MainActor
     func `unauthorized clients receive an error response (not EOF)`() async throws {
-        let socketPath = "/tmp/peekaboo-bridge-host-\(UUID().uuidString).sock"
-
-        let server = await MainActor.run {
-            PeekabooBridgeServer(
-                services: PeekabooServices(),
+        try await CLIBridgeHostFixture.withHosts { fixture in
+            let socketPath = fixture.desktop.root.appendingPathComponent("bridge.sock").path
+            let server = PeekabooBridgeServer(
+                services: CLISnapshotBridgeServices(
+                    snapshots: InMemorySnapshotManager(),
+                    directory: fixture.desktop.root
+                ),
                 hostKind: .gui,
                 allowlistedTeams: ["NOT_A_REAL_TEAM"],
-                allowlistedBundles: []
+                allowlistedBundles: [],
+                allowedOperations: [.permissionsStatus],
+                desktopOperationLaneCoordinator: fixture.desktop.laneCoordinator,
+                screenCaptureKitProcessCapabilityRegistrar: {},
+                screenCaptureKitOwnershipPreparer: {},
+                screenCaptureKitOwnerClaimProvider: CLISnapshotBridgeServices.unexpectedScreenCaptureKitClaim,
+                permissionStatusEvaluator: { _ in
+                    Issue.record("Unauthorized requests must be rejected before permission evaluation")
+                    return PermissionsStatus(screenRecording: false, accessibility: false, postEvent: false)
+                }
             )
+
+            let host = PeekabooBridgeHost(
+                socketPath: socketPath,
+                server: server,
+                allowedTeamIDs: ["NOT_A_REAL_TEAM"],
+                requestTimeoutSec: 2
+            )
+
+            try await fixture.start(host)
+
+            let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.permissionsStatus)
+            let responseData = try await Self.sendUnixRequest(path: socketPath, request: requestData)
+            let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+                PeekabooBridgeResponse.self,
+                from: responseData
+            )
+
+            guard case let .error(envelope) = response else {
+                Issue.record("Expected error response, got \(response)")
+                return
+            }
+
+            #expect(envelope.code == .unauthorizedClient)
         }
-
-        let host = PeekabooBridgeHost(
-            socketPath: socketPath,
-            server: server,
-            allowedTeamIDs: ["NOT_A_REAL_TEAM"],
-            requestTimeoutSec: 2
-        )
-
-        try await host.startChecked()
-        defer { Task { await host.stop() } }
-
-        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.permissionsStatus)
-        let responseData = try Self.sendUnixRequest(path: socketPath, request: requestData)
-        let response = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: responseData)
-
-        guard case let .error(envelope) = response else {
-            Issue.record("Expected error response, got \(response)")
-            return
-        }
-
-        #expect(envelope.code == .unauthorizedClient)
     }
 
-    private static func sendUnixRequest(path: String, request: Data) throws -> Data {
+    @concurrent
+    private static func sendUnixRequest(path: String, request: Data) async throws -> Data {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { close(fd) }
@@ -69,7 +84,7 @@ struct PeekabooBridgeHostUnauthorizedResponseTests {
         return try Self.readAll(fd: fd, maxBytes: 1024 * 1024)
     }
 
-    private static func writeAll(fd: Int32, data: Data) throws {
+    private nonisolated static func writeAll(fd: Int32, data: Data) throws {
         try data.withUnsafeBytes { buf in
             guard let base = buf.baseAddress else { return }
             var written = 0
@@ -87,7 +102,7 @@ struct PeekabooBridgeHostUnauthorizedResponseTests {
         }
     }
 
-    private static func readAll(fd: Int32, maxBytes: Int) throws -> Data {
+    private nonisolated static func readAll(fd: Int32, maxBytes: Int) throws -> Data {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
 
