@@ -45,6 +45,8 @@ If LaunchServices cannot resolve `Playground` by name, also set `PEEKABOO_PLAYGR
 
 Tests that read or mutate uncontrolled host state use the shared `PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS=true` selector. Ordinary local and automation-action selectors never imply this consent, and `test:safe` explicitly overrides inherited ambient-state opt-ins. The live clipboard smoke test uses this selector and must only be enabled with fresh authorization to read, replace, and restore the ambient clipboard.
 
+The caller-barrier and rejected-host-certificate tests in `InteractionMutationInvalidatorTests` also require this opt-in: their caller-local `SnapshotManager` advances the effective-UID desktop watermark and target ledger despite injected trackers and in-memory snapshots. These two bodies are intentionally skipped by safe preflight, not counted as passed, and may run only with explicit authorization for those ambient mutations.
+
 ## Test Categories
 
 ### Screenshot Validation Tests (`ScreenshotValidationTests.swift`)

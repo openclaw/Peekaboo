@@ -275,9 +275,10 @@ struct InteractionMutationInvalidatorTests {
         #expect(await snapshots.getMostRecentSnapshot() == nil)
     }
 
-    @Test
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS"] == "true"))
     func `Remote-selected local mutation installs a caller barrier`() async throws {
-        // Excluded from protected proof: runtime invalidation still constructs a caller-local SnapshotManager.
+        // Ambient opt-in: the caller-local SnapshotManager advances the effective-UID desktop watermark and
+        // target ledger despite this test's injected tracker and in-memory snapshots.
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-cli-remote-caller-barrier-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -470,9 +471,10 @@ struct InteractionMutationInvalidatorTests {
         try remoteTracker.cancelDurableMutation()
     }
 
-    @Test
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS"] == "true"))
     func `Remote coordinator rejects a host observation certificate that forbids preservation`() async throws {
-        // Excluded from protected proof: the owned tracker does not isolate caller-local snapshot invalidation.
+        // Ambient opt-in: the owned tracker does not isolate caller-local invalidation of the effective-UID
+        // desktop watermark and target ledger.
         let desktop = try CLIDesktopFixture()
         defer { desktop.removeDirectory() }
         let snapshots = InMemorySnapshotManager()

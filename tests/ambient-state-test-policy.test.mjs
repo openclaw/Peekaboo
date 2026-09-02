@@ -42,6 +42,25 @@ test("ambient-state tests require the exact shared opt-in", () => {
   );
 });
 
+for (const name of [
+  "Remote-selected local mutation installs a caller barrier",
+  "Remote coordinator rejects a host observation certificate that forbids preservation",
+]) {
+  test(`ambient mutation declaration requires the exact shared opt-in: ${name}`, () => {
+    const lines = readFileSync(
+      `${repositoryRoot}/Apps/CLI/Tests/CoreCLITests/InteractionMutationInvalidatorTests.swift`,
+      "utf8",
+    ).split("\n");
+    const declaration = lines.indexOf(`    func \`${name}\`() async throws {`);
+    assert.notEqual(declaration, -1, `Missing test declaration: ${name}`);
+    assert.equal(
+      lines[declaration - 1].trim(),
+      '@Test(.enabled(if: ProcessInfo.processInfo.environment["PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS"] == "true"))',
+      `The declaration must be immediately governed by the ambient-state gate: ${name}`,
+    );
+  });
+}
+
 test("hosted See proof retains target inclusion without opting into ambient tests", () => {
   const manifest = readFileSync(`${repositoryRoot}/Apps/CLI/Package.swift`, "utf8");
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
