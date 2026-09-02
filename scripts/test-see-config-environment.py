@@ -54,7 +54,7 @@ def verify_execution(output):
     require(len(summaries) == 1 and re.fullmatch(
         r"Test run with 2 tests in 1 suite passed after .+ seconds\.", summaries[0]),
         f"Expected one passing 2-test/1-suite summary, got {summaries!r}")
-    passed = re.findall(r'Test "([^"]+)" passed after .+ seconds\.', output)
+    passed = re.findall(r'Test "([^"]+)"(?: with 2 test cases)? passed after .+ seconds\.', output)
     require(sorted(passed) == sorted(DISPLAY_NAMES),
             f"Expected both See environment tests to pass exactly once, got {passed!r}")
     arguments = re.findall(

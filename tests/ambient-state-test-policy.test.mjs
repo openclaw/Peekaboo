@@ -95,10 +95,12 @@ if sys.argv[1:3] == ["test", "list"]:
 lines = [
     '◇ Test case passing 1 argument werePresent → false to "config environment restores inherited values" started.',
     '◇ Test case passing 1 argument werePresent → true to "config environment restores inherited values" started.',
-    '✔ Test "config environment restores inherited values" passed after 0.001 seconds.',
+    '✔ Test "config environment restores inherited values" with 2 test cases passed after 0.001 seconds.',
     '✔ Test "config environment restores nested throwing bodies" passed after 0.001 seconds.',
     '✔ Test run with 2 tests in 1 suite passed after 0.003 seconds.',
 ]
+if mode == "plain-pass-format": lines[2] = lines[2].replace(" with 2 test cases", "")
+if mode == "wrong-parameter-count": lines[2] = lines[2].replace("with 2 test cases", "with 3 test cases")
 if mode == "zero-execution": lines = ['✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.']
 if mode == "missing-summary": lines.pop()
 if mode == "duplicate-summary": lines.append(lines[-1])
@@ -152,12 +154,14 @@ test("hosted See proof selects two declarations from global discovery and execut
   // A package containing only the selected IDs is also valid; it is not required.
   const selectedOnly = runSeeProofFixture("selected-only");
   assert.equal(selectedOnly.status, 0, selectedOnly.stderr);
+  const plain = runSeeProofFixture("plain-pass-format");
+  assert.equal(plain.status, 0, plain.stderr);
 });
 
 test("hosted See proof fails closed on absent or incomplete evidence", () => {
   for (const mode of ["zero-discovery", "no-selected-id", "missing-id", "duplicate-id", "extra-selected-id", "display-id", "discovery-failed",
     "zero-execution", "missing-summary", "duplicate-summary", "wrong-count", "missing-pass", "extra-pass",
-    "missing-argument", "duplicate-argument", "execution-failed"]) {
+    "missing-argument", "duplicate-argument", "wrong-parameter-count", "execution-failed"]) {
     const result = runSeeProofFixture(mode);
     assert.notEqual(result.status, 0, mode);
     assert.equal(result.invocations.length, ["zero-discovery", "no-selected-id", "missing-id", "duplicate-id", "extra-selected-id", "display-id", "discovery-failed"].includes(mode) ? 1 : 2, mode);
