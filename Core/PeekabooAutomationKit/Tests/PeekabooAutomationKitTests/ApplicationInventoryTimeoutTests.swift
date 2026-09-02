@@ -798,16 +798,16 @@ extension ApplicationInventoryTimeoutTests {
             applications: [target, helper],
             identityProvider: { pid in
                 guard pid == helper.processIdentifier else { return .identity(90) }
-                return identityReads.withValue {
-                    defer { $0 += 1 }
-                    return identities[min($0, identities.count - 1)]
+                return identityReads.withValue { readIndex in
+                    defer { readIndex += 1 }
+                    return identities[min(readIndex, identities.count - 1)]
                 }
             },
             eligibilityProvider: { pid in
                 #expect(pid == helper.processIdentifier)
-                return eligibilityReads.withValue {
-                    defer { $0 += 1 }
-                    return evidence[min($0, evidence.count - 1)]
+                return eligibilityReads.withValue { readIndex in
+                    defer { readIndex += 1 }
+                    return evidence[min(readIndex, evidence.count - 1)]
                 }
             })
         let inventory = try await service.applicationMutationInventory()
