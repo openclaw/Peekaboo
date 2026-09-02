@@ -5,7 +5,7 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.3.0] - 2026-08-29
+## [4.3.0] - 2026-09-01
 
 ### Highlights
 
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bound application inventory from initial PID discovery through final generation validation, keep setup and validation reads off MainActor without queuing blocked native work, and reuse bound click metadata for result labels and diagnostics without post-action application or snapshot lookup.
 - Keep daemon health responsive while browser discovery is blocked, report cached browser diagnostics as unconfirmed, and preserve daemon transport failures instead of reporting successful absence or cleanup.
 - Reject late element-detection results and expired queued AX work against one absolute deadline, even when timeout delivery is delayed.
-- Pin the vendored AXorcist update so custom SwiftPM scratch paths cannot silently replace Commander's versioned dependency with a sibling checkout.
+- Consume AXorcist 0.1.9 in internal automation and public SwiftPM packages, preserving versioned Commander dependencies with custom scratch paths and nonjoining timeout cancellation.
 - Avoid main-thread LaunchServices stalls during global application lifecycle tracking, preserving process-instance identity, launch readiness, and stop/restart safety.
 - Distinguish browser handoff parent and receipt metadata refusals from inspection failures, and document the unchanged zero-ACL/xattr requirements, including OS provenance, without fallback.
 - Keep client, host, and certification Bridge socket waits off Swift's cooperative executor so concurrent requests can progress without changing deadlines, cancellation, or receipt validation.
@@ -81,7 +81,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Validate contradictory window and Space selectors before runtime-host discovery so malformed requests cannot start support services or mask the actionable error.
 - Explain that exact transient sheets may require read-only owning-process Accessibility inspection before screenshot/OCR fallback, without granting partial app trees mutation authority.
 - Bound retained native application metadata to eight operations per host process through timeout/cancellation and autorelease cleanup, shed overload as partial rows, and keep exact-target AX reads independent.
-- Keep public SwiftPM consumers on versioned Commander dependencies with custom scratch directories by pinning AXorcist 0.1.8.
 - Include nested dialog static text and nonblank AX text metadata fallbacks in `dialog list`, preserving dialog scope and control order.
 - Accept canonical v2 prebuilt Playground fixtures in native validation with strict source, lock, toolchain, bundle, and Foundation signature checks, retaining v1 only for the current invocation's local build.
 

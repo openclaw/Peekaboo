@@ -49,6 +49,9 @@ dist/
 build/
 *.js.map
 
+# Local Crabbox execution evidence
+.crabbox/
+
 # Logs
 logs/
 *.log
