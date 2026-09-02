@@ -11,6 +11,13 @@ const seeEnvironmentIDs = [
   "CLIAutomationTests.SeeCommandRuntimeTests/`config environment restores inherited values`(werePresent:)",
   "CLIAutomationTests.SeeCommandRuntimeTests/`config environment restores nested throwing bodies`()",
 ];
+const unrelatedSeeIDs = [
+  "CLIAutomationTests.SeeCommandRuntimeTests/unsafeRuntime()",
+  "CoreCLITests.AppCommandLaunchFlowTests/launch()",
+  "CoreCLITests.InteractionMutationInvalidatorTests/`Remote-selected local mutation installs a caller barrier`()",
+  "CoreCLITests.InteractionMutationInvalidatorTests/`Remote coordinator rejects a host observation certificate that forbids preservation`()",
+  `${seeEnvironmentIDs[0]}Extra`,
+];
 const packageJSON = JSON.parse(readFileSync(`${repositoryRoot}/package.json`, "utf8"));
 const runtimeTests = readFileSync(
   `${repositoryRoot}/Apps/CLI/Tests/CLIRuntimeTests/CLIRuntimeSmokeTests.swift`,
@@ -75,12 +82,14 @@ with open(os.environ["SEE_PROOF_CALLS"], "a") as output:
     output.write(json.dumps(sys.argv[1:]) + "\\n")
 mode = os.environ["SEE_PROOF_SCENARIO"]
 ids = ${JSON.stringify(seeEnvironmentIDs)}
-if "--list-tests" in sys.argv:
-    if mode == "zero-discovery": ids = []
+if sys.argv[1:3] == ["test", "list"]:
+    if mode in ["zero-discovery", "no-selected-id"]: ids = []
     if mode == "missing-id": ids.pop()
     if mode == "duplicate-id": ids.append(ids[0])
-    if mode == "extra-id": ids.append("CLIAutomationTests.SeeCommandRuntimeTests/unsafeRuntime()")
+    if mode == "extra-selected-id": ids.append(ids[0] + "/SeeCommandTests.swift:1:1")
     if mode == "display-id": ids[0] = "CLIAutomationTests.SeeCommandRuntimeTests/config environment restores inherited values"
+    if mode not in ["selected-only", "zero-discovery"]: ids += ${JSON.stringify(unrelatedSeeIDs)}
+    print("Building for debugging...")
     print("\\n".join(ids))
     sys.exit(1 if mode == "discovery-failed" else 0)
 lines = [
@@ -95,7 +104,9 @@ if mode == "missing-summary": lines.pop()
 if mode == "duplicate-summary": lines.append(lines[-1])
 if mode == "wrong-count": lines[-1] = '✔ Test run with 3 tests in 1 suite passed after 0.003 seconds.'
 if mode == "missing-pass": lines.pop(3)
+if mode == "extra-pass": lines.insert(4, '✔ Test "unsafeRuntime" passed after 0.001 seconds.')
 if mode == "missing-argument": lines.pop(1)
+if mode == "duplicate-argument": lines.insert(1, lines[0])
 print("\\n".join(lines))
 sys.exit(1 if mode == "execution-failed" else 0)
 `, { mode: 0o755 });
@@ -120,32 +131,73 @@ sys.exit(1 if mode == "execution-failed" else 0)
   }
 }
 
-test("hosted See proof counts discovery and execution in separate nonparallel processes", () => {
+test("hosted See proof selects two declarations from global discovery and executes only those nonparallel", () => {
   const result = runSeeProofFixture("passed");
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.invocations.length, 2);
-  for (const args of result.invocations) {
-    for (const flag of ["--no-parallel", "--disable-xctest", "--enable-swift-testing", "-DPEEKABOO_SKIP_AUTOMATION"]) {
-      assert.ok(args.includes(flag), flag);
-    }
-    const selection = new RegExp(args[args.indexOf("--filter") + 1]);
-    for (const id of seeEnvironmentIDs) assert.ok(selection.test(id), id);
-    assert.ok(!selection.test("CLIAutomationTests.SeeCommandRuntimeTests/unsafeRuntime()"));
-    assert.ok(!selection.test("CoreCLITests.AppCommandLaunchFlowTests/launch()"));
-  }
-  assert.ok(result.invocations[0].includes("--list-tests"));
-  assert.ok(result.invocations[1].includes("--skip-build"));
+  assert.deepEqual(result.invocations[0], [
+    "test", "list", "--disable-xctest", "--enable-swift-testing", "-Xswiftc", "-DPEEKABOO_SKIP_AUTOMATION",
+  ]);
+  const execution = result.invocations[1];
+  const filter = execution[execution.indexOf("--filter") + 1];
+  assert.deepEqual(execution, [
+    "test", "--disable-xctest", "--enable-swift-testing", "-Xswiftc", "-DPEEKABOO_SKIP_AUTOMATION",
+    "--skip-build", "--no-parallel", "--filter", filter,
+  ]);
+  const selection = new RegExp(filter);
+  for (const id of seeEnvironmentIDs) assert.ok(selection.test(id), id);
+  for (const id of unrelatedSeeIDs) assert.ok(!selection.test(id), id);
+  assert.match(result.stdout, /Verified discovery: 2 selected See environment test declarations from the global listing/);
   assert.match(result.stdout, /Verified execution: 2 tests in 1 suite/);
+  // A package containing only the selected IDs is also valid; it is not required.
+  const selectedOnly = runSeeProofFixture("selected-only");
+  assert.equal(selectedOnly.status, 0, selectedOnly.stderr);
 });
 
 test("hosted See proof fails closed on absent or incomplete evidence", () => {
-  for (const mode of ["zero-discovery", "missing-id", "duplicate-id", "extra-id", "display-id", "discovery-failed",
-    "zero-execution", "missing-summary", "duplicate-summary", "wrong-count", "missing-pass", "missing-argument", "execution-failed"]) {
+  for (const mode of ["zero-discovery", "no-selected-id", "missing-id", "duplicate-id", "extra-selected-id", "display-id", "discovery-failed",
+    "zero-execution", "missing-summary", "duplicate-summary", "wrong-count", "missing-pass", "extra-pass",
+    "missing-argument", "duplicate-argument", "execution-failed"]) {
     const result = runSeeProofFixture(mode);
     assert.notEqual(result.status, 0, mode);
-    assert.equal(result.invocations.length, ["zero-discovery", "missing-id", "duplicate-id", "extra-id", "display-id", "discovery-failed"].includes(mode) ? 1 : 2, mode);
+    assert.equal(result.invocations.length, ["zero-discovery", "no-selected-id", "missing-id", "duplicate-id", "extra-selected-id", "display-id", "discovery-failed"].includes(mode) ? 1 : 2, mode);
   }
   const local = runSeeProofFixture("passed", false);
   assert.notEqual(local.status, 0);
   assert.match(local.stderr, /restricted to the secretless GitHub-hosted CI runner/);
+});
+
+test("See proof arguments agree with installed Swift help and parse without running discovery", {
+  skip: process.platform !== "darwin",
+}, () => {
+  const directory = mkdtempSync(join(tmpdir(), "peekaboo-see-parser-"));
+  const swift = (args) => spawnSync("swift", args, {
+    cwd: directory, encoding: "utf8", timeout: 20_000,
+  });
+  try {
+    const listHelp = swift(["test", "list", "--help-hidden"]);
+    assert.equal(listHelp.status, 0, listHelp.stderr);
+    // Parent test options can parse without being documented list options.
+    assert.doesNotMatch(listHelp.stdout, /^\s+--(?:filter|parallel|no-parallel)\b/m);
+    for (const option of ["--disable-xctest", "--enable-swift-testing", "-Xswiftc"]) {
+      assert.ok(listHelp.stdout.includes(option), option);
+    }
+    const fixture = runSeeProofFixture("passed");
+    assert.equal(fixture.status, 0, fixture.stderr);
+    for (const args of fixture.invocations) {
+      const help = swift([...args, "--help"]);
+      assert.equal(help.status, 0, help.stderr);
+      // --help alone masks bad flags. Force a parser error before command dispatch;
+      // a preceding unknown option must win over this last, deliberate stop token.
+      const stop = "--see-proof-parser-stop";
+      const parsed = swift([...args, stop]);
+      assert.equal(parsed.status, 64, parsed.stderr);
+      assert.match(parsed.stderr, /^error: Unknown option '--see-proof-parser-stop'/m);
+      const invalid = swift([...args, "--invalid-see-option", stop]);
+      assert.equal(invalid.status, 64, invalid.stderr);
+      assert.match(invalid.stderr, /^error: Unknown option '--invalid-see-option'/m);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

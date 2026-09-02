@@ -18,6 +18,9 @@ DISPLAY_NAMES = (
 )
 # Test.ID can append a source location; do not match another declaration sharing a prefix.
 SELECTION = "^(?:" + "|".join(re.escape(name) for name in EXPECTED_IDS) + ")(?:/|$)"
+TEST_BUILD_ARGUMENTS = (
+    "--disable-xctest", "--enable-swift-testing", "-Xswiftc", "-DPEEKABOO_SKIP_AUTOMATION",
+)
 
 
 def require(condition, message):
@@ -27,8 +30,7 @@ def require(condition, message):
 
 def run_swift(arguments):
     result = subprocess.run(
-        ["swift", "test", "--no-parallel", "--disable-xctest", "--enable-swift-testing",
-         "-Xswiftc", "-DPEEKABOO_SKIP_AUTOMATION", "--filter", SELECTION, *arguments],
+        ["swift", *arguments],
         cwd=Path(__file__).resolve().parent.parent / "Apps/CLI",
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False,
     )
@@ -38,12 +40,13 @@ def run_swift(arguments):
 
 
 def verify_discovery(output):
-    # Ignore compiler chatter, but reject missing, duplicate, or additional test IDs.
+    # `swift test list` has no documented filter: select from its global listing locally.
     discovered = [line.strip() for line in output.splitlines()
                   if re.match(r"^[A-Za-z_]\w*\.[^/]+/", line.strip())]
-    require(sorted(discovered) == sorted(EXPECTED_IDS),
-            f"Expected exactly the two See environment declaration IDs, got {discovered!r}")
-    print("Verified discovery: 2 See environment test declarations.", flush=True)
+    selected = [test_id for test_id in discovered if re.search(SELECTION, test_id)]
+    require(sorted(selected) == sorted(EXPECTED_IDS),
+            f"Expected exactly the two selected See environment declaration IDs, got {selected!r}")
+    print("Verified discovery: 2 selected See environment test declarations from the global listing.", flush=True)
 
 
 def verify_execution(output):
@@ -73,9 +76,12 @@ def main():
         ("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1"),
     ):
         require(os.environ.get(name) == expected, f"Set {name}={expected} for this hosted proof")
-    verify_discovery(run_swift(["--list-tests"]))
-    # A separate nonparallel process, reusing precisely the discovered build and selector.
-    verify_execution(run_swift(["--skip-build"]))
+    # The deprecated --list-tests alias reparses execution flags as list options and fails.
+    verify_discovery(run_swift(["test", "list", *TEST_BUILD_ARGUMENTS]))
+    # Only execution is filtered and nonparallel, reusing precisely the discovered build.
+    verify_execution(run_swift([
+        "test", *TEST_BUILD_ARGUMENTS, "--skip-build", "--no-parallel", "--filter", SELECTION,
+    ]))
 
 
 if __name__ == "__main__":
