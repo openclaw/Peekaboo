@@ -118,6 +118,12 @@ V4 interaction and observation commands fail closed: use either `--app` or `--pi
 
 Some legacy app/window management commands retain lenient parameter handling as a compatibility contract. For those commands, redundant app/PID information is accepted; a textual app selector remains authoritative because the synchronous resolver cannot reliably cross-check it against the PID.
 
+### Mutation inventory completeness
+
+App mutations require an exact name, exact bundle ID, or explicit PID. Name and bundle selection must prove uniqueness from a complete mutation inventory. Helpers with prohibited activation policy remain selectable by exact name or bundle when the runtime host can read their process generation, including helpers owned by another user when the host has that access. Duplicate readable helpers still make a matching name or bundle ambiguous.
+
+The native mutation inventory excludes an unreadable helper without marking the inventory partial only when repeated observations agree: activation policy is explicitly prohibited, an exact-sized short-BSD response identifies the expected PID with an effective UID different from the runtime host, and full process-generation reads actually fail with `EPERM`. UID alone never predicts denial, and short BSD never supplies a generation receipt. Unknown policy, other failures, changing evidence, and a readable generation that disappears or changes all remain fail-closed. These checks share the inventory's one-second off-MainActor budget and retained native worker; they do not change read-only discovery or generation-pinned explicit-PID lifecycle targeting.
+
 ### Allowed Redundancy
 
 These legacy management forms are valid and equivalent:

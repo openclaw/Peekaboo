@@ -123,6 +123,12 @@ jobs:
       - name: Show Swift toolchain version
         run: swift --version
 
+      - name: Run mutation inventory and selector contracts
+        working-directory: Core/PeekabooAutomationKit
+        run: |
+          swift test --no-parallel \
+            --filter 'SystemIdentityResolverTests|ApplicationInventoryTimeoutTests|ApplicationMutationPlannerTests|ApplicationMutationSelectorTests|ApplicationIdentifierMatcherTests'
+
       - name: Build PeekabooCore
         working-directory: Core/PeekabooCore
         run: |

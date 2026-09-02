@@ -1,9 +1,60 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import Testing
 @testable import PeekabooAutomationKit
 
 struct SystemIdentityResolverTests {
+    @Test
+    func `full BSD observation preserves generation and distinguishes explicit denial from arbitrary failure`() {
+        var info = proc_bsdinfo()
+        info.pbi_start_tvsec = 123
+        info.pbi_start_tvusec = 456
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        let readable = SystemIdentityResolver.processStartIdentityObservation(
+            info: info, bytesRead: size, errorCode: EPERM)
+        #expect(readable == .identity(123_000_456))
+        #expect(readable.identity == 123_000_456)
+
+        for bytesRead in [Int32(0), -1] {
+            let denied = SystemIdentityResolver.processStartIdentityObservation(
+                info: info, bytesRead: bytesRead, errorCode: EPERM)
+            #expect(denied == .permissionDenied)
+            #expect(denied.identity == nil)
+            for errorCode in [0, ESRCH, EIO, EACCES] {
+                let unavailable = SystemIdentityResolver.processStartIdentityObservation(
+                    info: info, bytesRead: bytesRead, errorCode: errorCode)
+                #expect(unavailable == .unavailable)
+                #expect(unavailable.identity == nil)
+            }
+        }
+        for bytesRead in [size - 1, size + 1] {
+            #expect(SystemIdentityResolver.processStartIdentityObservation(
+                info: info, bytesRead: bytesRead, errorCode: EPERM) == .unavailable)
+        }
+        info.pbi_start_tvsec = UInt64.max
+        info.pbi_start_tvusec = 999_999
+        #expect(SystemIdentityResolver.processStartIdentityObservation(
+            info: info, bytesRead: size, errorCode: 0).identity ==
+            UInt64.max.multipliedReportingOverflow(by: 1_000_000).partialValue &+ 999_999)
+    }
+
+    @Test
+    func `short BSD credentials require exact size and expected PID and use effective rather than real UID`() {
+        var info = proc_bsdshortinfo()
+        info.pbsi_pid = 42
+        info.pbsi_uid = 502
+        info.pbsi_ruid = 501
+        let size = Int32(MemoryLayout<proc_bsdshortinfo>.stride)
+        #expect(SystemIdentityResolver.processCredentials(42, info: info, bytesRead: size) ==
+            .init(processIdentifier: 42, effectiveUserID: 502))
+        #expect(SystemIdentityResolver.processCredentials(43, info: info, bytesRead: size) == nil)
+        #expect(SystemIdentityResolver.processCredentials(-1, info: info, bytesRead: size) == nil)
+        for bytesRead in [0, -1, size - 1, size + 1] {
+            #expect(SystemIdentityResolver.processCredentials(42, info: info, bytesRead: bytesRead) == nil)
+        }
+    }
+
     @Test
     func `Exact window identity can be selected from a full offscreen catalog`() throws {
         let expectedBounds = CGRect(x: 560, y: 371, width: 673, height: 439)

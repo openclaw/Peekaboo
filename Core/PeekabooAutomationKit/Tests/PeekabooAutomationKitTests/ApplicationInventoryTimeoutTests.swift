@@ -568,13 +568,22 @@ struct ApplicationInventoryTimeoutTests {
     enum NativeInventoryPhase: String, CaseIterable, Sendable {
         case listingPID, listingCatalog, listingFinalGeneration
         case mutationPID, mutationSelector, mutationFinalGeneration
+        case mutationEligibility, mutationEligibilityRecheck, mutationDeniedGenerationRecheck
+
+        var readsDeniedGeneration: Bool {
+            switch self {
+            case .mutationEligibility, .mutationEligibilityRecheck, .mutationDeniedGenerationRecheck: true
+            default: false
+            }
+        }
 
         @MainActor
         func observe(_ service: ApplicationService) async throws -> [ServiceApplicationInfo] {
             switch self {
             case .listingPID, .listingCatalog, .listingFinalGeneration:
                 try await service.listApplications().data.applications
-            case .mutationPID, .mutationSelector, .mutationFinalGeneration:
+            case .mutationPID, .mutationSelector, .mutationFinalGeneration,
+                 .mutationEligibility, .mutationEligibilityRecheck, .mutationDeniedGenerationRecheck:
                 try await service.applicationMutationInventory().items
             }
         }
@@ -591,12 +600,21 @@ struct ApplicationInventoryTimeoutTests {
         let generationReads = AutomationTestLockedValue(0)
         let selectorReads = AutomationTestLockedValue(0)
         let metadataReads = AutomationTestLockedValue(0)
+        let eligibilityReads = AutomationTestLockedValue(0)
         let block: @Sendable (NativeInventoryPhase) -> Void = { boundary in
             guard phase == boundary else { return }
             reads.withValue { $0 += 1 }
             gate.markStarted()
             gate.waitWithEmergencyRelease()
             gate.markFinished()
+        }
+        let deniedIdentityProvider: ApplicationService.MutationIdentityObservationProvider = { identifier in
+            #expect(identifier == pid)
+            let read = generationReads.withValue { $0 += 1; return $0 }
+            if read == 3 {
+                block(.mutationDeniedGenerationRecheck)
+            }
+            return .permissionDenied
         }
         return ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
@@ -627,6 +645,13 @@ struct ApplicationInventoryTimeoutTests {
                     }
                 }
                 return 7
+            },
+            mutationIdentityObservationProvider: phase.readsDeniedGeneration ? deniedIdentityProvider : nil,
+            mutationEligibilityProvider: { identifier in
+                #expect(identifier == pid)
+                let read = eligibilityReads.withValue { $0 += 1; return $0 }
+                block(read == 1 ? .mutationEligibility : .mutationEligibilityRecheck)
+                return Self.eligibility(pid: pid)
             },
             runningApplicationProcessIdentifiersProvider: {
                 block(.listingPID)
@@ -669,6 +694,256 @@ struct ApplicationInventoryTimeoutTests {
             layer: 0,
             alpha: 1,
             axIdentifier: nil)
+    }
+}
+
+extension ApplicationInventoryTimeoutTests {
+    @Test(arguments: [uid_t(501), uid_t(0)])
+    @MainActor
+    func `denied foreign prohibited rows do not poison readable targets or disappear from listing`(
+        hostUserID: uid_t) async throws
+    {
+        let applications = [
+            Self.mutationApplication(pid: 41001, name: "Editor", policy: .regular),
+            Self.mutationApplication(pid: 41002, name: "Denied Helper", generation: nil),
+            Self.mutationApplication(pid: 41003, name: "Other Denied Helper", generation: nil),
+            Self.mutationApplication(pid: 41004, name: "Own Helper"),
+            Self.mutationApplication(pid: 41005, name: "Privileged Readable Foreign Helper"),
+        ]
+        let generations = Dictionary(uniqueKeysWithValues: applications.map {
+            ($0.processIdentifier, $0.processStartIdentity)
+        })
+        let identityReads = AutomationTestLockedValue<[pid_t: Int]>([:])
+        let eligibilityReads = AutomationTestLockedValue<[pid_t: Int]>([:])
+        let service = Self.mutationService(
+            applications: applications,
+            identityProvider: { pid in
+                identityReads.withValue { $0[pid, default: 0] += 1 }
+                return generations[pid].flatMap(\.self)
+                    .map(SystemIdentityResolver.ProcessStartIdentityObservation.identity)
+                    ?? .permissionDenied
+            },
+            eligibilityProvider: { pid in
+                eligibilityReads.withValue { $0[pid, default: 0] += 1 }
+                return Self.eligibility(pid: pid, userID: pid == 41004 ? hostUserID : 502, hostUserID: hostUserID)
+            })
+        let inventory = try await service.applicationMutationInventory()
+        #expect(inventory.isComplete)
+        #expect(inventory.warnings.isEmpty)
+        #expect(inventory.items.map(\.processIdentifier) == [41001, 41004, 41005])
+        #expect(identityReads.value == [41001: 2, 41002: 3, 41003: 3, 41004: 2, 41005: 2])
+        #expect(eligibilityReads.value == [41002: 2, 41003: 2])
+
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { try await service.applicationMutationInventory() })
+        for application in inventory.items {
+            for identifier in try [application.name, #require(application.bundleIdentifier)] {
+                let plan = try await planner.plan(identifier: identifier)
+                #expect(plan.processIdentity == application.processIdentity)
+            }
+        }
+        // The shared PID provider and read-only inventory still include the denied helpers.
+        let listed = try await service.listApplications()
+        #expect(Set(listed.data.applications.map(\.processIdentifier)) == Set(applications.map(\.processIdentifier)))
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `readable prohibited helpers still make duplicate name or bundle selectors ambiguous`(
+        sameBundle: Bool) async throws
+    {
+        let target = Self.mutationApplication(pid: 41101, name: "Editor", policy: .regular)
+        let helper = ServiceApplicationInfo(
+            processIdentifier: 41102,
+            processStartIdentity: 92,
+            bundleIdentifier: sameBundle ? target.bundleIdentifier : "com.example.helper",
+            name: sameBundle ? "Helper" : target.name,
+            activationPolicy: .prohibited)
+        let service = Self.mutationService(
+            applications: [target, helper],
+            identityProvider: { .identity(UInt64($0)) },
+            eligibilityProvider: { _ in
+                Issue.record("Readable generations must not be filtered by policy or UID")
+                return nil
+            })
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { try await service.applicationMutationInventory() })
+        let identifier = sameBundle ? try #require(target.bundleIdentifier) : target.name
+        await #expect(throws: DesktopTargetPlanningError.ambiguousApplication(
+            identifier: identifier, candidatePIDs: [41101, 41102]))
+        {
+            _ = try await planner.plan(identifier: identifier)
+        }
+    }
+
+    enum MutationEligibilityFailure: CaseIterable, Sendable {
+        case ownUser, regular, accessory, unknownPolicy, missingEligibility, wrongPID
+        case changedUID, changedHostUID, changedPID, changedPolicy, disappearedEligibility
+        case unavailable, zeroGeneration, becameReadable, denialDisappeared, lateReadable, lateUnavailable
+        case readableThenDenied, readableThenUnavailable, generationDrift
+    }
+
+    @Test(arguments: MutationEligibilityFailure.allCases)
+    @MainActor
+    func `uncertain denied rows and changing generations preserve fail closed name uniqueness`(
+        failure: MutationEligibilityFailure) async throws
+    {
+        let target = Self.mutationApplication(pid: 41201, name: "Editor", policy: .regular)
+        let helper = Self.mutationApplication(pid: 41202, name: "Helper")
+        let identities = Self.identityObservations(for: failure)
+        let evidence = Self.eligibilityObservations(for: failure, pid: helper.processIdentifier)
+        let identityReads = AutomationTestLockedValue(0)
+        let eligibilityReads = AutomationTestLockedValue(0)
+        let service = Self.mutationService(
+            applications: [target, helper],
+            identityProvider: { pid in
+                guard pid == helper.processIdentifier else { return .identity(90) }
+                return identityReads.withValue {
+                    defer { $0 += 1 }
+                    return identities[min($0, identities.count - 1)]
+                }
+            },
+            eligibilityProvider: { pid in
+                #expect(pid == helper.processIdentifier)
+                return eligibilityReads.withValue {
+                    defer { $0 += 1 }
+                    return evidence[min($0, evidence.count - 1)]
+                }
+            })
+        let inventory = try await service.applicationMutationInventory()
+        #expect(!inventory.isComplete)
+        #expect(inventory.items.map(\.processIdentifier) == [target.processIdentifier])
+        #expect(inventory.warnings.count == 1)
+        #expect(identityReads.value <= 3)
+        #expect(eligibilityReads.value <= 2)
+        if case .identity = identities[0] {
+            #expect(eligibilityReads.value == 0)
+        }
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { try await service.applicationMutationInventory() })
+        for identifier in try [target.name, #require(target.bundleIdentifier)] {
+            identityReads.value = 0
+            eligibilityReads.value = 0
+            await #expect(throws: DesktopTargetPlanningError.incompleteApplicationInventory(
+                identifier: identifier, warnings: inventory.warnings))
+            {
+                _ = try await planner.plan(identifier: identifier)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `legacy optional identity injection never probes eligibility or upgrades nil to denial`() async throws {
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            applicationMutationCandidateProvider: { _ in
+                Issue.record("Missing legacy generation must not read selector metadata")
+                return nil
+            },
+            processStartIdentityProvider: { _ in nil },
+            mutationEligibilityProvider: { _ in
+                Issue.record("Missing legacy generation must not read native eligibility")
+                return nil
+            },
+            runningApplicationProcessIdentifiersProvider: { [41301] })
+        let inventory = try await service.applicationMutationInventory()
+        #expect(!inventory.isComplete)
+        #expect(inventory.warnings == [
+            "Application PID 41301 lacked process-generation identity and was omitted.",
+        ])
+    }
+
+    private static func eligibility(
+        pid: pid_t,
+        userID: uid_t = 502,
+        hostUserID: uid_t = 501,
+        policy: ServiceApplicationActivationPolicy = .prohibited) -> ApplicationMutationEligibility
+    {
+        ApplicationMutationEligibility(
+            credentials: .init(processIdentifier: pid, effectiveUserID: userID),
+            runtimeHostUserID: hostUserID,
+            activationPolicy: policy)
+    }
+
+    private static func identityObservations(for failure: MutationEligibilityFailure)
+        -> [SystemIdentityResolver.ProcessStartIdentityObservation]
+    {
+        let denied = SystemIdentityResolver.ProcessStartIdentityObservation.permissionDenied
+        return switch failure {
+        case .unavailable: [.unavailable]
+        case .zeroGeneration: [.identity(0)]
+        case .becameReadable: [denied, .identity(90)]
+        case .denialDisappeared: [denied, .unavailable]
+        case .lateReadable: [denied, denied, .identity(90)]
+        case .lateUnavailable: [denied, denied, .unavailable]
+        case .readableThenDenied: [.identity(90), denied]
+        case .readableThenUnavailable: [.identity(90), .unavailable]
+        case .generationDrift: [.identity(90), .identity(91)]
+        default: [denied]
+        }
+    }
+
+    private static func eligibilityObservations(for failure: MutationEligibilityFailure, pid: pid_t)
+        -> [ApplicationMutationEligibility?]
+    {
+        let stable = Self.eligibility(pid: pid)
+        return switch failure {
+        case .ownUser: [Self.eligibility(pid: pid, userID: 501)]
+        case .regular: [Self.eligibility(pid: pid, policy: .regular)]
+        case .accessory: [Self.eligibility(pid: pid, policy: .accessory)]
+        case .unknownPolicy: [Self.eligibility(pid: pid, policy: .unknown)]
+        case .missingEligibility: [nil]
+        case .wrongPID: [Self.eligibility(pid: 99999)]
+        case .changedUID: [stable, Self.eligibility(pid: pid, userID: 503)]
+        case .changedHostUID: [stable, Self.eligibility(pid: pid, hostUserID: 0)]
+        case .changedPID: [stable, Self.eligibility(pid: 99999)]
+        case .changedPolicy: [stable, Self.eligibility(pid: pid, policy: .accessory)]
+        case .disappearedEligibility: [stable, nil]
+        default: [stable]
+        }
+    }
+
+    private static func mutationApplication(
+        pid: pid_t,
+        name: String,
+        generation: UInt64? = 90,
+        policy: ServiceApplicationActivationPolicy = .prohibited) -> ServiceApplicationInfo
+    {
+        ServiceApplicationInfo(
+            processIdentifier: pid,
+            processStartIdentity: generation,
+            bundleIdentifier: "com.example.\(pid)",
+            name: name,
+            activationPolicy: policy)
+    }
+
+    @MainActor
+    private static func mutationService(
+        applications: [ServiceApplicationInfo],
+        identityProvider: @escaping ApplicationService.MutationIdentityObservationProvider,
+        eligibilityProvider: @escaping ApplicationService.MutationEligibilityProvider) -> ApplicationService
+    {
+        let byPID = Dictionary(uniqueKeysWithValues: applications.map { ($0.processIdentifier, $0) })
+        return ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            applicationMutationCandidateProvider: { byPID[$0].map(ApplicationIdentifierMatcher.Candidate.init) },
+            frontmostProcessIdentifierProvider: { nil },
+            processStartIdentityProvider: { identityProvider($0).identity },
+            mutationIdentityObservationProvider: identityProvider,
+            mutationEligibilityProvider: eligibilityProvider,
+            runningApplicationProcessIdentifiersProvider: { applications.map(\.processIdentifier) },
+            applicationWindowCatalogProvider: { [] },
+            applicationMetadataProvider: { pid, _, _ in
+                let application = try #require(byPID[pid])
+                return try DetachedApplicationMetadata(
+                    bundleIdentifier: application.bundleIdentifier,
+                    name: application.name,
+                    bundlePath: nil,
+                    isHidden: false,
+                    activationPolicy: #require(application.activationPolicy),
+                    isFinishedLaunching: true)
+            })
     }
 }
 

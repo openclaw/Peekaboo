@@ -30,7 +30,8 @@ extension ApplicationService {
         -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
     {
         let processIdentifiersProvider = self.runningApplicationProcessIdentifiersProvider
-        let generationProvider = self.processStartIdentityProvider
+        let identityProvider = self.mutationIdentityObservationProvider
+        let eligibilityProvider = self.mutationEligibilityProvider
         let candidateProvider = self.applicationMutationCandidateProvider
         return try await self.withApplicationInventoryDeadline { deadline in
             try await DetachedApplicationInventoryWorker.shared.run(
@@ -38,7 +39,8 @@ extension ApplicationService {
             {
                 Self.readMutationInventory(
                     processIdentifiersProvider: processIdentifiersProvider,
-                    generationProvider: generationProvider,
+                    identityProvider: identityProvider,
+                    eligibilityProvider: eligibilityProvider,
                     candidateProvider: candidateProvider)
             }
         }
@@ -46,7 +48,8 @@ extension ApplicationService {
 
     private nonisolated static func readMutationInventory(
         processIdentifiersProvider: RunningApplicationProcessIdentifiersProvider,
-        generationProvider: ProcessStartIdentityProvider,
+        identityProvider: MutationIdentityObservationProvider,
+        eligibilityProvider: MutationEligibilityProvider,
         candidateProvider: ApplicationMutationCandidateProvider)
         -> DesktopTargetPlanning.Inventory<ServiceApplicationInfo>
     {
@@ -56,9 +59,18 @@ extension ApplicationService {
         var applications: [ServiceApplicationInfo] = []
         var warnings: [String] = []
         for processIdentifier in processIdentifiers {
-            guard let generation = generationProvider(processIdentifier),
+            let observation = identityProvider(processIdentifier)
+            guard let generation = observation.identity,
                   generation > 0
             else {
+                if observation == .permissionDenied,
+                   Self.confirmsNonTargetableMutationProcess(
+                       processIdentifier,
+                       identityProvider: identityProvider,
+                       eligibilityProvider: eligibilityProvider)
+                {
+                    continue
+                }
                 warnings.append(
                     "Application PID \(processIdentifier) lacked process-generation identity and was omitted.")
                 continue
@@ -69,7 +81,7 @@ extension ApplicationService {
                 continue
             }
             guard candidate.processIdentifier == processIdentifier,
-                  generationProvider(processIdentifier) == generation
+                  identityProvider(processIdentifier) == .identity(generation)
             else {
                 warnings.append(
                     "Application PID \(processIdentifier) changed process generation during inventory and was omitted.")
@@ -100,6 +112,23 @@ extension ApplicationService {
             items: applications,
             completeness: warnings.isEmpty ? .complete : .partial,
             warnings: warnings)
+    }
+
+    private nonisolated static func confirmsNonTargetableMutationProcess(
+        _ processIdentifier: pid_t,
+        identityProvider: MutationIdentityObservationProvider,
+        eligibilityProvider: MutationEligibilityProvider) -> Bool
+    {
+        // Three denied full reads bracket two agreeing credential/policy observations. A readable
+        // generation, changing outcome, or uncertain metadata stays partial; short BSD cannot pin a PID.
+        guard let before = eligibilityProvider(processIdentifier),
+              before.isForeignProhibited(processIdentifier: processIdentifier),
+              identityProvider(processIdentifier) == .permissionDenied,
+              let after = eligibilityProvider(processIdentifier),
+              after == before,
+              identityProvider(processIdentifier) == .permissionDenied
+        else { return false }
+        return true
     }
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {

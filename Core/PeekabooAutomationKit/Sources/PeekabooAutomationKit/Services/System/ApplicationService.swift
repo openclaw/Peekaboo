@@ -122,6 +122,9 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         -> WindowServerActivationState
     typealias ApplicationActivationSleepHandler = @MainActor (_ duration: Duration) async throws -> Void
     typealias ProcessStartIdentityProvider = @Sendable (_ processIdentifier: pid_t) -> UInt64?
+    typealias MutationIdentityObservationProvider = @Sendable (_ processIdentifier: pid_t)
+        -> SystemIdentityResolver.ProcessStartIdentityObservation
+    typealias MutationEligibilityProvider = @Sendable (_ processIdentifier: pid_t) -> ApplicationMutationEligibility?
     typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
     typealias ApplicationHiddenProvider = @MainActor (_ application: NSRunningApplication) throws -> Bool
     typealias ApplicationAccessibilityHideHandler = @MainActor (_ application: NSRunningApplication) throws -> Void
@@ -160,6 +163,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
     let windowServerActivationStateProvider: WindowServerActivationStateProvider
     let applicationActivationSleepHandler: ApplicationActivationSleepHandler
     let processStartIdentityProvider: ProcessStartIdentityProvider
+    let mutationIdentityObservationProvider: MutationIdentityObservationProvider
+    let mutationEligibilityProvider: MutationEligibilityProvider
     let applicationQuitHandler: ApplicationQuitHandler
     let applicationHiddenProvider: ApplicationHiddenProvider
     let applicationAccessibilityHideHandler: ApplicationAccessibilityHideHandler
@@ -213,7 +218,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
                     withApplicationAt: applicationURL,
                     configuration: configuration)
             },
-            applicationReadinessHandler: Self.isReadyForAutomation)
+            applicationReadinessHandler: Self.isReadyForAutomation,
+            mutationIdentityObservationProvider: SystemIdentityResolver.processStartIdentityObservation)
     }
 
     init(
@@ -258,6 +264,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         },
         processStartIdentityProvider: @escaping ProcessStartIdentityProvider = SystemIdentityResolver
             .processStartIdentity,
+        mutationIdentityObservationProvider: MutationIdentityObservationProvider? = nil,
+        mutationEligibilityProvider: @escaping MutationEligibilityProvider = ApplicationMutationEligibility.read,
         applicationQuitHandler: @escaping ApplicationQuitHandler = { application, force in
             force ? application.forceTerminate() : application.terminate()
         },
@@ -319,6 +327,12 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         self.windowServerActivationStateProvider = windowServerActivationStateProvider
         self.applicationActivationSleepHandler = applicationActivationSleepHandler
         self.processStartIdentityProvider = processStartIdentityProvider
+        // An injected optional provider cannot prove denial and must never trigger native eligibility probes.
+        self.mutationIdentityObservationProvider = mutationIdentityObservationProvider ?? { pid in
+            processStartIdentityProvider(pid).map(SystemIdentityResolver.ProcessStartIdentityObservation.identity)
+                ?? .unavailable
+        }
+        self.mutationEligibilityProvider = mutationEligibilityProvider
         self.applicationQuitHandler = applicationQuitHandler
         self.applicationHiddenProvider = applicationHiddenProvider
         self.applicationAccessibilityHideHandler = applicationAccessibilityHideHandler

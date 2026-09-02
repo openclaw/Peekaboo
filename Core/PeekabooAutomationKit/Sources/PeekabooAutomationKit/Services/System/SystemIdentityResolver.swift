@@ -43,6 +43,22 @@ public struct SystemWindowIdentity: Sendable, Equatable {
 /// PIDs are generation-bound because they are recycled; CGWindowID is Apple's session-scoped
 /// WindowServer identifier, with owner generation and bounds retained as fail-closed change evidence.
 public enum SystemIdentityResolver {
+    enum ProcessStartIdentityObservation: Equatable, Sendable {
+        case identity(UInt64)
+        case permissionDenied
+        case unavailable
+
+        var identity: UInt64? {
+            guard case let .identity(identity) = self else { return nil }
+            return identity
+        }
+    }
+
+    struct ProcessCredentials: Equatable, Sendable {
+        let processIdentifier: pid_t
+        let effectiveUserID: uid_t
+    }
+
     enum ExactWindowCatalogObservation {
         case found([String: Any])
         case absent
@@ -85,21 +101,61 @@ public enum SystemIdentityResolver {
 
     /// Returns an identity that changes when macOS reuses a numeric process identifier.
     public static func processStartIdentity(_ processIdentifier: pid_t) -> UInt64? {
-        guard processIdentifier > 0 else { return nil }
+        self.processStartIdentityObservation(processIdentifier).identity
+    }
+
+    static func processStartIdentityObservation(_ processIdentifier: pid_t) -> ProcessStartIdentityObservation {
+        guard processIdentifier > 0 else { return .unavailable }
         var info = proc_bsdinfo()
         let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
-        guard proc_pidinfo(
+        errno = 0
+        let bytesRead = proc_pidinfo(
             processIdentifier,
             PROC_PIDTBSDINFO,
             0,
             &info,
-            expectedSize) == expectedSize
-        else {
-            return nil
+            expectedSize)
+        let errorCode = errno
+        return self.processStartIdentityObservation(info: info, bytesRead: bytesRead, errorCode: errorCode)
+    }
+
+    static func processStartIdentityObservation(
+        info: proc_bsdinfo,
+        bytesRead: Int32,
+        errorCode: Int32) -> ProcessStartIdentityObservation
+    {
+        guard bytesRead == Int32(MemoryLayout<proc_bsdinfo>.stride) else {
+            // Only a failed full read with explicit EPERM proves the verified permission-denied path.
+            return bytesRead <= 0 && errorCode == EPERM ? .permissionDenied : .unavailable
         }
         let seconds = UInt64(info.pbi_start_tvsec)
         let microseconds = UInt64(info.pbi_start_tvusec)
-        return seconds.multipliedReportingOverflow(by: 1_000_000).partialValue &+ microseconds
+        return .identity(seconds.multipliedReportingOverflow(by: 1_000_000).partialValue &+ microseconds)
+    }
+
+    /// Short BSD supplies credentials only, never a process-generation receipt.
+    static func processCredentials(_ processIdentifier: pid_t) -> ProcessCredentials? {
+        guard processIdentifier > 0 else { return nil }
+        var info = proc_bsdshortinfo()
+        let bytesRead = proc_pidinfo(
+            processIdentifier,
+            PROC_PIDT_SHORTBSDINFO,
+            0,
+            &info,
+            Int32(MemoryLayout<proc_bsdshortinfo>.stride))
+        return self.processCredentials(processIdentifier, info: info, bytesRead: bytesRead)
+    }
+
+    static func processCredentials(
+        _ processIdentifier: pid_t,
+        info: proc_bsdshortinfo,
+        bytesRead: Int32) -> ProcessCredentials?
+    {
+        guard processIdentifier > 0,
+              bytesRead == Int32(MemoryLayout<proc_bsdshortinfo>.stride),
+              info.pbsi_pid == UInt32(processIdentifier)
+        else { return nil }
+        return ProcessCredentials(processIdentifier: processIdentifier, effectiveUserID: info.pbsi_uid)
     }
 
     /// Resolves one exact window from the current WindowServer catalog without AX traversal.
