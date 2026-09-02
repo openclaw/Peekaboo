@@ -119,13 +119,13 @@ struct MenuBarStatusView: View {
     private func openMainWindow() {
         guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) else { return }
 
-        DockIconManager.shared.temporarilyShowDock()
+        DockIconManager.shared.prepareForPresentation()
         NSApp.activate(ignoringOtherApps: true)
         self.openWindow(id: "main")
     }
 
     private func openInspector() {
-        DockIconManager.shared.temporarilyShowDock()
+        DockIconManager.shared.prepareForPresentation()
         NSApp.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(name: .showInspector, object: nil)
     }

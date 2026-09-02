@@ -22,11 +22,10 @@ enum SettingsOpener {
             SettingsTabRouter.request(tab)
         }
 
-        // Let DockIconManager handle dock visibility
-        DockIconManager.shared.temporarilyShowDock()
+        DockIconManager.shared.prepareForPresentation()
 
         Task { @MainActor in
-            // Small delay to ensure dock icon is visible
+            // Let activation policy settle before requesting the SwiftUI Settings scene.
             try? await Task.sleep(for: .milliseconds(50))
 
             // Activate the app
@@ -60,8 +59,6 @@ enum SettingsOpener {
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(100))
                     settingsWindow.level = .normal
-
-                    // DockIconManager will handle dock visibility automatically
                 }
             }
 

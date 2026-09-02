@@ -436,8 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.logger.info("showMainWindow called")
 
-        // Ensure dock icon is visible
-        DockIconManager.shared.temporarilyShowDock()
+        DockIconManager.shared.prepareForPresentation()
 
         // Activate the app first
         NSApp.activate(ignoringOtherApps: true)
@@ -510,8 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.logger.info("openWindow called with id: \(id)")
 
-        // Ensure dock icon is visible
-        DockIconManager.shared.temporarilyShowDock()
+        DockIconManager.shared.prepareForPresentation()
 
         // Use the window opener if available
         if let opener = self.windowOpener {

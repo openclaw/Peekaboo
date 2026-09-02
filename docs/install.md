@@ -36,6 +36,16 @@ This is the form you point Codex, Claude Code, and Cursor at. See [MCP.md](MCP.m
 
 The full menu-bar app (visualizer, permission flows, status item) ships as a drag-to-Applications DMG on the [Releases](https://github.com/openclaw/Peekaboo/releases/latest) page. The app and CLI are separate installs; use Homebrew or npm above when you also need the `peekaboo` command on your `PATH`.
 
+In Settings, **Show Peekaboo in → Menu bar only** keeps Peekaboo out of the Dock and Command-Tab,
+even while Settings, Inspector, or an enabled Sessions window is open. Use the menu-bar item or
+configured keyboard shortcuts to return to those windows. **Menu bar and Dock** keeps the Dock
+and Command-Tab entry available even after all windows are closed.
+
+An unattended background Bridge host stays out of the Dock and suppresses automatic window
+presentation regardless of the saved Dock preference. Explicitly opening a window from the menu
+bar or a shortcut resumes that preference for the running host; it does not force a Dock entry
+when **Menu bar only** is selected.
+
 ## Build from source
 
 Requires macOS 15.0+ and a Swift 6.2+ toolchain. See [platform-support.md](platform-support.md)
