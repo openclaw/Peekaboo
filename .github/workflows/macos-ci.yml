@@ -290,8 +290,7 @@ jobs:
           PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
           PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
         run: |
-          swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
-            --filter 'SeeCommandRuntimeTests/config environment restores (inherited values|nested throwing bodies)'
+          python3 ../../scripts/test-see-config-environment.py
 
   tachikoma:
     name: Tachikoma build & tests
