@@ -1311,7 +1311,7 @@ extension PeekabooBridgeOperationResultSemantics {
             target: target)
     }
 
-    private static func actionFailure(in response: PeekabooBridgeResponse) -> DesktopActionFailure? {
+    static func actionFailure(in response: PeekabooBridgeResponse) -> DesktopActionFailure? {
         switch response {
         case let .error(envelope):
             envelope.desktopActionFailure

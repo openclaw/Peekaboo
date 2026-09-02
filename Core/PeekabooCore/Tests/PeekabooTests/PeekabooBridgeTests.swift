@@ -2208,6 +2208,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     var browserStatusError: (any Error)?
     var browserConnectFailure: DesktopActionFailure?
     var browserConnectError: (any Error)?
+    var browserConnectResultCallCount = 0
     var browserConnectOutcome = DesktopActionOutcome.dispatchedUnverified(
         delivery: .init(mechanism: .browserProtocol, mode: .foreground),
         evidence: .deliveryAccepted,

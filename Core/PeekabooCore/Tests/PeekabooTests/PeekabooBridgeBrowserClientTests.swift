@@ -2,13 +2,161 @@ import Darwin
 import Foundation
 import MCP
 import PeekabooAgentRuntime
-import PeekabooAutomationKit
 import PeekabooBridgeTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooBridge
 @testable import PeekabooCore
+
+extension PeekabooBridgeBrowserClientTests {
+    @Test(arguments: [false, true])
+    @MainActor
+    func `unscoped status distinguishes confirmed absence from transport timeout`(timesOut: Bool) async throws {
+        let version = Self.legacyBrowserConnectVersion
+        let peer = try ScriptedBridgePeer(scripts: [
+            [.respond(.handshake(BridgeTestFixtures.handshake(
+                negotiatedVersion: version,
+                supportedOperations: [.browserStatus])))],
+            timesOut ? [.idle(seconds: 0.3)] : [.respond(.browserStatus(.init(
+                isConnected: false,
+                toolCount: 0,
+                detectedBrowsers: [])))],
+        ], socketPathPrefix: "pr660-status")
+        let bridge = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        _ = try await bridge.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.status-tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid()), protocolVersion: version)
+        let client = RemoteBrowserMCPClient(client: bridge)
+        let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+            arguments: ToolArguments(raw: ["action": "status"]))
+        let text = response.content.compactMap { item -> String? in
+            guard case let .text(value, _, _) = item else { return nil }
+            return value
+        }.joined(separator: "\n")
+        let meta = try #require(response.meta?.objectValue)
+        #expect(!response.isError)
+        #expect(meta["status_observation"] == .string(timesOut ? "indeterminate" : "confirmed"))
+        #expect(meta["connected"] == (timesOut ? .null : .bool(false)))
+        #expect(meta["tool_count"] == (timesOut ? .null : .int(0)))
+        #expect(meta["browser_count"] == (timesOut ? .null : .int(0)))
+        #expect(meta["channels"] == (timesOut ? .null : .array([])))
+        #expect(text.contains(timesOut ? "Connected: unknown" : "Connected: no"))
+        #expect(text.contains(timesOut ? "Tools: unknown" : "Tools: 0"))
+        #expect(text.contains(timesOut ? "Detected Chrome: unknown" : "Detected Chrome: none"))
+        #expect(text.contains("To enable browser control:") == !timesOut)
+        #expect(text.contains("Error:") == timesOut)
+        if timesOut {
+            #expect(text.contains(POSIXError(.ETIMEDOUT).localizedDescription))
+        }
+        #expect(meta["mutation_dispatched"] == nil)
+        await peer.waitUntilFinished()
+        let requests = await peer.requests
+        #expect(requests.count == 2)
+        for data in requests.dropFirst() {
+            let request = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeRequest.self, from: data)
+            #expect(request.operation == .browserStatus)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `unattributed connect preserves bounded typed diagnostics and unsafe outcome`(longCause: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pr660-connect-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root.appendingPathComponent("watermarks"))
+        let services = StubServices(snapshots: InMemorySnapshotManager(desktopMutationWatermarkStore: store))
+        let original = DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: .browserProtocol, mode: .foreground),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Browser connection completion is unknown after the provider accepted the request.",
+            hint: "Check browser status before deciding whether to reconnect.",
+            causeDescription: "Fixture approval deadline elapsed." +
+                (longCause ? String(repeating: "x", count: 5000) : ""))
+        services.browserConnectError = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            actionFailure: original,
+            details: "RAW-DIAGNOSTIC-NOT-FOR-PROJECTION")
+        let server = PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            desktopMutationWatermarkStore: store,
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: root.appendingPathComponent("coordination")),
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
+            })
+        // Keep the Unix-socket pathname below the platform limit; all persistent fixture state is owned above.
+        let socketPath = "/tmp/pr660-connect-\(UUID().uuidString).sock"
+        let host = PeekabooBridgeHost(socketPath: socketPath, server: server, allowedTeamIDs: [])
+        try await host.startChecked()
+        do {
+            let bridge = TrustedBridgeClientFixture.make(
+                socketPath: socketPath,
+                operationReceiptExportDirectory: root.appendingPathComponent("receipts"))
+            _ = try await bridge.handshake(client: .init(
+                bundleIdentifier: "dev.peekaboo.connect-diagnostic-tests",
+                teamIdentifier: nil,
+                processIdentifier: getpid()))
+            let client = RemoteBrowserMCPClient(client: bridge)
+            let response = try await BrowserTool(client: client, executionPolicy: .unrestricted).execute(
+                arguments: ToolArguments(raw: ["action": "connect", "channel": "stable"]))
+            #expect(response.isError)
+            let text = response.content.compactMap { item -> String? in
+                guard case let .text(value, _, _) = item else { return nil }
+                return value
+            }.joined(separator: "\n")
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string("indeterminate"))
+            #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
+            #expect(meta["dispatched_unit_count"] == .int(1))
+            #expect(meta["retry_safe"] == .bool(false))
+            let bundle = try #require(await bridge.lastOperationReceiptBundle())
+            let canonicalResponse = try JSONDecoder.peekabooBridgeDecoder().decode(
+                PeekabooBridgeResponse.self, from: bundle.canonicalResponse)
+            guard case let .projectedAction(projected) = canonicalResponse,
+                  case let .error(envelope) = projected.response
+            else {
+                Issue.record("Expected a projected attribution failure in the verified receipt bundle")
+                await host.stop()
+                return
+            }
+            let failure = try #require(envelope.desktopActionFailure)
+            #expect(failure.message == "Bridge operation completed without a trustworthy exact target receipt.")
+            let cause = try #require(failure.causeDescription)
+            #expect(cause.contains(original.message))
+            #expect(cause.contains("Fixture approval deadline elapsed."))
+            #expect(cause.contains(DesktopTargetIdentityError.incompleteExactWindow.localizedDescription))
+            #expect(!cause.contains("RAW-DIAGNOSTIC-NOT-FOR-PROJECTION"))
+            #expect(text.contains(cause))
+            #expect(envelope.details == nil)
+            #expect(envelope.operationMayHaveCompleted)
+            #expect(cause.count < 2500)
+            #expect(failure.outcome == original.outcome.routed(to: .bridge))
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.targetReceipt == nil)
+            #expect(failure.selectedLeafEvidence == nil)
+            let receipt = bundle.receipt
+            #expect(receipt.payload.target == nil)
+            #expect(receipt.payload.targetAttributionFailure?.code == .incompleteExactWindow)
+            #expect(receipt.payload.targetAttributionFailure?.stage == .postExecution)
+            #expect(receipt.payload.outcome == failure.outcome.projection)
+            #expect(services.browserConnectResultCallCount == 1)
+            #expect(services.lastBrowserStatusChannel == nil)
+            #expect(services.lastBrowserExecute == nil)
+        } catch {
+            await host.stop()
+            throw error
+        }
+        await host.stop()
+    }
+}
 
 struct PeekabooBridgeBrowserClientTests {
     @Test
@@ -825,6 +973,7 @@ extension StubServices: PeekabooBridgeBrowserConnectionResultProviding {
         channel: String?,
         browserURL: String?) async throws -> DesktopActionResult<PeekabooBridgeBrowserStatus>
     {
+        self.browserConnectResultCallCount += 1
         if let browserConnectError {
             throw browserConnectError
         }

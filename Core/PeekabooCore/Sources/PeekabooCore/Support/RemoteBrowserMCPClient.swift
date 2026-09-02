@@ -172,11 +172,7 @@ public final class RemoteBrowserMCPClient: BrowserMCPClientProviding, BrowserMCP
         do {
             return try await Self.status(from: self.client.browserStatus(channel: channel?.rawValue))
         } catch {
-            return BrowserMCPStatus(
-                isConnected: false,
-                toolCount: 0,
-                detectedBrowsers: [],
-                error: error.localizedDescription)
+            return self.indeterminateStatus(error: error)
         }
     }
 

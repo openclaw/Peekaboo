@@ -698,7 +698,9 @@ public struct BrowserTool: MCPTool {
         }
         return outcome
     }
+}
 
+extension BrowserTool {
     private func formatStatus(
         _ status: BrowserMCPStatus,
         headline: String,
@@ -715,7 +717,9 @@ public struct BrowserTool: MCPTool {
         }
         lines.append("Tools: \(status.observation == .confirmed ? String(status.toolCount) : "unknown")")
 
-        if status.detectedBrowsers.isEmpty {
+        if status.observation == .indeterminate {
+            lines.append("Detected Chrome: unknown")
+        } else if status.detectedBrowsers.isEmpty {
             lines.append("Detected Chrome: none")
         } else {
             lines.append("Detected Chrome:")
@@ -761,8 +765,9 @@ public struct BrowserTool: MCPTool {
             "connected": status.observation == .confirmed ? .bool(status.isConnected) : .null,
             "status_observation": .string(status.observation.rawValue),
             "tool_count": status.observation == .confirmed ? .int(status.toolCount) : .null,
-            "browser_count": .int(status.detectedBrowsers.count),
-            "channels": .array(status.detectedBrowsers.map { .string($0.channel.rawValue) }),
+            "browser_count": status.observation == .confirmed ? .int(status.detectedBrowsers.count) : .null,
+            "channels": status.observation == .confirmed
+                ? .array(status.detectedBrowsers.map { .string($0.channel.rawValue) }) : .null,
         ]
         if let providerSessionEpoch = status.providerSessionEpoch {
             meta["provider_session_epoch"] = .string(

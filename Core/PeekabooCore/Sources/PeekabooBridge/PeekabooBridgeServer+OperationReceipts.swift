@@ -175,6 +175,7 @@ extension PeekabooBridgeServer {
                 failure: failure,
                 originalOutcome: handled.outcome?.projection ??
                     PeekabooBridgeOperationReceiptSemantics.outcome(in: handled.response),
+                originalFailure: PeekabooBridgeOperationResultSemantics.actionFailure(in: handled.response),
                 afterExecution: true)
             target = nil
             focusedElement = nil
@@ -591,6 +592,7 @@ extension PeekabooBridgeServer {
         plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         failure: PeekabooBridgeTargetAttributionFailure,
         originalOutcome: DesktopActionOutcome.Projection?,
+        originalFailure: DesktopActionFailure? = nil,
         afterExecution: Bool) -> PeekabooBridgeResponse
     {
         let context = "bridge_target_attribution:\(failure.code.rawValue)"
@@ -604,6 +606,15 @@ extension PeekabooBridgeServer {
 
         let original = originalOutcome?.outcome
         let mayHaveDispatched = afterExecution && (original?.dispatchState.mutationDispatched ?? true)
+        var diagnostics = [failure.message]
+        if let originalFailure {
+            // Preserve only caller-facing typed diagnostics, never raw envelope details or target evidence.
+            diagnostics.append("Original operation failure: \(originalFailure.message.prefix(512))")
+            if let cause = originalFailure.causeDescription, !cause.isEmpty {
+                diagnostics.append("Original cause: \(cause.prefix(1536))")
+            }
+        }
+        let causeDescription = diagnostics.joined(separator: "\n")
         let actionFailure: DesktopActionFailure = if mayHaveDispatched {
             .indeterminate(
                 route: .bridge,
@@ -612,14 +623,14 @@ extension PeekabooBridgeServer {
                 unitCount: original?.dispatchState.unitCount,
                 message: "Bridge operation completed without a trustworthy exact target receipt.",
                 hint: "Observe the intended target before any retry.",
-                causeDescription: failure.message)
+                causeDescription: causeDescription)
         } else {
             .preDispatchRefusal(
                 route: .bridge,
                 reason: .invalidRequest,
                 message: "Bridge operation was refused because its target receipt is invalid.",
                 hint: "Capture fresh target evidence and retry with one exact process or window receipt.",
-                causeDescription: failure.message)
+                causeDescription: causeDescription)
         }
         let envelope = PeekabooBridgeErrorEnvelope(
             code: mayHaveDispatched ? .internalError : .invalidRequest,
