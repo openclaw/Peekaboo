@@ -4,11 +4,7 @@ import Testing
 
 /// Synthetic capture tests use private locks and refuse any uninjected ownership claim.
 public struct CaptureTestIsolation: TestTrait, SuiteTrait, TestScoping {
-    #if compiler(>=6.4)
     public typealias TestBody = @concurrent @Sendable () async throws -> Void
-    #else
-    public typealias TestBody = @Sendable () async throws -> Void
-    #endif
 
     public init() {}
 
