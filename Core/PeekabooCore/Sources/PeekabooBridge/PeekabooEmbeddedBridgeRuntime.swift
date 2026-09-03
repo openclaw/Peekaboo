@@ -30,6 +30,10 @@ public final class PeekabooEmbeddedBridgeServices: PeekabooBridgeServiceProvidin
         true
     }
 
+    public var supportsClassicCaptureWithoutScreenCaptureKit: Bool {
+        true
+    }
+
     public init(
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore = DesktopMutationWatermarkStore(),
         snapshotOptions: InMemorySnapshotManager.Options = .init(copyArtifactsOnStore: true),

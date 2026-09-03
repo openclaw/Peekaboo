@@ -70,10 +70,7 @@ public final class PeekabooBridgeServer {
     public static let defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds =
         ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1
 
-    private enum ScreenCaptureKitOwnershipPreparationOutcome: Sendable {
-        case available
-        case unavailable(String)
-    }
+    private typealias ScreenCaptureKitOwnershipPreparationOutcome = ScreenCaptureKitReadiness
 
     private final class ScreenCaptureKitOwnershipPreparationWaiter: @unchecked Sendable {
         typealias PreparationResult = Result<ScreenCaptureKitOwnershipPreparationOutcome, any Error>
@@ -118,6 +115,7 @@ public final class PeekabooBridgeServer {
     let allowedOperations: Set<PeekabooBridgeOperation>
     let hostIdentity: PeekabooBridgeHostIdentity?
     private(set) var hostCapabilities: Set<String>
+    private(set) var screenCaptureKitReadiness: ScreenCaptureKitReadiness?
     nonisolated let supportsBrowserHandoffMaintenance: Bool
     let servingSocketPath: String?
     var agentExecutionRunner: (any PeekabooBridgeAgentExecutionRunning)?
@@ -234,24 +232,22 @@ public final class PeekabooBridgeServer {
             services: services,
             supportedVersions: supportedVersions,
             allowedOperations: self.allowedOperations)
+        self.screenCaptureKitReadiness = Self.registerScreenCaptureKitCapability(
+            supported: services.supportsScreenCaptureKitProcessOwnership,
+            register: screenCaptureKitProcessCapabilityRegistrar)
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
-            (try? screenCaptureKitProcessCapabilityRegistrar()) != nil
-        resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
+            self.screenCaptureKitReadiness?.failure == nil
         if hostIdentity?.processStartIdentity != nil {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.hostGenerationIdentity)
         }
         if hostIdentity?.codeSignatureHash != nil {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.codeSignatureBuildIdentity)
         }
-        if self.allowedOperations.contains(.desktopObservation) {
-            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopObservationOCR)
-            if services.supportsDesktopObservationCaptureEngine {
-                resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopObservationCaptureEngine)
-            }
-            if registeredScreenCaptureKitOwnership {
-                resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
-            }
-        }
+        Self.updateCaptureCapabilities(
+            to: &resolvedHostCapabilities,
+            services: services,
+            allowedOperations: self.allowedOperations,
+            registeredOwnership: registeredScreenCaptureKitOwnership)
         if supportedVersions.upperBound >= PeekabooBridgeConstants.agentExecutionTraceVersion,
            self.allowedOperations.contains(.agentExecutionTrace),
            servingSocketPath != nil,
@@ -352,9 +348,9 @@ public final class PeekabooBridgeServer {
             let created = Task<ScreenCaptureKitOwnershipPreparationOutcome, Never> {
                 do {
                     try await prepare()
-                    return .available
+                    return .init(state: .ready)
                 } catch {
-                    return .unavailable(error.localizedDescription)
+                    return .failed(error, stage: .preparation)
                 }
             }
             self.screenCaptureKitOwnershipPreparationTask = created
@@ -368,16 +364,60 @@ public final class PeekabooBridgeServer {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            outcome = .unavailable(error.localizedDescription)
+            outcome = .failed(error, stage: .preparation)
         }
         try Task.checkCancellation()
-        if case let .unavailable(reason) = outcome {
+        self.screenCaptureKitReadiness = outcome
+        if !outcome.permitsAttempt {
             self.hostCapabilities.remove(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
             self.logger.warning(
                 """
-                ScreenCaptureKit ownership preparation failed; serving without ownership capability: \
-                \(reason, privacy: .public)
+                ScreenCaptureKit ownership preparation failed; preserving implementation support: \
+                \(outcome.refusal.userMessage, privacy: .public)
                 """)
+        }
+    }
+
+    private static func updateCaptureCapabilities(
+        to capabilities: inout Set<String>,
+        services: any PeekabooBridgeServiceProviding,
+        allowedOperations: Set<PeekabooBridgeOperation>,
+        registeredOwnership: Bool)
+    {
+        capabilities.subtract([
+            PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+            PeekabooBridgeHostCapability.screenCaptureKitOwnershipEnforcement,
+            PeekabooBridgeHostCapability.classicCaptureWithoutScreenCaptureKit,
+        ])
+        if allowedOperations.contains(.desktopObservation) {
+            if services.supportsScreenCaptureKitProcessOwnership {
+                capabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitOwnershipEnforcement)
+            }
+            if services.supportsClassicCaptureWithoutScreenCaptureKit,
+               services.supportsDesktopObservationCaptureEngine
+            {
+                capabilities.insert(PeekabooBridgeHostCapability.classicCaptureWithoutScreenCaptureKit)
+            }
+            capabilities.insert(PeekabooBridgeHostCapability.desktopObservationOCR)
+            if services.supportsDesktopObservationCaptureEngine {
+                capabilities.insert(PeekabooBridgeHostCapability.desktopObservationCaptureEngine)
+            }
+            if registeredOwnership {
+                capabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
+            }
+        }
+    }
+
+    private static func registerScreenCaptureKitCapability(
+        supported: Bool,
+        register: @MainActor () throws -> Void) -> ScreenCaptureKitReadiness?
+    {
+        guard supported else { return nil }
+        do {
+            try register()
+            return .init(state: .unavailable)
+        } catch {
+            return .failed(error, stage: .registration)
         }
     }
 
@@ -447,7 +487,8 @@ public final class PeekabooBridgeServer {
             let handled = try await self.route(request, peer: peer)
             return try self.encoder.encode(PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
                 response: handled.response,
-                outcome: handled.outcome?.routed(to: .bridge).projection))
+                outcome: handled.outcome?.routed(to: .bridge).projection)
+                .projectingScreenCaptureKitDiagnostics(offered: false))
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error(
                 "projected bridge request failed code=\(envelope.code.rawValue, privacy: .public)")
@@ -470,8 +511,10 @@ public final class PeekabooBridgeServer {
         let response = PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
             response: .error(envelope),
             outcome: envelope.actionOutcome)
+            .projectingScreenCaptureKitDiagnostics(offered: false)
         guard let data = try? self.encoder.encode(response), !data.isEmpty else {
-            return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
+            return PeekabooBridgeResponse.encodeError(
+                envelope.removingScreenCaptureKitDiagnostic(), using: self.encoder)
         }
         return data
     }
@@ -480,7 +523,7 @@ public final class PeekabooBridgeServer {
         for error: any Error,
         operation: PeekabooBridgeOperation) -> PeekabooBridgeErrorEnvelope
     {
-        if let envelope = self.actionFailureEnvelope(for: error) {
+        if let envelope = self.captureOrActionFailureEnvelope(for: error) {
             return envelope
         }
         if let error = error as? ApplicationLifecycleRefusalError {
@@ -587,7 +630,15 @@ public final class PeekabooBridgeServer {
             details: "\(error)")
     }
 
-    private static func actionFailureEnvelope(for error: any Error) -> PeekabooBridgeErrorEnvelope? {
+    private static func captureOrActionFailureEnvelope(for error: any Error) -> PeekabooBridgeErrorEnvelope? {
+        if let diagnostic = error as? ScreenCaptureKitOwnershipDiagnostic {
+            return .init(
+                code: .internalError,
+                message: diagnostic.userMessage,
+                context: PeekabooBridgeErrorEnvelope.standardizedErrorContextPrefix +
+                    StandardErrorCode.captureFailed.rawValue,
+                screenCaptureKitOwnershipDiagnostic: diagnostic)
+        }
         if let failure = error as? DesktopActionFailure {
             return .init(
                 code: .internalError,
@@ -1042,6 +1093,7 @@ public final class PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Operation \(op.rawValue) is not supported by this host")
         }
+        try self.validateScreenCaptureKitReadiness(for: request)
         if case let .browserExecute(payload) = request {
             _ = try Self.validatedBrowserExecutionReceipt(payload)
         }
@@ -1179,8 +1231,25 @@ public final class PeekabooBridgeServer {
     {
         guard case let .desktopObservation(payload) = request else { return false }
         return payload.capture.engine == .legacy &&
-            hostCapabilities.contains(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership) &&
+            (hostCapabilities.contains(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership) ||
+                hostCapabilities.contains(PeekabooBridgeHostCapability.classicCaptureWithoutScreenCaptureKit)) &&
             allowedOperations.contains(.desktopObservation)
+    }
+
+    private func validateScreenCaptureKitReadiness(for request: PeekabooBridgeRequest) throws {
+        let requiresScreenCaptureKit: Bool = switch request {
+        case let .desktopObservation(payload):
+            payload.capture.engine != .legacy
+        case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
+            true
+        default:
+            false
+        }
+        guard requiresScreenCaptureKit,
+              self.services.supportsScreenCaptureKitProcessOwnership,
+              self.screenCaptureKitReadiness?.permitsAttempt != true
+        else { return }
+        throw self.screenCaptureKitReadiness?.refusal ?? ScreenCaptureKitReadiness(state: .unknown).refusal
     }
 
     private static func validateTargetedClickAccess(

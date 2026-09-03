@@ -709,6 +709,21 @@ public actor PeekabooBridgeClient {
         }
     }
 
+    nonisolated static func offeredCapabilities(for protocolVersion: PeekabooBridgeProtocolVersion) -> [String] {
+        var capabilities: [String] = []
+        if protocolVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion {
+            capabilities.append(PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics)
+        }
+        if protocolVersion >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion {
+            capabilities.append(PeekabooBridgeClientCapability.producerBoundSnapshotReferences)
+            capabilities.append(PeekabooBridgeClientCapability.targetedClickAccessibilityValueDelivery)
+        }
+        if protocolVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion {
+            capabilities.append(PeekabooBridgeClientCapability.browserConnectionHandoff)
+        }
+        return capabilities
+    }
+
     private func performHandshake(
         inputs: PeekabooBridgeClientHandshakeInputs,
         protocolVersion: PeekabooBridgeProtocolVersion,
@@ -721,14 +736,7 @@ public actor PeekabooBridgeClient {
             requestedHostKind: inputs.requestedHost,
             operationClientInstanceID: self.operationClientInstanceID,
             replacingOperationSessionID: replacingOperationSessionID,
-            clientCapabilities: protocolVersion >= PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion
-                ? ([
-                    PeekabooBridgeClientCapability.producerBoundSnapshotReferences,
-                    PeekabooBridgeClientCapability.targetedClickAccessibilityValueDelivery,
-                ] + (protocolVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion
-                    ? [PeekabooBridgeClientCapability.browserConnectionHandoff]
-                    : []))
-                : nil)
+            clientCapabilities: Self.offeredCapabilities(for: protocolVersion))
         let reply = try await self.sendCarryingActionOutcome(.handshake(payload), timeoutSec: timeoutSec)
         try self.validateTrustedConnectedHost(reply.connectedHost)
         let response = reply.response

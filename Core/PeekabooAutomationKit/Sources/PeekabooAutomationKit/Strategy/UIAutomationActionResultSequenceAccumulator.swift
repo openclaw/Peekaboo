@@ -495,7 +495,8 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
             causeDescription: composed.causeDescription,
             standardErrorCode: leafFailure.standardErrorCode,
             targetReceipt: targetReceipt,
-            selectedLeafEvidence: evidence)
+            selectedLeafEvidence: evidence,
+            screenCaptureKitOwnershipDiagnostic: leafFailure.screenCaptureKitOwnershipDiagnostic)
         else {
             preconditionFailure("Composed action failures must retain a non-confirmed canonical outcome")
         }
@@ -512,7 +513,8 @@ public struct UIAutomationActionResultSequenceAccumulator: Sendable {
                 message: failure.message,
                 hint: failure.hint,
                 causeDescription: failure.causeDescription,
-                standardErrorCode: failure.standardErrorCode)
+                standardErrorCode: failure.standardErrorCode,
+                screenCaptureKitOwnershipDiagnostic: failure.screenCaptureKitOwnershipDiagnostic)
             else {
                 preconditionFailure("A reconciled desktop action failure must remain non-confirmed")
             }

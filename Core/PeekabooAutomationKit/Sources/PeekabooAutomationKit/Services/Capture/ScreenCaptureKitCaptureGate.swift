@@ -12,10 +12,20 @@ enum ScreenCaptureKitCaptureGate {
     @TaskLocal static var processOwnerClaimOverride:
         (@MainActor @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt)?
     @TaskLocal static var postCaptureSettleOverride: (@MainActor @Sendable () async -> Void)?
+    @TaskLocal static var coordinationOverride: Coordination?
     private static let processOwnerLease = Result { try ScreenCaptureKitOwnerLease() }
-    @MainActor private static let captureCoordinator = ScreenCaptureKitOperationCoordinator(
+    @MainActor private static let liveCaptureCoordinator = ScreenCaptureKitOperationCoordinator(
         lockFilePath: (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("boo.peekaboo.sckit-capture.lock"))
+
+    struct Coordination: Sendable {
+        let operationLockPath: String
+        let coordinator: ScreenCaptureKitOperationCoordinator
+    }
+
+    @MainActor private static var captureCoordinator: ScreenCaptureKitOperationCoordinator {
+        self.coordinationOverride?.coordinator ?? self.liveCaptureCoordinator
+    }
 
     @discardableResult
     @MainActor
@@ -27,12 +37,8 @@ enum ScreenCaptureKitCaptureGate {
                 return try processOwnerClaimOverride()
             }
             return try self.processOwnerLease.get().claim().receipt
-        } catch let error as ScreenCaptureKitOwnerLease.LeaseError {
-            throw self.captureError(for: error, operationName: operationName)
         } catch {
-            throw OperationError.captureFailed(
-                reason: "ScreenCaptureKit owner setup failed before \(operationName): " +
-                    "\(error.localizedDescription). No ScreenCaptureKit operation was dispatched.")
+            throw ScreenCaptureKitOwnershipDiagnostic.capturing(error, stage: .entry, operation: operationName)
         }
     }
 
@@ -115,7 +121,7 @@ enum ScreenCaptureKitCaptureGate {
     }
 
     static func openExclusiveOperationLockDescriptor() -> Int32 {
-        let path = (NSTemporaryDirectory() as NSString)
+        let path = self.coordinationOverride?.operationLockPath ?? (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("boo.peekaboo.sckit-operation.lock")
         // Agent actions can spawn long-lived children while this lock is held. Set close-on-exec atomically so an
         // abrupt owner exit cannot leave its capture transaction pinned by an inherited child descriptor.
@@ -176,22 +182,6 @@ enum ScreenCaptureKitCaptureGate {
                 excludingDesktopWindows,
                 onScreenWindowsOnly: onScreenWindowsOnly)
         }
-    }
-
-    private static func captureError(
-        for error: ScreenCaptureKitOwnerLease.LeaseError,
-        operationName: String) -> PeekabooError
-    {
-        if case let .ownedByAnotherProcess(_, receipt) = error {
-            return OperationError.captureFailed(
-                reason: "ScreenCaptureKit is already owned by another Peekaboo process " +
-                    "(PID \(receipt.processIdentifier), generation \(receipt.processStartIdentity)). " +
-                    "Use the active Bridge host, verify and stop that exact owner before retrying, " +
-                    "or explicitly choose the classic capture engine. No ScreenCaptureKit operation was dispatched.")
-        }
-        return OperationError.captureFailed(
-            reason: "ScreenCaptureKit owner validation failed before \(operationName): " +
-                "\(error.localizedDescription). No ScreenCaptureKit operation was dispatched.")
     }
 }
 

@@ -377,7 +377,10 @@ public enum PeekabooBridgeHostCapability {
     public static let backgroundBridgeHost = "backgroundBridgeHost"
     public static let desktopObservationOCR = "desktopObservationOCR"
     public static let desktopObservationCaptureEngine = "desktopObservationCaptureEngine"
+    // Old clients require successful preparation as well as implemented ownership support.
     public static let screenCaptureKitProcessOwnership = "screenCaptureKitProcessOwnership"
+    public static let screenCaptureKitOwnershipEnforcement = "screenCaptureKitOwnershipEnforcement"
+    public static let classicCaptureWithoutScreenCaptureKit = "classicCaptureWithoutScreenCaptureKit"
     public static let safeBackgroundApplicationLaunchNoOp = "safeBackgroundApplicationLaunchNoOp"
     public static let processGenerationPinnedApplicationActivation =
         "processGenerationPinnedApplicationActivation"
@@ -411,6 +414,7 @@ public enum PeekabooBridgeHostCapability {
 /// decodable by already-shipped hosts while the offer prevents new 1.34 operations or semantics
 /// from being advertised to already-shipped 1.34 clients.
 public enum PeekabooBridgeClientCapability {
+    public static let screenCaptureKitOwnershipDiagnostics = "screenCaptureKitOwnershipDiagnostics"
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
     public static let browserConnectionHandoff = "browserConnectionHandoff"
@@ -431,6 +435,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     public let hostIdentity: PeekabooBridgeHostIdentity?
     /// Optional raw capabilities of this host process and its launch mode.
     public let hostCapabilities: [String]?
+    public let screenCaptureKitReadiness: ScreenCaptureKitReadiness?
     /// Ephemeral identity of the exact listener that served this handshake.
     public let operationAttestation: PeekabooBridgeListenerAttestation?
     /// Listener-signed, peer-bound replay session for protocol 1.29 requests.
@@ -446,6 +451,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         permissionTags: [String: [PeekabooBridgePermissionKind]] = [:],
         hostIdentity: PeekabooBridgeHostIdentity? = nil,
         hostCapabilities: [String]? = nil,
+        screenCaptureKitReadiness: ScreenCaptureKitReadiness? = nil,
         operationAttestation: PeekabooBridgeListenerAttestation? = nil,
         operationSessionAttestation: PeekabooBridgeOperationSessionAttestation? = nil)
     {
@@ -458,6 +464,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.permissionTags = permissionTags
         self.hostIdentity = hostIdentity
         self.hostCapabilities = hostCapabilities
+        self.screenCaptureKitReadiness = screenCaptureKitReadiness
         self.operationAttestation = operationAttestation
         self.operationSessionAttestation = operationSessionAttestation
     }
@@ -472,6 +479,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         case permissionTags
         case hostIdentity
         case hostCapabilities
+        case screenCaptureKitReadiness
         case operationAttestation
         case operationSessionAttestation
     }
@@ -491,6 +499,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
             forKey: .permissionTags) ?? [:]
         self.hostIdentity = try container.decodeIfPresent(PeekabooBridgeHostIdentity.self, forKey: .hostIdentity)
         self.hostCapabilities = try container.decodeIfPresent([String].self, forKey: .hostCapabilities)
+        self.screenCaptureKitReadiness = try container.decodeIfPresent(
+            ScreenCaptureKitReadiness.self, forKey: .screenCaptureKitReadiness)
         self.operationAttestation = try container.decodeIfPresent(
             PeekabooBridgeListenerAttestation.self,
             forKey: .operationAttestation)
@@ -514,6 +524,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         if let hostCapabilities, !hostCapabilities.isEmpty {
             try container.encode(hostCapabilities, forKey: .hostCapabilities)
         }
+        try container.encodeIfPresent(self.screenCaptureKitReadiness, forKey: .screenCaptureKitReadiness)
         try container.encodeIfPresent(self.operationAttestation, forKey: .operationAttestation)
         try container.encodeIfPresent(
             self.operationSessionAttestation,
@@ -562,6 +573,13 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
     public let actionFailureCauseDescription: String?
     public let actionTargetReceipt: DesktopActionTargetReceipt?
     public let actionSelectedLeafEvidence: [DesktopSelectedLeafEvidence]?
+    public private(set) var screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic?
+
+    func removingScreenCaptureKitDiagnostic() -> Self {
+        var compatible = self
+        compatible.screenCaptureKitOwnershipDiagnostic = nil
+        return compatible
+    }
 
     private enum CodingKeys: String, CodingKey {
         case code
@@ -576,6 +594,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         case actionFailureCauseDescription
         case actionTargetReceipt
         case actionSelectedLeafEvidence
+        case screenCaptureKitOwnershipDiagnostic
     }
 
     public init(
@@ -585,7 +604,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         permission: PeekabooBridgePermissionKind? = nil,
         kind: PeekabooBridgeErrorKind? = nil,
         context: String? = nil,
-        operationMayHaveCompleted: Bool = false)
+        operationMayHaveCompleted: Bool = false,
+        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil)
     {
         self.code = code
         self.message = message
@@ -599,6 +619,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionFailureCauseDescription = nil
         self.actionTargetReceipt = nil
         self.actionSelectedLeafEvidence = nil
+        self.screenCaptureKitOwnershipDiagnostic = screenCaptureKitOwnershipDiagnostic
     }
 
     public init(
@@ -623,6 +644,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.actionFailureCauseDescription = actionFailure.causeDescription
         self.actionTargetReceipt = actionFailure.targetReceipt
         self.actionSelectedLeafEvidence = actionFailure.selectedLeafEvidence
+        self.screenCaptureKitOwnershipDiagnostic = actionFailure.screenCaptureKitOwnershipDiagnostic
     }
 
     public init(from decoder: any Decoder) throws {
@@ -637,6 +659,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         let encodedOperationMayHaveCompleted = try container.decodeIfPresent(
             Bool.self,
             forKey: .operationMayHaveCompleted)
+        self.screenCaptureKitOwnershipDiagnostic = try container.decodeIfPresent(
+            ScreenCaptureKitOwnershipDiagnostic.self, forKey: .screenCaptureKitOwnershipDiagnostic)
         self.actionOutcome = try container.decodeIfPresent(
             DesktopActionOutcome.Projection.self,
             forKey: .actionOutcome)
@@ -697,6 +721,9 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         if self.operationMayHaveCompleted {
             try container.encode(true, forKey: .operationMayHaveCompleted)
         }
+        try container.encodeIfPresent(
+            self.screenCaptureKitOwnershipDiagnostic,
+            forKey: .screenCaptureKitOwnershipDiagnostic)
         try container.encodeIfPresent(self.actionOutcome, forKey: .actionOutcome)
         try container.encodeIfPresent(self.actionFailureHint, forKey: .actionFailureHint)
         try container.encodeIfPresent(
@@ -728,7 +755,8 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
             causeDescription: self.actionFailureCauseDescription,
             standardErrorCode: self.standardizedErrorCode,
             targetReceipt: self.actionTargetReceipt,
-            selectedLeafEvidence: self.actionSelectedLeafEvidence)
+            selectedLeafEvidence: self.actionSelectedLeafEvidence,
+            screenCaptureKitOwnershipDiagnostic: self.screenCaptureKitOwnershipDiagnostic)
     }
 }
 

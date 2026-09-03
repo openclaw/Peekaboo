@@ -26,13 +26,15 @@ enum RuntimeHostResolver {
         dependencies: Dependencies
     ) async throws -> Resolution {
         var captureSafety = CaptureSafetyResolution()
-        var handshakeCache: RemoteHandshakeCache?
         try self.inspectCallerLocalOwner(options: options, environment: environment, dependencies: dependencies)
+        var handshakeCache = try await self.explicitCaptureHandshakeCache(
+            options: options, environment: environment, dependencies: dependencies
+        )
         let safetyPlan: RemoteCandidatePlan?
         if self.requiresCallerLocalScreenCaptureKitSafetyCheck(options: options, environment: environment) {
             let plan = try await dependencies.remoteCandidatePlan(options, environment)
             safetyPlan = plan
-            let resolvedHandshakeCache = dependencies.makeRemoteHandshakeCache()
+            let resolvedHandshakeCache = handshakeCache ?? dependencies.makeRemoteHandshakeCache()
             handshakeCache = resolvedHandshakeCache
             if let oldHost = try await dependencies.inspectScreenCaptureKitSafety(
                 options,
@@ -119,7 +121,8 @@ enum RuntimeHostResolver {
                 preferredScreenCaptureKitOwner: nil,
                 makeLocalServices: dependencies.makeLocalServices,
                 inspectScreenCaptureKitSafety: dependencies.inspectScreenCaptureKitSafety,
-                recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker
+                recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker,
+                makeRemoteServices: dependencies.makeRemoteServices
             )
             var permissionRejections: [String] = []
             var resolution = try await self.resolveSnapshotAffinityServices(
@@ -176,7 +179,8 @@ enum RuntimeHostResolver {
             preferredScreenCaptureKitOwner: preferredScreenCaptureKitOwner,
             makeLocalServices: dependencies.makeLocalServices,
             inspectScreenCaptureKitSafety: dependencies.inspectScreenCaptureKitSafety,
-            recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker
+            recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker,
+            makeRemoteServices: dependencies.makeRemoteServices
         ))
         resolution.captureEngineSafetyOverride = captureSafety.engineOverride
         resolution.toolCapturePreflightRefusal = captureSafety.toolPreflightRefusal
@@ -301,6 +305,10 @@ enum RuntimeHostResolver {
         if explicitSocket != nil,
            self.captureEnginePreferenceForOwnership(options: options, environment: context.environment) == .legacy,
            options.requiresScreenCaptureKitOwnerCapability,
+           !candidatePlan.candidates.contains(where: {
+               guard let entry = context.handshakeCache.entry(for: $0, identity: context.identity) else { return false }
+               return BridgeCapabilityPolicy.supportsClassicCaptureWithoutScreenCaptureKit(for: entry.response)
+           }),
            let oldHost = try await context.inspectScreenCaptureKitSafety(
                options,
                context.environment,
@@ -755,10 +763,13 @@ extension RuntimeHostResolver {
         requiredOwner: ScreenCaptureKitOwnerLease.OwnerReceipt? = nil,
         snapshotInvalidationRemoteSocketPaths: [String],
         permissionRejections: inout [String],
+        makeRemoteServices: RemoteServiceFactory = {
+            RuntimeHostResolver.remoteServices(client: $0, handshake: $1, options: $2)
+        },
         handshake: ScreenCaptureKitHandshake? = nil,
         handshakeCache: RemoteHandshakeCache? = nil
     )
-    async throws -> Resolution? {
+        async throws -> Resolution? {
         for candidate in candidates {
             try Task.checkCancellation()
             let socketPath = candidate.socketPath
@@ -768,7 +779,8 @@ extension RuntimeHostResolver {
                 if let handshake {
                     client = PeekabooBridgeClient(socketPath: socketPath)
                     handshakeResponse = try await handshake(candidate, identity)
-                } else if let cached = handshakeCache?.entry(for: candidate, identity: identity) {
+                } else if let handshakeCache {
+                    let cached = try await handshakeCache.handshake(candidate, identity: identity)
                     client = cached.client
                     handshakeResponse = cached.response
                 } else {
@@ -776,6 +788,18 @@ extension RuntimeHostResolver {
                     handshakeResponse = try await client.handshake(client: identity, requestedHost: nil)
                 }
                 try Task.checkCancellation()
+                if let requiredOwner,
+                   !self.screenCaptureKitHostMatchesOwner(handshake: handshakeResponse, owner: requiredOwner) {
+                    continue
+                }
+                if options.requiresScreenCaptureKitOwnerCapability,
+                   !options.usesPerToolSnapshotInvalidation,
+                   ObservationCommandSupport.captureEnginePreference(
+                       cliValue: options.captureEnginePreference, configuredValue: nil
+                   ) != .legacy,
+                   let diagnostic = BridgeCapabilityPolicy.screenCaptureKitReadinessRefusal(for: handshakeResponse) {
+                    throw self.readinessRefusal(diagnostic, handshake: handshakeResponse, socketPath: socketPath)
+                }
                 let validation = await self.validateRemoteCandidate(
                     candidate,
                     handshake: handshakeResponse,
@@ -798,15 +822,11 @@ extension RuntimeHostResolver {
                     }
                     continue
                 }
-                if let requiredOwner,
-                   !self.screenCaptureKitHostMatchesOwner(handshake: handshakeResponse, owner: requiredOwner) {
-                    continue
-                }
                 try Task.checkCancellation()
                 let authenticatedHostIdentity = await client.authenticatedHostIdentity()
                 let hostDescription = Self.remoteHostDescription(handshake: handshakeResponse, socketPath: socketPath)
                 return Resolution(
-                    services: Self.remoteServices(client: client, handshake: handshakeResponse, options: options),
+                    services: makeRemoteServices(client, handshakeResponse, options),
                     hostDescription: hostDescription,
                     selectedRemoteSocketPath: NSString(string: socketPath).standardizingPath,
                     selectedRemoteHostProcessIdentifier: validation.reusableDaemonStatus?.pid ??
@@ -822,6 +842,8 @@ extension RuntimeHostResolver {
                     ),
                     requiredHostFailure: nil
                 )
+            } catch let error as PreDispatchActionError {
+                throw error
             } catch let error as CancellationError {
                 throw error
             } catch {

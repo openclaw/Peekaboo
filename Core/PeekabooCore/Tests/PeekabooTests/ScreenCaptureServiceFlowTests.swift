@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAgentRuntime
@@ -8,7 +9,7 @@ import Testing
 @testable import PeekabooCore
 @testable import PeekabooVisualizer
 
-@Suite(.tags(.ui))
+@Suite(.serialized, .tags(.ui), CaptureTestIsolation())
 @MainActor
 struct ScreenCaptureServiceFlowTests {
     private func makeFixtures() -> ScreenCaptureService.TestFixtures {
@@ -308,7 +309,8 @@ struct ScreenCaptureServiceFlowTests {
             applicationResolver: FixtureResolver(fixtures: fixtures),
             makeFrameSource: { _ in NoOpCaptureFrameSource() },
             makeModernOperator: { _, _ in captureOperator },
-            makeLegacyOperator: { _ in captureOperator })
+            makeLegacyOperator: { _ in captureOperator },
+            screenLockProbe: { false })
         let service = ScreenCaptureService(
             loggingService: MockLoggingService(),
             dependencies: dependencies)
@@ -335,7 +337,8 @@ struct ScreenCaptureServiceFlowTests {
             applicationResolver: FixtureResolver(fixtures: fixtures),
             makeFrameSource: { _ in NoOpCaptureFrameSource() },
             makeModernOperator: { _, _ in failingOperator },
-            makeLegacyOperator: { _ in legacyOperator })
+            makeLegacyOperator: { _ in legacyOperator },
+            screenLockProbe: { false })
 
         let service = ScreenCaptureService(loggingService: MockLoggingService(), dependencies: dependencies)
 
@@ -359,7 +362,8 @@ struct ScreenCaptureServiceFlowTests {
             applicationResolver: FixtureResolver(fixtures: fixtures),
             makeFrameSource: { _ in NoOpCaptureFrameSource() },
             makeModernOperator: { _, _ in modernOperator },
-            makeLegacyOperator: { _ in legacyOperator })
+            makeLegacyOperator: { _ in legacyOperator },
+            screenLockProbe: { false })
         let service = ScreenCaptureService(loggingService: MockLoggingService(), dependencies: dependencies)
         let windowID = CGWindowID(truncatingIfNeeded: "Dashboard".hashValue)
 
@@ -384,7 +388,8 @@ struct ScreenCaptureServiceFlowTests {
             applicationResolver: FixtureResolver(fixtures: fixtures),
             makeFrameSource: { _ in NoOpCaptureFrameSource() },
             makeModernOperator: { _, _ in FixtureCaptureOperator(fixtures: fixtures) },
-            makeLegacyOperator: { _ in FixtureCaptureOperator(fixtures: fixtures) })
+            makeLegacyOperator: { _ in FixtureCaptureOperator(fixtures: fixtures) },
+            screenLockProbe: { false })
 
         let service = ScreenCaptureService(loggingService: MockLoggingService(), dependencies: dependencies)
 
@@ -406,7 +411,8 @@ struct ScreenCaptureServiceFlowTests {
             applicationResolver: FixtureResolver(fixtures: fixtures),
             makeFrameSource: { _ in NoOpCaptureFrameSource() },
             makeModernOperator: { _, _ in FixtureCaptureOperator(fixtures: fixtures) },
-            makeLegacyOperator: { _ in FixtureCaptureOperator(fixtures: fixtures) })
+            makeLegacyOperator: { _ in FixtureCaptureOperator(fixtures: fixtures) },
+            screenLockProbe: { false })
 
         let service = ScreenCaptureService(loggingService: MockLoggingService(), dependencies: dependencies)
 
@@ -427,7 +433,8 @@ struct ScreenCaptureServiceFlowTests {
             applicationResolver: FixtureResolver(fixtures: fixtures),
             makeFrameSource: { _ in NoOpCaptureFrameSource() },
             makeModernOperator: { _, _ in FixtureCaptureOperator(fixtures: fixtures) },
-            makeLegacyOperator: { _ in FixtureCaptureOperator(fixtures: fixtures) })
+            makeLegacyOperator: { _ in FixtureCaptureOperator(fixtures: fixtures) },
+            screenLockProbe: { false })
         let service = ScreenCaptureService(loggingService: MockLoggingService(), dependencies: dependencies)
 
         _ = try await service.withCaptureEngine(.legacy) {

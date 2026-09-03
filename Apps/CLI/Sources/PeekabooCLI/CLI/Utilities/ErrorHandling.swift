@@ -10,10 +10,16 @@ private func emitError(
     code: ErrorCode,
     jsonOutput: Bool,
     logger: Logger,
+    screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
     prefix: String = "❌"
 ) {
     if jsonOutput {
-        outputError(message: message, code: code, logger: logger)
+        outputError(
+            message: message,
+            code: code,
+            screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic,
+            logger: logger
+        )
     } else {
         print("\(prefix) \(message)")
     }
@@ -47,6 +53,7 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
                 actionOutcome: metadata.outcome,
                 targetReceipt: metadata.targetReceipt,
                 targetIdentity: metadata.targetIdentity,
+                screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error),
                 logger: logger
             )
         } else {
@@ -62,7 +69,8 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
         message: error.localizedDescription,
         code: genericErrorCode(for: error),
         jsonOutput: jsonOutput,
-        logger: logger
+        logger: logger,
+        screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error)
     )
 }
 
@@ -76,7 +84,7 @@ func renderDesktopActionFailure(
     if jsonOutput {
         outputError(
             message: failure.message,
-            code: .INTERACTION_FAILED,
+            code: captureOwnershipErrorCode(for: failure) ?? .INTERACTION_FAILED,
             hint: failure.hint,
             details: failure.causeDescription,
             actionFailure: failure,
@@ -94,6 +102,9 @@ func renderDesktopActionFailure(
 }
 
 func genericErrorCode(for error: any Error) -> ErrorCode {
+    if let captureCode = captureOwnershipErrorCode(for: error) {
+        return captureCode
+    }
     if error is DesktopActionFailure {
         return .INTERACTION_FAILED
     }
@@ -104,4 +115,28 @@ func genericErrorCode(for error: any Error) -> ErrorCode {
         return .UNKNOWN_ERROR
     }
     return errorCode(for: bridgeError)
+}
+
+nonisolated func screenCaptureKitOwnershipDiagnostic(
+    for error: any Error
+) -> ScreenCaptureKitOwnershipDiagnostic? {
+    switch error {
+    case let diagnostic as ScreenCaptureKitOwnershipDiagnostic:
+        diagnostic
+    case let failure as DesktopActionFailure:
+        failure.screenCaptureKitOwnershipDiagnostic
+    case let envelope as any ResultEnvelopeError:
+        envelope.envelopeActionFailure?.screenCaptureKitOwnershipDiagnostic
+    case let envelope as PeekabooBridgeErrorEnvelope:
+        envelope.screenCaptureKitOwnershipDiagnostic
+    default:
+        nil
+    }
+}
+
+nonisolated func captureOwnershipErrorCode(for error: any Error) -> ErrorCode? {
+    let failure = (error as? DesktopActionFailure) ??
+        (error as? any ResultEnvelopeError)?.envelopeActionFailure
+    return screenCaptureKitOwnershipDiagnostic(for: error) != nil || failure?.standardErrorCode == .captureFailed
+        ? .CAPTURE_FAILED : nil
 }

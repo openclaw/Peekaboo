@@ -11,7 +11,7 @@ import Testing
 extension ScreenCaptureKitOwnerRuntimeTests {
     @Test
     func `browser-only MCP runtime never consults an unrelated ScreenCaptureKit owner`() async throws {
-        let buildScopedSocket = "/tmp/peekaboo-browser-only-build-\(UUID().uuidString).sock"
+        let buildScopedSocket = Self.fixtureSocketPath()
         var options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
             commandType: MCPCommand.Serve.self,
@@ -27,10 +27,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: ["PEEKABOO_ALLOW_TOOLS": "browser"],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: {
                     claimCalls += 1
@@ -77,7 +77,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `capture-capable MCP runtime remains bound to the exact ScreenCaptureKit owner`() async throws {
-        let buildScopedSocket = "/tmp/peekaboo-browser-capture-build-\(UUID().uuidString).sock"
+        let buildScopedSocket = Self.fixtureSocketPath()
         var options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
             commandType: MCPCommand.Serve.self,
@@ -94,10 +94,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 options: options,
                 environment: ["PEEKABOO_ALLOW_TOOLS": "browser,see"],
                 configurationInput: nil,
-                dependencies: .init(
+                dependencies: Self.inertDependencies(
                     makeLocalServices: { _ in
                         localFactoryCalls += 1
-                        return PeekabooServices()
+                        return OwnerPolicyFixtureServices(ownerAware: true)
                     },
                     claimScreenCaptureKitOwner: {
                         claimCalls += 1
@@ -203,8 +203,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `explicit dynamic host ignores unrelated legacy owner and reuses selected generation`() async throws {
-        let selectedSocket = "/tmp/peekaboo-dynamic-selected-\(UUID().uuidString).sock"
-        let unrelatedSocket = "/tmp/peekaboo-dynamic-unrelated-\(UUID().uuidString).sock"
+        let selectedSocket = Self.fixtureSocketPath()
+        let unrelatedSocket = Self.fixtureSocketPath()
         var selectedHandshakeCount = 0
         var unrelatedHandshakeCount = 0
         let selectedHost = try await Self.startHost(
@@ -251,10 +251,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: {
@@ -308,7 +308,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `explicit dynamic host remains fail closed when the selected socket is unavailable`() async throws {
-        let selectedSocket = "/tmp/peekaboo-dynamic-missing-\(UUID().uuidString).sock"
+        let selectedSocket = Self.fixtureSocketPath()
         var options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -325,10 +325,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 options: options,
                 environment: [:],
                 configurationInput: nil,
-                dependencies: .init(
+                dependencies: Self.inertDependencies(
                     makeLocalServices: { _ in
                         localFactoryCalls += 1
-                        return PeekabooServices()
+                        return OwnerPolicyFixtureServices(ownerAware: true)
                     },
                     claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                     inspectScreenCaptureKitOwner: { nil },
@@ -364,7 +364,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `explicit verify screenshot inherits deferred capture refusal`() async throws {
-        let selectedSocket = "/tmp/peekaboo-verify-selected-\(UUID().uuidString).sock"
+        let selectedSocket = Self.fixtureSocketPath()
         let selectedHost = try await Self.startHost(
             socketPath: selectedSocket,
             processIdentifier: 4242,
@@ -407,8 +407,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
-                makeLocalServices: { _ in PeekabooServices() },
+            dependencies: Self.inertDependencies(
+                makeLocalServices: { _ in OwnerPolicyFixtureServices(ownerAware: true) },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: { nil },
                 inspectScreenCaptureKitSafety: { _, _, _, cache in
@@ -429,19 +429,12 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             )
         )
         let refusal = try #require(resolution.toolCapturePreflightRefusal)
-        let runtime = CommandRuntime(
-            configuration: options.makeConfiguration(),
+        // The Verify adapter passes these same values; construct its context directly to avoid
+        // process-wide profile, visualizer, and mutation-tracker initialization in this routing test.
+        let context = MCPToolContext(
             services: resolution.services,
-            hostDescription: resolution.hostDescription,
-            selectedRemoteSocketPath: resolution.selectedRemoteSocketPath,
-            selectedRemoteHostProcessIdentifier: resolution.selectedRemoteHostProcessIdentifier,
-            captureEngineSafetyOverride: resolution.captureEngineSafetyOverride,
-            toolCapturePreflightRefusal: refusal,
-            snapshotInvalidationRemoteSocketPaths: resolution.snapshotInvalidationRemoteSocketPaths,
-            applicationRelaunchAllowed: resolution.applicationRelaunchAllowed,
-            requiredHostFailure: resolution.requiredHostFailure
+            capturePreflightRefusal: refusal
         )
-        let context = VerifyCommand.makeToolContext(using: runtime)
         let counter = VerifyCaptureInvocationCounter()
         let response = try await context.execute(
             tool: VerifyCaptureInvocationProbe(counter: counter),

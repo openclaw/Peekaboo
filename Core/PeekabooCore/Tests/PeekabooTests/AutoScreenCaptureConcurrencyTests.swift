@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
-@_spi(Testing) import PeekabooAutomationKit
-import PeekabooBridge
 import PeekabooFoundation
 import Testing
+@_spi(Testing) @testable import PeekabooAutomationKit
+@testable import PeekabooBridge
 @testable import PeekabooCore
 
 @Suite(.serialized)
@@ -25,12 +25,13 @@ struct AutoScreenCaptureConcurrencyTests {
     }
 
     @Test
-    func `Bridge without registered ScreenCaptureKit capability preserves automatic capture`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-registration-failure-\(UUID().uuidString).sock"
+    func `Bridge registration failure refuses automatic capture with its diagnostic`() async throws {
+        let socketPath = Self.fixtureSocketPath()
         let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let claimCounter = BridgeOwnerClaimCounter()
         let observation = BridgeAutoScreenObservationService(failSlowAutomaticCapture: false)
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -40,14 +41,24 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
             hostCapabilities: [PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
             screenCaptureKitProcessCapabilityRegistrar: {
                 throw OperationError.captureFailed(reason: "Fixture registration failure")
             },
+            screenCaptureKitOwnershipPreparer: {},
             screenCaptureKitOwnerClaimProvider: {
                 claimCounter.record()
                 return ownerReceipt
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -59,19 +70,19 @@ struct AutoScreenCaptureConcurrencyTests {
             socketPath: socketPath,
             requestTimeoutSec: 2)
 
-        _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
-
-        #expect(observation.requests.count == 1)
-        #expect(observation.requests.first?.capture.engine == .auto)
-        #expect(observation.legacyAttemptCount == 1)
-        #expect(observation.modernAttemptCount == 0)
+        let error = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
+        }
+        #expect(error?.screenCaptureKitOwnershipDiagnostic?.stage == .registration)
+        #expect(error?.standardErrorCode == .captureFailed)
+        #expect(observation.requests.isEmpty)
         #expect(!claimCounter.didRecord)
         await host.stop()
     }
 
     @Test
     func `Bridge prepares screen ownership before serving concurrent captures inside its envelope`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-prepared-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let claimCounter = BridgeOwnerClaimCounter()
         let preparation = BridgeOwnerPreparationGate()
@@ -80,6 +91,7 @@ struct AutoScreenCaptureConcurrencyTests {
             settlementDelay: .milliseconds(5))
         let observation = BridgeAutoScreenObservationService(captureLane: captureLane)
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -88,6 +100,8 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
             screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {
                 await preparation.prepare()
@@ -96,7 +110,14 @@ struct AutoScreenCaptureConcurrencyTests {
                 claimCounter.record()
                 return ownerReceipt
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -132,10 +153,11 @@ struct AutoScreenCaptureConcurrencyTests {
 
     @Test
     func `Bridge preparation failure suppresses screen ownership capability`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-preparation-failure-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let preparation = BridgeOwnerPreparationGate()
         let observation = BridgeAutoScreenObservationService(failSlowAutomaticCapture: false)
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -144,12 +166,25 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
             screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {
                 await preparation.prepare()
             },
+            screenCaptureKitOwnerClaimProvider: {
+                Issue.record("Preparation must not claim an owner")
+                throw ScreenCaptureKitOwnerLease.LeaseError.invalidOwnerIdentity("unexpected fixture claim")
+            },
             screenCaptureKitOwnershipPreparationTimeoutSeconds: 0.02,
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -162,18 +197,21 @@ struct AutoScreenCaptureConcurrencyTests {
             socketPath: socketPath,
             requestTimeoutSec: 2)
 
-        _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
-
-        #expect(observation.requests.count == 1)
-        #expect(observation.requests.first?.capture.engine == .auto)
+        let error = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
+        }
+        #expect(error?.screenCaptureKitOwnershipDiagnostic?.kind == .timedOut)
+        #expect(error?.screenCaptureKitOwnershipDiagnostic?.timeoutSeconds == 0.02)
+        #expect(observation.requests.isEmpty)
         await host.stop()
     }
 
     @Test
     func `Bridge stop during ownership preparation prevents later socket publication`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-preparation-stop-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let preparation = BridgeOwnerPreparationGate()
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: BridgeAutoScreenObservationService(),
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -182,11 +220,24 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
             screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {
                 await preparation.prepare()
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            screenCaptureKitOwnerClaimProvider: {
+                Issue.record("Preparation must not claim an owner")
+                throw ScreenCaptureKitOwnerLease.LeaseError.invalidOwnerIdentity("unexpected fixture claim")
+            },
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -204,10 +255,11 @@ struct AutoScreenCaptureConcurrencyTests {
 
     @Test
     func `Bridge start cancellation does not cancel or wait for shared ownership preparation`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-preparation-cancel-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let preparation = BridgeOwnerPreparationGate()
         let completion = BridgeStartCompletionFlag()
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: BridgeAutoScreenObservationService(),
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -216,11 +268,24 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
             screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {
                 await preparation.prepare()
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            screenCaptureKitOwnerClaimProvider: {
+                Issue.record("Preparation must not claim an owner")
+                throw ScreenCaptureKitOwnerLease.LeaseError.invalidOwnerIdentity("unexpected fixture claim")
+            },
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -253,11 +318,12 @@ struct AutoScreenCaptureConcurrencyTests {
 
     @Test
     func `Fresh Bridge owner claims before concurrent background auto screen observations`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-concurrency-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let claimCounter = BridgeOwnerClaimCounter()
         let observation = BridgeAutoScreenObservationService()
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -266,12 +332,22 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
+            screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {},
             screenCaptureKitOwnerClaimProvider: {
                 claimCounter.record()
                 return ownerReceipt
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -302,7 +378,7 @@ struct AutoScreenCaptureConcurrencyTests {
 
     @Test
     func `Claimed screen owner generation drift preserves automatic capture`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-different-owner-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let claimCounter = BridgeOwnerClaimCounter()
         let differentOwnerReceipt = ScreenCaptureKitOwnerLease.OwnerReceipt(
@@ -310,6 +386,7 @@ struct AutoScreenCaptureConcurrencyTests {
             processStartIdentity: ownerReceipt.processStartIdentity + 1)
         let observation = BridgeAutoScreenObservationService(failSlowAutomaticCapture: false)
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -318,13 +395,22 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
             screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {},
             screenCaptureKitOwnerClaimProvider: {
                 claimCounter.record()
                 return differentOwnerReceipt
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -348,7 +434,7 @@ struct AutoScreenCaptureConcurrencyTests {
 
     @Test
     func `Competing screen owner claim preserves automatic capture`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-competing-owner-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let competingReceipt = ScreenCaptureKitOwnerLease.OwnerReceipt(
             processIdentifier: ownerReceipt.processIdentifier + 1,
@@ -356,6 +442,7 @@ struct AutoScreenCaptureConcurrencyTests {
         let claimCounter = BridgeOwnerClaimCounter()
         let observation = BridgeAutoScreenObservationService(failSlowAutomaticCapture: false)
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -364,6 +451,9 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
+            screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {},
             screenCaptureKitOwnerClaimProvider: {
                 claimCounter.record()
@@ -371,7 +461,14 @@ struct AutoScreenCaptureConcurrencyTests {
                     path: "/tmp/peekaboo-competing-owner.lock",
                     receipt: competingReceipt)
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -395,10 +492,11 @@ struct AutoScreenCaptureConcurrencyTests {
 
     @Test
     func `Unexpected screen owner claim failure preserves automatic capture`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-claim-failure-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let claimCounter = BridgeOwnerClaimCounter()
         let observation = BridgeAutoScreenObservationService(failSlowAutomaticCapture: false)
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -407,12 +505,22 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
+            screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {},
             screenCaptureKitOwnerClaimProvider: {
                 claimCounter.record()
                 throw ScreenCaptureKitOwnerLease.LeaseError.invalidOwnerIdentity("fixture drift")
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -436,13 +544,14 @@ struct AutoScreenCaptureConcurrencyTests {
 
     @Test
     func `Claimed automatic screen capture falls back to legacy after modern failure`() async throws {
-        let socketPath = "/tmp/peekaboo-auto-screen-modern-fallback-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
         let claimCounter = BridgeOwnerClaimCounter()
         let observation = BridgeAutoScreenObservationService(
             failSlowAutomaticCapture: false,
             failModernAutomaticCapture: true)
         let services = StubServices(
+            snapshots: InMemorySnapshotManager(),
             desktopObservation: observation,
             supportsScreenCaptureKitProcessOwnership: true)
         let server = PeekabooBridgeServer(
@@ -451,12 +560,22 @@ struct AutoScreenCaptureConcurrencyTests {
             allowlistedTeams: [],
             allowlistedBundles: [],
             allowedOperations: [.desktopObservation],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(
+                coordinationRootURL: URL(fileURLWithPath: socketPath + ".coordination")),
+            screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {},
             screenCaptureKitOwnerClaimProvider: {
                 claimCounter.record()
                 return ownerReceipt
             },
-            permissionStatusEvaluator: Self.grantedPermissions)
+            postEventAccessEvaluator: { true },
+            postEventAccessRequester: { false },
+            permissionStatusEvaluator: Self.grantedPermissions,
+            windowOwnerProcessIdentifierProvider: { _ in nil },
+            windowBoundsProvider: { _ in nil },
+            maximizedVisibleWorkAreaProvider: { _ in nil },
+            processStartIdentityProvider: { _ in nil },
+            processPresenceProvider: { _ in false })
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -476,6 +595,10 @@ struct AutoScreenCaptureConcurrencyTests {
         #expect(observation.legacyAttemptCount == 1)
         #expect(claimCounter.count == 1)
         await host.stop()
+    }
+
+    private static func fixtureSocketPath() -> String {
+        FileManager.default.temporaryDirectory.appendingPathComponent("s-\(UUID().uuidString).sock").path
     }
 
     private static let backgroundAutoScreenRequest = DesktopObservationRequest(

@@ -2,6 +2,7 @@ import Foundation
 
 struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let protocolVersion: PeekabooBridgeProtocolVersion
+    let screenCaptureKitOwnershipDiagnostics: Bool
     let statelessClickVariants: Bool
     let exactWindowHeldPointerLifecycle: Bool
     let nativeBrowserConnectionBinding: Bool
@@ -22,7 +23,8 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         targetedClickAccessibilityValueDelivery: true,
         requestPinnedExactWindowScrollReceipt: true,
         compositeTypeDelivery: true,
-        processGenerationBoundElementMutations: true)
+        processGenerationBoundElementMutations: true,
+        screenCaptureKitOwnershipDiagnostics: true)
 
     init(
         protocolVersion: PeekabooBridgeProtocolVersion,
@@ -34,9 +36,11 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         targetedClickAccessibilityValueDelivery: Bool = false,
         requestPinnedExactWindowScrollReceipt: Bool = false,
         compositeTypeDelivery: Bool = false,
-        processGenerationBoundElementMutations: Bool = false)
+        processGenerationBoundElementMutations: Bool = false,
+        screenCaptureKitOwnershipDiagnostics: Bool = false)
     {
         self.protocolVersion = protocolVersion
+        self.screenCaptureKitOwnershipDiagnostics = screenCaptureKitOwnershipDiagnostics
         self.statelessClickVariants = statelessClickVariants
         self.exactWindowHeldPointerLifecycle = exactWindowHeldPointerLifecycle
         self.nativeBrowserConnectionBinding = nativeBrowserConnectionBinding

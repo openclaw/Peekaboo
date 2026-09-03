@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Preserve current GUI capture support and typed ScreenCaptureKit blockers when preparation fails, allowing explicit classic capture on the same proven host without changing auto or modern engines, with negotiated typed errors that preserve older clients' signed receipts.
 - Verify ScreenCaptureKit owner and capability-marker close-on-fork protection through child descriptor behavior instead of SDK query bits, preserving atomic open flags and isolating marker tests.
 
 ## [4.3.0] - 2026-09-02

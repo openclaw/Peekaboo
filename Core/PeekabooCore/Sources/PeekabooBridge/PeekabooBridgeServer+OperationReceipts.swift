@@ -277,6 +277,9 @@ extension PeekabooBridgeServer {
         selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil,
         context: OperationReceiptEncodingContext) async throws -> Data
     {
+        // Shipped clients reconstruct the digest after decoding. Project unknown fields before hashing or signing.
+        let response = response.projectingScreenCaptureKitDiagnostics(
+            offered: context.claim.negotiatedCapabilities.screenCaptureKitOwnershipDiagnostics)
         let receiptPayload = try PeekabooBridgeOperationReceiptPayload(
             requestID: context.requestPayload.requestID,
             sessionID: context.requestPayload.sessionID,
@@ -518,7 +521,7 @@ extension PeekabooBridgeServer {
             causeDescription: envelope.details)
         return PeekabooBridgeErrorEnvelope(
             code: envelope.code,
-            actionFailure: failure,
+            actionFailure: failure.preservingScreenCaptureKitDiagnostic(envelope.screenCaptureKitOwnershipDiagnostic),
             details: envelope.details,
             permission: envelope.permission,
             kind: envelope.kind,
@@ -581,7 +584,7 @@ extension PeekabooBridgeServer {
             causeDescription: envelope.details)
         return PeekabooBridgeErrorEnvelope(
             code: envelope.code,
-            actionFailure: failure,
+            actionFailure: failure.preservingScreenCaptureKitDiagnostic(envelope.screenCaptureKitOwnershipDiagnostic),
             details: envelope.details,
             permission: envelope.permission,
             kind: envelope.kind,

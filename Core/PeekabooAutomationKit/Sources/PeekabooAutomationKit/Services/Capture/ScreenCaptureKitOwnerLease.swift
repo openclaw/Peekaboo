@@ -163,11 +163,11 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
                 "ScreenCaptureKit is already owned by PID \(receipt.processIdentifier) " +
                     "(generation \(receipt.processStartIdentity)) via \(path)"
             case let .uncoordinatedProcesses(processes):
-                "Live pre-lease Peekaboo processes may already own ScreenCaptureKit: " + processes.map {
+                "ScreenCaptureKit coordination cannot be proven for potential host processes: " + processes.map {
                     "PID \($0.processIdentifier) (generation \($0.processStartIdentity))"
                 }.joined(separator: ", ")
             case let .uncoordinatedHosts(hosts):
-                "Live pre-lease Bridge hosts may already own ScreenCaptureKit: " + hosts.map {
+                "ScreenCaptureKit coordination cannot be proven for Bridge hosts: " + hosts.map {
                     if let processIdentifier = $0.processIdentifier,
                        let processStartIdentity = $0.processStartIdentity
                     {
@@ -177,9 +177,7 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
                         return "\($0.socketPath) (PID \(processIdentifier))"
                     }
                     return $0.socketPath
-                }.joined(separator: ", ") +
-                    ". Update or relaunch those hosts, then restart this process before retrying SCK. " +
-                    "Do not stop a process unless its exact PID and process generation are known and revalidated"
+                }.joined(separator: ", ")
             case let .preparationTimedOut(seconds):
                 "ScreenCaptureKit owner preparation timed out after \(seconds) seconds"
             }

@@ -224,6 +224,27 @@ enabled `desktopObservation` operation is absent; an older host cannot silently 
 and run its default backend. `auto` remains compatible, and request-scoped selection does not alter
 the long-lived daemon's fallback policy.
 
+Capture support and startup preparation are separate, additive handshake contracts at the existing protocol version.
+`screenCaptureKitOwnershipEnforcement` and `classicCaptureWithoutScreenCaptureKit` are derived from the host's concrete
+service contracts and allowed observation operation. Caller-supplied capability strings cannot manufacture either
+proof. The older `screenCaptureKitProcessOwnership` capability remains conservative and is removed if registration or
+preparation fails, preserving old-client wire safety.
+
+Optional `screenCaptureKitReadiness` records the preparation observation and typed failure, including all original
+blocker identities that were available. A ready observation is permission to attempt SCK, not actual ownership.
+Unknown or missing readiness supplies no new SCK authority. A current blocked host can still accept explicit classic
+on that same socket when it proves no in-process SCK, while auto and modern return the typed refusal before capture.
+AX-only operations remain independent. Typed ownership errors also survive capture, permission, and Bridge error
+conversion; a refused SCK entry does not erase an earlier desktop mutation outcome.
+
+Typed terminal error fields additionally require the raw client offer `screenCaptureKitOwnershipDiagnostics`, bound to
+an authenticated operation session. Before computing the terminal response digest and signing its receipt, the host
+removes only the new diagnostic fields for sessions without that offer. This preserves shipped clients that decode
+unknown fields away before reconstructing the signed response digest. Offered sessions retain all typed blockers and
+any earlier mutation outcome. The offer works at existing signed-session protocol versions; receiptless requests
+(including older protocols and unknown offers) retain their legacy error shape. Handshake readiness is not part of a
+terminal operation response digest and remains additive.
+
 Protocol `1.22` adds process-generation receipts to process-targeted typing and clicks. Current CLI, Agent, and MCP background input retain the application discovery receipt through Bridge admission and native dispatch. Typing revalidates it before every emitted unit; clicks validate before dispatch and report a retry-unsafe indeterminate outcome if the generation changes after dispatch. Process-targeted Cmd+V uses the generation-pinned hotkey contract introduced in 1.19. New clients refuse older hosts before sending these inputs because an older decoder could otherwise ignore the optional receipt and route input using only a reusable PID. Legacy raw-PID payloads remain decodable for old clients, but current user-facing paths never select them.
 
 Protocol `1.29` adds listener-signed operation receipts without imposing a lifetime request limit on a long-running

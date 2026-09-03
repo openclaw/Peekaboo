@@ -61,17 +61,10 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
         let codeSignatureHash: String?
     }
 
-    static func register(ownerIdentity: Lease.OwnerIdentity) throws {
-        try self.register(
-            ownerIdentity: ownerIdentity,
-            directory: self.directoryURL,
-            signatureIdentity: self.currentCodeSignatureIdentity())
-    }
-
     static func register(
         ownerIdentity: Lease.OwnerIdentity,
-        directory: URL,
-        signatureIdentity: CodeSignatureIdentity?) throws
+        directory: URL = directoryURL,
+        signatureIdentity: CodeSignatureIdentity? = currentCodeSignatureIdentity()) throws
     {
         let receipt = ProcessCapabilityReceipt(
             processIdentifier: ownerIdentity.processIdentifier,

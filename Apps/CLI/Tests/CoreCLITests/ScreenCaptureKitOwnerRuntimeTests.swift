@@ -1,6 +1,7 @@
 import Commander
 import Darwin
 import Foundation
+import PeekabooAgentRuntime
 import PeekabooAutomation
 import PeekabooBridge
 import PeekabooBridgeTestSupport
@@ -29,10 +30,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                 options: options,
                 environment: [:],
                 configurationInput: nil,
-                dependencies: .init(
+                dependencies: Self.inertDependencies(
                     makeLocalServices: { _ in
                         localFactoryCalls += 1
-                        return PeekabooServices()
+                        return OwnerPolicyFixtureServices(ownerAware: true)
                     },
                     claimScreenCaptureKitOwner: {
                         claimCalls += 1
@@ -74,10 +75,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: {
                     claimCalls += 1
@@ -117,10 +118,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: {
                     claimCalls += 1
@@ -155,7 +156,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
     func `caller-local explicit snapshot scroll skips capture ownership and old-host discovery`() async throws {
         let snapshots = InMemorySnapshotManager()
         let snapshotID = try await snapshots.createSnapshot()
-        let localServices = PeekabooServices(snapshotManager: snapshots)
+        let localServices = OwnerPolicyFixtureServices(ownerAware: true, snapshots: snapshots)
         var options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -175,7 +176,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
                     return localServices
@@ -212,7 +213,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         engine: String
     ) async {
         let owner = Self.ownerReceipt()
-        let missingSocket = "/tmp/peekaboo-unmatched-owner-\(UUID().uuidString).sock"
+        let missingSocket = Self.fixtureSocketPath()
         let options = Self.captureOptions(engine: engine)
         var claimCalls = 0
         var inspectCalls = 0
@@ -223,10 +224,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                 options: options,
                 environment: ["PEEKABOO_DAEMON_SOCKET": missingSocket],
                 configurationInput: nil,
-                dependencies: .init(
+                dependencies: Self.inertDependencies(
                     makeLocalServices: { _ in
                         localFactoryCalls += 1
-                        return PeekabooServices()
+                        return OwnerPolicyFixtureServices(ownerAware: true)
                     },
                     claimScreenCaptureKitOwner: {
                         claimCalls += 1
@@ -253,7 +254,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
     func `explicit transported capture refuses an owner-unaware host before capture or local fallback`(
         engine: String
     ) async throws {
-        let explicitSocket = "/tmp/peekaboo-owner-unaware-\(UUID().uuidString).sock"
+        let explicitSocket = Self.fixtureSocketPath()
         let oldHost = try await Self.startHost(
             socketPath: explicitSocket,
             processIdentifier: 3131,
@@ -274,10 +275,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                 options: options,
                 environment: [:],
                 configurationInput: nil,
-                dependencies: .init(
+                dependencies: Self.inertDependencies(
                     makeLocalServices: { _ in
                         localFactoryCalls += 1
-                        return PeekabooServices()
+                        return OwnerPolicyFixtureServices(ownerAware: true)
                     },
                     claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                     inspectScreenCaptureKitOwner: {
@@ -307,8 +308,8 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         #expect(error?.localizedDescription.contains("build 4.0.0 (4000099)") == true)
         #expect(error?.localizedDescription.contains(explicitSocket) == true)
         #expect(error?.localizedDescription.contains("Selected socket: \(explicitSocket)") == true)
-        #expect(error?.hint?.contains("revalidate and stop exactly PID 3131, generation 4141") == true)
-        #expect(error?.hint?.contains("never use the socket path alone") == true)
+        #expect(error?.hint?.contains("Classic capture on this unproven") == true)
+        #expect(error?.localizedDescription.contains("support cannot be proven") == true)
         #expect(inspectCalls == 0)
         #expect(recordedBlockers == [RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
             socketPath: explicitSocket,
@@ -322,7 +323,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `automatic capture routes to an owner-aware host around an auxiliary legacy SCK blocker`() async throws {
-        let selectedSocket = "/tmp/peekaboo-auto-classic-first-\(UUID().uuidString).sock"
+        let selectedSocket = Self.fixtureSocketPath()
         let ownerAwareHost = try await Self.startHost(
             socketPath: selectedSocket,
             processIdentifier: 3131,
@@ -347,10 +348,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: { nil },
@@ -368,7 +369,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `explicit modern capture still refuses an auxiliary legacy SCK blocker`() async throws {
-        let selectedSocket = "/tmp/peekaboo-modern-auxiliary-blocker-\(UUID().uuidString).sock"
+        let selectedSocket = Self.fixtureSocketPath()
         let ownerAwareHost = try await Self.startHost(
             socketPath: selectedSocket,
             processIdentifier: 3131,
@@ -394,10 +395,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                 options: options,
                 environment: [:],
                 configurationInput: nil,
-                dependencies: .init(
+                dependencies: Self.inertDependencies(
                     makeLocalServices: { _ in
                         localFactoryCalls += 1
-                        return PeekabooServices()
+                        return OwnerPolicyFixtureServices(ownerAware: true)
                     },
                     claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                     inspectScreenCaptureKitOwner: { nil },
@@ -434,10 +435,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         #expect(error.localizedDescription.contains("build 4.0.0 (4000099)") == true)
         #expect(error.localizedDescription.contains("owner socket \(ownerSocket)") == true)
         #expect(error.localizedDescription.contains("Selected socket: \(selectedSocket)") == true)
-        #expect(error.hint?.contains("stop exactly PID 3131, generation 4141") == true)
-        #expect(error.hint?.contains("never use the socket path alone") == true)
-        #expect(error.hint?.contains("peekaboo see --capture-engine classic") == true)
-        #expect(error.hint?.contains("retry with its --snapshot") == true)
+        #expect(error.hint?.contains("Classic capture on this unproven") == true)
+        #expect(error.localizedDescription.contains("support cannot be proven") == true)
+        #expect(error.hint?.contains("peekaboo see --capture-engine classic") == false)
+        #expect(error.hint?.contains("retry with its --snapshot") == false)
         #expect(error.hint?.contains("explicitly choose --capture-engine classic") == false)
     }
 
@@ -456,12 +457,12 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             selectedSocket: selectedSocket
         )
 
-        #expect(error.localizedDescription.contains("exact PID and process-start identity are unavailable") == true)
+        #expect(error.failure.screenCaptureKitOwnershipDiagnostic?.blockers.first?.processIdentifier == nil)
         #expect(error.localizedDescription.contains("owner socket \(ownerSocket)") == true)
         #expect(error.localizedDescription.contains("Selected socket: \(selectedSocket)") == true)
         #expect(!error.localizedDescription.contains(hostileBuild))
         #expect(!error.localizedDescription.contains("/private/user"))
-        #expect(error.hint?.contains("Do not stop any process") == true)
+        #expect(error.hint?.contains("Use a host that proves") == true)
         #expect(error.hint?.contains("stop exactly") == false)
     }
 
@@ -477,10 +478,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             selectedSocket: nil
         )
 
-        #expect(error.localizedDescription.contains("PID 3131, build 4.0.0") == true)
-        #expect(error.localizedDescription.contains("exact process-start identity is unavailable") == true)
+        #expect(error.localizedDescription.contains("PID 3131") == true)
+        #expect(error.failure.screenCaptureKitOwnershipDiagnostic?.blockers.first?.processStartIdentity == nil)
         #expect(error.localizedDescription.contains("Selected socket: automatic resolution") == true)
-        #expect(error.hint?.contains("Do not stop any process") == true)
+        #expect(error.hint?.contains("Use a host that proves") == true)
     }
 
     @Test
@@ -499,13 +500,13 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
         #expect(error.localizedDescription.contains("PID 3131, generation 4141") == true)
         #expect(error.localizedDescription.contains("build 4.0.0 (4000099)") == true)
-        #expect(error.localizedDescription.contains("owner socket /tmp/deferred-owner.sock") == true)
+        #expect(error.localizedDescription.contains("/tmp/deferred-owner.sock") == true)
         #expect(error.localizedDescription.contains("Selected socket: /tmp/selected-current.sock") == true)
     }
 
     @Test
-    func `classic false-permission host remains executable after request-aware selection`() async throws {
-        let socketPath = "/tmp/peekaboo-classic-deferral-\(UUID().uuidString).sock"
+    func `blocked current host admits classic exact-window dispatch despite false permission preflight`() async throws {
+        let socketPath = Self.fixtureSocketPath()
         let coordinationRoot = URL(fileURLWithPath: socketPath).appendingPathExtension("coordination")
         defer { try? FileManager.default.removeItem(at: coordinationRoot) }
         let host = try await Self.startHost(
@@ -516,9 +517,20 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             screenRecording: false,
             serviceOverride: OwnerPolicyFixtureServices(
                 ownerAware: true,
-                observation: ClassicDispatchSentinelObservationService()
+                observation: ClassicDispatchSentinelObservationService(expectedTarget: .windowID(77))
             ),
-            coordinationRootURL: coordinationRoot
+            coordinationRootURL: coordinationRoot,
+            windowIdentity: WindowMutationIdentity(
+                windowID: 77,
+                ownerProcessIdentifier: 3030,
+                ownerProcessStartIdentity: 4040,
+                capturedBounds: CGRect(x: 10, y: 20, width: 100, height: 80)
+            ),
+            screenCaptureKitOwnershipPreparer: {
+                throw ScreenCaptureKitOwnerLease.LeaseError.uncoordinatedProcesses([
+                    .init(processIdentifier: 4242, processStartIdentity: 9001, executablePath: "/synthetic/Blocker")
+                ])
+            }
         )
         defer { Task { await host.stop() } }
         var permissionRejections: [String] = []
@@ -538,19 +550,22 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             ),
             options: Self.captureOptions(engine: "classic"),
             snapshotInvalidationRemoteSocketPaths: [],
-            permissionRejections: &permissionRejections
+            permissionRejections: &permissionRejections,
+            makeRemoteServices: Self.makeInertRemoteServices,
+            handshakeCache: Self.inertHandshakeCache()
         )
         let resolution = try #require(resolved)
+        #expect(resolution.selectedRemoteSocketPath == socketPath)
 
         let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
             _ = try await resolution.services.desktopObservation.observe(DesktopObservationRequest(
-                target: .screen(index: 0),
+                target: .windowID(77),
                 capture: DesktopCaptureOptions(engine: .legacy),
                 detection: DesktopDetectionOptions(mode: .none)
             ))
         }
 
-        #expect(error?.standardizedErrorCode == .captureFailed)
+        #expect(error?.standardizedErrorCode == .captureFailed, "\(String(describing: error))")
         #expect(error?.message.contains("classic request reached the remote observation service") == true)
         #expect(permissionRejections.isEmpty)
         await host.stop()
@@ -558,7 +573,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `dynamic remote projection evaluates each request engine from raw host capabilities`() async throws {
-        let socketPath = "/tmp/peekaboo-dynamic-classic-deferral-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let coordinationRoot = URL(fileURLWithPath: socketPath).appendingPathExtension("coordination")
         defer { try? FileManager.default.removeItem(at: coordinationRoot) }
         let host = try await Self.startHost(
@@ -595,7 +610,9 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             identity: identity,
             options: options,
             snapshotInvalidationRemoteSocketPaths: [],
-            permissionRejections: &permissionRejections
+            permissionRejections: &permissionRejections,
+            makeRemoteServices: Self.makeInertRemoteServices,
+            handshakeCache: Self.inertHandshakeCache()
         )
         let resolution = try #require(resolved)
 
@@ -615,7 +632,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `explicit remote modern refuses a nonowner socket without rerouting or local fallback`() async throws {
-        let explicitSocket = "/tmp/peekaboo-explicit-nonowner-\(UUID().uuidString).sock"
+        let explicitSocket = Self.fixtureSocketPath()
         let nonownerHost = try await Self.startHost(
             socketPath: explicitSocket,
             processIdentifier: 1111,
@@ -635,10 +652,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
                 options: options,
                 environment: [:],
                 configurationInput: nil,
-                dependencies: .init(
+                dependencies: Self.inertDependencies(
                     makeLocalServices: { _ in
                         localFactoryCalls += 1
-                        return PeekabooServices()
+                        return OwnerPolicyFixtureServices(ownerAware: true)
                     },
                     claimScreenCaptureKitOwner: {
                         claimCalls += 1
@@ -666,7 +683,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `explicit remote modern accepts the exact owner socket without rerouting`() async throws {
-        let explicitSocket = "/tmp/peekaboo-explicit-owner-\(UUID().uuidString).sock"
+        let explicitSocket = Self.fixtureSocketPath()
         let ownerHost = try await Self.startHost(
             socketPath: explicitSocket,
             processIdentifier: 4242,
@@ -684,10 +701,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: {
@@ -705,7 +722,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test(arguments: ["auto", "classic"])
     func `local-default dynamic tools follow an explicit owner Bridge`(startupEngine: String) async throws {
-        let ownerSocket = "/tmp/peekaboo-dynamic-owner-\(UUID().uuidString).sock"
+        let ownerSocket = Self.fixtureSocketPath()
         let ownerHost = try await Self.startHost(
             socketPath: ownerSocket,
             processIdentifier: 4242,
@@ -725,10 +742,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: { Self.ownerReceipt() }
@@ -742,7 +759,7 @@ struct ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `stateful dynamic tools follow an implicit owner outside the build-scoped daemon`() async throws {
-        let ownerSocket = "/tmp/peekaboo-dynamic-implicit-owner-\(UUID().uuidString).sock"
+        let ownerSocket = Self.fixtureSocketPath()
         let ownerHost = try await Self.startHost(
             socketPath: ownerSocket,
             processIdentifier: 4242,
@@ -760,10 +777,10 @@ struct ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: { Self.ownerReceipt() },
                 inspectScreenCaptureKitOwner: { Self.ownerReceipt() },
@@ -815,10 +832,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: {
                     claimCalls += 1
@@ -858,7 +875,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
 
     @Test(arguments: ["modern", "classic", "auto"])
     func `remote capture engines never preclaim in the caller`(engine: String) async throws {
-        let missingSocket = "/tmp/peekaboo-owner-runtime-\(UUID().uuidString).sock"
+        let missingSocket = Self.fixtureSocketPath()
         var options = Self.captureOptions(engine: engine)
         options.bridgeSocketPath = missingSocket
         options.autoStartDaemon = false
@@ -870,10 +887,10 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: .init(
+            dependencies: Self.inertDependencies(
                 makeLocalServices: { _ in
                     localFactoryCalls += 1
-                    return PeekabooServices()
+                    return OwnerPolicyFixtureServices(ownerAware: true)
                 },
                 claimScreenCaptureKitOwner: {
                     claimCalls += 1
@@ -1277,6 +1294,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 options: Self.captureOptions(engine: "auto"),
                 snapshotInvalidationRemoteSocketPaths: [],
                 permissionRejections: &permissionRejections,
+                makeRemoteServices: Self.makeInertRemoteServices,
                 handshake: { _, _ in
                     try? await Task.sleep(for: .milliseconds(20))
                     return Self.handshake(
@@ -1312,7 +1330,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 identity: identity,
                 options: Self.captureOptions(engine: "auto"),
                 snapshotInvalidationRemoteSocketPaths: [],
-                permissionRejections: &permissionRejections
+                permissionRejections: &permissionRejections,
+                makeRemoteServices: Self.makeInertRemoteServices,
+                handshakeCache: Self.inertHandshakeCache()
             )
         }
         while resumeResolution == nil {
@@ -1328,8 +1348,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
 
     @Test
     func `remote resolution prefers the exact live owner over an earlier capable host`() async throws {
-        let firstSocket = "/tmp/peekaboo-nonowner-\(UUID().uuidString).sock"
-        let ownerSocket = "/tmp/peekaboo-owner-\(UUID().uuidString).sock"
+        let firstSocket = Self.fixtureSocketPath()
+        let ownerSocket = Self.fixtureSocketPath()
         let firstHost = try await Self.startHost(
             socketPath: firstSocket,
             processIdentifier: 1111,
@@ -1373,7 +1393,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             options: Self.captureOptions(engine: "modern"),
             requiredOwner: Self.ownerReceipt(),
             snapshotInvalidationRemoteSocketPaths: [],
-            permissionRejections: &permissionRejections
+            permissionRejections: &permissionRejections,
+            makeRemoteServices: Self.makeInertRemoteServices,
+            handshakeCache: Self.inertHandshakeCache()
         )
 
         #expect(resolution?.selectedRemoteSocketPath == ownerSocket)
@@ -1435,176 +1457,5 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             ),
             hostCapabilities: hostCapabilities
         )
-    }
-
-    static func startHost(
-        socketPath: String,
-        processIdentifier: pid_t,
-        processStartIdentity: UInt64,
-        codeSignatureHash: String,
-        ownerAware: Bool = true,
-        screenRecording: Bool = true,
-        maximumProtocolVersion: PeekabooBridgeProtocolVersion =
-            PeekabooBridgeConstants.exactForcedDialogDismissExecutionVersion,
-        usesCurrentHostIdentity: Bool = false,
-        serviceOverride: (any PeekabooBridgeServiceProviding)? = nil,
-        coordinationRootURL: URL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-owner-lane-\(UUID().uuidString)", isDirectory: true),
-        screenCaptureKitProcessCapabilityRegistrar: @MainActor @Sendable () throws -> Void = {},
-        screenCaptureKitOwnershipPreparer: @escaping @Sendable () async throws -> Void = {},
-        permissionEvaluationObserver: @escaping @MainActor @Sendable () -> Void = {}
-    ) async throws -> PeekabooBridgeHost {
-        let services: any PeekabooBridgeServiceProviding = if let serviceOverride {
-            serviceOverride
-        } else if ownerAware {
-            PeekabooServices()
-        } else {
-            OwnerPolicyFixtureServices(ownerAware: false)
-        }
-        let server = PeekabooBridgeServer(
-            services: services,
-            hostKind: .onDemand,
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            supportedVersions: ClosedRange(uncheckedBounds: (
-                lower: PeekabooBridgeConstants.supportedProtocolRange.lowerBound,
-                upper: maximumProtocolVersion
-            )),
-            allowedOperations: [
-                .permissionsStatus,
-                .captureScreen,
-                .desktopObservation,
-                .invalidateImplicitLatestSnapshot,
-                .launchApplicationWithOptions,
-                .findApplication,
-                .activateApplication,
-                .targetedHotkey,
-                .targetedTypeActions,
-                .targetedClick,
-                .ownsSnapshot,
-                .targetedDialogListElements,
-                .prepareDialogAction,
-                .exactDialogClickButton,
-                .exactDialogDismiss,
-            ],
-            hostIdentity: usesCurrentHostIdentity
-                ? .current()
-                : PeekabooBridgeHostIdentity(
-                    processIdentifier: processIdentifier,
-                    processStartIdentity: processStartIdentity,
-                    bundleIdentifier: "boo.peekaboo.test.host",
-                    bundleShortVersion: nil,
-                    bundleVersion: nil,
-                    codeSignatureHash: codeSignatureHash
-                ),
-            // Synthetic startup and dispatch must not use user-wide ownership or desktop coordination state.
-            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: coordinationRootURL),
-            screenCaptureKitProcessCapabilityRegistrar: screenCaptureKitProcessCapabilityRegistrar,
-            screenCaptureKitOwnershipPreparer: screenCaptureKitOwnershipPreparer,
-            permissionStatusEvaluator: { _ in
-                permissionEvaluationObserver()
-                return PermissionsStatus(
-                    screenRecording: screenRecording,
-                    accessibility: true,
-                    appleScript: false,
-                    postEvent: true
-                )
-            }
-        )
-        let host = PeekabooBridgeHost(
-            socketPath: socketPath,
-            server: server,
-            allowedTeamIDs: [],
-            requestTimeoutSec: 2
-        )
-        try await host.startChecked()
-        return host
-    }
-}
-
-@MainActor
-private final class OwnerPolicyFixtureServices: PeekabooBridgeServiceProviding {
-    private let base = PeekabooServices()
-    private let ownerAware: Bool
-    private let observation: (any DesktopObservationServiceProtocol)?
-
-    init(
-        ownerAware: Bool,
-        observation: (any DesktopObservationServiceProtocol)? = nil
-    ) {
-        self.ownerAware = ownerAware
-        self.observation = observation
-    }
-
-    var permissions: PermissionsService {
-        self.base.permissions
-    }
-
-    var screenCapture: any ScreenCaptureServiceProtocol {
-        self.base.screenCapture
-    }
-
-    var automation: any UIAutomationServiceProtocol {
-        self.base.automation
-    }
-
-    var windows: any WindowManagementServiceProtocol {
-        self.base.windows
-    }
-
-    var applications: any ApplicationServiceProtocol {
-        self.base.applications
-    }
-
-    var menu: any MenuServiceProtocol {
-        self.base.menu
-    }
-
-    var dock: any DockServiceProtocol {
-        self.base.dock
-    }
-
-    var dialogs: any DialogServiceProtocol {
-        self.base.dialogs
-    }
-
-    var snapshots: any SnapshotManagerProtocol {
-        self.base.snapshots
-    }
-
-    var desktopObservation: any DesktopObservationServiceProtocol {
-        self.observation ?? self.base.desktopObservation
-    }
-
-    var supportsDesktopObservationCaptureEngine: Bool {
-        true
-    }
-
-    var supportsScreenCaptureKitProcessOwnership: Bool {
-        self.ownerAware
-    }
-
-    func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
-        try await self.base.browserStatus(channel: channel)
-    }
-
-    func browserConnect(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
-        try await self.base.browserConnect(channel: channel)
-    }
-
-    func browserDisconnect() async throws {
-        try await self.base.browserDisconnect()
-    }
-
-    func browserExecute(_ request: PeekabooBridgeBrowserExecuteRequest) async throws
-    -> PeekabooBridgeBrowserToolResponse {
-        try await self.base.browserExecute(request)
-    }
-}
-
-@MainActor
-private final class ClassicDispatchSentinelObservationService: DesktopObservationServiceProtocol {
-    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
-        throw OperationError.captureFailed(reason: "classic request reached the remote observation service")
     }
 }

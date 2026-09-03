@@ -8,7 +8,7 @@ import Testing
 extension ScreenCaptureKitOwnerRuntimeTests {
     @Test(arguments: [true, false])
     func `fixture ownership capability follows service support`(ownerAware: Bool) async throws {
-        let socketPath = "/tmp/peekaboo-owner-fixture-\(UUID().uuidString).sock"
+        let socketPath = Self.fixtureSocketPath()
         let host = try await Self.startHost(
             socketPath: socketPath,
             processIdentifier: 4242,
@@ -32,8 +32,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
     }
 
     @Test(arguments: [true, false])
-    func `fixture ownership failures remain owner unaware`(registrationFails: Bool) async throws {
-        let socketPath = "/tmp/peekaboo-owner-fixture-failure-\(UUID().uuidString).sock"
+    func `fixture preparation failures retain ownership implementation proof`(registrationFails: Bool) async throws {
+        let socketPath = Self.fixtureSocketPath()
         let host = try await Self.startHost(
             socketPath: socketPath,
             processIdentifier: 4242,
@@ -62,9 +62,13 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             externalHostPresence: { _ in .absent }
         )
 
-        #expect(unawareHost?.socketPath == socketPath)
-        #expect(unawareHost?.processIdentifier == 4242)
-        #expect(unawareHost?.processStartIdentity == 9001)
+        #expect(unawareHost == nil)
+        let handshake = try await PeekabooBridgeClient(socketPath: socketPath).handshake(
+            client: .init(bundleIdentifier: "synthetic.client", teamIdentifier: nil, processIdentifier: getpid())
+        )
+        #expect(handshake.screenCaptureKitReadiness?.state == .unavailable)
+        #expect(handshake.screenCaptureKitReadiness?.failure?
+            .stage == (registrationFails ? .registration : .preparation))
         await host.stop()
     }
 }

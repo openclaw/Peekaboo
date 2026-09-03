@@ -763,6 +763,13 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
     public let standardErrorCode: StandardErrorCode?
     public let targetReceipt: DesktopActionTargetReceipt?
     public let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
+    public private(set) var screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic?
+
+    public func removingScreenCaptureKitDiagnostic() -> Self {
+        var compatible = self
+        compatible.screenCaptureKitOwnershipDiagnostic = nil
+        return compatible
+    }
 
     public init?(
         outcome: DesktopActionOutcome,
@@ -771,7 +778,8 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         causeDescription: String? = nil,
         standardErrorCode: StandardErrorCode? = nil,
         targetReceipt: DesktopActionTargetReceipt? = nil,
-        selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil)
+        selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil,
+        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil)
     {
         guard !outcome.isConfirmed,
               selectedLeafEvidence == nil || outcome.dispatchState.mutationDispatched,
@@ -783,6 +791,7 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         self.hint = hint
         self.causeDescription = causeDescription
         self.standardErrorCode = standardErrorCode
+        self.screenCaptureKitOwnershipDiagnostic = screenCaptureKitOwnershipDiagnostic
         self.targetReceipt = targetReceipt
         self.selectedLeafEvidence = selectedLeafEvidence
     }
@@ -911,13 +920,15 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         causeDescription: String?,
         standardErrorCode: StandardErrorCode? = nil,
         targetReceipt: DesktopActionTargetReceipt? = nil,
-        selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil)
+        selectedLeafEvidence: [DesktopSelectedLeafEvidence]? = nil,
+        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil)
     {
         self.outcome = outcome
         self.message = message
         self.hint = hint
         self.causeDescription = causeDescription
         self.standardErrorCode = standardErrorCode
+        self.screenCaptureKitOwnershipDiagnostic = screenCaptureKitOwnershipDiagnostic
         self.targetReceipt = targetReceipt
         self.selectedLeafEvidence = outcome.dispatchState.mutationDispatched ? selectedLeafEvidence : nil
     }
@@ -943,7 +954,8 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             causeDescription: self.causeDescription,
             standardErrorCode: self.standardErrorCode,
             targetReceipt: self.targetReceipt,
-            selectedLeafEvidence: self.selectedLeafEvidence)
+            selectedLeafEvidence: self.selectedLeafEvidence,
+            screenCaptureKitOwnershipDiagnostic: self.screenCaptureKitOwnershipDiagnostic)
     }
 
     /// Attaches a resolved target only after the execution owner has established it.
@@ -956,7 +968,8 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             causeDescription: self.causeDescription,
             standardErrorCode: self.standardErrorCode,
             targetReceipt: targetReceipt,
-            selectedLeafEvidence: self.selectedLeafEvidence)
+            selectedLeafEvidence: self.selectedLeafEvidence,
+            screenCaptureKitOwnershipDiagnostic: self.screenCaptureKitOwnershipDiagnostic)
     }
 
     /// Attaches the exact selected leaves only after at least one mutation crossed dispatch.
@@ -973,10 +986,25 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             causeDescription: self.causeDescription,
             standardErrorCode: self.standardErrorCode,
             targetReceipt: self.targetReceipt,
-            selectedLeafEvidence: evidence)
+            selectedLeafEvidence: evidence,
+            screenCaptureKitOwnershipDiagnostic: self.screenCaptureKitOwnershipDiagnostic)
+    }
+
+    public func preservingScreenCaptureKitDiagnostic(_ diagnostic: ScreenCaptureKitOwnershipDiagnostic?) -> Self {
+        guard let diagnostic else { return self }
+        return Self(
+            validatedOutcome: self.outcome,
+            message: self.message,
+            hint: self.hint,
+            causeDescription: self.causeDescription,
+            standardErrorCode: self.standardErrorCode ?? .captureFailed,
+            targetReceipt: self.targetReceipt,
+            selectedLeafEvidence: self.selectedLeafEvidence,
+            screenCaptureKitOwnershipDiagnostic: diagnostic)
     }
 
     private enum CodingKeys: String, CodingKey {
+        case screenCaptureKitOwnershipDiagnostic = "screen_capture_kit_ownership_diagnostic"
         case outcome
         case message
         case hint
@@ -1000,6 +1028,8 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
         self.hint = try container.decodeIfPresent(String.self, forKey: .hint)
         self.causeDescription = try container.decodeIfPresent(String.self, forKey: .causeDescription)
         self.standardErrorCode = try container.decodeIfPresent(StandardErrorCode.self, forKey: .standardErrorCode)
+        self.screenCaptureKitOwnershipDiagnostic = try container.decodeIfPresent(
+            ScreenCaptureKitOwnershipDiagnostic.self, forKey: .screenCaptureKitOwnershipDiagnostic)
         self.targetReceipt = try container.decodeIfPresent(DesktopActionTargetReceipt.self, forKey: .targetReceipt)
         self.selectedLeafEvidence = try container.decodeIfPresent(
             [DesktopSelectedLeafEvidence].self,

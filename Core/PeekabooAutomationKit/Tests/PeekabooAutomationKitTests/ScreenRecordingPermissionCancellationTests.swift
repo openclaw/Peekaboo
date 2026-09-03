@@ -1,9 +1,34 @@
 import Foundation
+import PeekabooFoundation
 import Testing
 @_spi(Testing) @testable import PeekabooAutomationKit
 
 @MainActor
 struct ScreenRecordingPermissionCancellationTests {
+    @Test
+    func `ownership refusal survives required permission evaluation`() async throws {
+        let blocker = ScreenCaptureKitOwnerLease.UncoordinatedProcess(
+            processIdentifier: 4242, processStartIdentity: 9001, executablePath: "/synthetic/Host")
+        let diagnostic = ScreenCaptureKitOwnershipDiagnostic.capturing(
+            ScreenCaptureKitOwnerLease.LeaseError.uncoordinatedProcesses([blocker]), stage: .entry)
+        var probes = 0
+        let checker = ScreenRecordingPermissionChecker(
+            preflight: { false },
+            coreGraphicsEvidence: { false },
+            shareableContentProbe: {
+                probes += 1
+                throw diagnostic
+            })
+        let gate = ScreenCapturePermissionGate(evaluator: checker)
+        let error = await #expect(throws: ScreenCaptureKitOwnershipDiagnostic.self) {
+            try await gate.requirePermission(
+                logger: MockLoggingService().logger(category: "test"),
+                correlationId: "test")
+        }
+        #expect(error == diagnostic)
+        #expect(probes == 1)
+    }
+
     @Test
     func `cancel during transient permission retry skips second probe`() async {
         let logger = MockLoggingService().logger(category: "test")

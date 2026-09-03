@@ -88,7 +88,7 @@ private func printCommanderError(_ error: CommanderProgramError, jsonOutput: Boo
     }
 }
 
-private func printGenericError(_ error: any Error, jsonOutput: Bool) {
+func printGenericError(_ error: any Error, jsonOutput: Bool) {
     let envelopeError = error as? any ResultEnvelopeError
     let fallbackCode: ErrorCode = if error is CommanderBindingError || error is CommanderUsageError {
         .INVALID_ARGUMENT
@@ -97,7 +97,7 @@ private func printGenericError(_ error: any Error, jsonOutput: Bool) {
     } else {
         .UNKNOWN_ERROR
     }
-    let code = envelopeError?.envelopeCode ?? fallbackCode
+    let code = captureOwnershipErrorCode(for: error) ?? envelopeError?.envelopeCode ?? fallbackCode
     let actionMetadata = actionErrorEnvelopeMetadata(
         for: error,
         isActionCommand: ResultEnvelopeContext.isActionCommand
@@ -125,6 +125,7 @@ private func printGenericError(_ error: any Error, jsonOutput: Bool) {
             actionFailure: actionFailure,
             targetReceipt: actionMetadata.targetReceipt,
             targetIdentity: actionMetadata.targetIdentity,
+            screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error),
             logger: logger
         )
     }

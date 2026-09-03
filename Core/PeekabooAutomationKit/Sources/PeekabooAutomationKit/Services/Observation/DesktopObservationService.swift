@@ -41,6 +41,7 @@ extension DesktopObservationServiceProtocol {
                 "Desktop observation failed after a conditional mutation may have been dispatched.",
                 hint: "Observe the target before retrying this observation.",
                 causeDescription: error.localizedDescription)
+                .preservingScreenCaptureKitDiagnostic(error as? ScreenCaptureKitOwnershipDiagnostic)
         }
     }
 
@@ -183,6 +184,7 @@ public enum ObservationActionResultSemantics {
                 message: failure.message,
                 hint: failure.hint ?? "Observe the target before retrying \(operation).",
                 causeDescription: failure.causeDescription)
+                .preservingScreenCaptureKitDiagnostic(failure.screenCaptureKitOwnershipDiagnostic)
         }
 
         var validation = UIAutomationActionResultSequenceAccumulator()
@@ -197,6 +199,7 @@ public enum ObservationActionResultSemantics {
             : validationResolution.selectedLeafEvidence
 
         let message = error.localizedDescription
+        let diagnostic = error as? ScreenCaptureKitOwnershipDiagnostic
         let hint = "Observe the target before retrying \(operation)."
         let causeDescription = String(describing: error)
         if let failure = DesktopActionFailure(
@@ -207,6 +210,7 @@ public enum ObservationActionResultSemantics {
             targetReceipt: targetReceipt)
         {
             return failure.selectingLeaves(validatedSelectedLeafEvidence)
+                .preservingScreenCaptureKitDiagnostic(diagnostic)
         }
         switch outcome.state {
         case .confirmedChange:
@@ -220,6 +224,7 @@ public enum ObservationActionResultSemantics {
                 causeDescription: causeDescription)
                 .attributed(to: targetReceipt)
                 .selectingLeaves(validatedSelectedLeafEvidence)
+                .preservingScreenCaptureKitDiagnostic(diagnostic)
         case .confirmedNoChange:
             return DesktopActionFailure.preDispatchRefusal(
                 route: outcome.route,
@@ -228,6 +233,7 @@ public enum ObservationActionResultSemantics {
                 hint: hint,
                 causeDescription: causeDescription)
                 .attributed(to: targetReceipt)
+                .preservingScreenCaptureKitDiagnostic(diagnostic)
         case .partial, .dispatchedUnverified, .suspectedNoop, .refused, .indeterminate:
             preconditionFailure("A non-confirmed outcome must construct a desktop action failure")
         }

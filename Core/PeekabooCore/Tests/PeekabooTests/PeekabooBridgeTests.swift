@@ -2198,6 +2198,8 @@ final class StubServices: PeekabooBridgeServiceProviding {
     let desktopObservation: any DesktopObservationServiceProtocol
     let permissions: PermissionsService = .init()
     let supportsScreenCaptureKitProcessOwnership: Bool
+    let supportsClassicCaptureWithoutScreenCaptureKit: Bool
+    let supportsDesktopObservationCaptureEngine: Bool
     var lastBrowserStatusChannel: String?
     var lastBrowserConnectTarget: (channel: String?, browserURL: String?)?
     var lastBrowserExecute: PeekabooBridgeBrowserExecuteRequest?
@@ -2244,7 +2246,9 @@ final class StubServices: PeekabooBridgeServiceProviding {
         snapshots: any SnapshotManagerProtocol = SnapshotManager(),
         desktopObservation: (any DesktopObservationServiceProtocol)? = nil,
         ownedDesktopOperationLanes: Set<PeekabooBridgeOperation> = [],
-        supportsScreenCaptureKitProcessOwnership: Bool = false)
+        supportsScreenCaptureKitProcessOwnership: Bool = false,
+        supportsClassicCaptureWithoutScreenCaptureKit: Bool = false,
+        supportsDesktopObservationCaptureEngine: Bool = false)
     {
         let desktopObservationStub = StubDesktopObservationService()
         self.screenCapture = self.screenCaptureStub
@@ -2256,6 +2260,8 @@ final class StubServices: PeekabooBridgeServiceProviding {
         self.desktopObservation = desktopObservation ?? desktopObservationStub
         self.ownedDesktopOperationLanes = ownedDesktopOperationLanes
         self.supportsScreenCaptureKitProcessOwnership = supportsScreenCaptureKitProcessOwnership
+        self.supportsClassicCaptureWithoutScreenCaptureKit = supportsClassicCaptureWithoutScreenCaptureKit
+        self.supportsDesktopObservationCaptureEngine = supportsDesktopObservationCaptureEngine
     }
 
     func ownsDesktopOperationLane(for operation: PeekabooBridgeOperation) -> Bool {
