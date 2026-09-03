@@ -42,15 +42,29 @@ compatible Bridge host whose PID, process generation, and signed build match tha
 Every claim scans and refuses owner-unaware live processes, including processes discovered after the current generation
 acquired the canonical lease.
 
-Every transported engine requires the additive `screenCaptureKitProcessOwnership` host capability. For `auto` and
-`modern`, it proves the host enforces the owner lease; for `classic`, it proves a false CoreGraphics permission preflight
-will not fall into an in-process SCK probe. During an upgrade, Peekaboo refuses live older capture hosts before starting
-another owner; update/relaunch or stop those exact hosts first.
+Current hosts advertise implemented ownership enforcement separately from their observed preparation readiness.
+`screenCaptureKitOwnershipEnforcement` proves the service contract; optional `screenCaptureKitReadiness` reports
+preparation success, a blocker, or an unavailable check. Preparation never claims ownership, and every actual SCK entry
+still scans and claims independently. Blocked preparation retains the original typed failure and known blocker
+PID, generation, executable, socket, and build evidence. A potential uncoordinated host is not proof of actual SCK use.
+
+Explicit `classic`/`cg` uses `classicCaptureWithoutScreenCaptureKit` plus capture-engine transport to stay on the selected
+socket even when SCK preparation failed or its readiness report is missing. It retains permission evidence, enabled
+operation, target freshness, and receipt checks. Default/`auto` and explicit `modern` refuse a current host's blocked or
+unavailable readiness with that host and blocker context; they do not substitute classic. Unblocked auto behavior is
+unchanged. Older hosts carrying `screenCaptureKitProcessOwnership` retain their established compatibility contract.
+Hosts with neither applicable proof fail closed; engine transport or a version label alone is insufficient.
+
+CLI JSON errors expose available typed ownership evidence as `error.screen_capture_kit_ownership_diagnostic`, with
+`CAPTURE_FAILED` as the error code. This optional field includes the selected host and original blockers independently
+of action metadata, including for ordinary `see --json` preflight failures. Its absence supplies no ownership evidence.
+A blocked SCK entry does not imply that an earlier desktop mutation was absent or safe to repeat; any existing action
+outcome and retry-safety receipt remain authoritative.
 
 `--no-remote --capture-engine modern` explicitly requests caller-local ownership. If another Peekaboo process owns
 SCK, the command refuses before constructing local capture services or calling the framework. Retry without
-`--no-remote` to use the owner host, verify and stop that exact PID/process generation, or explicitly request
-`--capture-engine classic`. Peekaboo never silently changes an explicit `modern` request to classic. Explicit classic
+`--no-remote` to use a compatible host for that exact owner generation, or explicitly request
+`--capture-engine classic` on a host that proves the classic contract. Peekaboo never silently changes an explicit `modern` request to classic. Explicit classic
 does not probe or claim in-process ScreenCaptureKit. Because the CoreGraphics permission preflight is not authoritative
 for rebuilt CLI binaries, a false preflight must be corroborated by readable protected metadata from a foreign visible
 WindowServer window before classic dispatches; otherwise it refuses before a wallpaper-only capture can be accepted.
@@ -69,9 +83,9 @@ or remove the explicit socket. Classic remains a process-isolated, in-process-SC
 New CLI and app processes publish a private PID/process-generation/build receipt and retain its file lock for their
 lifetime. Before every SCK leaf, Peekaboo scans exact same-user Peekaboo and companion host entry points plus the known
 Peekaboo, Claude, and Clawdbot Bridge sockets. Ordinary Claude Code, renderer, crash-reporting, audio, and model helpers
-are not hosts. A matching live host without a valid current receipt is treated as a pre-lease process that may already
-own SCK, including a renamed official binary or long-running `agent`/`capture live` process. The first upgrade to this
-policy therefore has an explicit restart boundary: stop or relaunch every reported old process. Unlocked stale receipts
+are not hosts. A matching live host without a valid current receipt blocks SCK because its coordination cannot be
+proven, including a renamed official binary or long-running `agent`/`capture live` process. This observation does not
+establish whether that process has used SCK or which build first implemented ownership. Unlocked stale receipts
 are safely removed from a dedicated private marker directory; repeated scans reuse PID, process-generation, executable,
 and signature inspection results while revalidating the executable path.
 

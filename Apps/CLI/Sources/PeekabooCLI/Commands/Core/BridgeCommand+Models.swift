@@ -1,6 +1,7 @@
 import Foundation
 import PeekabooBridge
 import PeekabooCore
+import PeekabooFoundation
 
 struct BridgeStatusReport: Codable {
     let remoteSkipped: Bool
@@ -168,6 +169,7 @@ struct BridgeHandshakeReport: Codable {
     let permissionTags: [String: [PeekabooBridgePermissionKind]]
     let hostIdentity: PeekabooBridgeHostIdentity?
     let hostCapabilities: [String]?
+    let screenCaptureKitReadiness: ScreenCaptureKitReadiness?
 
     init(from handshake: PeekabooBridgeHandshakeResponse) {
         self.negotiatedVersion = handshake.negotiatedVersion
@@ -179,6 +181,7 @@ struct BridgeHandshakeReport: Codable {
         self.permissionTags = handshake.permissionTags
         self.hostIdentity = handshake.hostIdentity
         self.hostCapabilities = handshake.hostCapabilities
+        self.screenCaptureKitReadiness = handshake.screenCaptureKitReadiness
     }
 }
 

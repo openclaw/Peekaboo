@@ -1,8 +1,10 @@
 import Darwin
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
+@Suite(.serialized, CaptureTestIsolation())
 @MainActor
 struct ScreenCaptureKitOwnerLeafTests {
     @Test
@@ -111,14 +113,14 @@ struct ScreenCaptureKitOwnerLeafTests {
             }
         }
 
-        let error: PeekabooError
+        let error: ScreenCaptureKitOwnershipDiagnostic
         do {
             _ = try await ScreenCaptureKitCaptureGate.$processOwnerClaimOverride.withValue(
                 claim,
                 operation: operation)
             Issue.record("Foreign ownership should refuse before the leaf")
             return
-        } catch let caught as PeekabooError {
+        } catch let caught as ScreenCaptureKitOwnershipDiagnostic {
             error = caught
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -127,7 +129,8 @@ struct ScreenCaptureKitOwnerLeafTests {
 
         #expect(error.code == StandardErrorCode.captureFailed)
         #expect(error.localizedDescription.contains("PID 4242, generation 9001"))
-        #expect(error.localizedDescription.contains("No ScreenCaptureKit operation was dispatched"))
+        #expect(error.blockers.first?.processIdentifier == 4242)
+        #expect(error.blockers.first?.processStartIdentity == 9001)
         #expect(leafCalls == 0)
     }
 
@@ -159,9 +162,11 @@ struct ScreenCaptureKitOwnerLeafTests {
                 claim,
                 operation: operation)
             Issue.record("The second owner check should refuse before the delayed leaf")
-        } catch let error as PeekabooError {
+        } catch let error as ScreenCaptureKitOwnershipDiagnostic {
             #expect(error.code == StandardErrorCode.captureFailed)
             #expect(error.localizedDescription.contains("old-bridge.sock"))
+            #expect(error.kind == .uncoordinatedHosts)
+            #expect(error.blockers.first?.socketPath == blocker.socketPath)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

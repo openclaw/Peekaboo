@@ -19,6 +19,7 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
     var desktopObservation: any DesktopObservationServiceProtocol { get }
     var supportsDesktopObservationCaptureEngine: Bool { get }
     var supportsScreenCaptureKitProcessOwnership: Bool { get }
+    var supportsClassicCaptureWithoutScreenCaptureKit: Bool { get }
     var browserSessionBootstrapProvider: (any PeekabooBridgeBrowserSessionBootstrapProviding)? { get }
 
     /// Whether the concrete native service owns the lane for this exact operation.
@@ -59,6 +60,10 @@ extension PeekabooBridgeServiceProviding {
     }
 
     public var supportsScreenCaptureKitProcessOwnership: Bool {
+        false
+    }
+
+    public var supportsClassicCaptureWithoutScreenCaptureKit: Bool {
         false
     }
 

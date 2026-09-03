@@ -1204,6 +1204,7 @@ extension PeekabooBridgeClient {
             message: envelope.message,
             hint: "Observe the target before retrying this operation.",
             causeDescription: envelope.details)
+            .preservingScreenCaptureKitDiagnostic(envelope.screenCaptureKitOwnershipDiagnostic)
     }
 }
 

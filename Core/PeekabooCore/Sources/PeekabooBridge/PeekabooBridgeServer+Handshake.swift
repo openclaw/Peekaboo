@@ -318,7 +318,9 @@ extension PeekabooBridgeServer {
                         compositeTypeDelivery: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.compositeTypeDelivery),
                         processGenerationBoundElementMutations: advertisedCapabilities.contains(
-                            PeekabooBridgeHostCapability.processGenerationBoundElementMutations)),
+                            PeekabooBridgeHostCapability.processGenerationBoundElementMutations),
+                        screenCaptureKitOwnershipDiagnostics: clientCapabilities.contains(
+                            PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics)),
                     replacing: payload.replacingOperationSessionID)
                 self.clearReceiptlessNegotiation(peer: peer)
             } catch let error as PeekabooBridgeOperationReceiptError {
@@ -353,6 +355,7 @@ extension PeekabooBridgeServer {
             permissionTags: permissionTags,
             hostIdentity: self.hostIdentity,
             hostCapabilities: advertisedCapabilities.sorted(),
+            screenCaptureKitReadiness: self.screenCaptureKitReadiness,
             operationAttestation: supportsAttestedOperationReceipts
                 ? operationReceiptAuthority?.attestation
                 : nil,

@@ -424,6 +424,10 @@ public final class PeekabooServices {
 
 extension PeekabooServices: PeekabooServiceProviding {}
 extension PeekabooServices: PeekabooBridgeServiceProviding {
+    public var supportsClassicCaptureWithoutScreenCaptureKit: Bool {
+        self.screenCapture is ScreenCaptureService
+    }
+
     public var supportsScreenCaptureKitProcessOwnership: Bool {
         self.screenCapture is ScreenCaptureService
     }

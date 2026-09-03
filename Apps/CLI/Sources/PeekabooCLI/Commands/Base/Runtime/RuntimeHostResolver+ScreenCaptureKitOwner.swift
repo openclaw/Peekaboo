@@ -4,10 +4,83 @@ import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooCore
+import PeekabooFoundation
 
 @MainActor
 extension RuntimeHostResolver {
+    static func explicitCaptureHandshakeCache(
+        options: CommandRuntimeOptions,
+        environment: [String: String],
+        dependencies: Dependencies
+    ) async throws -> RemoteHandshakeCache? {
+        guard options.requiresScreenCaptureKitOwnerCapability,
+              !options.usesPerToolSnapshotInvalidation,
+              options.requiresScreenCapturePermission || options.requiresSilentCapture,
+              !self.remoteIsolationRequested(options: options, environment: environment),
+              let socket = BridgeSocketResolver.explicitBridgeSocket(options: options, environment: environment)
+        else { return nil }
+        let cache = dependencies.makeRemoteHandshakeCache()
+        try await self.validateExplicitCaptureReadiness(
+            socketPath: socket, options: options, environment: environment, cache: cache
+        )
+        return cache
+    }
+
+    static func validateExplicitCaptureReadiness(
+        socketPath: String,
+        options: CommandRuntimeOptions,
+        environment: [String: String],
+        cache: RemoteHandshakeCache
+    ) async throws {
+        let candidate = ImplicitRemoteCandidate(
+            socketPath: socketPath,
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let response: PeekabooBridgeHandshakeResponse
+        do {
+            response = try await cache.handshake(candidate, identity: cache.identity).response
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            return
+        }
+        guard self.captureEnginePreferenceForOwnership(options: options, environment: environment) != .legacy,
+              let diagnostic = BridgeCapabilityPolicy.screenCaptureKitReadinessRefusal(for: response)
+        else { return }
+        throw self.readinessRefusal(diagnostic, handshake: response, socketPath: socketPath)
+    }
+
+    static func readinessRefusal(
+        _ diagnostic: ScreenCaptureKitOwnershipDiagnostic,
+        handshake: PeekabooBridgeHandshakeResponse,
+        socketPath: String
+    ) -> PreDispatchActionError {
+        let identified = diagnostic.selectingHost(.init(
+            processIdentifier: handshake.hostIdentity?.processIdentifier,
+            processStartIdentity: handshake.hostIdentity?.processStartIdentity,
+            socketPath: socketPath,
+            buildIdentity: self.safeDiagnosticBuildIdentity(handshake.build),
+            codeSignatureHash: handshake.hostIdentity?.codeSignatureHash
+        ))
+        let hint = BridgeCapabilityPolicy.supportsClassicCaptureWithoutScreenCaptureKit(for: handshake)
+            ? "Explicit --capture-engine classic can use this same socket without in-process ScreenCaptureKit."
+            : "This host has not proven a classic capture path without in-process ScreenCaptureKit."
+        return PreDispatchActionError(
+            message: identified.userMessage,
+            code: .CAPTURE_FAILED,
+            hint: hint,
+            reason: .runtimeIncompatible,
+            screenCaptureKitOwnershipDiagnostic: identified
+        )
+    }
+
     typealias LocalServiceFactory = @MainActor (CommandRuntimeOptions) -> any PeekabooServiceProviding
+    typealias RemoteServiceFactory = @MainActor (
+        PeekabooBridgeClient, PeekabooBridgeHandshakeResponse, CommandRuntimeOptions
+    ) -> any PeekabooServiceProviding
     typealias ScreenCaptureKitOwnerClaim = () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt
     typealias ScreenCaptureKitOwnerInspector = () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt?
     typealias RemoteCandidatePlanner = @MainActor (
@@ -38,6 +111,7 @@ extension RuntimeHostResolver {
         let remoteCandidatePlan: RemoteCandidatePlanner
         let snapshotAffinityProbe: SnapshotAffinityProbe
         let makeRemoteHandshakeCache: RemoteHandshakeCacheFactory
+        let makeRemoteServices: RemoteServiceFactory
 
         init(
             makeLocalServices: @escaping LocalServiceFactory,
@@ -47,7 +121,10 @@ extension RuntimeHostResolver {
             recordScreenCaptureKitSafetyBlocker: @escaping ScreenCaptureKitSafetyRecorder = { _ in },
             remoteCandidatePlan: @escaping RemoteCandidatePlanner = RuntimeHostResolver.remoteCandidatePlan,
             snapshotAffinityProbe: @escaping SnapshotAffinityProbe = RuntimeHostResolver.liveSnapshotAffinityProbe,
-            makeRemoteHandshakeCache: @escaping RemoteHandshakeCacheFactory = { RemoteHandshakeCache() }
+            makeRemoteHandshakeCache: @escaping RemoteHandshakeCacheFactory = { RemoteHandshakeCache() },
+            makeRemoteServices: @escaping RemoteServiceFactory = {
+                RuntimeHostResolver.remoteServices(client: $0, handshake: $1, options: $2)
+            }
         ) {
             self.makeLocalServices = makeLocalServices
             self.claimScreenCaptureKitOwner = claimScreenCaptureKitOwner
@@ -57,6 +134,7 @@ extension RuntimeHostResolver {
             self.remoteCandidatePlan = remoteCandidatePlan
             self.snapshotAffinityProbe = snapshotAffinityProbe
             self.makeRemoteHandshakeCache = makeRemoteHandshakeCache
+            self.makeRemoteServices = makeRemoteServices
         }
 
         static let live = Dependencies(
@@ -105,6 +183,9 @@ extension RuntimeHostResolver {
         let makeLocalServices: LocalServiceFactory
         let inspectScreenCaptureKitSafety: ScreenCaptureKitSafetyInspector
         let recordScreenCaptureKitSafetyBlocker: ScreenCaptureKitSafetyRecorder
+        var makeRemoteServices: RemoteServiceFactory = {
+            RuntimeHostResolver.remoteServices(client: $0, handshake: $1, options: $2)
+        }
 
         func resolveRemoteServices(
             candidates: [ImplicitRemoteCandidate],
@@ -120,6 +201,7 @@ extension RuntimeHostResolver {
                 requiredOwner: requiredOwner,
                 snapshotInvalidationRemoteSocketPaths: self.snapshotInvalidationRemoteSocketPaths,
                 permissionRejections: &permissionRejections,
+                makeRemoteServices: self.makeRemoteServices,
                 handshakeCache: self.handshakeCache
             )
         }
@@ -265,7 +347,7 @@ extension RuntimeHostResolver {
         owner: ScreenCaptureKitOwnerLease.OwnerReceipt
     ) -> Bool {
         let capabilities = handshake.hostCapabilities ?? []
-        guard capabilities.contains(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership),
+        guard BridgeCapabilityPolicy.supportsScreenCaptureKitProcessOwnership(for: handshake),
               capabilities.contains(PeekabooBridgeHostCapability.hostGenerationIdentity),
               let hostIdentity = handshake.hostIdentity,
               hostIdentity.processIdentifier == owner.processIdentifier,
@@ -357,31 +439,18 @@ extension RuntimeHostResolver {
         callerLocal: Bool,
         selectedSocket: String? = nil
     ) -> PreDispatchActionError {
-        if let leaseError = error as? ScreenCaptureKitOwnerLease.LeaseError {
-            switch leaseError {
-            case let .ownedByAnotherProcess(_, receipt):
-                return self.ownerRefusal(owner: receipt, callerLocal: callerLocal)
-            case let .uncoordinatedHosts(hosts):
-                if let host = hosts.first {
-                    return self.ownerCapabilityRefusal(
-                        host: ScreenCaptureKitOwnerUnawareHost(
-                            socketPath: host.socketPath,
-                            processIdentifier: host.processIdentifier,
-                            processStartIdentity: host.processStartIdentity,
-                            buildIdentity: host.buildIdentity
-                        ),
-                        selectedSocket: selectedSocket
-                    )
-                }
-            default:
-                break
-            }
+        var diagnostic = ScreenCaptureKitOwnershipDiagnostic.capturing(error, stage: .admission)
+        if let selectedSocket {
+            diagnostic = diagnostic.selectingHost(.init(socketPath: selectedSocket))
         }
+        let route = selectedSocket.map { "Selected socket: \($0). " }
+            ?? (callerLocal ? "Selected route: caller-local. " : "Selected socket: automatic resolution. ")
         return PreDispatchActionError(
-            message: "Peekaboo could not establish safe ScreenCaptureKit process ownership. No capture was dispatched.",
+            message: route + diagnostic.userMessage,
             code: .CAPTURE_FAILED,
-            hint: error.localizedDescription,
-            reason: .runtimeIncompatible
+            hint: "Use a host that proves the required capture contract and satisfies process ownership.",
+            reason: .runtimeIncompatible,
+            screenCaptureKitOwnershipDiagnostic: diagnostic
         )
     }
 
@@ -390,44 +459,27 @@ extension RuntimeHostResolver {
         selectedSocket: String?
     ) -> PreDispatchActionError {
         let ownerSocket = NSString(string: host.socketPath).standardizingPath
-        let selectedSocket = selectedSocket.map { NSString(string: $0).standardizingPath }
         let selectedSocketText = selectedSocket ?? "automatic resolution"
-        let buildText = self.safeDiagnosticBuildIdentity(host.buildIdentity).map { ", build \($0)" } ?? ""
-        let hasExactProcessIdentity = host.processIdentifier != nil && host.processStartIdentity != nil
-        let identityText: String
-        let message: String
-        if let processIdentifier = host.processIdentifier,
-           let processStartIdentity = host.processStartIdentity {
-            identityText = "PID \(processIdentifier), generation \(processStartIdentity)\(buildText)"
-            message = "Bridge host \(identityText) at owner socket \(ownerSocket) predates safe " +
-                "process-lifetime ScreenCaptureKit ownership. Selected socket: \(selectedSocketText). " +
-                "No capture was dispatched."
-        } else if let processIdentifier = host.processIdentifier {
-            identityText = "PID \(processIdentifier)\(buildText)"
-            message = "Bridge host \(identityText) at owner socket \(ownerSocket) may predate safe " +
-                "process-lifetime ScreenCaptureKit ownership, but its exact process-start identity is unavailable. " +
-                "Selected socket: \(selectedSocketText). No capture was dispatched."
-        } else {
-            identityText = "unknown process identity\(buildText)"
-            message = "A live Bridge host at owner socket \(ownerSocket) may predate safe process-lifetime " +
-                "ScreenCaptureKit ownership, but its exact PID and process-start identity are unavailable" +
-                "\(buildText). Selected socket: \(selectedSocketText). No capture was dispatched."
-        }
-        let classicRecovery = self.classicCaptureRecoveryGuidance
-        let hint = if hasExactProcessIdentity {
-            "Update or relaunch the host at owner socket \(ownerSocket). If stopping it is necessary, first " +
-                "revalidate and stop exactly \(identityText); never use the socket path alone. Alternatively, " +
-                classicRecovery
-        } else {
-            "Update or relaunch the app configured for owner socket \(ownerSocket), or " +
-                classicRecovery + " Do not stop any process based on this refusal: the exact PID and " +
-                "process-start identity are unavailable."
-        }
+        let evidence = ScreenCaptureKitOwnershipDiagnostic.ProcessEvidence(
+            processIdentifier: host.processIdentifier,
+            processStartIdentity: host.processStartIdentity,
+            socketPath: ownerSocket,
+            buildIdentity: self.safeDiagnosticBuildIdentity(host.buildIdentity)
+        )
+        let diagnostic = ScreenCaptureKitOwnershipDiagnostic(
+            kind: .uncoordinatedHosts,
+            stage: .admission,
+            message: "Safe ScreenCaptureKit ownership support cannot be proven for the Bridge host at " +
+                "owner socket \(ownerSocket). Selected socket: \(selectedSocketText). No capture was dispatched.",
+            blockers: [evidence]
+        )
         return PreDispatchActionError(
-            message: message,
+            message: diagnostic.userMessage,
             code: .CAPTURE_FAILED,
-            hint: hint,
-            reason: .runtimeIncompatible
+            hint: "Use a host that proves the required capture contract. Classic capture on this unproven " +
+                "socket cannot be assumed safe.",
+            reason: .runtimeIncompatible,
+            screenCaptureKitOwnershipDiagnostic: diagnostic
         )
     }
 
@@ -436,9 +488,8 @@ extension RuntimeHostResolver {
         selectedSocket: String?
     ) -> MCPToolCapturePreflightRefusal {
         let refusal = self.ownerCapabilityRefusal(host: host, selectedSocket: selectedSocket)
-        let sessionGuidance = "This capture refusal is fixed for the lifetime of this MCP or Agent session; " +
-            "after the owner is updated or stopped, start a fresh session before retrying auto or modern capture. " +
-            "The see tool can instead use capture_engine 'classic' in this session without entering ScreenCaptureKit."
+        let sessionGuidance = "This capture refusal is fixed for the lifetime of this MCP or Agent session. " +
+            "Noncapture tools remain available; classic capture still requires proof from the selected host."
         return MCPToolCapturePreflightRefusal(
             message: refusal.localizedDescription,
             hint: [refusal.hint, sessionGuidance].compactMap(\.self).joined(separator: " ")
@@ -636,19 +687,13 @@ extension RuntimeHostResolver {
                 "Bridge host for that exact process generation is available. Selected socket: automatic " +
                 "resolution; owner socket: unavailable in the process ownership receipt. No capture was dispatched."
         }
-        let classicRecovery = self.classicCaptureRecoveryGuidance
-        let hint = if callerLocal {
-            "Retry without --no-remote to use the selected owner host; otherwise verify and stop exactly " +
-                "\(ownerText), or " + classicRecovery
-        } else {
-            "Use a Bridge socket served by exactly \(ownerText); otherwise verify and stop that exact owner, " +
-                "or " + classicRecovery
-        }
+        let hint = "Use a Bridge socket served by exactly \(ownerText) with the required capture contract."
         return PreDispatchActionError(
             message: message,
             code: .CAPTURE_FAILED,
             hint: hint,
-            reason: .runtimeIncompatible
+            reason: .runtimeIncompatible,
+            screenCaptureKitOwnershipDiagnostic: self.ownerDiagnostic(owner)
         )
     }
 
@@ -662,15 +707,11 @@ extension RuntimeHostResolver {
             message: "Selected socket: \(selectedSocket). The ScreenCaptureKit owner is \(ownerText), but its " +
                 "owner socket is unavailable in the process ownership receipt. No capture was dispatched.",
             code: .CAPTURE_FAILED,
-            hint: "Change or remove --bridge-socket to select the exact owner host; otherwise verify and stop " +
-                "\(ownerText), or " + self.classicCaptureRecoveryGuidance,
-            reason: .runtimeIncompatible
+            hint: "Change or remove --bridge-socket to select the exact owner host with the required capture contract.",
+            reason: .runtimeIncompatible,
+            screenCaptureKitOwnershipDiagnostic: self.ownerDiagnostic(owner)
         )
     }
-
-    private static let classicCaptureRecoveryGuidance =
-        "use classic capture through a command that exposes it. For an interaction, first run " +
-        "'peekaboo see --capture-engine classic' for the exact target and retry with its --snapshot."
 
     static func ownerExactBuildConflict(
         owner: ScreenCaptureKitOwnerLease.OwnerReceipt,
@@ -682,9 +723,25 @@ extension RuntimeHostResolver {
             message: "ScreenCaptureKit owner \(ownerText) does not serve selected socket \(selectedSocket); " +
                 "the owner socket is unavailable in the process ownership receipt. No capture was dispatched.",
             code: .CAPTURE_FAILED,
-            hint: "Stop or upgrade the exact owner before retrying. Peekaboo will not violate process ownership " +
-                "or route stateful snapshot work to a different build.",
-            reason: .runtimeIncompatible
+            hint: "The selected socket must match the owner generation and required build for this stateful request.",
+            reason: .runtimeIncompatible,
+            screenCaptureKitOwnershipDiagnostic: self.ownerDiagnostic(owner)
+        )
+    }
+
+    private static func ownerDiagnostic(
+        _ owner: ScreenCaptureKitOwnerLease.OwnerReceipt
+    ) -> ScreenCaptureKitOwnershipDiagnostic {
+        .init(
+            kind: .ownedByAnotherProcess,
+            stage: .admission,
+            message: "The required ScreenCaptureKit owner host is unavailable for this route.",
+            blockers: [.init(
+                processIdentifier: owner.processIdentifier,
+                processStartIdentity: owner.processStartIdentity,
+                buildIdentity: self.safeDiagnosticBuildIdentity(owner.buildIdentity),
+                codeSignatureHash: self.safeDiagnosticBuildIdentity(owner.codeSignatureHash)
+            )]
         )
     }
 

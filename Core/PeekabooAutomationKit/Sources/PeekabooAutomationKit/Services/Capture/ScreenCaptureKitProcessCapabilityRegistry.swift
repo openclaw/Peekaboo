@@ -61,8 +61,11 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
         let codeSignatureHash: String?
     }
 
-    static func register(ownerIdentity: Lease.OwnerIdentity) throws {
-        let signatureIdentity = self.currentCodeSignatureIdentity()
+    static func register(
+        ownerIdentity: Lease.OwnerIdentity,
+        directory: URL = directoryURL,
+        signatureIdentity: CodeSignatureIdentity? = currentCodeSignatureIdentity()) throws
+    {
         let receipt = ProcessCapabilityReceipt(
             processIdentifier: ownerIdentity.processIdentifier,
             processStartIdentity: ownerIdentity.processStartIdentity,
@@ -72,7 +75,8 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
             teamIdentifier: signatureIdentity?.teamIdentifier)
         let markerURL = self.markerURL(
             processIdentifier: receipt.processIdentifier,
-            processStartIdentity: receipt.processStartIdentity)
+            processStartIdentity: receipt.processStartIdentity,
+            directory: directory)
         let markerPath = markerURL.path
 
         try self.registryLock.withLock {

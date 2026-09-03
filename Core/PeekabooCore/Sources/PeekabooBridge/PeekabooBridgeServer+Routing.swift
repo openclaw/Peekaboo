@@ -63,6 +63,12 @@ extension PeekabooBridgeServer {
                 peer: peer,
                 permissions: permissions,
                 effectiveOps: effectiveOps)
+        } catch let diagnostic as ScreenCaptureKitOwnershipDiagnostic {
+            failed = true
+            throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
+                Self.bridgeErrorEnvelope(for: diagnostic, operation: op),
+                plan: plan,
+                stage: .preDispatch(.runtimeIncompatible))
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             failed = true
             let duration = Date().timeIntervalSince(start)

@@ -346,6 +346,30 @@ struct BridgeStatusReportHintTests {
     }
 
     @Test
+    func `Bridge report preserves typed capture readiness`() throws {
+        let handshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: "fixture",
+            supportedOperations: [.desktopObservation],
+            screenCaptureKitReadiness: .init(state: .blocked, failure: .init(
+                kind: .uncoordinatedProcesses,
+                stage: .preparation,
+                message: "Synthetic coordination blocker",
+                blockers: [.init(processIdentifier: 4242, processStartIdentity: 9001)]
+            ))
+        )
+        let data = try JSONEncoder().encode(BridgeHandshakeReport(from: handshake))
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let readiness = try #require(object["screenCaptureKitReadiness"] as? [String: Any])
+        #expect(readiness["state"] as? String == "blocked")
+        let failure = try #require(readiness["failure"] as? [String: Any])
+        let blockers = try #require(failure["blockers"] as? [[String: Any]])
+        #expect(blockers.first?["processIdentifier"] as? Int == 4242)
+        #expect(blockers.first?["processStartIdentity"] as? Int == 9001)
+    }
+
+    @Test
     func `Bridge report preserves host generation build and launch capabilities`() throws {
         let identity = PeekabooBridgeHostIdentity(
             processIdentifier: 4242,

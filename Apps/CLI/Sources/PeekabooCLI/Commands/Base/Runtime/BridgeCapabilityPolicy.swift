@@ -17,7 +17,7 @@ enum BridgeCapabilityPolicy {
     ) -> Bool {
         let defersScreenRecording = self.defersRemoteScreenRecordingPermission(options: options)
         let supportsCapture = defersScreenRecording
-            ? handshake.supportedOperations.contains(.captureScreen)
+            ? self.supportsPermissionDeferredOperation(.captureScreen, for: handshake, options: options)
             : self.supportsOperation(.captureScreen, for: handshake)
         if options.requiresScreenCapturePermission || options.requiresSilentCapture,
            !supportsCapture {
@@ -156,10 +156,18 @@ enum BridgeCapabilityPolicy {
             return false
         }
         if options.requiresScreenCaptureKitOwnerCapability,
-           !self.supportsScreenCaptureKitProcessOwnership(for: handshake) {
+           !(self.defersClassicScreenRecordingPermission(options: options)
+               ? self.supportsClassicCaptureWithoutScreenCaptureKit(for: handshake)
+               : self.supportsScreenCaptureKitProcessOwnership(for: handshake)) {
             return false
         }
         if options.requiresExactWindowROIObservation, !capabilities.exactWindowROIObservation {
+            return false
+        }
+        if !options.usesPerToolSnapshotInvalidation,
+           options.requiresScreenCaptureKitOwnerCapability,
+           !self.defersClassicScreenRecordingPermission(options: options),
+           self.screenCaptureKitReadinessRefusal(for: handshake) != nil {
             return false
         }
         if options.requiresExplicitSnapshotPublication,
@@ -185,7 +193,7 @@ enum BridgeCapabilityPolicy {
 
         let supportsObservation = handshake.negotiatedVersion >=
             PeekabooBridgeProtocolVersion(major: 1, minor: 5) &&
-            handshake.supportedOperations.contains(.desktopObservation)
+            self.supportsPermissionDeferredOperation(.desktopObservation, for: handshake, options: options)
         return ObservationCapabilities(
             desktopObservation: supportsObservation,
             desktopObservationOCR: supportsObservation &&
@@ -560,15 +568,6 @@ enum BridgeCapabilityPolicy {
             ) == true
     }
 
-    static func supportsScreenCaptureKitProcessOwnership(
-        for handshake: PeekabooBridgeHandshakeResponse
-    ) -> Bool {
-        handshake.supportedOperations.contains(.desktopObservation) &&
-            handshake.hostCapabilities?.contains(
-                PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership
-            ) == true
-    }
-
     private static func defersClassicScreenRecordingPermission(options: CommandRuntimeOptions) -> Bool {
         options.requiresScreenCaptureKitOwnerCapability &&
             ObservationCommandSupport.captureEnginePreference(
@@ -579,6 +578,20 @@ enum BridgeCapabilityPolicy {
 
     private static func defersRemoteScreenRecordingPermission(options: CommandRuntimeOptions) -> Bool {
         self.defersClassicScreenRecordingPermission(options: options) || options.usesPerToolSnapshotInvalidation
+    }
+
+    private static func supportsPermissionDeferredOperation(
+        _ operation: PeekabooBridgeOperation,
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        guard handshake.supportedOperations.contains(operation) else { return false }
+        if options.usesPerToolSnapshotInvalidation || self.supportsOperation(operation, for: handshake) {
+            return true
+        }
+        return handshake.permissions?.screenRecording == false &&
+            self.supportsClassicCaptureWithoutScreenCaptureKit(for: handshake) &&
+            self.missingPermissions(for: operation, handshake: handshake).subtracting([.screenRecording]).isEmpty
     }
 
     static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

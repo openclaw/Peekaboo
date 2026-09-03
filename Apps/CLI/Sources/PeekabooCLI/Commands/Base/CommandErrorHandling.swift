@@ -26,7 +26,8 @@ extension ErrorHandlingCommand {
             message: presentation.message,
             code: code,
             hint: (error as? any ResultEnvelopeError)?.envelopeHint ?? presentation.hint,
-            reason: explicitReason ?? defaultActionRefusalReason(code) ?? .targetUnavailable
+            reason: explicitReason ?? defaultActionRefusalReason(code) ?? .targetUnavailable,
+            screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error)
         )
     }
 
@@ -39,7 +40,8 @@ extension ErrorHandlingCommand {
             let actionFailure = actionMetadata.failure
             let lifecycleRefusal = applicationLifecycleRefusalProjection(for: error)
             let lifecycleFailure = applicationLifecycleFailureProjection(for: error)
-            let errorCode = customCode ?? envelopeError?.envelopeCode ?? self.mapErrorToCode(error)
+            let errorCode = customCode ?? captureOwnershipErrorCode(for: error)
+                ?? envelopeError?.envelopeCode ?? self.mapErrorToCode(error)
             let failureReceipt = lifecycleFailure.map { failure in
                 CaptureFailureReceipt(
                     retrySafe: failure.metadata.retrySafe,
@@ -70,6 +72,7 @@ extension ErrorHandlingCommand {
                     actionFailure: actionFailure,
                     targetReceipt: actionMetadata.targetReceipt,
                     targetIdentity: actionMetadata.targetIdentity,
+                    screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error),
                     logger: logger
                 )
             }
@@ -103,6 +106,10 @@ extension ErrorHandlingCommand {
 
     /// Map various error types to error codes
     func mapErrorToCode(_ error: any Error) -> ErrorCode {
+        captureOwnershipErrorCode(for: error) ?? self.mapOtherErrorToCode(error)
+    }
+
+    private func mapOtherErrorToCode(_ error: any Error) -> ErrorCode {
         switch error {
         case let cleanupError as CaptureArtifactCleanupError:
             self.mapErrorToCode(cleanupError.primaryError)

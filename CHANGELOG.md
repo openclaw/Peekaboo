@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Preserve current GUI capture support and typed ScreenCaptureKit blockers when preparation fails, allowing explicit classic capture on the same proven host without changing auto or modern engines, with negotiated typed errors that preserve older clients' signed receipts.
+
 ## [4.3.0] - 2026-09-02
 
 ### Highlights

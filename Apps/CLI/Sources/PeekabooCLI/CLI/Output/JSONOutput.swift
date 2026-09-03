@@ -198,9 +198,11 @@ struct PreDispatchActionError: LocalizedError, ResultEnvelopeError {
         message: String,
         code: ErrorCode,
         hint: String?,
-        reason: DesktopActionOutcome.RefusalReason
+        reason: DesktopActionOutcome.RefusalReason,
+        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil
     ) {
-        self.failure = .preDispatchRefusal(reason: reason, message: message, hint: hint)
+        self.failure = DesktopActionFailure.preDispatchRefusal(reason: reason, message: message, hint: hint)
+            .preservingScreenCaptureKitDiagnostic(screenCaptureKitOwnershipDiagnostic)
         self.code = code
         self.hint = hint
     }
@@ -268,6 +270,7 @@ struct ErrorInfo: Codable {
     let details: String?
     let retry_safe: Bool?
     let mutation_dispatched: Bool?
+    let screen_capture_kit_ownership_diagnostic: ScreenCaptureKitOwnershipDiagnostic?
 
     init(
         message: String,
@@ -275,7 +278,8 @@ struct ErrorInfo: Codable {
         hint: String? = nil,
         details: String? = nil,
         retrySafe: Bool? = nil,
-        mutationDispatched: Bool? = nil
+        mutationDispatched: Bool? = nil,
+        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil
     ) {
         self.init(
             message: message,
@@ -283,7 +287,8 @@ struct ErrorInfo: Codable {
             hint: hint,
             details: details,
             retrySafe: retrySafe,
-            mutationDispatched: mutationDispatched
+            mutationDispatched: mutationDispatched,
+            screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic
         )
     }
 
@@ -293,7 +298,8 @@ struct ErrorInfo: Codable {
         hint: String? = nil,
         details: String? = nil,
         retrySafe: Bool? = nil,
-        mutationDispatched: Bool? = nil
+        mutationDispatched: Bool? = nil,
+        screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil
     ) {
         let presentation = splitErrorHint(from: message)
         self.code = code
@@ -302,6 +308,7 @@ struct ErrorInfo: Codable {
         self.details = details
         self.retry_safe = retrySafe
         self.mutation_dispatched = mutationDispatched
+        self.screen_capture_kit_ownership_diagnostic = screenCaptureKitOwnershipDiagnostic
     }
 }
 
@@ -561,6 +568,7 @@ func outputError(
     actionFailure: DesktopActionFailure? = nil,
     targetReceipt: DesktopActionTargetReceipt? = nil,
     targetIdentity: DesktopTargetIdentity? = nil,
+    screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
     logger: Logger
 ) {
     let response = makeErrorEnvelope(
@@ -575,6 +583,7 @@ func outputError(
         actionFailure: actionFailure,
         targetReceipt: targetReceipt,
         targetIdentity: targetIdentity,
+        screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic,
         debugLogs: logger.getDebugLogs()
     )
     outputJSONCodable(response, logger: logger)
@@ -592,6 +601,7 @@ func makeErrorEnvelope(
     actionFailure: DesktopActionFailure? = nil,
     targetReceipt: DesktopActionTargetReceipt? = nil,
     targetIdentity: DesktopTargetIdentity? = nil,
+    screenCaptureKitOwnershipDiagnostic: ScreenCaptureKitOwnershipDiagnostic? = nil,
     debugLogs: [String] = []
 ) -> ResultEnvelope<Empty?> {
     let suppliedOutcome = actionOutcome?.projection ?? actionFailure?.outcome.projection
@@ -624,7 +634,9 @@ func makeErrorEnvelope(
             hint: hint,
             details: details,
             retrySafe: resolvedRetrySafe,
-            mutationDispatched: resolvedMutationDispatched
+            mutationDispatched: resolvedMutationDispatched,
+            screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic ??
+                actionFailure?.screenCaptureKitOwnershipDiagnostic
         )
     )
 }

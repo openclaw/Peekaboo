@@ -29,13 +29,21 @@ struct ScreenCaptureKitOwnerLeaseTests {
 
     @Test
     func `Process capability marker is build bound and held for process lifetime`() throws {
-        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
-
-        try ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
+        let fixture = try LeaseFixture(name: "private-capability")
+        defer { fixture.removeLockPath() }
+        let processStartIdentity = fixture.processStartIdentity
+        try ScreenCaptureKitProcessCapabilityRegistry.register(
+            ownerIdentity: .init(
+                processIdentifier: getpid(),
+                processStartIdentity: processStartIdentity,
+                buildIdentity: "synthetic-build"),
+            directory: fixture.directoryURL,
+            signatureIdentity: nil)
 
         let markerURL = ScreenCaptureKitOwnerLease.processCapabilityMarkerURL(
             processIdentifier: getpid(),
-            processStartIdentity: processStartIdentity)
+            processStartIdentity: processStartIdentity,
+            directory: fixture.directoryURL)
         let receipt = try JSONDecoder().decode(
             ScreenCaptureKitOwnerLease.ProcessCapabilityReceipt.self,
             from: Data(contentsOf: markerURL))

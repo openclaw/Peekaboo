@@ -1,6 +1,7 @@
 import CoreGraphics
 import Darwin
 import Foundation
+import PeekabooFoundation
 
 @_spi(Testing) public enum ScreenRecordingPermissionProbePolicy: Sendable, Equatable {
     case allowScreenCaptureKit
@@ -12,9 +13,19 @@ import Foundation
     func hasPermission(
         logger: CategoryLogger,
         policy: ScreenRecordingPermissionProbePolicy) async -> Bool
+    func evaluatePermission(
+        logger: CategoryLogger,
+        policy: ScreenRecordingPermissionProbePolicy) async throws -> Bool
 }
 
 extension ScreenRecordingPermissionEvaluating {
+    public func evaluatePermission(
+        logger: CategoryLogger,
+        policy: ScreenRecordingPermissionProbePolicy) async throws -> Bool
+    {
+        await self.hasPermission(logger: logger, policy: policy)
+    }
+
     func hasPermission(logger: CategoryLogger) async -> Bool {
         await self.hasPermission(logger: logger, policy: .allowScreenCaptureKit)
     }
@@ -48,6 +59,13 @@ struct ScreenRecordingPermissionChecker: ScreenRecordingPermissionEvaluating {
         logger: CategoryLogger,
         policy: ScreenRecordingPermissionProbePolicy = .allowScreenCaptureKit) async -> Bool
     {
+        await (try? self.evaluatePermission(logger: logger, policy: policy)) ?? false
+    }
+
+    func evaluatePermission(
+        logger: CategoryLogger,
+        policy: ScreenRecordingPermissionProbePolicy) async throws -> Bool
+    {
         let preflightResult = self.preflight()
         if preflightResult {
             return true
@@ -73,6 +91,8 @@ struct ScreenRecordingPermissionChecker: ScreenRecordingPermissionEvaluating {
             try await self.shareableContentProbe()
             logger.info("Screen recording permission granted (SCShareableContent probe)")
             return true
+        } catch let diagnostic as ScreenCaptureKitOwnershipDiagnostic {
+            throw diagnostic
         } catch {
             if let delay = ScreenCaptureKitTransientError.retryDelayNanoseconds(after: error) {
                 logger.warning(
@@ -87,6 +107,8 @@ struct ScreenRecordingPermissionChecker: ScreenRecordingPermissionEvaluating {
                     try await self.shareableContentProbe()
                     logger.info("Screen recording permission granted (SCShareableContent retry)")
                     return true
+                } catch let diagnostic as ScreenCaptureKitOwnershipDiagnostic {
+                    throw diagnostic
                 } catch {
                     logger.warning("Screen recording permission retry failed: \(error)")
                 }
@@ -145,7 +167,7 @@ struct ScreenCapturePermissionGate {
         policy: ScreenRecordingPermissionProbePolicy = .allowScreenCaptureKit) async throws
     {
         logger.debug("Checking screen recording permission", correlationId: correlationId)
-        guard await self.hasPermission(logger: logger, policy: policy) else {
+        guard try await self.evaluator.evaluatePermission(logger: logger, policy: policy) else {
             logger.error("Screen recording permission denied", correlationId: correlationId)
             throw PermissionError.screenRecording()
         }

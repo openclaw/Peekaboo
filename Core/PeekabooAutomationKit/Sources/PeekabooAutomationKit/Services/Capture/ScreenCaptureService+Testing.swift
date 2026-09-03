@@ -9,6 +9,23 @@ import Foundation
 import PeekabooFoundation
 
 extension ScreenCaptureService {
+    @MainActor
+    @_spi(Testing) public static func withIsolatedCaptureCoordination<T: Sendable>(
+        directory: URL,
+        operation: @MainActor () async throws -> T) async rethrows -> T
+    {
+        let coordination = ScreenCaptureKitCaptureGate.Coordination(
+            operationLockPath: directory.appendingPathComponent("operation.lock").path,
+            coordinator: ScreenCaptureKitOperationCoordinator(
+                lockFilePath: directory.appendingPathComponent("capture.lock").path))
+        return try await ScreenCaptureKitCaptureGate.$coordinationOverride.withValue(coordination) {
+            try await ScreenCaptureKitCaptureGate.$processOwnerClaimOverride.withValue({
+                throw ScreenCaptureKitOwnerLease.LeaseError.invalidOwnerIdentity(
+                    "Synthetic capture must inject its owner claim")
+            }, operation: operation)
+        }
+    }
+
     @_spi(Testing) public struct TestFixtures: Sendable {
         @_spi(Testing) public struct Display: Sendable {
             public let name: String
@@ -150,7 +167,8 @@ extension ScreenCaptureService {
             },
             makeLegacyOperator: { _ in
                 MockModernCaptureOperator(fixtures: fixtures)
-            })
+            },
+            screenLockProbe: { false })
         return ScreenCaptureService(loggingService: loggingService, dependencies: dependencies)
     }
 }
