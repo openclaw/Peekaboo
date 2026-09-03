@@ -199,6 +199,8 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
     public static let processCapabilityDirectoryURL = ScreenCaptureKitProcessCapabilityRegistry.directoryURL
 
     private static let maximumReceiptBytes = 4096
+    /// The compiler gate exposes the SDK flag, not an F_GETFD guarantee: macOS 26.6.2
+    /// honors atomic O_CLOFORK opens even though F_GETFD omits FD_CLOFORK.
     static let closeOnForkOpenFlag: Int32 = {
         #if compiler(>=6.4)
         O_CLOFORK

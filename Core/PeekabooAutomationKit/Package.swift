@@ -52,11 +52,16 @@ let package = Package(
                 .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
             ],
             swiftSettings: approachableConcurrencySettings),
+        .target(
+            name: "DescriptorForkTestSupport",
+            path: "Tests/Support/DescriptorForkTestSupport",
+            publicHeadersPath: "include"),
         .testTarget(
             name: "PeekabooAutomationKitTests",
             dependencies: [
                 "PeekabooAutomationKit",
                 "PeekabooAutomationKitTestSupport",
+                "DescriptorForkTestSupport",
                 .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
             ],
             path: "Tests/PeekabooAutomationKitTests",

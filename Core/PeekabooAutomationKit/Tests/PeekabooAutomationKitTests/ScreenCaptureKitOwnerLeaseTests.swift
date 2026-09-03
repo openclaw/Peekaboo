@@ -1,4 +1,5 @@
 import Darwin
+import DescriptorForkTestSupport
 import Foundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -29,30 +30,69 @@ struct ScreenCaptureKitOwnerLeaseTests {
 
     @Test
     func `Process capability marker is build bound and held for process lifetime`() throws {
-        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        let fixture = try LeaseFixture(name: "capability-marker")
+        defer { fixture.removeLockPath() }
+        let ownerIdentity = ScreenCaptureKitOwnerLease.OwnerIdentity(
+            processIdentifier: 42420,
+            processStartIdentity: 9001,
+            buildIdentity: "synthetic-marker-build",
+            codeSignatureHash: "synthetic-marker-cdhash")
+        let signatureIdentity = ScreenCaptureKitOwnerLease.CodeSignatureIdentity(
+            signingIdentifier: "test.peekaboo.marker",
+            teamIdentifier: "TESTTEAM",
+            codeSignatureHash: ownerIdentity.codeSignatureHash)
 
-        try ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
+        try ScreenCaptureKitProcessCapabilityRegistry.register(
+            ownerIdentity: ownerIdentity,
+            directory: fixture.directoryURL,
+            signatureIdentity: signatureIdentity)
 
         let markerURL = ScreenCaptureKitOwnerLease.processCapabilityMarkerURL(
-            processIdentifier: getpid(),
-            processStartIdentity: processStartIdentity)
+            processIdentifier: ownerIdentity.processIdentifier,
+            processStartIdentity: ownerIdentity.processStartIdentity,
+            directory: fixture.directoryURL)
+        let receiptData = try Data(contentsOf: markerURL)
         let receipt = try JSONDecoder().decode(
             ScreenCaptureKitOwnerLease.ProcessCapabilityReceipt.self,
-            from: Data(contentsOf: markerURL))
-        #expect(receipt.processIdentifier == getpid())
-        #expect(receipt.processStartIdentity == processStartIdentity)
-        #expect(receipt.buildIdentity?.isEmpty == false || receipt.codeSignatureHash?.isEmpty == false)
+            from: receiptData)
+        #expect(receipt.processIdentifier == ownerIdentity.processIdentifier)
+        #expect(receipt.processStartIdentity == ownerIdentity.processStartIdentity)
+        #expect(receipt.buildIdentity == ownerIdentity.buildIdentity)
+        #expect(receipt.codeSignatureHash == ownerIdentity.codeSignatureHash)
+        #expect(receipt.signingIdentifier == signatureIdentity.signingIdentifier)
+        #expect(receipt.teamIdentifier == signatureIdentity.teamIdentifier)
 
         var fileInfo = stat()
         #expect(lstat(markerURL.path, &fileInfo) == 0)
+        #expect(fileInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG))
         #expect(fileInfo.st_uid == geteuid())
         #expect(fileInfo.st_nlink == 1)
         #expect(fileInfo.st_mode & mode_t(S_IRWXU | S_IRWXG | S_IRWXO) == mode_t(S_IRUSR | S_IWUSR))
         let heldDescriptor = try #require(self.descriptor(for: fileInfo))
-        #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOEXEC == FD_CLOEXEC)
+        self.expectLiveCloseOnExecDescriptor(heldDescriptor, matching: fileInfo)
+
+        try ScreenCaptureKitProcessCapabilityRegistry.register(
+            ownerIdentity: .init(
+                processIdentifier: ownerIdentity.processIdentifier,
+                processStartIdentity: ownerIdentity.processStartIdentity,
+                buildIdentity: "replacement-build",
+                codeSignatureHash: "replacement-cdhash"),
+            directory: fixture.directoryURL,
+            signatureIdentity: .init(
+                signingIdentifier: "test.peekaboo.replacement",
+                teamIdentifier: "REPLACEMENT",
+                codeSignatureHash: "replacement-cdhash"))
+        #expect(try Data(contentsOf: markerURL) == receiptData)
+
+        var reentryInfo = stat()
+        #expect(lstat(markerURL.path, &reentryInfo) == 0)
+        #expect(reentryInfo.st_dev == fileInfo.st_dev)
+        #expect(reentryInfo.st_ino == fileInfo.st_ino)
         #if compiler(>=6.4)
-        #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOFORK == FD_CLOFORK)
+        #expect(peekaboo_probe_descriptor_after_fork(heldDescriptor) == DescriptorForkProbeClosed)
         #endif
+        self.expectLiveCloseOnExecDescriptor(heldDescriptor, matching: fileInfo)
+        #expect(try Data(contentsOf: markerURL) == receiptData)
 
         let contender = open(markerURL.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         #expect(contender >= 0)
@@ -62,6 +102,52 @@ struct ScreenCaptureKitOwnerLeaseTests {
             #expect(errno == EWOULDBLOCK || errno == EAGAIN)
         }
     }
+
+    @Test
+    func `Fork probe inherits a close-on-exec-only descriptor`() throws {
+        let fixture = try LeaseFixture(name: "fork-cloexec-control")
+        defer { fixture.removeLockPath() }
+        let descriptor = open(fixture.lockURL.path, O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        try #require(descriptor >= 0)
+        defer { close(descriptor) }
+        var fileInfo = stat()
+        try #require(fstat(descriptor, &fileInfo) == 0)
+        self.expectLiveCloseOnExecDescriptor(descriptor, matching: fileInfo)
+
+        #expect(peekaboo_probe_descriptor_after_fork(descriptor) == DescriptorForkProbeInherited)
+
+        self.expectLiveCloseOnExecDescriptor(descriptor, matching: fileInfo)
+    }
+
+    @Test(arguments: [Int32(-1), Int32.max])
+    func `Fork probe rejects invalid input as an error`(descriptor: Int32) {
+        #expect(peekaboo_probe_descriptor_after_fork(descriptor) == DescriptorForkProbeInputError)
+    }
+
+    #if compiler(>=6.4)
+    @Test(arguments: [false, true])
+    func `Atomic owner open flags close descriptors across fork`(useOpenAt: Bool) throws {
+        let fixture = try LeaseFixture(name: "fork-atomic-open")
+        defer { fixture.removeLockPath() }
+        let directory = open(fixture.directoryURL.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        try #require(directory >= 0)
+        defer { close(directory) }
+        let flags = O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC | ScreenCaptureKitOwnerLease.closeOnForkOpenFlag | O_NOFOLLOW
+        let descriptor = useOpenAt
+            ? openat(directory, fixture.lockURL.lastPathComponent, flags, S_IRUSR | S_IWUSR)
+            : open(fixture.lockURL.path, flags, S_IRUSR | S_IWUSR)
+        try #require(descriptor >= 0)
+        defer { close(descriptor) }
+        var fileInfo = stat()
+        try #require(fstat(descriptor, &fileInfo) == 0)
+        self.expectLiveCloseOnExecDescriptor(descriptor, matching: fileInfo)
+
+        #expect(ScreenCaptureKitOwnerLease.closeOnForkOpenFlag == O_CLOFORK)
+        #expect(peekaboo_probe_descriptor_after_fork(descriptor) == DescriptorForkProbeClosed)
+
+        self.expectLiveCloseOnExecDescriptor(descriptor, matching: fileInfo)
+    }
+    #endif
 
     @Test
     func `Pre-lease process blocks claim before owner file creation`() throws {
@@ -299,10 +385,14 @@ struct ScreenCaptureKitOwnerLeaseTests {
         #expect(fileInfo.st_mode & mode_t(S_IRWXU | S_IRWXG | S_IRWXO) == mode_t(S_IRUSR | S_IWUSR))
 
         let heldDescriptor = try #require(self.descriptor(for: fileInfo))
-        #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOEXEC == FD_CLOEXEC)
+        self.expectLiveCloseOnExecDescriptor(heldDescriptor, matching: fileInfo)
         #if compiler(>=6.4)
-        #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOFORK == FD_CLOFORK)
+        #expect(peekaboo_probe_descriptor_after_fork(heldDescriptor) == DescriptorForkProbeClosed)
         #endif
+        self.expectLiveCloseOnExecDescriptor(heldDescriptor, matching: fileInfo)
+        #expect(try fixture.persistedReceipt() == firstReceipt)
+        #expect(try fixture.makeLease(buildIdentity: "after-fork")
+            .claim() == .alreadyOwnedByCurrentProcess(firstReceipt))
 
         let descriptor = open(fixture.lockURL.path, O_RDONLY | O_NOFOLLOW)
         #expect(descriptor >= 0)
@@ -599,6 +689,16 @@ struct ScreenCaptureKitOwnerLeaseTests {
         throw TestError("Could not resolve child process generation")
     }
 
+    private func expectLiveCloseOnExecDescriptor(_ descriptor: Int32, matching expectedInfo: stat) {
+        let flags = fcntl(descriptor, F_GETFD)
+        #expect(flags >= 0)
+        #expect(flags & FD_CLOEXEC == FD_CLOEXEC)
+        var fileInfo = stat()
+        #expect(fstat(descriptor, &fileInfo) == 0)
+        #expect(fileInfo.st_dev == expectedInfo.st_dev)
+        #expect(fileInfo.st_ino == expectedInfo.st_ino)
+    }
+
     private func descriptor(for expectedInfo: stat) -> Int32? {
         for descriptor in 0..<getdtablesize() {
             var candidateInfo = stat()
@@ -637,7 +737,10 @@ private struct LeaseFixture {
                 processIdentifier: getpid(),
                 processStartIdentity: self.processStartIdentity,
                 buildIdentity: buildIdentity),
-            processStartIdentity: SystemIdentityResolver.processStartIdentity)
+            processStartIdentity: SystemIdentityResolver.processStartIdentity,
+            registerProcessCapability: {},
+            uncoordinatedProcesses: { [] },
+            uncoordinatedHosts: { [] })
     }
 
     func write(receipt: ScreenCaptureKitOwnerLease.OwnerReceipt) throws {

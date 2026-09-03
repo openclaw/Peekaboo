@@ -75,6 +75,19 @@ policy therefore has an explicit restart boundary: stop or relaunch every report
 are safely removed from a dedicated private marker directory; repeated scans reuse PID, process-generation, executable,
 and signature inspection results while revalidating the executable path.
 
+The owner lease and capability marker retain `flock` descriptors for process lifetime. Their opens atomically include
+`O_CLOEXEC` and, under the existing Swift 6.4 compiler/SDK gate, `O_CLOFORK`. An inherited descriptor could keep the
+parent's lease locked after the parent exits; unlocking the shared `flock` in a child would also unlock the parent's
+lease. Atomic close-on-fork protects even the interval between opening a descriptor and storing it in the registry.
+
+SDK flag availability does not establish runtime support for querying or setting descriptor flags. On the checked
+macOS 26.6.2 (25G83) runtime, built with Xcode 27 / Swift 6.4, both `open` and `openat` with `O_CLOFORK` close the
+descriptor in the fork child, while `F_GETFD` omits `FD_CLOFORK` and `F_SETFD` cannot set or clear its semantics despite
+returning success. Tests therefore check actual child `EBADF`, parent inode/lock retention, and strict `FD_CLOEXEC`
+reporting; a missing query bit never excuses inheritance. The runtime introduction of `FD_CLOFORK` query/set support
+has not been established, and no macOS 27 runtime was tested. Builds using older compiler/SDK combinations that omit
+`O_CLOFORK` retain close-on-exec only: there is no implemented atfork cleanup or pre-exec fork-safety guarantee.
+
 Long-running Agent and MCP modes remain available for non-capture tools when they discover a pre-lease Bridge. Peekaboo
 keeps that runtime local and records a process-lifetime SCK blocker instead of failing startup or routing capture to the
 old host. A later SCK leaf refuses before framework dispatch. The blocker is intentionally irreversible for that Agent
