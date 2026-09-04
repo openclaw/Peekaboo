@@ -208,6 +208,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         self.menu = menuService
         self.dock = RemoteDockService(client: client)
         let resolvedDialogCapabilities = RemoteDialogCapabilities(
+            systemAlertDiscovery: dialogCapabilities.systemAlertDiscovery,
             backgroundButtonClick: dialogCapabilities.backgroundButtonClick || supportsBackgroundDialogClick,
             targetedList: dialogCapabilities.targetedList,
             prepareAction: dialogCapabilities.prepareAction,

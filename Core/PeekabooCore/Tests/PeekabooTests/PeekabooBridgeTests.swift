@@ -1960,6 +1960,30 @@ extension PeekabooBridgeTests {
     }
 
     @Test
+    @MainActor
+    func `remote services carry dialog system-alert discovery capability through rebuild`() {
+        let client = PeekabooBridgeClient(
+            socketPath: "/tmp/nonexistent-\(UUID().uuidString).sock",
+            requestTimeoutSec: 1)
+
+        // The resolved capabilities are rebuilt inside RemotePeekabooServices; every advertised
+        // dialog capability must survive that rebuild, or a no-target `dialog click` refuses even
+        // though the host advertises system-alert discovery.
+        let discoveryCapable = RemotePeekabooServices(
+            client: client,
+            dialogCapabilities: RemoteDialogCapabilities(
+                systemAlertDiscovery: true,
+                prepareAction: true,
+                exactClick: true))
+        let discoveryUnsupported = RemotePeekabooServices(
+            client: client,
+            dialogCapabilities: RemoteDialogCapabilities(prepareAction: true, exactClick: true))
+
+        #expect(discoveryCapable.dialogs.supportsSystemAlertDiscovery == true)
+        #expect(discoveryUnsupported.dialogs.supportsSystemAlertDiscovery == false)
+    }
+
+    @Test
     func `bridge setValue forwards to automation service`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-set-value-\(UUID().uuidString).sock"
         let services = await MainActor.run { StubServices() }
