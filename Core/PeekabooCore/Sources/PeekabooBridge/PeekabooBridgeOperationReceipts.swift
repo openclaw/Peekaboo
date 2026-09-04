@@ -19,6 +19,7 @@ enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable, Send
     case replayedRequest
     case invalidOperationSignature
     case receiptMismatch(String)
+    case unsignedHostFailure(operation: String, code: String, message: String, details: String?)
     case unsafeArchive(String)
     case archiveWriteFailed(String)
 
@@ -50,6 +51,10 @@ enum PeekabooBridgeOperationReceiptError: Error, LocalizedError, Equatable, Send
             "Bridge operation receipt signature is invalid"
         case let .receiptMismatch(field):
             "Bridge operation receipt does not match \(field)"
+        case let .unsignedHostFailure(operation, code, message, details):
+            "Bridge host answered the attested \(operation) request with an unsigned \(code) error " +
+                "instead of a signed receipt: \(message)" +
+                (details.flatMap { $0.isEmpty ? nil : " (details: \($0))" } ?? "")
         case let .unsafeArchive(path):
             "Bridge operation receipt archive is unsafe: \(path)"
         case let .archiveWriteFailed(message):

@@ -303,6 +303,7 @@ public actor PeekabooBridgeClient {
             epoch: session.epoch,
             listenerAttestation: session.listenerAttestation,
             listenerLiveIdentity: session.listenerLiveIdentity,
+            hostBuild: session.hostBuild,
             sessionAttestation: session.attestation,
             sequence: sequence,
             requestID: PeekabooBridgeOperationReceiptCoding.deterministicRequestID(
@@ -350,6 +351,7 @@ public actor PeekabooBridgeClient {
             successor,
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: current.listenerLiveIdentity,
+            hostBuild: current.hostBuild,
             authenticatedHostIdentity: current.authenticatedHostIdentity)
     }
 
@@ -1194,6 +1196,7 @@ public actor PeekabooBridgeClient {
                     sessionAttestation,
                     listenerAttestation: listenerAttestation,
                     listenerLiveIdentity: listenerLiveIdentity,
+                    hostBuild: candidate.response.build,
                     authenticatedHostIdentity: candidate.authenticatedHostIdentity)
             }
         } else {
@@ -1251,6 +1254,7 @@ public actor PeekabooBridgeClient {
         _ attestation: PeekabooBridgeOperationSessionAttestation,
         listenerAttestation: PeekabooBridgeListenerAttestation,
         listenerLiveIdentity: PeekabooBridgeLivePeerIdentity,
+        hostBuild: String?,
         authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?) -> UInt64
     {
         self.operationSessionEpoch &+= 1
@@ -1262,6 +1266,7 @@ public actor PeekabooBridgeClient {
             epoch: epoch,
             listenerAttestation: listenerAttestation,
             listenerLiveIdentity: listenerLiveIdentity,
+            hostBuild: hostBuild,
             authenticatedHostIdentity: authenticatedHostIdentity,
             attestation: attestation,
             nextSequence: .init(0),
@@ -1413,6 +1418,7 @@ struct PeekabooBridgeClientOperationSessionReservation: Sendable {
     let epoch: UInt64
     let listenerAttestation: PeekabooBridgeListenerAttestation
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity
+    let hostBuild: String?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation
     let sequence: PeekabooBridgeOperationSessionSequence
     let requestID: UUID
@@ -1446,6 +1452,7 @@ private struct PeekabooBridgeClientOperationSession: Sendable {
     let epoch: UInt64
     let listenerAttestation: PeekabooBridgeListenerAttestation
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity
+    let hostBuild: String?
     let authenticatedHostIdentity: PeekabooBridgeAuthenticatedHostIdentity?
     let attestation: PeekabooBridgeOperationSessionAttestation
     var nextSequence: PeekabooBridgeOperationSessionSequence

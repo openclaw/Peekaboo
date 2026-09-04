@@ -9,6 +9,89 @@ import Testing
 
 @Suite(.serialized)
 struct PeekabooBridgeClientTransportSafetyTests {
+    @Test(arguments: [true, false])
+    func `unsigned host error preserves diagnostics and session builds`(differentBuild: Bool) async throws {
+        let clientBuild = PeekabooBridgeConstants.buildIdentifier
+        let hostBuild = differentBuild ? "fixture-host-\(clientBuild)" : clientBuild
+        let (client, peer, root) = try await Self.unsignedResponseClient(
+            response: .error(.init(code: .internalError, message: "boom", details: "why")),
+            hostBuild: hostBuild)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        do {
+            try await client.sendExpectOK(.requestPostEventPermission)
+            Issue.record("Expected unsigned host error to remain indeterminate")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .responseLost)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            let cause = try #require(failure.causeDescription)
+            #expect(cause.contains("unsigned internal_error error"))
+            #expect(cause.contains("boom"))
+            #expect(cause.contains("why"))
+            #expect(cause.contains("host build \(hostBuild)"))
+            #expect(cause.contains("client build \(clientBuild)"))
+            #expect(cause
+                .hasPrefix("Bridge host build differs from this CLI build; update the host.") == differentBuild)
+        }
+        await peer.waitUntilFinished()
+        #expect(await peer.acceptedConnectionCount == 2)
+        #expect(await client.lastOperationReceipt() == nil)
+    }
+
+    @Test
+    func `unsigned ok still requires a receipt and identifies the response family`() async throws {
+        let (client, peer, root) = try await Self.unsignedResponseClient(response: .ok)
+        defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            try await client.sendExpectOK(.requestPostEventPermission)
+            Issue.record("Expected unsigned ok to remain indeterminate")
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
+            #expect(failure.causeDescription?.contains("the required receipt envelope") == true)
+            #expect(failure.causeDescription?.contains("response family: ok") == true)
+        }
+        await peer.waitUntilFinished()
+        #expect(await peer.acceptedConnectionCount == 2)
+    }
+
+    @Test
+    func `unsigned read only host error is rethrown with its original diagnostics`() async throws {
+        let (client, peer, root) = try await Self.unsignedResponseClient(
+            response: .error(.init(code: .internalError, message: "boom", details: "why")),
+            operation: .permissionsStatus)
+        defer { try? FileManager.default.removeItem(at: root) }
+        await #expect(throws: PeekabooBridgeOperationReceiptError.unsignedHostFailure(
+            operation: "permissionsStatus", code: "internal_error", message: "boom", details: "why"))
+        {
+            _ = try await client.send(.permissionsStatus)
+        }
+        await peer.waitUntilFinished()
+        #expect(await peer.acceptedConnectionCount == 2)
+    }
+
+    private static func unsignedResponseClient(
+        response: PeekabooBridgeResponse,
+        hostBuild: String = "unsigned-response-test",
+        operation: PeekabooBridgeOperation = .requestPostEventPermission) async throws
+        -> (PeekabooBridgeClient, ScriptedBridgePeer, URL)
+    {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-unsigned-response-\(UUID().uuidString)", isDirectory: true)
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("authority.sock").path)
+        let session = try await OperationReceiptSessionFixture.make(authority: authority)
+        let peer = try ScriptedBridgePeer(responses: [
+            .handshake(self.attestedHandshake(
+                authority: authority, session: session.attestation, supportedOperation: operation, build: hostBuild)),
+            response,
+        ])
+        let client = TrustedBridgeClientFixture.make(
+            socketPath: peer.socketPath, requestTimeoutSec: 2, operationClientInstanceID: session.clientInstanceID)
+        _ = try await client.handshake(client: self.clientIdentity)
+        return (client, peer, root)
+    }
+
     @Test
     func `attested listener drift refuses mutation before request bytes are written`() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -341,14 +424,15 @@ struct PeekabooBridgeClientTransportSafetyTests {
     private static func attestedHandshake(
         authority: PeekabooBridgeOperationReceiptAuthority,
         session: PeekabooBridgeOperationSessionAttestation,
-        supportedOperation: PeekabooBridgeOperation = .requestPostEventPermission)
+        supportedOperation: PeekabooBridgeOperation = .requestPostEventPermission,
+        build: String = "attested-listener-drift-test")
         -> PeekabooBridgeHandshakeResponse
     {
         let listener = authority.attestation
         return BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.attestedOperationReceiptVersion,
             hostKind: .gui,
-            build: "attested-listener-drift-test",
+            build: build,
             supportedOperations: [supportedOperation],
             permissions: .init(screenRecording: true, accessibility: true, postEvent: true),
             enabledOperations: [supportedOperation],

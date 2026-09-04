@@ -490,7 +490,7 @@ extension PeekabooBridgeClient {
             guard plan.result.completion.mutatesDesktop else { throw error }
             throw Self.responseLostFailure(
                 operation: op,
-                causeDescription: "Bridge operation receipt validation failed: \(error.localizedDescription)",
+                causeDescription: Self.receiptValidationFailureDescription(error, context: attestedContext),
                 requestID: attestedContext?.requestID)
         }
     }
@@ -998,6 +998,18 @@ extension PeekabooBridgeClient {
             causeDescription: causeDescription)
     }
 
+    private nonisolated static func receiptValidationFailureDescription(
+        _ error: any Error,
+        context: PeekabooBridgeAttestedRequestContext?) -> String
+    {
+        let clientBuild = PeekabooBridgeConstants.buildIdentifier
+        let hostBuild = context?.reservation.hostBuild.flatMap { $0.isEmpty ? nil : $0 }
+        let buildMismatch = hostBuild.map { $0 != clientBuild } ?? false
+        let buildWarning = buildMismatch ? "Bridge host build differs from this CLI build; update the host. " : ""
+        return buildWarning + "Bridge operation receipt validation failed: \(error.localizedDescription); " +
+            "host build \(hostBuild ?? "unknown"); client build \(clientBuild)"
+    }
+
     private nonisolated static func verifyAttestedResponse(
         _ response: PeekabooBridgeResponse,
         context: PeekabooBridgeAttestedRequestContext?,
@@ -1021,7 +1033,19 @@ extension PeekabooBridgeClient {
             return .rollover(refusal)
         }
         guard case let .attestedOperation(envelope) = response else {
-            throw PeekabooBridgeOperationReceiptError.receiptMismatch("the required receipt envelope")
+            if case let .error(envelope) = response {
+                let code = envelope.code.rawValue.replacingOccurrences(
+                    of: "([a-z])([A-Z])", with: "$1_$2", options: .regularExpression).lowercased()
+                throw PeekabooBridgeOperationReceiptError.unsignedHostFailure(
+                    operation: context.request.operation.rawValue,
+                    code: code,
+                    message: envelope.message,
+                    details: envelope.details)
+            }
+            // Enum labels identify the wire family without including any response payload.
+            let family = Mirror(reflecting: response).children.first?.label ?? "ok"
+            throw PeekabooBridgeOperationReceiptError.receiptMismatch(
+                "the required receipt envelope (received response family: \(family))")
         }
         guard case .attestedOperation = envelope.response else {
             let receipt = envelope.receipt

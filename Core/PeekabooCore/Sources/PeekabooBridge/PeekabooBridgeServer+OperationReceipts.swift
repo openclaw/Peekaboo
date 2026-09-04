@@ -25,12 +25,42 @@ private enum OperationReceiptRequestCarriage {
 
 @MainActor
 extension PeekabooBridgeServer {
-    // Attested execution deliberately keeps claim, target, signing, and handoff reservation cleanup in one scope.
-    // swiftlint:disable:next function_body_length
     func handleAttestedOperation(
         _ payload: PeekabooBridgeAttestedOperationRequest,
         peer: PeekabooBridgePeer?,
         admissionRefused: Bool = false) async throws -> Data
+    {
+        var operationMayHaveCompleted = false
+        do {
+            return try await self.performAttestedOperation(
+                payload,
+                peer: peer,
+                admissionRefused: admissionRefused,
+                operationMayHaveCompleted: &operationMayHaveCompleted)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw envelope
+        } catch {
+            let operation = payload.request.operation.rawValue
+            let reason = error.localizedDescription
+            self.logger.error(
+                """
+                bridge op=\(operation, privacy: .public) could not produce a signed receipt: \(reason, privacy: .public)
+                """)
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "Bridge host could not produce a signed receipt for \(operation): \(reason)",
+                details: reason,
+                operationMayHaveCompleted: operationMayHaveCompleted)
+        }
+    }
+
+    // Attested execution deliberately keeps claim, target, signing, and handoff reservation cleanup in one scope.
+    // swiftlint:disable:next function_body_length
+    private func performAttestedOperation(
+        _ payload: PeekabooBridgeAttestedOperationRequest,
+        peer: PeekabooBridgePeer?,
+        admissionRefused: Bool,
+        operationMayHaveCompleted: inout Bool) async throws -> Data
     {
         guard let authority = PeekabooBridgeRequestContext.operationReceiptAuthority else {
             throw PeekabooBridgeErrorEnvelope(
@@ -128,6 +158,8 @@ extension PeekabooBridgeServer {
         }
 
         let handled = await self.executeAttestedOperation(plan: plan, claim: claim, peer: peer)
+        operationMayHaveCompleted = plan.result.completion.mutatesDesktop &&
+            !PeekabooBridgeOperationResultSemantics.isNoDispatchFailure(handled.response)
         let response: PeekabooBridgeResponse
         let target: PeekabooBridgeOperationTargetReceipt?
         let focusedElement: FocusedElementIdentity?
@@ -310,16 +342,7 @@ extension PeekabooBridgeServer {
             receiptPayload,
             plan: context.plan,
             response: response)
-        let receipt: PeekabooBridgeOperationReceipt
-        do {
-            receipt = try await context.authority.signAndArchive(receiptPayload, claim: context.claim)
-        } catch {
-            throw PeekabooBridgeErrorEnvelope(
-                code: .internalError,
-                message: "Bridge operation completed, but its signed receipt could not be archived",
-                details: error.localizedDescription,
-                operationMayHaveCompleted: context.plan.result.completion.mutatesDesktop)
-        }
+        let receipt = try await context.authority.signAndArchive(receiptPayload, claim: context.claim)
         if case let .browserConnect(connectRequest) = context.request.unwrappedOperationRequest,
            connectRequest.requestsHandoff,
            let connectionReceipt = response.browserExecutionConnectionReceipt,
@@ -476,7 +499,9 @@ extension PeekabooBridgeServer {
             return try await self.route(plan, peer: peer)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             let responseEnvelope = PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics
-                ? envelope
+                ? Self.canonicalMutationFailureEnvelope(
+                    envelope,
+                    mayMutateDesktop: plan.result.completion.mutatesDesktop)
                 : envelope.legacyCompatible
             return .init(
                 response: .error(responseEnvelope),
@@ -492,12 +517,16 @@ extension PeekabooBridgeServer {
                     details: "\(failure)")),
                 selectedLeafEvidence: routed.selectedLeafEvidence)
         } catch is CancellationError {
-            return .init(response: .error(.init(code: .timeout, message: "Bridge request was cancelled")))
+            return .init(response: .error(Self.canonicalMutationFailureEnvelope(
+                .init(code: .timeout, message: "Bridge request was cancelled"),
+                mayMutateDesktop: plan.result.completion.mutatesDesktop)))
         } catch {
-            return .init(response: .error(.init(
-                code: .internalError,
-                message: error.localizedDescription,
-                details: "\(error)")))
+            return .init(response: .error(Self.canonicalMutationFailureEnvelope(
+                .init(
+                    code: .internalError,
+                    message: error.localizedDescription,
+                    details: "\(error)"),
+                mayMutateDesktop: plan.result.completion.mutatesDesktop)))
         }
     }
 

@@ -353,6 +353,10 @@ outcome when present, remaining session capacity, and timestamps. A missing or i
 session. For a mutating operation, losing the response or receipt after dispatch yields an indeterminate,
 retry-unsafe result rather than a speculative retry.
 
+An unsigned host reply to an attested request reports the host's own error code and message, when present, plus the
+host and client build strings. Different builds trigger an update-host diagnostic when receipt validation fails.
+Mutating operations remain indeterminate and retry-unsafe because the unsigned reply cannot prove their outcome.
+
 Window and frontmost capture receipts bind the exact process/window identity returned by capture metadata; a missing
 target or a window ID that contradicts the request is rejected. Screen and area captures remain targetless global reads.
 

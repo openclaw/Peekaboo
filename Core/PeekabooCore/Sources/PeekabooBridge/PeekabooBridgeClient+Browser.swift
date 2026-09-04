@@ -24,7 +24,7 @@ extension PeekabooBridgeClient {
             .hostGenerationChanged
         case .invalidOperationSessionConfiguration, .operationSessionMismatch,
              .operationSessionRegistryExhausted, .replayedRequest, .invalidOperationSignature,
-             .receiptMismatch, .unsafeArchive, .archiveWriteFailed:
+             .receiptMismatch, .unsignedHostFailure, .unsafeArchive, .archiveWriteFailed:
             nil
         }
     }
