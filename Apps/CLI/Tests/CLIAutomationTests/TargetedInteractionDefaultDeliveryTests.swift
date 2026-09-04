@@ -173,34 +173,36 @@ struct TargetedInteractionDefaultDeliveryTests {
         #expect(automation.typeActionsCalls.isEmpty)
     }
 
-    @Test
-    func `exact Calculator window ignores unrelated unpinnable system application row`() async throws {
+    @Test(arguments: [false, true])
+    func `Messages input ignores omitted unrelated generationless process`(press: Bool) async throws {
         let fixture = AutomationTestFixtures.linkedDesktopTarget(
             processIdentity: .init(processIdentifier: 2468, processStartIdentity: 7),
-            applicationName: "Calculator",
-            windowID: 42
+            applicationName: "Messages",
+            windowID: 1108
         )
         let unpinnableSystemRow = AutomationTestFixtures.application(
-            processIdentifier: 1,
+            processIdentifier: 358,
             processStartIdentity: nil,
-            bundleIdentifier: nil,
-            name: "WindowServer",
+            bundleIdentifier: "com.apple.AppSSODaemon",
+            name: "AppSSODaemon",
             isHiddenKnown: false,
             activationPolicy: .prohibited
         )
         let candidates = [fixture.application, unpinnableSystemRow]
             .map(ApplicationIdentifierMatcher.Candidate.init)
         let resolution = try #require(try ApplicationIdentifierMatcher.resolution(
-            for: "Calculator",
+            for: "Messages",
             in: candidates
         ))
-        let calculator = fixture.application.withSelectorResolutionProofs([
+        let messages = fixture.application.withSelectorResolutionProofs([
             resolution.proof(selectedProcessIdentity: fixture.processIdentity),
         ])
-        let applications = StubApplicationService(applications: [calculator, unpinnableSystemRow])
-        applications.inventoryCompleteness = .partial
-        applications.inventoryWarnings = [
-            "Application PID 1 lacked process-generation identity and was omitted.",
+        let applications = StubApplicationService(applications: [messages, unpinnableSystemRow])
+        applications.applicationInventorySequence = [
+            .partial([messages], warnings: [
+                "Application PID 358 (AppSSODaemon, com.apple.AppSSODaemon) " +
+                    "lacked process-generation identity and was omitted.",
+            ]),
         ]
         let automation = OutcomeStubAutomationService()
         automation.actionOutcome = .confirmedChange(
@@ -214,10 +216,10 @@ struct TargetedInteractionDefaultDeliveryTests {
             value: nil,
             frame: fixture.window.bounds.insetBy(dx: 40, dy: 40),
             applicationName: fixture.application.name,
-            bundleIdentifier: fixture.application.bundleIdentifier ?? "com.apple.calculator",
+            bundleIdentifier: fixture.application.bundleIdentifier ?? "com.apple.MobileSMS",
             processId: Int(fixture.processIdentity.processIdentifier),
             windowID: fixture.window.windowID,
-            identifier: "calculator-display"
+            identifier: "messages-compose"
         )
         let services = TestServicesFactory.makePeekabooServices(
             applications: applications,
@@ -226,26 +228,39 @@ struct TargetedInteractionDefaultDeliveryTests {
             automation: automation
         )
 
-        for arguments in [
-            ["type", "12345"],
-            ["press", "return"],
-        ] {
-            let result = try await InProcessCommandRunner.run(
-                arguments + [
-                    "--app", "Calculator",
-                    "--window-id", String(fixture.window.windowID),
-                    "--json", "--no-remote",
-                ],
-                services: services
-            )
-            #expect(result.exitStatus == 0, "Unexpected exact-window refusal: \(result.combinedOutput)")
-        }
+        let arguments = press
+            ? ["press", "cmd+n", "--app", "Messages", "--window-id", "1108"]
+            : ["type", "x", "--app", "Messages"]
+        let result = try await InProcessCommandRunner.run(
+            arguments + ["--json", "--no-remote"], services: services
+        )
+        #expect(result.exitStatus == 0, "Unexpected refusal: \(result.combinedOutput)")
 
-        #expect(automation.exactTypeActionsCalls.count == 1)
-        #expect(automation.exactTypeActionsCalls.first?.target.windowIdentity == fixture.windowIdentity)
-        #expect(automation.exactHotkeyCalls.count == 1)
-        #expect(automation.exactHotkeyCalls.first?.target.windowIdentity == fixture.windowIdentity)
+        if press {
+            #expect(automation.exactTypeActionsCalls.isEmpty)
+            #expect(automation.typeActionsCalls.isEmpty)
+            #expect(automation.exactHotkeyCalls.count == 1)
+            #expect(automation.exactHotkeyCalls.first?.keys == "cmd,n")
+            #expect(automation.exactHotkeyCalls.first?.target.windowIdentity == fixture.windowIdentity)
+        } else {
+            #expect(automation.exactTypeActionsCalls.count == 1)
+            // The exact stub also records its call in the base type-action log.
+            #expect(automation.typeActionsCalls.count == 1)
+            let actions = try #require(automation.exactTypeActionsCalls.first?.actions)
+            #expect(actions.count == 1)
+            if case let .text(text) = try #require(actions.first) {
+                #expect(text == "x")
+            } else {
+                Issue.record("Expected one exact text action")
+            }
+            #expect(automation.exactTypeActionsCalls.first?.target.windowIdentity == fixture.windowIdentity)
+            #expect(automation.exactHotkeyCalls.isEmpty)
+        }
+        #expect(automation.targetedTypeActionsCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
         #expect(automation.hotkeyCalls.isEmpty)
+        #expect(applications.activateCalls.isEmpty)
+        #expect(applications.findApplicationRequests.contains("Messages"))
     }
 
     @Test

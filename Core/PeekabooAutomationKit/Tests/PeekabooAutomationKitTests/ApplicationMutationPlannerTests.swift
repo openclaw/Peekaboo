@@ -257,3 +257,207 @@ private final class ApplicationPlannerInventorySpy {
         return self.inventories[self.readCount]
     }
 }
+
+extension ApplicationMutationPlannerTests {
+    @Test(arguments: ["Messages", "mEsSaGeS", "com.apple.MobileSMS"])
+    func `partial generation inventory accepts authoritative exact name and bundle proof`(
+        identifier: String) async throws
+    {
+        let application = Self.messages()
+        let census = [application, Self.omittedApplication()]
+        var requests: [String] = []
+        var inventoryReads = 0
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: {
+                inventoryReads += 1
+                return .partial([application], warnings: [Self.omissionWarning])
+            },
+            exactIdentifierProvider: { identifier in
+                requests.append(identifier)
+                return try Self.authoritativeApplication(identifier: identifier, census: census)
+            })
+
+        let plan = try await planner.plan(identifier: identifier)
+        let proof = try #require(try Self.authoritativeApplication(
+            identifier: identifier, census: census).selectorResolutionProofs?.first)
+
+        #expect(plan.processIdentity == application.processIdentity)
+        #expect(plan.selectorProof == proof)
+        #expect(plan.selectorProof.candidateCount == 2)
+        #expect(inventoryReads == 1)
+        #expect(requests == [identifier, "PID:2468"])
+    }
+
+    @Test(arguments: ["Messages", "com.apple.MobileSMS"])
+    func `omitted matching process still prevents authoritative selection`(identifier: String) async {
+        let application = Self.messages()
+        let duplicate = Self.omittedApplication(name: application.name, bundle: application.bundleIdentifier)
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .partial([application], warnings: [Self.omissionWarning]) },
+            exactIdentifierProvider: { identifier in
+                try Self.authoritativeApplication(identifier: identifier, census: [application, duplicate])
+            })
+
+        await #expect(throws: DesktopTargetPlanningError.ambiguousApplication(
+            identifier: identifier, candidatePIDs: []))
+        {
+            _ = try await planner.plan(identifier: identifier)
+        }
+    }
+
+    @Test(arguments: ["missing", "selector", "generation", "tie"])
+    func `partial inventory without authoritative selector proof remains refused`(invalidProof: String) async throws {
+        let application = Self.messages()
+        let proofApplication = invalidProof == "generation" ? Self.messages(generation: 8) : application
+        let duplicate = Self.omittedApplication(name: application.name, bundle: application.bundleIdentifier)
+        let census = invalidProof == "tie" ? [proofApplication, duplicate] : [proofApplication]
+        let resolution = try #require(try ApplicationIdentifierMatcher.resolution(
+            for: invalidProof == "selector" ? "com.apple.MobileSMS" : "Messages",
+            in: census.map(ApplicationIdentifierMatcher.Candidate.init)))
+        let proofs = try invalidProof == "missing" ? [] : [resolution.proof(
+            selectedProcessIdentity: #require(proofApplication.processIdentity))]
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .partial([application], warnings: [Self.omissionWarning]) },
+            exactIdentifierProvider: { _ in application.withSelectorResolutionProofs(proofs) })
+
+        await #expect(throws: DesktopTargetPlanningError.applicationInventoryUnavailable(identifier: "Messages")) {
+            _ = try await planner.plan(identifier: "Messages")
+        }
+    }
+
+    @Test(arguments: ["expected", "missing", "zero", "reuse", "metadata"])
+    func `authoritative fallback preserves expected generation and revalidation`(failure: String) async throws {
+        let original = Self.messages()
+        let selected = switch failure {
+        case "missing": Self.messages(generation: nil)
+        case "zero": Self.messages(generation: 0)
+        default: original
+        }
+        let current = switch failure {
+        case "reuse": Self.messages(generation: 8)
+        case "metadata": AutomationTestFixtures.application(
+                processIdentifier: 2468, processStartIdentity: 7, name: "Rebound")
+        default: selected
+        }
+        var requests: [String] = []
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .partial([original], warnings: [Self.omissionWarning]) },
+            exactIdentifierProvider: { identifier in
+                requests.append(identifier)
+                return try Self.authoritativeApplication(
+                    identifier: identifier,
+                    census: [identifier == "PID:2468" ? current : selected, Self.omittedApplication()])
+            })
+        let expected = try #require((failure == "expected" ? Self.messages(generation: 8) : original).processIdentity)
+        let error: DesktopTargetPlanningError = switch failure {
+        case "missing": .missingProcessIdentity(processIdentifier: 2468)
+        case "zero": .invalidProcessIdentity(processIdentifier: 2468, processStartIdentity: 0)
+        default: .staleApplication(expected: expected)
+        }
+
+        await #expect(throws: error) {
+            _ = try await planner.plan(identifier: "Messages", expectedIdentity: expected)
+        }
+        #expect(requests == (["reuse", "metadata"].contains(failure) ? ["Messages", "PID:2468"] : ["Messages"]))
+    }
+
+    @Test
+    func `authoritative fallback defers revalidation only when requested`() async throws {
+        let application = Self.messages()
+        var requests: [String] = []
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .partial([application], warnings: [Self.omissionWarning]) },
+            exactIdentifierProvider: { identifier in
+                requests.append(identifier)
+                return try Self.authoritativeApplication(
+                    identifier: identifier, census: [application, Self.omittedApplication()])
+            })
+        let plan = try await planner.resolve(
+            selector: InteractionTargetSelector(applicationIdentifier: "Messages"),
+            expectedIdentity: application.processIdentity,
+            revalidateBeforeReturn: false)
+        #expect(requests == ["Messages"])
+        _ = try await planner.revalidate(plan)
+        #expect(requests == ["Messages", "PID:2468"])
+    }
+
+    @Test(arguments: ["Mess", "MessagesExecutable"])
+    func `authoritative fallback refuses fuzzy and executable matches`(identifier: String) async {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.apple.MobileSMS",
+            name: "Messages",
+            executablePath: "/Applications/Messages.app/Contents/MacOS/MessagesExecutable")
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { .partial([application], warnings: [Self.omissionWarning]) },
+            exactIdentifierProvider: { identifier in
+                try Self.authoritativeApplication(identifier: identifier, census: [application])
+            })
+        await #expect(throws: DesktopTargetPlanningError.unsupportedApplicationIdentifier(
+            identifier: identifier, candidatePIDs: [2468]))
+        {
+            _ = try await planner.plan(identifier: identifier)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `inventory failure never invokes authoritative fallback`(cancelled: Bool) async {
+        var directReads = 0
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: {
+                if cancelled {
+                    throw CancellationError()
+                }
+                throw PeekabooError.timeout("inventory timeout")
+            },
+            exactIdentifierProvider: { _ in
+                directReads += 1
+                return Self.messages()
+            })
+        if cancelled {
+            await #expect(throws: CancellationError.self) { _ = try await planner.plan(identifier: "Messages") }
+        } else {
+            await #expect(throws: DesktopTargetPlanningError.applicationInventoryUnavailable(identifier: "Messages")) {
+                _ = try await planner.plan(identifier: "Messages")
+            }
+        }
+        #expect(directReads == 0)
+    }
+
+    private static let omissionWarning =
+        "Application PID 358 (AppSSODaemon, com.apple.AppSSODaemon) lacked process-generation identity and was omitted."
+
+    private static func messages(generation: UInt64? = 7) -> ServiceApplicationInfo {
+        AutomationTestFixtures.application(
+            processIdentifier: 2468,
+            processStartIdentity: generation,
+            bundleIdentifier: "com.apple.MobileSMS",
+            name: "Messages")
+    }
+
+    private static func omittedApplication(
+        name: String = "AppSSODaemon", bundle: String? = "com.apple.AppSSODaemon") -> ServiceApplicationInfo
+    {
+        AutomationTestFixtures.application(
+            processIdentifier: 358,
+            processStartIdentity: nil,
+            bundleIdentifier: bundle,
+            name: name,
+            activationPolicy: .prohibited)
+    }
+
+    private static func authoritativeApplication(
+        identifier: String, census: [ServiceApplicationInfo]) throws -> ServiceApplicationInfo
+    {
+        guard let resolution = try ApplicationIdentifierMatcher.resolution(
+            for: identifier, in: census.map(ApplicationIdentifierMatcher.Candidate.init))
+        else { throw PeekabooError.appNotFound(identifier) }
+        guard !resolution.hasWinningTie else {
+            throw PeekabooError.ambiguousAppIdentifier(identifier, suggestions: census.map(\.name))
+        }
+        let application = census[resolution.index]
+        guard let identity = application.processIdentity else { return application }
+        return application.withSelectorResolutionProofs([resolution.proof(selectedProcessIdentity: identity)])
+    }
+}

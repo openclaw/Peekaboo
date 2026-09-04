@@ -168,7 +168,8 @@ extension DesktopTargetPlanning {
     /// Inventory rows plus the provider's completeness evidence.
     ///
     /// Mutation planners must not infer uniqueness from a partial catalog. Exact PID and window-ID
-    /// selectors can bypass a partial catalog only when their provider performed a direct lookup.
+    /// selectors require a direct lookup to bypass it; exact application names and bundles require
+    /// an authoritative selector proof whose census includes omitted generationless processes.
     public struct Inventory<Element: Codable & Equatable & Sendable>: Codable, Equatable, Sendable {
         public enum Completeness: String, Codable, Equatable, Sendable {
             case complete

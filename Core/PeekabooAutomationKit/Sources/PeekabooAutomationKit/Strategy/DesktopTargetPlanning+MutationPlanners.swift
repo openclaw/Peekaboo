@@ -161,26 +161,32 @@ extension DesktopTargetPlanning {
             } else {
                 try await self.applicationInventory(identifier: normalizedTarget ?? "application target")
             }
-            guard inventory.isComplete else {
-                throw DesktopTargetPlanningError.incompleteApplicationInventory(
-                    identifier: normalizedTarget ?? "application target",
-                    warnings: inventory.warnings)
-            }
             guard let normalizedTarget else {
                 throw DesktopTargetPlanningError.missingApplicationTarget
             }
-            let selection = try ApplicationMutationSelector.select(
-                identifier: normalizedTarget,
-                applications: inventory.items)
-            let application = inventory.items[selection.index]
-            let processIdentity = try Self.validatedIdentity(application)
-            if let expectedIdentity, processIdentity != expectedIdentity {
+            let plan: ApplicationMutationPlan
+            if inventory.isComplete {
+                let selection = try ApplicationMutationSelector.select(
+                    identifier: normalizedTarget,
+                    applications: inventory.items)
+                let application = inventory.items[selection.index]
+                let processIdentity = try Self.validatedIdentity(application)
+                plan = ApplicationMutationPlan(
+                    application: application,
+                    processIdentity: processIdentity,
+                    selectorProof: selection.resolution.proof(selectedProcessIdentity: processIdentity))
+            } else if let exactIdentifierProvider {
+                plan = try await self.resolveAuthoritativeApplication(
+                    identifier: normalizedTarget,
+                    provider: exactIdentifierProvider)
+            } else {
+                throw DesktopTargetPlanningError.incompleteApplicationInventory(
+                    identifier: normalizedTarget,
+                    warnings: inventory.warnings)
+            }
+            if let expectedIdentity, plan.processIdentity != expectedIdentity {
                 throw DesktopTargetPlanningError.staleApplication(expected: expectedIdentity)
             }
-            let plan = ApplicationMutationPlan(
-                application: application,
-                processIdentity: processIdentity,
-                selectorProof: selection.resolution.proof(selectedProcessIdentity: processIdentity))
             return if revalidateBeforeReturn {
                 try await self.revalidate(plan)
             } else {
@@ -190,29 +196,16 @@ extension DesktopTargetPlanning {
 
         /// Resolves an application constraint through an authoritative direct lookup.
         ///
-        /// This path is reserved for an already-selected exact window. The direct provider must
-        /// carry a complete selector proof, so omitted broad-inventory rows cannot hide ambiguity.
-        func resolveAuthoritativeWindowOwner(
-            selector: InteractionTargetSelector) async throws -> ApplicationMutationPlan
+        /// The provider must carry a complete selector proof from a census that includes omitted
+        /// generationless rows, so a partial mutation inventory cannot hide name or bundle ambiguity.
+        private func resolveAuthoritativeApplication(
+            identifier normalizedTarget: String,
+            provider: ExactIdentifierProvider) async throws -> ApplicationMutationPlan
         {
-            do {
-                try selector.validate(policy: .mutationSafe)
-            } catch let error as InteractionTargetSelector.ValidationError {
-                throw DesktopTargetPlanningError.invalidSelector(error)
-            }
-            guard selector.hasOwnerInput,
-                  let normalizedTarget = try selector.normalizedApplicationTarget(policy: .mutationSafe).map({
-                      try ApplicationMutationSelector.normalizedIdentifier($0)
-                  }),
-                  let exactIdentifierProvider
-            else {
-                throw DesktopTargetPlanningError.missingApplicationTarget
-            }
-
             let application = try await self.exactApplication(
                 identifier: normalizedTarget,
                 staleIdentity: nil,
-                provider: exactIdentifierProvider)
+                provider: provider)
             let processIdentity = try Self.validatedIdentity(application)
             _ = try ApplicationMutationSelector.select(
                 identifier: normalizedTarget,
@@ -444,16 +437,10 @@ extension DesktopTargetPlanning {
 
             if owner == nil {
                 if selector.hasOwnerInput {
-                    do {
-                        owner = try await self.applications.resolve(
-                            selector: selector,
-                            expectedIdentity: nil,
-                            revalidateBeforeReturn: false)
-                    } catch let error as DesktopTargetPlanningError {
-                        guard case .incompleteApplicationInventory = error else { throw error }
-                        owner = try await self.applications.resolveAuthoritativeWindowOwner(
-                            selector: selector)
-                    }
+                    owner = try await self.applications.resolve(
+                        selector: selector,
+                        expectedIdentity: nil,
+                        revalidateBeforeReturn: false)
                 } else {
                     owner = try await self.applications.resolve(
                         selector: InteractionTargetSelector(

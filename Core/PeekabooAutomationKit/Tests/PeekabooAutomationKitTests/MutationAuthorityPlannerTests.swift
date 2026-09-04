@@ -283,35 +283,65 @@ struct MutationAuthorityPlannerTests {
     }
 
     @Test
-    func `exact window owner ignores unrelated incomplete application rows`() async throws {
+    func `omitted unrelated process survives receipt bound window revalidation`() async throws {
         let fixture = AutomationTestFixtures.linkedDesktopTarget(
             processIdentity: .init(processIdentifier: 2468, processStartIdentity: 7),
-            applicationName: "Calculator",
-            windowID: 42)
-        let unpinnableSystemRow = AutomationTestFixtures.application(
-            processIdentifier: 1,
+            applicationName: "Messages",
+            windowID: 1108)
+        let omitted = AutomationTestFixtures.application(
+            processIdentifier: 358,
             processStartIdentity: nil,
-            bundleIdentifier: nil,
-            name: "WindowServer",
-            isHiddenKnown: false,
+            bundleIdentifier: "com.apple.AppSSODaemon",
+            name: "AppSSODaemon",
             activationPolicy: .prohibited)
-        let warning = "Application PID 1 lacked process-generation identity and was omitted."
-        let script = MutationAuthorityCatalogScript(
-            applicationInventories: [
-                .partial([fixture.application, unpinnableSystemRow], warnings: [warning]),
-            ],
-            windowInventories: [.complete([fixture.window])])
+        let census = [fixture.application, omitted]
+        var applicationReads = 0
+        var exactRequests: [String] = []
+        var windowTargets: [WindowTarget] = []
+        let applications = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: {
+                applicationReads += 1
+                return .partial([fixture.application], warnings: [
+                    "Application PID 358 (AppSSODaemon, com.apple.AppSSODaemon) " +
+                        "lacked process-generation identity and was omitted.",
+                ])
+            },
+            exactIdentifierProvider: { identifier in
+                exactRequests.append(identifier)
+                let resolution = try #require(try ApplicationIdentifierMatcher.resolution(
+                    for: identifier, in: census.map(ApplicationIdentifierMatcher.Candidate.init)))
+                #expect(!resolution.hasWinningTie)
+                return census[resolution.index].withSelectorResolutionProofs([
+                    resolution.proof(selectedProcessIdentity: fixture.processIdentity),
+                ])
+            })
+        let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+            applicationPlanner: applications,
+            windowPlanner: DesktopTargetPlanning.WindowMutationPlanner(
+                applicationPlanner: applications,
+                windowInventoryProvider: { target in
+                    // Direct-window selection must precede application resolution.
+                    if windowTargets.isEmpty {
+                        #expect(applicationReads == 0)
+                    }
+                    windowTargets.append(target)
+                    return .complete([fixture.window])
+                }))
+        let authority = try await planner.plan(selector: InteractionTargetSelector(
+            applicationIdentifier: "Messages", windowID: 1108))
+        let bound = try planner.bind(identity: fixture.windowTargetIdentity, authority: authority)
+        let current = try await planner.revalidate(bound)
 
-        let authority = try await script.planner().plan(selector: InteractionTargetSelector(
-            applicationIdentifier: "Calculator",
-            windowID: fixture.window.windowID))
-
-        #expect(authority.window?.identity == fixture.windowIdentity)
-        #expect(authority.application.processIdentity == fixture.processIdentity)
-        #expect(authority.application.selectorProof.matchKind == .exactName)
-        #expect(script.applicationInventoryRequestCount == 1)
-        #expect(script.exactApplicationRequests == ["Calculator", "PID:2468"])
-        #expect(script.windowInventoryTargets == [.windowId(fixture.window.windowID)])
+        #expect(current.sourceIdentity == fixture.windowTargetIdentity)
+        #expect(current.targetIdentity == fixture.windowTargetIdentity)
+        #expect(current.selectedWindow == fixture.window)
+        #expect(current.authority.window?.identity == fixture.windowIdentity)
+        #expect(current.authority.application.processIdentity == fixture.processIdentity)
+        #expect(current.authority.application.selectorProof.matchKind == .exactName)
+        #expect(current.authority.application.selectorProof.candidateCount == 2)
+        #expect(applicationReads == 1)
+        #expect(exactRequests == ["Messages", "PID:2468", "PID:2468"])
+        #expect(windowTargets == [.windowId(1108), .windowId(1108)])
     }
 
     @Test

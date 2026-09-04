@@ -76,8 +76,18 @@ extension ApplicationService {
                 {
                     continue
                 }
+                let metadata = if let candidate = candidateProvider(processIdentifier),
+                                  candidate.processIdentifier == processIdentifier,
+                                  !candidate.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    " (" + [candidate.name, candidate.bundleIdentifier].compactMap(\.self)
+                        .filter { !$0.isEmpty }.joined(separator: ", ") + ")"
+                } else {
+                    ""
+                }
                 warnings.append(
-                    "Application PID \(processIdentifier) lacked process-generation identity and was omitted.")
+                    "Application PID \(processIdentifier)\(metadata) " +
+                        "lacked process-generation identity and was omitted.")
                 continue
             }
             guard let candidate = candidateProvider(processIdentifier) else {

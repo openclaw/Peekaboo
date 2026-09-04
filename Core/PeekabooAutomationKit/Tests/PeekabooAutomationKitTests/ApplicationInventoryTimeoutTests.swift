@@ -245,7 +245,8 @@ struct ApplicationInventoryTimeoutTests {
         #expect(inventory.items.map(\.processIdentifier) == [stablePID])
         #expect(!inventory.isComplete)
         #expect(inventory.warnings == [
-            "Application PID \(missingPID) lacked process-generation identity and was omitted.",
+            "Application PID \(missingPID) (App \(missingPID), com.example.\(missingPID)) " +
+                "lacked process-generation identity and was omitted.",
             "Application PID \(driftingPID) changed process generation during inventory and was omitted.",
         ])
     }
@@ -908,10 +909,11 @@ extension ApplicationInventoryTimeoutTests {
     @Test
     @MainActor
     func `legacy optional identity injection never probes eligibility or upgrades nil to denial`() async throws {
+        let candidateReads = AutomationTestLockedValue(0)
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
             applicationMutationCandidateProvider: { _ in
-                Issue.record("Missing legacy generation must not read selector metadata")
+                candidateReads.withValue { $0 += 1 }
                 return nil
             },
             processStartIdentityProvider: { _ in nil },
@@ -921,6 +923,7 @@ extension ApplicationInventoryTimeoutTests {
             },
             runningApplicationProcessIdentifiersProvider: { [41301] })
         let inventory = try await service.applicationMutationInventory()
+        #expect(candidateReads.value == 1)
         #expect(!inventory.isComplete)
         #expect(inventory.warnings == [
             "Application PID 41301 lacked process-generation identity and was omitted.",
