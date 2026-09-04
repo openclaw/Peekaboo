@@ -5,6 +5,7 @@ import PeekabooFoundation
 /// Protocol defining dialog and alert management operations
 @MainActor
 public protocol DialogServiceProtocol: Sendable {
+    var supportsSystemAlertDiscovery: Bool { get }
     /// Whether the legacy `appName` parameter accepts an exact `PID:<n>` sentinel.
     ///
     /// Remote and third-party providers default to false so callers preserve the established
@@ -115,6 +116,10 @@ public protocol DialogServiceProtocol: Sendable {
 }
 
 extension DialogServiceProtocol {
+    public var supportsSystemAlertDiscovery: Bool {
+        false
+    }
+
     public var supportsExactProcessIdentifierAppHint: Bool {
         false
     }
@@ -389,6 +394,8 @@ extension DialogActionResult {
 
 /// Information about dialog elements
 public struct DialogElements: Sendable, Codable {
+    /// Bounded automatic discovery, including partial results and owner receipts.
+    public let discovery: DialogDiscoveryInventory?
     /// Dialog information
     public let dialogInfo: DialogInfo
 
@@ -413,7 +420,8 @@ public struct DialogElements: Sendable, Codable {
         textFields: [DialogTextField] = [],
         staticTexts: [String] = [],
         otherElements: [DialogElement] = [],
-        resolvedTarget: ResolvedDialogTargetEvidence? = nil)
+        resolvedTarget: ResolvedDialogTargetEvidence? = nil,
+        discovery: DialogDiscoveryInventory? = nil)
     {
         self.dialogInfo = dialogInfo
         self.buttons = buttons
@@ -421,11 +429,13 @@ public struct DialogElements: Sendable, Codable {
         self.staticTexts = staticTexts
         self.otherElements = otherElements
         self.resolvedTarget = resolvedTarget
+        self.discovery = discovery
     }
 }
 
 /// Information about a dialog button
 public struct DialogButton: Sendable, Codable {
+    public let supportsAXPress: Bool?
     /// Button text
     public let title: String
 
@@ -438,11 +448,13 @@ public struct DialogButton: Sendable, Codable {
     public init(
         title: String,
         isEnabled: Bool = true,
-        isDefault: Bool = false)
+        isDefault: Bool = false,
+        supportsAXPress: Bool? = nil)
     {
         self.title = title
         self.isEnabled = isEnabled
         self.isDefault = isDefault
+        self.supportsAXPress = supportsAXPress
     }
 }
 

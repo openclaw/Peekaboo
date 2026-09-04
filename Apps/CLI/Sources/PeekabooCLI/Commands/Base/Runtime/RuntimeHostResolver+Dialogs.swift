@@ -20,6 +20,9 @@ extension RuntimeHostResolver {
             handshake.negotiatedVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true
         return RemoteDialogCapabilities(
+            systemAlertDiscovery: handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.systemAlertDialogDiscovery
+            ) == true,
             backgroundButtonClick: BridgeCapabilityPolicy.supportsOperation(
                 .backgroundDialogClickButton,
                 for: handshake

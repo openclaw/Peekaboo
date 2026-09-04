@@ -243,6 +243,14 @@ public final class PeekabooBridgeServer {
         if hostIdentity?.codeSignatureHash != nil {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.codeSignatureBuildIdentity)
         }
+        if services.dialogs.supportsSystemAlertDiscovery,
+           self.allowedOperations.contains(.prepareDialogAction),
+           self.allowedOperations.contains(.exactDialogClickButton)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.systemAlertDialogDiscovery)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.systemAlertDialogDiscovery)
+        }
         Self.updateCaptureCapabilities(
             to: &resolvedHostCapabilities,
             services: services,

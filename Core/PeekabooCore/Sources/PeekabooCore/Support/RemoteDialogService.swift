@@ -6,6 +6,7 @@ import PeekabooBridge
 import PeekabooFoundation
 
 public struct RemoteDialogCapabilities: Sendable {
+    public let systemAlertDiscovery: Bool
     public let backgroundButtonClick: Bool
     public let targetedList: Bool
     public let prepareAction: Bool
@@ -17,6 +18,7 @@ public struct RemoteDialogCapabilities: Sendable {
     public let legacyInputFocusPolicy: Bool
 
     public init(
+        systemAlertDiscovery: Bool = false,
         backgroundButtonClick: Bool = false,
         targetedList: Bool = false,
         prepareAction: Bool = false,
@@ -27,6 +29,7 @@ public struct RemoteDialogCapabilities: Sendable {
         exactForceDismiss: Bool = false,
         legacyInputFocusPolicy: Bool = false)
     {
+        self.systemAlertDiscovery = systemAlertDiscovery
         self.backgroundButtonClick = backgroundButtonClick
         self.targetedList = targetedList
         self.prepareAction = prepareAction
@@ -42,6 +45,7 @@ public struct RemoteDialogCapabilities: Sendable {
 @MainActor
 public final class RemoteDialogService: DialogServiceProtocol {
     public let foregroundOutcomeRoute = DesktopActionOutcome.Route.bridge
+    public let supportsSystemAlertDiscovery: Bool
     public let supportsBackgroundExactDialogInput: Bool
 
     private let client: PeekabooBridgeClient
@@ -64,6 +68,7 @@ public final class RemoteDialogService: DialogServiceProtocol {
         client: PeekabooBridgeClient,
         capabilities: RemoteDialogCapabilities = RemoteDialogCapabilities())
     {
+        self.supportsSystemAlertDiscovery = capabilities.systemAlertDiscovery
         self.client = client
         self.supportsBackgroundButtonClick = capabilities.backgroundButtonClick
         self.supportsTargetedList = capabilities.targetedList
@@ -219,6 +224,10 @@ public final class RemoteDialogService: DialogServiceProtocol {
     public func prepareDialogAction(_ request: DialogActionPreparationRequest) async throws
         -> PreparedDialogActionReceipt
     {
+        guard request.target.hasTarget || self.supportsSystemAlertDiscovery else {
+            throw Self.capabilityRefusal(
+                "Remote host does not advertise system-alert discovery; no automatic action was prepared.")
+        }
         guard self.supportsPrepareAction, self.supportsAction(request.kind) else {
             throw Self.capabilityRefusal(
                 "Remote host does not advertise the exact prepared dialog operation; update the host.")

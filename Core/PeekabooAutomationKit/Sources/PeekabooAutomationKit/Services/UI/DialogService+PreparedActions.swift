@@ -20,14 +20,16 @@ extension DialogService {
                     token: UUID(),
                     kind: request.kind,
                     target: candidate.target,
-                    resolvedTarget: candidate.resolvedTarget)
+                    resolvedTarget: candidate.resolvedTarget,
+                    discoveryProof: candidate.discoveryProof)
                 self.preparedActionStore.insert(.init(
                     receipt: receipt,
                     request: request,
                     window: candidate.window,
                     dialog: candidate.dialog,
                     button: candidate.button,
-                    resolvedButtonTitle: candidate.button.title() ?? request.buttonText ?? "Dismiss",
+                    resolvedButtonTitle: candidate.discoveryProof?.buttonTitle ??
+                        candidate.button.title() ?? request.buttonText ?? "Dismiss",
                     resolvedButtonIdentifier: candidate.button.attribute(Attribute<String>("AXIdentifier")),
                     createdAt: Date()))
                 return receipt
@@ -71,10 +73,7 @@ extension DialogService {
             let leafOutcome: DesktopActionOutcome
             do {
                 try Task.checkCancellation()
-                leafOutcome = try await DetachedAXActionRunner.perform(
-                    action: AXActionNames.kAXPressAction,
-                    on: entry.button.underlyingElement,
-                    gracePeriod: DetachedAXActionRunner.pressGracePeriod)
+                leafOutcome = try await self.discoveryReaders.press(entry.button)
                 sequence.record(.reportedOutcome(leafOutcome, defaultDispatchedUnitCount: .one))
                 try Task.checkCancellation()
             } catch is CancellationError {
@@ -185,6 +184,7 @@ extension DialogService {
         let window: Element
         let dialog: Element
         let button: Element
+        var discoveryProof: DialogDiscoverySelectionProof?
     }
 
     enum DialogPresence: Equatable {
@@ -216,6 +216,9 @@ extension DialogService {
     func preparedActionCandidates(for request: DialogActionPreparationRequest) async throws
         -> [PreparedActionCandidate]
     {
+        if !request.target.hasTarget {
+            return try [self.discoveredActionCandidate(for: request)]
+        }
         let dialogs = try await self.targetedDialogCandidates(
             target: request.target,
             membership: .structuralMutation)
@@ -374,7 +377,7 @@ extension DialogService {
             processIdentity: processIdentity)
     }
 
-    private func resolvedTargetWithUniqueWindowProof(
+    func resolvedTargetWithUniqueWindowProof(
         _ candidate: TargetedDialogCandidate,
         candidates: [TargetedDialogCandidate]) throws -> ResolvedDialogTargetEvidence
     {
@@ -510,6 +513,16 @@ extension DialogService {
     }
 
     func revalidatePreparedAction(_ entry: DialogPreparedActionStore.Entry) async throws {
+        if entry.receipt.discoveryProof != nil {
+            let current = try self.discoveredActionCandidate(for: entry.request)
+            guard current.target == entry.receipt.target,
+                  Self.sameElement(current.window, entry.window),
+                  Self.sameElement(current.dialog, entry.dialog),
+                  Self.sameElement(current.button, entry.button)
+            else { throw self.targetUnavailable("Discovered dialog changed before AXPress.") }
+            try Task.checkCancellation()
+            return
+        }
         try await self.revalidateDialogTarget(
             target: entry.receipt.target,
             retainedWindow: entry.window,
@@ -630,7 +643,10 @@ extension DialogService {
     }
 
     func preparedDialogPresence(_ entry: DialogPreparedActionStore.Entry) -> DialogPresence {
-        self.dialogPresence(target: entry.receipt.target, retainedDialog: entry.dialog)
+        if entry.receipt.discoveryProof != nil {
+            return self.discoveredDialogPresence(entry)
+        }
+        return self.dialogPresence(target: entry.receipt.target, retainedDialog: entry.dialog)
     }
 
     func dialogPresence(

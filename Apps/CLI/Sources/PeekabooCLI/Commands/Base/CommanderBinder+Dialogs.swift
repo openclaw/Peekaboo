@@ -73,7 +73,9 @@ extension CommanderCLIBinder {
         }
 
         if commandType == DialogCommand.ClickSubcommand.self {
-            try requireTarget()
+            if values.flag("foreground") {
+                try requireTarget()
+            }
             let button = values.singleOption("button")?.trimmingCharacters(in: .whitespacesAndNewlines)
             guard button?.isEmpty == false else {
                 try refuse(

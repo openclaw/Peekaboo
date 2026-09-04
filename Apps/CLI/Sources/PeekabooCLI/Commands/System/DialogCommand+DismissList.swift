@@ -213,6 +213,30 @@ extension DialogCommand {
         @OptionGroup var target: InteractionTargetOptions
         @RuntimeStorage var runtime: CommandRuntime?
 
+        private static func printDiscovery(_ inventory: DialogDiscoveryInventory) {
+            for dialog in inventory.dialogs {
+                let elements = dialog.elements
+                let title = elements.dialogInfo.title.isEmpty ? "Untitled Dialog" : elements.dialogInfo.title
+                print("Dialog: \(title)")
+                print("Owner: \(dialog.owner.name) (\(dialog.owner.bundleIdentifier ?? "unknown"), " +
+                    "PID \(dialog.owner.processIdentifier))")
+                let windowID = elements.resolvedTarget.map { String($0.target.identity.windowID) } ?? "unaddressable"
+                print(
+                    "Window: \(windowID) " +
+                        "\(elements.dialogInfo.role)/\(elements.dialogInfo.subrole ?? "")"
+                )
+                for button in elements.buttons {
+                    print(
+                        "  • \(button.title) [enabled=\(button.isEnabled), AXPress=\(button.supportsAXPress == true)]"
+                    )
+                }
+                elements.staticTexts.forEach { print("  \($0)") }
+            }
+            if !inventory.isComplete {
+                print("Discovery incomplete: " + inventory.issues.joined(separator: "; "))
+            }
+        }
+
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
@@ -257,7 +281,13 @@ extension DialogCommand {
                             role: elements.dialogInfo.role,
                             buttons: elements.buttons.map(\.title),
                             textFields: textFields,
-                            textElements: elements.staticTexts
+                            textElements: elements.staticTexts,
+                            subrole: elements.dialogInfo.subrole,
+                            displayTitle: elements.dialogInfo.title.isEmpty ? "Untitled Dialog" : elements.dialogInfo
+                                .title,
+                            buttonDetails: elements.buttons,
+                            owner: elements.discovery?.dialogs.first?.owner,
+                            discovery: elements.discovery
                         )
                         outputSuccessCodable(
                             data: outputData,
@@ -265,6 +295,10 @@ extension DialogCommand {
                             logger: self.outputLogger
                         )
                     } else {
+                        if let discovery = elements.discovery {
+                            Self.printDiscovery(discovery)
+                            return
+                        }
                         print("Dialog: \(elements.dialogInfo.title)")
 
                         if !elements.buttons.isEmpty {
@@ -313,6 +347,11 @@ private struct DialogListResult: Codable {
     let buttons: [String]
     let textFields: [TextField]
     let textElements: [String]
+    let subrole: String?
+    let displayTitle: String
+    let buttonDetails: [DialogButton]
+    let owner: ServiceApplicationInfo?
+    let discovery: DialogDiscoveryInventory?
 
     struct TextField: Codable {
         let title: String

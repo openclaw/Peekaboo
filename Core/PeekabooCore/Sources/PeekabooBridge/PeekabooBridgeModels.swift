@@ -372,6 +372,7 @@ public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
 /// Stable raw capability names advertised by current hosts. The wire representation remains an
 /// array of strings so clients can safely ignore capabilities introduced by later builds.
 public enum PeekabooBridgeHostCapability {
+    public static let systemAlertDialogDiscovery = "systemAlertDialogDiscovery"
     public static let hostGenerationIdentity = "hostGenerationIdentity"
     public static let codeSignatureBuildIdentity = "codeSignatureBuildIdentity"
     public static let backgroundBridgeHost = "backgroundBridgeHost"

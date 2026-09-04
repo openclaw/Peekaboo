@@ -50,6 +50,7 @@ extension DialogError: LocalizedError {
 /// Default implementation of dialog management operations
 @MainActor
 public final class DialogService: DialogServiceProtocol {
+    public let supportsSystemAlertDiscovery = true
     public let supportsBackgroundExactDialogInput = true
     public let supportsExactProcessIdentifierAppHint = true
 
@@ -59,11 +60,12 @@ public final class DialogService: DialogServiceProtocol {
     let targetedDialogSearchTimeout: Float = 0.5
     let applicationService: any ApplicationServiceProtocol
     let syntheticInputDriver: any SyntheticInputDriving
-    let focusService = FocusManagementService()
+    let focusService: any DialogFocusManaging
     let windowIdentityService = WindowIdentityService()
     let feedbackClient: any AutomationFeedbackClient
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
     let preparedActionStore: DialogPreparedActionStore
+    let discoveryReaders: DialogDiscoveryReaders
     var scansAllApplicationsForDialogs: Bool {
         ProcessInfo.processInfo.environment["PEEKABOO_DIALOG_SCAN_ALL_APPS"] == "1"
     }
@@ -84,13 +86,17 @@ public final class DialogService: DialogServiceProtocol {
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         syntheticInputDriver: any SyntheticInputDriving,
         operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
-        preparedActionStore: DialogPreparedActionStore = DialogPreparedActionStore())
+        preparedActionStore: DialogPreparedActionStore = DialogPreparedActionStore(),
+        discoveryReaders: DialogDiscoveryReaders = DialogDiscoveryReaders(),
+        focusService: any DialogFocusManaging = FocusManagementService())
     {
         self.applicationService = applicationService ?? ApplicationService()
         self.feedbackClient = feedbackClient
         self.syntheticInputDriver = syntheticInputDriver
         self.operationLaneCoordinator = operationLaneCoordinator
         self.preparedActionStore = preparedActionStore
+        self.discoveryReaders = discoveryReaders
+        self.focusService = focusService
         self.logger.debug("DialogService initialized")
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

@@ -108,10 +108,10 @@ struct DialogCommand: ParsableCommand {
         matching selector: DialogTargetSelector
     ) throws -> DesktopTargetIdentity? {
         guard selector.hasTarget else {
-            guard elements.resolvedTarget == nil else {
+            guard elements.resolvedTarget == nil || elements.discovery != nil else {
                 throw DesktopTargetIdentityError.contradictoryWindowIdentifier
             }
-            return nil
+            return elements.resolvedTarget.map { DesktopTargetIdentity(exactWindow: $0.target) }
         }
         guard let resolved = elements.resolvedTarget,
               resolved.matches(selector)

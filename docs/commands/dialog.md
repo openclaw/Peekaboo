@@ -12,10 +12,17 @@ dialogs without re-running `see`. Exact targeted click, non-forced dismiss, and 
 default. Global keyboard/coordinate paths are never implicit: targetless input, `file`, and `dismiss --force`
 require `--foreground`.
 
+Without a target, `dialog list` and `dialog click --button "Don't Allow"` discover macOS system-permission alerts
+(including TCC) in the background, checking the focused owner and the allowlisted `com.apple.UserNotificationCenter`
+and `com.apple.SecurityAgent` hosts by exact bundle and executable identity. Discovery is bounded and read-only: it
+never focuses, raises, or switches Spaces. Listing includes owner, window receipt, text, and button availability;
+automatic clicks require complete discovery, one dialog, and one enabled AXPress button with the exact name
+(straight and curly apostrophes are equivalent), then use an exact receipt and verify disappearance.
+
 ## Subcommands
 | Name | Purpose | Key options |
 | --- | --- | --- |
-| `click` | Press a dialog button with AX. | `--button <exact label>` and an app/PID/window target are required; `--foreground` may focus first but never enables pointer fallback. |
+| `click` | Press a dialog button with AX. | `--button <exact label>` is required; app/PID/window targets are optional; `--foreground` may focus first but never enables pointer fallback. |
 | `input` | Set text in a dialog field. | `--text` plus an app/PID/window target default to background AXValue. Use `--foreground` only for targetless/global keyboard input. Optional `--field <label>` or `--index <0-based>` and `--clear`. |
 | `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` is required; an app/PID/window target is optional and recommended. Supports `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, and `--timeout <duration>`. Save-like actions verify the file exists and return `saved_path`. |
 | `dismiss` | Close the current dialog. | Normal dismissal requires a target and uniquely resolves one cancel/close AXPress button in the background. `--force --foreground` explicitly sends global Escape. |
@@ -34,7 +41,7 @@ require `--foreground`.
   (or `foreground: true` over MCP).
 - `dialog file` and forced dismissal use global keyboard or coordinate events and therefore require foreground
   consent. For compatibility with interactive foreground workflows, input and file may target the current dialog only
-  in that foreground mode. Receipt-pinned background click and non-forced dismiss never allow a targetless path.
+  in that foreground mode. Receipt-pinned non-forced dismiss requires a target.
 - Button clicks and text entry route through `services.dialogs` helpers, which return dictionaries describing what happened; JSON output exposes those details verbatim (`button`, `field`, `text_length`, etc.).
 - `dialog input` accepts either a field label (`--field`) or an index; when neither is provided it targets the first
   text field. `--clear` replaces the value directly in background AXValue mode; the targetless foreground route uses

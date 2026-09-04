@@ -1179,6 +1179,14 @@ extension PeekabooBridgeOperationReceiptSemantics {
         _ receipt: PreparedDialogActionReceipt,
         request: DialogActionPreparationRequest) throws
     {
+        if !request.target.hasTarget {
+            guard request.kind == .clickButton,
+                  receipt.resolvedTarget != nil,
+                  receipt.discoveryProof?.validates(target: receipt.target, buttonText: request.buttonText) == true
+            else {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("automatic dialog discovery proof")
+            }
+        }
         let identity = receipt.target.identity
         guard receipt.kind == request.kind,
               request.target.processIdentifier.map({ $0 == identity.ownerProcessIdentifier }) ?? true,

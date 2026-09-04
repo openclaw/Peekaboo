@@ -831,6 +831,11 @@ extension PeekabooBridgeServer {
             let elements = try await self.services.dialogs.listDialogElements(target: selector)
             return .init(response: .dialogElements(elements))
         case let .prepareDialogAction(payload):
+            guard payload.target.hasTarget ||
+                self.hostCapabilities.contains(PeekabooBridgeHostCapability.systemAlertDialogDiscovery)
+            else {
+                throw PeekabooError.invalidInput("System-alert dialog discovery is unavailable on this host")
+            }
             let receipt = try await self.services.dialogs.prepareDialogAction(payload)
             return .init(response: .preparedDialogAction(receipt))
         case let .exactDialogClickButton(receipt):

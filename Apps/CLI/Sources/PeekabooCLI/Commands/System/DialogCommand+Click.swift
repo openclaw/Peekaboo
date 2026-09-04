@@ -32,6 +32,9 @@ extension DialogCommand {
                 resolveWindowTitle: false,
                 resolveAppHint: false,
                 validate: {
+                    guard self.target.hasAnyTarget || !self.foreground else {
+                        throw ValidationError("Automatic dialog discovery is background-only; omit --foreground")
+                    }
                     guard self.foreground || !self.focusOptions.hasForegroundFocusOverrides else {
                         throw ValidationError("Dialog focus options require --foreground")
                     }

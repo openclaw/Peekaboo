@@ -108,6 +108,12 @@ extension DialogService {
 
     public func listDialogElements(windowTitle: String?, appName: String?) async throws -> DialogElements {
         try await self.operationLaneCoordinator.run(scope: .global, access: .read) {
+            if windowTitle == nil, appName == nil {
+                let scan = try self.discoverDialogCandidates()
+                if !scan.candidates.isEmpty || !scan.issues.isEmpty {
+                    return try self.discoveredDialogList(scan)
+                }
+            }
             self.logger.info("Listing dialog elements")
             if let title = windowTitle {
                 self.logger.debug("For window: \(title)")

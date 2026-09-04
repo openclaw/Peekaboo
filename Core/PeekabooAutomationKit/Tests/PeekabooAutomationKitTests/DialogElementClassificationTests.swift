@@ -3,6 +3,14 @@ import Testing
 
 struct DialogElementClassificationTests {
     @Test
+    func `untitled system alert classifies`() {
+        let evidence = DialogElementEvidence(
+            role: "AXWindow", subrole: "AXSystemDialog", roleDescription: "", identifier: "", title: "")
+        #expect(DialogElementClassifier.isStructuralDialog(evidence))
+        #expect(DialogElementClassifier.isDialog(evidence))
+    }
+
+    @Test
     func `collected sheet makes its standard window observation dialog active`() {
         let window = DetectedElement(
             id: "window",

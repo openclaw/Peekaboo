@@ -418,7 +418,7 @@ public struct DialogActionPreparationRequest: Sendable, Codable, Equatable {
         buttonText: String? = nil) throws
     {
         let normalizedButton = buttonText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard target.hasTarget else {
+        guard target.hasTarget || kind == .clickButton else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .invalidRequest,
                 message: "Dialog mutations require an explicit app, PID, or window target.",
@@ -463,16 +463,19 @@ public struct PreparedDialogActionReceipt: Sendable, Codable, Equatable {
     public let kind: DialogPreparedActionKind
     public let target: UIAutomationTarget.ExactWindow
     public let resolvedTarget: ResolvedDialogTargetEvidence?
+    public let discoveryProof: DialogDiscoverySelectionProof?
 
     public init(
         token: UUID,
         kind: DialogPreparedActionKind,
         target: UIAutomationTarget.ExactWindow,
-        resolvedTarget: ResolvedDialogTargetEvidence? = nil)
+        resolvedTarget: ResolvedDialogTargetEvidence? = nil,
+        discoveryProof: DialogDiscoverySelectionProof? = nil)
     {
         self.token = token
         self.kind = kind
         self.target = target
         self.resolvedTarget = resolvedTarget
+        self.discoveryProof = discoveryProof
     }
 }
