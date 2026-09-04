@@ -44,10 +44,14 @@ that snapshot. Use `press` for standalone keys or chords.
   `AXFocused=true`. Cached trees, a first editable-field guess, and application-level focus from another window are
   never accepted. To focus a known field without activating the app, use its fresh element ID with background
   `click`, run `see` again, then type with the new snapshot.
-- Exact background delivery re-resolves that same role/frame/identifier under the captured window and verifies its
-  own `AXFocused` attribute and the application's exact internal key window before every keyboard unit. Process
-  relaunch, window/bounds drift, sibling focus, a different internal key window, or an unreadable focus attribute
-  stops delivery instead of widening to application or foreground focus.
+- Exact background delivery strictly validates the initial focused-element frame. Subsequent units and text
+  completion allow that same uniquely identified element to reflow: role and identifier (or title when no identifier
+  exists) must still match, its center must remain inside the captured window, and `AXFocused` and the application's
+  exact internal key window must still agree. This applies to both Accessibility edits and keyboard events. Process
+  relaunch, window/bounds drift, sibling or ambiguous focus, a different internal key window, or an unreadable focus
+  attribute stops delivery with retry-unsafe prefix evidence after any input was emitted.
+- A delivered trailing special key may intentionally change focus, so it returns dispatched-unverified without an
+  unchanged-focus check afterward. Any remaining input still requires the same receiver's continuation proof.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
 - Background delivery prefers Accessibility value and selection edits for writable focused text controls. Unsupported or rejected AX routes fall back to process-targeted CoreGraphics keyboard events, which require Event Synthesizing access. Apps that accept neither background route may still need `--foreground`.
 - Printable event fallback carries Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.

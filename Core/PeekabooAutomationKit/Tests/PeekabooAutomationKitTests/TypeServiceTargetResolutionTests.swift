@@ -35,9 +35,11 @@ struct TypeServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `exact window delivery revalidates before every targeted character`() async throws {
+    func `receiver moves to different window stops remaining text`() async throws {
         var typed: [Character] = []
-        var validationCount = 0
+        var initialValidationCount = 0
+        var continuationCount = 0
+        let expected = Self.focusedIdentity()
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
             targetedCharacterTyper: { character, _, delivery in
@@ -52,10 +54,14 @@ struct TypeServiceTargetResolutionTests {
                 snapshotId: nil,
                 targetProcessIdentifier: 4242,
                 deliveryValidator: {
-                    validationCount += 1
-                    if validationCount == 2 {
-                        throw PeekabooError.invalidInput("focus changed")
-                    }
+                    initialValidationCount += 1
+                    try FocusedElementReceiptResolver.validate(expected, matches: expected)
+                },
+                continuationValidator: {
+                    continuationCount += 1
+                    try FocusedElementReceiptResolver.validateContinuation(
+                        Self.focusedIdentity(windowID: 43),
+                        matches: expected)
                 })
             Issue.record("Expected focus revalidation to stop the second character")
         } catch let error as InputDeliveryIndeterminateError {
@@ -63,26 +69,109 @@ struct TypeServiceTargetResolutionTests {
             #expect(error.emittedUnitCount == 1)
             #expect(error.operationMayHaveCompleted)
             #expect(!error.retrySafe)
-            #expect(error.localizedDescription.contains("focus changed"))
+            #expect(error.causeDescription == FocusedElementReceiptError.windowMismatch.localizedDescription)
         } catch {
             Issue.record("Expected indeterminate delivery error, got \(error)")
         }
 
-        #expect(validationCount == 2)
+        #expect(initialValidationCount == 1)
+        #expect(continuationCount == 1)
         #expect(typed == ["a"])
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `same element reflow after first and final character does not truncate`(usesAX: Bool) async throws {
+        let expected = Self.focusedIdentity()
+        var actual = expected
+        var typed: [Character] = []
+        var initialValidationCount = 0
+        var continuationCount = 0
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { character, _, delivery in
+                typed.append(character)
+                actual = Self.focusedIdentity(frame: CGRect(x: 50, y: 100, width: 200, height: 30 + typed.count * 10))
+                return .dispatched(
+                    delivery: usesAX ? .init(mechanism: .accessibilityValue, mode: .background) : delivery,
+                    keyPressCount: usesAX ? 0 : 1)
+            })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.text("abc")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            targetProcessIdentifier: 4242,
+            deliveryValidator: {
+                initialValidationCount += 1
+                try FocusedElementReceiptResolver.validate(actual, matches: expected)
+            },
+            continuationValidator: {
+                continuationCount += 1
+                try FocusedElementReceiptResolver.validateContinuation(actual, matches: expected)
+            })
+
+        #expect(typed == ["a", "b", "c"])
+        #expect(initialValidationCount == 1)
+        #expect(continuationCount == 3)
+        #expect(summary.result.totalCharacters == 3)
+        #expect(summary.result.keyPresses == (usesAX ? 0 : 3))
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(summary.executionResult.outcome.dispatchState.unitCount?.rawValue == 3)
+    }
+
+    @Test(arguments: [SpecialKey.escape, .return, .tab])
+    @MainActor
+    func `delivered exact window special key can change focus`(key: SpecialKey) async throws {
+        var delivered = false
+        var validationCount = 0
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let target = try UIAutomationTarget.exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: getpid(),
+                ownerProcessStartIdentity: 91,
+                capturedBounds: bounds),
+            bounds: bounds))
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            targetedSpecialKeyTyper: { _, _, delivery in
+                delivered = true
+                return .dispatched(delivery: delivery, keyPressCount: 1)
+            })
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.key(key), .text("")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: target,
+            deliveryValidator: {
+                validationCount += 1
+                if delivered {
+                    throw TypeDeliveryTestError.destinationDrifted
+                }
+            },
+            continuationValidator: { throw TypeDeliveryTestError.destinationDrifted })
+
+        #expect(delivered)
+        #expect(validationCount == 1)
+        #expect(summary.result.specialKeyPresses == 1)
+        #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
     }
 
     @Test
     @MainActor
-    func `final character drift is retry unsafe instead of exact success`() async throws {
-        var destinationIsValid = true
+    func `final character receiver change is retry unsafe instead of exact success`() async throws {
+        let expected = Self.focusedIdentity()
+        var actual = expected
         var typed: [Character] = []
         var validationCount = 0
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
             targetedCharacterTyper: { character, _, delivery in
                 typed.append(character)
-                destinationIsValid = false
+                actual = Self.focusedIdentity(windowID: 43)
                 return .dispatched(delivery: delivery, keyPressCount: 1)
             })
 
@@ -94,9 +183,11 @@ struct TypeServiceTargetResolutionTests {
                 targetProcessIdentifier: 4242,
                 deliveryValidator: {
                     validationCount += 1
-                    guard destinationIsValid else {
-                        throw TypeDeliveryTestError.destinationDrifted
-                    }
+                    try FocusedElementReceiptResolver.validate(actual, matches: expected)
+                },
+                continuationValidator: {
+                    validationCount += 1
+                    try FocusedElementReceiptResolver.validateContinuation(actual, matches: expected)
                 })
             Issue.record("Expected final character validation to fail")
         } catch let error as InputDeliveryIndeterminateError {
@@ -104,7 +195,7 @@ struct TypeServiceTargetResolutionTests {
             #expect(error.emittedUnitCount == 1)
             #expect(error.operationMayHaveCompleted)
             #expect(!error.retrySafe)
-            #expect(error.causeDescription?.contains("destination drifted") == true)
+            #expect(error.causeDescription == FocusedElementReceiptError.windowMismatch.localizedDescription)
         } catch {
             Issue.record("Expected indeterminate delivery error, got \(error)")
         }
@@ -477,6 +568,19 @@ struct TypeServiceTargetResolutionTests {
             actualStringLength: &length,
             unicodeString: &buffer)
         return String(utf16CodeUnits: buffer, count: length)
+    }
+
+    private static func focusedIdentity(
+        windowID: Int = 42,
+        frame: CGRect = CGRect(x: 50, y: 100, width: 200, height: 30)) -> FocusedElementIdentity
+    {
+        FocusedElementIdentity(
+            processIdentifier: 4242,
+            windowID: windowID,
+            role: "AXTextField",
+            title: "To",
+            identifier: "recipient",
+            frame: frame)
     }
 
     @Test

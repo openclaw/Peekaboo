@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo press`
 
-`press` sends raw xdotool `key`-style chords such as `cmd+c`, `cmd+shift+t`, and `Return`. Multiple positional chords form a sequence. Raw keys require either `--foreground` or an exact window/snapshot receipt whose focused element stays unchanged through native background dispatch.
+`press` sends raw xdotool `key`-style chords such as `cmd+c`, `cmd+shift+t`, and `Return`. Multiple positional chords form a sequence. Raw keys require either `--foreground` or an exact window/snapshot receipt that proves the focused destination before native background delivery.
 
 ## Key options
 | Flag | Description |
@@ -31,6 +31,10 @@ read_when:
 ## Implementation notes
 - Bare keys include Return, Tab, Escape, Delete/Forward Delete, arrows, navigation keys, F1-F12, letters/digits, Space, and standard punctuation. Comma- and space-delimited chord syntax is rejected.
 - Background raw chords never collapse an exact selector to process delivery and never silently foreground. Exact-window remote delivery requires Bridge protocol 1.24.
+- A delivered background chord may change focus, open a window, or dismiss its receiver. It returns
+  `dispatched_unverified` without requiring unchanged focus afterward. Destination drift before key-down still
+  stops delivery, and key-up cleanup checks the original process generation before each release. A later chord
+  needs its own valid destination proof.
 - Repetition multiplies the sequence client-side—e.g., `press tab return --count 3 --foreground` becomes six actions—so you get predictable ordering.
 - Results include the literal key list, total presses, repeat count, delivery mode, optional target PID, and elapsed time in both text and JSON modes.
 - The `--hold` flag is passed to the hotkey service for each key press.

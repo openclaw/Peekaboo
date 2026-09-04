@@ -180,6 +180,20 @@ struct FocusedElementReceiptResolverTests {
     }
 
     @Test
+    func `initial receipt still rejects frame mismatch`() throws {
+        let expected = self.focusedIdentity(title: "To", identifier: "recipient")
+        let reflowed = self.focusedIdentity(
+            title: "To",
+            identifier: "recipient",
+            frame: CGRect(x: 150, y: 180, width: 300, height: 60))
+
+        #expect(throws: FocusedElementReceiptError.frameMismatch) {
+            try FocusedElementReceiptResolver.validate(reflowed, matches: expected)
+        }
+        try FocusedElementReceiptResolver.validateContinuation(reflowed, matches: expected)
+    }
+
+    @Test
     func `title fallback selects one same-frame sibling in either order`() {
         let frame = CGRect(x: 150, y: 180, width: 250, height: 30)
         for expectedIdentifier: String? in [nil, ""] {
@@ -209,6 +223,24 @@ struct FocusedElementReceiptResolverTests {
         #expect(!FocusedElementReceiptResolver.matches(
             self.focusedIdentity(title: "", identifier: nil),
             expected: expected))
+    }
+
+    @Test
+    func `continuation title fallback preserves identity across reflow`() throws {
+        let frame = CGRect(x: 150, y: 180, width: 300, height: 60)
+        for identifier: String? in [nil, ""] {
+            let expected = self.focusedIdentity(title: "To", identifier: identifier)
+            try FocusedElementReceiptResolver.validateContinuation(
+                self.focusedIdentity(title: "To", identifier: identifier, frame: frame),
+                matches: expected)
+            for title: String? in ["Sibling", nil, ""] {
+                #expect(throws: FocusedElementReceiptError.titleMismatch) {
+                    try FocusedElementReceiptResolver.validateContinuation(
+                        self.focusedIdentity(title: title, identifier: identifier, frame: frame),
+                        matches: expected)
+                }
+            }
+        }
     }
 
     @Test

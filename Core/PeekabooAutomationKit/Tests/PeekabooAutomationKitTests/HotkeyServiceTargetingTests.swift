@@ -419,7 +419,10 @@ struct HotkeyServiceTargetingTests {
         #expect(postedEvents.map(\.keyCode) == [0x37, 0x38, 0x25, 0x25])
     }
 
-    @Test func `generation drift during cleanup counts completed key up and stops modifier cleanup`() async throws {
+    @Test(arguments: [0, 50])
+    func `generation drift during cleanup counts completed key up and stops modifier cleanup`(
+        holdDuration: Int) async throws
+    {
         var postedEvents: [CGEventType] = []
         let generation = OSAllocatedUnfairLock<UInt64?>(initialState: 704)
         let target = try self.heldHotkeyTarget(generation: 704)
@@ -438,11 +441,12 @@ struct HotkeyServiceTargetingTests {
         do {
             _ = try await service.hotkey(
                 keys: "cmd,l",
-                holdDuration: 50,
+                holdDuration: holdDuration,
                 automationTarget: target)
             Issue.record("Expected cleanup generation drift")
         } catch let error as InputDeliveryIndeterminateError {
             #expect(error.emittedUnitCount == 3)
+            #expect(!error.retrySafe)
         }
         #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp])
     }
@@ -453,13 +457,14 @@ struct HotkeyServiceTargetingTests {
         let service = HotkeyService(
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             postEventAccessEvaluator: { true },
-            eventPoster: { _, _ in postedEventCount += 1 })
+            eventPoster: { _, _ in postedEventCount += 1 },
+            processStartIdentityProvider: { _ in 711 })
 
         do {
             try await service.hotkey(
                 keys: "cmd,shift,l",
                 holdDuration: 0,
-                targetProcessIdentifier: getpid(),
+                automationTarget: self.heldHotkeyTarget(generation: 711),
                 deliveryValidator: {
                     validationCount += 1
                     if validationCount == 2 {
@@ -493,7 +498,11 @@ struct HotkeyServiceTargetingTests {
         #expect(events.map(\.keyCode) == [0x37, 0x38, 0x38, 0x37])
     }
 
-    @Test func `final hotkey drift is retry unsafe after all releases`() async throws {
+    @Test(arguments: [0, 50], [3, 6])
+    func `chord that changes focus after full delivery is dispatched-unverified`(
+        holdDuration: Int,
+        driftAfterEvent: Int) async throws
+    {
         var destinationIsValid = true
         var validationCount = 0
         var postedEvents: [CGEventType] = []
@@ -502,34 +511,28 @@ struct HotkeyServiceTargetingTests {
             postEventAccessEvaluator: { true },
             eventPoster: { event, _ in
                 postedEvents.append(event.type)
-                if postedEvents.count == 6 {
+                if postedEvents.count == driftAfterEvent {
                     destinationIsValid = false
+                }
+            },
+            processStartIdentityProvider: { _ in 710 },
+            holdSleeper: { _ in })
+
+        let result = try await service.hotkey(
+            keys: "cmd,shift,l",
+            holdDuration: holdDuration,
+            automationTarget: self.heldHotkeyTarget(generation: 710),
+            deliveryValidator: {
+                validationCount += 1
+                guard destinationIsValid else {
+                    throw HotkeyDeliveryTestError.focusChanged
                 }
             })
 
-        do {
-            try await service.hotkey(
-                keys: "cmd,shift,l",
-                holdDuration: 0,
-                targetProcessIdentifier: getpid(),
-                deliveryValidator: {
-                    validationCount += 1
-                    guard destinationIsValid else {
-                        throw HotkeyDeliveryTestError.focusChanged
-                    }
-                })
-            Issue.record("Expected final hotkey validation to fail")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .hotkey)
-            #expect(error.emittedUnitCount == 6)
-            #expect(error.operationMayHaveCompleted)
-            #expect(!error.retrySafe)
-            #expect(error.causeDescription?.contains("focus changed") == true)
-        } catch {
-            Issue.record("Expected indeterminate delivery error, got \(error)")
-        }
-
         #expect(validationCount == 4)
+        #expect(!destinationIsValid)
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
         #expect(postedEvents == [
             .flagsChanged,
             .flagsChanged,
@@ -599,13 +602,14 @@ struct HotkeyServiceTargetingTests {
                 if postedEvents.count == 2 {
                     exactWindowHasFocus = false
                 }
-            })
+            },
+            processStartIdentityProvider: { _ in 712 })
 
         do {
             try await service.hotkey(
                 keys: "cmd,shift,l",
                 holdDuration: 0,
-                targetProcessIdentifier: getpid(),
+                automationTarget: self.heldHotkeyTarget(generation: 712),
                 deliveryValidator: {
                     guard exactWindowHasFocus else {
                         throw HotkeyDeliveryTestError.focusChanged
@@ -614,7 +618,7 @@ struct HotkeyServiceTargetingTests {
             Issue.record("Expected focus change to stop hotkey delivery")
         } catch let error as InputDeliveryIndeterminateError {
             #expect(error.operation == .hotkey)
-            #expect(error.emittedUnitCount == 2)
+            #expect(error.emittedUnitCount == 4)
             #expect(error.operationMayHaveCompleted)
             #expect(!error.retrySafe)
             #expect(error.causeDescription?.contains("focus changed") == true)

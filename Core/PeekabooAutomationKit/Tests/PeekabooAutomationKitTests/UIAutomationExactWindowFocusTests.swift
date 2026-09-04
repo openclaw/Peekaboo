@@ -341,6 +341,113 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         }
     }
 
+    func testContinuationAllowsSameElementFrameChangeButRejectsSiblingOrOtherWindow() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_011,
+            ownerProcessStartIdentity: 94,
+            capturedBounds: bounds)
+        let expected = FocusedElementIdentity(
+            processIdentifier: identity.ownerProcessIdentifier,
+            windowID: identity.windowID,
+            role: "AXTextField",
+            title: "To",
+            identifier: "recipient",
+            frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+        let reflowedFrame = CGRect(x: 50, y: 100, width: 300, height: 60)
+        let candidates = [
+            (windowID: 42, role: "AXTextField", identifier: "recipient", frame: reflowedFrame, valid: true),
+            (windowID: 42, role: "AXTextField", identifier: "sibling", frame: reflowedFrame, valid: false),
+            (windowID: 43, role: "AXTextField", identifier: "recipient", frame: reflowedFrame, valid: false),
+            (windowID: 42, role: "AXButton", identifier: "recipient", frame: reflowedFrame, valid: false),
+            (windowID: 42, role: "AXTextField", identifier: "recipient", frame: .zero, valid: false),
+            (
+                windowID: 42,
+                role: "AXTextField",
+                identifier: "recipient",
+                frame: reflowedFrame.offsetBy(dx: 900, dy: 0),
+                valid: false),
+        ]
+
+        for candidate in candidates {
+            let snapshot = ExactWindowFocusSnapshot(
+                processIdentifier: expected.processIdentifier,
+                windowID: candidate.windowID,
+                frame: candidate.frame,
+                role: candidate.role,
+                title: expected.title,
+                identifier: candidate.identifier)
+            let service = UIAutomationService(
+                actionInputDriver: ActionInputDriver(),
+                automationElementResolver: AutomationElementResolver(),
+                exactFocusedElementReader: { _ in .success(snapshot) },
+                continuationFocusedElementReader: { _ in .success(snapshot) },
+                exactKeyWindowReader: { processIdentifier in
+                    ExactKeyWindowSnapshot(
+                        processIdentifier: processIdentifier,
+                        windowID: identity.windowID,
+                        isSheet: false,
+                        hasAttachedSheet: false)
+                },
+                exactWindowIdentityValidator: { _, _ in true })
+
+            do {
+                try await service.requireExactWindowKeyboardFocus(
+                    expectedWindowIdentity: identity,
+                    expectedWindowBounds: bounds,
+                    expectedFocusedElement: expected,
+                    phase: .continuation)
+                XCTAssertTrue(candidate.valid)
+            } catch {
+                XCTAssertFalse(candidate.valid, "Same receiver reflow must continue: \(error)")
+            }
+            do {
+                try await service.requireExactWindowKeyboardFocus(
+                    expectedWindowIdentity: identity,
+                    expectedWindowBounds: bounds,
+                    expectedFocusedElement: expected)
+                XCTFail("Initial receipt must still reject changed frames and identities")
+            } catch {}
+        }
+    }
+
+    func testContinuationRefusesLostAmbiguousOrUnfocusedReceiver() async throws {
+        let expected = FocusedElementIdentity(
+            processIdentifier: 930_012,
+            windowID: 42,
+            role: "AXTextField",
+            identifier: "recipient",
+            frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+        let failures: [FocusedElementReceiptError] = [
+            .frameMismatch, .multipleFocusedElements, .focusNotConfirmed, .focusedAttributeUnreadable, .processMismatch,
+        ]
+        for failure in failures {
+            let service = UIAutomationService(
+                actionInputDriver: ActionInputDriver(),
+                automationElementResolver: AutomationElementResolver(),
+                continuationFocusedElementReader: { _ in .failure(failure) },
+                exactWindowIdentityValidator: { _, _ in true })
+            do {
+                try await service.requireExactWindowKeyboardFocus(
+                    expectedWindowIdentity: WindowMutationIdentity(
+                        windowID: expected.windowID,
+                        ownerProcessIdentifier: expected.processIdentifier,
+                        ownerProcessStartIdentity: 95),
+                    expectedWindowBounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+                    expectedFocusedElement: expected,
+                    phase: .continuation)
+                XCTFail("Expected continuation refusal for \(failure)")
+            } catch let PeekabooError.invalidInput(message) {
+                XCTAssertTrue(message.contains(BackgroundKeyboardFocusRemediation.message))
+                if failure == .frameMismatch {
+                    XCTAssertTrue(message.contains("receiver moved or changed window"))
+                    XCTAssertFalse(message.contains("frame changed"))
+                }
+            }
+        }
+    }
+
     func testExactReceiptValidationDoesNotConsultApplicationFocusedElement() async throws {
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
         let identity = WindowMutationIdentity(

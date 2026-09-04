@@ -172,7 +172,14 @@ extension UIAutomationService {
         return try await self.normalizingSnapshotErrors {
             try await self.typeService.typeActionsByFocusingPixel(
                 request,
-                deliveryValidator: validator)
+                deliveryValidator: validator,
+                continuationValidator: { focusedElement in
+                    try await self.requireExactWindowKeyboardFocus(
+                        expectedWindowIdentity: request.windowIdentity,
+                        expectedWindowBounds: request.windowBounds,
+                        expectedFocusedElement: focusedElement,
+                        phase: .continuation)
+                })
         }
     }
 
@@ -251,13 +258,21 @@ extension UIAutomationService {
                 expectedWindowBounds: target.windowBounds,
                 expectedFocusedElement: target.focusedElement)
         }
+        let continuationValidator: @MainActor @Sendable () async throws -> Void = {
+            try await self.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: target.windowIdentity,
+                expectedWindowBounds: target.windowBounds,
+                expectedFocusedElement: target.focusedElement,
+                phase: .continuation)
+        }
         let summary = try await self.normalizingSnapshotErrors {
             try await self.typeService.typeActionsTrackingSecureInput(
                 actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
                 automationTarget: automationTarget,
-                deliveryValidator: validator)
+                deliveryValidator: validator,
+                continuationValidator: continuationValidator)
         }
         return UIAutomationActionResult(
             payload: summary.result,

@@ -75,7 +75,8 @@ extension UIAutomationService {
     func requireExactWindowKeyboardFocus(
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect,
-        expectedFocusedElement: FocusedElementIdentity? = nil) async throws
+        expectedFocusedElement: FocusedElementIdentity? = nil,
+        phase: KeyboardFocusValidationPhase = .initial) async throws
     {
         let identityValidator = self.exactWindowIdentityValidator
         let targetProcessIdentifier = expectedWindowIdentity.ownerProcessIdentifier
@@ -83,7 +84,7 @@ extension UIAutomationService {
         let keyWindow: ExactKeyWindowSnapshot?
         do {
             if let expectedFocusedElement {
-                let reader = self.exactFocusedElementReader
+                let reader = phase == .initial ? self.exactFocusedElementReader : self.continuationFocusedElementReader
                 let result = try await ElementDetectionTimeoutRunner.runDetached(
                     targetProcessIdentifier: targetProcessIdentifier,
                     targetProcessStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity,
@@ -116,9 +117,13 @@ extension UIAutomationService {
                 keyWindowReader(targetProcessIdentifier)
             }
         } catch let error as FocusedElementReceiptError {
+            let reason = phase == .continuation && error == .frameMismatch
+                ? "The keyboard receiver moved or changed window; it could no longer be found in the target window."
+                : error.localizedDescription
             throw PeekabooError.invalidInput(
                 field: "target",
-                reason: "Exact focused-element receipt is stale: \(error.localizedDescription)")
+                reason: "Exact focused-element receipt is stale: \(reason) " + BackgroundKeyboardFocusRemediation
+                    .message)
         } catch {
             throw self.exactWindowKeyboardFocusChangedError()
         }
@@ -140,7 +145,7 @@ extension UIAutomationService {
         guard
             !focused.frame.isEmpty,
             expectedWindowBounds.contains(CGPoint(x: focused.frame.midX, y: focused.frame.midY)),
-            Self.focusedElementMatches(focused, expected: expectedFocusedElement),
+            Self.focusedElementMatches(focused, expected: expectedFocusedElement, phase: phase),
             identityValidator(expectedWindowIdentity, expectedWindowBounds)
         else {
             throw self.exactWindowKeyboardFocusChangedError()
@@ -149,7 +154,8 @@ extension UIAutomationService {
 
     private static func focusedElementMatches(
         _ focused: ExactWindowFocusSnapshot,
-        expected: FocusedElementIdentity?) -> Bool
+        expected: FocusedElementIdentity?,
+        phase: KeyboardFocusValidationPhase) -> Bool
     {
         guard let expected else { return true }
         guard let windowID = focused.windowID, let role = focused.role else { return false }
@@ -161,7 +167,8 @@ extension UIAutomationService {
                 title: focused.title,
                 identifier: focused.identifier,
                 frame: focused.frame),
-            expected: expected)
+            expected: expected,
+            phase: phase)
     }
 
     private func exactWindowKeyboardFocusChangedError() -> PeekabooError {

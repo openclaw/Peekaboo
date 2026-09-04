@@ -213,9 +213,9 @@ public final class HotkeyService {
                     throw ActionInputError.unsupported(.missingElement)
                 }
                 let actionResult = try self.actionInputDriver.tryHotkey(application: application, keys: parsedKeys)
-                try await self.validateDelivery(
-                    targetValidator,
-                    emittedUnitCount: 1)
+                if automationTarget.exactWindow == nil {
+                    try await self.validateDelivery(targetValidator, emittedUnitCount: 1)
+                }
                 return actionResult
             },
             synthesis: DesktopOperationPlan.SynthesisRoute {
@@ -229,9 +229,9 @@ public final class HotkeyService {
                     modifierFlags: plan.modifierFlags,
                     targetProcessIdentifier: targetProcessIdentifier)
                 {
-                    try await self.validateDelivery(
-                        targetValidator,
-                        emittedUnitCount: 1)
+                    if automationTarget.exactWindow == nil {
+                        try await self.validateDelivery(targetValidator, emittedUnitCount: 1)
+                    }
                     return .dispatchedUnverified(
                         delivery: DesktopActionOutcome.Delivery(
                             mechanism: .accessibilityAction,
@@ -251,9 +251,10 @@ public final class HotkeyService {
                     if holdDuration <= 0 {
                         try await Task.sleep(nanoseconds: 10_000_000)
                     }
-                    try await self.validateDelivery(
-                        targetValidator,
-                        emittedUnitCount: emittedUnitCount)
+                    // The chord's effect can change focus; exact destination proof belongs before delivery.
+                    if automationTarget.exactWindow == nil {
+                        try await self.validateDelivery(targetValidator, emittedUnitCount: emittedUnitCount)
+                    }
                 } catch let error as InputDeliveryIndeterminateError {
                     throw error
                 } catch {
@@ -326,7 +327,7 @@ public final class HotkeyService {
             flags: plan.modifierFlags,
             targetProcessIdentifier: targetProcessIdentifier)
 
-        if holdNanoseconds > 0, let cleanupProcessIdentity {
+        if let cleanupProcessIdentity {
             return try await self.postHeldHotkey(
                 eventPlan,
                 holdNanoseconds: holdNanoseconds,

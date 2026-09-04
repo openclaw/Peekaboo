@@ -2,6 +2,11 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
+enum KeyboardFocusValidationPhase: Sendable {
+    case initial
+    case continuation
+}
+
 /// Builds exact focused-element receipts only from explicit AXFocused observation evidence.
 public enum FocusedElementReceiptResolver {
     public static func uniqueReceipt(
@@ -52,6 +57,21 @@ public enum FocusedElementReceiptResolver {
         _ actual: FocusedElementIdentity,
         matches expected: FocusedElementIdentity) throws
     {
+        try self.validate(actual, matches: expected, phase: .initial)
+    }
+
+    static func validateContinuation(
+        _ actual: FocusedElementIdentity,
+        matches expected: FocusedElementIdentity) throws
+    {
+        try self.validate(actual, matches: expected, phase: .continuation)
+    }
+
+    private static func validate(
+        _ actual: FocusedElementIdentity,
+        matches expected: FocusedElementIdentity,
+        phase: KeyboardFocusValidationPhase) throws
+    {
         guard actual.processIdentifier == expected.processIdentifier else {
             throw FocusedElementReceiptError.processMismatch
         }
@@ -61,11 +81,17 @@ public enum FocusedElementReceiptResolver {
         guard actual.role == expected.role else {
             throw FocusedElementReceiptError.roleMismatch
         }
-        guard actual.frame == expected.frame else {
+        guard phase == .continuation || actual.frame == expected.frame else {
             throw FocusedElementReceiptError.frameMismatch
         }
         if let identifier = expected.identifier, !identifier.isEmpty, actual.identifier != identifier {
             throw FocusedElementReceiptError.identifierMismatch
+        }
+        if expected.identifier?.isEmpty != false,
+           phase == .continuation,
+           actual.title != expected.title
+        {
+            throw FocusedElementReceiptError.titleMismatch
         }
         if expected.identifier?.isEmpty != false,
            let title = expected.title,
@@ -78,10 +104,11 @@ public enum FocusedElementReceiptResolver {
 
     static func matches(
         _ actual: FocusedElementIdentity,
-        expected: FocusedElementIdentity) -> Bool
+        expected: FocusedElementIdentity,
+        phase: KeyboardFocusValidationPhase = .initial) -> Bool
     {
         do {
-            try self.validate(actual, matches: expected)
+            try self.validate(actual, matches: expected, phase: phase)
             return true
         } catch {
             return false

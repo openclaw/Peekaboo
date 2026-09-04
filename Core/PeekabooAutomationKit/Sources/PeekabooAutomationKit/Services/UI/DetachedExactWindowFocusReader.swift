@@ -84,6 +84,12 @@ enum DetachedExactWindowFocusReader {
         self.read(expected: expected, includesValue: false)
     }
 
+    static func readContinuation(
+        expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+    {
+        self.read(expected: expected, includesValue: false, phase: .continuation)
+    }
+
     static func readValue(
         expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
@@ -92,7 +98,8 @@ enum DetachedExactWindowFocusReader {
 
     private static func read(
         expected: FocusedElementIdentity,
-        includesValue: Bool) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+        includesValue: Bool,
+        phase: KeyboardFocusValidationPhase = .initial) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
         guard expected.processIdentifier > 0 else { return .failure(.missingProcessIdentifier) }
         guard expected.windowID > 0 else { return .failure(.missingWindowIdentifier) }
@@ -121,7 +128,7 @@ enum DetachedExactWindowFocusReader {
             let observedRole = self.stringAttribute(kAXRoleAttribute as String, of: element)
             let observedFrame = self.frame(of: element)
             if observedRole == expected.role,
-               observedFrame == expected.frame
+               phase == .continuation || observedFrame == expected.frame
             {
                 roleAndFrameMatches.append(element)
                 let candidate = FocusedElementIdentity(
@@ -131,13 +138,14 @@ enum DetachedExactWindowFocusReader {
                     title: self.stringAttribute(kAXTitleAttribute as String, of: element),
                     identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
                     frame: observedFrame ?? .zero)
-                if FocusedElementReceiptResolver.matches(candidate, expected: expected) {
+                if FocusedElementReceiptResolver.matches(candidate, expected: expected, phase: phase) {
                     exactMatches.append(element)
                 }
             }
             queue.append(contentsOf: self.elementArrayAttribute(kAXChildrenAttribute, of: element))
         }
 
+        guard queue.isEmpty else { return .failure(.multipleFocusedElements) }
         guard !roleAndFrameMatches.isEmpty else { return .failure(.frameMismatch) }
         guard !exactMatches.isEmpty else {
             return .failure(expected.identifier?.isEmpty == false ? .identifierMismatch : .titleMismatch)
@@ -150,11 +158,23 @@ enum DetachedExactWindowFocusReader {
         }
         guard focused else { return .failure(.focusNotConfirmed) }
 
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element, &processIdentifier) == .success,
+              processIdentifier == expected.processIdentifier
+        else { return .failure(.processMismatch) }
+        let owningWindow = CFEqual(element, window) ? window : self.elementAttribute(kAXWindowAttribute, of: element)
+        guard let owningWindow,
+              AXWindowIDResolver.windowID(of: owningWindow).map(Int.init) == expected.windowID
+        else { return .failure(.windowMismatch) }
+        guard let frame = self.frame(of: element), !frame.isEmpty else {
+            return .failure(.missingElementFrame)
+        }
+
         let subrole = self.stringAttribute(kAXSubroleAttribute as String, of: element)
         return .success(ExactWindowFocusSnapshot(
             processIdentifier: expected.processIdentifier,
             windowID: expected.windowID,
-            frame: expected.frame,
+            frame: frame,
             role: expected.role,
             subrole: subrole,
             title: self.stringAttribute(kAXTitleAttribute as String, of: element),
