@@ -406,7 +406,16 @@ struct PeekabooServicesBrowserSessionProviderTests {
         #expect(await Self.waitUntil {
             child.removeCount == 1 && fixture.root.existingAuthenticatedSession(named: sessionName) == nil
         })
-        _ = try await fixture.root.connectWithOutcome(channel: nil, browserURL: Self.browserURL)
+        let releaseDeadline = ContinuousClock.now + .seconds(1)
+        while true {
+            do {
+                _ = try await fixture.root.connectWithOutcome(channel: nil, browserURL: Self.browserURL)
+                break
+            } catch BrowserMCPConnectionError.targetLocked where ContinuousClock.now < releaseDeadline {
+                // Provider removal precedes the reaper's final target-lease release.
+                try await Task.sleep(for: .milliseconds(1))
+            }
+        }
         await fixture.root.disconnect()
         #expect(await host.stop() == .stopped)
     }

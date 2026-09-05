@@ -154,6 +154,9 @@ those app-only services are injected separately; moving them into the embedded r
 - Listener acceptance is kernel-readiness-driven: one coalesced notification drains the queued connection backlog to
   `EAGAIN`, while source cancellation owns descriptor closure and bounded shutdown waits for queued handlers to drain.
 
+Receiptless offers through protocol `1.28` omit `clientCapabilities` rather than sending an empty array.
+Receipt-capable `1.29` and newer offers retain version-gated capabilities, including ownership diagnostics.
+
 Protocol `1.3` adds element action operations:
 
 - `setValue` for direct accessibility value mutation.

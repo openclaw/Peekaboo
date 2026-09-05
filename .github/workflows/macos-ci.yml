@@ -143,14 +143,19 @@ jobs:
       - name: Run MCP action fixtures and outcome contract tests
         working-directory: Core/PeekabooCore
         run: |
-          swift test --no-parallel --filter 'MCPToolExecutionTests|MCPToolErrorHandlingTests|MCPElementActionToolExecutionTests'
+          swift test --no-parallel --filter 'MCPToolExecutionTests|MCPToolErrorHandlingTests|MCPElementActionToolExecutionTests|MCPSeeExactWindowTests'
           swift test --no-parallel --filter 'MCPDesktopActionOutcomeProjectionTests|MCPCompositeActionOutcomeTests'
+
+      - name: Run Bridge negotiation and cancellation contracts
+        working-directory: Core/PeekabooCore
+        run: |
+          swift test --no-parallel --filter 'PeekabooBridgeClientHostTrustTests|CaptureDiagnosticWireCompatibilityTests|PeekabooBridgeCancellationTests'
 
       - name: Run browser capability and guidance contracts
         working-directory: Core/PeekabooCore
         run: |
           swift test --no-parallel \
-            --filter 'BrowserToolTests|BrowserToolCapabilityIntegrationTests|RemoteBrowserMCPSessionTests|AgentSystemPromptTests'
+            --filter 'BrowserToolTests|BrowserToolCapabilityIntegrationTests|RemoteBrowserMCPSessionTests|PeekabooServicesBrowserSessionProviderTests|AgentSystemPromptTests'
 
       - name: Run focused Swift tests
         working-directory: Core/PeekabooCore

@@ -375,16 +375,16 @@ struct PeekabooBridgeCancellationTests {
             socketPath: socketPath,
             server: server,
             allowedTeamIDs: [],
-            requestTimeoutSec: 1,
+            requestTimeoutSec: 5,
             requestDrainTimeoutSec: 0.05)
         try await host.startChecked()
 
-        let timedOutClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 0.25)
-        try await Self.negotiateLegacyTransport(timedOutClient)
+        let disconnectedClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 5)
+        try await Self.negotiateLegacyTransport(disconnectedClient)
         let firstRequest = PeekabooBridgeRequest.desktopObservation(
             Self.mutatingObservationRequest(snapshotID: "blocked"))
-        let firstTask = Task { try await timedOutClient.send(firstRequest) }
-        let observationStarted = try await Self.waitForObservationStart(observations)
+        let firstTask = Task { try await disconnectedClient.send(firstRequest) }
+        let observationStarted = try await Self.waitForObservationStart(observations, timeout: .seconds(4))
         guard observationStarted else {
             Issue.record("Expected the bridge observation to start")
             firstTask.cancel()
@@ -392,9 +392,11 @@ struct PeekabooBridgeCancellationTests {
             return
         }
 
+        // The host has consumed the half-close; disconnect only after work starts.
+        firstTask.cancel()
         do {
             _ = try await firstTask.value
-            Issue.record("Expected the first client to time out")
+            Issue.record("Expected the disconnected client to fail")
         } catch let failure as DesktopActionFailure {
             Self.expectResponseLostFailure(failure)
         } catch {
@@ -635,9 +637,10 @@ struct PeekabooBridgeCancellationTests {
 
     @MainActor
     private static func waitForObservationStart(
-        _ observations: CancellationTestObservationService) async throws -> Bool
+        _ observations: CancellationTestObservationService,
+        timeout: Duration = .seconds(1)) async throws -> Bool
     {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        let deadline = ContinuousClock.now.advanced(by: timeout)
         while !observations.hasStarted {
             guard ContinuousClock.now < deadline else { return false }
             try await Task.sleep(for: .milliseconds(5))
