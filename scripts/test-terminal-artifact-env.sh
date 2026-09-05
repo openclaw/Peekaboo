@@ -2,11 +2,15 @@
 
 set -euo pipefail
 
+# Fixtures supply their own custody values; never inherit the operator's credentials.
+unset OP_SERVICE_ACCOUNT_TOKEN MOLTY_OP_SERVICE_ACCOUNT_TOKEN \
+  PEEKABOO_OP_SERVICE_TOKEN_FILE PEEKABOO_MOLTY_OP_SERVICE_TOKEN_FILE
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/terminal-artifact-env.sh
 source "$ROOT_DIR/scripts/terminal-artifact-env.sh"
 
-TEST_DIR="$(mktemp -d /tmp/peekaboo-terminal-env-test.XXXXXX)"
+TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/peekaboo-terminal-env-test.XXXXXX")"
 trap 'rm -rf -- "$TEST_DIR"' EXIT
 
 fail() {
