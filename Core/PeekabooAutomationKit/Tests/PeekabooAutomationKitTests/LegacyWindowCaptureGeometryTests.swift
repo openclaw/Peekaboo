@@ -137,6 +137,42 @@ struct LegacyWindowCaptureGeometryTests {
         }
     }
 
+    @Test(arguments: [1, 2], [CaptureScalePreference.logical1x, .native])
+    func `partially visible secondary windows use their own display density`(
+        density: Int,
+        preference: CaptureScalePreference) throws
+    {
+        let screens = [
+            CGRect(x: 0, y: 0, width: 1200, height: 900),
+            CGRect(x: -1000, y: 100, width: 1000, height: 800),
+        ]
+        let scaleFactors = [density == 1 ? 2 : 1, density]
+        // Straddling displays, mostly off the left edge, and partly above the secondary display.
+        for bounds in [
+            CGRect(x: -300, y: 200, width: 448, height: 240),
+            CGRect(x: -1300, y: 200, width: 448, height: 240),
+            CGRect(x: -600, y: -100, width: 448, height: 240),
+        ] {
+            let index = try #require(LegacyWindowCaptureGeometry.screenIndex(for: bounds, screenFrames: screens))
+            #expect(index == 1)
+            let sourceScale = scaleFactors[index]
+            let geometry = try Self.geometry(bounds: bounds, density: sourceScale, preference: preference)
+            let raster = try LegacyCapturedRaster(image: Self.image(width: 448 * density, height: 240 * density))
+            let delivered = try geometry.deliver(raster, sourceScale: CGFloat(sourceScale))
+            let outputScale = preference == .native ? density : 1
+            #expect(delivered.image.width == 448 * outputScale)
+            #expect(delivered.image.height == 240 * outputScale)
+        }
+    }
+
+    @Test
+    func `fully offscreen and absent displays retain bounded fallback`() {
+        let screens = [CGRect(x: 0, y: 0, width: 1200, height: 900)]
+        let bounds = CGRect(x: 2000, y: 2000, width: 448, height: 240)
+        #expect(LegacyWindowCaptureGeometry.screenIndex(for: bounds, screenFrames: screens) == 0)
+        #expect(LegacyWindowCaptureGeometry.screenIndex(for: bounds, screenFrames: []) == nil)
+    }
+
     private static func geometry(
         bounds: CGRect = CGRect(x: -300, y: 200, width: 448, height: 240),
         density: Int,

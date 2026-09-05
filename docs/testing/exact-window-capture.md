@@ -9,8 +9,10 @@ read_when:
 The classic path uses `/usr/sbin/screencapture -l <id> -o -a -x`. The `-a` option excludes attached windows. The
 returned PNG must match the selected WindowServer bounds at the independently resolved source scale. A larger
 surface is refused, because its PNG dimensions do not establish its origin or identify a safe crop. Successful
-output must also match the requested delivery scale. This check supplements the existing owner-generation,
-window-identity, and bounds receipts; it does not replace them.
+output must also match the requested delivery scale. Display density uses the existing center/overlap display
+planner, so partly visible or straddling windows do not inherit the primary display's density merely because no
+display contains their entire bounds. This check supplements the existing owner-generation, window-identity,
+and bounds receipts; it does not replace them.
 
 ## Verified local reproduction (2026-09-05)
 

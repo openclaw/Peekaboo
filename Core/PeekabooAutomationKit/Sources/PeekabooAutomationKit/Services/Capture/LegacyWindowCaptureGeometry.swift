@@ -14,6 +14,18 @@ struct LegacyWindowCaptureGeometry {
         _ = try self.pixelSize(scale: scalePlan.outputScale)
     }
 
+    static func screenIndex(for bounds: CGRect, screenFrames: [CGRect]) -> Int? {
+        let appKitBounds = GlobalScreenCoordinateGeometry.appKitRect(
+            fromGlobalDisplay: bounds,
+            primaryScreenFrame: screenFrames.first)
+        switch ScreenCapturePlanner.matchDisplay(windowFrame: appKitBounds, displayFrames: screenFrames) {
+        case let .mapped(index), let .unmapped(index):
+            return index
+        case .noDisplays:
+            return nil
+        }
+    }
+
     static func validateBounds(_ bounds: CGRect) throws {
         guard bounds.origin.x.isFinite, bounds.origin.y.isFinite,
               bounds.size.width.isFinite, bounds.size.height.isFinite,
