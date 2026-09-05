@@ -150,6 +150,10 @@ missing or inaccessible. It accepts `.git` directories and `.git` files with abs
 It reads `config` directly in the referenced Git directory; it does not follow a linked worktree's `commondir`.
 Release builds do not run this startup check.
 
+Each Git probe has a five-second execution/output deadline. Standard output is drained while Git runs, so a
+large dirty worktree cannot fill the pipe and prevent staleness detection. Failed, timed-out, or over-8-MiB
+probes skip this optional diagnostic; cleanup may add up to two seconds for termination and reaping.
+
 ## Releases
 
 For full release automation (tarballs, npm package, checksums), follow [RELEASING.md](RELEASING.md). Quick recap:

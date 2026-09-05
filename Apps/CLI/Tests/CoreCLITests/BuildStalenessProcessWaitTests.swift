@@ -6,15 +6,13 @@ import Testing
 @Suite(.tags(.safe), .serialized)
 struct BuildStalenessProcessWaitTests {
     @Test
-    func `normally exiting child returns true and keeps its exit status`() throws {
+    func `normally exiting child keeps its exit status`() throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", "sleep 0.05; exit 7"]
 
         try process.run()
-        let exited = waitForProcessExit(process, timeoutSeconds: 2)
-
-        #expect(exited)
+        try waitForProcessExit(process, timeoutSeconds: 2)
         #expect(!process.isRunning)
         #expect(process.terminationReason == .exit)
         #expect(process.terminationStatus == 7)
@@ -30,15 +28,14 @@ struct BuildStalenessProcessWaitTests {
         process.waitUntilExit()
         #expect(!process.isRunning)
 
-        let exited = waitForProcessExit(process, timeoutSeconds: 0.05)
-        #expect(exited)
+        try waitForProcessExit(process, timeoutSeconds: 0.05)
         #expect(!process.isRunning)
         #expect(process.terminationReason == .exit)
         #expect(process.terminationStatus == 0)
     }
 
     @Test
-    func `timed out child is killed and wait returns false`() throws {
+    func `timed out child is killed and wait throws`() throws {
         let fileManager = FileManager.default
         let scratch = fileManager.temporaryDirectory
             .appendingPathComponent("peekaboo-build-staleness-\(UUID().uuidString)", isDirectory: true)
@@ -70,9 +67,9 @@ struct BuildStalenessProcessWaitTests {
         }
         try #require(fileManager.fileExists(atPath: readyFile.path), "Child did not become ready to ignore TERM")
 
-        let exited = waitForProcessExit(process, timeoutSeconds: 0.05)
-
-        #expect(!exited)
+        #expect(throws: ProcessWaitError.timedOut) {
+            try waitForProcessExit(process, timeoutSeconds: 0.05)
+        }
         #expect(!process.isRunning)
         #expect(process.terminationReason == .uncaughtSignal)
         #expect(process.terminationStatus == SIGKILL)

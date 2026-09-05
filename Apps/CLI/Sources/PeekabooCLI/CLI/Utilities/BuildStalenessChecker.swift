@@ -1,9 +1,6 @@
 import Foundation
 import PeekabooFoundation
 
-/// Bound git child waits. A stuck lock or NFS hang must not block CLI startup.
-private let gitStalenessWaitTimeoutSeconds: TimeInterval = 5
-
 /// Check if the CLI binary is stale compared to the current git state.
 /// Only runs in debug builds when git config 'peekaboo.check-build-staleness' is true.
 func checkBuildStaleness() {
@@ -126,26 +123,7 @@ private func checkGitCommitStaleness() {
         return
     }
 
-    // Get current git commit hash
-    let gitProcess = Process()
-    gitProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    gitProcess.arguments = ["rev-parse", "HEAD"]
-
-    let gitPipe = Pipe()
-    gitProcess.standardOutput = gitPipe
-    gitProcess.standardError = Pipe() // Silence stderr
-
-    do {
-        try gitProcess.run()
-        guard waitForProcessExit(gitProcess, timeoutSeconds: gitStalenessWaitTimeoutSeconds) else {
-            return // Git wait timed out, skip check
-        }
-
-        guard gitProcess.terminationStatus == 0 else {
-            return // Git command failed, skip check
-        }
-
-        let gitData = gitPipe.fileHandleForReading.readDataToEndOfFile()
+    if let gitData = runGitStalenessProbe(arguments: ["rev-parse", "HEAD"]) {
         let rawCommitString = String(data: gitData, encoding: .utf8)
         let currentCommit = rawCommitString?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -159,8 +137,6 @@ private func checkGitCommitStaleness() {
             logError("   Run ./scripts/build-swift-debug.sh to rebuild")
             exit(1)
         }
-    } catch {
-        return // Git command failed, skip check
     }
 }
 
@@ -181,26 +157,7 @@ private func checkFileModificationStaleness() {
         return // Could not determine git root, skip check
     }
 
-    // Get list of modified files from git status
-    let gitStatusProcess = Process()
-    gitStatusProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    gitStatusProcess.arguments = ["status", "--porcelain=1"]
-
-    let statusPipe = Pipe()
-    gitStatusProcess.standardOutput = statusPipe
-    gitStatusProcess.standardError = Pipe() // Silence stderr
-
-    do {
-        try gitStatusProcess.run()
-        guard waitForProcessExit(gitStatusProcess, timeoutSeconds: gitStalenessWaitTimeoutSeconds) else {
-            return // Git wait timed out, skip check
-        }
-
-        guard gitStatusProcess.terminationStatus == 0 else {
-            return // Git command failed, skip check
-        }
-
-        let statusData = statusPipe.fileHandleForReading.readDataToEndOfFile()
+    if let statusData = runGitStalenessProbe(arguments: ["status", "--porcelain=1"]) {
         let statusOutput = String(data: statusData, encoding: .utf8) ?? ""
 
         // Parse git status output
@@ -216,8 +173,6 @@ private func checkFileModificationStaleness() {
             logError("   Run ./scripts/build-swift-debug.sh to rebuild")
             exit(1)
         }
-    } catch {
-        return // Git command failed, skip check
     }
 }
 
@@ -270,35 +225,13 @@ private func parseGitStatusOutput(_ output: String) -> [String] {
 
 /// Get the git repository root directory
 private func getGitRepositoryRoot() -> String? {
-    // Get the git repository root directory
-    let gitProcess = Process()
-    gitProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    gitProcess.arguments = ["rev-parse", "--show-toplevel"]
-
-    let pipe = Pipe()
-    gitProcess.standardOutput = pipe
-    gitProcess.standardError = Pipe() // Silence stderr
-
-    do {
-        try gitProcess.run()
-        guard waitForProcessExit(gitProcess, timeoutSeconds: gitStalenessWaitTimeoutSeconds) else {
-            return nil
-        }
-
-        guard gitProcess.terminationStatus == 0 else {
-            return nil
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Check if output is empty after trimming
-        guard let output, !output.isEmpty else {
-            return nil
-        }
-        return output
-    } catch {
+    guard let data = runGitStalenessProbe(arguments: ["rev-parse", "--show-toplevel"]),
+          let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !output.isEmpty
+    else {
         return nil
     }
+    return output
 }
 
 /// Check if a file's modification time is newer than the build date

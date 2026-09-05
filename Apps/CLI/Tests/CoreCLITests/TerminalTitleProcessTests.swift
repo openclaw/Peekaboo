@@ -6,7 +6,7 @@ import Testing
 @Suite(.tags(.safe), .serialized)
 struct TerminalTitleProcessTests {
     @Test
-    func `timeout converts shared false result to timedOut error`() throws {
+    func `timeout preserves the terminal title error`() throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", "exec /bin/sleep 30"]
