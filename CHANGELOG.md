@@ -1,10 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-- Add an optional `config edit --timeout` for scripted editor waits while preserving unlimited interactive editing. Thanks @SebTardif for #681.
-
 ## [4.3.0] - 2026-09-02
 
 ### Highlights
