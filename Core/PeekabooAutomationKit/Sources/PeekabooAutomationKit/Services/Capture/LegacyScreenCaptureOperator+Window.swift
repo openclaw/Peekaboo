@@ -73,17 +73,19 @@ extension LegacyScreenCaptureOperator {
             ],
             correlationId: correlationId)
 
+        let bounds = try Self.windowBounds(from: targetWindow)
+        let scalePlan = self.scalePlan(for: bounds, preference: scale)
+        let geometry = try LegacyWindowCaptureGeometry(bounds: bounds, scalePlan: scalePlan)
         let raster = try await self.captureWindowImage(
             windowID: windowID,
             correlationId: correlationId,
-            scale: scale)
+            geometry: geometry)
         let image = raster.image
         let mutationIdentity: WindowMutationIdentity? = mutationSnapshot.flatMap { snapshot in
             guard snapshot.ownerProcessStartIdentity == app.processStartIdentity else { return nil }
             return Self.validatedMutationIdentity(snapshot)
         }
 
-        let bounds = Self.windowBounds(from: targetWindow, fallbackImage: image)
         let selectorResolutionProofs = try self.selectorResolutionProofs(
             app: app,
             windows: appWindows,
@@ -92,14 +94,9 @@ extension LegacyScreenCaptureOperator {
                 index: resolvedIndex,
                 bounds: bounds,
                 identity: mutationIdentity))
-        let scalePlan = self.scalePlan(for: bounds, preference: scale)
         let imageData: Data
-        let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
-            image,
-            scale: scale,
-            fallbackScale: scalePlan.nativeScale)
         do {
-            imageData = try raster.pngData(for: scaledImage)
+            imageData = try raster.pngData(for: image)
         } catch {
             throw OperationError.captureFailed(reason: "Failed to convert image to PNG format")
         }
@@ -113,7 +110,7 @@ extension LegacyScreenCaptureOperator {
             correlationId: correlationId)
 
         let metadata = CaptureMetadata(
-            size: CGSize(width: scaledImage.width, height: scaledImage.height),
+            size: CGSize(width: image.width, height: image.height),
             mode: .window,
             applicationInfo: app,
             windowInfo: ServiceWindowInfo(
@@ -139,7 +136,7 @@ extension LegacyScreenCaptureOperator {
                 scaleFactor: scalePlan.outputScale),
             diagnostics: ScreenCaptureScaleResolver.diagnostics(
                 plan: scalePlan,
-                finalPixelSize: CGSize(width: scaledImage.width, height: scaledImage.height)),
+                finalPixelSize: CGSize(width: image.width, height: image.height)),
             selectorResolutionProofs: selectorResolutionProofs)
 
         return CaptureResult(
@@ -186,22 +183,19 @@ extension LegacyScreenCaptureOperator {
             ],
             correlationId: correlationId)
 
+        let bounds = try Self.windowBounds(from: targetWindow)
+        let scalePlan = self.scalePlan(for: bounds, preference: scale)
+        let geometry = try LegacyWindowCaptureGeometry(bounds: bounds, scalePlan: scalePlan)
         let raster = try await self.captureWindowImage(
             windowID: windowID,
             correlationId: correlationId,
-            scale: scale)
+            geometry: geometry)
         let image = raster.image
         let mutationIdentity = mutationSnapshot.flatMap(Self.validatedMutationIdentity)
 
-        let bounds = Self.windowBounds(from: targetWindow, fallbackImage: image)
-        let scalePlan = self.scalePlan(for: bounds, preference: scale)
         let imageData: Data
-        let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
-            image,
-            scale: scale,
-            fallbackScale: scalePlan.nativeScale)
         do {
-            imageData = try raster.pngData(for: scaledImage)
+            imageData = try raster.pngData(for: image)
         } catch {
             throw OperationError.captureFailed(reason: "Failed to convert image to PNG format")
         }
@@ -223,7 +217,7 @@ extension LegacyScreenCaptureOperator {
         }
 
         let metadata = CaptureMetadata(
-            size: CGSize(width: scaledImage.width, height: scaledImage.height),
+            size: CGSize(width: image.width, height: image.height),
             mode: .window,
             applicationInfo: applicationInfo,
             windowInfo: ServiceWindowInfo(
@@ -248,7 +242,7 @@ extension LegacyScreenCaptureOperator {
                 scaleFactor: scalePlan.outputScale),
             diagnostics: ScreenCaptureScaleResolver.diagnostics(
                 plan: scalePlan,
-                finalPixelSize: CGSize(width: scaledImage.width, height: scaledImage.height)))
+                finalPixelSize: CGSize(width: image.width, height: image.height)))
 
         return CaptureResult(
             imageData: imageData,
@@ -289,12 +283,12 @@ extension LegacyScreenCaptureOperator {
     private func captureWindowImage(
         windowID: CGWindowID,
         correlationId: String,
-        scale: CaptureScalePreference) async throws -> LegacyCapturedRaster
+        geometry: LegacyWindowCaptureGeometry) async throws -> LegacyCapturedRaster
     {
         let raster = try await self.captureWindowWithCGWindowList(
             windowID: windowID,
             correlationId: correlationId,
-            scale: scale)
+            geometry: geometry)
         self.logger.debug(
             "Captured window via isolated legacy path",
             metadata: ["windowID": String(windowID)],
@@ -303,19 +297,15 @@ extension LegacyScreenCaptureOperator {
     }
 
     private static func windowBounds(
-        from window: [String: Any],
-        fallbackImage image: CGImage) -> CGRect
+        from window: [String: Any]) throws -> CGRect
     {
-        if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
-           let x = boundsDict["X"] as? CGFloat,
-           let y = boundsDict["Y"] as? CGFloat,
-           let width = boundsDict["Width"] as? CGFloat,
-           let height = boundsDict["Height"] as? CGFloat
-        {
-            return CGRect(x: x, y: y, width: width, height: height)
+        guard let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
+              let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+        else {
+            throw OperationError.captureFailed(reason: "Exact window capture requires WindowServer bounds")
         }
-
-        return CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        try LegacyWindowCaptureGeometry.validateBounds(bounds)
+        return bounds
     }
 
     private struct SelectedWindowProofContext {

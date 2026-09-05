@@ -101,11 +101,13 @@ extension LegacyScreenCaptureOperator {
     {
         // Match Apple's native window capture path; Hopper shows `screencapture -l` using
         // private window-id lookup before building its SCScreenshotManager content filter.
+        // Exclude attached windows; the caller still validates the returned extent before publication.
         try await self.captureImageWithSystemScreencapture(
             arguments: [
                 "-l",
                 String(windowID),
                 "-o",
+                "-a",
                 "-x",
             ],
             outputPrefix: "peekaboo-window-\(windowID)",
