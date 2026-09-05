@@ -736,7 +736,9 @@ public actor PeekabooBridgeClient {
             requestedHostKind: inputs.requestedHost,
             operationClientInstanceID: self.operationClientInstanceID,
             replacingOperationSessionID: replacingOperationSessionID,
-            clientCapabilities: Self.offeredCapabilities(for: protocolVersion))
+            clientCapabilities: protocolVersion >= PeekabooBridgeConstants.attestedOperationReceiptVersion
+                ? Self.offeredCapabilities(for: protocolVersion)
+                : nil)
         let reply = try await self.sendCarryingActionOutcome(.handshake(payload), timeoutSec: timeoutSec)
         try self.validateTrustedConnectedHost(reply.connectedHost)
         let response = reply.response

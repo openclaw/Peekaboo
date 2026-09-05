@@ -81,6 +81,21 @@ struct PeekabooBridgeClientHostTrustTests {
             .appendingPathComponent(relativePath).path
     }
 
+    @Test(arguments: [28, 29])
+    func `wire capability field begins with receipt capable negotiation`(minor: Int) async throws {
+        let probe = HandshakeOfferProbe()
+        let client = PeekabooBridgeClient(socketPath: Self.socketPath("Peekaboo/bridge.sock"), encoder: probe)
+        let offer = try await Self.offer(from: client, probe: probe, protocolVersion: .init(major: 1, minor: minor))
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(offer)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        if minor == 28 {
+            #expect(object["clientCapabilities"] == nil)
+        } else {
+            let capabilities = try #require(object["clientCapabilities"] as? [String])
+            #expect(capabilities.contains(PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics))
+        }
+    }
+
     private static func offer(
         from client: PeekabooBridgeClient,
         probe: HandshakeOfferProbe,

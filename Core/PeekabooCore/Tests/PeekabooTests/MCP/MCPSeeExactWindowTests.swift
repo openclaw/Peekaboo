@@ -1,4 +1,5 @@
-import AppKit
+import CoreGraphics
+import Foundation
 import MCP
 import PeekabooAutomationKit
 import TachikomaMCP
@@ -48,11 +49,10 @@ struct MCPSeeExactWindowTests {
                         windowInfo: window))
                 }))
         }
-        let context = await MCPToolTestHelpers.makeContext(
-            automation: automation,
-            screenCapture: screenCapture,
-            applications: applications,
-            exactWindowMetadataProvider: ExactWindowTestMetadataProvider(values: [
+        let (screens, snapshots, observation) = await MainActor.run {
+            let screens = MockScreenService(screens: [])
+            let snapshots = InMemorySnapshotManager()
+            let metadataProvider = ExactWindowTestMetadataProvider(values: [
                 42: ExactWindowObservationMetadata(
                     ownerProcessIdentifier: app.processIdentifier,
                     ownerProcessStartIdentity: 700,
@@ -63,7 +63,27 @@ struct MCPSeeExactWindowTests {
                     ownerProcessStartIdentity: 700,
                     title: foreignWindow.title,
                     bounds: foreignWindow.bounds),
-            ]))
+            ])
+            let observation = DesktopObservationService(
+                screenCapture: screenCapture,
+                automation: automation,
+                applications: applications,
+                screens: screens,
+                snapshotManager: snapshots,
+                exactWindowMetadataProvider: metadataProvider,
+                processStartIdentityProvider: { _ in 700 },
+                windowMutationIdentityProvider: { windowID in
+                    windows.first { $0.windowID == Int(windowID) }?.mutationIdentity
+                })
+            return (screens, snapshots, observation)
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            screenCapture: screenCapture,
+            applications: applications,
+            screens: screens,
+            snapshots: snapshots,
+            desktopObservation: observation)
         let tool = SeeTool(context: context)
 
         let legacyIndex = try await context.execute(
@@ -80,7 +100,13 @@ struct MCPSeeExactWindowTests {
                 "app_target": app.name,
                 "window_id": 42,
             ]))
-        #expect(exact.isError == false)
+        #expect(exact.isError == false, "Exact response: \(String(describing: exact.content))")
+        #expect(await MainActor.run { screenCapture.lastWindowID } == 42)
+
+        let ownerless = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["window_id": 42]))
+        #expect(ownerless.isError == false, "Owner resolution: \(String(describing: ownerless.content))")
         #expect(await MainActor.run { screenCapture.lastWindowID } == 42)
 
         let mixedSelectors = try await context.execute(
@@ -98,13 +124,25 @@ struct MCPSeeExactWindowTests {
                 "window_id": 99999,
             ]))
         #expect(wrongOwner.isError)
-        #expect(await MainActor.run { screenCapture.captureAttemptCount } == 2)
+        #expect(await MainActor.run { screenCapture.captureAttemptCount } == 3)
     }
 
     @Test
-    func `See tool exact window id requires an owner target`() async throws {
-        let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+    func `See tool unresolved exact window metadata refuses before capture`() async throws {
+        let (screenCapture, observation) = await MainActor.run {
+            let screenCapture = MockScreenCaptureService(screenRecordingGranted: true)
+            let observation = DesktopObservationService(
+                screenCapture: screenCapture,
+                automation: MockAutomationService(accessibilityGranted: true),
+                applications: MockApplicationService(applications: []),
+                screens: MockScreenService(screens: []),
+                exactWindowMetadataProvider: ExactWindowTestMetadataProvider(values: [:]),
+                processStartIdentityProvider: { _ in nil },
+                windowMutationIdentityProvider: { _ in nil })
+            return (screenCapture, observation)
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            screenCapture: screenCapture, desktopObservation: observation)
 
         let response = try await context.execute(
             tool: SeeTool(context: context),
@@ -176,7 +214,7 @@ struct MCPSeeExactWindowTests {
             name: "Zephyr Agency",
             isActive: true,
             windowCount: 3)
-        let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 2000, height: 1200)
+        let screenFrame = CGRect(x: 0, y: 0, width: 2000, height: 1200)
         let visibleOrigin = CGPoint(x: screenFrame.minX + 20, y: screenFrame.minY + 20)
         let offscreenOrigin = CGPoint(x: screenFrame.maxX + 10000, y: screenFrame.maxY + 10000)
 
