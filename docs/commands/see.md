@@ -89,10 +89,6 @@ For agent and automation runs, pass `--path` to a known temporary file when usin
 
 Passive background observations retry one resolve-and-capture transaction when the target's exact receipt changes during capture, then fail closed if it changes again. Foreground capture, explicit web-focus fallback, and menu-opening observations never retry because they can mutate visible desktop state.
 
-Observation verification and MCP image reloads limit each artifact to 256 MiB. Reads retain one regular-file
-descriptor and reject files that grow or change during the read. Ordinary symlink paths remain supported;
-oversized or replaced artifacts fail before their content is published.
-
 Pixel-only `see --no-elements` captures without `--path` write a generated file beneath `PEEKABOO_DEFAULT_SAVE_PATH`, `defaults.savePath`, or the built-in `~/Desktop` default, in that order. Generated names retain a readable timestamp and include a unique token so concurrent callers do not share a path. This also applies with `--json`; `data.files[].path` reports the saved file. Ordinary element-producing `--json` observations without `--path` instead retain the raw image only in managed snapshot storage and return empty `screenshot_raw` and `screenshot_annotated` fields.
 
 ## Exact-window ROI capture
@@ -153,6 +149,10 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 ```
 
 ## Troubleshooting tips
+
+Observation verification and MCP image reloads limit each artifact to 256 MiB. Reads retain one regular-file
+descriptor and reject files that grow or change during the read. Ordinary symlink paths remain supported;
+oversized or replaced artifacts fail before their content is published.
 
 - If the CLI reports **blind typing**, pass an explicit `--app`, `--pid`, `--window-id`, or fresh `--snapshot` so `type` can resolve a background target process, or add `--foreground` when the target app requires focused keyboard input.
 - If a concrete snapshot reports no unique live host affinity, keep the producing host running or capture again. Do
