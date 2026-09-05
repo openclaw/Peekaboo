@@ -89,10 +89,6 @@ For agent and automation runs, pass `--path` to a known temporary file when usin
 
 Passive background observations retry one resolve-and-capture transaction when the target's exact receipt changes during capture, then fail closed if it changes again. Foreground capture, explicit web-focus fallback, and menu-opening observations never retry because they can mutate visible desktop state.
 
-Before publication, saved images are read through one retained descriptor with a byte limit and checked against
-their verified content. Changed or oversized artifacts fail closed. Independently encoded annotations use the
-256 MiB capture-image limit; their size is not restricted to that of the raw screenshot.
-
 Pixel-only `see --no-elements` captures without `--path` write a generated file beneath `PEEKABOO_DEFAULT_SAVE_PATH`, `defaults.savePath`, or the built-in `~/Desktop` default, in that order. Generated names retain a readable timestamp and include a unique token so concurrent callers do not share a path. This also applies with `--json`; `data.files[].path` reports the saved file. Ordinary element-producing `--json` observations without `--path` instead retain the raw image only in managed snapshot storage and return empty `screenshot_raw` and `screenshot_annotated` fields.
 
 ## Exact-window ROI capture
@@ -165,6 +161,10 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 - Rapid repeated `see` calls for the same window reuse a short-lived AX cache (~1.5s); wait a beat if you need a fully fresh traversal.
 
 ## Smart label placement (`--annotate`)
+
+Before publication, saved images are read through one retained descriptor with a byte limit and checked against
+their verified content. Changed or oversized artifacts fail closed. Independently encoded annotations use the
+256 MiB capture-image limit; their size is not restricted to that of the raw screenshot.
 - The `SmartLabelPlacer` generates external label candidates (above/below/sides/corners) for each element, filters out overlaps/out-of-bounds positions, then scores remaining spots via `AcceleratedTextDetector.scoreRegionForLabelPlacement` to prefer calm regions. Internal placements are a last-resort fallback.
 - Edge-aware scoring samples a padded rectangle (6 px halo, clamped to the image) so the chosen region stays clean once text is drawn; above/below placements get slight bonuses to reduce sideways clutter.
 - Preferred orientations nudge horizontally tight elements toward vertical labels when scores tie.
