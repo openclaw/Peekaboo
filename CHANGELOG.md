@@ -1,10 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-- Bound observation and MCP image artifact reads on one descriptor, rejecting oversized, growing, or replaced files before publication. Thanks @SebTardif for #683.
-
 ## [4.3.0] - 2026-09-02
 
 ### Highlights
