@@ -2,10 +2,20 @@
 
 ## Unreleased
 
+**Highlights:** Exact popup and sheet screenshots, bounded image reads, and updater security fixes.
+
 ### Fixed
-- Exclude attached windows from classic window captures and reject mismatched raster extents before publishing window coordinates or snapshots; preserve exact 1×/Retina mapping without double-scaling private captures.
-- Preserve current GUI capture support and typed ScreenCaptureKit blockers when preparation fails, allowing explicit classic capture on the same proven host without changing auto or modern engines, with negotiated typed errors that preserve older clients' signed receipts.
-- Verify ScreenCaptureKit owner and capability-marker close-on-fork protection through child descriptor behavior instead of SDK query bits, preserving atomic open flags and isolating marker tests.
+- Capture exact popup and sheet extents without attached windows, reject mismatched images before publishing coordinates, and preserve 1×/Retina mapping without double-scaling. #689.
+- Update Sparkle to 2.9.6 for installer archive handling and signature validation security fixes. #691.
+- Cap observation and MCP screenshot reads and reject files that grow or are replaced during reading; thanks @SebTardif for #683.
+- Bound `see` publication reads while preserving annotations larger than their raw screenshots; thanks @SebTardif for #688.
+- Add an optional `config edit --timeout` for scripted editor waits while preserving unlimited interactive editing; thanks @SebTardif for #681.
+- Bound debug build-staleness Git probes and drain their output so large dirty worktrees still report stale builds; thanks @SebTardif for #682.
+- Preserve GUI capture readiness after ScreenCaptureKit preparation fails, allowing explicit classic recovery on the same proven host while retaining typed blockers, automatic-engine behavior, and older clients' signed receipts. #684.
+- Preserve omitted capability metadata in legacy Bridge 1.28 handshakes while retaining modern diagnostic negotiation. #692.
+- Verify ScreenCaptureKit owner and capability-marker close-on-fork protection through child descriptor behavior instead of SDK query bits, preserving atomic open flags.
+- Refresh Swift networking and crypto dependencies, pnpm, and Node setup tooling. #691.
+- Keep validation fixtures independent of operator credentials and live window IDs, and synchronize cleanup/disconnect checks with completed state transitions. #690, #692.
 
 ## [4.3.0] - 2026-09-02
 
