@@ -5,8 +5,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE_LOCK="$ROOT_DIR/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 MAC_LOCK="$ROOT_DIR/Apps/Mac/Package.resolved"
-EXPECTED_SPARKLE_VERSION=2.9.5
-EXPECTED_SPARKLE_REVISION=79bc9e872948e47877e76f194cb0c8e0412b0b90
+EXPECTED_SPARKLE_VERSION=2.9.6
+EXPECTED_SPARKLE_REVISION=ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a
 TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/peekaboo-release-resolution-test.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
@@ -143,7 +143,7 @@ export PACKAGE_RESOLUTION_TEST_REVISION="$EXPECTED_SPARKLE_REVISION"
 write_sparkle_info "$EXPECTED_SPARKLE_VERSION"
 verify_fixture >/dev/null
 
-write_sparkle_info 2.9.6
+write_sparkle_info 2.9.5
 assert_fixture_refused embedded-version 'does not match locked version'
 write_sparkle_info "$EXPECTED_SPARKLE_VERSION"
 

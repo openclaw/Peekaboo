@@ -154,7 +154,7 @@ jobs:
           grep -Eq '^Xcode 26\.[0-9]+(\.[0-9]+)?$' "$VALIDATION_RESULTS/toolchain.txt"
           printf 'DEVELOPER_DIR=%s\n' "$DEVELOPER_DIR" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false
