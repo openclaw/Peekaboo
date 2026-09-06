@@ -87,9 +87,22 @@ int main(int argument_count, char *arguments[]) {
 
     int child_status = 0;
     pid_t wait_result;
-    do {
-        wait_result = waitpid(process_identifier, &child_status, 0);
-    } while (wait_result < 0 && errno == EINTR);
+    for (;;) {
+        wait_result = waitpid(process_identifier, &child_status, WUNTRACED);
+        if (wait_result < 0 && errno == EINTR) {
+            continue;
+        }
+        if (wait_result == process_identifier && WIFSTOPPED(child_status)) {
+            // Resume only after the parent has consumed the completed stop event.
+            if (dprintf(STDOUT_FILENO, "PEEKABOO_CHILD_STOPPED=%d:%d\n",
+                        process_identifier, WSTOPSIG(child_status)) < 0) {
+                terminate_child(process_identifier);
+                return 132;
+            }
+            continue;
+        }
+        break;
+    }
     (void)tcsetpgrp(STDIN_FILENO, getpgrp());
     if (wait_result != process_identifier) {
         return 130;

@@ -666,16 +666,15 @@ extension ConfigCredentialInputCLITests {
                 }
             case let .stopAndContinue(signalNumber, input):
                 _ = kill(processIdentifier, signalNumber)
-                let didStop = self.waitForStopped(
+                stoppedSignal = self.waitForStopped(
                     processIdentifier: processIdentifier,
                     fileDescriptor: primaryDescriptor,
                     output: &output,
                     timeout: 2
                 )
-                stoppedSignal = didStop ? signalNumber : nil
-                echoEnabledWhileStopped = didStop &&
+                echoEnabledWhileStopped = stoppedSignal != nil &&
                     self.waitForEcho(fileDescriptor: primaryDescriptor, enabled: true, timeout: 1)
-                if didStop {
+                if stoppedSignal != nil {
                     _ = kill(processIdentifier, SIGCONT)
                     echoDisabledAfterContinue = self.waitForEcho(
                         fileDescriptor: primaryDescriptor,
@@ -821,19 +820,21 @@ extension ConfigCredentialInputCLITests {
         fileDescriptor: Int32,
         output: inout Data,
         timeout: TimeInterval
-    ) -> Bool {
+    ) -> Int32? {
+        let marker = "PEEKABOO_CHILD_STOPPED=\(processIdentifier):"
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             self.drainTTY(fileDescriptor: fileDescriptor, into: &output)
-            var processInfo = proc_bsdinfo()
-            let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
-            if proc_pidinfo(processIdentifier, PROC_PIDTBSDINFO, 0, &processInfo, expectedSize) == expectedSize,
-               processInfo.pbi_status == UInt32(SSTOP) {
-                return true
+            if let text = String(data: output, encoding: .utf8),
+               let markerRange = text.range(of: marker),
+               let lineEnd = text[markerRange.upperBound...].firstIndex(where: \.isNewline),
+               let signalNumber = Int32(text[markerRange.upperBound..<lineEnd]
+                   .trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return signalNumber
             }
             usleep(10000)
         }
-        return false
+        return nil
     }
 
     private nonisolated func waitForEcho(fileDescriptor: Int32, enabled: Bool, timeout: TimeInterval) -> Bool {
