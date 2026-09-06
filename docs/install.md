@@ -13,14 +13,14 @@ Peekaboo ships in three flavors. They all use the same Swift core and the same t
 
 ## Homebrew (recommended)
 
-The CLI is signed, notarized, and lives in [steipete/homebrew-tap](https://github.com/steipete/homebrew-tap).
+The CLI is signed, notarized, and lives in [openclaw/homebrew-tap](https://github.com/openclaw/homebrew-tap).
 
 ```bash
-brew install steipete/tap/peekaboo
+brew install openclaw/tap/peekaboo
 peekaboo --version
 ```
 
-Update with `brew upgrade steipete/tap/peekaboo`.
+Update with `brew upgrade openclaw/tap/peekaboo`.
 
 ## npm (for MCP clients)
 

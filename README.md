@@ -1,6 +1,6 @@
 # Peekaboo 🫣 — Mac automation that sees the screen and does the clicks.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/openclaw/Peekaboo/macos-ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/openclaw/Peekaboo/actions/workflows/macos-ci.yml) [![npm](https://img.shields.io/npm/v/%40steipete%2Fpeekaboo?style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo) [![GitHub release](https://img.shields.io/github/v/release/openclaw/Peekaboo?style=flat-square)](https://github.com/openclaw/Peekaboo/releases/latest) [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0078d7?logo=apple&logoColor=white&style=flat-square)](docs/platform-support.md) [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/) [![Node](https://img.shields.io/node/v/%40steipete%2Fpeekaboo?style=flat-square)](https://nodejs.org/) [![License](https://img.shields.io/github/license/openclaw/Peekaboo?style=flat-square)](LICENSE) [![Homebrew](https://img.shields.io/badge/Homebrew-steipete%2Ftap-b28f62?logo=homebrew&logoColor=white&style=flat-square)](https://github.com/steipete/homebrew-tap) [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-0088cc?style=flat-square)](https://deepwiki.com/openclaw/Peekaboo)
+[![CI](https://img.shields.io/github/actions/workflow/status/openclaw/Peekaboo/macos-ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/openclaw/Peekaboo/actions/workflows/macos-ci.yml) [![npm](https://img.shields.io/npm/v/%40steipete%2Fpeekaboo?style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo) [![GitHub release](https://img.shields.io/github/v/release/openclaw/Peekaboo?style=flat-square)](https://github.com/openclaw/Peekaboo/releases/latest) [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0078d7?logo=apple&logoColor=white&style=flat-square)](docs/platform-support.md) [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/) [![Node](https://img.shields.io/node/v/%40steipete%2Fpeekaboo?style=flat-square)](https://nodejs.org/) [![License](https://img.shields.io/github/license/openclaw/Peekaboo?style=flat-square)](LICENSE) [![Homebrew](https://img.shields.io/badge/Homebrew-openclaw%2Ftap-b28f62?logo=homebrew&logoColor=white&style=flat-square)](https://github.com/openclaw/homebrew-tap) [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-0088cc?style=flat-square)](https://deepwiki.com/openclaw/Peekaboo)
 
 Peekaboo is a macOS CLI and menu-bar app for screen capture, accessibility inspection, and native UI automation. Use it directly, let its agent plan multi-step work, or expose the same toolset to MCP clients.
 
@@ -13,7 +13,7 @@ The released CLI and app require macOS 15 or later.
 ### CLI with Homebrew
 
 ```sh
-brew install steipete/tap/peekaboo
+brew install openclaw/tap/peekaboo
 ```
 
 ### MCP package with npm
@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.3.0
+## What's new in 4.3.1
 
-Peekaboo 4.3.0 adds exact-window pixel-focus typing, explicit foreground modifier-clicks, and stronger signed Bridge receipts for background automation. Window inventory explains whether combined Accessibility capture, screenshot-only recovery, or refreshed evidence is available, while isolated browser sessions keep targets and permissions bound to their caller. Secure credential input and shared app/CLI credential storage avoid process-list leaks and Keychain prompts. Faster caller-local startup, concurrent automatic capture, and modern protocol negotiation with signed OpenClaw hosts make everyday automation more predictable.
+Peekaboo 4.3.1 captures exact popup and sheet extents, bounds screenshot reads without losing large annotations, and updates Sparkle with archive handling and signature validation security fixes. Scripted editor waits now support an optional timeout, graceful capture-action cancellation gets its full TERM window, and legacy Bridge clients retain compatible capability negotiation.
 
 ## Automate an app
 

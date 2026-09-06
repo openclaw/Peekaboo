@@ -5,7 +5,7 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 4.3.1 - 2026-09-05
 
 **Highlights:** Exact popup and sheet screenshots, bounded image reads, and more reliable scripted commands.
 
@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve GUI capture readiness after ScreenCaptureKit preparation fails, allowing explicit classic recovery on the same proven host while retaining typed blockers, automatic-engine behavior, and older clients' signed receipts. #684.
 - Preserve omitted capability metadata in legacy Bridge 1.28 handshakes while retaining modern diagnostic negotiation. #692.
 - Verify ScreenCaptureKit owner and capability-marker close-on-fork protection through child descriptor behavior instead of SDK query bits, preserving atomic open flags.
+- Route Homebrew release updates and installation instructions through `openclaw/tap`.
 - Refresh Swift networking and crypto dependencies, pnpm, and Node setup tooling. #691.
 - Keep validation fixtures independent of operator credentials and live window IDs, and synchronize cleanup/disconnect checks with completed state transitions. #690, #692.
 

@@ -1,5 +1,5 @@
 ---
-summary: 'Maintain the Peekaboo formula in steipete/homebrew-tap'
+summary: 'Maintain the Peekaboo formula in openclaw/homebrew-tap'
 read_when:
   - 'publishing or repairing the Peekaboo Homebrew formula'
   - 'testing a release archive through Homebrew'
@@ -7,7 +7,7 @@ read_when:
 
 # Setting Up Homebrew Tap for Peekaboo
 
-This guide explains how the shipped universal CLI archive reaches the Peekaboo formula in [github.com/steipete/homebrew-tap](https://github.com/steipete/homebrew-tap).
+This guide explains how the shipped universal CLI archive reaches the Peekaboo formula in [github.com/openclaw/homebrew-tap](https://github.com/openclaw/homebrew-tap).
 
 ## Repository Structure
 
@@ -22,14 +22,14 @@ The tap owns the installable `Formula/peekaboo.rb`. This repository keeps `homeb
 ### Installing Peekaboo via Homebrew
 
 ```bash
-brew install steipete/tap/peekaboo
+brew install openclaw/tap/peekaboo
 ```
 
 ### Updating Peekaboo
 
 ```bash
 brew update
-brew upgrade steipete/tap/peekaboo
+brew upgrade openclaw/tap/peekaboo
 ```
 
 ## Release Process
@@ -39,10 +39,10 @@ brew upgrade steipete/tap/peekaboo
 Publishing a GitHub Release runs `.github/workflows/update-homebrew.yml`. The workflow:
 
 1. Resolves the published `v<version>` tag.
-2. Dispatches `steipete/homebrew-tap`'s `update-formula.yml` with the source repository, tag, formula name, and `peekaboo-macos-universal.tar.gz` asset.
+2. Dispatches `openclaw/homebrew-tap`'s `update-formula.yml` with the source repository, tag, formula name, and `peekaboo-macos-universal.tar.gz` asset.
 3. Locates the exact dispatched run and waits for it to finish.
 
-`HOMEBREW_TAP_TOKEN` must have workflow access to `steipete/homebrew-tap`.
+`HOMEBREW_TAP_TOKEN` must have workflow access to `openclaw/homebrew-tap`.
 
 ### Manual Update
 
@@ -63,8 +63,8 @@ The helper updates the formula URL, `sha256`, and `version` for the current pack
 
 ```bash
 brew uninstall peekaboo 2>/dev/null || true
-brew install --verbose --debug steipete/tap/peekaboo
-brew test steipete/tap/peekaboo
+brew install --verbose --debug openclaw/tap/peekaboo
+brew test openclaw/tap/peekaboo
 peekaboo --version
 ```
 
@@ -89,8 +89,8 @@ brew install --build-from-source ./homebrew/peekaboo.rb
 ### Debugging
 
 ```bash
-brew tap-info steipete/tap
-brew audit --strict steipete/tap/peekaboo
+brew tap-info openclaw/tap
+brew audit --strict openclaw/tap/peekaboo
 ```
 
 ## Maintenance
