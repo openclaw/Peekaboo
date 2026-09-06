@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recover transactional app installs using authenticated GUI Bridge identity when atomic socket publication leaves `lsof` reporting the temporary bind path.
+
 ## 4.3.1 - 2026-09-05
 
 **Highlights:** Exact popup and sheet screenshots, bounded image reads, and updater security fixes.

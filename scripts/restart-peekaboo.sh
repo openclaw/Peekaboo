@@ -981,9 +981,10 @@ validate_healthcheck_configuration() {
     "Healthcheck CLI predates exact host-generation readiness; build and sign this checkout's CLI or pass --healthcheck-cli <absolute-current-path>"
 }
 
-verify_replacement_bridge_health() {
+verify_exact_bridge_health() {
   local attempt code_hash current_pids current_start_identity_after current_start_identity_before
   local output short_version bundle_version
+  local require_background_host="$1"
 
   [[ "${LAUNCHED_PID}" =~ ^[0-9]+$ && "${LAUNCHED_PROCESS_START_IDENTITY}" =~ ^[0-9]+$ ]] || return 1
   code_hash="$(bundle_code_signature_hash "${APP_BUNDLE}")" || return 1
@@ -1010,6 +1011,7 @@ verify_replacement_bridge_health() {
       --arg bundle_id "${EXPECTED_BUNDLE_ID}" \
       --arg short_version "${short_version}" \
       --arg bundle_version "${bundle_version}" \
+      --argjson require_background_host "${require_background_host}" \
       --arg code_hash "${code_hash}" '
         .success == true and
         .data.selected.source == "remote" and
@@ -1021,7 +1023,8 @@ verify_replacement_bridge_health() {
         .data.selected.handshake.hostIdentity.bundleShortVersion == $short_version and
         .data.selected.handshake.hostIdentity.bundleVersion == $bundle_version and
         .data.selected.handshake.hostIdentity.codeSignatureHash == $code_hash and
-        (.data.selected.handshake.hostCapabilities | index("backgroundBridgeHost")) != null and
+        ($require_background_host == false or
+          (.data.selected.handshake.hostCapabilities | index("backgroundBridgeHost")) != null) and
         (.data.selected.handshake.hostCapabilities | index("hostGenerationIdentity")) != null and
         (.data.selected.handshake.hostCapabilities | index("codeSignatureBuildIdentity")) != null
       ' <<<"${output}" >/dev/null
@@ -1038,7 +1041,7 @@ verify_replacement_bridge_health() {
     fi
     "${SLEEP_BIN}" "${HEALTH_VERIFY_INTERVAL}"
   done
-  printf 'Replacement process %s did not expose matching background GUI Bridge readiness at %s\n' \
+  printf 'Process %s did not expose matching GUI Bridge readiness at %s\n' \
     "${LAUNCHED_PID}" "${BRIDGE_SOCKET}" >&2
   return 1
 }
@@ -1070,8 +1073,15 @@ verify_restored_bridge_health() {
         .data.selected.source == "remote" and
         .data.selected.socketPath == $socket and
         .data.selected.handshake.hostKind == "gui"
-      ' <<<"${output}" >/dev/null &&
-       current_start_identity_after="$(query_process_start_identity "${LAUNCHED_PID}")" &&
+      ' <<<"${output}" >/dev/null
+    then
+      # Atomic socket publication leaves lsof reporting the temporary bind path. Modern hosts
+      # provide an authenticated process/build receipt; never downgrade a mismatched receipt.
+      if "${JQ_BIN}" -e '.data.selected.handshake | has("hostIdentity")' <<<"${output}" >/dev/null; then
+        verify_exact_bridge_health false
+        return $?
+      fi
+      if current_start_identity_after="$(query_process_start_identity "${LAUNCHED_PID}")" &&
        current_pids_after="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)" &&
        socket_pids_after="$("${LSOF_BIN}" -t -a -U -- "${BRIDGE_SOCKET}" 2>/dev/null | awk '!seen[$0]++')" &&
        [[ "${current_start_identity_before}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
@@ -1080,8 +1090,9 @@ verify_restored_bridge_health() {
           "${current_pids_after}" == "${LAUNCHED_PID}" &&
           "${socket_pids_before}" == "${LAUNCHED_PID}" &&
           "${socket_pids_after}" == "${LAUNCHED_PID}" ]]
-    then
-      return 0
+      then
+        return 0
+      fi
     fi
     "${SLEEP_BIN}" "${HEALTH_VERIFY_INTERVAL}"
   done
@@ -1118,7 +1129,7 @@ ensure_restored_bundle_ready() {
 
 launch_and_verify() {
   launch_and_verify_bundle "${APP_BUNDLE}" || return 1
-  verify_replacement_bridge_health
+  verify_exact_bridge_health true
 }
 
 rollback_install() {

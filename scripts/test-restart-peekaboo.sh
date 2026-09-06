@@ -796,7 +796,14 @@ build_id="$(<"${bundle}/build-id")"
 if [[ -f "${state_dir}/fail-health" && "${build_id}" == "new" ]]; then
   exit 71
 fi
+if [[ -f "${state_dir}/restored-bridge-never-ready" && "${build_id}" == "old" ]]; then
+  exit 71
+fi
 bundle_id="$(<"${bundle}/.bundle-id")"
+if [[ "${build_id}" == "old" && ! -f "${state_dir}/modern-restored-host" ]]; then
+  printf '{"success":true,"data":{"selected":{"source":"remote","socketPath":"%s","handshake":{"hostKind":"gui"}}}}\n' "${state_dir}/bridge.sock"
+  exit 0
+fi
 code_hash="$(<"${bundle}/.cdhash")"
 host_pid=4242
 host_process_start_identity=123456
@@ -813,6 +820,9 @@ if [[ -f "${state_dir}/health-adjacent-large-start" ]]; then
 fi
 [[ ! -f "${state_dir}/health-wrong-hash" ]] || code_hash=0000000000000000000000000000000000000000
 [[ ! -f "${state_dir}/health-missing-capability" ]] || capabilities='["hostGenerationIdentity","codeSignatureBuildIdentity"]'
+if [[ "${build_id}" == "old" && -f "${state_dir}/restored-interactive-host" ]]; then
+  capabilities='["hostGenerationIdentity","codeSignatureBuildIdentity"]'
+fi
 short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
   "${bundle}/Contents/Info.plist")"
 bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
@@ -874,6 +884,7 @@ state_dir="$(cd "$(dirname "$0")/.." && pwd)"
   "${4:-}" == "--" && "${5:-}" == "${state_dir}/bridge.sock" && "$#" -eq 5 ]] || exit 72
 [[ -f "${state_dir}/running-path" ]] || exit 1
 bundle="$(<"${state_dir}/running-path")"
+[[ ! -f "${state_dir}/renamed-socket" ]] || exit 1
 if [[ -f "${state_dir}/restored-bridge-never-ready" && "$(<"${bundle}/build-id")" == "old" ]]; then
   exit 1
 fi
@@ -1363,6 +1374,31 @@ assert_text "${restored_health_target}/build-id" old
 find "$(dirname "${restored_health_target}")" -maxdepth 1 -type d \
   -name '.Peekaboo.install.*' | grep -q . || \
   fail 'restored Bridge readiness failure discarded its recovery bundle'
+
+# Modern restored hosts prove exact ownership despite lsof retaining the temporary bind name.
+for restored_case in modern-restored-success modern-restored-interactive modern-restored-wrong-pid modern-restored-wrong-hash; do
+  modern_dir="$(new_case "${restored_case}")"
+  modern_target="${modern_dir}/Applications/Peekaboo.app"
+  mkdir -p "$(dirname "${modern_target}")"
+  make_bundle "${modern_target}" old
+  printf '%s\n' "${modern_target}" >"${modern_dir}/running-path"
+  touch "${modern_dir}/fail-health" "${modern_dir}/modern-restored-host" "${modern_dir}/renamed-socket"
+  case "${restored_case}" in
+    *interactive) touch "${modern_dir}/restored-interactive-host" ;;
+    *wrong-pid) touch "${modern_dir}/health-wrong-pid" ;;
+    *wrong-hash) touch "${modern_dir}/health-wrong-hash" ;;
+  esac
+  if run_restart "${modern_dir}"; then
+    fail 'expected replacement health failure before modern rollback'
+  fi
+  assert_text "${modern_target}/build-id" old
+  modern_journal="$(dirname "${modern_target}")/.Peekaboo.install.journal"
+  if [[ "${restored_case}" == modern-restored-success || "${restored_case}" == modern-restored-interactive ]]; then
+    [[ ! -e "${modern_journal}" ]] || fail 'authenticated restored host left an incomplete journal'
+  else
+    [[ -f "${modern_journal}" ]] || fail 'mismatched restored identity discarded the journal'
+  fi
+done
 
 # If the replacement cannot be stopped, rollback preserves both bundles and never restores over it.
 stop_refusal_dir="$(new_case rollback-stop-refusal)"
