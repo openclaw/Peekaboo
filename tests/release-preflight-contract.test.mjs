@@ -311,6 +311,37 @@ test('draft lookup distinguishes absence from provider failures and rejects redi
   }
 });
 
+test('npm publication reads normalize singleton JSON wrappers without hiding ambiguous or failed results', () => {
+  const functionSource = driverSource.match(/^npm_view_single_json\(\) \{[\s\S]*?^\}$/m)?.[0];
+  assert.ok(functionSource);
+  const run = (stdout, exit = 0) => spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', `
+set -euo pipefail
+NPM_REGISTRY=https://registry.npmjs.org/
+node() { "$NODE_BIN" "$@"; }
+npm() { printf '%s' "$FIXTURE_STDOUT"; return "$FIXTURE_EXIT"; }
+${functionSource}
+npm_view_single_json @steipete/peekaboo@4.3.1 version
+`], { encoding: 'utf8', env: {
+    PATH: process.env.PATH, NODE_BIN: process.execPath, FIXTURE_STDOUT: stdout, FIXTURE_EXIT: String(exit)
+  } });
+  for (const value of ['4.3.1', { version: '4.3.1', dist: { integrity: 'fixture' } }, { '4.3.1': '2026-09-06T13:15:51Z' }]) {
+    for (const wrapped of [value, [value]]) {
+      const result = run(JSON.stringify(wrapped));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), value);
+    }
+  }
+  for (const invalid of ['[]', '["4.3.0","4.3.1"]', 'not JSON']) {
+    const result = run(invalid);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /did not return one JSON value/);
+  }
+  const failure = '{"error":{"code":"E404"}}';
+  const result = run(failure, 37);
+  assert.equal(result.status, 37);
+  assert.equal(result.stdout, failure);
+});
+
 function safeTestsLaunch() {
   assert.ok(safeTestsFunction, 'test launcher must be inspectable without executing preparation');
   let launch;

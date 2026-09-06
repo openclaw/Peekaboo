@@ -802,13 +802,35 @@ process.stdout.write(JSON.stringify(receipt.assets));
     echo -e "${GREEN}✅ GitHub release assets verified${NC}"
 }
 
+npm_view_single_json() {
+    local output result
+    if output=$(npm view "$@" --registry "$NPM_REGISTRY" --json); then
+        printf '%s' "$output" | node -e '
+try {
+  let value = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  if (Array.isArray(value)) {
+    if (value.length !== 1) throw new Error("ambiguous npm result");
+    value = value[0];
+  }
+  process.stdout.write(JSON.stringify(value));
+} catch {
+  console.error("npm view did not return one JSON value");
+  process.exitCode = 1;
+}'
+    else
+        result=$?
+        printf '%s' "$output"
+        return "$result"
+    fi
+}
+
 verify_npm_publication() {
     local metadata package_name publish_times metadata_tmp
     package_name=$(node -p "require('$PROJECT_ROOT/package.json').name")
     [[ "$(npm_package_integrity "$NPM_PACKAGE_PATH")" == "$NPM_PACKAGE_INTEGRITY" ]] ||
         fail "Local npm package changed after it was frozen"
-    metadata=$(npm view "$package_name@$VERSION" --registry "$NPM_REGISTRY" --json)
-    publish_times=$(npm view "$package_name" time --registry "$NPM_REGISTRY" --json)
+    metadata=$(npm_view_single_json "$package_name@$VERSION")
+    publish_times=$(npm_view_single_json "$package_name" time)
     metadata=$(NPM_METADATA="$metadata" NPM_TIMES="$publish_times" node -e '
 const metadata = JSON.parse(process.env.NPM_METADATA);
 metadata.time = JSON.parse(process.env.NPM_TIMES);
@@ -897,8 +919,7 @@ npm_publication_exists() {
     local package_name observed error_path error_output result state
     package_name=$(node -p "require('$PROJECT_ROOT/package.json').name")
     error_path=$(mktemp "${TMPDIR:-/tmp}/peekaboo-npm-view.XXXXXX")
-    if observed=$(npm view "$package_name@$VERSION" version --registry "$NPM_REGISTRY" \
-      --json 2> "$error_path"); then
+    if observed=$(npm_view_single_json "$package_name@$VERSION" version 2> "$error_path"); then
         result=0
     else
         result=$?
