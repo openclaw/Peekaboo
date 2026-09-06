@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Capture exact popup and sheet extents without attached windows, reject mismatched images before publishing coordinates, and preserve 1×/Retina mapping without double-scaling. #689.
 - Cap observation and MCP screenshot reads and reject files that grow or are replaced during reading; thanks @SebTardif for #683.
 - Bound `see` publication reads while preserving annotations larger than their raw screenshots; thanks @SebTardif for #688.
+- Start the `capture action` TERM grace after signal dispatch so delayed cancellation or timeout handling does not prematurely kill graceful children; retain the absolute completion deadline. #692.
 - Add an optional `config edit --timeout` for scripted editor waits while preserving unlimited interactive editing; thanks @SebTardif for #681.
 - Bound debug build-staleness Git probes and drain their output so large dirty worktrees still report stale builds; thanks @SebTardif for #682.
 - Preserve GUI capture readiness after ScreenCaptureKit preparation fails, allowing explicit classic recovery on the same proven host while retaining typed blockers, automatic-engine behavior, and older clients' signed receipts. #684.
