@@ -262,17 +262,20 @@ function isValidCalendarDate(value) {
 
 export function validateChangelogContract({ changelogSource, version, requireDatedHeading }) {
   const escapedVersion = escapeRegExp(version);
-  const headingPattern = new RegExp(`^## \\[${escapedVersion}\\] - (Unreleased|\\d{4}-\\d{2}-\\d{2})$`, 'gm');
+  const headingPattern = new RegExp(
+    `^## (?:\\[${escapedVersion}\\]|${escapedVersion}) - (Unreleased|\\d{4}-\\d{2}-\\d{2})$`, 'gm');
   const matches = [...changelogSource.matchAll(headingPattern)];
   if (matches.length !== 1) {
     return [
-      `CHANGELOG.md must contain exactly one '## [${version}] - Unreleased' or dated ISO heading; ` +
+      `CHANGELOG.md must contain exactly one '## ${version} - Unreleased' or dated ISO heading ` +
+      `(version brackets optional); ` +
       `found ${matches.length}`
     ];
   }
   const match = matches[0];
   if (requireDatedHeading && match[1] === 'Unreleased') {
-    return [`full publication preflight requires '## [${version}] - YYYY-MM-DD'; found Unreleased`];
+    return [`full publication preflight requires '## ${version} - YYYY-MM-DD' ` +
+      `(version brackets optional); found Unreleased`];
   }
   if (match[1] !== 'Unreleased' && !isValidCalendarDate(match[1])) {
     return [`CHANGELOG.md has an invalid release date for ${version}: ${match[1]}`];

@@ -47,7 +47,7 @@ test('preparation accepts Unreleased while publication requires a dated heading'
     changelogSource,
     version: '4.0.0',
     requireDatedHeading: true
-  }), ["full publication preflight requires '## [4.0.0] - YYYY-MM-DD'; found Unreleased"]);
+  }), ["full publication preflight requires '## 4.0.0 - YYYY-MM-DD' (version brackets optional); found Unreleased"]);
 });
 
 test('publication accepts only an exact heading with a valid ISO calendar date', () => {
@@ -71,8 +71,36 @@ test('publication accepts only an exact heading with a valid ISO calendar date',
     version: '4.0.0',
     requireDatedHeading: false
   }), [
-    "CHANGELOG.md must contain exactly one '## [4.0.0] - Unreleased' or dated ISO heading; found 2"
+    "CHANGELOG.md must contain exactly one '## 4.0.0 - Unreleased' or dated ISO heading " +
+      "(version brackets optional); found 2"
   ]);
+});
+
+test('publication accepts plain version headings while preserving date and uniqueness checks', () => {
+  const validate = (changelogSource, requireDatedHeading = true) => validateChangelogContract({
+    changelogSource,
+    version: '4.3.1',
+    requireDatedHeading
+  });
+  assert.deepEqual(validate('## 4.3.1 - 2026-09-05\n'), []);
+  assert.deepEqual(validate('## 4.3.1 - Unreleased\n', false), []);
+  assert.match(validate('## 4.3.1 - Unreleased\n')[0], /requires.*YYYY-MM-DD.*Unreleased/);
+  assert.match(validate('## 4.3.1 - 2026-02-30\n')[0], /invalid release date/);
+  assert.match(validate('## 4.3.1 - 2026-09-05\n\n## [4.3.1] - 2026-09-05\n')[0], /found 2/);
+  for (const heading of ['## [4.3.1 - 2026-09-05', '## 4.3.1] - 2026-09-05', '## 4.3.10 - 2026-09-05']) {
+    assert.match(validate(`${heading}\n`)[0], /found 0/);
+  }
+});
+
+test('current root and CLI release headings pass the preparation gate', () => {
+  const { version } = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
+  for (const path of ['CHANGELOG.md', 'Apps/CLI/CHANGELOG.md']) {
+    assert.deepEqual(validateChangelogContract({
+      changelogSource: readFileSync(join(projectRoot, path), 'utf8'),
+      version,
+      requireDatedHeading: false
+    }), [], path);
+  }
 });
 
 test('command registry roots must have exact page, index, and reference parity', () => {

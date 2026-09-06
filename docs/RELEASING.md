@@ -206,7 +206,9 @@ path must leave every byte and manifest hash unchanged and validate without a Pe
 
 ## 3. Date, commit, push, and run publication preflight
 
-Replace `Unreleased` with the actual release date, then use standard Git commands with Conventional Commits. Push
+Use `## X.Y.Z - YYYY-MM-DD` in both changelogs; square brackets around the version are also accepted. Each target
+version must have exactly one heading with a valid calendar date. Replace `Unreleased` with the actual release date,
+then use standard Git commands with Conventional Commits. Push
 `main`, pull with `--ff-only`, and confirm the publication commit is current and the tree is clean. Only then run the
 full publication preflight:
 
