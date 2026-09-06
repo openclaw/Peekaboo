@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
@@ -223,6 +224,92 @@ const prepareSource = readFileSync(new URL('../scripts/prepare-release.js', impo
 const driverSource = readFileSync(new URL('../scripts/release-binaries.sh', import.meta.url), 'utf8');
 const sanitizerPath = join(projectRoot, 'scripts/terminal-artifact-env.sh');
 const safeTestsFunction = prepareSource.match(/^function runSafeTests\(\) \{[\s\S]*?^\}/m)?.[0];
+
+function githubDraftLookup(t, { mode = 'draft', apiUrl, command = 'verify' } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'peekaboo-draft-lookup-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'receipt.json'), JSON.stringify({ assets: {} }));
+  writeFileSync(join(root, 'github-release-body.md'), 'fixture release notes\n');
+  const names = ['github_release_api_path', 'github_release_exists', 'verify_github_release_assets'];
+  const functions = names.map((name) => driverSource.match(
+    new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0] ?? '').join('\n');
+  const sourceCommit = 'a'.repeat(40);
+  const script = `set -euo pipefail
+VERSION=9.8.7
+GITHUB_HOST=github.com
+GITHUB_REPOSITORY=github.com/openclaw/Peekaboo
+GITHUB_API_REPOSITORY=openclaw/Peekaboo
+BLUE= GREEN= NC=
+fail() { printf '%s\\n' "$*" >&2; exit 1; }
+assert_publication_receipt() { :; }
+github_tag_commit() { printf '%s\\n' "$RELEASE_SOURCE_COMMIT"; }
+node() { "$NODE_BIN" "$@"; }
+gh() {
+  printf '%s\\n' "$*" >> "$CALL_LOG"
+  if [[ "$1 $2" == 'release view' ]]; then
+    case "$FIXTURE_MODE" in
+      missing) printf 'release not found\\n' >&2; return 1 ;;
+      auth) printf 'HTTP 401: unauthorized\\n' >&2; return 1 ;;
+      api-error) printf 'HTTP 404: Not Found\\n' >&2; return 1 ;;
+    esac
+    printf '%s\\n' "$FIXTURE_API_URL"
+  elif [[ "$*" == 'api --hostname github.com repos/openclaw/Peekaboo/releases/123' ]]; then
+    printf '%s\\n' "$FIXTURE_RELEASE_JSON"
+  else
+    printf 'HTTP 404: Not Found\\n' >&2
+    return 1
+  fi
+}
+${functions}
+if [[ "$FIXTURE_COMMAND" == verify ]]; then
+  verify_github_release_assets
+else
+  github_release_exists
+fi
+`;
+  const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', script], {
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH, HOME: root, TMPDIR: root, NODE_BIN: process.execPath,
+      RELEASE_DIR: root, RELEASE_SOURCE_COMMIT: sourceCommit,
+      PUBLICATION_RECEIPT_PATH: join(root, 'receipt.json'),
+      RELEASE_CONTRACT: join(projectRoot, 'scripts/release-driver-contract.mjs'),
+      CALL_LOG: join(root, 'calls'), FIXTURE_MODE: mode, FIXTURE_COMMAND: command,
+      FIXTURE_API_URL: apiUrl ?? 'https://api.github.com/repos/openclaw/Peekaboo/releases/123',
+      FIXTURE_RELEASE_JSON: JSON.stringify({ tag_name: 'v9.8.7', draft: true, body: 'fixture release notes\n', assets: [] })
+    }
+  });
+  return { ...result, calls: readFileSync(join(root, 'calls'), 'utf8') };
+}
+
+test('draft verification uses the authenticated release ID when the tag endpoint returns 404', (t) => {
+  const result = githubDraftLookup(t);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.calls, /release view v9\.8\.7 --repo github\.com\/openclaw\/Peekaboo --json apiUrl/);
+  assert.match(result.calls, /api --hostname github\.com repos\/openclaw\/Peekaboo\/releases\/123/);
+  assert.doesNotMatch(result.calls, /releases\/tags\//);
+  assert.equal(githubDraftLookup(t, { command: 'exists' }).status, 0);
+});
+
+test('draft lookup distinguishes absence from provider failures and rejects redirected locators', (t) => {
+  assert.equal(githubDraftLookup(t, { mode: 'missing', command: 'exists' }).status, 2);
+  for (const mode of ['auth', 'api-error']) {
+    const result = githubDraftLookup(t, { mode, command: 'exists' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Could not determine/);
+  }
+  for (const apiUrl of [
+    'https://example.com/repos/openclaw/Peekaboo/releases/123',
+    'https://api.github.com/repos/other/repo/releases/123',
+    'https://api.github.com/repos/openclaw/Peekaboo/releases/123?redirect=1',
+    'https://api.github.com/repos/openclaw/Peekaboo/releases/0'
+  ]) {
+    const result = githubDraftLookup(t, { apiUrl });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /invalid release API locator/);
+    assert.doesNotMatch(result.calls, /^api /m);
+  }
+});
 
 function safeTestsLaunch() {
   assert.ok(safeTestsFunction, 'test launcher must be inspectable without executing preparation');

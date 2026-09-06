@@ -776,7 +776,7 @@ ensure_github_release_tag() {
 verify_github_release_assets() {
     local npm_metadata_path="${1:-}" allow_body_mismatch="${2:-false}"
     local allow_asset_repair="${3:-false}"
-    local expected_assets_json expected_body_json release_json tag_commit
+    local expected_assets_json expected_body_json release_json release_api_path tag_commit
 
     echo -e "\n${BLUE}Verifying GitHub release assets...${NC}"
     assert_publication_receipt "$npm_metadata_path"
@@ -793,8 +793,8 @@ process.stdout.write(JSON.stringify(receipt.assets));
           "$RELEASE_DIR/github-release-body.md")
     fi
 
-    release_json=$(gh api --hostname "$GITHUB_HOST" \
-      "repos/${GITHUB_API_REPOSITORY}/releases/tags/v${VERSION}")
+    release_api_path=$(github_release_api_path) || fail "Could not locate the GitHub release draft"
+    release_json=$(gh api --hostname "$GITHUB_HOST" "$release_api_path")
     printf '{"release":%s,"version":"%s","sourceCommit":"%s","tagCommit":"%s","expectedAssets":%s,"expectedBody":%s,"expectDraft":true,"allowAssetRepair":%s}\n' \
         "$release_json" "$VERSION" "$RELEASE_SOURCE_COMMIT" "$tag_commit" "$expected_assets_json" \
         "$expected_body_json" "$allow_asset_repair" |
@@ -936,22 +936,31 @@ prepare_release_assets() {
     RELEASE_ASSETS+=("$RELEASE_DIR/checksums.txt")
 }
 
-github_release_exists() {
-    local error_path result
+github_release_api_path() {
+    local error_path result api_url release_id
     error_path=$(mktemp "${TMPDIR:-/tmp}/peekaboo-gh-release-view.XXXXXX")
-    if gh api --hostname "$GITHUB_HOST" \
-      "repos/${GITHUB_API_REPOSITORY}/releases/tags/v${VERSION}" >/dev/null 2> "$error_path"; then
+    # The REST tag endpoint omits drafts, including drafts whose Git tag already exists.
+    if api_url=$(gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+      --json apiUrl --jq .apiUrl 2> "$error_path"); then
         rm -f "$error_path"
-        return 0
     else
         result=$?
-        if /usr/bin/grep -Eq 'HTTP 404|Not Found.*404' "$error_path"; then
+        if /usr/bin/grep -Eq '^release not found$' "$error_path"; then
             rm -f "$error_path"
             return 2
         fi
         rm -f "$error_path"
         fail "Could not determine whether the GitHub release draft exists (gh exit $result)"
     fi
+    release_id=${api_url##*/}
+    [[ "$release_id" =~ ^[1-9][0-9]*$ &&
+       "$api_url" == "https://api.github.com/repos/${GITHUB_API_REPOSITORY}/releases/${release_id}" ]] ||
+        fail "GitHub returned an invalid release API locator"
+    printf 'repos/%s/releases/%s\n' "$GITHUB_API_REPOSITORY" "$release_id"
+}
+
+github_release_exists() {
+    github_release_api_path >/dev/null
 }
 
 create_github_release_draft() {
