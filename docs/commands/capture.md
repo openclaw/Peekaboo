@@ -84,7 +84,8 @@ Peekaboo starts the process-group leader suspended, captures and revalidates its
 forwarding, clears inherited termination-signal masks, restores default SIGINT/SIGTERM dispositions, and only then
 releases command code. If generation evidence is unavailable, no child code runs. Blocking
 leader observation runs outside Swift's cooperative executor so concurrent actions cannot starve cancellation or timeout
-work. After the direct child exits Peekaboo gives remaining members a bounded TERM grace,
+work. Timeout and cancellation give the child a 500 ms TERM grace measured after signal dispatch, still capped by the
+capture's absolute completion deadline. After the direct child exits Peekaboo gives remaining members a bounded TERM grace,
 escalates to KILL, and verifies that the group is gone before post-roll completion, artifact validation, or manifest
 publication. Startup, child timeout, TERM/KILL escalation, and descendant drain share the capture's one absolute
 deadline; one blocking waiter owns escalation, and post-roll uses its recorded completion boundary so actor scheduling

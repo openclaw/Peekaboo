@@ -329,7 +329,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
             let nowNs = DispatchTime.now().uptimeNanoseconds
             let effectiveDeadlineNs = self.effectiveWaitAbandonDeadline(originalNs: abandonDeadlineNs)
             if nowNs >= timeoutDeadlineNs {
-                self.requestTimeoutTermination(observedAtNs: nowNs)
+                self.requestTimeoutTermination()
             }
             self.sendTerminationKillIfDue(
                 observedAtNs: nowNs,
@@ -475,8 +475,8 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
             return
         }
         if self.terminationRequestedAtNs == nil {
-            self.terminationRequestedAtNs = requestedAtNs
             self.killProcessGroup(pid: pid, signal: SIGTERM)
+            self.terminationRequestedAtNs = DispatchTime.now().uptimeNanoseconds
         }
         self.lock.unlock()
     }
@@ -633,7 +633,7 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
         }
     }
 
-    private nonisolated func requestTimeoutTermination(observedAtNs: UInt64) {
+    private nonisolated func requestTimeoutTermination() {
         self.lock.lock()
         defer { self.lock.unlock() }
         guard !self.forceStop,
@@ -643,8 +643,8 @@ private final class CaptureActionProcessBox: @unchecked Sendable {
               !self.didFinishWaiting
         else { return }
         self.timedOut = true
-        self.terminationRequestedAtNs = observedAtNs
         self.killProcessGroup(pid: pid, signal: SIGTERM)
+        self.terminationRequestedAtNs = DispatchTime.now().uptimeNanoseconds
     }
 
     private nonisolated func sendTerminationKillIfDue(

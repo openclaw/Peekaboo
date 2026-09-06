@@ -223,6 +223,37 @@ struct CaptureActionProcessRunnerTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func `TERM grace starts after dispatch`(cancel: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-action-delayed-term-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("graceful-exit")
+        let ready = root.appendingPathComponent("ready")
+        let task = Task {
+            try await CaptureActionProcessRunner.run(
+                command: ["/usr/bin/perl", "-e", Self.gracefulTermHandlerScript, marker.path, ready.path, "0.1"],
+                timeoutSeconds: cancel ? 5 : 1,
+                signalProcessGroup: { pid, signal in
+                    if signal == SIGTERM {
+                        usleep(750_000)
+                    }
+                    _ = Darwin.kill(-pid, signal)
+                }
+            )
+        }
+
+        if cancel {
+            try await Self.waitUntilFileExists(ready)
+            task.cancel()
+        }
+        let result = try await task.value
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        #expect(result.exitCode == 0)
+        #expect(result.timedOut == !cancel)
+    }
+
     @Test
     func `cancellation returns quickly for TERM ignoring child with long timeout`() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -616,8 +647,9 @@ struct CaptureActionProcessRunnerTests {
     }
 
     private static let gracefulTermHandlerScript = """
-    my ($marker, $ready) = @ARGV;
+    my ($marker, $ready, $handler_delay) = @ARGV;
     $SIG{TERM} = sub {
+        select(undef, undef, undef, $handler_delay) if defined($handler_delay);
         open(my $fh, '>', $marker) or die "marker: $!";
         print $fh "ok\\n";
         close($fh);
