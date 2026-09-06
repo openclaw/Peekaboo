@@ -71,7 +71,9 @@ rg -Fq 'release-driver-contract.mjs' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'release-plan.json' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'github-release' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'npm-publication' "$ROOT_DIR/scripts/release-binaries.sh"
-rg -Fq '"repos/${GITHUB_API_REPOSITORY}/releases/tags/v${VERSION}"' \
+rg -Fq 'github_release_api_path' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq -- '--json apiUrl' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'release_json=$(gh api --hostname "$GITHUB_HOST" "$release_api_path")' \
   "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'ensure_github_release_tag' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--verify-tag' "$ROOT_DIR/scripts/release-binaries.sh"
