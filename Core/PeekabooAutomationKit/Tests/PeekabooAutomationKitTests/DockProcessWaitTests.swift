@@ -20,14 +20,29 @@ struct DockProcessWaitTests {
         #expect(process.terminationStatus == 7)
     }
 
-    @Test
-    func `timed out child is killed and reaped`() throws {
+    @Test(arguments: [0.0, 0.1])
+    func `timed out child is killed and reaped`(startupDelay: Double) throws {
         let process = Process()
+        let readiness = Pipe()
+        defer { try? readiness.fileHandleForReading.close() }
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "trap '' TERM; exec /bin/sleep 30"]
+        process.arguments = ["-c", "sleep \(startupDelay); trap '' TERM; printf r; exec /bin/sleep 30"]
+        process.standardOutput = readiness
 
         try process.run()
         let pid = process.processIdentifier
+        defer {
+            if process.isRunning {
+                _ = kill(pid, SIGKILL)
+                process.waitUntilExit()
+            }
+        }
+        try readiness.fileHandleForWriting.close()
+
+        // Process.run() does not guarantee that the child has installed its TERM handler.
+        var descriptor = pollfd(fd: readiness.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0)
+        try #require(poll(&descriptor, 1, 10000) == 1)
+        try #require(readiness.fileHandleForReading.read(upToCount: 1) == Data("r".utf8))
         let startedAt = Date()
 
         #expect(throws: PeekabooError.self) {
