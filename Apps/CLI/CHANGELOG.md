@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+**Highlights:** Explicit typing dispatch acceptance for scripts and more reliable release recovery.
+
+- Let standalone scripts opt into `type --accept-dispatched` while preserving strict defaults, unverified outcomes, retry warnings, and confirmed-only character counts; thanks @jandubois for #686.
+- Recover authenticated draft releases and accept npm's singleton-array publication metadata without weakening validation.
+- Treat release-preparation binary paths literally during permission, architecture, and help checks to prevent shell interpretation.
+- Update pnpm setup in release validation and hosted build preparation to 6.1.0.
+
 ## 4.3.1 - 2026-09-05
 
 **Highlights:** Exact popup and sheet screenshots, bounded image reads, and more reliable scripted commands.
