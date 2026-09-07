@@ -94,7 +94,7 @@ WindowServer bounds at the capture scale, both before and after conversion to lo
 or composited surface with different dimensions, the command fails before publishing an image or snapshot. A PNG
 does not provide a trustworthy global origin, so Peekaboo does not guess a crop or stretch that surface into the
 requested window. Missing, invalid, or non-pixel-representable bounds also fail closed. Native synthetic popup/sheet
-proof instructions are in [Exact-window capture testing](../testing/exact-window-capture.md).
+proof instructions are in [Exact-window capture testing](https://github.com/openclaw/Peekaboo/blob/main/docs/testing/exact-window-capture.md).
 
 Pixel-only `see --no-elements` captures without `--path` write a generated file beneath `PEEKABOO_DEFAULT_SAVE_PATH`, `defaults.savePath`, or the built-in `~/Desktop` default, in that order. Generated names retain a readable timestamp and include a unique token so concurrent callers do not share a path. This also applies with `--json`; `data.files[].path` reports the saved file. Ordinary element-producing `--json` observations without `--path` instead retain the raw image only in managed snapshot storage and return empty `screenshot_raw` and `screenshot_annotated` fields.
 
