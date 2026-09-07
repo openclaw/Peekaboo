@@ -10,8 +10,8 @@
  * 4. Build, CLI contract, and package verification
  */
 
-import { execSync, spawnSync } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
+import { execFileSync, execSync, spawnSync } from 'child_process';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -678,8 +678,7 @@ function buildAndVerifyPackage() {
   
   // Check if binary is executable
   try {
-    const stats = exec(`stat -f "%Lp" "${binaryPath}" 2>/dev/null || stat -c "%a" "${binaryPath}"`);
-    const perms = parseInt(stats, 8);
+    const perms = statSync(binaryPath).mode;
     if ((perms & 0o111) === 0) {
       logError('peekaboo binary is not executable');
       return false;
@@ -691,7 +690,11 @@ function buildAndVerifyPackage() {
   
   // Check binary architectures (arm64 required; x86_64 optional unless explicitly enforced)
   try {
-    const lipoOutput = exec(`lipo -info "${binaryPath}"`);
+    const lipoOutput = execFileSync('lipo', ['-info', binaryPath], {
+      cwd: projectRoot,
+      stdio: 'pipe',
+      encoding: 'utf8'
+    }).trim();
     const hasArm64 = lipoOutput.includes('arm64');
     const hasX86 = lipoOutput.includes('x86_64');
     if (!hasArm64) {
@@ -716,7 +719,11 @@ function buildAndVerifyPackage() {
   
   // Check if binary responds to --help
   try {
-    const helpOutput = exec(`"${binaryPath}" --help`);
+    const helpOutput = execFileSync(binaryPath, ['--help'], {
+      cwd: projectRoot,
+      stdio: 'pipe',
+      encoding: 'utf8'
+    }).trim();
     if (!helpOutput || helpOutput.length === 0) {
       logError('peekaboo binary does not respond to --help command');
       return false;

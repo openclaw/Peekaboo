@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Treat release-preparation binary paths literally during permission, architecture, and help checks to prevent shell interpretation.
 - Recover transactional app installs using authenticated GUI Bridge identity when atomic socket publication leaves `lsof` reporting the temporary bind path.
 
 ## 4.3.1 - 2026-09-05

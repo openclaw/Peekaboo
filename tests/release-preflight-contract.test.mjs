@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import {
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
+  rmSync, statSync, symlinkSync, writeFileSync
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -224,6 +227,162 @@ const prepareSource = readFileSync(new URL('../scripts/prepare-release.js', impo
 const driverSource = readFileSync(new URL('../scripts/release-binaries.sh', import.meta.url), 'utf8');
 const sanitizerPath = join(projectRoot, 'scripts/terminal-artifact-env.sh');
 const safeTestsFunction = prepareSource.match(/^function runSafeTests\(\) \{[\s\S]*?^\}/m)?.[0];
+
+function verifyBinaryFixture(t, {
+  name = 'peekaboo',
+  mode = 0o755,
+  missing = false,
+  symlink = false,
+  statFailure = false,
+  universal = false,
+  architectures = 'arm64',
+  lipoExit = 0,
+  help = '  fixture help \u00e9\n',
+  helpExit = 0
+} = {}) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'peekaboo-binary-contract-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const tools = join(root, 'tools');
+  const binaryPath = join(root, name);
+  const callLog = join(root, 'calls.jsonl');
+  const messages = [];
+  const shellCalls = [];
+  mkdirSync(tools);
+  writeFileSync(join(root, 'package.json'), '{"version":"1.2.3"}\n');
+  const toolSource = (tool) => `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(process.env.FIXTURE_CALL_LOG, JSON.stringify({
+  tool: ${JSON.stringify(tool)}, args: process.argv.slice(2), cwd: process.cwd()
+}) + '\\n');
+process.stdout.write(process.env.${tool.toUpperCase()}_OUTPUT);
+process.exit(Number(process.env.${tool.toUpperCase()}_EXIT));
+`;
+  writeFileSync(join(tools, 'lipo'), toolSource('lipo'), { mode: 0o755 });
+  if (!missing) {
+    const target = symlink ? join(root, 'target-binary') : binaryPath;
+    writeFileSync(target, toolSource('binary'));
+    chmodSync(target, mode);
+    if (symlink) symlinkSync(target, binaryPath);
+  }
+  const env = {
+    PATH: `${tools}:/usr/bin:/bin`,
+    HOME: root,
+    TMPDIR: root,
+    LANG: 'C',
+    FIXTURE_CALL_LOG: callLog,
+    LIPO_OUTPUT: architectures,
+    LIPO_EXIT: String(lipoExit),
+    BINARY_OUTPUT: help,
+    BINARY_EXIT: String(helpExit),
+    PEEKABOO_REQUIRE_UNIVERSAL: universal ? '1' : '0'
+  };
+  const execFunction = prepareSource.match(/^function exec\(command, options = \{\}\) \{[\s\S]*?^\}/m)?.[0];
+  const verifyFunction = prepareSource.match(/^function buildAndVerifyPackage\(\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(execFunction && verifyFunction, 'inspect the actual checks without invoking main');
+  const legacyCommands = new Set([
+    `stat -f "%Lp" "${binaryPath}" 2>/dev/null || stat -c "%a" "${binaryPath}"`,
+    `lipo -info "${binaryPath}"`,
+    `"${binaryPath}" --help`
+  ]);
+  const verify = runInNewContext(`${execFunction}\n${verifyFunction}\nbuildAndVerifyPackage`, {
+    projectRoot: root, binaryOverride: binaryPath, noBuild: true, colors: {},
+    process: { env }, join, existsSync, readFileSync,
+    statSync(path) {
+      if (statFailure) throw new Error('fixture stat failure');
+      return statSync(path);
+    },
+    execSync(command, options) {
+      shellCalls.push(command);
+      // Refuse hostile red-phase commands before any shell or marker can run.
+      if (!legacyCommands.has(command) || /["$`]/.test(binaryPath)) {
+        throw new Error('fixture refused shell interpretation of the binary path');
+      }
+      return execSync(command, { ...options, env, timeout: 5000 });
+    },
+    execFileSync(file, args, options) {
+      assert.ok(file === 'lipo' || file === binaryPath, 'only fixture tools may execute');
+      return execFileSync(file, Array.from(args), { ...options, env, timeout: 5000 });
+    },
+    execNpm() { return 'peekaboo\npeekaboo-mcp.js\nREADME.md\nLICENSE\n'; },
+    execWithOutput() { assert.fail('binary verification must not build a release'); },
+    logStep() {},
+    log(message) { messages.push(message); },
+    logSuccess(message) { messages.push(message); },
+    logWarning(message) { messages.push(message); },
+    logError(message) { messages.push(message); }
+  });
+  const passed = verify();
+  const calls = existsSync(callLog)
+    ? readFileSync(callLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    : [];
+  for (const marker of ['dollar-marker', 'backtick-marker']) {
+    assert.equal(existsSync(join(root, marker)), false, 'path text must never run a marker command');
+  }
+  return { passed, calls, messages, shellCalls, root, binaryPath };
+}
+
+for (const name of [
+  'peekaboo with spaces',
+  "peekaboo 'single quotes'",
+  'peekaboo "double quotes"',
+  'peekaboo $(touch dollar-marker)',
+  'peekaboo `touch backtick-marker`'
+]) {
+  test(`binary verification passes a literal filename: ${name}`, (t) => {
+    const result = verifyBinaryFixture(t, { name });
+    assert.equal(result.passed, true, `${name}: ${result.messages.join('\n')}`);
+    assert.deepEqual(result.shellCalls, [], 'binary verification must not invoke a shell');
+    assert.deepEqual(result.calls, [
+      { tool: 'lipo', args: ['-info', result.binaryPath], cwd: result.root },
+      { tool: 'binary', args: ['--help'], cwd: result.root }
+    ]);
+  });
+}
+
+test('binary verification follows symlinks and accepts owner-only executable permission', (t) => {
+  for (const symlink of [false, true]) {
+    const result = verifyBinaryFixture(t, { symlink, mode: 0o744 });
+    assert.equal(result.passed, true, result.messages.join('\n'));
+    assert.deepEqual(result.calls.map((call) => call.tool), ['lipo', 'binary']);
+    assert.deepEqual(result.calls[0].args, ['-info', result.binaryPath]);
+  }
+});
+
+test('binary verification preserves permission, architecture, and command failures', (t) => {
+  const cases = [
+    [{ missing: true }, 'peekaboo binary not found', []],
+    [{ mode: 0o644 }, 'peekaboo binary is not executable', []],
+    [{ statFailure: true }, 'Failed to check binary permissions', []],
+    [{ architectures: ' \nx86_64 \n' }, 'peekaboo binary is missing arm64', ['lipo']],
+    [{ universal: true }, 'peekaboo binary does not contain x86_64', ['lipo']],
+    [{ lipoExit: 31 }, 'Failed to check binary architectures (lipo command failed)', ['lipo']],
+    [{ help: '' }, 'peekaboo binary does not respond to --help command', ['lipo', 'binary']],
+    [{ help: ' \t\n' }, 'peekaboo binary does not respond to --help command', ['lipo', 'binary']],
+    [{ helpExit: 29 }, 'peekaboo binary failed to execute with --help', ['lipo', 'binary']],
+    // Any executable bit passes the mode gate, even when this owner cannot execute.
+    [{ mode: 0o654 }, 'peekaboo binary failed to execute with --help', ['lipo']]
+  ];
+  for (const [options, diagnostic, tools] of cases) {
+    const result = verifyBinaryFixture(t, options);
+    assert.equal(result.passed, false, JSON.stringify(options));
+    assert.ok(result.messages.some((message) => message.includes(diagnostic)),
+      `${JSON.stringify(options)}: ${result.messages.join('\n')}`);
+    assert.deepEqual(result.calls.map((call) => call.tool), tools);
+    if (options.architectures) assert.ok(result.messages.includes('Found: x86_64'));
+    if (options.helpExit) assert.ok(result.messages.some((message) => message.startsWith('Error: ')));
+  }
+});
+
+test('binary verification requires x86_64 only in universal mode', (t) => {
+  for (const universal of [false, true]) {
+    const result = verifyBinaryFixture(t, { universal, architectures: ' \narm64 x86_64 \n' });
+    assert.equal(result.passed, true, result.messages.join('\n'));
+    assert.ok(result.messages.includes('Binary contains both arm64 and x86_64 architectures'));
+  }
+  const arm = verifyBinaryFixture(t);
+  assert.equal(arm.passed, true, arm.messages.join('\n'));
+  assert.ok(arm.messages.includes('Binary is arm64-only (set PEEKABOO_REQUIRE_UNIVERSAL=1 to enforce universal)'));
+});
 
 function githubDraftLookup(t, { mode = 'draft', apiUrl, command = 'verify' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'peekaboo-draft-lookup-'));
