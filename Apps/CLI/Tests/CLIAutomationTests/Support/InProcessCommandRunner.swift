@@ -217,15 +217,26 @@ enum InProcessCommandRunner {
         standardInput: String? = nil,
         _ body: () async throws -> Int32
     ) async throws -> (Int32, Data, Data) {
-        // Prevent writes to closed pipes from crashing the test runner.
-        let previousSigpipeHandler = signal(SIGPIPE, SIG_IGN)
-        defer { _ = signal(SIGPIPE, previousSigpipeHandler) }
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
+        // Commands can replay more than a pipe buffer before returning to this runner.
+        let stdoutFile = try self.makeOutputFile()
+        defer { try? stdoutFile.close() }
+        let stderrFile = try self.makeOutputFile()
+        defer { try? stderrFile.close() }
 
         let originalStdout = dup(STDOUT_FILENO)
+        guard originalStdout >= 0 else { throw self.currentPOSIXError() }
+        defer {
+            fflush(stdout)
+            _ = dup2(originalStdout, STDOUT_FILENO)
+            close(originalStdout)
+        }
         let originalStderr = dup(STDERR_FILENO)
+        guard originalStderr >= 0 else { throw self.currentPOSIXError() }
+        defer {
+            fflush(stderr)
+            _ = dup2(originalStderr, STDERR_FILENO)
+            close(originalStderr)
+        }
         let originalStdin: Int32
         if standardInput == nil {
             originalStdin = -1
@@ -295,64 +306,32 @@ enum InProcessCommandRunner {
             clearerr(stdin)
         }
 
-        dup2(stdoutPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-        dup2(stderrPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+        fflush(stdout)
+        fflush(stderr)
+        guard dup2(stdoutFile.fileDescriptor, STDOUT_FILENO) >= 0,
+              dup2(stderrFile.fileDescriptor, STDERR_FILENO) >= 0
+        else { throw self.currentPOSIXError() }
 
-        stdoutPipe.fileHandleForWriting.closeFile()
-        stderrPipe.fileHandleForWriting.closeFile()
-
-        do {
-            let status = try await body()
-            dup2(originalStdout, STDOUT_FILENO)
-            dup2(originalStderr, STDERR_FILENO)
-            close(originalStdout)
-            close(originalStderr)
-
-            let stdoutData = self.drainNonBlocking(stdoutPipe.fileHandleForReading)
-            let stderrData = self.drainNonBlocking(stderrPipe.fileHandleForReading)
-            stdoutPipe.fileHandleForReading.closeFile()
-            stderrPipe.fileHandleForReading.closeFile()
-            return (status, stdoutData, stderrData)
-        } catch {
-            dup2(originalStdout, STDOUT_FILENO)
-            dup2(originalStderr, STDERR_FILENO)
-            close(originalStdout)
-            close(originalStderr)
-
-            _ = self.drainNonBlocking(stdoutPipe.fileHandleForReading)
-            _ = self.drainNonBlocking(stderrPipe.fileHandleForReading)
-            stdoutPipe.fileHandleForReading.closeFile()
-            stderrPipe.fileHandleForReading.closeFile()
-            throw error
-        }
+        let exitStatus = try await body()
+        fflush(stdout)
+        fflush(stderr)
+        try stdoutFile.seek(toOffset: 0)
+        try stderrFile.seek(toOffset: 0)
+        return try (exitStatus, stdoutFile.readToEnd() ?? Data(), stderrFile.readToEnd() ?? Data())
     }
 
-    private static func drainNonBlocking(_ handle: FileHandle) -> Data {
-        let fd = handle.fileDescriptor
-        let flags = fcntl(fd, F_GETFL)
-        if flags != -1 {
-            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+    private static func makeOutputFile() throws -> FileHandle {
+        var template = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-cli-output.XXXXXX").path.utf8CString
+        let descriptor = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
+        guard descriptor >= 0 else { throw self.currentPOSIXError() }
+        let path = template.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        guard unlink(path) == 0 else {
+            let error = self.currentPOSIXError()
+            close(descriptor)
+            throw error
         }
-
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        var data = Data()
-
-        while true {
-            let bytesRead = read(fd, &buffer, buffer.count)
-            if bytesRead > 0 {
-                data.append(buffer, count: bytesRead)
-                continue
-            }
-            if bytesRead == 0 {
-                break // EOF
-            }
-            if errno == EAGAIN || errno == EWOULDBLOCK {
-                break // no more data right now
-            }
-            break // other error; bail out
-        }
-
-        return data
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     private static func currentPOSIXError() -> NSError {

@@ -171,6 +171,27 @@ struct TypeCommandTruthTests {
     }
 
     @Test
+    func `Large typing output is captured completely without pipe backpressure`() async throws {
+        let text = String(repeating: "x", count: 128 * 1024)
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(delivery: .init(
+            mechanism: .globalEvents,
+            mode: .foreground
+        ))
+        let result = try await InProcessCommandRunner.run(
+            ["type", text, "--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(automation: automation)
+        )
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<TypeCommandResult>.self
+        )
+        #expect(result.exitStatus == 0)
+        #expect(payload.data.requestedText == text)
+        #expect(payload.data.typedText == text)
+    }
+
+    @Test
     func `CLI prefers authoritative special key event count over legacy arithmetic`() async throws {
         let cases: [(arguments: [String], result: TypeResult, expectedSpecialKeys: Int)] = [
             (
