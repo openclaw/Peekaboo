@@ -295,7 +295,7 @@ test('full safe lane shares source gates and runs only the complete pinned comma
   assert.deepEqual(steps.filter((entry) => /\bbrew install\b|\brg --version\b|\buv --version\b/.test(entry)), [tools]);
   assert.match(safe, /if: matrix.group == 'full-safe'\n        id: safe\n        timeout-minutes: \$\{\{ matrix.test_minutes }}/);
   assert.match(install, /if: matrix.group == 'full-safe'\n        id: safe-install\n        timeout-minutes: 10/);
-  assert.match(pnpm, /if: matrix.group == 'full-safe'\n        timeout-minutes: 5\n        uses: pnpm\/action-setup@v6\.0\.9/);
+  assert.match(pnpm, /if: matrix.group == 'full-safe'\n        timeout-minutes: 5\n        uses: pnpm\/action-setup@v6\.1\.0/);
   assert.match(pnpm, /run_install: false\n          cache: false/);
   assert.doesNotMatch(pnpm, /\n\s+version:/, 'pnpm version must come from package.json');
   assert.match(workflow, /uses: actions\/setup-node@v7\n        with:\n          node-version: '24'\n          package-manager-cache: false/);

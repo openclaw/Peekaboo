@@ -178,7 +178,7 @@ jobs:
       - name: Set up repository-pinned pnpm
         if: matrix.group == 'full-safe'
         timeout-minutes: 5
-        uses: pnpm/action-setup@v6.0.9
+        uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
           cache: false
