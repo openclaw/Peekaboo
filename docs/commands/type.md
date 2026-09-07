@@ -23,6 +23,7 @@ that snapshot. Use `press` for standalone keys or chords.
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
 | `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
 | `--clear` | Clear before typing. Background targets prefer one AXValue replacement; keyboard fallback uses Cmd+A, Delete. |
+| `--accept-dispatched` | CLI only: also return exit 0 for accepted but unverified dispatch. Keeps the unverified outcome, zero confirmed counts, and observe-before-retry warning. Default remains confirmed change only. |
 | Target flags | `--app <name>`, `--pid <pid>`, or an exact window selector for background input. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global keyboard input. |
 | Focus flags | Foreground focus controls (`--no-auto-focus`, `--space-switch`, etc.). |
@@ -51,8 +52,13 @@ that snapshot. Use `press` for standalone keys or chords.
 - Background delivery prefers Accessibility value and selection edits for writable focused text controls. Unsupported or rejected AX routes fall back to process-targeted CoreGraphics keyboard events, which require Event Synthesizing access. Apps that accept neither background route may still need `--foreground`.
 - Printable event fallback carries Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.
 - Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Requests containing non-empty text, clear, or an editable focused-text key require Bridge protocol 1.36 plus `compositeTypeDelivery`, because those actions may use AXValue delivery; event-only special keys retain their earlier compatibility floor.
-- Event injection is not evidence that the receiver changed. A native `dispatched_unverified` result is returned as
-  non-success and requires a fresh observation; `typedText`, `totalCharacters`, and `keyPresses` claim completed work
+- Event injection is not evidence that the receiver changed. By default, a native `dispatched_unverified` result is
+  non-success and requires a fresh observation. Standalone CLI callers can opt into `--accept-dispatched` to return
+  exit 0 and `success: true` for this state, like `press` and `click`, without claiming the text arrived. The outcome
+  still reports `effect: unverifiable`, `retry_safe: false`, and `requires_fresh_observation: true`; confirmed counters
+  remain zero and `typedText` is omitted. This flag does not change foreground consent or Agent/MCP acceptance.
+  Missing, refused, partial, indeterminate, suspected-no-op, and confirmed-no-change results remain non-success.
+  `typedText`, `totalCharacters`, and `keyPresses` claim completed work
   only when the typing effect is a confirmed change. `confirmed_no_change` and missing outcomes are also non-success.
   Exact-window `--clear` followed only by printable literal text can confirm when a generation-bound, readable,
   non-secure AX value changes from its private pre-dispatch value to the exact requested value during a short bounded
@@ -74,6 +80,9 @@ peekaboo type "status report ready" --snapshot "$SNAPSHOT_ID" --clear
 
 # Intentionally dispatch foreground typing, then observe; this remains non-success without readback
 peekaboo type "status report ready" --app TextEdit --foreground
+
+# Accept dispatch for a script that performs its own follow-up observation
+peekaboo type "status report ready" --app TextEdit --foreground --accept-dispatched --json
 
 # Cadence options also require follow-up observation unless the exact replacement shape above applies
 peekaboo type "status report ready" --app TextEdit --wpm 140

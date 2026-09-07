@@ -37,6 +37,9 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     @Flag(help: "Clear the field before typing (Cmd+A, Delete)")
     var clear = false
 
+    @Flag(help: "Accept dispatched but unverified typing as success; observe before retrying")
+    var acceptDispatched = false
+
     @OptionGroup var target: InteractionTargetOptions
 
     @OptionGroup var focusOptions: FocusCommandOptions
@@ -134,7 +137,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                     snapshotId: observation.snapshotId,
                     target: deliveryTarget
                 )
-                _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+                try self.requireAcceptedTyping(
                     actionResult,
                     deliveryMode: Self.delivery(for: deliveryTarget).mode,
                     operation: "Typing"
@@ -358,7 +361,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                     windowBounds: authority.target.bounds
                 )
             )
-            _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+            try self.requireAcceptedTyping(
                 result,
                 deliveryMode: .background,
                 targetRequirement: .exact(expectedTarget),
@@ -403,6 +406,29 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             throw CancellationError()
         } catch {
             throw ValidationError("Snapshot '\(snapshotID)' is stale or has inconsistent target metadata")
+        }
+    }
+
+    private func requireAcceptedTyping(
+        _ result: UIAutomationActionResult<TypeResult>,
+        deliveryMode: DesktopActionOutcome.Delivery.Mode,
+        targetRequirement: UIAutomationActionResultSemantics.TargetRequirement = .optional,
+        operation: String
+    ) throws {
+        if self.acceptDispatched, result.outcome?.state == .dispatchedUnverified {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmedOrDispatched(requiring: deliveryMode),
+                targetRequirement: targetRequirement,
+                operation: operation
+            )
+        } else {
+            _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+                result,
+                deliveryMode: deliveryMode,
+                targetRequirement: targetRequirement,
+                operation: operation
+            )
         }
     }
 
@@ -601,6 +627,7 @@ extension TypeCommand: CommanderBindableCommand {
             self.profileOption = profile
         }
         self.clear = values.flag("clear")
+        self.acceptDispatched = values.flag("acceptDispatched")
         self.target = try values.makeInteractionTargetOptions()
         self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
@@ -631,8 +658,9 @@ extension TypeCommand: ParsableCommand {
                 discussion: """
                     The 'type' command sends keyboard input to a targeted app or snapshot
                     process. Background delivery is the default and requires a process target.
-                    Use --foreground for intentional global input. Success requires a confirmed
-                    receiver change; event dispatch alone remains a retry-unsafe non-success.
+                    Use --foreground for intentional global input. By default, success requires a
+                    confirmed receiver change. --accept-dispatched also accepts unverified dispatch;
+                    it remains retry-unsafe and requires a fresh observation.
 
                     EXAMPLES:
                       peekaboo type "Hello World" --snapshot "$SNAPSHOT_ID" --clear

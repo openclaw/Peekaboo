@@ -54,6 +54,72 @@ struct TypeCommandTruthTests {
     }
 
     @Test
+    func `Dispatch acceptance preserves uncertainty and confirmed counters`() async throws {
+        for foreground in [false, true] {
+            let automation = self.automation(focused: self.textFocus())
+            automation.actionOutcome = .dispatchedUnverified(
+                delivery: .init(
+                    mechanism: foreground ? .globalEvents : .windowTargetedEvents,
+                    mode: foreground ? .foreground : .background
+                ),
+                evidence: .deliveryAccepted,
+                unitCount: .one
+            )
+            let context = self.context(automation: automation)
+            let target = foreground ? ["--foreground"] : ["--app", "TextEdit"]
+            let result = try await self.runType(
+                ["Hello", "--accept-dispatched", "--json"] + target,
+                context: context
+            )
+            let payload = try ExternalCommandRunner.decodeJSONResponse(
+                from: result,
+                as: CodableJSONResponse<TypeCommandResult>.self
+            )
+            let envelope = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+
+            #expect(result.exitStatus == 0)
+            #expect(envelope.success == true)
+            #expect(envelope.outcome?.state == .dispatchedUnverified)
+            #expect(envelope.outcome?.dispatchState.unitCount == .one)
+            #expect(envelope.outcome?.mutationDispatched == true)
+            #expect(result.stdout.contains("\"retry_safe\" : false"))
+            #expect(result.stdout.contains("\"requires_fresh_observation\" : true"))
+            #expect(payload.data.typedText == nil)
+            #expect(payload.data.totalCharacters == 0)
+            #expect(payload.data.keyPresses == 0)
+            #expect(payload.data.specialKeyPresses == 0)
+            #expect(payload.data.requestedText == "Hello")
+        }
+    }
+
+    @Test
+    func `Dispatch acceptance never accepts other failures or wrong delivery`() async throws {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground)
+        let outcomes: [DesktopActionOutcome?] = [
+            nil,
+            .confirmedNoChange(),
+            .suspectedNoop(delivery: delivery),
+            .partial(delivery: delivery),
+            .refused(reason: .targetUnavailable),
+            .indeterminate(delivery: delivery, evidence: .completionUnknown),
+            .dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted
+            ),
+        ]
+        for outcome in outcomes {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = outcome
+            let result = try await InProcessCommandRunner.run(
+                ["type", "Hello", "--foreground", "--accept-dispatched", "--json"],
+                services: TestServicesFactory.makePeekabooServices(automation: automation)
+            )
+            #expect(result.exitStatus != 0)
+            #expect(!result.combinedOutput.contains("typedText"))
+        }
+    }
+
+    @Test
     func `Every non-confirmed typing state is CLI non-success without typed fields`() async throws {
         let delivery = DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground)
         let outcomes: [DesktopActionOutcome?] = [
@@ -241,6 +307,38 @@ struct TypeCommandTruthTests {
         #expect(payload.success == false)
         #expect(payload.outcome?.state == .indeterminate)
         #expect(payload.outcome?.mutationDispatched == true)
+    }
+
+    @Test
+    func `Accepted unverified typing after confirmed focus still invalidates observations`() async throws {
+        let windows = InputFocusWindowService(focusOutcome: InputFocusFixtures.focusOutcome)
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted
+        )
+        let base = TestServicesFactory.makeAutomationTestContext(automation: automation, windows: windows)
+        let services = InputExecutionHostServices(host: .remote, base: base.services)
+        _ = try await base.snapshots.createSnapshot()
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "Hello", "--window-id", String(InputFocusFixtures.windowID),
+                "--foreground", "--accept-dispatched", "--json",
+            ],
+            services: services
+        )
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<TypeCommandResult>.self
+        )
+        #expect(result.exitStatus == 0)
+        #expect(base.snapshots.invalidationCutoffs.count == 1)
+        #expect(await base.snapshots.getMostRecentSnapshot() == nil)
+        #expect(payload.data.typedText == nil)
+        #expect(payload.data.totalCharacters == 0)
+        #expect(payload.data.keyPresses == 0)
     }
 
     @Test

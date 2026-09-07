@@ -49,6 +49,11 @@ extension TypeCommand: CommanderSignatureProviding {
             ],
             flags: [
                 .commandFlag(
+                    "acceptDispatched",
+                    help: "Accept dispatched but unverified typing as success; observe before retrying",
+                    long: "accept-dispatched"
+                ),
+                .commandFlag(
                     "clear",
                     help: "Clear the field before typing (Cmd+A, Delete)",
                     long: "clear"
