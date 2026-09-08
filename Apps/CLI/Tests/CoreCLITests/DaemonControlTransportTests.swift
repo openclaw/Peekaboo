@@ -28,7 +28,11 @@ struct DaemonControlTransportTests {
         await peer.stop()
         let failure = try #require(error)
         #expect(failure.code == code)
-        let output = Self.captureOutput { handleGenericError(failure, jsonOutput: true, logger: Logger.shared) }
+        let output = try await captureStandardOutputText { handleGenericError(
+            failure,
+            jsonOutput: true,
+            logger: Logger.shared
+        ) }
         let envelope = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
         #expect(envelope["success"] as? Bool == false)
         #expect(envelope["data"] is NSNull)
@@ -151,18 +155,5 @@ struct DaemonControlTransportTests {
             hostKind: .gui,
             supportedOperations: [.daemonStatus, .daemonStop]
         )
-    }
-
-    private static func captureOutput(_ body: () -> Void) -> String {
-        let pipe = Pipe()
-        fflush(stdout)
-        let saved = dup(STDOUT_FILENO)
-        dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-        body()
-        fflush(stdout)
-        dup2(saved, STDOUT_FILENO)
-        close(saved)
-        try? pipe.fileHandleForWriting.close()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
 }

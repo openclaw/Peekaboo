@@ -12,7 +12,7 @@ struct CaptureOwnershipErrorOutputTests {
     func `nonaction see preflight JSON retains selected host and every blocker`(
         engine: String,
         emitter: String
-    ) throws {
+    ) async throws {
         var see = SeeCommand()
         see.runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: .init(
@@ -32,7 +32,7 @@ struct CaptureOwnershipErrorOutputTests {
             screenCaptureKitOwnershipDiagnostic: Self.diagnostic
         )
         // Use the command's classification without constructing a runtime or accessing its services/logger.
-        let output = try Self.captureJSON {
+        let output = try await Self.captureJSON {
             if emitter == "command" {
                 OutputCommand(defaultEffect: see.defaultEffect).handleError(error)
             } else {
@@ -49,14 +49,14 @@ struct CaptureOwnershipErrorOutputTests {
     }
 
     @Test(arguments: ["command", "generic", "render", "entrypoint"])
-    func `remote leaf failure retains capture code and typed evidence`(emitter: String) throws {
+    func `remote leaf failure retains capture code and typed evidence`(emitter: String) async throws {
         let failure = DesktopActionFailure.refused(
             route: .bridge,
             reason: .runtimeIncompatible,
             message: Self.diagnostic.userMessage
         ).preservingScreenCaptureKitDiagnostic(Self.diagnostic)
         #expect(failure.standardErrorCode == .captureFailed)
-        let output = try Self.emit(failure, using: emitter)
+        let output = try await Self.emit(failure, using: emitter)
         try Self.expectDiagnostic(output)
         #expect(output.response.outcome == failure.outcome.projection)
         #expect(output.response.error?.retry_safe == true)
@@ -64,7 +64,7 @@ struct CaptureOwnershipErrorOutputTests {
     }
 
     @Test(arguments: ["command", "generic", "render", "entrypoint"])
-    func `ownership blocker never overwrites earlier dispatched failure`(emitter: String) throws {
+    func `ownership blocker never overwrites earlier dispatched failure`(emitter: String) async throws {
         let failure = DesktopActionFailure.dispatchedUnverified(
             route: .bridge,
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -72,7 +72,7 @@ struct CaptureOwnershipErrorOutputTests {
             unitCount: .one,
             message: "A mutation was dispatched before capture failed"
         ).preservingScreenCaptureKitDiagnostic(Self.diagnostic)
-        let output = try Self.emit(failure, using: emitter)
+        let output = try await Self.emit(failure, using: emitter)
         try Self.expectDiagnostic(output)
         #expect(output.response.outcome == failure.outcome.projection)
         #expect(output.response.error?.retry_safe == false)
@@ -80,8 +80,8 @@ struct CaptureOwnershipErrorOutputTests {
     }
 
     @Test(arguments: ["command", "generic", "entrypoint"])
-    func `direct diagnostic emits capture code without action claims`(emitter: String) throws {
-        let output = try Self.captureJSON {
+    func `direct diagnostic emits capture code without action claims`(emitter: String) async throws {
+        let output = try await Self.captureJSON {
             if emitter == "command" {
                 OutputCommand(defaultEffect: nil).handleError(Self.diagnostic)
             } else if emitter == "generic" {
@@ -98,7 +98,7 @@ struct CaptureOwnershipErrorOutputTests {
     }
 
     @Test
-    func `Bridge error envelope retains independent diagnostic`() throws {
+    func `Bridge error envelope retains independent diagnostic`() async throws {
         let error = PeekabooBridgeErrorEnvelope(
             code: .internalError,
             message: Self.diagnostic.userMessage,
@@ -106,15 +106,15 @@ struct CaptureOwnershipErrorOutputTests {
                 StandardErrorCode.captureFailed.rawValue,
             screenCaptureKitOwnershipDiagnostic: Self.diagnostic
         )
-        let output = try Self.captureJSON { OutputCommand(defaultEffect: nil).handleError(error) }
+        let output = try await Self.captureJSON { OutputCommand(defaultEffect: nil).handleError(error) }
         try Self.expectDiagnostic(output)
         #expect(output.response.outcome == nil)
         #expect(output.response.error?.mutation_dispatched == nil)
     }
 
     @Test
-    func `unrelated errors omit diagnostic and old JSON still decodes`() throws {
-        let output = try Self.captureJSON {
+    func `unrelated errors omit diagnostic and old JSON still decodes`() async throws {
+        let output = try await Self.captureJSON {
             OutputCommand(defaultEffect: nil).handleError(Commander.ValidationError("Invalid input"))
         }
         #expect(output.response.error?.code == "VALIDATION_ERROR")
@@ -131,7 +131,7 @@ struct CaptureOwnershipErrorOutputTests {
     }
 
     @Test(arguments: ["command", "generic", "entrypoint"])
-    func `wrapped failure retains typed capture evidence and prior mutation`(emitter: String) throws {
+    func `wrapped failure retains typed capture evidence and prior mutation`(emitter: String) async throws {
         let failure = DesktopActionFailure.dispatchedUnverified(
             route: .bridge,
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -146,7 +146,7 @@ struct CaptureOwnershipErrorOutputTests {
         #expect(screenCaptureKitOwnershipDiagnostic(for: error) == Self.diagnostic)
         #expect(OutputCommand(defaultEffect: .unverifiable).mapErrorToCode(error) == .CAPTURE_FAILED)
         #expect(genericErrorCode(for: error) == .CAPTURE_FAILED)
-        let output = try Self.captureJSON {
+        let output = try await Self.captureJSON {
             switch emitter {
             case "command":
                 OutputCommand(defaultEffect: .unverifiable).handleError(error)
@@ -174,8 +174,8 @@ struct CaptureOwnershipErrorOutputTests {
     }
 
     @Test
-    func `standalone output diagnostic does not invent action metadata`() throws {
-        let output = try Self.captureJSON {
+    func `standalone output diagnostic does not invent action metadata`() async throws {
+        let output = try await Self.captureJSON {
             outputError(
                 message: Self.diagnostic.userMessage,
                 code: .CAPTURE_FAILED,
@@ -191,14 +191,14 @@ struct CaptureOwnershipErrorOutputTests {
     }
 
     @Test(arguments: ["command", "generic", "render", "entrypoint"])
-    func `known capture failure code survives without new diagnostic`(emitter: String) throws {
+    func `known capture failure code survives without new diagnostic`(emitter: String) async throws {
         let failure = DesktopActionFailure.preDispatchRefusal(
             route: .bridge,
             reason: .runtimeIncompatible,
             message: "Legacy capture refusal",
             standardErrorCode: .captureFailed
         )
-        let output = try Self.emit(failure, using: emitter)
+        let output = try await Self.emit(failure, using: emitter)
         #expect(output.response.error?.code == "CAPTURE_FAILED")
         #expect(output.diagnostic == nil)
         #expect(String(data: output.data, encoding: .utf8)?
@@ -229,8 +229,8 @@ struct CaptureOwnershipErrorOutputTests {
         }
     }
 
-    private static func emit(_ failure: DesktopActionFailure, using emitter: String) throws -> CapturedOutput {
-        try self.captureJSON {
+    private static func emit(_ failure: DesktopActionFailure, using emitter: String) async throws -> CapturedOutput {
+        try await self.captureJSON {
             switch emitter {
             case "command":
                 OutputCommand(defaultEffect: .unverifiable).handleError(failure)
@@ -284,22 +284,11 @@ struct CaptureOwnershipErrorOutputTests {
         let error: Failure
     }
 
-    private static func captureJSON(_ body: () -> Void) throws -> CapturedOutput {
-        let pipe = Pipe()
-        defer { Logger.shared.setJsonOutputMode(false) }
-        fflush(stdout)
-        let savedOutput = dup(STDOUT_FILENO)
-        guard savedOutput >= 0 else { throw CocoaError(.fileWriteUnknown) }
-        defer { close(savedOutput) }
-        guard dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) >= 0 else {
-            throw CocoaError(.fileWriteUnknown)
+    private static func captureJSON(_ body: () -> Void) async throws -> CapturedOutput {
+        let data = try await captureStandardOutputBytes {
+            defer { Logger.shared.setJsonOutputMode(false) }
+            body()
         }
-        pipe.fileHandleForWriting.closeFile()
-        body()
-        fflush(stdout)
-        guard dup2(savedOutput, STDOUT_FILENO) >= 0 else { throw CocoaError(.fileWriteUnknown) }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        pipe.fileHandleForReading.closeFile()
         return try CapturedOutput(
             data: data,
             response: JSONDecoder().decode(JSONResponse.self, from: data),
