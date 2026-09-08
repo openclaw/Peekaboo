@@ -62,12 +62,7 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
         let explicitlyRequestedInteractive = launchArguments.contains(Self.interactiveArgument)
         self.explicitlyRequestedBackgroundHost = explicitlyRequestedBackgroundHost
         self.currentBuildReceipt = currentBuildReceipt
-        let offendingArgument = launchArguments.enumerated().first { index, argument in
-            (index == 0 && !argument.hasPrefix("-")) ||
-                (argument.hasPrefix("--") && argument != Self.backgroundBridgeHostArgument &&
-                    argument != Self.interactiveArgument) ||
-                argument == "-V" || argument == "-v" || argument == "-h" || argument == "-j"
-        }?.element
+        let offendingArgument = Self.firstCommandLineArgument(in: launchArguments)
         self.mode = if let offendingArgument {
             .refusedCommandLineInvocation(argument: offendingArgument)
         } else if explicitlyRequestedBackgroundHost {
@@ -79,6 +74,27 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
         } else {
             .interactive
         }
+    }
+
+    private static func firstCommandLineArgument(in arguments: ArraySlice<String>) -> String? {
+        var acceptsCocoaValue = false
+        for argument in arguments {
+            if argument == Self.backgroundBridgeHostArgument || argument == Self.interactiveArgument ||
+                argument.hasPrefix("-psn_")
+            {
+                acceptsCocoaValue = false
+            } else if argument.hasPrefix("--") || ["-V", "-v", "-h", "-j"].contains(argument) {
+                return argument
+            } else if argument.hasPrefix("-") {
+                // Cocoa defaults may carry one value, unlike the app's valueless launch flags.
+                acceptsCocoaValue = true
+            } else if acceptsCocoaValue {
+                acceptsCocoaValue = false
+            } else {
+                return argument
+            }
+        }
+        return nil
     }
 
     @MainActor
