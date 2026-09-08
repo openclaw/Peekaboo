@@ -6,6 +6,22 @@ func captureStandardOutputBytes(
     isolation: isolated (any Actor)? = #isolation,
     operation: () async throws -> Void
 ) async throws -> Data {
+    await StandardOutputCaptureGate.shared.acquire()
+    do {
+        try Task.checkCancellation()
+        let data = try await captureStandardOutputUnlocked(isolation: isolation, operation: operation)
+        await StandardOutputCaptureGate.shared.release()
+        return data
+    } catch {
+        await StandardOutputCaptureGate.shared.release()
+        throw error
+    }
+}
+
+private func captureStandardOutputUnlocked(
+    isolation: isolated (any Actor)? = #isolation,
+    operation: () async throws -> Void
+) async throws -> Data {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("peekaboo-test-stdout-\(UUID().uuidString)")
     let descriptor = Darwin.open(url.path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
@@ -30,6 +46,28 @@ func captureStandardOutputBytes(
 
     try file.seek(toOffset: 0)
     return try file.readToEnd() ?? Data()
+}
+
+private actor StandardOutputCaptureGate {
+    static let shared = StandardOutputCaptureGate()
+    private var held = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if self.held {
+            await withCheckedContinuation { self.waiters.append($0) }
+        } else {
+            self.held = true
+        }
+    }
+
+    func release() {
+        if self.waiters.isEmpty {
+            self.held = false
+        } else {
+            self.waiters.removeFirst().resume()
+        }
+    }
 }
 
 func captureStandardOutputText(
