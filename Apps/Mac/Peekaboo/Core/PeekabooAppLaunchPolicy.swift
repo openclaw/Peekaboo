@@ -39,6 +39,7 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
     enum Mode: Equatable, Sendable {
         case interactive
         case backgroundBridgeHost
+        case refusedCommandLineInvocation(argument: String)
     }
 
     enum PresentationIntent: Equatable, Sendable {
@@ -61,7 +62,15 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
         let explicitlyRequestedInteractive = launchArguments.contains(Self.interactiveArgument)
         self.explicitlyRequestedBackgroundHost = explicitlyRequestedBackgroundHost
         self.currentBuildReceipt = currentBuildReceipt
-        self.mode = if explicitlyRequestedBackgroundHost {
+        let offendingArgument = launchArguments.enumerated().first { index, argument in
+            (index == 0 && !argument.hasPrefix("-")) ||
+                (argument.hasPrefix("--") && argument != Self.backgroundBridgeHostArgument &&
+                    argument != Self.interactiveArgument) ||
+                argument == "-v" || argument == "-h"
+        }?.element
+        self.mode = if let offendingArgument {
+            .refusedCommandLineInvocation(argument: offendingArgument)
+        } else if explicitlyRequestedBackgroundHost {
             .backgroundBridgeHost
         } else if explicitlyRequestedInteractive {
             .interactive

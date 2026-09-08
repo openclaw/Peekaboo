@@ -45,6 +45,13 @@ a concrete snapshot they remain diagnostic-only unless selected with `--bridge-s
 
 There is **no auto-launch** of Peekaboo.app.
 
+Peekaboo.app is the GUI/Bridge host; its bundle executable is not the CLI, even when a
+case-insensitive filesystem accepts the lowercase name `peekaboo`. CLI-style invocations such as
+`Peekaboo.app/Contents/MacOS/peekaboo --version` or `Peekaboo see --no-elements` print installation
+guidance to stderr and exit with status 64 before registering capture capability or starting a Bridge
+listener. Use the separate `peekaboo` binary from Homebrew or `peekaboo-macos-universal.tar.gz`.
+The app's `--background-bridge-host`, `--interactive`, and Cocoa/LaunchServices launch arguments remain supported.
+
 `pnpm app:restart` remains the contributor workflow: it builds Debug with the repository's ordinary
 local Xcode signing configuration. It does not require or inject an OpenClaw Foundation identity.
 Managed replacement of the stable TCC app is deliberately

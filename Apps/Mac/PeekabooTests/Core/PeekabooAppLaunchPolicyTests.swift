@@ -51,7 +51,45 @@ struct PeekabooAppLaunchPolicyTests {
             "--background-bridge-host=true",
         ])
 
+        #expect(policy.mode == .refusedCommandLineInvocation(argument: "--background-bridge-host=true"))
+    }
+
+    @Test(arguments: [
+        ["--interactive"],
+        ["-psn_0_123"],
+        ["-NSDocumentRevisionsDebugMode", "YES"],
+        ["--interactive", "-NSDocumentRevisionsDebugMode", "YES"],
+    ])
+    func `app and Cocoa launch arguments remain accepted`(arguments: [String]) {
+        let policy = PeekabooAppLaunchPolicy(arguments: ["Peekaboo"] + arguments)
+
         #expect(policy.mode == .interactive)
+    }
+
+    @Test(arguments: [
+        ["--version"],
+        ["--help"],
+        ["-v"],
+        ["-h"],
+        ["see", "--no-elements"],
+        ["permissions", "status"],
+        ["version"],
+    ])
+    func `CLI invocation is refused with the first offending argument`(arguments: [String]) {
+        let policy = PeekabooAppLaunchPolicy(arguments: ["Peekaboo"] + arguments)
+
+        #expect(policy.mode == .refusedCommandLineInvocation(argument: arguments[0]))
+    }
+
+    @Test(arguments: ["--background-bridge-host", "--interactive", "-psn_0_123"])
+    func `unknown long options are refused even after accepted flags`(argument: String) throws {
+        let receipt = try #require(self.receipt(bundleVersion: "42", codeSignatureHash: "abc123"))
+        let policy = PeekabooAppLaunchPolicy(
+            arguments: ["Peekaboo", argument, "--no-elements"],
+            managedReceipt: receipt,
+            currentBuildReceipt: receipt)
+
+        #expect(policy.mode == .refusedCommandLineInvocation(argument: "--no-elements"))
     }
 
     @Test

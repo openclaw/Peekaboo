@@ -215,6 +215,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didObserveAgentMode = false
 
     override init() {
+        if case let .refusedCommandLineInvocation(argument) = PeekabooAppLaunchPolicy(
+            arguments: CommandLine.arguments).mode
+        {
+            let message =
+                "Peekaboo.app is the GUI/Bridge host and cannot handle CLI argument \(argument.debugDescription). " +
+                "Use the separate peekaboo CLI binary from Homebrew or the release tarball " +
+                "peekaboo-macos-universal.tar.gz; the app bundle executable must not be used as the CLI.\n"
+            FileHandle.standardError.write(Data(message.utf8))
+            exit(EX_USAGE)
+        }
         try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
         ScreenCaptureKitOwnerLease.beginCurrentProcessCapabilityPreparation()
         let launchPolicy = PeekabooAppLaunchPolicy.current
