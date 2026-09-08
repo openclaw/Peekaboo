@@ -34,6 +34,24 @@ struct ConfigEditorLaunchTests {
     }
 
     @Test
+    func `CLI print-path does not create configuration or launch an editor`() async throws {
+        try await self.withTempConfigDir { dir in
+            let resolved = try CommanderRuntimeRouter.resolve(argv: [
+                "peekaboo", "config", "edit", "--print-path",
+                "--editor", dir.appendingPathComponent("missing-editor").path,
+            ])
+            var command = try CommanderCLIBinder.instantiateCommand(
+                ofType: ConfigCommand.EditCommand.self,
+                parsedValues: resolved.parsedValues
+            )
+
+            #expect(command.printPath)
+            try await command.run(using: self.makeRuntime())
+            #expect(!FileManager.default.fileExists(atPath: PeekabooCore.ConfigurationManager.configPath))
+        }
+    }
+
+    @Test
     func `EditCommand bounds a non-exiting editor`() async throws {
         try await self.withTempConfigDir { dir in
             let fileManager = FileManager.default

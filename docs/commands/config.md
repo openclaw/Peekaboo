@@ -14,7 +14,7 @@ read_when:
 | --- | --- | --- |
 | `init` | Create a default `config.json` (respects `--force`) and print provider readiness (env / credentials / OAuth) in human mode. | `--force` overwrites an existing file; `--timeout` bounds live checks (default `30s`; bare values are milliseconds). |
 | `show` | Print either the raw file or the fully merged “effective” view (config + env + credentials); human `--effective` also live-validates providers. | `--effective` switches to the merged view; `--timeout` bounds validation with the shared duration grammar; JSON mode emits a standard `{ success, data }` object with no appended text. |
-| `edit` | Opens the config in `$EDITOR` (or the `--editor` you pass) and validates the result after you quit. | `--editor` overrides the detected editor; `--timeout` is an optional bound (bare values are milliseconds). Omit it to wait until the editor exits. |
+| `edit` | Opens the config in `$EDITOR` (or the `--editor` you pass) and validates the result after you quit. | `--editor` overrides the detected editor; `--timeout` is an optional bound (bare values are milliseconds). Omit it to wait until the editor exits. `--print-path` prints the config path without creating the file or launching an editor. |
 | `validate` | Parses the config without writing anything and surfaces syntax/errors. | None. |
 | `status` | Display provider credential readiness. | `--timeout` (default `30s`; bare values are milliseconds). |
 | `login` | Run an OAuth flow (no API key stored) for supported providers. | `login openai` (ChatGPT/Codex), `login anthropic` (Claude Pro/Max). |
@@ -40,6 +40,9 @@ read_when:
 # Create a clean config + show the merged view
 peekaboo config init --force
 peekaboo config show --effective
+
+# Locate the config without opening an editor or creating a file
+peekaboo config edit --print-path
 
 # Add and validate an OpenRouter key with the no-echo prompt
 peekaboo config credential set openrouter

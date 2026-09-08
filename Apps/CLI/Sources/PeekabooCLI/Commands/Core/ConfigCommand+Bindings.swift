@@ -44,7 +44,7 @@ extension ConfigCommand.EditCommand: CommanderBindableCommand {
         if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
             self.timeout = timeout
         }
-        self.printPath = values.flag("print-path")
+        self.printPath = values.flag("printPath")
     }
 }
 
