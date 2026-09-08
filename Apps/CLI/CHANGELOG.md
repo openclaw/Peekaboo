@@ -7,8 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-**Highlights:** Safer Firestaff manifest reads with optional memory limits.
+**Highlights:** Prevent accidental GUI host launches and read Firestaff manifests more safely.
 
+- Refuse CLI-style invocations of Peekaboo.app before capture or Bridge startup, with guidance to use the separate `peekaboo` CLI binary. #706.
 - Read immutable Firestaff frames across atomic updates, reject detectable in-place rewrites, and add opt-in byte limits while preserving the unlimited default; thanks @SebTardif for #703.
 - Fix generated Homebrew formula smoke tests to recognize the v4 `Usage` header. #702.
 
