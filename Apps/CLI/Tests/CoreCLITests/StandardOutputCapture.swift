@@ -75,5 +75,5 @@ func captureStandardOutputText(
     _ operation: () async throws -> Void
 ) async throws -> String {
     let data = try await captureStandardOutputBytes(isolation: isolation, operation: operation)
-    return String(decoding: data, as: UTF8.self)
+    return String(data: data, encoding: .utf8) ?? ""
 }
