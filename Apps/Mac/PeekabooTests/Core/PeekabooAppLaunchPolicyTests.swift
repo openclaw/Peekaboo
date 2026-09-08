@@ -69,8 +69,11 @@ struct PeekabooAppLaunchPolicyTests {
     @Test(arguments: [
         ["--version"],
         ["--help"],
+        ["-V"],
         ["-v"],
         ["-h"],
+        ["-j"],
+        ["-j", "see"],
         ["see", "--no-elements"],
         ["permissions", "status"],
         ["version"],
@@ -81,15 +84,26 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(policy.mode == .refusedCommandLineInvocation(argument: arguments[0]))
     }
 
-    @Test(arguments: ["--background-bridge-host", "--interactive", "-psn_0_123"])
-    func `unknown long options are refused even after accepted flags`(argument: String) throws {
+    @Test(arguments: ["--background-bridge-host", "--interactive", "-psn_0_123"], ["--no-elements", "-V", "-j"])
+    func `CLI options are refused even after accepted flags`(argument: String, cliOption: String) throws {
         let receipt = try #require(self.receipt(bundleVersion: "42", codeSignatureHash: "abc123"))
         let policy = PeekabooAppLaunchPolicy(
-            arguments: ["Peekaboo", argument, "--no-elements"],
+            arguments: ["Peekaboo", argument, cliOption],
             managedReceipt: receipt,
             currentBuildReceipt: receipt)
 
-        #expect(policy.mode == .refusedCommandLineInvocation(argument: "--no-elements"))
+        #expect(policy.mode == .refusedCommandLineInvocation(argument: cliOption))
+    }
+
+    @Test
+    func `short version option overrides matching managed receipt`() throws {
+        let receipt = try #require(self.receipt(bundleVersion: "42", codeSignatureHash: "abc123"))
+        let policy = PeekabooAppLaunchPolicy(
+            arguments: ["Peekaboo", "-V"],
+            managedReceipt: receipt,
+            currentBuildReceipt: receipt)
+
+        #expect(policy.mode == .refusedCommandLineInvocation(argument: "-V"))
     }
 
     @Test

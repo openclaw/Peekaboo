@@ -66,7 +66,7 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
             (index == 0 && !argument.hasPrefix("-")) ||
                 (argument.hasPrefix("--") && argument != Self.backgroundBridgeHostArgument &&
                     argument != Self.interactiveArgument) ||
-                argument == "-v" || argument == "-h"
+                argument == "-V" || argument == "-v" || argument == "-h" || argument == "-j"
         }?.element
         self.mode = if let offendingArgument {
             .refusedCommandLineInvocation(argument: offendingArgument)
