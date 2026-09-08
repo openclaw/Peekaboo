@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refuse CLI-style invocations of Peekaboo.app before capture or Bridge startup, with guidance to use the separate `peekaboo` CLI binary.
+
 ## 4.3.2 - 2026-09-07
 
 **Highlights:** Explicit typing dispatch acceptance for scripts, plus more reliable app installation and release recovery.
