@@ -564,7 +564,7 @@ struct CaptureActionCommandEndToEndTests {
         #expect(!FileManager.default.fileExists(atPath: marker.path))
 
         var cliCommand = command
-        let output = try await Self.captureStandardOutput {
+        let output = try await captureStandardOutputBytes {
             _ = try? await cliCommand.run(using: self.makeRuntime())
         }
         let envelope = try JSONDecoder().decode(ResultEnvelope<Empty?>.self, from: output)
@@ -833,24 +833,6 @@ struct CaptureActionCommandEndToEndTests {
             bundleShortVersion: "4.2.3",
             bundleVersion: "1"
         )
-    }
-
-    private static func captureStandardOutput(
-        operation: () async -> Void
-    ) async throws -> Data {
-        let pipe = Pipe()
-        let originalStandardOutput = dup(STDOUT_FILENO)
-        guard originalStandardOutput >= 0,
-              dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) >= 0
-        else {
-            throw POSIXError(.EIO)
-        }
-        await operation()
-        fflush(stdout)
-        _ = dup2(originalStandardOutput, STDOUT_FILENO)
-        close(originalStandardOutput)
-        try pipe.fileHandleForWriting.close()
-        return try pipe.fileHandleForReading.readToEnd() ?? Data()
     }
 }
 

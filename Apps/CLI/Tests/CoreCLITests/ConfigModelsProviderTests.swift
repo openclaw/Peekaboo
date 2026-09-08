@@ -68,7 +68,7 @@ struct ConfigModelsProviderTests {
             var command = ConfigCommand.ModelsProviderCommand()
             command.providerId = "openai-proxy"
             command.save = true
-            let output = try await captureStandardOutput {
+            let output = try await captureStandardOutputText {
                 try await command.run(using: self.makeRuntime(jsonOutput: true))
             }
 
@@ -119,7 +119,7 @@ struct ConfigModelsProviderTests {
             command.providerId = "openai-proxy"
             command.discover = true
             command.save = true
-            let output = try await captureStandardOutput {
+            let output = try await captureStandardOutputText {
                 try await command.run(using: self.makeRuntime(jsonOutput: true))
             }
 
@@ -178,7 +178,7 @@ struct ConfigModelsProviderTests {
             command.providerId = "openai-proxy"
             command.discover = true
             command.save = true
-            let output = try await captureStandardOutput {
+            let output = try await captureStandardOutputText {
                 let exitCode = await #expect(throws: ExitCode.self) {
                     try await command.run(using: self.makeRuntime(jsonOutput: true))
                 }
@@ -211,7 +211,7 @@ struct ConfigModelsProviderTests {
 
             var command = ConfigCommand.TestProviderCommand()
             command.providerId = "broken-openai"
-            let output = try await self.captureStandardOutput {
+            let output = try await captureStandardOutputText {
                 let exitCode = await #expect(throws: ExitCode.self) {
                     try await command.run(using: self.makeRuntime(jsonOutput: true))
                 }
@@ -236,7 +236,7 @@ struct ConfigModelsProviderTests {
 
             var command = ConfigCommand.TestProviderCommand()
             command.providerId = "broken-anthropic"
-            let output = try await self.captureStandardOutput {
+            let output = try await captureStandardOutputText {
                 let exitCode = await #expect(throws: ExitCode.self) {
                     try await command.run(using: self.makeRuntime(jsonOutput: true))
                 }
@@ -262,7 +262,7 @@ struct ConfigModelsProviderTests {
             var command = ConfigCommand.ModelsProviderCommand()
             command.providerId = "broken-discover"
             command.discover = true
-            let output = try await self.captureStandardOutput {
+            let output = try await captureStandardOutputText {
                 let exitCode = await #expect(throws: ExitCode.self) {
                     try await command.run(using: self.makeRuntime())
                 }
@@ -294,35 +294,6 @@ struct ConfigModelsProviderTests {
             configuration: .init(verbose: false, jsonOutput: jsonOutput, logLevel: nil),
             services: PeekabooServices()
         )
-    }
-
-    private func captureStandardOutput(_ body: () async throws -> Void) async throws -> String {
-        let pipe = Pipe()
-        let originalStandardOutput = dup(STDOUT_FILENO)
-        guard originalStandardOutput >= 0 else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        guard dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) >= 0 else {
-            close(originalStandardOutput)
-            throw CocoaError(.fileWriteUnknown)
-        }
-        pipe.fileHandleForWriting.closeFile()
-
-        do {
-            try await body()
-            fflush(nil)
-            _ = dup2(originalStandardOutput, STDOUT_FILENO)
-            close(originalStandardOutput)
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            pipe.fileHandleForReading.closeFile()
-            return String(data: data, encoding: .utf8) ?? ""
-        } catch {
-            fflush(nil)
-            _ = dup2(originalStandardOutput, STDOUT_FILENO)
-            close(originalStandardOutput)
-            pipe.fileHandleForReading.closeFile()
-            throw error
-        }
     }
 
     private func withTempConfigDir(_ body: () async throws -> Void) async throws {
