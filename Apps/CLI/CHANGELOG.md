@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Refuse CLI-style invocations of Peekaboo.app before capture or Bridge startup, with guidance to use the separate `peekaboo` CLI binary. #706.
 - Read immutable Firestaff frames across atomic updates, reject detectable in-place rewrites, and add opt-in byte limits while preserving the unlimited default; thanks @SebTardif for #703.
+- Honor `config edit --print-path` without creating a configuration file or launching an editor. #707.
 - Fix generated Homebrew formula smoke tests to recognize the v4 `Usage` header. #702.
 
 ## 4.3.2 - 2026-09-07
