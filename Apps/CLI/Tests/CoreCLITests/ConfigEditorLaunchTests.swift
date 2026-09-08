@@ -52,12 +52,15 @@ struct ConfigEditorLaunchTests {
             command.editor = editor.path
             command.timeout = .seconds(1)
 
-            let startedAt = Date()
+            let runtime = self.makeRuntime()
+            let startedAt = ContinuousClock.now
             let exitCode = await #expect(throws: ExitCode.self) {
-                try await command.run(using: self.makeRuntime())
+                try await command.run(using: runtime)
             }
             #expect(exitCode == ExitCode.failure)
-            #expect(Date().timeIntervalSince(startedAt) < 3)
+            // The one-second timeout permits two more seconds of termination cleanup.
+            // Leave scheduling headroom while staying below the editor's eight-second natural exit.
+            #expect(startedAt.duration(to: .now) < .seconds(5))
 
             let pidText = try String(contentsOf: pidFile, encoding: .utf8)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
