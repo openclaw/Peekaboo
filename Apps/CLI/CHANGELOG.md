@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+**Highlights:** Safer Firestaff manifest reads with optional memory limits.
+
+- Read immutable Firestaff frames across atomic updates, reject detectable in-place rewrites, and add opt-in byte limits while preserving the unlimited default; thanks @SebTardif for #703.
+- Fix generated Homebrew formula smoke tests to recognize the v4 `Usage` header. #702.
+
 ## 4.3.2 - 2026-09-07
 
 **Highlights:** Explicit typing dispatch acceptance for scripts and more reliable release recovery.
