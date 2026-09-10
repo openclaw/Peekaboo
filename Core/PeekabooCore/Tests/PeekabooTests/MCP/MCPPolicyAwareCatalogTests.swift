@@ -10,33 +10,14 @@ struct MCPPolicyAwareCatalogTests {
         let tool = PasteTool(context: backgroundContext)
         guard case let .object(schema) = tool.inputSchema,
               case let .object(properties)? = schema["properties"],
-              case let .array(required)? = schema["required"],
-              case let .array(targetAlternatives)? = schema["anyOf"]
+              case let .array(required)? = schema["required"]
         else {
             Issue.record("Expected background-only Paste schema")
             return
         }
         #expect(required == [Value.string("text")])
-        let requiredTargets = targetAlternatives.compactMap { alternative -> Set<String>? in
-            guard case let .object(fields) = alternative,
-                  case let .array(required)? = fields["required"]
-            else { return nil }
-            return Set(required.compactMap(\.stringValue))
-        }
-        #expect(Set(requiredTargets) == Set([
-            Set(["app"]),
-            Set(["pid"]),
-            Set(["app", "window_id"]),
-            Set(["pid", "window_id"]),
-            Set(["app", "window_title"]),
-            Set(["pid", "window_title"]),
-            Set(["app", "window_index"]),
-            Set(["pid", "window_index"]),
-        ]))
-        for alternative in targetAlternatives {
-            let required = try #require(Self.requiredFields(alternative))
-            #expect(Self.excludedTargetFields(alternative) ==
-                Set(["app", "pid", "window_id", "window_title", "window_index"]).subtracting(required))
+        for keyword in ["oneOf", "allOf", "anyOf"] {
+            #expect(schema[keyword] == nil)
         }
         #expect(properties["text"] != nil)
         #expect(properties["app"] != nil)
@@ -99,26 +80,6 @@ struct MCPPolicyAwareCatalogTests {
         #expect(foregroundProperties["window_id"]?.objectValue?["description"]?.stringValue?
             .contains("foreground focus") == true)
         #expect(foregroundTool.description.contains("Paste the current clipboard"))
-    }
-
-    private static func requiredFields(_ schema: Value) -> Set<String>? {
-        guard case let .object(fields) = schema,
-              case let .array(required)? = fields["required"]
-        else { return nil }
-        return Set(required.compactMap(\.stringValue))
-    }
-
-    private static func excludedTargetFields(_ schema: Value) -> Set<String> {
-        guard case let .object(fields) = schema,
-              case let .object(notSchema)? = fields["not"],
-              case let .array(alternatives)? = notSchema["anyOf"]
-        else { return [] }
-        return Set(alternatives.compactMap { alternative in
-            guard case let .object(fields) = alternative,
-                  case let .array(required)? = fields["required"]
-            else { return nil }
-            return required.compactMap(\.stringValue).first
-        })
     }
 
     @Test

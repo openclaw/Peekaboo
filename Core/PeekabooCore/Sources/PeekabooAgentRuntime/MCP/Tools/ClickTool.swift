@@ -25,7 +25,7 @@ public struct ClickTool: MCPTool {
     }
 
     public var inputSchema: Value {
-        let baseSchema = SchemaBuilder.object(
+        SchemaBuilder.object(
             properties: [
                 "query": SchemaBuilder.string(
                     description: """
@@ -98,67 +98,6 @@ public struct ClickTool: MCPTool {
                     description: "Foreground-only modifier keys. Requires foreground=true and a fresh exact snapshot."),
             ],
             required: [])
-
-        guard case let .object(fields) = baseSchema else { return baseSchema }
-        var schema = fields
-        schema["oneOf"] = .array(Self.targetRouteSchemas)
-        schema["allOf"] = .array([Self.exclusiveClickVariantSchema])
-        return .object(schema)
-    }
-
-    private static var targetRouteSchemas: [Value] {
-        [
-            self.exclusiveTargetRoute("on"),
-            self.exclusiveTargetRoute("query"),
-            self.exclusiveTargetRoute("coords", additionalFields: [
-                "anyOf": .array([
-                    self.requiredConstant("foreground", value: true),
-                    self.requiredConstant("background", value: false),
-                    .object(["required": .array([.string("snapshot")])]),
-                    .object(["required": .array([.string("coordinate_reference")])]),
-                ]),
-            ]),
-        ]
-    }
-
-    private static func exclusiveTargetRoute(
-        _ name: String,
-        additionalFields: [String: Value] = [:]) -> Value
-    {
-        let otherTargets = ["on", "query", "coords"].filter { $0 != name }
-        var fields = additionalFields
-        fields["required"] = .array([.string(name)])
-        fields["not"] = .object([
-            "anyOf": .array(otherTargets.map { target in
-                .object(["required": .array([.string(target)])])
-            }),
-        ])
-        return .object(fields)
-    }
-
-    private static func requiredConstant(_ name: String, value: Bool) -> Value {
-        .object([
-            "properties": .object([name: .object(["const": .bool(value)])]),
-            "required": .array([.string(name)]),
-        ])
-    }
-
-    private static var exclusiveClickVariantSchema: Value {
-        let variants = ["double", "right", "middle", "triple"]
-        let noVariant = Value.object([
-            "properties": .object(Dictionary(uniqueKeysWithValues: variants.map {
-                ($0, Value.object(["enum": .array([.bool(false)])]))
-            })),
-        ])
-        let selectedVariants = variants.map { selected in
-            Value.object([
-                "properties": .object(Dictionary(uniqueKeysWithValues: variants.map { variant in
-                    (variant, Value.object(["enum": .array([.bool(variant == selected)])]))
-                })),
-                "required": .array([.string(selected)]),
-            ])
-        }
-        return .object(["oneOf": .array([noVariant] + selectedVariants)])
     }
 
     public init(context: MCPToolContext = .shared) {

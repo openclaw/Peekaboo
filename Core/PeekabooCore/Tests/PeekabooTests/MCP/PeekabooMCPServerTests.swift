@@ -143,7 +143,7 @@ struct PeekabooMCPServerTests {
 
     @Test
     @MainActor
-    func `click wire schema requires an exclusive target and a background coordinate receipt`() async throws {
+    func `click wire schema is flat and documents runtime target constraints`() async throws {
         let context = await MCPToolTestHelpers.makeContext()
         let session = try await MCPWireSession.connect(context: context)
 
@@ -151,40 +151,16 @@ struct PeekabooMCPServerTests {
             let (tools, _) = try await session.client.listTools()
             let click = try #require(tools.first { $0.name == "click" })
             guard case let .object(schema) = click.inputSchema,
-                  case let .object(properties)? = schema["properties"],
-                  case let .array(routes)? = schema["oneOf"]
+                  case let .object(properties)? = schema["properties"]
             else {
-                Issue.record("click wire schema is missing its target routes")
+                Issue.record("click wire schema is missing its properties")
                 await session.stop()
                 return
             }
 
-            #expect(Set(routes.compactMap(Self.requiredFields)) == Set([["on"], ["query"], ["coords"]]))
-            for route in routes {
-                let required = try #require(Self.requiredFields(route)?.first)
-                #expect(Self.excludedTargetFields(route) == Set(["on", "query", "coords"]).subtracting([required]))
+            for keyword in ["oneOf", "allOf", "anyOf"] {
+                #expect(schema[keyword] == nil)
             }
-
-            let coordinateRoute = try #require(routes.first { Self.requiredFields($0) == ["coords"] })
-            guard case let .object(coordinateFields) = coordinateRoute,
-                  case let .array(coordinateAlternatives)? = coordinateFields["anyOf"]
-            else {
-                Issue.record("coordinate route is missing receipt and foreground alternatives")
-                await session.stop()
-                return
-            }
-
-            #expect(coordinateAlternatives.count == 4)
-            #expect(coordinateAlternatives.contains { Self.requiredFields($0) == ["snapshot"] })
-            #expect(coordinateAlternatives.contains { Self.requiredFields($0) == ["coordinate_reference"] })
-            #expect(Self.hasRequiredBooleanConstant(
-                name: "foreground",
-                value: true,
-                in: coordinateAlternatives))
-            #expect(Self.hasRequiredBooleanConstant(
-                name: "background",
-                value: false,
-                in: coordinateAlternatives))
 
             guard case let .object(snapshotSchema)? = properties["snapshot"],
                   case let .object(referenceSchema)? = properties["coordinate_reference"],
@@ -206,12 +182,6 @@ struct PeekabooMCPServerTests {
                 #expect(variantSchema["type"] == .string("boolean"))
                 #expect(variantSchema["default"] == .bool(false))
             }
-            guard case let .array(variantConstraints)? = schema["allOf"] else {
-                Issue.record("click wire schema is missing variant conflicts")
-                await session.stop()
-                return
-            }
-            #expect(!variantConstraints.isEmpty)
             for field in ["on", "query", "coords"] {
                 guard case let .object(targetSchema)? = properties[field] else {
                     Issue.record("click target property \(field) is missing")
@@ -718,36 +688,6 @@ struct PeekabooMCPServerTests {
 
         #expect(!names.contains("set_value"))
         #expect(!names.contains("action"))
-    }
-
-    private static func requiredFields(_ schema: Value) -> Set<String>? {
-        guard case let .object(fields) = schema,
-              case let .array(required)? = fields["required"]
-        else { return nil }
-        return Set(required.compactMap(\.stringValue))
-    }
-
-    private static func excludedTargetFields(_ schema: Value) -> Set<String>? {
-        guard case let .object(fields) = schema,
-              case let .object(notSchema)? = fields["not"],
-              case let .array(alternatives)? = notSchema["anyOf"]
-        else { return nil }
-        return Set(alternatives.flatMap { Self.requiredFields($0) ?? [] })
-    }
-
-    private static func hasRequiredBooleanConstant(
-        name: String,
-        value: Bool,
-        in schemas: [Value]) -> Bool
-    {
-        schemas.contains { schema in
-            guard Self.requiredFields(schema) == [name],
-                  case let .object(fields) = schema,
-                  case let .object(properties)? = fields["properties"],
-                  case let .object(property)? = properties[name]
-            else { return false }
-            return property["const"] == .bool(value)
-        }
     }
 
     private static func invalidParamsDetail(session: MCPWireSession, params: Value) async -> String? {

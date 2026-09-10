@@ -94,39 +94,9 @@ public struct PasteTool: MCPTool {
                 description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
                 default: false)
         }
-        let base = SchemaBuilder.object(
+        return SchemaBuilder.object(
             properties: properties,
             required: foregroundCapable ? [] : ["text"])
-        guard !foregroundCapable, case let .object(fields) = base else { return base }
-        var backgroundSchema = fields
-        backgroundSchema["anyOf"] = .array(Self.backgroundTargetRouteSchemas)
-        return .object(backgroundSchema)
-    }
-
-    private static var backgroundTargetRouteSchemas: [Value] {
-        ["app", "pid"].flatMap { owner in
-            [self.backgroundTargetRoute(owner: owner)] +
-                ["window_id", "window_title", "window_index"].map { window in
-                    self.backgroundTargetRoute(owner: owner, window: window)
-                }
-        }
-    }
-
-    private static func backgroundTargetRoute(owner: String, window: String? = nil) -> Value {
-        let owners: [String] = ["app", "pid"]
-        let windows: [String] = ["window_id", "window_title", "window_index"]
-        let otherOwners = owners.filter { $0 != owner }
-        let otherWindows = windows.filter { $0 != window }
-        let excludedTargets = otherOwners + otherWindows
-        let requiredTargets = [owner] + (window.map { [$0] } ?? [])
-        return .object([
-            "required": .array(requiredTargets.map(Value.string)),
-            "not": .object([
-                "anyOf": .array(excludedTargets.map { target in
-                    .object(["required": .array([.string(target)])])
-                }),
-            ]),
-        ])
     }
 
     public init(context: MCPToolContext = .shared) {
