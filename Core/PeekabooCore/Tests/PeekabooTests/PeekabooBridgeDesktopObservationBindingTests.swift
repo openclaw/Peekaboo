@@ -1,8 +1,8 @@
 import CoreGraphics
 import Foundation
-import PeekabooAutomationKit
 import PeekabooFoundation
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooBridge
 
 @Suite(.serialized)
@@ -563,6 +563,56 @@ struct PeekabooBridgeDesktopObservationBindingTests: DesktopObservationBindingFi
         #expect(PeekabooBridgeDesktopObservationBinding.mismatch(
             request: request,
             result: forged) == "frontmost application snapshot identity")
+    }
+
+    @Test
+    @MainActor
+    func `sparse exact window capture retains frontmost identity through signed validation`() async throws {
+        let fixture = Self.windowResult(.init(
+            processIdentifier: 42,
+            generation: 1001,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            applicationName: "Fixture",
+            windowID: 73,
+            title: "Document",
+            index: 0,
+            captureMode: .window))
+        let original = fixture.result.target
+        let richApp = ApplicationIdentity(
+            processIdentifier: 42,
+            processStartIdentity: 1001,
+            bundleIdentifier: "dev.peekaboo.fixture",
+            name: "Fixture",
+            executablePath: "/Applications/Fixture.app/Contents/MacOS/Fixture",
+            activationPolicy: .regular)
+        let resolved = ResolvedObservationTarget(
+            kind: original.kind,
+            app: richApp,
+            window: original.window,
+            bounds: original.bounds,
+            detectionContext: original.detectionContext)
+        let request = DesktopObservationRequest(target: .frontmost, detection: .init(mode: .none))
+        try DesktopObservationService.validateCaptureReceipt(fixture.result.capture, for: resolved)
+        let capture = DesktopObservationService.normalize(
+            capture: fixture.result.capture,
+            for: resolved,
+            requestedTarget: request.target)
+        let bound = DesktopObservationService.bindingCaptureReceipt(
+            to: resolved,
+            capture: capture,
+            requestedTarget: request.target)
+        let result = Self.replacingDiagnostics(
+            DesktopObservationResult(target: bound, capture: capture, elements: nil)
+                .withCaptureContentDigest(rawScreenshotData: nil, annotatedScreenshotData: nil),
+            stateSnapshot: DesktopStateSnapshot(frontmostApplication: richApp))
+
+        #expect(result.capture.metadata.applicationInfo?.executablePath == nil)
+        #expect(PeekabooBridgeDesktopObservationBinding.mismatch(request: request, result: result) == nil)
+        let signed = try await Self.makeBundle(
+            request: .desktopObservation(request),
+            response: .desktopObservation(result),
+            target: .window(fixture.identity))
+        try signed.validateIntegrity()
     }
 
     @Test

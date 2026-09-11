@@ -15,6 +15,10 @@ build-scoped daemon and may auto-start it before considering a healthy Peekaboo.
 AX-tree-only forms because their snapshots and capability decisions are host-memory state. An explicit
 `--bridge-socket`, a custom daemon socket, or `--no-remote` remains authoritative.
 
+Frontmost screenshots retain the application identity observed at the start of the request and report the logical
+`frontmost` capture mode, even when the capture engine uses that application's exact window. The captured process
+generation, window ID, and bounds must still match before the result can be accepted by the Bridge.
+
 Every reusable snapshot is identified by a producer-generated reference with the exact form `ps1_` followed by 32
 lowercase ASCII hexadecimal digits, for example `ps1_0123456789abcdef0123456789abcdef`. The 32-digit suffix contains
 128 random bits. The selected local or Bridge producer reserves that reference before storing detection results or

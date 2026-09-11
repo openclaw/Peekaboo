@@ -653,8 +653,11 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
                     error,
                     resolution: foregroundCaptureFailureResolution)
             }
-            let capture = Self.normalize(capture: rawCapture, for: target)
-            let captureBoundTarget = Self.bindingCaptureReceipt(to: target, capture: capture)
+            let capture = Self.normalize(capture: rawCapture, for: target, requestedTarget: request.target)
+            let captureBoundTarget = Self.bindingCaptureReceipt(
+                to: target,
+                capture: capture,
+                requestedTarget: request.target)
             let captureBoundResolution = UIAutomationActionResult(
                 payload: captureBoundTarget,
                 outcome: resolution.outcome,

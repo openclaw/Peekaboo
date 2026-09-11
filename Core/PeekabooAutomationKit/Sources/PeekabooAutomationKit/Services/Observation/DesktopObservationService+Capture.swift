@@ -87,7 +87,11 @@ extension DesktopObservationService {
         }
     }
 
-    static func normalize(capture: CaptureResult, for target: ResolvedObservationTarget) -> CaptureResult {
+    static func normalize(
+        capture: CaptureResult,
+        for target: ResolvedObservationTarget,
+        requestedTarget: DesktopObservationTargetRequest) -> CaptureResult
+    {
         guard
             let resolvedWindow = target.window,
             let capturedWindow = capture.metadata.windowInfo,
@@ -119,9 +123,17 @@ extension DesktopObservationService {
             isExcludedFromWindowsMenu: capturedWindow.isExcludedFromWindowsMenu,
             observationCapability: capturedWindow.observationCapability,
             mutationIdentity: capturedWindow.mutationIdentity)
+        let mode: CaptureMode = if case .frontmost = requestedTarget,
+                                   target.detectionContext?.windowMutationIdentity != nil,
+                                   capture.metadata.mode == .window
+        {
+            .frontmost
+        } else {
+            capture.metadata.mode
+        }
         let metadata = CaptureMetadata(
             size: capture.metadata.size,
-            mode: capture.metadata.mode,
+            mode: mode,
             videoTimestampMs: capture.metadata.videoTimestampMs,
             applicationInfo: capture.metadata.applicationInfo,
             windowInfo: normalizedWindow,
@@ -179,13 +191,23 @@ extension DesktopObservationService {
 
     static func bindingCaptureReceipt(
         to target: ResolvedObservationTarget,
-        capture: CaptureResult) -> ResolvedObservationTarget
+        capture: CaptureResult,
+        requestedTarget: DesktopObservationTargetRequest) -> ResolvedObservationTarget
     {
         let capturedApplication = capture.metadata.applicationInfo.map(ApplicationIdentity.init)
         let capturedWindow = capture.metadata.windowInfo.map(WindowIdentity.init)
+        // Capture receipt validation already proved this exact owner/window. Native capture metadata
+        // omits discovery-only fields that the signed frontmost snapshot must retain.
+        let application: ApplicationIdentity? = if case .frontmost = requestedTarget,
+                                                   target.detectionContext?.windowMutationIdentity != nil
+        {
+            target.app
+        } else {
+            capturedApplication ?? target.app
+        }
         return ResolvedObservationTarget(
             kind: target.kind,
-            app: capturedApplication ?? target.app,
+            app: application,
             window: capturedWindow ?? target.window,
             bounds: capturedWindow?.bounds ?? target.bounds,
             detectionContext: self.windowContext(for: target, capture: capture),

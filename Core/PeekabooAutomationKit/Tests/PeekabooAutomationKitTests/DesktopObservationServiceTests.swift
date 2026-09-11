@@ -163,6 +163,49 @@ extension DesktopObservationServiceTests {
         XCTAssertEqual(automation.detectCalls, 0)
     }
 
+    func testFrontmostObservationRetainsDiscoveryIdentityAfterExactWindowCapture() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 700,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            executablePath: "/Applications/Fixture.app/Contents/MacOS/Fixture",
+            activationPolicy: .regular)
+        let capturedApplication = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 700,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture")
+        let bounds = CGRect(x: 100, y: 100, width: 400, height: 300)
+        let window = Self.window(
+            id: 42,
+            title: "Captured",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 123,
+                ownerProcessStartIdentity: 700,
+                capturedBounds: bounds))
+        let capture = RecordingScreenCaptureService(
+            result: Self.captureResult(app: capturedApplication, window: window))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [application], windows: [window]),
+            exactWindowMetadataProvider: StableExactWindowMetadataProvider())
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .frontmost,
+            detection: .init(mode: .none)))
+
+        XCTAssertEqual(capture.operations, [.windowID(42, .logical1x, .auto)])
+        XCTAssertEqual(result.target.app, ApplicationIdentity(application))
+        XCTAssertEqual(result.target.app, result.diagnostics.stateSnapshot?.frontmostApplication)
+        XCTAssertEqual(result.capture.metadata.mode, .frontmost)
+        XCTAssertNil(result.capture.metadata.applicationInfo?.executablePath)
+        XCTAssertEqual(result.capture.metadata.windowInfo?.mutationIdentity, window.mutationIdentity)
+    }
+
     func testReusedPIDAndWindowIDFailWhenCaptureReceiptDisagrees() async throws {
         let oldApplication = ServiceApplicationInfo(
             processIdentifier: 123,
