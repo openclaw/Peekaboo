@@ -9,6 +9,7 @@ struct TTYCommandRunnerTests {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("tty-runner-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
 
         let scriptURL = tmp.appendingPathComponent("spawn_child.sh")
         let script = """
@@ -26,7 +27,7 @@ struct TTYCommandRunnerTests {
         let result = try runner.run(
             binary: scriptURL.path,
             send: "",
-            options: .init(rows: 5, cols: 40, timeout: 0.8, extraArgs: [])
+            options: .init(rows: 5, cols: 40, extraArgs: [])
         )
 
         guard let childPID = Self.extractChildPID(result.text) else {
@@ -34,10 +35,17 @@ struct TTYCommandRunnerTests {
             return
         }
 
-        usleep(150_000) // allow teardown signals to land
-
-        let stillAlive = kill(childPID, 0) == 0
-        #expect(stillAlive == false, "Child process (pid: \(childPID)) is still alive; process-group kill failed")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while kill(childPID, 0) == 0, ContinuousClock.now < deadline {
+            usleep(10000)
+        }
+        errno = 0
+        let probe = kill(childPID, 0)
+        let probeError = errno
+        #expect(
+            probe == -1 && probeError == ESRCH,
+            "Child process (pid: \(childPID)) was not proven absent after cleanup"
+        )
     }
 
     private static func extractChildPID(_ text: String) -> pid_t? {

@@ -1134,15 +1134,12 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             )
         }
 
-        var resumeHandshake: CheckedContinuation<Void, Never>?
         let uncooperativeHandshake = Task { @MainActor in
             try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
                 candidates: [candidate],
                 identity: identity,
                 handshake: { _, _ in
-                    await withCheckedContinuation { continuation in
-                        resumeHandshake = continuation
-                    }
+                    withUnsafeCurrentTask { $0?.cancel() }
                     return Self.handshake(
                         processIdentifier: 3131,
                         processStartIdentity: 4141,
@@ -1154,11 +1151,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 }
             )
         }
-        while resumeHandshake == nil {
-            await Task.yield()
-        }
-        uncooperativeHandshake.cancel()
-        resumeHandshake?.resume()
         await #expect(throws: CancellationError.self) {
             _ = try await uncooperativeHandshake.value
         }
@@ -1292,7 +1284,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             teamIdentifier: nil,
             processIdentifier: getpid()
         )
-        var resumeHandshake: CheckedContinuation<Void, Never>?
         let task = Task { @MainActor in
             var permissionRejections: [String] = []
             return try await RuntimeHostResolver.resolveRemoteServices(
@@ -1303,9 +1294,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 permissionRejections: &permissionRejections,
                 makeRemoteServices: Self.makeInertRemoteServices,
                 handshake: { _, _ in
-                    await withCheckedContinuation { continuation in
-                        resumeHandshake = continuation
-                    }
+                    withUnsafeCurrentTask { $0?.cancel() }
                     return Self.handshake(
                         processIdentifier: 4242,
                         processStartIdentity: 9001
@@ -1314,11 +1303,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             )
         }
 
-        while resumeHandshake == nil {
-            await Task.yield()
-        }
-        task.cancel()
-        resumeHandshake?.resume()
         await #expect(throws: CancellationError.self) {
             _ = try await task.value
         }
