@@ -20,6 +20,7 @@ public struct PasteTool: MCPTool {
             return """
             Deliver one direct text payload to an explicit app or PID UI target, optionally pinned to one exact
             window, under immutable background-only authority. This route does not touch the shared clipboard.
+            Provide exactly one of app or pid and at most one of window_id, window_title, or window_index.
             Current-clipboard, binary/file/image payloads, targetless input, and foreground delivery are unavailable.
             If delivery fails after it begins, a prefix may already be present; observe the exact target before
             retrying.

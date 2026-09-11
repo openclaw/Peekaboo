@@ -17,6 +17,7 @@ public struct ClickTool: MCPTool {
         """
         Clicks on UI elements or coordinates.
         Supports element queries, specific IDs from `see` or `inspect_ui`, or raw coordinates.
+        Choose exactly one of on, query, or coords, and at most one of double, triple, right, or middle.
         Background delivery is the default. Background coordinates require a nonempty snapshot or coordinate_reference
         from a fresh exact-window `see`; pid alone is never a safe coordinate target. Set `foreground` to true only for
         intentional shared-pointer input, which may omit the capture reference.

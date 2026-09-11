@@ -252,7 +252,11 @@ operations used to finalize the validated result. Current clients additionally r
 protocol 1.34 `producerBoundSnapshotReferences` capability before creating or publishing the reference; an old 1.34
 host cannot cause the result to be rebound locally.
 
-The `click` tool accepts exactly one target shape: `on`, `query`, or `coords`. Its published schema requires every
+The `click` and `paste` tools publish flat object schemas without root-level `oneOf`, `allOf`, or `anyOf`, so MCP clients
+can forward them to providers such as Anthropic without schema rewriting. Peekaboo enforces cross-field constraints
+at runtime before dispatch; the flat catalog does not relax target, receipt, or foreground-consent requirements.
+
+The `click` tool accepts exactly one target shape: `on`, `query`, or `coords`. Runtime validation requires every
 background `coords` call to include either `snapshot` or `coordinate_reference`; a PID alone is only a consistency
 check and never replaces the receipt. Both fields must be nonempty and identify a fresh exact-window `see` capture.
 Pass `coordinate_space: "image_pixels"` for delivered-raster pixels or `coordinate_space: "normalized"` for values
