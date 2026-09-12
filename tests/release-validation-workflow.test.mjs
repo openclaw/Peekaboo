@@ -44,13 +44,17 @@ function fixture(t) {
   return root;
 }
 
-test('normal macOS CI runs the complete serial Tachikoma suite in its existing hosted job', () => {
+test('normal macOS CI runs the complete serial Tachikoma suite in an independent hosted job', () => {
   const entry = tachikomaStep();
   const command = scriptFromStep('Run Tachikoma package tests', entry);
   assert.match(macosWorkflow, /\npermissions:\n  contents: read\n/);
   assert.equal(macosWorkflow.match(/^\s*permissions:/gm)?.length, 1);
-  assert.match(tachikomaJob, /^  tachikoma:\n    name: Tachikoma build & tests\n    runs-on: macos-26\n    needs: peekaboo-cli\n/);
-  assert.match(tachikomaJob, /uses: actions\/checkout@v7\n        with:\n          submodules: recursive\n          fetch-depth: 1\n          persist-credentials: false\n/);
+  assert.match(tachikomaJob, /^  tachikoma:\n    name: Tachikoma build & tests\n    runs-on: macos-26\n    steps:\n/);
+  assert.match(tachikomaJob, /uses: actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\.0\.1\n        with:\n          submodules: recursive\n          fetch-depth: 1\n          persist-credentials: false\n/);
+  assert.doesNotMatch(macosWorkflow, /^    needs:/m, 'Package checks and lint must schedule independently');
+  for (const [, action] of macosWorkflow.matchAll(/uses: ([^\n]+)/g)) {
+    assert.match(action, /^[\w-]+\/[\w-]+@[0-9a-f]{40} # v[0-9.]+$/, 'CI actions must retain reviewed commit pins');
+  }
   assert.doesNotMatch(macosWorkflow.split('\njobs:\n')[0], /\bsecrets\./,
     'Workflow-wide secrets must not reach the mock suite');
   assert.doesNotMatch(tachikomaJob, /\bsecrets\.|(?:OPENAI|ANTHROPIC)_API_KEY/,
@@ -58,7 +62,7 @@ test('normal macOS CI runs the complete serial Tachikoma suite in its existing h
   assert.doesNotMatch(tachikomaJob, /^\s*(?:ref|if|continue-on-error|timeout-minutes):|self-hosted/m);
   assert.doesNotMatch(tachikomaJob, /^\s*(?:export\s+)?(?:CI|HOME|RUNNER_\w+|GITHUB_\w+)\s*[:=]/m);
   assert.match(tachikomaJob, /name: Build Tachikoma\n        working-directory: Tachikoma\n        run: \|\n          swift build --configuration debug\n/);
-  assert.match(macosWorkflow, /\n  mac-apps:\n    name: Build macOS apps \(Peekaboo \+ Inspector\)\n    runs-on: macos-26\n    needs: \[peekaboo-cli, tachikoma\]/);
+  assert.match(macosWorkflow, /\n  mac-apps:\n    name: Build macOS apps \(Peekaboo \+ Inspector\)\n    runs-on: macos-26\n    steps:\n/);
   assert.match(macosWorkflow, /name: Run Mac package tests \(secretless hosted runner only\)\n        working-directory: Apps\/Mac\n[\s\S]*?        run: swift test --no-parallel\n/);
   assert.match(entry, /working-directory: Tachikoma\n        env:\n          TACHIKOMA_TEST_MODE: "mock"\n          TACHIKOMA_DISABLE_API_TESTS: "true"\n        run:/);
   assert.equal(macosWorkflow.match(/TACHIKOMA_TEST_MODE:/g)?.length, 1);

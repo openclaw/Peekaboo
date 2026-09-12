@@ -22,15 +22,14 @@ jobs:
       RUN_AUTOMATION_TESTS: "false"
       RUN_LOCAL_TESTS: "false"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Install Bun runtime
-        uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          bun-version: "latest"
+          node-version: "24"
 
       - name: Configure checkout-local Swift workspace
         run: python3 scripts/setup-swift-workspace.py setup
@@ -52,21 +51,6 @@ jobs:
           done
           /usr/bin/xcodebuild -version
 
-      - name: Prepare Swift Argument Parser fork
-        run: |
-          sudo mkdir -p /Users/steipete/Projects
-          sudo chown "$USER" /Users/steipete
-          sudo mkdir -p /Users/steipete/Projects
-          sudo chown "$USER" /Users/steipete/Projects
-          if [ -d /Users/steipete/Projects/swift-argument-parser ]; then
-            cd /Users/steipete/Projects/swift-argument-parser
-            git fetch origin approachable-concurrency
-            git checkout approachable-concurrency
-            git pull --ff-only origin approachable-concurrency
-          else
-            git clone --branch approachable-concurrency --depth 1 https://github.com/steipete/swift-argument-parser.git /Users/steipete/Projects/swift-argument-parser
-          fi
-
       - name: Compute SwiftPM cache key (PeekabooCore)
         id: cache-key-core
         env:
@@ -82,7 +66,7 @@ jobs:
           echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (PeekabooCore)
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.swiftpm
@@ -184,12 +168,11 @@ jobs:
   peekaboo-cli:
     name: Peekaboo CLI build & tests
     runs-on: macos-26
-    needs: peekaboo-core
     env:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
       PEEKABOO_SKIP_AUTOMATION: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 1
@@ -209,21 +192,6 @@ jobs:
           done
           /usr/bin/xcodebuild -version
 
-      - name: Prepare Swift Argument Parser fork
-        run: |
-          sudo mkdir -p /Users/steipete/Projects
-          sudo chown "$USER" /Users/steipete
-          sudo mkdir -p /Users/steipete/Projects
-          sudo chown "$USER" /Users/steipete/Projects
-          if [ -d /Users/steipete/Projects/swift-argument-parser ]; then
-            cd /Users/steipete/Projects/swift-argument-parser
-            git fetch origin approachable-concurrency
-            git checkout approachable-concurrency
-            git pull --ff-only origin approachable-concurrency
-          else
-            git clone --branch approachable-concurrency --depth 1 https://github.com/steipete/swift-argument-parser.git /Users/steipete/Projects/swift-argument-parser
-          fi
-
       - name: Compute SwiftPM cache key (CLI)
         id: cache-key-cli
         env:
@@ -239,7 +207,7 @@ jobs:
           echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (CLI)
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.swiftpm
@@ -313,9 +281,8 @@ jobs:
   tachikoma:
     name: Tachikoma build & tests
     runs-on: macos-26
-    needs: peekaboo-cli
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 1
@@ -338,21 +305,6 @@ jobs:
           rm -f .gitmodules
           git config --local --remove-section submodule.Tachikoma || true
 
-      - name: Prepare Swift Argument Parser fork
-        run: |
-          sudo mkdir -p /Users/steipete/Projects
-          sudo chown "$USER" /Users/steipete
-          sudo mkdir -p /Users/steipete/Projects
-          sudo chown "$USER" /Users/steipete/Projects
-          if [ -d /Users/steipete/Projects/swift-argument-parser ]; then
-            cd /Users/steipete/Projects/swift-argument-parser
-            git fetch origin approachable-concurrency
-            git checkout approachable-concurrency
-            git pull --ff-only origin approachable-concurrency
-          else
-            git clone --branch approachable-concurrency --depth 1 https://github.com/steipete/swift-argument-parser.git /Users/steipete/Projects/swift-argument-parser
-          fi
-
       - name: Compute SwiftPM cache key (Tachikoma)
         id: cache-key-tachikoma
         env:
@@ -368,7 +320,7 @@ jobs:
           echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (Tachikoma)
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.swiftpm
@@ -432,9 +384,8 @@ jobs:
   mac-apps:
     name: Build macOS apps (Peekaboo + Inspector)
     runs-on: macos-26
-    needs: [peekaboo-cli, tachikoma]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 1
@@ -496,7 +447,7 @@ jobs:
           test "$actual_revision" = "$expected_revision"
 
       - name: Build Inspector app (Xcode)
-        working-directory: Apps/PeekabooInspector
+        working-directory: Apps
         run: |
           /usr/bin/env \
             -u DYLD_LIBRARY_PATH \
@@ -507,19 +458,21 @@ jobs:
             -u DYLD_IMAGE_SUFFIX \
             -u DYLD_VERSIONED_LIBRARY_PATH \
             -u DYLD_VERSIONED_FRAMEWORK_PATH \
-            xcodebuild -project Inspector.xcodeproj \
+            xcodebuild -workspace Peekaboo.xcworkspace \
             -scheme Inspector \
             -configuration Debug \
             -sdk macosx \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
-            -derivedDataPath /tmp/DerivedData-Inspector
+            -derivedDataPath /tmp/DerivedData-Peekaboo
 
   lint:
     name: SwiftLint (core + CLI)
     runs-on: macos-26
-    needs: [peekaboo-cli, tachikoma, mac-apps]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install SwiftLint
         run: brew install swiftlint
