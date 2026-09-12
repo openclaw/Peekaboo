@@ -1,292 +1,117 @@
 ---
-summary: 'Review Peekaboo Architecture Overview guidance'
+summary: 'Package boundaries, runtime ownership, and execution contracts for Peekaboo.'
 read_when:
-  - 'planning work related to peekaboo architecture overview'
-  - 'debugging or extending features described here'
+  - 'finding the owner of an automation, agent, Bridge, or UI change'
+  - 'integrating Peekaboo services into a host'
 ---
 
-# Peekaboo Architecture Overview
+# Peekaboo architecture
 
-This document provides a high-level overview of how Tachikoma and PeekabooCore work together to provide AI-powered macOS automation capabilities.
+Peekaboo is a macOS automation system with a CLI, a menu-bar app, and an MCP server. The apps share automation
+services and result contracts; Tachikoma supplies model providers and streaming. The [project vision](https://github.com/openclaw/Peekaboo/blob/main/VISION.md)
+sets the platform and reliability scope. [Platform support](platform-support.md) lists the declared runtime floors.
 
-## System Architecture
+## Package boundaries
 
-### Core Components
+| Package or product | Owns |
+| --- | --- |
+| `PeekabooFoundation` | Shared errors and low-level value types. |
+| `PeekabooProtocols` | Cross-module protocols and transport-safe models. |
+| `PeekabooExternalDependencies` | The shared AXorcist, Commander, Algorithms, Logging, System, and Collections dependency boundary. |
+| `PeekabooAutomationKit` | Capture, desktop observation, input, application/menu/window services, snapshots, and typed automation models. |
+| `PeekabooAutomation` | AutomationKit re-exports, configuration, Tachikoma model resolution, and visualizer feedback adapters. |
+| `PeekabooBridge` | Authenticated host/client transport, request validation, capabilities, and operation receipts. |
+| `PeekabooVisualizer` | Visual feedback events, presets, and delivery to the app, independent of the agent runtime. |
+| `PeekabooUICore` | Shared SwiftUI inspector and overlay components. |
+| `PeekabooAgentRuntime` | Agent execution, MCP tools and catalogs, browser sessions, and tool formatting. |
+| `PeekabooCore` | Umbrella imports and the `PeekabooServices` container used by apps and the CLI. |
+| `Tachikoma` | Model providers, request configuration, and streaming. |
 
-```
-┌─────────────────┐
-│   Tachikoma     │  AI models + streaming
-└────────┬────────┘
-         │
-┌────────▼────────┐      ┌────────────────────┐      ┌────────────────────┐
-│ PeekabooAutomation│◄───►│ PeekabooAgentRuntime │◄───►│  PeekabooVisualizer  │
-│ UI/system services│      │ Agent + MCP runtime │      │ Visual feedback stack │
-└────────┬────────┘      └──────────┬──────────┘      └──────────┬──────────┘
-         │                           │                           │
-         └───────────────┬───────────┴───────────┬───────────────┘
-                         ▼                       ▼
-                  ┌─────────────┐        ┌──────────────┐
-                  │  PeekabooCore│        │   Apps / CLI │
-                  │ (umbrella)   │        │  consumers   │
-                  └─────────────┘        └──────────────┘
-```
+Automation behavior belongs in AutomationKit; agent and MCP adapters belong in AgentRuntime. Put shared UI in UICore
+and visual feedback in Visualizer. The public root `Package.swift` exports Foundation, Protocols, AutomationKit, and
+Bridge without the agent runtime or Tachikoma. Internal apps can link the umbrella or focused products as needed.
 
-- **PeekabooFoundation** – shared errors and low-level value types used across packages.
-- **PeekabooProtocols** – cross-module protocols and transport-safe model contracts.
-- **PeekabooExternalDependencies** – central package boundary for AXorcist, Swift Algorithms, Swift Log, Swift System, Commander, and Collections.
-- **PeekabooAutomationKit** – owns capture, observation, input, application/menu/window services, snapshot management, and typed automation models.
-- **PeekabooAutomation** – re-exports `PeekabooAutomationKit` and adds Peekaboo configuration, Tachikoma model resolution, and visualizer feedback adapters.
-- **PeekabooBridge** – request/response transport and host/client plumbing for permission-bearing runtimes.
-- **PeekabooVisualizer** – standalone visual feedback layer (`VisualizationClient`, event store, presets) used by automation and apps.
-- **PeekabooUICore** – shared SwiftUI inspector and overlay components used by app surfaces.
-- **PeekabooAgentRuntime** – MCP tools, ToolRegistry/formatters, and the agent service itself. Depends on `PeekabooAutomation` for services/data models and on `PeekabooVisualizer` for status tokens.
-- **PeekabooCore** – thin umbrella (`_exported` imports + `PeekabooServices` convenience container). Apps/CLI keep importing `PeekabooCore`, but large features can now link the more focused products directly. Whoever instantiates `PeekabooServices` is responsible for calling `installAgentRuntimeDefaults()` so MCP tools and the ToolRegistry share that instance.
-- **Tachikoma** – still the AI provider surface that the runtime modules call through. See
-  [providers.md](providers.md) for the current provider and model catalog.
+The repository uses submodules for AXorcist, Commander, Swiftdansi, Tachikoma, and TauTUI. Change these in their owning
+repositories before updating Peekaboo's pointers. The [build guide](building.md#commander-dependency-resolution)
+describes checkout-local dependency setup and the distinction between internal and public package resolution.
 
-### Runtime hosting
+## Service ownership
 
-Permission-bound automation can execute in three runtime shapes:
-
-| Runtime | State and permissions | Transport |
-| --- | --- | --- |
-| Reusable daemon | Warm snapshots, tracking, browser MCP state; daemon process TCC | `daemon.sock` Bridge protocol |
-| Peekaboo.app | GUI-held TCC grants and app lifecycle | `bridge.sock` Bridge protocol |
-| MCP server | Process-local services owned by the MCP client | stdio; no Bridge listener |
-
-CLI automation without a snapshot reference resolves a healthy daemon first, then a capable Peekaboo.app host, then
-auto-starts the reusable daemon. Operations that permit local fallback can run in the CLI process when no host is
-usable. Explicit socket and `--no-remote` flags override this selection.
-
-A concrete snapshot reference changes the authority rule from preference to producer affinity. Actionable references
-have the exact grammar `ps1_` followed by 32 lowercase hexadecimal digits (128 random bits). The resolver asks the
-caller-local store and every authenticated live daemon, Peekaboo.app, Claude.app, and Clawdbot.app Bridge candidate
-whether it owns that reference, then proceeds only when exactly one host claims it. Missing, incompatible, unreachable,
-or multiple owners are pre-dispatch refusals; Peekaboo does not replay the action against another host or reinterpret
-the reference as local state. An explicit socket restricts the ownership check to that listener, while `--no-remote`
-restricts it to caller-local services. See [bridge-host.md](bridge-host.md#snapshot-authority) for the handshake and
-compatibility contract.
-
-The daemon and GUI app never share a socket. Each Bridge listener holds an exclusive lease, publishes its socket
-atomically, and removes only the filesystem object it owns. See [daemon.md](daemon.md) and
-[bridge-host.md](bridge-host.md) for lifecycle, migration, security, and TCC troubleshooting.
-
-### Dependency Flow
-
-**Tachikoma** (AI Model Management)
-- Provides `LanguageModel`, the `ModelProvider` protocol, provider parsers, and `Tachikoma.generateText`.
-- `TachikomaConfiguration` supplies provider credentials and endpoint configuration.
-- `PeekabooAIService` resolves configured model strings and calls Tachikoma with the selected `LanguageModel`.
-
-**PeekabooAutomationKit**
-- Exposes automation protocols and concrete implementations such as `ScreenCaptureService`, `UIAutomationService`, `MenuService`, and `ProcessService`.
-- Owns capture, observation, input, window filtering, snapshot persistence, and their typed models.
-
-**PeekabooAutomation**
-- Re-exports `PeekabooAutomationKit` and adds `ConfigurationManager`, `PeekabooAIService`, and `VisualizerAutomationFeedbackClient`.
-- Depends on Tachikoma for provider/model execution and on `PeekabooVisualizer` for optional UI feedback.
-
-**PeekabooAgentRuntime**
-- Imports `PeekabooAutomation` for services/models and hosts MCP/agent tooling (`PeekabooAgentService`, `MCPToolContext`, `ToolRegistry`, CLI/MCP formatters).
-- Provides a clean `PeekabooServiceProviding` protocol so higher layers (CLI, macOS app, and the MCP server entrypoints) can swap concrete service collections without touching globals.
-
-**PeekabooVisualizer**
-- Stays decoupled from automation; only consumes `PeekabooProtocols` data (`DetectedElement`, `LogLevel`) so it can be embedded in other contexts later.
-- `VisualizationClient` is still accessed via `PeekabooAutomation` convenience wrappers, but the module boundary keeps visual dependencies out of headless hosts.
-
-## Tachikoma: AI Model Management
-
-### Architecture Pattern: Explicit Model Selection
-
-Peekaboo resolves configured provider strings into Tachikoma `LanguageModel` values before executing requests:
-
-```swift
-let ai = PeekabooAIService(configuration: .shared)
-let model = ai.resolveConfiguredModel("openai/gpt-5.6")
-let text = try await ai.generateText(prompt: "Describe this workflow", model: model)
-```
-
-### Key Components
-
-#### LanguageModel
-- **Role**: Typed model selection with provider identity and capability metadata.
-- **Resolution**: `ProviderParser`, `AIProviderParser`, and `LanguageModel.parse(from:)` turn configuration strings into model values.
-
-#### ModelProvider
-- **Role**: Provider execution protocol used by Tachikoma and Peekaboo's custom compatible-provider adapter.
-- **Supported Providers**: See [providers.md](providers.md) for the current provider reference.
-
-#### TachikomaConfiguration
-- **Role**: Provider keys, endpoints, and request configuration for Tachikoma calls.
-- **Sources**: Peekaboo's `ConfigurationManager` loads `~/.peekaboo/config.json`, `~/.peekaboo/credentials`, and environment variables, then applies those values to Tachikoma.
-
-## PeekabooCore: Automation Engine
-
-### Architecture Pattern: Service Orchestration
-
-PeekabooCore uses a service locator pattern with specialized service delegation:
-
-```swift
-let services = PeekabooServices()
-let automation = services.automation  // UIAutomationService
-let screenCapture = services.screenCapture  // ScreenCaptureService
-let applications = services.applications  // ApplicationService
-```
-
-### Service Hierarchy
-
-#### PeekabooServices (Service Locator)
-- **Role**: Central registry for all automation services
-- **Pattern**: Service locator with dependency injection support
-- **Lifecycle**: Manages service initialization and coordination
-
-##### Installing a services instance
-`PeekabooServices` no longer registers itself globally. Whoever constructs an instance (CLI runtime, macOS app, integration test, etc.) **must** call `services.installAgentRuntimeDefaults()` immediately after initialization. This wires the container into `MCPToolContext` and `ToolRegistry` so downstream tooling (MCP server, CLI `peekaboo tools`, agent service) can resolve the exact same services without touching singletons. Skipping the install step will cause MCP and ToolRegistry code to fatal because no default factory is configured.
-
-#### UIAutomationService (Orchestrator)
-- **Role**: Primary automation interface delegating to specialized services
-- **Delegation**: Routes operations to appropriate specialized services
-- **Snapshot Management**: Maintains state across automation workflows
-
-#### Specialized Services
-Each service handles a specific aspect of automation:
-
-- **ClickService**: Mouse interaction and element targeting
-- **TypeService**: Keyboard input and text manipulation
-- **ScreenCaptureService**: Display and window capture
-- **ApplicationService**: Application discovery and management
-- **WindowManagementService**: Window positioning and state control
-- **MenuService**: Menu bar navigation and interaction
-- **SnapshotManager**: State persistence and element caching
-
-### Threading Model
-
-**Main Thread Requirement**: All UI automation operations run on MainActor due to macOS requirements:
-
-```swift
-@MainActor
-public final class UIAutomationService: UIAutomationServiceProtocol {
-    // All operations are main-thread bound
-}
-```
-
-### Integration Points
-
-#### AI Integration
-PeekabooCore integrates with Tachikoma through `PeekabooAgentService`:
+`PeekabooServices` is a main-actor container. Its default initializer constructs the production services; its injected
+initializer accepts service implementations for hosts and tests. The container does not install global agent defaults
+automatically. A host that uses the default MCP context or tool registry installs its services explicitly:
 
 ```swift
 let services = PeekabooServices()
 services.installAgentRuntimeDefaults()
-let ai = PeekabooAIService(configuration: services.configuration)
-let model = ai.resolveConfiguredModel("anthropic/claude-opus-5") ?? .anthropic(.opus5)
-let agent = try PeekabooAgentService(services: services, defaultModel: model)
 ```
 
-#### Visual Feedback Integration
-Services automatically connect to PeekabooVisualizer when available:
+Keep that instance alive while its installed factories are used: they capture it without retaining it. Tests and
+embedded hosts can instead pass explicit service contexts. See
+[`PeekabooServiceProviding`](../Core/PeekabooCore/Sources/PeekabooAgentRuntime/Support/PeekabooServiceProviding.swift)
+for the installation boundary and [agent chat](agent-chat.md) for execution lifecycle.
 
-```swift
-// Automatic visualizer integration
-let visualizerClient = VisualizationClient.shared
-_ = await visualizerClient.showClickFeedback(at: clickPoint, type: clickType)
-```
+`PeekabooAIService` resolves configured provider strings to Tachikoma `LanguageModel` values. Configuration and provider
+selection are documented in [configuration](configuration.md) and [providers](providers.md), rather than duplicated here.
+The app and CLI share `~/.peekaboo/credentials`; `config.json` holds settings. A configured `PEEKABOO_CONFIG_DIR` changes
+that root. Credential persistence and migration rules belong to the configuration guide.
 
-Behind the scenes the client serializes a `VisualizerEvent` into `~/Library/Application Support/PeekabooShared/VisualizerEvents/<uuid>.json` and posts `boo.peekaboo.visualizer.event` via `NSDistributedNotificationCenter`. When Peekaboo.app is alive its `VisualizerEventReceiver` loads the payload and hands it to `VisualizerCoordinator`; otherwise the event is silently dropped and execution continues.
+## Runtime hosting and routing
 
-## Data Flow Architecture
+| Runtime | State and permissions | Transport |
+| --- | --- | --- |
+| Reusable daemon | Warm services, snapshots, tracking, and browser state; daemon process TCC grants. | `daemon.sock` or a build-scoped daemon socket. |
+| Peekaboo.app | GUI lifecycle and the app's TCC grants. | `bridge.sock`. |
+| MCP server | Services owned by the MCP client process. | stdio, without a Bridge listener. |
+| Local CLI | Services owned by one CLI invocation. | In-process calls. |
 
-### Automation Workflow
+Implicit CLI routing prefers a suitable daemon or GUI host and can start a daemon. Build-sensitive capture, AX,
+browser, and snapshot commands prefer the current CLI build's daemon. Explicit Bridge sockets and `--no-remote`
+constrain selection. Local fallback is operation-dependent; it does not make failed host actions safe to replay.
+[Daemon routing](daemon.md#runtime-ownership) is the detailed authority for host preference and migration.
 
-1. **Input**: Natural language task or direct API call
-2. **AI Processing**: `PeekabooAgentService` uses Tachikoma models
-3. **Service Orchestration**: `UIAutomationService` delegates to specialized services
-4. **Platform Integration**: Services use macOS APIs (Accessibility, ScreenCaptureKit)
-5. **Visual Feedback**: Operations trigger visualizer animations
-6. **Snapshot Management**: State cached for subsequent operations
+Actionable snapshots use `ps1_` followed by 32 lowercase hexadecimal digits. A concrete reference selects its unique
+authenticated producer, overriding ordinary host preference. Missing, unreachable, incompatible, or multiple owners
+cause refusal before dispatch. An explicit socket restricts ownership lookup to that host; `--no-remote` restricts it
+to caller-local services. Snapshots are not interchangeable between processes. See
+[Bridge snapshot authority](bridge-host.md#snapshot-authority) for the full protocol and compatibility contract.
 
-### Example Flow: "Click the Submit button"
+Each Bridge listener holds an exclusive lease, publishes its socket atomically, and removes only the filesystem object
+it owns. Browser sessions also retain caller, connection, and target identity; see [browser MCP](browser-mcp.md).
 
-```
-User Input ("Click Submit")
-    ↓
-PeekabooAgentService (AI interpretation)
-    ↓
-UIAutomationService.detectElements() → ElementDetectionService
-    ↓
-UIAutomationService.click() → ClickService
-    ↓
-macOS Accessibility APIs
-    ↓
-VisualizationClient (click animation)
-```
+## Observation, actions, and concurrency
 
-## Performance Characteristics
+A typical workflow observes a target, receives an identity-bound snapshot or result, and dispatches an action against
+that exact target. `DesktopObservationService` coordinates capture and optional element detection. Input services
+select the supported delivery mechanism and return evidence describing what happened. The CLI, MCP, and Bridge adapters
+preserve that evidence instead of inferring success from an absence of errors.
 
-### Service Performance Ranges
-- **Element Detection**: 200-800ms (AI analysis + accessibility correlation)
-- **Click Operations**: 10-50ms (accessibility API optimization)
-- **Screen Capture**: 20-100ms (ScreenCaptureKit acceleration)
-- **Application Discovery**: 20-200ms (depending on system load)
-- **Window Management**: 10-200ms (depending on operation complexity)
+The default agent/MCP authority is background-only. Foreground operations require explicit consent, and catalogs expose
+only actions supported by the session's authority. Once an action may have been dispatched, later validation or cleanup
+failure must preserve uncertainty and retry safety. See [automation](automation.md), [security](security.md), and
+[background computer-use testing](https://github.com/openclaw/Peekaboo/blob/main/docs/testing/background-computer-use.md) for the action contract and proof requirements.
 
-### Optimization Strategies
-- **Snapshot Caching**: Element detection results cached per snapshot
-- **Accessibility Timeouts**: Reduced from 6s to 2s to prevent hangs
-- **Dual APIs**: Modern ScreenCaptureKit with CGWindowList fallback
-- **Visual Feedback**: Async animations don't block automation operations
-
-## Error Handling Strategy
-
-### Layered Error Handling
-1. **Service Level**: Individual services handle API-specific errors
-2. **Orchestration Level**: UIAutomationService provides unified error handling
-3. **Agent Level**: AI agent handles retry logic and error recovery
-4. **Client Level**: Applications receive structured error information
-
-### Defensive Programming
-- **Permission Validation**: Automatic checks for Screen Recording and Accessibility permissions
-- **Timeout Protection**: Configurable timeouts prevent system hangs
-- **Graceful Degradation**: Fallback strategies for problematic applications
-- **State Validation**: Element existence and accessibility verification
+Service orchestration and AppKit-facing state use `MainActor`. Blocking native work and socket waits use bounded workers
+or transport queues so they do not hold the main actor or Swift's cooperative executor. A timeout does not necessarily
+stop an underlying native call: for example, the application-inventory worker keeps its slot until that call returns,
+refusing new work instead of growing a queue behind it.
 
 Checked dialog, focus, and window-identity probes use AXorcist's MainActor `Element.withMessagingTimeout` owner.
 Application and returned child references need separate scopes. Dialog scope failures propagate before fallback;
 optional focus/identity probes fail closed, while optional AX identifier failure can retain exact CG metadata.
 After successful setup, the synchronous scope attempts to reset to zero (not the previous timeout); reset failure
 overrides the operation's result or error. Cancellation must be thrown by the operation. Detached raw AX workers retain
-unchecked `AXChildWindowMessagingTimeout` scopes by design so their blocking calls stay off MainActor.
+unchecked `AXChildWindowMessagingTimeout` scopes so their blocking calls stay off MainActor.
 
-## Configuration Management
+## Presentation and verification
 
-### Multi-Source Configuration
-1. **Environment Variables**: `PEEKABOO_AI_PROVIDERS`, `OPENAI_API_KEY`, etc.
-2. **Credential Files**: `~/.peekaboo/config.json`, `~/.tachikoma/credentials`
-3. **Runtime Parameters**: Method-level configuration overrides
-4. **Feature Flags**: `PEEKABOO_USE_MODERN_CAPTURE`, etc.
+Automation feedback adapters submit `VisualizerEvent` values to the visualizer event store and notify Peekaboo.app.
+The app's receiver and coordinator render the overlays. Automation can continue without a running visualizer host;
+visual feedback is not proof that an action reached its target. See [visualizer](visualizer.md) for event delivery.
 
-### Configuration Precedence
-```
-CLI Arguments > Environment Variables > Credential Files > Config Files > Defaults
-```
+Agent and Mac tool summaries share the [tool formatter registry](https://github.com/openclaw/Peekaboo/blob/main/docs/tool-formatter-architecture.md). New result shapes
+should be handled at that shared boundary rather than independently in each app.
 
-## Future Architecture Considerations
-
-### Scalability
-- Service architecture supports horizontal scaling through additional specialized services
-- AI model provider supports multiple concurrent model instances
-- Snapshot management designed for multi-user and multi-process scenarios
-
-### Extensibility
-- Plugin architecture possible through service locator pattern
-- AI model provider supports custom model implementations
-- Visual feedback system can be extended with additional visualization types
-
-### Cross-Platform Potential
-- Service interfaces abstract platform-specific implementations
-- Threading model adaptable to other platforms
-- AI integration remains platform-agnostic
-
----
-
-*This architecture has been designed to be "really easy for other people to understand" while providing the performance and reliability needed for production automation workflows.*
+Use [building](building.md) for source setup, [testing tools](https://github.com/openclaw/Peekaboo/blob/main/docs/testing/tools.md) for manual recipes, and the focused
+contracts under `docs/testing/` for live qualification. Historical timing ranges and archived captures do not establish
+current performance or correctness; record the command, built revision, and observed result for the change being tested.

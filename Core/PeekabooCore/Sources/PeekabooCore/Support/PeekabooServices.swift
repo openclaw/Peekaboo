@@ -7,58 +7,12 @@ import PeekabooBridge
 import PeekabooFoundation
 import PeekabooVisualizer
 
-/**
- * Central service registry and coordination hub for all Peekaboo functionality.
- *
- * `PeekabooServices` is the main entry point for accessing all Peekaboo capabilities including
- * screen capture, UI automation, window management, and AI-powered operations. It provides
- * a unified interface that coordinates between different service implementations and manages
- * their lifecycle.
- *
- * ## Architecture Overview
- * PeekabooServices follows a service locator pattern where individual services are:
- * - **Injected at initialization**: All services are provided via dependency injection
- * - **Protocol-based**: Services implement specific protocols for testability
- * - **Thread-safe**: All services can be safely accessed from multiple threads
- * - **Stateless where possible**: Most services maintain minimal state
- *
- * ## Core Service Categories
- * - **Capture Services**: Screen capture, window capture, region capture
- * - **Automation Services**: Click, type, scroll, hotkey operations
- * - **Management Services**: Window, application, and session management
- * - **AI Services**: Model providers and intelligent automation agents
- *
- * ## Usage Example
- * ```swift
- * // Access a default instance
- * let services = PeekabooServices()
- *
- * // Capture a screenshot
- * let screenshot = try await services.screenCapture.captureScreen()
- *
- * // Perform UI automation
- * try await services.automation.click(target: .coordinate(100, 200))
- *
- * // Use AI agent for complex tasks
- * if let agent = services.agent {
- *     let result = try await agent.executeTask("Click the submit button")
- * }
- * ```
- *
- * ## Dependency Injection
- * For testing or custom configurations, services can be injected:
- * ```swift
- * let customServices = PeekabooServices(
- *     screenCapture: MockScreenCaptureService(),
- *     automation: MockAutomationService(),
- *     // ... other services
- * )
- * ```
- *
- * - Important: All services run on the main thread due to macOS UI automation requirements
- * - Note: The shared instance is automatically configured with production services
- * - Since: PeekabooCore 1.0.0
- */
+/// Main-actor service container shared by the CLI, app, and agent runtime.
+///
+/// The default initializer constructs production services; the injected initializer accepts host or test services.
+/// Call `installAgentRuntimeDefaults()` before using the default MCP context or tool registry, and keep this
+/// container alive while those factories are in use. Installation is explicit and does not retain the container.
+/// Native services manage their own bounded workers where blocking work must leave the main actor.
 @MainActor
 public final class PeekabooServices {
     /// Internal logger for debugging service initialization and coordination
