@@ -75,7 +75,11 @@ add another sleep or extend the session beyond its deadline.
 The command exits non-zero if the child command exits non-zero, times out, leaves a process-group descendant that Peekaboo cannot terminate, or required capture artifacts fail custody or semantic validation. JSON output includes the child command exit code/stdout/stderr, the normal `CaptureResult`, artifact validation details, the canonical `outcome`, and the SHA-256 receipt for `action.json`. Command success is cross-checked against the child, validation, and manifest receipt; effect/dispatch/retry fields are derived from the canonical outcome. A released child reports dispatched-unverified evidence rather than claiming a verified partial desktop change. Failures before focus or child release report a canonical refused, retry-safe, not-dispatched outcome.
 
 The child starts after the requested pre-roll while capture remains active, and capture continues through the full
-post-roll. Suspended spawn and process-generation attribution consume the action timeout before `SIGCONT`; Peekaboo
+post-roll. Positive post-roll also requires a valid image whose sampling began after the child completed; processing
+an older frame does not satisfy that requirement. A slow earlier frame can extend sampling beyond the requested
+post-roll boundary, within the existing duration, frame, and size caps. If a cap prevents the required sample, the
+capture reports incomplete coverage. Zero post-roll retains immediate stopping after the child completes.
+Suspended spawn and process-generation attribution consume the action timeout before `SIGCONT`; Peekaboo
 reports the effective timeout after the outer capture and cleanup deadline caps it. The pre-roll race does not join the
 long-running session task. A live capture deadline can also end an in-flight frame attempt, so one slow or
 cancellation-insensitive capture call cannot defer the action until after the requested session duration.
@@ -98,6 +102,12 @@ commit, and exact process generation, plus the exact frame/contact/metadata/vide
 refuses raw, ad-hoc, unstamped, untrusted-team, or unsigned hosts instead of publishing incomplete provenance.
 Retain the SHA-256 returned in CLI JSON with the manifest: the manifest is canonical and hash-bound to that result, but
 it is not by itself an independently signed certification artifact.
+
+New manifests include `timeline.sampleBoundary`, with canonical decimal-string nanosecond offsets from capture start
+for action completion and the last valid sample's start. Validation checks their millisecond projections and requires
+the sample to begin at or after action completion when positive post-roll is reported valid. Older version-1 manifests
+remain readable as elapsed-time evidence but do not prove a post-action sample; consumers requiring that guarantee
+must require `sampleBoundary` and verify the retained manifest SHA-256.
 
 The manifest records `containmentScope: process_group`. This lifecycle boundary covers the launched group, including
 ordinary background children, but it is not a hostile-process sandbox. A command that deliberately calls `setsid` or

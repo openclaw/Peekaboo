@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep action capture running until it samples after the child finishes and retain exact sample-boundary proof in new manifests; capture caps still fail incomplete coverage, while older version-1 manifests remain readable as legacy elapsed-time evidence.
+
 ## 4.3.4 - 2026-09-11
 
 **Highlights:** Restore provider-compatible MCP tools and frontmost daemon captures.

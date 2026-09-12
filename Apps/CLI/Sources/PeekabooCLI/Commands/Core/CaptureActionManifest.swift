@@ -192,7 +192,19 @@ struct CaptureActionManifest: Codable {
         else {
             return "Capture action manifest fields contradict the retained action evidence"
         }
+        if let sample = timeline.sampleBoundary {
+            guard sample.actionCompletedOffsetNs / 1_000_000 == UInt64(timeline.actionCompletedMs),
+                  sample.lastSampleStartedOffsetNs / 1_000_000 <= UInt64(timeline.samplingCompletedMs),
+                  request.postRollMs == 0 || !result.validation.ok || sample.samplesAfterAction
+            else {
+                return "Capture action manifest sample evidence contradicts post-roll coverage"
+            }
+        }
         return nil
+    }
+
+    var provesPostActionSample: Bool {
+        self.timeline.sampleBoundary?.samplesAfterAction == true
     }
 
     private static func artifactsAreCanonical(_ artifacts: [Artifact]) -> Bool {
@@ -209,6 +221,70 @@ struct CaptureActionManifest: Codable {
         let actionCompletedMs: Int
         let samplingCompletedMs: Int
         let captureCompletedMs: Int
+        /// Older version-1 manifests retain elapsed-time evidence without this sample proof.
+        let sampleBoundary: SampleBoundary?
+
+        init(
+            captureStartedAtUnixMs: Int64,
+            actionStartedMs: Int,
+            actionCompletedMs: Int,
+            samplingCompletedMs: Int,
+            captureCompletedMs: Int,
+            sampleBoundary: SampleBoundary? = nil
+        ) {
+            self.captureStartedAtUnixMs = captureStartedAtUnixMs
+            self.actionStartedMs = actionStartedMs
+            self.actionCompletedMs = actionCompletedMs
+            self.samplingCompletedMs = samplingCompletedMs
+            self.captureCompletedMs = captureCompletedMs
+            self.sampleBoundary = sampleBoundary
+        }
+    }
+
+    struct SampleBoundary: Codable, Sendable {
+        let actionCompletedOffsetNs: UInt64
+        let lastSampleStartedOffsetNs: UInt64
+
+        var samplesAfterAction: Bool {
+            self.lastSampleStartedOffsetNs >= self.actionCompletedOffsetNs
+        }
+
+        init(actionCompletedOffsetNs: UInt64, lastSampleStartedOffsetNs: UInt64) {
+            self.actionCompletedOffsetNs = actionCompletedOffsetNs
+            self.lastSampleStartedOffsetNs = lastSampleStartedOffsetNs
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case actionCompletedOffsetNs
+            case lastSampleStartedOffsetNs
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.actionCompletedOffsetNs = try Self.decodeOffset(.actionCompletedOffsetNs, from: container)
+            self.lastSampleStartedOffsetNs = try Self.decodeOffset(.lastSampleStartedOffsetNs, from: container)
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(String(self.actionCompletedOffsetNs), forKey: .actionCompletedOffsetNs)
+            try container.encode(String(self.lastSampleStartedOffsetNs), forKey: .lastSampleStartedOffsetNs)
+        }
+
+        private static func decodeOffset(
+            _ key: CodingKeys,
+            from container: KeyedDecodingContainer<CodingKeys>
+        ) throws -> UInt64 {
+            let text = try container.decode(String.self, forKey: key)
+            guard let value = UInt64(text), String(value) == text else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: key,
+                    in: container,
+                    debugDescription: "Sample offset must be canonical unsigned nanoseconds"
+                )
+            }
+            return value
+        }
     }
 
     struct Request: Codable {

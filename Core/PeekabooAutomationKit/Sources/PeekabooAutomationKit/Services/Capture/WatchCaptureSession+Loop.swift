@@ -209,6 +209,7 @@ extension WatchCaptureSession {
             }
             state.consecutiveDecodeFailures = 0
             state.framesSampled += 1
+            self.recordValidSample(startedAtNanoseconds: frameStartNs)
 
             if self.keepAllFrames {
                 try await self.keepAllFrame(

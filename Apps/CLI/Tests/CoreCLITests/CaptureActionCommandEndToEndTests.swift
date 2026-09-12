@@ -804,7 +804,7 @@ struct CaptureActionCommandEndToEndTests {
         }
     }
 
-    private func makeRuntime() -> CommandRuntime {
+    func makeRuntime() -> CommandRuntime {
         CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: PeekabooServices()
@@ -820,7 +820,7 @@ struct CaptureActionCommandEndToEndTests {
         return size.intValue > 0
     }
 
-    private static func authenticatedHostIdentity() -> PeekabooBridgeAuthenticatedHostIdentity {
+    static func authenticatedHostIdentity() -> PeekabooBridgeAuthenticatedHostIdentity {
         guard let processStartIdentity = SystemIdentityResolver.processStartIdentity(getpid()) else {
             preconditionFailure("Test process identity must be available")
         }
@@ -1316,7 +1316,7 @@ extension CaptureActionCommandEndToEndTests {
 }
 
 @MainActor
-private final class DeterministicCaptureActionFrameSource: CaptureFrameSource {
+final class DeterministicCaptureActionFrameSource: CaptureFrameSource {
     private let engine: String?
     private(set) var captureCount = 0
     var resolvedScopes: [CaptureScope] = []

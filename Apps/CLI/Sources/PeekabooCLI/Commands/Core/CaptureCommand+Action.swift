@@ -220,32 +220,19 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 throw ValidationError("Capture ended before action started")
             }
             self.resolvedRuntime.beginInteractionMutation()
-            let dispatchState = CaptureActionDispatchState()
-            let action: CaptureActionProcessResult
-            do {
-                action = try await self.executionDependencies.processRunner(
-                    self.command,
-                    timing.actionTimeout,
-                    actionCompletionDeadlineNs
-                ) { dispatchState.markDispatched(at: $0) }
-                self.recordChildDispatch(dispatchState)
-                self.childCommandCompleted = true
-            } catch {
-                self.recordChildDispatch(dispatchState)
-                throw error
-            }
-            guard let actionStartedNs = dispatchState.dispatchedAtMonotonicNanoseconds else {
-                throw CaptureActionProcessLaunchError(
-                    message: "Action runner returned without admitting child dispatch"
-                )
-            }
+            let (action, actionStartedNs) = try await self.runChildAction(
+                timing: timing,
+                completionDeadlineNs: actionCompletionDeadlineNs
+            )
             let actionStartedMs = Self.elapsedMilliseconds(
                 since: captureStartedNs,
                 endingAt: actionStartedNs
             )
             let resumedAtNs = DispatchTime.now().uptimeNanoseconds
             let actionCompletedNs = action.completedAtMonotonicNanoseconds ?? resumedAtNs
-            guard actionCompletedNs >= actionStartedNs, actionCompletedNs <= resumedAtNs else {
+            guard actionStartedNs >= captureStartedNs,
+                  actionCompletedNs >= actionStartedNs, actionCompletedNs <= resumedAtNs
+            else {
                 throw CaptureActionProcessLaunchError(
                     message: "Action runner returned an invalid completion boundary"
                 )
@@ -254,15 +241,13 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 since: captureStartedNs,
                 endingAt: actionCompletedNs
             )
-            let postRollDeadlineNs = try timing.postRollDeadline(startingAtNs: actionCompletedNs)
-            guard postRollDeadlineNs <= captureDeadlineNs else {
-                throw ValidationError("Action completion left insufficient time for the requested post-roll")
-            }
-            try await Self.sleep(untilMonotonicNanoseconds: postRollDeadlineNs)
-            session.requestStop()
-
-            let captureCompletion = try await captureTask.value
-            try Task.checkCancellation()
+            let captureCompletion = try await Self.finishPostRoll(
+                session: session,
+                captureTask: captureTask,
+                timing: timing,
+                actionCompletedNs: actionCompletedNs,
+                captureDeadlineNs: captureDeadlineNs
+            )
             let capture = captureCompletion.result
             try await self.revalidateCaptureHostIdentity(captureHostIdentity)
             let samplingCompletedMs = captureCompletion.samplingCompletedMs
@@ -272,7 +257,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 artifactValidation: artifactValidation,
                 samplingCompletedMs: samplingCompletedMs,
                 actionCompletedMs: actionCompletedMs,
-                postRollMs: timing.postRollMs
+                postRollMs: timing.postRollMs,
+                sampledAfterAction: captureCompletion.lastSampleStartedNs >= actionCompletedNs
             )
             let childOutcome = CaptureActionOutcomeSemantics.completedChildOutcome
             let outcome = CaptureActionOutcomeSemantics.aggregate(
@@ -289,6 +275,10 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                         captureStartedAtUnixMs: captureStartedAtUnixMs,
                         actionStartedMs: actionStartedMs,
                         actionCompletedMs: actionCompletedMs,
+                        sampleBoundary: .init(
+                            actionCompletedOffsetNs: actionCompletedNs - captureStartedNs,
+                            lastSampleStartedOffsetNs: captureCompletion.lastSampleStartedNs - captureStartedNs
+                        ),
                         samplingCompletedMs: samplingCompletedMs,
                         captureCompletedMs: captureCompletedMs,
                         timing: timing,
@@ -328,11 +318,58 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         self.childCommandDispatched = self.childCommandDispatched || dispatchState.wasDispatched
     }
 
+    private mutating func runChildAction(
+        timing: CaptureActionTiming,
+        completionDeadlineNs: UInt64
+    ) async throws -> (CaptureActionProcessResult, UInt64) {
+        let dispatchState = CaptureActionDispatchState()
+        let action: CaptureActionProcessResult
+        do {
+            action = try await self.executionDependencies.processRunner(
+                self.command,
+                timing.actionTimeout,
+                completionDeadlineNs
+            ) { dispatchState.markDispatched(at: $0) }
+            self.recordChildDispatch(dispatchState)
+            self.childCommandCompleted = true
+        } catch {
+            self.recordChildDispatch(dispatchState)
+            throw error
+        }
+        guard let startedAtNs = dispatchState.dispatchedAtMonotonicNanoseconds else {
+            throw CaptureActionProcessLaunchError(message: "Action runner returned without admitting child dispatch")
+        }
+        return (action, startedAtNs)
+    }
+
+    private static func finishPostRoll(
+        session: WatchCaptureSession,
+        captureTask: Task<CaptureActionCaptureCompletion, any Error>,
+        timing: CaptureActionTiming,
+        actionCompletedNs: UInt64,
+        captureDeadlineNs: UInt64
+    ) async throws -> CaptureActionCaptureCompletion {
+        let postRollDeadlineNs = try timing.postRollDeadline(startingAtNs: actionCompletedNs)
+        guard postRollDeadlineNs <= captureDeadlineNs else {
+            throw ValidationError("Action completion left insufficient time for the requested post-roll")
+        }
+        try await Self.sleep(untilMonotonicNanoseconds: postRollDeadlineNs)
+        if timing.postRollMs > 0 {
+            session.requestStop(afterSampleStartedAtOrAfter: actionCompletedNs)
+        } else {
+            session.requestStop()
+        }
+        let completion = try await captureTask.value
+        try Task.checkCancellation()
+        return completion
+    }
+
     private static func validatePostRollCoverage(
         artifactValidation: CaptureActionArtifactValidation,
         samplingCompletedMs: Int,
         actionCompletedMs: Int,
-        postRollMs: Int
+        postRollMs: Int,
+        sampledAfterAction: Bool
     ) -> CaptureActionArtifactValidation {
         let requiredCaptureCompletedMs = actionCompletedMs + postRollMs
         var validationFailures = artifactValidation.missing
@@ -340,6 +377,9 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             validationFailures.append(
                 "capture ended before the action and requested post-roll completed"
             )
+        }
+        if postRollMs > 0, !sampledAfterAction {
+            validationFailures.append("capture ended without a valid sample begun after the action completed")
         }
         return CaptureActionArtifactValidation(
             ok: validationFailures.isEmpty,
@@ -394,7 +434,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 actionStartedMs: context.actionStartedMs,
                 actionCompletedMs: context.actionCompletedMs,
                 samplingCompletedMs: context.samplingCompletedMs,
-                captureCompletedMs: context.captureCompletedMs
+                captureCompletedMs: context.captureCompletedMs,
+                sampleBoundary: context.sampleBoundary
             ),
             request: .init(
                 commandSHA256: CaptureActionManifestWriter.commandSHA256(self.command),
@@ -462,8 +503,14 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             guard let samplingEndedNs = session.samplingEndedAtMonotonicNanoseconds else {
                 throw ValidationError("capture session did not report its sampling completion boundary")
             }
+            guard let lastSampleStartedNs = session.lastSampleStartedAtMonotonicNanoseconds,
+                  lastSampleStartedNs >= captureStartedNs
+            else {
+                throw ValidationError("capture session did not report a valid sample boundary")
+            }
             return CaptureActionCaptureCompletion(
                 result: result,
+                lastSampleStartedNs: lastSampleStartedNs,
                 samplingCompletedMs: Self.elapsedMilliseconds(
                     since: captureStartedNs,
                     endingAt: samplingEndedNs
@@ -1028,6 +1075,7 @@ struct CaptureActionTiming {
 
 private struct CaptureActionCaptureCompletion: Sendable {
     let result: CaptureSessionResult
+    let lastSampleStartedNs: UInt64
     let samplingCompletedMs: Int
     let completedMs: Int
 }
@@ -1038,6 +1086,7 @@ private struct CaptureActionManifestContext {
     let captureStartedAtUnixMs: Int64
     let actionStartedMs: Int
     let actionCompletedMs: Int
+    let sampleBoundary: CaptureActionManifest.SampleBoundary
     let samplingCompletedMs: Int
     let captureCompletedMs: Int
     let timing: CaptureActionTiming

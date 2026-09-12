@@ -166,6 +166,8 @@ public final class WatchCaptureSession {
     var totalBytes: Int = 0
     var lastCaptureErrorDescription: String?
     public private(set) var samplingEndedAtMonotonicNanoseconds: UInt64?
+    public private(set) var lastSampleStartedAtMonotonicNanoseconds: UInt64?
+    private var stopAfterSampleStartedAtNanoseconds: UInt64?
     private let stopSignal = WatchCaptureStopSignal()
 
     public init(dependencies: WatchCaptureDependencies, configuration: WatchCaptureConfiguration) {
@@ -297,7 +299,27 @@ public final class WatchCaptureSession {
     }
 
     public func requestStop() {
+        self.stopAfterSampleStartedAtNanoseconds = nil
         self.stopSignal.request()
+    }
+
+    /// Waits for a valid image sampled after the given boundary, subject to the existing capture caps.
+    public func requestStop(afterSampleStartedAtOrAfter boundary: UInt64) {
+        self.stopAfterSampleStartedAtNanoseconds = max(self.stopAfterSampleStartedAtNanoseconds ?? boundary, boundary)
+        self.finishDeferredStopIfSampled()
+    }
+
+    func recordValidSample(startedAtNanoseconds: UInt64) {
+        self.lastSampleStartedAtMonotonicNanoseconds = startedAtNanoseconds
+        self.finishDeferredStopIfSampled()
+    }
+
+    private func finishDeferredStopIfSampled() {
+        guard let boundary = self.stopAfterSampleStartedAtNanoseconds,
+              let sampledAt = self.lastSampleStartedAtMonotonicNanoseconds,
+              sampledAt >= boundary
+        else { return }
+        self.requestStop()
     }
 
     func hasStopRequest() -> Bool {
