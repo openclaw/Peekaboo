@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix application name and bundle resolution being blocked by reaped processes lingering in LaunchServices; require repeated native absence while retaining refusal for uncertain or changing process identities. #709.
+
 ## 4.3.4 - 2026-09-11
 
 **Highlights:** Restore provider-compatible MCP tools and frontmost daemon captures.
