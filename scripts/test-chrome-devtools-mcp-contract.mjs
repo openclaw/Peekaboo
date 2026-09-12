@@ -70,6 +70,7 @@ const { createTools } = await import(
 );
 
 const serverArgs = {
+  usageStatistics: false,
   experimentalPageIdRouting: true,
   experimentalStructuredContent: true,
   slim: false,
@@ -96,7 +97,16 @@ const structuredFixtureTool = {
     response.appendResponseLine("structured fixture");
   },
 };
+let disabledTelemetryMetadataReads = 0;
 const fixtureContext = {
+  async getDevToolsData() {
+    disabledTelemetryMetadataReads++;
+    throw new Error("Disabled telemetry must not inspect DevTools UI");
+  },
+  getSelectedMcpPageUrl() {
+    disabledTelemetryMetadataReads++;
+    throw new Error("Disabled telemetry must not inspect a selected page");
+  },
   consumeReconnectNotice() {
     return false;
   },
@@ -115,6 +125,11 @@ const textOnlyHandler = new ToolHandler(
 );
 const structuredFixture = await structuredHandler.handle({});
 const textOnlyFixture = await textOnlyHandler.handle({});
+assert.equal(
+  disabledTelemetryMetadataReads,
+  0,
+  "disabled telemetry must not add page/DevTools probes after an otherwise inert tool call",
+);
 assert.equal(
   structuredFixture.structuredContent?.message,
   "structured fixture",

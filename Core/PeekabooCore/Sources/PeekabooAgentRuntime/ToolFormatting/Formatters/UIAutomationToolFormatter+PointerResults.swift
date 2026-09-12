@@ -165,10 +165,10 @@ extension UIAutomationToolFormatter {
 
     func elementDescription(from result: [String: Any]) -> String? {
         if let element = ToolResultExtractor.string("element", from: result) {
-            return "on \"\(self.truncate(element, limit: 40))\""
+            return "on \"\(self.truncate(element, maxLength: 40))\""
         }
         if let description = ToolResultExtractor.string("description", from: result) {
-            return "on \(self.truncate(description, limit: 40))"
+            return "on \(self.truncate(description, maxLength: 40))"
         }
         return nil
     }
@@ -238,14 +238,14 @@ extension UIAutomationToolFormatter {
     func locationDescription(_ key: String, fallback: String?, from result: [String: Any]) -> String? {
         if let location = ToolResultExtractor.dictionary(key, from: result) {
             if let description = location["description"] as? String {
-                return self.truncate(description, limit: 50)
+                return self.truncate(description, maxLength: 50)
             }
             if let point = self.pointSummary(from: location) {
                 return point
             }
         }
         if let fallback, let value = ToolResultExtractor.string(fallback, from: result) {
-            return self.truncate(value, limit: 50)
+            return self.truncate(value, maxLength: 50)
         }
         return nil
     }
@@ -274,12 +274,5 @@ extension UIAutomationToolFormatter {
             return Int(value)
         }
         return nil
-    }
-
-    func truncate(_ text: String, limit: Int) -> String {
-        if text.count > limit {
-            return String(text.prefix(limit)) + "..."
-        }
-        return text
     }
 }

@@ -34,7 +34,7 @@ public protocol ToolFormatter {
 
 /// Base implementation of ToolFormatter with common functionality
 open class BaseToolFormatter: ToolFormatter {
-    /// Format the tool execution start message
+    /// The tool type this formatter handles.
     public let toolType: ToolType
 
     public init(toolType: ToolType) {
@@ -74,7 +74,6 @@ open class BaseToolFormatter: ToolFormatter {
     }
 
     open func formatCompactSummary(arguments: [String: Any]) -> String {
-        // Default: no summary
         ""
     }
 
@@ -92,25 +91,8 @@ open class BaseToolFormatter: ToolFormatter {
 
     // MARK: - Helper Methods
 
-    /// Format duration in a human-readable way
-    func formatDuration(_ seconds: TimeInterval) -> String {
-        // Format duration in a human-readable way
-        if seconds < 0.001 {
-            return String(format: "%.0fµs", seconds * 1_000_000)
-        } else if seconds < 1.0 {
-            return String(format: "%.0fms", seconds * 1000)
-        } else if seconds < 60.0 {
-            return String(format: "%.1fs", seconds)
-        } else {
-            let minutes = Int(seconds / 60)
-            let remainingSeconds = Int(seconds.truncatingRemainder(dividingBy: 60))
-            return String(format: "%dmin %ds", minutes, remainingSeconds)
-        }
-    }
-
     /// Truncate text if too long
     func truncate(_ text: String, maxLength: Int = 30) -> String {
-        // Truncate text if too long
         if text.count > maxLength {
             return String(text.prefix(maxLength)) + "..."
         }

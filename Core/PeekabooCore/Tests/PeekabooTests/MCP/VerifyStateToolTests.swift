@@ -504,11 +504,11 @@ struct VerifyStateToolTests {
             context: context,
             windowOwnerProcessIdentifierProvider: { _ in nil })
 
+        // Use the normal polling budget for two stable inventory samples.
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "pid": Int(fixture.application.processIdentifier),
             "window_id": fixture.window.windowID,
             "predicates": [["kind": "window_exists", "expected": true]],
-            "timeout_ms": 250,
         ]))
 
         #expect(Self.stringMeta("status", response) == "satisfied")

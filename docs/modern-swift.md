@@ -1,172 +1,52 @@
 ---
-summary: 'Review Modern Swift Development guidance'
+summary: 'Swift and SwiftUI conventions for Peekaboo source changes.'
 read_when:
-  - 'planning work related to modern swift development'
-  - 'debugging or extending features described here'
+  - 'adding or refactoring Swift and SwiftUI code'
 ---
 
-# Modern Swift Development
+# Swift conventions
 
-Write idiomatic SwiftUI code following Apple's latest architectural recommendations and best practices.
+Peekaboo uses Swift 6.2 conventions and explicit `self` for member references. Run the repository's SwiftFormat and
+SwiftLint commands, and preserve the declared package and app floors in [platform support](platform-support.md).
+Do not raise a deployment target to make a refactor compile.
 
-## Core Philosophy
+## State and views
 
-- SwiftUI is the default UI paradigm for Apple platforms - embrace its declarative nature
-- Avoid legacy UIKit patterns and unnecessary abstractions
-- Focus on simplicity, clarity, and native data flow
-- Let SwiftUI handle the complexity - don't fight the framework
+Keep view-local values in `@State`, pass writable values through `@Binding`, and use the existing environment or
+initializer injection for shared dependencies. New observable reference models can use Observation with `@Observable`;
+isolate UI-owned models to `@MainActor` and let the owning view retain them through `@State`. Use `@Bindable` where a
+child needs bindings to an observable model's properties.
 
-## Architecture Guidelines
+Keep state near its owner. Extract a model when it owns shared state or behavior, and extract a view when it gives a
+subtree a clear responsibility. A small view does not need a matching model type. Preserve established public
+`ObservableObject` contracts unless the change explicitly migrates their callers.
 
-### 1. Embrace Native State Management
+Keep rendering code free of I/O and repeated expensive work. Use `.task` for asynchronous work tied to a view's lifetime;
+use `.task(id:)` when a specific input should restart it. Handle cancellation separately from a user-visible failure.
+Use `TimelineView` for new time-driven presentation when its scheduling semantics fit the feature; retain event streams
+when the stream itself is the source of truth.
 
-Use SwiftUI's built-in property wrappers appropriately:
-- `@State` - Local, ephemeral view state
-- `@Binding` - Two-way data flow between views
-- `@Observable` - Shared state (iOS 17+)
-- `@ObservableObject` - Legacy shared state (pre-iOS 17)
-- `@Environment` - Dependency injection for app-wide concerns
+## Concurrency and service boundaries
 
-### 2. State Ownership Principles
+Respect actor isolation instead of adding `nonisolated(unsafe)` or `@unchecked Sendable` to silence the compiler.
+When a type uses a lock or queue to protect shared state, keep every access within that synchronization boundary and
+document why an unchecked conformance is sound. Prefer typed, `Sendable` values across actor and transport boundaries.
 
-- Views own their local state unless sharing is required
-- State flows down, actions flow up
-- Keep state as close to where it's used as possible
-- Extract shared state only when multiple views need it
+An `async` function does not make a blocking Accessibility or socket call nonblocking. Use the existing bounded native
+workers and transport queues at those boundaries. Cancellation can end the caller's wait without stopping native work;
+preserve the worker's admission, deadline, and cleanup rules. See [architecture](ARCHITECTURE.md) for ownership and
+[error handling](error-handling-guide.md) for result propagation.
 
-### 3. Modern Async Patterns
+Prefer structured concurrency for child work whose lifetime belongs to the caller. Detached tasks need an explicit
+lifetime and cancellation owner. Keep production automation in AutomationKit, agent/MCP adaptation in AgentRuntime,
+and shared visual components in UICore or Visualizer.
 
-- Use `async/await` as the default for asynchronous operations
-- Leverage `.task` modifier for lifecycle-aware async work
-- Avoid Combine unless absolutely necessary
-- Handle errors gracefully with try/catch
+## Verification
 
-### 4. View Composition
+Exercise behavior at its owning boundary. Use injected clocks, services, and temporary stores where those seams already
+exist; await observable completion instead of sleeping for an estimated duration. Preserve tests for released APIs and
+wire formats during refactors. [Lint compatibility](dev/lint-compatibility.md) records the narrow existing exceptions.
 
-- Build UI with small, focused views
-- Extract reusable components naturally
-- Use view modifiers to encapsulate common styling
-- Prefer composition over inheritance
-
-### 5. Code Organization
-
-- Organize by feature, not by type (avoid Views/, Models/, ViewModels/ folders)
-- Keep related code together in the same file when appropriate
-- Use extensions to organize large files
-- Follow Swift naming conventions consistently
-
-## Implementation Patterns
-
-### Simple State Example
-```swift
-struct CounterView: View {
-    @State private var count = 0
-    
-    var body: some View {
-        VStack {
-            Text("Count: \(count)")
-            Button("Increment") { 
-                count += 1 
-            }
-        }
-    }
-}
-```
-
-### Shared State with @Observable
-```swift
-@Observable
-class UserSession {
-    var isAuthenticated = false
-    var currentUser: User?
-    
-    func signIn(user: User) {
-        currentUser = user
-        isAuthenticated = true
-    }
-}
-
-struct MyApp: App {
-    @State private var session = UserSession()
-    
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environment(session)
-        }
-    }
-}
-```
-
-### Async Data Loading
-```swift
-struct ProfileView: View {
-    @State private var profile: Profile?
-    @State private var isLoading = false
-    @State private var error: Error?
-    
-    var body: some View {
-        Group {
-            if isLoading {
-                ProgressView()
-            } else if let profile {
-                ProfileContent(profile: profile)
-            } else if let error {
-                ErrorView(error: error)
-            }
-        }
-        .task {
-            await loadProfile()
-        }
-    }
-    
-    private func loadProfile() async {
-        isLoading = true
-        defer { isLoading = false }
-        
-        do {
-            profile = try await ProfileService.fetch()
-        } catch {
-            self.error = error
-        }
-    }
-}
-```
-
-## Best Practices
-
-### DO:
-- Write self-contained views when possible
-- Use property wrappers as intended by Apple
-- Test logic in isolation, preview UI visually
-- Handle loading and error states explicitly
-- Keep views focused on presentation
-- Use Swift's type system for safety
-
-### DON'T:
-- Create ViewModels for every view
-- Move state out of views unnecessarily
-- Add abstraction layers without clear benefit
-- Use Combine for simple async operations
-- Fight SwiftUI's update mechanism
-- Overcomplicate simple features
-
-## Testing Strategy
-
-- Unit test business logic and data transformations
-- Use SwiftUI Previews for visual testing
-- Test @Observable classes independently
-- Keep tests simple and focused
-- Don't sacrifice code clarity for testability
-
-## Modern Swift Features
-
-- Use Swift Concurrency (async/await, actors)
-- Leverage Swift 6 data race safety when available
-- Utilize property wrappers effectively
-- Embrace value types where appropriate
-- Use protocols for abstraction, not just for testing
-
-## Summary
-
-Write SwiftUI code that looks and feels like SwiftUI. The framework has matured significantly - trust its patterns and tools. Focus on solving user problems rather than implementing architectural patterns from other platforms.
+Build the affected package and run its relevant tests. For UI behavior, also run the built app against a controlled
+fixture and verify the visible result. SwiftUI previews help with layout, but do not establish lifecycle, permission,
+or automation correctness. Follow [building](building.md) and the relevant `docs/testing/` contract for those checks.

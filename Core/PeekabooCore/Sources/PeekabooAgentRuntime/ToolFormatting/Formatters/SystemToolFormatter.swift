@@ -463,7 +463,7 @@ public class SystemToolFormatter: BaseToolFormatter {
         if toolType == .shell {
             let exitCode = ToolResultExtractor.int("exitCode", from: result) ?? 0
             if duration > 5.0 {
-                let durationText = formatDuration(duration)
+                let durationText = FormattingUtilities.formatDetailedDuration(duration)
                 if exitCode == 0 {
                     return "\(AgentDisplayTokens.Status.success) Command completed successfully after \(durationText)"
                 }

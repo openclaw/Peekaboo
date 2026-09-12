@@ -12,7 +12,7 @@ read_when:
 - macOS 15.0+
 - Swift 6.2+ toolchain (Xcode 26.x or newer recommended)
 - Python 3.9+ for the checkout-local Swift workspace setup (Xcode provides `python3`).
-- Node.js 22+ (Corepack-enabled) — only needed for pnpm helper scripts; core Swift builds do not require Node.
+- Node.js 22.13+ for the pinned pnpm source helpers (Corepack-enabled) — only needed for pnpm helper scripts; core Swift builds do not require Node.
 - pnpm (`corepack enable pnpm`)
 - SwiftLint and SwiftFormat for the repository validation helpers (`brew install swiftlint swiftformat`)
 
@@ -132,6 +132,10 @@ from the app's `Peekaboo.build/Debug/Peekaboo.build` on a case-insensitive volum
 the app's sources and generated assets as the CLI. The package name separates those directories; the entry
 target name also separates the Swift module where the build system uses it. Public binaries, `PeekabooCLI`
 imports, source paths, and embedded Info.plist/source stamps remain unchanged.
+
+Normal macOS CI schedules package tests, app builds, and lint independently. The Peekaboo and Inspector builds use
+this same workspace, canonical package lock, and derived-data directory so Inspector can reuse matching dependency
+builds. Each package's tests retain serial execution within their job.
 
 Run `pnpm run test:codeql-build-graph` to check product coverage, internal ownership, and the CLI's exact
 `PeekabooMain.swift` entrypoint. These structural checks do not replace a successful hosted CodeQL build.

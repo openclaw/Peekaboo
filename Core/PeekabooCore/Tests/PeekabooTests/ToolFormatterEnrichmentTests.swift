@@ -5,6 +5,34 @@ import Testing
 struct ToolFormatterEnrichmentTests {
     private let registry = ToolFormatterRegistry()
 
+    @Test(arguments: [
+        (5.0, "→ Success"),
+        (5.1, "[ok] Command completed successfully after 5.1s"),
+        (60.0, "[ok] Command completed successfully after 1min 0s"),
+        (90.0, "[ok] Command completed successfully after 1min 30s"),
+    ])
+    func `shell completion preserves duration wording`(duration: Double, expected: String) {
+        let formatter = self.registry.formatter(for: .shell)
+        #expect(formatter.formatCompleted(result: ["exitCode": 0], duration: duration) == expected)
+    }
+
+    @Test
+    func `pointer descriptions preserve truncation boundaries and unicode characters`() {
+        let formatter = UIAutomationToolFormatter(toolType: .click)
+        let text = String(repeating: "👩🏽‍💻", count: 40)
+        #expect(formatter.elementDescription(from: ["element": text]) == "on \"\(text)\"")
+        #expect(formatter.elementDescription(from: ["element": text + "x"]) == "on \"\(text)...\"")
+        #expect(formatter.elementDescription(from: ["description": text + "x"]) == "on \(text)...")
+
+        let location = String(repeating: "é", count: 50)
+        #expect(formatter.locationDescription("from", fallback: nil, from: [
+            "from": ["description": location],
+        ]) == location)
+        #expect(formatter.locationDescription("from", fallback: "source", from: [
+            "source": location + "x",
+        ]) == location + "...")
+    }
+
     @Test
     func `list menus supports item and menu structure results`() {
         let formatter = self.registry.formatter(for: .listMenus)

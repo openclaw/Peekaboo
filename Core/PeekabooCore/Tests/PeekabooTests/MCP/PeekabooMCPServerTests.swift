@@ -41,15 +41,27 @@ struct PeekabooMCPServerTests {
         let context = await MCPToolTestHelpers.makeContext()
         let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
         let server = try await PeekabooMCPServer(toolContext: context)
+        let snapshots = await MCPToolUISnapshotStore(owner: server.snapshotOwnerForTesting())
+        let snapshot = await snapshots.createSnapshot()
         let client = Client(name: "PeekabooHostTransportTests", version: "1.0")
 
         let serving = Task { try await server.serve(transport: serverTransport) }
-        _ = try await client.connect(transport: clientTransport)
-        let (tools, _) = try await client.listTools()
-        #expect(tools.contains { $0.name == "see" })
+        do {
+            _ = try await client.connect(transport: clientTransport)
+            let (tools, _) = try await client.listTools()
+            #expect(tools.contains { $0.name == "see" })
+            #expect(await snapshots.hasOwnerState())
+        } catch {
+            await client.disconnect()
+            await server.stopForTesting()
+            _ = try? await serving.value
+            throw error
+        }
 
         await client.disconnect()
         try await serving.value
+        #expect(await snapshots.getSnapshot(id: snapshot.id) == nil)
+        #expect(await !snapshots.hasOwnerState())
     }
 
     @Test
@@ -559,7 +571,8 @@ struct PeekabooMCPServerTests {
     @Test
     @MainActor
     func `wire decoder rejects non-object tool calls and preserves omitted arguments`() async throws {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(
+            permissionsStatusProvider: WireDecoderPermissionsStatusProvider())
         let session = try await MCPWireSession.connect(context: context)
 
         do {
@@ -776,6 +789,13 @@ struct PeekabooMCPServerTests {
             }
             #expect(message == Self.missingFactoryMessage)
         }
+    }
+}
+
+@MainActor
+private struct WireDecoderPermissionsStatusProvider: PermissionsStatusProviding {
+    func permissionsStatus() async throws -> PermissionsStatus {
+        PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
     }
 }
 

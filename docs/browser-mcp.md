@@ -18,6 +18,20 @@ Peekaboo exposes a native `browser` tool that brokers Chrome DevTools MCP. Agent
 
 Use Peekaboo native tools for macOS UI, browser chrome, menus, dialogs, permissions, window management, and non-browser apps.
 
+## Provider update guard
+
+The provider remains pinned to 1.6.0. Audited 1.7.0 and 1.9.0 builds call `context.getDevToolsData(page)` after every tool
+handler even when usage statistics are disabled. When DevTools is open, that path calls Puppeteer evaluation and can
+grant browser user activation during an otherwise background-safe read. Disabling JavaScript tools does not remove
+this post-handler probe.
+
+The dependency contract test requires zero telemetry-driven page/DevTools reads for an inert tool with statistics
+disabled. Upgrade only after the provider gates those metadata reads on an active telemetry logger (or removes the
+evaluation path), then repeat the complete routing, UID, and user-activation audit. The
+[1.9.0 handler](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.9.0/src/ToolHandler.ts)
+and [page helper](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.9.0/src/McpPage.ts)
+own the behavior; changing Peekaboo's background policy would weaken the existing contract.
+
 ## Permission flow
 
 Peekaboo attaches to an already-running Chrome profile. It requires:

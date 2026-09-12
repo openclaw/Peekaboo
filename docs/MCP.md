@@ -57,6 +57,12 @@ Supported transports:
 - **stdio**: supported and default.
 - **http / sse**: recognized flags, but server transports are not implemented yet.
 
+Applications linking `PeekabooCore` can pass an MCP Swift SDK `Transport` to
+`PeekabooMCPServer.serve(transport:)`. The host owns connection setup and transport policy; `serve` waits for
+the transport to complete, then releases its tool context. Startup failures also release that context. A successful
+return confirms cleanup; incomplete cleanup throws. This entry point does not add a built-in HTTP or SSE server.
+For an accepted `NetworkTransport` connection, disable SDK reconnection so a disconnected peer ends the session.
+
 Peekaboo validates numeric arguments before a tool or mutation lane runs. Fields published as `integer` accept exact
 whole values (including whole-number JSON doubles and integer strings) but reject fractional, non-finite, and
 out-of-range values. Fields published as `number` must be finite. Rejections report `mutation_dispatched: false` and
