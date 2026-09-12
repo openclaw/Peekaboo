@@ -288,8 +288,8 @@ public actor PeekabooMCPServer {
 
     public func serve(transport: TransportType, port: Int = 8080) async throws {
         self.logger.info("Starting Peekaboo MCP server on \(transport) transport, version: \(self.serverVersion)")
-        do {
-            let serverTransport: any Transport = switch transport {
+        try await self.run {
+            switch transport {
             case .stdio:
                 EOFDrainingTransport(wrapping: StdioTransport())
             case .http:
@@ -298,6 +298,24 @@ public actor PeekabooMCPServer {
             case .sse:
                 throw MCPError.notImplemented("SSE server transport not yet implemented")
             }
+        }
+    }
+
+    /// Serves over a transport supplied by the host process.
+    ///
+    /// For hosts that embed the server instead of spawning the CLI — an application that
+    /// links `PeekabooCore` and speaks MCP over a connection it owns. The lifecycle is the
+    /// one `serve(transport:port:)` gives the built-in stdio transport: the server runs
+    /// until the transport completes, and the tool context is released on the way out,
+    /// on success and on failure alike.
+    public func serve(transport: any Transport) async throws {
+        self.logger.info("Starting Peekaboo MCP server on a host transport, version: \(self.serverVersion)")
+        try await self.run { transport }
+    }
+
+    private func run(makingTransport: () throws -> any Transport) async throws {
+        do {
+            let serverTransport = try makingTransport()
             try await self.server.start(transport: serverTransport)
 
             // Keep the server running

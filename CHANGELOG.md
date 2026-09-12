@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Let hosts that embed `PeekabooMCPServer` serve over a transport they supply (`serve(transport: any Transport)`), with the same run-until-complete lifecycle and tool-context teardown as the built-in stdio path. #716.
+
 ## 4.3.4 - 2026-09-11
 
 **Highlights:** Restore provider-compatible MCP tools and frontmost daemon captures.

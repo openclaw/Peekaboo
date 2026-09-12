@@ -36,6 +36,23 @@ struct PeekabooMCPServerTests {
     }
 
     @Test
+    @MainActor
+    func `serve runs on a host-supplied transport until it completes`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        let server = try await PeekabooMCPServer(toolContext: context)
+        let client = Client(name: "PeekabooHostTransportTests", version: "1.0")
+
+        let serving = Task { try await server.serve(transport: serverTransport) }
+        _ = try await client.connect(transport: clientTransport)
+        let (tools, _) = try await client.listTools()
+        #expect(tools.contains { $0.name == "see" })
+
+        await client.disconnect()
+        try await serving.value
+    }
+
+    @Test
     func `each direct MCP server owns one isolated snapshot namespace`() async throws {
         let first = try await makeServer()
         let second = try await makeServer()
