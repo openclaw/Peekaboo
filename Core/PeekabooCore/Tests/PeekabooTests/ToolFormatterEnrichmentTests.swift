@@ -6,7 +6,7 @@ struct ToolFormatterEnrichmentTests {
     private let registry = ToolFormatterRegistry()
 
     @Test(arguments: [
-        (5.0, "→ completed"),
+        (5.0, "→ Success"),
         (5.1, "[ok] Command completed successfully after 5.1s"),
         (60.0, "[ok] Command completed successfully after 1min 0s"),
         (90.0, "[ok] Command completed successfully after 1min 30s"),
