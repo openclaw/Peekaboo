@@ -321,12 +321,14 @@ public actor PeekabooMCPServer {
             // Keep the server running
             await self.server.waitUntilCompleted()
         } catch {
+            await self.server.stop()
             let cleanupConfirmed = await self.releaseToolContextForTeardown()
             if !cleanupConfirmed {
                 self.logger.error("Browser session cleanup remains pending after MCP server failure")
             }
             throw error
         }
+        await self.server.stop()
         let cleanupConfirmed = await self.releaseToolContextForTeardown()
         guard cleanupConfirmed else {
             throw MCPError.executionFailed(

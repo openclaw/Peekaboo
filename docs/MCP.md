@@ -59,7 +59,8 @@ Supported transports:
 
 Applications linking `PeekabooCore` can pass an MCP Swift SDK `Transport` to
 `PeekabooMCPServer.serve(transport:)`. The host owns connection setup and transport policy; `serve` waits for
-the transport to complete, then releases its tool context. Startup failures also release that context. A successful
+the transport to complete, then disconnects the SDK session and releases its tool context. Startup failures also
+disconnect the session and release that context. A successful
 return confirms cleanup; incomplete cleanup throws. This entry point does not add a built-in HTTP or SSE server.
 For an accepted `NetworkTransport` connection, disable SDK reconnection so a disconnected peer ends the session.
 
