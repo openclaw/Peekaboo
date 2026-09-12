@@ -27,6 +27,8 @@ Core/PeekabooCore/Sources/PeekabooAgentRuntime/ToolFormatting/
 - `ToolResultExtractor` and `FormattingUtilities` normalize wrapped values and shared display operations.
 - `Formatters/` contains the application, communication, dock, element, menu/dialog, system, UI automation, vision, and window formatter families.
 
+Duration displays use `FormattingUtilities.formatDetailedDuration`; formatter subclasses share the base truncation helper.
+
 The registry is available as `ToolFormatterRegistry.shared` or as a separately initialized registry in tests.
 
 ### Mac App Consumption

@@ -9,7 +9,6 @@ import Foundation
 public enum FormattingUtilities {
     /// Format keyboard shortcut with proper symbols
     public static func formatKeyboardShortcut(_ keys: String) -> String {
-        // Format keyboard shortcut with proper symbols
         keys.replacingOccurrences(of: "cmd", with: "⌘")
             .replacingOccurrences(of: "command", with: "⌘")
             .replacingOccurrences(of: "shift", with: "⇧")
@@ -32,7 +31,6 @@ public enum FormattingUtilities {
 
     /// Format duration for display
     public static func formatDetailedDuration(_ seconds: TimeInterval) -> String {
-        // Format duration for display
         if seconds < 0.001 {
             return String(format: "%.0fµs", seconds * 1_000_000)
         } else if seconds < 1.0 {
