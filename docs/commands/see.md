@@ -165,6 +165,8 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 
 ## Troubleshooting tips
 
+- An inconsistent-response-evidence refusal means the returned capture could not be verified against the request. Check the specific evidence named in the error. Use `--verbose` to identify the selected runtime and Bridge socket before inspecting that host; a current client and host can still hit a runtime bug, so an update is not assumed to resolve every verification refusal.
+
 Observation verification and MCP image reloads limit each artifact to 256 MiB. Reads retain one regular-file
 descriptor and reject files that grow or change during the read. Ordinary symlink paths remain supported;
 oversized or replaced artifacts fail before their content is published.
