@@ -156,7 +156,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '26.8.2'
           package-manager-cache: false
 
       - name: Check workflow contract

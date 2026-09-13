@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Update Linux validation to Swift 6.3.3 and the pinned Node qualification runtime to 24.21.0 with verified universal binary checksums; smoke-test the built CLI catalog in CI.
+- Update Linux validation to Swift 6.3.3 and CI plus the pinned qualification runtime to Node 26.8.2 with verified universal binary checksums; smoke-test the built CLI catalog in CI.
 
 - Keep caller screenshot destinations intact when remote evidence is rejected or raw output was not requested, staging ordinary captures before file publication as well as ROI captures. #710.
 
