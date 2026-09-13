@@ -40,6 +40,8 @@ NODE_RUNTIME_UNIVERSAL_BINARY_SIZE="$(/usr/bin/stat -f%z "$TEST_DIR/expected-nod
 
 [[ " $(/usr/bin/lipo -archs "$output/Contents/MacOS/node") " == *' arm64 '* ]]
 [[ " $(/usr/bin/lipo -archs "$output/Contents/MacOS/node") " == *' x86_64 '* ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$output/Contents/Info.plist")" == 26.8.2 ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$output/Contents/Info.plist")" == 260802 ]]
 jq -e '
   .runtime_version == "26.8.2" and .identifier == "boo.peekaboo.qualification-node" and
   .inputs.arm64.url == "https://nodejs.org/dist/v26.8.2/node-v26.8.2-darwin-arm64.tar.gz" and

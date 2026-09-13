@@ -15,6 +15,8 @@ terminal_artifact_assert_build_env_is_clean || {
 }
 
 NODE_VERSION=26.8.2
+IFS=. read -r node_major node_minor node_patch <<< "$NODE_VERSION"
+NODE_BUILD_VERSION=$((node_major * 10000 + node_minor * 100 + node_patch))
 ARM64_URL=https://nodejs.org/dist/v26.8.2/node-v26.8.2-darwin-arm64.tar.gz
 X64_URL=https://nodejs.org/dist/v26.8.2/node-v26.8.2-darwin-x64.tar.gz
 ARM64_ARCHIVE_SHA=974b6d5fb2fc7c33ff2354db0902b4e91c2de01ec8acc6de48e543c97e18c9e1
@@ -128,7 +130,7 @@ cat > "$app/Contents/Info.plist" <<EOF
 <key>CFBundleName</key><string>PeekabooQualificationNode</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$NODE_VERSION</string>
-<key>CFBundleVersion</key><string>241500</string>
+<key>CFBundleVersion</key><string>$NODE_BUILD_VERSION</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 </dict></plist>
 EOF
