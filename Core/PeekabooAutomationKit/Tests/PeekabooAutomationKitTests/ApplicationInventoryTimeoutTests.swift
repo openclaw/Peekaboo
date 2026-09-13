@@ -834,6 +834,79 @@ extension ApplicationInventoryTimeoutTests {
 
     @Test
     @MainActor
+    func `reaped native process in LaunchServices inventory does not block a live named target`() async throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try child.run()
+        child.waitUntilExit()
+        let deadPID = child.processIdentifier
+        let existenceResult = kill(deadPID, 0)
+        let existenceError = errno
+        #expect(existenceResult == -1 && existenceError == ESRCH)
+
+        let target = Self.mutationApplication(pid: getpid(), name: "Editor", policy: .regular)
+        let stale = Self.mutationApplication(pid: deadPID, name: "Stale helper")
+        let nativeReads = AutomationTestLockedValue(0)
+        let service = Self.mutationService(
+            applications: [target, stale],
+            identityProvider: { pid in
+                guard pid == deadPID else { return .identity(90) }
+                nativeReads.withValue { $0 += 1 }
+                return SystemIdentityResolver.processStartIdentityObservation(pid)
+            },
+            eligibilityProvider: { _ in
+                Issue.record("A missing native process must not use permission-denied eligibility")
+                return nil
+            })
+
+        let inventory = try await service.applicationMutationInventory()
+        #expect(inventory.isComplete)
+        #expect(inventory.warnings.isEmpty)
+        #expect(inventory.items.map(\.processIdentifier) == [target.processIdentifier])
+        #expect(nativeReads.value == 2)
+
+        let planner = DesktopTargetPlanning.ApplicationMutationPlanner(
+            inventoryProvider: { try await service.applicationMutationInventory() })
+        for identifier in try [target.name, #require(target.bundleIdentifier)] {
+            let plan = try await planner.plan(identifier: identifier)
+            #expect(plan.processIdentity == target.processIdentity)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `changing or uncertain native absence leaves mutation inventory partial`() async throws {
+        let transitions: [[SystemIdentityResolver.ProcessStartIdentityObservation]] = [
+            [.absent, .identity(91)],
+            [.absent, .permissionDenied],
+            [.absent, .unavailable],
+            [.identity(90), .absent],
+            [.unavailable, .absent],
+        ]
+        let target = Self.mutationApplication(pid: 41201, name: "Editor", policy: .regular)
+        let helper = Self.mutationApplication(pid: 41202, name: "Helper")
+        for observations in transitions {
+            let reads = AutomationTestLockedValue(0)
+            let service = Self.mutationService(
+                applications: [target, helper],
+                identityProvider: { pid in
+                    guard pid == helper.processIdentifier else { return .identity(90) }
+                    return reads.withValue { index in
+                        defer { index += 1 }
+                        return observations[min(index, observations.count - 1)]
+                    }
+                },
+                eligibilityProvider: { _ in nil })
+            let inventory = try await service.applicationMutationInventory()
+            #expect(!inventory.isComplete)
+            #expect(inventory.items.map(\.processIdentifier) == [target.processIdentifier])
+            #expect(inventory.warnings.count == 1)
+            #expect(reads.value <= 2)
+        }
+    }
+
+    @Test
+    @MainActor
     func `legacy optional identity injection never probes eligibility or upgrades nil to denial`() async throws {
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },

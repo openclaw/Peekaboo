@@ -124,6 +124,12 @@ App mutations require an exact name, exact bundle ID, or explicit PID. Name and 
 
 The native mutation inventory excludes an unreadable helper without marking the inventory partial only when repeated observations agree: activation policy is explicitly prohibited, an exact-sized short-BSD response identifies the expected PID with an effective UID different from the runtime host, and full process-generation reads actually fail with `EPERM`. UID alone never predicts denial, and short BSD never supplies a generation receipt. Unknown policy, other failures, changing evidence, and a readable generation that disappears or changes all remain fail-closed. These checks share the inventory's one-second off-MainActor budget and retained native worker; they do not change read-only discovery or generation-pinned explicit-PID lifecycle targeting.
 
+LaunchServices can also retain records for processes that have exited. Two consecutive failed full-BSD generation
+reads with explicit `ESRCH` confirm native absence and exclude that stale row without making mutation inventory
+partial. A partial native read, arbitrary failure, or transition between absence and a readable generation remains
+an uncertain omission. A process that disappears after its generation was read also remains an omission; retry with
+a fresh inventory. Read-only listing and explicit-PID targeting keep their existing behavior.
+
 ### Allowed Redundancy
 
 These legacy management forms are valid and equivalent:

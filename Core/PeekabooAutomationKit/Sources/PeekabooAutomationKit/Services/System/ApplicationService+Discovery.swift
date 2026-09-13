@@ -63,6 +63,11 @@ extension ApplicationService {
             guard let generation = observation.identity,
                   generation > 0
             else {
+                // LaunchServices can retain a reaped PID. Only two explicit native absence reads
+                // exclude it; a new generation or any uncertain result still makes inventory partial.
+                if observation == .absent, identityProvider(processIdentifier) == .absent {
+                    continue
+                }
                 if observation == .permissionDenied,
                    Self.confirmsNonTargetableMutationProcess(
                        processIdentifier,
