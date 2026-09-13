@@ -256,6 +256,22 @@ jobs:
           swift build --configuration debug
           echo "PEEKABOO_CLI_BINARY=$(swift build --configuration debug --show-bin-path)/peekaboo" >> "$GITHUB_ENV"
 
+      - name: Smoke test the built CLI and tool catalog
+        run: |
+          set -euo pipefail
+          "$PEEKABOO_CLI_BINARY" --version
+          "$PEEKABOO_CLI_BINARY" tools --json > "$RUNNER_TEMP/peekaboo-tools.json"
+          python3 - "$RUNNER_TEMP/peekaboo-tools.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as source:
+              result = json.load(source)
+          assert result["success"] is True, result
+          catalog = result["data"]
+          assert catalog["count"] == len(catalog["tools"]) > 0, catalog
+          print(f"Built CLI returned {catalog['count']} tools")
+          PY
+
       - name: Run CLI unit tests (skip automation)
         working-directory: Apps/CLI
         run: |

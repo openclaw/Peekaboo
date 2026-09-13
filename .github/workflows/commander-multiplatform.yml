@@ -68,7 +68,7 @@ jobs:
           submodules: recursive
       - uses: SwiftyLab/setup-swift@v1
         with:
-          swift-version: '6.2.1'
+          swift-version: '6.3.3'
       - name: Test (Linux)
         working-directory: Commander
         run: swift test

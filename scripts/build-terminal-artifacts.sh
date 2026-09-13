@@ -330,7 +330,7 @@ verify_node_source_manifest() {
     --argjson binarySize "$(/usr/bin/stat -f%z "$node_binary")" '
       type == "object" and keys == ["architectures", "entitlements", "executable_path", "identifier", "inputs", "license",
         "runtime_version", "universal_binary_sha256", "universal_binary_size", "version"] and
-      .version == 1 and .runtime_version == "24.15.0" and
+      .version == 1 and .runtime_version == "24.21.0" and
       .identifier == "boo.peekaboo.qualification-node" and .executable_path == "Contents/MacOS/node" and
       .architectures == ["arm64", "x86_64"] and .license == {
         path: "Contents/Resources/LICENSE",
@@ -341,16 +341,16 @@ verify_node_source_manifest() {
       (.inputs | keys == ["arm64", "x86_64"]) and
       (.inputs.arm64 | keys == ["archive_sha256", "binary_sha256", "url"]) and
       (.inputs.x86_64 | keys == ["archive_sha256", "binary_sha256", "url"]) and
-      .inputs.arm64.url == "https://nodejs.org/dist/v24.15.0/node-v24.15.0-darwin-arm64.tar.gz" and
-      .inputs.x86_64.url == "https://nodejs.org/dist/v24.15.0/node-v24.15.0-darwin-x64.tar.gz" and
+      .inputs.arm64.url == "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz" and
+      .inputs.x86_64.url == "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz" and
       (($pinMode == "production" and
-        .universal_binary_sha256 == "f638dd249d1df9ff89764a312a510c55250f23ce40e977ac8b68a295161d6f3a" and
-        .universal_binary_size == 242234784 and
-        .license.sha256 == "4573185d56580da2b890ba34a85a409257640f1c5632eade4300137266194d18" and
-        .inputs.arm64.archive_sha256 == "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4" and
-        .inputs.arm64.binary_sha256 == "3200fbd9f7fd4410426dd541e10d1ab829d3472f270d743c7fabd1696c03fe32" and
-        .inputs.x86_64.archive_sha256 == "ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b" and
-        .inputs.x86_64.binary_sha256 == "2a249a6a7015b0555c3448a77d226c1f3c8f62bd133d89044a2e1518cd16c4b3") or
+        .universal_binary_sha256 == "dc2559871be8ee697dff6e4027349434f6606c4960db29f68129c606f26d9704" and
+        .universal_binary_size == 247417680 and
+        .license.sha256 == "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace" and
+        .inputs.arm64.archive_sha256 == "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057" and
+        .inputs.arm64.binary_sha256 == "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b" and
+        .inputs.x86_64.archive_sha256 == "1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097" and
+        .inputs.x86_64.binary_sha256 == "7abcf39bd37ab251015337ff75304d7555f0d8e88c6e0fbf04bce8ce34636f49") or
        ($pinMode == "test_fixture" and .universal_binary_sha256 == $binarySHA and
         .universal_binary_size == $binarySize and
         (.inputs.arm64.archive_sha256 | test("^[0-9a-f]{64}$")) and
@@ -360,14 +360,14 @@ verify_node_source_manifest() {
     ' "$manifest" >/dev/null || return 1
   if [[ "$pin_mode" == production && "$mode" == unsigned && \
     "$(/usr/bin/shasum -a 256 "$node_binary" | /usr/bin/awk '{print $1}')" != \
-    "f638dd249d1df9ff89764a312a510c55250f23ce40e977ac8b68a295161d6f3a" ]]; then
+    "dc2559871be8ee697dff6e4027349434f6606c4960db29f68129c606f26d9704" ]]; then
     return 1
   fi
   archs=" $(/usr/bin/lipo -archs "$node_binary") "
   [[ "$archs" == *' arm64 '* && "$archs" == *' x86_64 '* && \
     "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" == \
       boo.peekaboo.qualification-node && \
-    "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == 24.15.0 ]]
+    "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == 24.21.0 ]]
 }
 
 verify_unsigned_stage() {
@@ -1040,7 +1040,7 @@ publish_phase() {
   dmg_payload_check=""
   node_binary="$NOTARIZED_NODE/Contents/MacOS/node"
   verify_node_entitlements "$node_binary" || fail 'post-notary Node JIT entitlements mismatch'
-  [[ "$(/usr/bin/env -i PATH=/usr/bin:/bin "$node_binary" --version)" == v24.15.0 ]] || \
+  [[ "$(/usr/bin/env -i PATH=/usr/bin:/bin "$node_binary" --version)" == v24.21.0 ]] || \
     fail 'post-notary qualification Node version probe failed'
   /usr/bin/env -i PATH=/usr/bin:/bin "$node_binary" -e \
     'const value = new Function("return 6 * 7")(); if (value !== 42) process.exit(1);' || \
@@ -1079,7 +1079,7 @@ publish_phase() {
   terminal_artifact_zip_app_exact "$NOTARIZED_PLAYGROUND" "$publish_root/Playground-$VERSION.app.zip" \
     "$publish_root/playground-app-tree.json"
   terminal_artifact_zip_app_exact "$NOTARIZED_NODE" \
-    "$publish_root/PeekabooQualificationNode-24.15.0.app.zip" \
+    "$publish_root/PeekabooQualificationNode-24.21.0.app.zip" \
     "$publish_root/qualification-node-app-tree.json"
   /usr/bin/cmp -s "$APP_NOTARY_TRANSACTION/tree.json" "$publish_root/peekaboo-app-tree.json" || \
     fail 'Peekaboo.app notary tree differs from package tree'
@@ -1168,8 +1168,8 @@ publish_phase() {
     --argjson playgroundSize "$(/usr/bin/stat -f%z "$publish_root/Playground-$VERSION.app.zip")" \
     --arg playgroundCDHash "$playground_cdhash" --arg playgroundTreeSHA "$(/usr/bin/shasum -a 256 "$publish_root/playground-app-tree.json" | /usr/bin/awk '{print $1}')" \
     --arg playgroundManifestSHA "$playground_manifest_sha" \
-    --arg nodeZipSHA "$(/usr/bin/shasum -a 256 "$publish_root/PeekabooQualificationNode-24.15.0.app.zip" | /usr/bin/awk '{print $1}')" \
-    --argjson nodeZipSize "$(/usr/bin/stat -f%z "$publish_root/PeekabooQualificationNode-24.15.0.app.zip")" \
+    --arg nodeZipSHA "$(/usr/bin/shasum -a 256 "$publish_root/PeekabooQualificationNode-24.21.0.app.zip" | /usr/bin/awk '{print $1}')" \
+    --argjson nodeZipSize "$(/usr/bin/stat -f%z "$publish_root/PeekabooQualificationNode-24.21.0.app.zip")" \
     --arg nodeAppCDHash "$node_app_cdhash" \
     --arg nodeTreeSHA "$(/usr/bin/shasum -a 256 "$publish_root/qualification-node-app-tree.json" | /usr/bin/awk '{print $1}')" \
     --arg nodeSourceManifestSHA "$node_source_manifest_sha" \
@@ -1249,7 +1249,7 @@ publish_phase() {
            sha256: $playgroundSHA, size: $playgroundSize, cdhash: $playgroundCDHash,
            source_commit: $sourceCommit, embedded_manifest_sha256: $playgroundManifestSHA,
            tree_manifest: {path: "playground-app-tree.json", sha256: $playgroundTreeSHA}},
-         qualification_node_app_zip: {path: "PeekabooQualificationNode-24.15.0.app.zip",
+         qualification_node_app_zip: {path: "PeekabooQualificationNode-24.21.0.app.zip",
            sha256: $nodeZipSHA, size: $nodeZipSize, cdhash: $nodeAppCDHash,
            source_commit: $sourceCommit, embedded_runtime_manifest_sha256: $nodeSourceManifestSHA,
            tree_manifest: {path: "qualification-node-app-tree.json", sha256: $nodeTreeSHA},
@@ -1281,7 +1281,7 @@ publish_phase() {
     "$publish_root"/*-tree.json "$publish_root/notary"/*.json "$publish_root/tools"/*
   (cd "$publish_root" && /usr/bin/shasum -a 256 \
     peekaboo-macos-universal.tar.gz "Peekaboo-$VERSION.app.zip" "Peekaboo-$VERSION.dmg" \
-    "Playground-$VERSION.app.zip" PeekabooQualificationNode-24.15.0.app.zip \
+    "Playground-$VERSION.app.zip" PeekabooQualificationNode-24.21.0.app.zip \
     cli-tree.json cli-notary-tree.json peekaboo-app-tree.json peekaboo-dmg-payload.json \
     playground-app-tree.json qualification-node-app-tree.json \
     qualification/peekaboo-certification-controller qualification/background-computer-use-probe \
