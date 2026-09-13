@@ -38,6 +38,7 @@ jobs:
         run: |
           node scripts/docs-lint.mjs
           node --test tests/docs-site-toc.test.mjs
+          node --test tests/background-capability-guidance.test.mjs
 
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |

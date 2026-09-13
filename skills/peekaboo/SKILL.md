@@ -46,6 +46,9 @@ GUI_SOCKET="$HOME/Library/Application Support/Peekaboo/bridge.sock"
 "$PB" app list --include-hidden --include-background --json
 "$PB" window list --app Safari --json
 
+# Read clipboard contents only when relevant to the authorized task.
+"$PB" clipboard get --json
+
 # Pixels only; an exact window also publishes a coordinate receipt.
 "$PB" see --window-id "$WINDOW_ID" --no-elements --path /tmp/peekaboo-window.png --json
 
