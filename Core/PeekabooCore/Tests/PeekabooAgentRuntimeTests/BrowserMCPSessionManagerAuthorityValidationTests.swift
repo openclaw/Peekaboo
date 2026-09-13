@@ -109,7 +109,8 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
             manager: manager,
             detectedBrowsers: { _ in [] },
             processStartIdentity: { _ in nil },
-            connectionAttempt: { .standalone(timeout: .milliseconds(40)) },
+            // Reach the deliberately blocked provider even under a busy suite, as in the explicit-connect proof.
+            connectionAttempt: { .standalone(timeout: .seconds(2)) },
             endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
             environment: ["PEEKABOO_BROWSER_MCP_ISOLATED": "1"])
         let service = BrowserMCPService(sessionManager: session)

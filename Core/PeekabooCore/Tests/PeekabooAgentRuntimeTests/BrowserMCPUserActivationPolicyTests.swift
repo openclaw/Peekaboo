@@ -17,6 +17,7 @@ struct BrowserMCPUserActivationPolicyTests {
             .union(BrowserMCPUserActivationPolicy.sourceProvenBackgroundToolNames)
 
         #expect(classified == registered)
+        #expect(Set(BrowserMCPUserActivationPolicy.catalogToolNames(foregroundCapable: true)) == registered)
         #expect(BrowserMCPUserActivationPolicy.alwaysForegroundToolNames.count == 16)
         #expect(BrowserMCPUserActivationPolicy.conditionalToolNames.count == 6)
         #expect(BrowserMCPUserActivationPolicy.sourceProvenBackgroundToolNames.count == 7)

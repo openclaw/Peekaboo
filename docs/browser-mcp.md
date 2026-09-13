@@ -20,17 +20,32 @@ Use Peekaboo native tools for macOS UI, browser chrome, menus, dialogs, permissi
 
 ## Provider update guard
 
-The provider remains pinned to 1.6.0. Audited 1.7.0 and 1.9.0 builds call `context.getDevToolsData(page)` after every tool
-handler even when usage statistics are disabled. When DevTools is open, that path calls Puppeteer evaluation and can
-grant browser user activation during an otherwise background-safe read. Disabling JavaScript tools does not remove
-this post-handler probe.
+The provider is pinned to 1.9.0, including bundled Puppeteer 25.10.0 and MCP SDK 1.30.0. Its unmodified handler calls
+`context.getDevToolsData(page)` after every tool even when usage statistics are disabled. With DevTools open, this
+calls `hasDevTools()`, `openDevTools()`, and DevTools-page Puppeteer evaluation with CDP `userGesture: true`.
+An otherwise background-safe console read can therefore grant web user activation in DevTools. Disabling
+JavaScript tools or telemetry transmission does not remove the post-handler probe.
 
-The dependency contract test requires zero telemetry-driven page/DevTools reads for an inert tool with statistics
-disabled. Upgrade only after the provider gates those metadata reads on an active telemetry logger (or removes the
-evaluation path), then repeat the complete routing, UID, and user-activation audit. The
+`BrowserMCPProviderBootstrap` applies one in-memory, upstream-shaped fix: collect those two telemetry metadata fields
+only when `ClearcutLogger.get()` returns an active logger. It verifies the package version and SHA-256 of the complete
+published `ToolHandler.js` before loading the module, and refuses changed bytes before server startup or browser
+connection. The bootstrap is embedded in the native CLI and GUI host, so the separately downloaded `npx` provider
+receives the fix too. It does not edit npm caches, suppress tool-owned DevTools reads, change Puppeteer user gestures,
+or weaken Peekaboo's foreground policy. Node's module loader registration supports the provider's existing runtime
+minimum; no extra dependency is needed.
+
+The dependency contract test executes this same bootstrap, reproduces the unpatched failure, requires zero metadata
+reads with disabled telemetry on both success and error paths, and verifies enabled telemetry and tool-owned reads.
+It also rejects changed handler bytes, audits every tool's routing/UID/response contract, and starts the full launcher
+without attaching Chrome. Remove the patch only when an upstream release fixes this path and passes the complete
+routing, UID, and user-activation audit. The
 [1.9.0 handler](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.9.0/src/ToolHandler.ts)
 and [page helper](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.9.0/src/McpPage.ts)
 own the behavior; changing Peekaboo's background policy would weaken the existing contract.
+
+The audit covers all 58 upstream tools, while public raw-call schemas advertise only the 29 tools registered by this
+provider configuration. Optional PWA tools require a category that conflicts with an existing-browser connection;
+those and disabled experimental tools are not advertised as usable capabilities.
 
 ## Permission flow
 
@@ -64,16 +79,17 @@ rediscover an ambient browser.
 Peekaboo starts Chrome DevTools MCP with:
 
 ```bash
-npx -y chrome-devtools-mcp@1.6.0 \
+# Effective provider options; Peekaboo's embedded bootstrap applies the audited telemetry fix first.
+chrome-devtools-mcp \
   --wsEndpoint=ws://127.0.0.1:<port>/devtools/browser/<id> \
-  --experimentalPageIdRouting \
+  --page-id-routing \
   --experimentalStructuredContent \
   --no-usage-statistics \
   --no-performance-crux
 ```
 
 Peekaboo pins the verified Chrome DevTools MCP version because direct page-ID routing and the structured response data
-used to mint opaque page/element capabilities are experimental upstream contracts. Upgrade the pin only after its
+used to mint opaque page/element capabilities remain version-sensitive upstream contracts. Upgrade the pin only after its
 page-scoped schemas, structured response surfaces, and routing behavior have been revalidated.
 
 For deterministic legacy CLI tests or custom Chrome endpoints:
@@ -105,7 +121,9 @@ does not pass `--allowUnrestrictedPaths`. Every mapped or raw `upload_file` call
 source must be an absolute, current-user-owned regular file no larger than 100 MiB, opened without following a final
 symlink, and copied from that checked descriptor into a read-only transfer directory under the child root. The copy is
 kept for the exact browser session because Chrome can read an attached file after the upload tool returns; it is removed
-only after the MCP child terminates on disconnect, connection loss, endpoint drift, or cancellation. External upload
+only after the MCP child terminates on disconnect, connection loss, endpoint drift, or cancellation. Peekaboo's public
+single-file `filePath` contract is translated to the provider's `filePaths` array only after staging; caller-supplied
+`filePaths` arrays are refused before dispatch. External upload
 authorization remains the caller's responsibility.
 
 ## Persistence
@@ -213,7 +231,7 @@ Common actions:
 Advanced escape hatch:
 
 - `call` with `mcp_tool` and `mcp_args_json` forwards a raw tool from the audited, pinned Chrome DevTools MCP
-  v1.6.0 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
+  v1.9.0 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
   it as upstream `pageId`, overriding any nested value in `mcp_args_json`. Truly global tools such as `list_pages`
   reject `page_id`. UID-bearing raw schemas are resolved only at their audited positions, including
   `evaluate_script.args`, form elements, and third-party singleton `{ "uid": ... }` parameters; unrelated domain

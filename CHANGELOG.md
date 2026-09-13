@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update Chrome DevTools MCP to 1.9.0 with a verified telemetry opt-out patch that prevents background reads from probing or activating DevTools; preserve single-file uploads across the provider's new array schema and re-audit browser routing.
+
 - Keep background window close, restore, and maximize callbacks on the main thread when the target belongs to the Peekaboo host, preventing embedded macOS apps from crashing while preserving exact-window validation and remote AX deadlines.
 
 - Keep caller screenshot destinations intact when remote evidence is rejected or raw output was not requested, staging ordinary captures before file publication as well as ROI captures. #710.

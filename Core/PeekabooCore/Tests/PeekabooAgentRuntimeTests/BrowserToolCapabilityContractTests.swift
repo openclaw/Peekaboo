@@ -31,7 +31,8 @@ struct BrowserToolCapabilityContractTests {
             "upload_file.uid",
         ])
         #expect(BrowserMCPPageRoutingContract.pageResponseToolNames == [
-            "close_page", "handle_dialog", "list_pages", "navigate_page", "new_page", "resize_page", "select_page",
+            "close_page", "handle_dialog", "launch_pwa", "list_pages", "navigate_page", "new_page", "resize_page",
+            "select_page", "uninstall_pwa",
         ])
         #expect(BrowserMCPPageRoutingContract.snapshotResponseToolNames == [
             "click", "click_at", "drag", "execute_3p_developer_tool", "fill", "fill_form", "hover", "press_key",

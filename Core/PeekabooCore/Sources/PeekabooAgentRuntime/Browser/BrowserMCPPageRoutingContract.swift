@@ -43,7 +43,7 @@ enum BrowserMCPPageRoutingContract {
 
     typealias ActionSemantics = BrowserToolActionSemantics
 
-    static let dependencyVersion = "1.6.0"
+    static let dependencyVersion = "1.9.0"
 
     // chrome-devtools-mcp-contract:element-reference-path-begin
     static let elementReferencePathMarkers: Set<String> = [
@@ -64,11 +64,13 @@ enum BrowserMCPPageRoutingContract {
     static let pageResponseToolNames: Set<String> = [
         "close_page",
         "handle_dialog",
+        "launch_pwa",
         "list_pages",
         "navigate_page",
         "new_page",
         "resize_page",
         "select_page",
+        "uninstall_pwa",
     ]
     // chrome-devtools-mcp-contract:page-response-end
 
@@ -125,7 +127,7 @@ enum BrowserMCPPageRoutingContract {
     ]
     // chrome-devtools-mcp-contract:page-scoped-end
 
-    // These upstream tools are not marked `pageScoped`, but their v1.6.0 schemas still require `pageId`.
+    // These upstream tools are not marked `pageScoped`, but their v1.9.0 schemas still require `pageId`.
     // chrome-devtools-mcp-contract:explicit-page-target-begin
     static let explicitPageTargetToolNames: Set<String> = [
         "close_page",
@@ -143,15 +145,21 @@ enum BrowserMCPPageRoutingContract {
         "get_heapsnapshot_dominators",
         "get_heapsnapshot_duplicate_strings",
         "get_heapsnapshot_edges",
+        "get_heapsnapshot_object_details",
         "get_heapsnapshot_retainers",
         "get_heapsnapshot_retaining_paths",
         "get_heapsnapshot_summary",
+        "get_os_app_state",
         "install_extension",
+        "install_pwa",
+        "launch_pwa",
         "list_extensions",
         "list_pages",
         "new_page",
+        "query_heapsnapshot_objects",
         "reload_extension",
         "uninstall_extension",
+        "uninstall_pwa",
     ]
     // chrome-devtools-mcp-contract:global-end
 
@@ -215,7 +223,7 @@ enum BrowserMCPPageRoutingContract {
 
         let responseProjection: BrowserMCPToolCapabilityContract.ResponseProjection = switch toolName {
         case "list_pages", "select_page", "close_page", "new_page", "navigate_page", "resize_page",
-             "handle_dialog":
+             "handle_dialog", "launch_pwa", "uninstall_pwa":
             .pages
         case "take_snapshot", "wait_for":
             .snapshotAlways
@@ -236,7 +244,8 @@ enum BrowserMCPPageRoutingContract {
             .navigate
         case "lighthouse_audit" where arguments["mode"] as? String != "snapshot":
             .navigate
-        case "install_extension", "reload_extension", "uninstall_extension":
+        case "install_extension", "reload_extension", "uninstall_extension", "install_pwa", "launch_pwa",
+             "uninstall_pwa":
             .invalidateAllPages
         default:
             self.actionSemantics(for: toolName, arguments: arguments) == .mutating &&

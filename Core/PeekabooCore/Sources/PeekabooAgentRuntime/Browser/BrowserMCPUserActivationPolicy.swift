@@ -2,7 +2,7 @@ import Foundation
 
 /// Fail-closed user-activation policy for the exactly pinned Chrome DevTools MCP provider.
 ///
-/// Puppeteer 25.3.0 sends every `evaluate` and `evaluateHandle` call with CDP `userGesture: true`. The provider can
+/// Puppeteer 25.10.0 sends every `evaluate` and `evaluateHandle` call with CDP `userGesture: true`. The provider can
 /// therefore grant transient browser user activation without visibly fronting a page. Background execution is limited
 /// to routes whose complete successful call path is source-proven not to reach those Puppeteer APIs.
 enum BrowserMCPUserActivationPolicy {
@@ -63,6 +63,12 @@ enum BrowserMCPUserActivationPolicy {
     ]
     // chrome-devtools-mcp-contract:user-activation-source-proven-background-end
 
+    /// The default provider registration is audited by the dependency contract test. Optional tools remain in the
+    /// routing audit, but must not be advertised when their provider category or feature is disabled.
+    static let registeredToolNames = Self.alwaysForegroundToolNames
+        .union(Self.conditionalToolNames)
+        .union(Self.sourceProvenBackgroundToolNames)
+
     /// Raw names advertised to background callers. Runtime-state-dependent routes stay hidden because their safe
     /// branch cannot be proven from request arguments before provider entry.
     static let backgroundCatalogToolNames = Self.sourceProvenBackgroundToolNames.union([
@@ -84,7 +90,7 @@ enum BrowserMCPUserActivationPolicy {
 
     static func catalogToolNames(foregroundCapable: Bool) -> [String] {
         let names = foregroundCapable
-            ? BrowserMCPPageRoutingContract.pageTargetedToolNames.union(BrowserMCPPageRoutingContract.globalToolNames)
+            ? self.registeredToolNames
             : self.backgroundCatalogToolNames
         return names.sorted()
     }

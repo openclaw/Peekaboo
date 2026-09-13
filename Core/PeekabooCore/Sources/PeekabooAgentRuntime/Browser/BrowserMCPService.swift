@@ -1183,8 +1183,14 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
     private static let chromeDevToolsBaseArguments = [
         "-y",
-        "chrome-devtools-mcp@1.6.0",
-        "--experimentalPageIdRouting",
+        "--package=chrome-devtools-mcp@1.9.0",
+        "--",
+        "node",
+        "--input-type=module",
+        "--eval",
+        BrowserMCPProviderBootstrap.source,
+        "--",
+        "--page-id-routing",
         "--experimentalStructuredContent",
     ]
 

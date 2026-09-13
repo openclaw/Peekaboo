@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const rootPackageURL = new URL("../package.json", import.meta.url);
 const dependencyPackageURL = new URL(
@@ -58,27 +62,41 @@ const expectedElementReferencePaths = namesInContractSection("element-reference-
 const expectedPageResponseNames = namesInContractSection("page-response");
 const expectedSnapshotResponseNames = namesInContractSection("snapshot-response");
 
-assert.equal(declaredVersion, "1.6.0", "keep the audited browser routing contract pinned exactly");
+assert.equal(declaredVersion, "1.9.0", "keep the audited browser routing contract pinned exactly");
 assert.equal(dependencyPackage.version, declaredVersion, "installed Chrome DevTools MCP must match the pin");
 assert.equal(swiftVersion, declaredVersion, "Swift browser routing contract must match the dependency pin");
 
-const { ToolHandler } = await import(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/ToolHandler.js", import.meta.url)
-);
+// Exercise the exact embedded runtime loader, stopping before the stdio server entrypoint.
+const bootstrapSwift = readFileSync(new URL(
+  "../Core/PeekabooCore/Sources/PeekabooAgentRuntime/Browser/BrowserMCPProviderBootstrap.swift", import.meta.url,
+), "utf8");
+const bootstrap = bootstrapSwift.match(/static let source = #"""\n([\s\S]*?)\n    """#/)[1]
+  .replace(/^    /gm, "");
+const originalPath = process.env.PATH;
+process.env.PATH = fileURLToPath(new URL("../node_modules/.bin", import.meta.url)) + delimiter + originalPath;
+await import("data:text/javascript," + encodeURIComponent(bootstrap.split("process.argv =")[0]));
+process.env.PATH = originalPath;
+const handlerURL = new URL("../node_modules/chrome-devtools-mcp/build/src/ToolHandler.js", import.meta.url);
+const { ToolHandler } = await import(handlerURL);
+const { ToolHandler: UnpatchedToolHandler } = await import(new URL(handlerURL.href + "?unpatched-regression"));
 const { createTools } = await import(
   new URL("../node_modules/chrome-devtools-mcp/build/src/tools/tools.js", import.meta.url)
 );
 
+const { mcpOptions } = await import(new URL(
+  "../node_modules/chrome-devtools-mcp/build/src/config/mcp-options.js", import.meta.url,
+));
 const serverArgs = {
+  ...Object.fromEntries(Object.entries(mcpOptions).map(([key, option]) => [key, option.default])),
   usageStatistics: false,
-  experimentalPageIdRouting: true,
+  pageIdRouting: true,
   experimentalStructuredContent: true,
   slim: false,
   viaCli: false,
 };
 const inertMutex = {
   async acquire() {
-    return { dispose() {} };
+    return { [Symbol.dispose]() {} };
   },
 };
 const tools = createTools(serverArgs);
@@ -99,6 +117,7 @@ const structuredFixtureTool = {
 };
 let disabledTelemetryMetadataReads = 0;
 const fixtureContext = {
+  browser: { process() { return {}; } },
   async getDevToolsData() {
     disabledTelemetryMetadataReads++;
     throw new Error("Disabled telemetry must not inspect DevTools UI");
@@ -111,6 +130,12 @@ const fixtureContext = {
     return false;
   },
 };
+const unpatchedFixture = await new UnpatchedToolHandler(
+  structuredFixtureTool, serverArgs, async () => fixtureContext, inertMutex,
+).handle({});
+assert.equal(unpatchedFixture.isError, true, "the unfixed 1.9.0 handler must reproduce the telemetry probe");
+assert.equal(disabledTelemetryMetadataReads, 1, "the negative control must reach DevTools metadata");
+disabledTelemetryMetadataReads = 0;
 const structuredHandler = new ToolHandler(
   structuredFixtureTool,
   serverArgs,
@@ -140,6 +165,69 @@ assert.equal(
   false,
   "structured-content proof must discriminate the provider's default text-only behavior",
 );
+const failedHandler = new ToolHandler(
+  { ...structuredFixtureTool, async handler() { throw new Error("fixture tool failed"); } },
+  serverArgs, async () => fixtureContext, inertMutex,
+);
+assert.equal((await failedHandler.handle({})).isError, true);
+assert.equal(disabledTelemetryMetadataReads, 0, "failed tools must also skip disabled telemetry probes");
+
+// The patch only gates telemetry: real tool-owned DevTools reads must retain their normal semantics.
+const metadataHandler = new ToolHandler(
+  { ...structuredFixtureTool, async handler(_request, _response, context) { await context.getDevToolsData(); } },
+  serverArgs, async () => fixtureContext, inertMutex,
+);
+assert.equal((await metadataHandler.handle({})).isError, true);
+assert.equal(disabledTelemetryMetadataReads, 1, "do not stub the shared DevTools helper");
+
+const { ClearcutLogger } = await import(new URL(
+  "../node_modules/chrome-devtools-mcp/build/src/telemetry/ClearcutLogger.js", import.meta.url,
+));
+const originalGetLogger = ClearcutLogger.get;
+let loggedInvocation;
+ClearcutLogger.get = () => ({ logToolInvocation(value) { loggedInvocation = value; } });
+try {
+  const enabledContext = {
+    ...fixtureContext,
+    async getDevToolsData() { return { fixture: "devtools" }; },
+    getSelectedMcpPageUrl() { return "https://example.invalid/"; },
+  };
+  const result = await new ToolHandler(
+    structuredFixtureTool, { ...serverArgs, usageStatistics: true }, async () => enabledContext, inertMutex,
+  ).handle({});
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(loggedInvocation.devToolsData, { fixture: "devtools" });
+  assert.equal(loggedInvocation.pageUrl, "https://example.invalid/");
+} finally {
+  ClearcutLogger.get = originalGetLogger;
+}
+
+const localBin = fileURLToPath(new URL("../node_modules/.bin", import.meta.url));
+const versionProbe = spawnSync(process.execPath, ["--input-type=module", "--eval", bootstrap, "--", "--version"], {
+  encoding: "utf8", timeout: 30_000, env: { ...process.env, PATH: localBin + delimiter + originalPath },
+});
+assert.equal(versionProbe.status, 0, "the complete embedded launcher must start the pinned provider");
+assert.equal(versionProbe.stdout.trim(), declaredVersion);
+
+const tamperedRoot = mkdtempSync(join(tmpdir(), "peekaboo-provider-contract-"));
+try {
+  const fakeBin = join(tamperedRoot, "node_modules/.bin");
+  const fakePackage = join(tamperedRoot, "node_modules/chrome-devtools-mcp");
+  mkdirSync(fakeBin, { recursive: true });
+  mkdirSync(join(fakePackage, "build/src"), { recursive: true });
+  writeFileSync(join(fakePackage, "package.json"), JSON.stringify({
+    name: "chrome-devtools-mcp", version: declaredVersion, type: "module",
+  }));
+  writeFileSync(join(fakePackage, "build/src/ToolHandler.js"), "throw new Error('unverified code ran');");
+  const rejected = spawnSync(process.execPath, ["--input-type=module", "--eval", bootstrap], {
+    encoding: "utf8", timeout: 10_000, env: { ...process.env, PATH: fakeBin + delimiter + originalPath },
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /Error: Peekaboo: unaudited Chrome DevTools MCP ToolHandler/);
+  assert.doesNotMatch(rejected.stderr, /Error: unverified code ran/);
+} finally {
+  rmSync(tamperedRoot, { recursive: true, force: true });
+}
 
 function unwrapOptional(schema) {
   let current = schema;
@@ -201,7 +289,7 @@ const issueFormatterSource = readFileSync(
   "utf8",
 );
 const waitForHelperSource = readFileSync(
-  new URL("../node_modules/chrome-devtools-mcp/build/src/WaitForHelper.js", import.meta.url),
+  new URL("../node_modules/chrome-devtools-mcp/build/src/utils/WaitForHelper.js", import.meta.url),
   "utf8",
 );
 const scriptToolSource = readFileSync(
@@ -297,7 +385,7 @@ assert.match(
 );
 assert.match(
   inputToolSource,
-  /File uploaded from \$\{filePath\}/,
+  /File uploaded from \$\{filePaths\.join\(', '\)\}/,
   "provider upload-path response changed",
 );
 assert.match(
@@ -446,7 +534,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   expectedPageResponseNames,
-  ["close_page", "handle_dialog", "list_pages", "navigate_page", "new_page", "resize_page", "select_page"],
+  ["close_page", "handle_dialog", "launch_pwa", "list_pages", "navigate_page", "new_page", "resize_page", "select_page", "uninstall_pwa"],
   "re-audit every provider tool that emits a page list",
 );
 assert.deepEqual(

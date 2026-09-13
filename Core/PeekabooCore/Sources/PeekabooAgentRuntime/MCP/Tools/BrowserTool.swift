@@ -128,7 +128,7 @@ public struct BrowserTool: MCPTool {
             "insight_name": SchemaBuilder.string(description: "Insight name from trace summary."),
             "mcp_tool": SchemaBuilder.string(
                 description: foregroundCapable
-                    ? "Advanced: audited Chrome DevTools MCP v1.6.0 tool name for call. " +
+                    ? "Advanced: audited Chrome DevTools MCP v1.9.0 tool name for call. " +
                     "Routes that enter page evaluation use foreground browser authority."
                     : "Audited raw tool whose complete path cannot grant browser user activation.",
                 enum: BrowserMCPUserActivationPolicy.catalogToolNames(foregroundCapable: foregroundCapable)),

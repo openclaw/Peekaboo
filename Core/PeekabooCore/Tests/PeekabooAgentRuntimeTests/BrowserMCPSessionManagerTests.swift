@@ -5021,8 +5021,15 @@ extension BrowserMCPSessionManagerTests {
         #expect(result.actionFailure?.outcome.dispatchState.unitCount?.rawValue == 2)
     }
 
-    @Test
-    func `first pre dispatch upload failure stays typed retry safe and dispatch free`() async throws {
+    @Test(arguments: [
+        #"{"filePath":"relative.txt"}"#,
+        #"{"filePath":"/tmp/safe.txt","filePaths":["/tmp/unchecked.txt"]}"#,
+        #"{"filePaths":["/tmp/unchecked.txt"]}"#,
+    ])
+    func `first pre dispatch upload failure stays typed retry safe and dispatch free`(
+        argumentsJSON: String) async throws
+    {
+        let arguments = try #require(JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any])
         let manager = MockBrowserMCPManager()
         let session = Self.exactSession(manager: manager)
         let receipt = try #require(try await (session.connect(channel: .stable)).connectionReceipt)
@@ -5030,7 +5037,7 @@ extension BrowserMCPSessionManagerTests {
 
         do {
             _ = try await session.executeSequence(
-                [BrowserMCPMappedCall(toolName: "upload_file", arguments: ["filePath": "relative.txt"])],
+                [BrowserMCPMappedCall(toolName: "upload_file", arguments: arguments)],
                 channel: .stable,
                 expectedConnectionReceipt: receipt)
             Issue.record("Expected a typed pre-dispatch upload refusal")
@@ -5058,7 +5065,10 @@ extension BrowserMCPSessionManagerTests {
         var stagedPath: String?
         manager.executeHandler = { toolName, arguments in
             guard toolName == "upload_file" else { return ToolResponse.text("ok") }
-            let path = try #require(arguments["filePath"] as? String)
+            #expect(arguments["filePath"] == nil)
+            let paths = try #require(arguments["filePaths"] as? [String])
+            #expect(paths.count == 1)
+            let path = try #require(paths.first)
             stagedPath = path
             #expect(URL(fileURLWithPath: path).lastPathComponent == "browser receipt.txt")
             #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data("receipt-value".utf8))
@@ -5188,7 +5198,7 @@ extension BrowserMCPSessionManagerTests {
         var stagedPath: String?
         manager.executeHandler = { toolName, arguments in
             guard toolName == "upload_file" else { return ToolResponse.text("ok") }
-            stagedPath = arguments["filePath"] as? String
+            stagedPath = (arguments["filePaths"] as? [String])?.first
             return ToolResponse.error("fixture rejected upload")
         }
         _ = try await session.connect(channel: .stable)
@@ -5223,7 +5233,7 @@ extension BrowserMCPSessionManagerTests {
         var stagedPath: String?
         manager.executeHandler = { toolName, arguments in
             guard toolName == "upload_file" else { return ToolResponse.text("ok") }
-            let path = try #require(arguments["filePath"] as? String)
+            let path = try #require((arguments["filePaths"] as? [String])?.first)
             stagedPath = path
             throw UploadProviderFixtureError(message: "Provider rejected staged path \(path)")
         }
@@ -5257,7 +5267,7 @@ extension BrowserMCPSessionManagerTests {
         var stagedFileExistedWhenChildRemoved = false
         manager.executeHandler = { toolName, arguments in
             guard toolName == "upload_file" else { return ToolResponse.text("ok") }
-            stagedPath = arguments["filePath"] as? String
+            stagedPath = (arguments["filePaths"] as? [String])?.first
             await barrier.block()
             try Task.checkCancellation()
             return ToolResponse.text("unexpected")

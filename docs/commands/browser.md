@@ -21,7 +21,7 @@ peekaboo browser snapshot --page-id 2 --path /tmp/page.txt --foreground
 
 Use `peekaboo browser --help` for the complete action-specific option set. Page-scoped automation should retain the returned page ID and pass `--page-id` on later calls so concurrent browser work cannot redirect it.
 
-The CLI is background-only by default. Chrome DevTools MCP 1.6.0's bundled Puppeteer grants browser user activation to
+The CLI is background-only by default. Chrome DevTools MCP 1.9.0's bundled Puppeteer grants browser user activation to
 every page evaluation, including evaluation used internally for page titles, stable-DOM waits, snapshots, and element
 geometry. Default mode therefore exposes only source-audited routes that cannot enter that evaluation path. Page
 discovery, snapshots, navigation, waits, element interaction, and arbitrary script evaluation refuse before provider

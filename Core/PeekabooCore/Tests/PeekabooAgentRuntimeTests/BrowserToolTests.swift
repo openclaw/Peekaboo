@@ -733,12 +733,12 @@ struct BrowserToolTests {
 
     @Test
     func `Audited browser routing contract partitions pinned tool catalog`() {
-        #expect(BrowserMCPPageRoutingContract.dependencyVersion == "1.6.0")
+        #expect(BrowserMCPPageRoutingContract.dependencyVersion == "1.9.0")
         #expect(BrowserMCPPageRoutingContract.pageScopedToolNames.count == 32)
         #expect(BrowserMCPPageRoutingContract.explicitPageTargetToolNames.count == 3)
-        #expect(BrowserMCPPageRoutingContract.globalToolNames.count == 16)
+        #expect(BrowserMCPPageRoutingContract.globalToolNames.count == 22)
         #expect(BrowserMCPPageRoutingContract.blockedSelectedPageToolNames == ["trigger_extension_action"])
-        #expect(BrowserMCPPageRoutingContract.allToolNames.count == 52)
+        #expect(BrowserMCPPageRoutingContract.allToolNames.count == 58)
         #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
             with: BrowserMCPPageRoutingContract.globalToolNames))
         #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
@@ -746,8 +746,8 @@ struct BrowserToolTests {
         #expect(BrowserMCPPageRoutingContract.globalToolNames.isDisjoint(
             with: BrowserMCPPageRoutingContract.blockedSelectedPageToolNames))
         #expect(BrowserMCPPageRoutingContract.routing(for: "trigger_extension_action") == .blockedSelectedPage)
-        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 27)
-        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.count == 23)
+        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 30)
+        #expect(BrowserMCPPageRoutingContract.mutatingToolNames.count == 26)
         #expect(BrowserMCPPageRoutingContract.argumentDependentToolNames == [
             "performance_start_trace",
             "select_page",

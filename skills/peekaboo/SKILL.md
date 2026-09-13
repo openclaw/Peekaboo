@@ -7,6 +7,12 @@ description: "Use Peekaboo for macOS screenshots, Accessibility inspection, and 
 
 Use native Peekaboo commands for macOS apps, windows, menus, dialogs, browser chrome, and pixels. Prefer existing browser tooling for page content, DOM, forms, console, and network; Peekaboo's `browser` command is available when that integration is configured. Stay within the user's authorized task and verify the resulting UI.
 
+For Peekaboo browser work, retain one Bridge host and its existing provider connection across calls. The pinned
+Chrome DevTools MCP 1.9.0 is launched through Peekaboo's audited telemetry bootstrap; a bare upstream `npx` invocation
+does not carry that fix. Background calls require an existing exact connection and retain the source-audited tool
+allowlist. Page evaluation can grant web user activation even when Chrome remains behind another app, so do not
+infer background safety from window focus alone or retry a refused call with foreground authority implicitly.
+
 ## Select the CLI and execution host
 
 Use the installed signed CLI for ordinary automation; building Peekaboo is a development task, not a prerequisite. Honor an explicit binary override and inspect its version:

@@ -55,13 +55,19 @@ struct BrowserMCPConfigTests {
     }
 
     private func expectStructuredCapabilityArguments(_ arguments: [String]) {
-        #expect(Array(arguments.prefix(4)) == [
+        #expect(Array(arguments.prefix(10)) == [
             "-y",
-            "chrome-devtools-mcp@1.6.0",
-            "--experimentalPageIdRouting",
+            "--package=chrome-devtools-mcp@1.9.0",
+            "--",
+            "node",
+            "--input-type=module",
+            "--eval",
+            BrowserMCPProviderBootstrap.source,
+            "--",
+            "--page-id-routing",
             "--experimentalStructuredContent",
         ])
-        #expect(arguments.count { $0 == "--experimentalPageIdRouting" } == 1)
+        #expect(arguments.count { $0 == "--page-id-routing" } == 1)
         #expect(arguments.count { $0 == "--experimentalStructuredContent" } == 1)
     }
 }

@@ -706,7 +706,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                         expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
                         connectionPolicy: .requireExistingLiveReceipt)
                     let currentUIDs = BrowserMCPProviderSnapshotParser.providerUIDs(in: preflight.response)
-                    // chrome-devtools-mcp v1.6.0 preserves a UID only for the same per-page
+                    // chrome-devtools-mcp v1.9.0 preserves a UID only for the same per-page
                     // loaderId/backendNodeId pair. The pinned dependency contract checks that identity rule.
                     guard !preflight.response.isError,
                           preflight.actionFailure == nil,
@@ -1110,10 +1110,12 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 throw BrowserMCPCallFailure.mayHaveDispatched(error)
             }
         }
-        guard let sourcePath = call.arguments["filePath"] as? String, !sourcePath.isEmpty else {
+        guard let sourcePath = call.arguments["filePath"] as? String, !sourcePath.isEmpty,
+              call.arguments["filePaths"] == nil
+        else {
             throw BrowserMCPCallFailure.preDispatch(
                 BrowserMCPUploadStagingError.invalidPath(
-                    "upload_file requires a non-empty filePath string"))
+                    "upload_file requires a single non-empty filePath string; filePaths is not supported"))
         }
 
         guard let uploadWorkspace = self.uploadWorkspace else {
@@ -1128,7 +1130,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             throw BrowserMCPCallFailure.preDispatch(error)
         }
         var stagedArguments = call.arguments
-        stagedArguments["filePath"] = stagedUpload.filePath
+        // Preserve Peekaboo's single-file API while only exposing the checked copy to the newer provider.
+        stagedArguments.removeValue(forKey: "filePath")
+        stagedArguments["filePaths"] = [stagedUpload.filePath]
         let uploadID = UUID()
         self.activeUploadID = uploadID
         do {
