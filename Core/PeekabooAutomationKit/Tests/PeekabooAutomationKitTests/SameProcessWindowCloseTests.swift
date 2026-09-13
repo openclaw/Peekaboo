@@ -12,6 +12,7 @@ struct SameProcessWindowCloseTests {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
         application.finishLaunching()
+        let service = WindowManagementService()
 
         let target = self.makeWindow(title: "Close target", origin: CGPoint(x: 100, y: 100))
         let sibling = self.makeWindow(title: "Keep open", origin: CGPoint(x: 500, y: 100))
@@ -33,13 +34,20 @@ struct SameProcessWindowCloseTests {
         let siblingIdentity = try #require(SystemIdentityResolver.windowMutationIdentity(windowID: siblingWindowID))
         #expect(identity.ownerProcessIdentifier == ProcessInfo.processInfo.processIdentifier)
 
-        let result = try await WindowManagementService().closeWindowActionResult(
-            target: .windowId(identity.windowID),
-            expectedIdentity: identity,
-            allowForegroundFallback: false)
-
-        #expect(result.outcome?.state == .confirmedChange)
-        #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        do {
+            let result = try await service.closeWindowActionResult(
+                target: .windowId(identity.windowID),
+                expectedIdentity: identity,
+                allowForegroundFallback: false)
+            #expect(result.outcome?.state == .confirmedChange)
+            #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        } catch {
+            let current = SystemIdentityResolver.windowIdentity(targetWindowID)
+            print("Close fixture receipt: \(identity); current: \(String(describing: current))")
+            print(
+                "Fixture: frame=\(target.frame), visible=\(target.isVisible), closes=\(targetDelegate.closeCount)")
+            throw error
+        }
         #expect(targetDelegate.closeCount == 1)
         #expect(!target.isVisible)
         #expect(siblingDelegate.closeCount == 0)
@@ -55,6 +63,7 @@ struct SameProcessWindowCloseTests {
             defer: false)
         window.title = title
         window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
         window.orderFront(nil)
         return window
     }
