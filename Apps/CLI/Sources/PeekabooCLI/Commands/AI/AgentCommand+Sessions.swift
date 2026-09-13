@@ -6,7 +6,6 @@ import PeekabooFoundation
 import Tachikoma
 import TauTUI
 
-/// Temporary session info struct until PeekabooAgentService implements session management
 struct AgentSessionInfo: Codable {
     let id: String
     let task: String

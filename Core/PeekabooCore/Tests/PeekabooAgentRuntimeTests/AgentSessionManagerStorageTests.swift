@@ -158,6 +158,30 @@ struct AgentSessionManagerStorageTests {
         #expect(summaries.first { $0.id == "expired" }?.status == .expired)
     }
 
+    @Test
+    @MainActor
+    func `Session round trip preserves messages and deletion clears cached state`() async throws {
+        let root = try Self.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = try AgentSessionManager(sessionDirectory: root)
+        let session = Self.session(
+            id: "round-trip",
+            messages: [.user("Test session"), .assistant("Saved response")])
+        try manager.saveSession(session)
+
+        let reloaded = try AgentSessionManager(sessionDirectory: root)
+        let loaded = try #require(try await reloaded.loadSession(id: session.id))
+        #expect(loaded.messages.count == 2)
+        #expect(loaded.messages == session.messages)
+        #expect(reloaded.listSessions().first?.messageCount == 2)
+
+        try await reloaded.deleteSession(id: session.id)
+        #expect(try await reloaded.loadSession(id: session.id) == nil)
+        #expect(reloaded.listSessions().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("round-trip.json").path))
+        #expect(try await reloaded.loadSession(id: "missing-session") == nil)
+    }
+
     private static func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentSessionManagerStorageTests-\(UUID().uuidString)", isDirectory: true)
@@ -169,6 +193,7 @@ struct AgentSessionManagerStorageTests {
         id: String,
         status: String? = nil,
         totalTokens: Int = 0,
+        messages: [ModelMessage] = [.user("Test session")],
         createdAt: Date? = nil,
         updatedAt: Date? = nil) -> AgentSession
     {
@@ -177,7 +202,7 @@ struct AgentSessionManagerStorageTests {
         return AgentSession(
             id: id,
             modelName: "test-model",
-            messages: [.user("Test session")],
+            messages: messages,
             metadata: SessionMetadata(totalTokens: totalTokens, customData: customData),
             createdAt: createdAt ?? now,
             updatedAt: updatedAt ?? now)
