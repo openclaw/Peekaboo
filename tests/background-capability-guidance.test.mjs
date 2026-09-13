@@ -33,6 +33,7 @@ test('press guidance preserves the snapshot-pinned background route', () => {
 const isTargetedRawPress = (line) => /^peekaboo press\b.*--(?:app|pid)\b/.test(line);
 const hasSafeRawPressRoute = (line) =>
   /--(?:foreground|snapshot|window-(?:id|title|index))\b/.test(line);
+const normalizeSkillCommands = (source) => source.replace(/^"\$PB"(?=\s)/gm, 'peekaboo');
 
 test('primary app automation examples stay exact-window and background-only', () => {
   for (const path of ['README.md', 'docs/quickstart.md']) {
@@ -53,7 +54,7 @@ test('primary app automation examples stay exact-window and background-only', ()
 });
 
 test('bundled skill never advertises app/PID-only background press', () => {
-  const skill = read('skills/peekaboo/SKILL.md');
+  const skill = normalizeSkillCommands(read('skills/peekaboo/SKILL.md'));
   const targetedPressExamples = skill
     .split('\n')
     .filter(isTargetedRawPress);
@@ -67,13 +68,16 @@ test('bundled skill never advertises app/PID-only background press', () => {
     );
   }
 
-  assert.equal(isTargetedRawPress('peekaboo press return --pid 1234'), true);
-  assert.equal(hasSafeRawPressRoute('peekaboo press return --pid 1234'), false);
-  assert.equal(hasSafeRawPressRoute('peekaboo press return --pid 1234 --window-id 42'), true);
+  for (const binary of ['peekaboo', '"$PB"']) {
+    const unsafe = normalizeSkillCommands(`${binary} press return --pid 1234`);
+    assert.equal(isTargetedRawPress(unsafe), true);
+    assert.equal(hasSafeRawPressRoute(unsafe), false);
+    assert.equal(hasSafeRawPressRoute(`${unsafe} --window-id 42`), true);
+  }
 });
 
 test('bundled skill keeps routine management examples read-only', () => {
-  const skill = read('skills/peekaboo/SKILL.md');
+  const skill = normalizeSkillCommands(read('skills/peekaboo/SKILL.md'));
 
   assert.doesNotMatch(skill, /^peekaboo clipboard (?:set|clear|restore)\b/m);
   assert.doesNotMatch(skill, /^peekaboo permissions request\b/m);
