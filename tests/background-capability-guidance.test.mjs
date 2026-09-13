@@ -30,7 +30,7 @@ test('press guidance preserves the snapshot-pinned background route', () => {
   assert.match(press, /Background-only Agent\/MCP.*explicit fresh exact non-dialog snapshot/s);
 });
 
-const isTargetedRawPress = (line) => /^peekaboo press\b.*--(?:app|pid)\b/.test(line);
+const isTargetedRawPress = (line) => /^(?:peekaboo|"\$PB") press\b.*--(?:app|pid)\b/.test(line);
 const hasSafeRawPressRoute = (line) =>
   /--(?:foreground|snapshot|window-(?:id|title|index))\b/.test(line);
 
@@ -68,6 +68,7 @@ test('bundled skill never advertises app/PID-only background press', () => {
   }
 
   assert.equal(isTargetedRawPress('peekaboo press return --pid 1234'), true);
+  assert.equal(isTargetedRawPress('"$PB" press return --pid 1234'), true);
   assert.equal(hasSafeRawPressRoute('peekaboo press return --pid 1234'), false);
   assert.equal(hasSafeRawPressRoute('peekaboo press return --pid 1234 --window-id 42'), true);
 });
@@ -75,12 +76,11 @@ test('bundled skill never advertises app/PID-only background press', () => {
 test('bundled skill keeps routine management examples read-only', () => {
   const skill = read('skills/peekaboo/SKILL.md');
 
-  assert.doesNotMatch(skill, /^peekaboo clipboard (?:set|clear|restore)\b/m);
-  assert.doesNotMatch(skill, /^peekaboo permissions request\b/m);
-  assert.doesNotMatch(skill, /^peekaboo app focus\b/m);
-  assert.match(skill, /^peekaboo clipboard get --json$/m);
-  assert.match(skill, /^peekaboo permissions status --all-sources --json$/m);
-  assert.match(skill, /^peekaboo app list --include-hidden --include-background --json$/m);
+  assert.doesNotMatch(skill, /^(?:peekaboo|"\$PB") clipboard (?:set|clear|restore)\b/m);
+  assert.doesNotMatch(skill, /^(?:peekaboo|"\$PB") permissions request\b/m);
+  assert.doesNotMatch(skill, /^(?:peekaboo|"\$PB") app focus\b/m);
+  assert.match(skill, /^(?:peekaboo|"\$PB") permissions status --all-sources --json$/m);
+  assert.match(skill, /^(?:peekaboo|"\$PB") app list --include-hidden --include-background --json$/m);
 });
 
 test('background Agent type guidance requires an explicit non-dialog snapshot', () => {
