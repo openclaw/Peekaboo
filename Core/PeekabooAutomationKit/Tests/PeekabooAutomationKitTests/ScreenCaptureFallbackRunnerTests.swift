@@ -86,10 +86,24 @@ struct ScreenCaptureFallbackRunnerTests {
     @Test
     @MainActor
     func `wedged system screencapture child is killed and reaped without blocking main actor`() async throws {
+        let readyURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: readyURL) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "trap '' TERM; exec /bin/sleep 30"]
+        process.arguments = ["-c", "trap '' TERM; printf ready > \"$1\"; exec /bin/sleep 30", "fixture", readyURL.path]
         try process.run()
+        defer {
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+        }
+        // Start the timeout only after the child has installed its TERM handler.
+        let readinessDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !FileManager.default.fileExists(atPath: readyURL.path), ContinuousClock.now < readinessDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: readyURL.path))
         let processIdentifier = process.processIdentifier
         let startedAt = ContinuousClock.now
 

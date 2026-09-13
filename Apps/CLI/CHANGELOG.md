@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Capture no longer refuses when other apps such as Claude or OpenClaw are running; scope ScreenCaptureKit coordination to Peekaboo hosts and preserve real capture errors.
 - Update Chrome DevTools MCP to 1.9.0 with a verified telemetry opt-out patch that prevents background reads from probing or activating DevTools; preserve single-file uploads across the provider's new array schema and re-audit browser routing.
 
 - Refresh the canonical agent skill with current host selection, permission, background input, coordinate, and result-verification guidance; document linked distribution and correct snapshot-relative click coordinates in CLI help and docs.

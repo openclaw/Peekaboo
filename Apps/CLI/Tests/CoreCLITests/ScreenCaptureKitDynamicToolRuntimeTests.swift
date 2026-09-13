@@ -167,7 +167,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
     }
 
     @Test
-    func `one-shot and implicit capture safety retain broad legacy-owner discovery`() {
+    func `one-shot and implicit capture safety discover only Peekaboo and selected hosts`() {
         let selectedSocket = "/tmp/one-shot-selected.sock"
         let daemonSocket = "/tmp/one-shot-daemon.sock"
         let buildSocket = "/tmp/one-shot-build-daemon.sock"
@@ -196,8 +196,8 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         #expect(candidates.contains(buildSocket))
         #expect(candidates.contains(historicalSocket))
         #expect(candidates.contains(PeekabooBridgeConstants.peekabooSocketPath))
-        #expect(candidates.contains(PeekabooBridgeConstants.claudeSocketPath))
-        #expect(candidates.contains(PeekabooBridgeConstants.clawdbotSocketPath))
+        #expect(!candidates.contains(PeekabooBridgeConstants.claudeSocketPath))
+        #expect(!candidates.contains(PeekabooBridgeConstants.clawdbotSocketPath))
         #expect(Set(candidates).count == candidates.count)
     }
 
@@ -267,8 +267,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                     return try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
                         candidates: candidates,
                         identity: handshakeCache.identity,
-                        handshakeCache: handshakeCache,
-                        externalHostPresence: { _ in .absent }
+                        handshakeCache: handshakeCache
                     )
                 },
                 remoteCandidatePlan: { _, _ in

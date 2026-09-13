@@ -58,8 +58,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                 requiredHostKind: nil,
                 requiresValidatedHistoricalDaemon: false
             )],
-            identity: BridgeDiagnostics.currentClientIdentity(),
-            externalHostPresence: { _ in .absent }
+            identity: BridgeDiagnostics.currentClientIdentity()
         )
 
         #expect(unawareHost == nil)

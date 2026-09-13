@@ -328,21 +328,13 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
         return self.unsignedMainBundleIsScreenCaptureKitHost(executablePath: executablePath)
     }
 
+    /// Coordinate Peekaboo builds only. Other applications are independent ScreenCaptureKit clients.
     private static let screenCaptureKitHostIdentifiers: Set<String> = [
         "peekaboo",
         "boo.peekaboo",
         "boo.peekaboo.peekaboo",
         "boo.peekaboo.mac",
         "boo.peekaboo.mac.debug",
-        "com.anthropic.claudefordesktop",
-        "com.clawdis.mac",
-        "com.clawdis.mac.debug",
-        "com.clawdbot.mac",
-        "com.clawdbot.mac.debug",
-        "bot.molt.mac",
-        "bot.molt.mac.debug",
-        "ai.openclaw.mac",
-        "ai.openclaw.mac.debug",
     ]
 
     private static func unsignedMainBundleIsScreenCaptureKitHost(executablePath: String) -> Bool {

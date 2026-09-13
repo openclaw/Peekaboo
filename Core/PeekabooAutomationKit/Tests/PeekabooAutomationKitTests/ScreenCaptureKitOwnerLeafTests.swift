@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
@@ -95,6 +96,31 @@ struct ScreenCaptureKitOwnerLeafTests {
 
         #expect(value == 42)
         #expect(steps == ["claim", "leaf"])
+    }
+
+    @Test(arguments: [-3801, -3805])
+    func `ScreenCaptureKit permission and stream errors survive owner admission`(code: Int) async throws {
+        let receipt = Self.receipt(processIdentifier: 100, processStartIdentity: 200)
+        let claim: @MainActor @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt = { receipt }
+        let failure = NSError(
+            domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: "ScreenCaptureKit fixture failure"])
+        var leafCalls = 0
+
+        let error = await #expect(throws: NSError.self) {
+            try await ScreenCaptureKitCaptureGate.$processOwnerClaimOverride.withValue(claim) {
+                try await ScreenCaptureKitCaptureGate.runOwnedOperation(seconds: 1, operationName: "fixture") {
+                    leafCalls += 1
+                    throw failure
+                }
+            }
+        }
+
+        #expect(leafCalls == 1)
+        #expect(error?.domain == failure.domain)
+        #expect(error?.code == failure.code)
+        #expect(error?.localizedDescription == failure.localizedDescription)
     }
 
     @Test

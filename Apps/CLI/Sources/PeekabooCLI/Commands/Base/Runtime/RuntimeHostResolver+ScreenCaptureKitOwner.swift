@@ -1,4 +1,3 @@
-import AppKit
 import Darwin
 import Foundation
 import PeekabooAutomationKit
@@ -98,8 +97,6 @@ extension RuntimeHostResolver {
         ImplicitRemoteCandidate,
         PeekabooBridgeClientIdentity
     ) async throws -> PeekabooBridgeHandshakeResponse
-    typealias ScreenCaptureKitExternalHostInspector = @MainActor @Sendable (String) ->
-        ScreenCaptureKitExternalHostPresence
     typealias RemoteHandshakeCacheFactory = @MainActor () -> RemoteHandshakeCache
 
     struct Dependencies {
@@ -224,37 +221,6 @@ extension RuntimeHostResolver {
             self.processStartIdentity = processStartIdentity
             self.buildIdentity = buildIdentity
         }
-    }
-
-    enum ScreenCaptureKitExternalHostPresence: Equatable {
-        case absent
-        case present(
-            processIdentifier: pid_t?,
-            processStartIdentity: UInt64?,
-            buildIdentity: String?
-        )
-
-        var identity: (
-            processIdentifier: pid_t?,
-            processStartIdentity: UInt64?,
-            buildIdentity: String?
-        )? {
-            switch self {
-            case .absent:
-                nil
-            case let .present(processIdentifier, processStartIdentity, buildIdentity):
-                (processIdentifier, processStartIdentity, buildIdentity)
-            }
-        }
-    }
-
-    struct ScreenCaptureKitExternalApplication: Equatable {
-        let bundleIdentifier: String?
-        let bundleName: String?
-        let localizedName: String?
-        let processIdentifier: pid_t
-        let isTerminated: Bool
-        let buildIdentity: String?
     }
 
     enum ScreenCaptureKitSafetyDisposition {
@@ -409,11 +375,7 @@ extension RuntimeHostResolver {
             paths.append(buildScopedDaemonSocketPath)
         }
         paths.append(contentsOf: plan.historicalBuildScopedDaemonSocketPaths)
-        paths.append(contentsOf: [
-            PeekabooBridgeConstants.peekabooSocketPath,
-            PeekabooBridgeConstants.claudeSocketPath,
-            PeekabooBridgeConstants.clawdbotSocketPath,
-        ])
+        paths.append(PeekabooBridgeConstants.peekabooSocketPath)
 
         return self.screenCaptureKitSafetyCandidates(paths: paths)
     }
@@ -500,10 +462,7 @@ extension RuntimeHostResolver {
         candidates: [ImplicitRemoteCandidate],
         identity: PeekabooBridgeClientIdentity,
         handshakeCache: RemoteHandshakeCache? = nil,
-        handshake: ScreenCaptureKitHandshake? = nil,
-        externalHostPresence: @escaping ScreenCaptureKitExternalHostInspector = {
-            RuntimeHostResolver.knownExternalHostPresence(socketPath: $0)
-        }
+        handshake: ScreenCaptureKitHandshake? = nil
     ) async throws -> ScreenCaptureKitOwnerUnawareHost? {
         for candidate in candidates {
             try Task.checkCancellation()
@@ -524,17 +483,13 @@ extension RuntimeHostResolver {
                 if Task.isCancelled {
                     throw CancellationError()
                 }
-                let presence = externalHostPresence(candidate.socketPath)
-                if self.isDefinitiveScreenCaptureKitSocketAbsence(error),
-                   presence == .absent {
+                if self.isDefinitiveScreenCaptureKitSocketAbsence(error) {
                     continue
                 }
-                let knownIdentity = presence.identity
                 return ScreenCaptureKitOwnerUnawareHost(
                     socketPath: candidate.socketPath,
-                    processIdentifier: knownIdentity?.processIdentifier,
-                    processStartIdentity: knownIdentity?.processStartIdentity,
-                    buildIdentity: knownIdentity?.buildIdentity
+                    processIdentifier: nil,
+                    processStartIdentity: nil
                 )
             }
             guard !BridgeCapabilityPolicy.supportsScreenCaptureKitProcessOwnership(for: response),
@@ -543,20 +498,11 @@ extension RuntimeHostResolver {
             else {
                 continue
             }
-            let externalIdentity = externalHostPresence(candidate.socketPath).identity
-            let handshakeProcessIdentifier = response.hostIdentity?.processIdentifier
-            let processIdentifier = handshakeProcessIdentifier ?? externalIdentity?.processIdentifier
-            let externalIdentityMatches = handshakeProcessIdentifier == nil ||
-                handshakeProcessIdentifier == externalIdentity?.processIdentifier
-            let processStartIdentity = response.hostIdentity?.processStartIdentity ?? {
-                guard externalIdentityMatches else { return nil }
-                return externalIdentity?.processStartIdentity
-            }()
             return ScreenCaptureKitOwnerUnawareHost(
                 socketPath: candidate.socketPath,
-                processIdentifier: processIdentifier,
-                processStartIdentity: processStartIdentity,
-                buildIdentity: response.build ?? (externalIdentityMatches ? externalIdentity?.buildIdentity : nil)
+                processIdentifier: response.hostIdentity?.processIdentifier,
+                processStartIdentity: response.hostIdentity?.processStartIdentity,
+                buildIdentity: response.build
             )
         }
         return nil
@@ -572,105 +518,6 @@ extension RuntimeHostResolver {
               let code = POSIXErrorCode(rawValue: rawCode)
         else { return false }
         return code == .ENOENT || code == .ECONNREFUSED || code == .ENAMETOOLONG
-    }
-
-    private static func knownExternalHostPresence(socketPath: String) -> ScreenCaptureKitExternalHostPresence {
-        let applications = NSWorkspace.shared.runningApplications.map { application in
-            ScreenCaptureKitExternalApplication(
-                bundleIdentifier: application.bundleIdentifier,
-                bundleName: application.bundleURL?.deletingPathExtension().lastPathComponent,
-                localizedName: application.localizedName,
-                processIdentifier: application.processIdentifier,
-                isTerminated: application.isTerminated,
-                buildIdentity: self.externalHostBuildIdentity(application)
-            )
-        }
-        return self.knownExternalHostPresence(
-            socketPath: socketPath,
-            applications: applications,
-            processStartIdentity: SystemIdentityResolver.processStartIdentity
-        )
-    }
-
-    static func knownExternalHostPresence(
-        socketPath: String,
-        applications: [ScreenCaptureKitExternalApplication],
-        processStartIdentity: (pid_t) -> UInt64?
-    ) -> ScreenCaptureKitExternalHostPresence {
-        let standardizedPath = NSString(string: socketPath).standardizingPath
-        let identityFragments: [String]
-        let exactBundleIdentifiers: Set<String>
-        if standardizedPath == NSString(string: PeekabooBridgeConstants.claudeSocketPath).standardizingPath {
-            identityFragments = ["anthropic.claude", "claude"]
-            exactBundleIdentifiers = ["com.anthropic.claudefordesktop"]
-        } else if standardizedPath == NSString(string: PeekabooBridgeConstants.clawdbotSocketPath).standardizingPath {
-            identityFragments = ["clawdbot", "openclaw"]
-            exactBundleIdentifiers = [
-                "com.clawdis.mac",
-                "com.clawdis.mac.debug",
-                "com.clawdbot.mac",
-                "com.clawdbot.mac.debug",
-                "bot.molt.mac",
-                "bot.molt.mac.debug",
-                "ai.openclaw.mac",
-                "ai.openclaw.mac.debug",
-            ]
-        } else {
-            return .absent
-        }
-
-        let broadMatches = applications.filter { application in
-            let values = [
-                application.bundleIdentifier?.lowercased(),
-                application.bundleName?.lowercased(),
-                application.localizedName?.lowercased(),
-            ].compactMap(\.self)
-            return identityFragments.contains { fragment in values.contains(where: { $0.contains(fragment) }) }
-        }
-        guard !broadMatches.isEmpty else { return .absent }
-
-        let exactMatches = applications.filter { application in
-            guard let bundleIdentifier = application.bundleIdentifier?.lowercased() else { return false }
-            return exactBundleIdentifiers.contains(bundleIdentifier)
-        }
-        guard exactMatches.count == 1,
-              let application = exactMatches.first,
-              !application.isTerminated,
-              application.processIdentifier > 0
-        else {
-            return .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
-        }
-
-        let processIdentifier = application.processIdentifier
-        guard let firstGeneration = processStartIdentity(processIdentifier),
-              !application.isTerminated,
-              processStartIdentity(processIdentifier) == firstGeneration
-        else {
-            return .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
-        }
-        return .present(
-            processIdentifier: processIdentifier,
-            processStartIdentity: firstGeneration,
-            buildIdentity: application.buildIdentity
-        )
-    }
-
-    private static func externalHostBuildIdentity(_ application: NSRunningApplication) -> String? {
-        guard let bundleURL = application.bundleURL,
-              let information = Bundle(url: bundleURL)?.infoDictionary
-        else { return nil }
-        let shortVersion = information["CFBundleShortVersionString"] as? String
-        let buildVersion = information["CFBundleVersion"] as? String
-        switch (shortVersion, buildVersion) {
-        case let (shortVersion?, buildVersion?) where shortVersion != buildVersion:
-            return "\(shortVersion) (\(buildVersion))"
-        case let (shortVersion?, _):
-            return shortVersion
-        case let (_, buildVersion?):
-            return buildVersion
-        default:
-            return nil
-        }
     }
 
     static func ownerRefusal(

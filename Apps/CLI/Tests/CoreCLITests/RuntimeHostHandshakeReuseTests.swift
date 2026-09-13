@@ -37,8 +37,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         let unawareHost = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
             candidates: [candidate],
             identity: identity,
-            handshakeCache: handshakeCache,
-            externalHostPresence: { _ in .absent }
+            handshakeCache: handshakeCache
         )
         #expect(unawareHost == nil)
         #expect(permissionEvaluationCount == 1)

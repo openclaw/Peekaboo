@@ -35,11 +35,11 @@ inside the individual request and never become a reusable daemon's inherited pro
 
 ## ScreenCaptureKit process ownership
 
-macOS can strand a second process's ScreenCaptureKit screenshot request after another live process has used SCK, even
-when no capture is in flight. Peekaboo therefore gives the first process that explicitly preclaims caller-local modern
+Peekaboo has observed a second Peekaboo process's ScreenCaptureKit screenshot request hanging after its daemon used
+SCK, even when no capture was in flight. Peekaboo therefore gives the first process that explicitly preclaims caller-local modern
 capture or enters a real SCK API a per-user, process-lifetime owner lease. Later remote `modern` requests prefer the
 compatible Bridge host whose PID, process generation, and signed build match that lease.
-Every claim scans and refuses owner-unaware live processes, including processes discovered after the current generation
+Every claim scans and refuses owner-unaware live Peekaboo processes, including those discovered after the current generation
 acquired the canonical lease.
 
 Current hosts advertise implemented ownership enforcement separately from their observed preparation readiness.
@@ -81,9 +81,11 @@ owner PID/process generation and signed build; otherwise Peekaboo refuses before
 or remove the explicit socket. Classic remains a process-isolated, in-process-SCK-free recovery path.
 
 New CLI and app processes publish a private PID/process-generation/build receipt and retain its file lock for their
-lifetime. Before every SCK leaf, Peekaboo scans exact same-user Peekaboo and companion host entry points plus the known
-Peekaboo, Claude, and Clawdbot Bridge sockets. Ordinary Claude Code, renderer, crash-reporting, audio, and model helpers
-are not hosts. A matching live host without a valid current receipt blocks SCK because its coordination cannot be
+lifetime. Before every SCK leaf, Peekaboo scans exact same-user Peekaboo CLI and app entry points. CLI preflight checks
+Peekaboo daemon/app sockets and an explicitly selected Bridge host. Claude, OpenClaw, Zoom, OBS, and other applications
+are independent ScreenCaptureKit clients: their presence never requires a Peekaboo capability marker or Bridge socket
+and does not block capture. Permission, timeout, and stream errors from the selected capture backend still propagate.
+A matching live Peekaboo host without a valid current receipt blocks SCK because its coordination cannot be
 proven, including a renamed official binary or long-running `agent`/`capture live` process. This observation does not
 establish whether that process has used SCK or which build first implemented ownership. Unlocked stale receipts
 are safely removed from a dedicated private marker directory; repeated scans reuse PID, process-generation, executable,

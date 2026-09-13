@@ -975,69 +975,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
     }
 
     @Test
-    func `external host diagnostics attribute only one exact main application`() {
-        let exactClaude = RuntimeHostResolver.ScreenCaptureKitExternalApplication(
-            bundleIdentifier: "com.anthropic.claudefordesktop",
-            bundleName: "Claude",
-            localizedName: "Claude",
-            processIdentifier: 3131,
-            isTerminated: false,
-            buildIdentity: "4.0.0 (4000099)"
-        )
-        let helper = RuntimeHostResolver.ScreenCaptureKitExternalApplication(
-            bundleIdentifier: "com.anthropic.claudefordesktop.helper",
-            bundleName: "Claude Helper",
-            localizedName: "Claude Helper",
-            processIdentifier: 3232,
-            isTerminated: false,
-            buildIdentity: "4.0.0 (4000099)"
-        )
-        let similarlyNamed = RuntimeHostResolver.ScreenCaptureKitExternalApplication(
-            bundleIdentifier: "com.example.claude.integration",
-            bundleName: "Claude Integration",
-            localizedName: "Claude Integration",
-            processIdentifier: 3333,
-            isTerminated: false,
-            buildIdentity: "fixture"
-        )
-        let generation: (pid_t) -> UInt64? = { processIdentifier in
-            processIdentifier == 3131 ? 4141 : 5151
-        }
-
-        let exact = RuntimeHostResolver.knownExternalHostPresence(
-            socketPath: PeekabooBridgeConstants.claudeSocketPath,
-            applications: [exactClaude, helper],
-            processStartIdentity: generation
-        )
-        #expect(exact == .present(
-            processIdentifier: 3131,
-            processStartIdentity: 4141,
-            buildIdentity: "4.0.0 (4000099)"
-        ))
-
-        for ambiguousApplications in [[helper], [similarlyNamed], [exactClaude, exactClaude]] {
-            let ambiguous = RuntimeHostResolver.knownExternalHostPresence(
-                socketPath: PeekabooBridgeConstants.claudeSocketPath,
-                applications: ambiguousApplications,
-                processStartIdentity: generation
-            )
-            #expect(ambiguous == .present(
-                processIdentifier: nil,
-                processStartIdentity: nil,
-                buildIdentity: nil
-            ))
-        }
-
-        let absent = RuntimeHostResolver.knownExternalHostPresence(
-            socketPath: PeekabooBridgeConstants.claudeSocketPath,
-            applications: [],
-            processStartIdentity: generation
-        )
-        #expect(absent == .absent)
-    }
-
-    @Test
-    func `old-host safety skips only definitive socket and process absence`() async throws {
+    func `old-host safety skips only definitive socket absence`() async throws {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/fixture.sock",
             requireReusableDaemon: false,
@@ -1054,8 +992,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             let result = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
                 candidates: [candidate],
                 identity: identity,
-                handshake: { _, _ in throw POSIXError(code) },
-                externalHostPresence: { _ in .absent }
+                handshake: { _, _ in throw POSIXError(code) }
             )
             #expect(result == nil)
         }
@@ -1063,8 +1000,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         let timeout = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
             candidates: [candidate],
             identity: identity,
-            handshake: { _, _ in throw POSIXError(.ETIMEDOUT) },
-            externalHostPresence: { _ in .absent }
+            handshake: { _, _ in throw POSIXError(.ETIMEDOUT) }
         )
         #expect(timeout == RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
             socketPath: candidate.socketPath,
@@ -1077,26 +1013,14 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             identity: identity,
             handshake: { _, _ in
                 throw PeekabooBridgeErrorEnvelope(code: .unauthorizedClient, message: "fixture")
-            },
-            externalHostPresence: { _ in .absent }
-        )
-        #expect(unauthorized == timeout)
-
-        let liveExternalProcess = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
-            candidates: [candidate],
-            identity: identity,
-            handshake: { _, _ in throw POSIXError(.ENOENT) },
-            externalHostPresence: { _ in
-                .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
             }
         )
-        #expect(liveExternalProcess == timeout)
+        #expect(unauthorized == timeout)
 
         let explicitUnknownSocket = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
             candidates: [candidate],
             identity: identity,
-            handshake: { _, _ in throw POSIXError(.ECONNREFUSED) },
-            externalHostPresence: { _ in .absent }
+            handshake: { _, _ in throw POSIXError(.ECONNREFUSED) }
         )
         #expect(explicitUnknownSocket == nil)
 
@@ -1118,8 +1042,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         processIdentifier: 4242,
                         processStartIdentity: 9001
                     )
-                },
-                externalHostPresence: { _ in .absent }
+                }
             )
         #expect(validExplicitWithAbsentAuxiliary == nil)
 
@@ -1127,10 +1050,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             _ = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
                 candidates: [candidate],
                 identity: identity,
-                handshake: { _, _ in throw CancellationError() },
-                externalHostPresence: { _ in
-                    .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
-                }
+                handshake: { _, _ in throw CancellationError() }
             )
         }
 
@@ -1145,9 +1065,6 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         processStartIdentity: 4141,
                         hostCapabilities: []
                     )
-                },
-                externalHostPresence: { _ in
-                    .present(processIdentifier: nil, processStartIdentity: nil, buildIdentity: nil)
                 }
             )
         }
@@ -1157,7 +1074,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
     }
 
     @Test
-    func `old-host safety retains handshake and exact external owner diagnostics`() async throws {
+    func `old-host safety retains exact handshake diagnostics`() async throws {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/fixture-owner.sock",
             requireReusableDaemon: false,
@@ -1180,94 +1097,13 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                     hostCapabilities: [],
                     build: "4.0.0 (4000099)"
                 )
-            },
-            externalHostPresence: { _ in .absent }
+            }
         )
         #expect(handshakeOwner == .init(
             socketPath: candidate.socketPath,
             processIdentifier: 3131,
             processStartIdentity: 4141,
             buildIdentity: "4.0.0 (4000099)"
-        ))
-
-        let unreachableOwner = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
-            candidates: [candidate],
-            identity: identity,
-            handshake: { _, _ in throw POSIXError(.ETIMEDOUT) },
-            externalHostPresence: { _ in
-                .present(
-                    processIdentifier: 5151,
-                    processStartIdentity: 6161,
-                    buildIdentity: "3.9.2 (3920)"
-                )
-            }
-        )
-        #expect(unreachableOwner == .init(
-            socketPath: candidate.socketPath,
-            processIdentifier: 5151,
-            processStartIdentity: 6161,
-            buildIdentity: "3.9.2 (3920)"
-        ))
-    }
-
-    @Test
-    func `legacy handshake enriches only a matching external PID`() async throws {
-        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
-            socketPath: "/tmp/fixture-owner.sock",
-            requireReusableDaemon: false,
-            requiredHostKind: nil,
-            requiresValidatedHistoricalDaemon: false
-        )
-        let identity = PeekabooBridgeClientIdentity(
-            bundleIdentifier: "boo.peekaboo.test.client",
-            teamIdentifier: nil,
-            processIdentifier: getpid()
-        )
-        let partialHandshake: RuntimeHostResolver.ScreenCaptureKitHandshake = { _, _ in
-            Self.handshake(
-                processIdentifier: 3131,
-                processStartIdentity: nil,
-                hostCapabilities: [],
-                build: nil
-            )
-        }
-
-        let matching = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
-            candidates: [candidate],
-            identity: identity,
-            handshake: partialHandshake,
-            externalHostPresence: { _ in
-                .present(
-                    processIdentifier: 3131,
-                    processStartIdentity: 4141,
-                    buildIdentity: "4.0.0"
-                )
-            }
-        )
-        #expect(matching == .init(
-            socketPath: candidate.socketPath,
-            processIdentifier: 3131,
-            processStartIdentity: 4141,
-            buildIdentity: "4.0.0"
-        ))
-
-        let mismatched = try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
-            candidates: [candidate],
-            identity: identity,
-            handshake: partialHandshake,
-            externalHostPresence: { _ in
-                .present(
-                    processIdentifier: 9191,
-                    processStartIdentity: 9292,
-                    buildIdentity: "unrelated-build"
-                )
-            }
-        )
-        #expect(mismatched == .init(
-            socketPath: candidate.socketPath,
-            processIdentifier: 3131,
-            processStartIdentity: nil,
-            buildIdentity: nil
         ))
     }
 

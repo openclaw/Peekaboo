@@ -234,6 +234,9 @@ enabled `desktopObservation` operation is absent; an older host cannot silently 
 and run its default backend. `auto` remains compatible, and request-scoped selection does not alter
 the long-lived daemon's fallback policy.
 
+ScreenCaptureKit coordination covers Peekaboo's own CLI/app processes and selected Bridge hosts. Running third-party
+capture apps, including Claude and OpenClaw, does not block capture or require those apps to publish Peekaboo receipts.
+
 Capture support and startup preparation are separate, additive handshake contracts at the existing protocol version.
 `screenCaptureKitOwnershipEnforcement` and `classicCaptureWithoutScreenCaptureKit` are derived from the host's concrete
 service contracts and allowed observation operation. Caller-supplied capability strings cannot manufacture either

@@ -221,18 +221,13 @@ struct ScreenCaptureKitOwnerLeaseTests {
     }
 
     @Test
-    func `Potential host classification includes only exact entry points`() throws {
+    func `Potential host classification includes only Peekaboo entry points`() {
         let signedHosts: [(path: String, signingIdentifier: String)] = [
             ("/tmp/renamed-cli", "peekaboo"),
             ("/tmp/renamed-debug-cli", "boo.peekaboo"),
             ("/tmp/renamed-cli", "boo.peekaboo.peekaboo"),
             ("/Applications/Peekaboo.app/Contents/MacOS/Peekaboo", "boo.peekaboo.mac"),
             ("/Applications/Peekaboo.app/Contents/MacOS/Peekaboo", "boo.peekaboo.mac.debug"),
-            ("/Applications/Claude.app/Contents/MacOS/Claude", "com.anthropic.claudefordesktop"),
-            ("/Applications/Clawdis.app/Contents/MacOS/Clawdis", "com.clawdis.mac"),
-            ("/Applications/Clawdbot.app/Contents/MacOS/Clawdbot", "com.clawdbot.mac.debug"),
-            ("/Applications/Moltbot.app/Contents/MacOS/Moltbot", "bot.molt.mac"),
-            ("/Applications/OpenClaw.app/Contents/MacOS/OpenClaw", "ai.openclaw.mac.debug"),
         ]
         for host in signedHosts {
             #expect(ScreenCaptureKitOwnerLease.isPotentialPeekabooProcess(
@@ -244,6 +239,13 @@ struct ScreenCaptureKitOwnerLeaseTests {
             signingIdentifier: nil))
 
         let nonHosts: [(path: String, signingIdentifier: String?)] = [
+            ("/Applications/Claude.app/Contents/MacOS/Claude", "com.anthropic.claudefordesktop"),
+            ("/Applications/Clawdis.app/Contents/MacOS/Clawdis", "com.clawdis.mac"),
+            ("/Applications/Clawdbot.app/Contents/MacOS/Clawdbot", "com.clawdbot.mac.debug"),
+            ("/Applications/Moltbot.app/Contents/MacOS/Moltbot", "bot.molt.mac"),
+            ("/Applications/OpenClaw.app/Contents/MacOS/OpenClaw", "ai.openclaw.mac.debug"),
+            ("/Applications/zoom.us.app/Contents/MacOS/zoom.us", "us.zoom.xos"),
+            ("/Applications/OBS.app/Contents/MacOS/OBS", "com.obsproject.obs-studio"),
             ("/tmp/peekaboo", "com.apple.sleep"),
             (
                 "/Users/test/Library/Application Support/Claude/claude-code/2.1.222/" +
@@ -274,18 +276,21 @@ struct ScreenCaptureKitOwnerLeaseTests {
                 executablePath: nonHost.path,
                 signingIdentifier: nonHost.signingIdentifier))
         }
+    }
 
+    @Test(arguments: ["boo.peekaboo.mac", "ai.openclaw.mac", "com.anthropic.claudefordesktop", "us.zoom.xos"])
+    func `Unsigned bundle classification coordinates only Peekaboo`(bundleIdentifier: String) throws {
         let fixture = try LeaseFixture(name: "unsigned-main-bundle")
         defer { fixture.removeLockPath() }
-        let bundleURL = fixture.directoryURL.appendingPathComponent("OpenClaw.app", isDirectory: true)
+        let bundleURL = fixture.directoryURL.appendingPathComponent("Capture.app", isDirectory: true)
         let contentsURL = bundleURL.appendingPathComponent("Contents", isDirectory: true)
         let executableDirectory = contentsURL.appendingPathComponent("MacOS", isDirectory: true)
-        let executableURL = executableDirectory.appendingPathComponent("OpenClaw", isDirectory: false)
+        let executableURL = executableDirectory.appendingPathComponent("Capture", isDirectory: false)
         try FileManager.default.createDirectory(at: executableDirectory, withIntermediateDirectories: true)
         let infoData = try PropertyListSerialization.data(
             fromPropertyList: [
-                "CFBundleIdentifier": "ai.openclaw.mac",
-                "CFBundleExecutable": "OpenClaw",
+                "CFBundleIdentifier": bundleIdentifier,
+                "CFBundleExecutable": "Capture",
                 "CFBundlePackageType": "APPL",
             ],
             format: .xml,
@@ -294,9 +299,9 @@ struct ScreenCaptureKitOwnerLeaseTests {
         #expect(FileManager.default.createFile(atPath: executableURL.path, contents: Data()))
         #expect(ScreenCaptureKitOwnerLease.isPotentialPeekabooProcess(
             executablePath: executableURL.path,
-            signingIdentifier: nil))
+            signingIdentifier: nil) == (bundleIdentifier == "boo.peekaboo.mac"))
         #expect(!ScreenCaptureKitOwnerLease.isPotentialPeekabooProcess(
-            executablePath: executableDirectory.appendingPathComponent("openclaw-mlx-tts").path,
+            executablePath: executableDirectory.appendingPathComponent("capture-helper").path,
             signingIdentifier: nil))
     }
 

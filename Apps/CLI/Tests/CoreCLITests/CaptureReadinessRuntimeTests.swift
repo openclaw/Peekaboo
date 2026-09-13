@@ -88,8 +88,7 @@ struct CaptureReadinessRuntimeTests {
                 try await RuntimeHostResolver.firstScreenCaptureKitOwnerUnawareHost(
                     candidates: (candidates ?? []).filter { $0.socketPath == socket },
                     identity: cache.identity,
-                    handshakeCache: cache,
-                    externalHostPresence: { _ in .absent }
+                    handshakeCache: cache
                 )
             },
             recordScreenCaptureKitSafetyBlocker: { _ in safetyRecords += 1 },
