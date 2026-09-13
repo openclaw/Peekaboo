@@ -112,8 +112,13 @@ jobs:
         env:
           RUN_AUTOMATION_ACTIONS: "true"
         run: |
+          set -o pipefail
+          test_log="$RUNNER_TEMP/host-window-contracts.log"
           swift test --no-parallel \
-            --filter 'SystemIdentityResolverTests|ApplicationInventoryTimeoutTests|ApplicationMutationPlannerTests|ApplicationMutationSelectorTests|ApplicationIdentifierMatcherTests|SameProcessWindowCloseTests'
+            --filter 'SystemIdentityResolverTests|ApplicationInventoryTimeoutTests|ApplicationMutationPlannerTests|ApplicationMutationSelectorTests|ApplicationIdentifierMatcherTests|SameProcessWindowCloseTests' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite SameProcessWindowCloseTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Build PeekabooCore
         working-directory: Core/PeekabooCore
