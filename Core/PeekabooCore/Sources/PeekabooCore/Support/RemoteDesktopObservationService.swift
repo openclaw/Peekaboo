@@ -90,7 +90,10 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         else {
             throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
         }
-        guard request.capture.roi != nil else {
+        let isROI = request.capture.roi != nil
+        let writesArtifacts = request.output.saveRawScreenshot || request.output.saveAnnotatedScreenshot ||
+            request.output.saveSnapshot
+        guard isROI || writesArtifacts else {
             let actionResult = try await self.client.desktopObservationWithOutcome(request)
             do {
                 // The Bridge client verifies every returned artifact under the negotiated content
@@ -107,7 +110,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
                 throw Self.failurePreservingOutcome(error, from: actionResult)
             }
         }
-        guard self.supportsExactWindowROIObservation else {
+        guard !isROI || self.supportsExactWindowROIObservation else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
                 message: "Bridge host lacks protocol 1.21 exact-window ROI observation support")
@@ -117,8 +120,9 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
 
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-remote-roi-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            .appendingPathComponent("peekaboo-remote-observation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: directory) }
         let quarantinePath =
             directory
@@ -126,10 +130,12 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
                 .path
         var remoteRequest = request
         remoteRequest.output.path = quarantinePath
-        // The client owns ROI validation and publication. Force one quarantined raster for proof,
-        // and defer snapshot publication until the receipt and every requested artifact pass.
+        // Caller-visible files stay private until response validation. Ordinary observations retain
+        // host-owned snapshot publication; ROI keeps its existing deferred snapshot transaction.
         remoteRequest.output.saveRawScreenshot = true
-        remoteRequest.output.saveSnapshot = false
+        if isROI {
+            remoteRequest.output.saveSnapshot = false
+        }
 
         let remoteResult: UIAutomationActionResult<DesktopObservationResult>
         do {
@@ -150,18 +156,38 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
                 target: result.target,
                 capture: result.capture,
                 request: request)
-            try DesktopObservationROIProcessor.validateApplied(
-                request.capture.roi,
-                requestTarget: request.target,
-                resolvedTarget: result.target,
-                capture: result.capture)
+            if isROI {
+                try DesktopObservationROIProcessor.validateApplied(
+                    request.capture.roi,
+                    requestTarget: request.target,
+                    resolvedTarget: result.target,
+                    capture: result.capture)
+            }
             try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
-            let prepared = try self.prepareROIResult(
+            let prepared = try self.prepareObservationResult(
                 result,
                 request: request,
                 quarantinePath: quarantinePath,
                 deadline: deadline,
                 timeout: overallTimeout)
+            if !isROI {
+                try self.artifactInstallationPreflight()
+                for artifact in prepared.artifacts {
+                    try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
+                    let destination = URL(fileURLWithPath: artifact.path)
+                    try FileManager.default.createDirectory(
+                        at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try artifact.data.write(to: destination, options: .atomic)
+                }
+                if let evidenceError {
+                    throw evidenceError
+                }
+                return UIAutomationActionResult(
+                    payload: prepared.result,
+                    outcome: remoteResult.outcome,
+                    targetIdentity: remoteResult.targetIdentity,
+                    selectedLeafEvidence: remoteResult.selectedLeafEvidence)
+            }
             let stagedArtifacts = try Self.stageArtifacts(
                 prepared.artifacts,
                 deadline: deadline,
@@ -198,8 +224,14 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
             return try await UIAutomationActionResult(
                 payload: commitTask.value,
                 outcome: remoteResult.outcome,
-                targetIdentity: remoteResult.targetIdentity)
+                targetIdentity: remoteResult.targetIdentity,
+                selectedLeafEvidence: remoteResult.selectedLeafEvidence)
         } catch {
+            if !isROI, error is CaptureROIError {
+                throw Self.failurePreservingOutcome(
+                    PeekabooError.captureFailed("Remote observation returned invalid screenshot artifacts"),
+                    from: remoteResult)
+            }
             throw Self.failurePreservingOutcome(error, from: remoteResult)
         }
     }
@@ -215,20 +247,22 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
             operation: "remote desktop observation post-processing")
     }
 
-    private struct PreparedROIResult {
+    private struct PreparedObservationResult {
         let result: DesktopObservationResult
         let artifacts: [(data: Data, path: String)]
         let quarantineRawPath: String
         let quarantineAnnotatedPath: String?
     }
 
-    private func prepareROIResult(
+    private func prepareObservationResult(
         _ result: DesktopObservationResult,
         request: DesktopObservationRequest,
         quarantinePath: String,
         deadline: ContinuousClock.Instant?,
-        timeout: TimeInterval?) throws -> PreparedROIResult
+        timeout: TimeInterval?) throws -> PreparedObservationResult
     {
+        let isROI = request.capture.roi != nil
+        let defaultFilePrefix = isROI ? "peekaboo-roi" : "peekaboo"
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
         guard Self.sameFile(result.files.rawScreenshotPath, quarantinePath) else {
             throw CaptureROIError.hostDidNotApplyROI
@@ -245,7 +279,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
                 ? ObservationOutputPathResolver.resolve(
                     path: request.output.path,
                     format: request.output.format,
-                    defaultFileName: "peekaboo-roi-\(UUID().uuidString).\(request.output.format.rawValue)")
+                    defaultFileName: "\(defaultFilePrefix)-\(UUID().uuidString).\(request.output.format.rawValue)")
                 .standardizedFileURL
                 .path
                 : nil
@@ -273,14 +307,15 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         }
 
         var artifacts: [(data: Data, path: String)] = []
-        if request.output.saveRawScreenshot, let rawPath {
+        if let rawPath {
             artifacts.append((rawData, rawPath))
         }
         if let annotatedPath, let annotatedData {
             artifacts.append((annotatedData, annotatedPath))
         }
+        let includesImageData = isROI || rawPath == nil
         let capture = CaptureResult(
-            imageData: rawData,
+            imageData: includesImageData ? rawData : result.capture.imageData,
             savedPath: rawPath,
             metadata: result.capture.metadata,
             warning: result.capture.warning)
@@ -298,21 +333,22 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
             ocr: result.ocr,
             files: DesktopObservationFiles(
                 rawScreenshotPath: rawPath,
-                annotatedScreenshotPath: annotatedPath),
+                annotatedScreenshotPath: annotatedPath,
+                publishedSnapshotID: result.files.publishedSnapshotID),
             timings: result.timings,
-            diagnostics: result.diagnostics)
-            .withCaptureContentDigest(
-                rawScreenshotData: rawData,
-                annotatedScreenshotData: annotatedData)
-        return PreparedROIResult(
-            result: preparedResult,
+            diagnostics: result.diagnostics,
+            captureContentDigest: result.captureContentDigest)
+        return PreparedObservationResult(
+            result: includesImageData ? preparedResult.withCaptureContentDigest(
+                rawScreenshotData: rawPath == nil ? nil : rawData,
+                annotatedScreenshotData: annotatedData) : preparedResult,
             artifacts: artifacts,
             quarantineRawPath: quarantinePath,
             quarantineAnnotatedPath: quarantineAnnotatedPath)
     }
 
     private func storeSnapshotIfNeeded(
-        _ prepared: PreparedROIResult,
+        _ prepared: PreparedObservationResult,
         request: DesktopObservationRequest,
         deadline: ContinuousClock.Instant?,
         timeout: TimeInterval?) async throws

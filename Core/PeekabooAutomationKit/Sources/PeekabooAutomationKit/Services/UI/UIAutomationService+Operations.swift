@@ -5,64 +5,7 @@ import PeekabooFoundation
 extension UIAutomationService {
     // MARK: - Element Detection
 
-    /**
-     * Detect and analyze UI elements in a captured screen image using AI-powered recognition.
-     *
-     * This method uses advanced computer vision and AI models to identify interactive UI elements
-     * in screenshots. Elements are classified by type (buttons, text fields, etc.) and assigned
-     * unique identifiers for subsequent automation operations.
-     *
-     * - Parameters:
-     *   - imageData: PNG or JPEG image data containing the screen capture
-     *   - snapshotId: Optional snapshot identifier for element caching and state management
-     *   - windowContext: Optional context about the captured window for improved accuracy
-     * - Returns: `ElementDetectionResult` containing detected elements and metadata
-     * - Throws: `PeekabooError` if detection fails or image data is invalid
-     *
-     * ## Detection Process
-     * 1. **Image Analysis**: AI model analyzes the screenshot for UI patterns
-     * 2. **Element Classification**: Elements are categorized (button, textField, image, etc.)
-     * 3. **Coordinate Mapping**: Screen coordinates are calculated for each element
-     * 4. **Accessibility Correlation**: Elements are matched with accessibility tree data
-     * 5. **Session Caching**: Results are stored for quick access in subsequent operations
-     *
-     * ## Element Types
-     * Detected elements include:
-     * - `button`: Clickable buttons and controls
-     * - `textField`: Text input fields and text areas
-     * - `image`: Images and icons
-     * - `staticText`: Labels and static text content
-     * - `other`: Other interactive elements
-     *
-     * ## Performance
-     * - **Typical Duration**: 200-800ms depending on screen complexity
-     * - **Caching**: Results are cached per snapshot to avoid re-detection
-     * - **Batch Processing**: Multiple elements detected in single pass
-     *
-     * ## Example
-     * ```swift
-     * let captureResult = try await screenCapture.captureScreen()
-     * let windowContext = WindowContext(
-     *     applicationName: "Safari",
-     *     windowTitle: "Apple",
-     *     windowBounds: CGRect(x: 0, y: 0, width: 1920, height: 1080)
-     * )
-     *
-     * let elements = try await automation.detectElements(
-     *     in: captureResult.imageData,
-     *     snapshotId: "ps1_0123456789abcdef0123456789abcdef",
-     *     windowContext: windowContext
-     * )
-     *
-     * print("Detected \(elements.elements.all.count) elements")
-     * for element in elements.elements.buttons {
-     *     print("Button: \(element.label ?? "Unlabeled") at \(element.bounds)")
-     * }
-     * ```
-     *
-     * - Important: Requires Screen Recording permission for screen capture
-     * - Note: Detection accuracy improves with window context information
-     */
+    /// Reads the target's Accessibility element map. An explicit snapshot ID also stores the result.
     public func detectElements(
         in imageData: Data,
         snapshotId: String?,

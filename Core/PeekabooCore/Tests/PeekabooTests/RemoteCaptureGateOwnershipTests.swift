@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 @testable import PeekabooBridge
 @testable import PeekabooCore
 
+@Suite(.serialized)
 @MainActor
 struct RemoteCaptureGateOwnershipTests {
     private static let roiFixtureBounds = CGRect(x: 100, y: 200, width: 100, height: 80)
@@ -322,6 +323,110 @@ extension RemoteCaptureGateOwnershipTests {
             return
         }
         #expect(seconds == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func `rejected ordinary observation preserves caller screenshot destinations`(
+        existingDestination: Bool) async throws
+    {
+        let root = URL(fileURLWithPath: "/tmp/pb-publication-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let output = root.appendingPathComponent("capture.png")
+        let sentinel = Data("existing caller content".utf8)
+        if existingDestination {
+            try sentinel.write(to: output)
+        }
+        let observation = NonROIFileObservationService(captureMode: .window)
+        let host = PeekabooBridgeHost(
+            socketPath: root.appendingPathComponent("bridge.sock").path,
+            server: self.makeROIServer(services: StubServices(desktopObservation: observation)),
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: root.appendingPathComponent("bridge.sock").path,
+                requestTimeoutSec: 2))
+
+        await #expect(throws: (any Error).self) {
+            _ = try await remote.observe(DesktopObservationRequest(
+                target: .screen(index: 0),
+                detection: .init(mode: .none),
+                output: .init(path: output.path, saveRawScreenshot: true)))
+        }
+
+        if existingDestination {
+            #expect(try Data(contentsOf: output) == sentinel)
+        } else {
+            #expect(!FileManager.default.fileExists(atPath: output.path))
+        }
+        let hostPath = try #require(observation.lastPath)
+        #expect(hostPath != output.path)
+        #expect(!FileManager.default.fileExists(atPath: hostPath))
+        await host.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func `ordinary annotation and snapshot only requests never replace the raw destination`(
+        savesSnapshot: Bool) async throws
+    {
+        let root = URL(fileURLWithPath: "/tmp/pb-no-raw-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let output = root.appendingPathComponent("capture.png")
+        let sentinel = Data("existing caller content".utf8)
+        try sentinel.write(to: output)
+        let snapshots = InMemorySnapshotManager(options: .init(copyArtifactsOnStore: true))
+        let snapshotID: String? = if savesSnapshot {
+            try await snapshots.createSnapshot()
+        } else {
+            nil
+        }
+        defer {
+            if let snapshotID {
+                Task { try? await snapshots.cleanSnapshot(snapshotId: snapshotID) }
+            }
+        }
+        let observation = NonROIFileObservationService(snapshots: snapshots)
+        let host = PeekabooBridgeHost(
+            socketPath: root.appendingPathComponent("bridge.sock").path,
+            server: self.makeROIServer(services: StubServices(snapshots: snapshots, desktopObservation: observation)),
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = try await RemoteDesktopObservationService(
+            client: self.makeNegotiatedClient(
+                socketPath: root.appendingPathComponent("bridge.sock").path,
+                requestTimeoutSec: 2))
+        let result = try await remote.observe(DesktopObservationRequest(
+            target: .screen(index: 0),
+            detection: .init(mode: .none),
+            output: .init(
+                path: output.path,
+                saveRawScreenshot: false,
+                saveAnnotatedScreenshot: !savesSnapshot,
+                saveSnapshot: savesSnapshot,
+                snapshotID: snapshotID)))
+
+        #expect(try Data(contentsOf: output) == sentinel)
+        #expect(result.files.rawScreenshotPath == nil)
+        #expect(result.capture.savedPath == nil)
+        #expect(result.captureContentDigest?.rawScreenshotSHA256 == nil)
+        #expect(try result.verifiedCaptureImageData(requirement: .requireDigest) == observation.imageData)
+        if let snapshotID {
+            #expect(result.files.publishedSnapshotID == snapshotID)
+            let snapshot = try #require(try await snapshots.getUIAutomationSnapshot(snapshotId: snapshotID))
+            let storedPath = try #require(snapshot.screenshotPath)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: storedPath)) == observation.imageData)
+            try await snapshots.cleanSnapshot(snapshotId: snapshotID)
+        } else {
+            let annotation = try #require(result.files.annotatedScreenshotPath)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: annotation)) == observation.imageData)
+        }
+        await host.stop()
     }
 
     @Test
@@ -1011,10 +1116,38 @@ private final class PathlessTrackingObservationService: DesktopObservationServic
 @MainActor
 private final class NonROIFileObservationService: DesktopObservationServiceProtocol {
     let imageData = makeROITestImageData(width: 1, height: 1, red: 0.2, green: 0.4, blue: 0.8)
+    private let captureMode: CaptureMode
+    private let snapshots: (any SnapshotManagerProtocol)?
+    private(set) var lastPath: String?
+
+    init(captureMode: CaptureMode = .screen, snapshots: (any SnapshotManagerProtocol)? = nil) {
+        self.captureMode = captureMode
+        self.snapshots = snapshots
+    }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
         let path = try #require(request.output.path)
+        self.lastPath = path
         try self.imageData.write(to: URL(fileURLWithPath: path), options: .atomic)
+        let annotatedPath = request.output.saveAnnotatedScreenshot
+            ? ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: path) : nil
+        if let annotatedPath {
+            try self.imageData.write(to: URL(fileURLWithPath: annotatedPath), options: .atomic)
+        }
+        var publishedSnapshotID: String?
+        if request.output.saveSnapshot {
+            let snapshots = try #require(self.snapshots)
+            let snapshotID = try #require(request.output.snapshotID)
+            try await snapshots.storeScreenshot(.init(
+                snapshotId: snapshotID,
+                screenshotPath: path,
+                applicationBundleId: nil,
+                applicationProcessId: nil,
+                applicationName: nil,
+                windowTitle: nil,
+                windowBounds: nil))
+            publishedSnapshotID = snapshotID
+        }
         let size = CGSize(width: 1, height: 1)
         return DesktopObservationResult(
             target: ResolvedObservationTarget(kind: .screen(index: 0)),
@@ -1023,7 +1156,7 @@ private final class NonROIFileObservationService: DesktopObservationServiceProto
                 savedPath: path,
                 metadata: CaptureMetadata(
                     size: size,
-                    mode: .screen,
+                    mode: self.captureMode,
                     displayInfo: DisplayInfo(
                         index: 0,
                         name: "Fixture",
@@ -1037,7 +1170,10 @@ private final class NonROIFileObservationService: DesktopObservationServiceProto
                         finalPixelSize: size,
                         engine: "ScreenCaptureKit"))),
             elements: nil,
-            files: DesktopObservationFiles(rawScreenshotPath: path))
+            files: DesktopObservationFiles(
+                rawScreenshotPath: path,
+                annotatedScreenshotPath: annotatedPath,
+                publishedSnapshotID: publishedSnapshotID))
     }
 }
 
