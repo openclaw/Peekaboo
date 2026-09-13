@@ -943,6 +943,7 @@ extension CaptureActionCommandEndToEndTests {
             )
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
         let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        var runnerReturnedAfterDeadline = false
         var command = CaptureActionCommand()
         command.mode = "frontmost"
         command.durationLimit = CLIDuration(argument: "2500ms")
@@ -955,12 +956,14 @@ extension CaptureActionCommandEndToEndTests {
             deadlineProcessRunner: { childCommand, timeoutSeconds, completionDeadlineNs, onLaunch in
                 let actionStartedNs = DispatchTime.now().uptimeNanoseconds
                 onLaunch(actionStartedNs)
-                let completedAtNs = completionDeadlineNs - 50_000_000
+                // Keep sampling headroom independent of the delayed delivery being tested.
+                let completedAtNs = actionStartedNs
                 let delayedReturnNs = completionDeadlineNs + 20_000_000
                 let nowNs = DispatchTime.now().uptimeNanoseconds
                 if delayedReturnNs > nowNs {
                     try await Task.sleep(nanoseconds: delayedReturnNs - nowNs)
                 }
+                runnerReturnedAfterDeadline = DispatchTime.now().uptimeNanoseconds > completionDeadlineNs
                 return CaptureActionProcessResult(
                     command: childCommand,
                     processIdentifier: getpid(),
@@ -988,7 +991,10 @@ extension CaptureActionCommandEndToEndTests {
             from: Data(contentsOf: URL(fileURLWithPath: receipt.path))
         )
 
+        #expect(runnerReturnedAfterDeadline)
         #expect(result.success)
+        #expect(manifest.timeline.actionCompletedMs == manifest.timeline.actionStartedMs)
+        #expect(manifest.provesPostActionSample)
         #expect(manifest.timeline.samplingCompletedMs >= manifest.timeline.actionCompletedMs + 100)
     }
 
@@ -1138,14 +1144,17 @@ extension CaptureActionCommandEndToEndTests {
             captureDeadlineNs: captureDeadlineNs
         )
         #expect(actionCompletionDeadlineNs == captureStartedNs + 2_300_000_000)
-        #expect(timing.postRollFits(
-            startingAtNs: actionCompletionDeadlineNs,
-            captureDeadlineNs: captureDeadlineNs
-        ))
-        #expect(!timing.postRollFits(
-            startingAtNs: actionCompletionDeadlineNs + 1,
-            captureDeadlineNs: captureDeadlineNs
-        ))
+        for start in [actionCompletionDeadlineNs - 50_000_000, actionCompletionDeadlineNs] {
+            #expect(try timing.postRollDeadline(
+                startingAtNs: start,
+                captureDeadlineNs: captureDeadlineNs
+            ) == start + 200_000_000)
+        }
+        for start in [actionCompletionDeadlineNs + 1, actionCompletionDeadlineNs + 20_000_000, UInt64.max] {
+            #expect(throws: (any Error).self) {
+                try timing.postRollDeadline(startingAtNs: start, captureDeadlineNs: captureDeadlineNs)
+            }
+        }
         #expect(throws: (any Error).self) {
             _ = try CaptureActionTiming.resolve(
                 durationLimit: 1.7,

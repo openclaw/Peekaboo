@@ -349,10 +349,10 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         actionCompletedNs: UInt64,
         captureDeadlineNs: UInt64
     ) async throws -> CaptureActionCaptureCompletion {
-        let postRollDeadlineNs = try timing.postRollDeadline(startingAtNs: actionCompletedNs)
-        guard postRollDeadlineNs <= captureDeadlineNs else {
-            throw ValidationError("Action completion left insufficient time for the requested post-roll")
-        }
+        let postRollDeadlineNs = try timing.postRollDeadline(
+            startingAtNs: actionCompletedNs,
+            captureDeadlineNs: captureDeadlineNs
+        )
         try await Self.sleep(untilMonotonicNanoseconds: postRollDeadlineNs)
         if timing.postRollMs > 0 {
             session.requestStop(afterSampleStartedAtOrAfter: actionCompletedNs)
@@ -1037,16 +1037,14 @@ struct CaptureActionTiming {
         return captureDeadlineNs - postRollNs
     }
 
-    func postRollFits(startingAtNs: UInt64, captureDeadlineNs: UInt64) -> Bool {
-        guard let deadlineNs = try? self.postRollDeadline(startingAtNs: startingAtNs) else { return false }
-        return deadlineNs <= captureDeadlineNs
-    }
-
-    func postRollDeadline(startingAtNs: UInt64) throws -> UInt64 {
+    func postRollDeadline(startingAtNs: UInt64, captureDeadlineNs: UInt64) throws -> UInt64 {
         let postRollNs = try Self.nanoseconds(milliseconds: self.postRollMs)
         let (deadlineNs, overflowed) = startingAtNs.addingReportingOverflow(postRollNs)
         guard !overflowed else {
             throw ValidationError("--post-roll overflowed the capture deadline")
+        }
+        guard deadlineNs <= captureDeadlineNs else {
+            throw ValidationError("Action completion left insufficient time for the requested post-roll")
         }
         return deadlineNs
     }
