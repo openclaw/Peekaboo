@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Repair selected-CLI skill checks and published guide links, restore the read-only clipboard example, run guidance checks in regular macOS CI, and make noncooperative detection timeout proof independent of scheduler timing.
+- Keep background window close, restore, and maximize callbacks on the main thread when the target belongs to the Peekaboo host, preventing embedded macOS apps from crashing while preserving exact-window validation and remote AX deadlines.
 
 - Keep caller screenshot destinations intact when remote evidence is rejected or raw output was not requested, staging ordinary captures before file publication as well as ROI captures. #710.
 
@@ -14,6 +14,8 @@
 - Let hosts embedding `PeekabooMCPServer` supply their own MCP transport with the same completion and cleanup lifecycle as stdio. Thanks @semyoren! #716.
 
 - Clarify observation evidence failures and runtime refusal guidance so same-build verification errors do not imply that an update will fix them. #710.
+
+- Strengthen selected-CLI guidance checks, repair published guide links, restore the read-only clipboard example, run guidance checks in regular macOS CI, and make noncooperative detection timeout proof independent of scheduler timing.
 
 ## 4.3.4 - 2026-09-11
 

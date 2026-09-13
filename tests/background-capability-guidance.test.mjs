@@ -30,10 +30,9 @@ test('press guidance preserves the snapshot-pinned background route', () => {
   assert.match(press, /Background-only Agent\/MCP.*explicit fresh exact non-dialog snapshot/s);
 });
 
-const isTargetedRawPress = (line) => /^peekaboo press\b.*--(?:app|pid)\b/.test(line);
+const isTargetedRawPress = (line) => /^(?:peekaboo|"\$PB") press\b.*--(?:app|pid)\b/.test(line);
 const hasSafeRawPressRoute = (line) =>
   /--(?:foreground|snapshot|window-(?:id|title|index))\b/.test(line);
-const normalizeSkillCommands = (source) => source.replace(/^"\$PB"(?=\s)/gm, 'peekaboo');
 
 test('primary app automation examples stay exact-window and background-only', () => {
   for (const path of ['README.md', 'docs/quickstart.md']) {
@@ -54,7 +53,7 @@ test('primary app automation examples stay exact-window and background-only', ()
 });
 
 test('bundled skill never advertises app/PID-only background press', () => {
-  const skill = normalizeSkillCommands(read('skills/peekaboo/SKILL.md'));
+  const skill = read('skills/peekaboo/SKILL.md');
   const targetedPressExamples = skill
     .split('\n')
     .filter(isTargetedRawPress);
@@ -70,7 +69,7 @@ test('bundled skill never advertises app/PID-only background press', () => {
 
   for (const binary of ['peekaboo', '"$PB"']) {
     for (const target of ['--app TextEdit', '--pid 1234']) {
-      const unsafe = normalizeSkillCommands(`${binary} press return ${target}`);
+      const unsafe = `${binary} press return ${target}`;
       assert.equal(isTargetedRawPress(unsafe), true);
       assert.equal(hasSafeRawPressRoute(unsafe), false);
       assert.equal(hasSafeRawPressRoute(`${unsafe} --window-id 42`), true);
@@ -79,14 +78,14 @@ test('bundled skill never advertises app/PID-only background press', () => {
 });
 
 test('bundled skill keeps routine management examples read-only', () => {
-  const skill = normalizeSkillCommands(read('skills/peekaboo/SKILL.md'));
+  const skill = read('skills/peekaboo/SKILL.md');
 
-  assert.doesNotMatch(skill, /^peekaboo clipboard (?:set|clear|restore)\b/m);
-  assert.doesNotMatch(skill, /^peekaboo permissions request\b/m);
-  assert.doesNotMatch(skill, /^peekaboo app focus\b/m);
-  assert.match(skill, /^peekaboo clipboard get --json$/m);
-  assert.match(skill, /^peekaboo permissions status --all-sources --json$/m);
-  assert.match(skill, /^peekaboo app list --include-hidden --include-background --json$/m);
+  assert.doesNotMatch(skill, /^(?:peekaboo|"\$PB") clipboard (?:set|clear|restore)\b/m);
+  assert.doesNotMatch(skill, /^(?:peekaboo|"\$PB") permissions request\b/m);
+  assert.doesNotMatch(skill, /^(?:peekaboo|"\$PB") app focus\b/m);
+  assert.match(skill, /^(?:peekaboo|"\$PB") clipboard get --json$/m);
+  assert.match(skill, /^(?:peekaboo|"\$PB") permissions status --all-sources --json$/m);
+  assert.match(skill, /^(?:peekaboo|"\$PB") app list --include-hidden --include-background --json$/m);
 });
 
 test('background Agent type guidance requires an explicit non-dialog snapshot', () => {
