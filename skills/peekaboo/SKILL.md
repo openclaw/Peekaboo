@@ -1,179 +1,105 @@
 ---
 name: peekaboo
-description: "Use Peekaboo for macOS desktop automation, screenshots, visual UI maps, native accessibility inspection, app/window/menu/dialog control, native app and browser chrome control, browser-page MCP tooling, MCP diagnostics, and Peekaboo repo validation. Use when Codex needs current macOS UI state, direct desktop control, privacy-aware live smoke tests, or changes to the Peekaboo repository."
+description: "Use Peekaboo for macOS screenshots, Accessibility inspection, and background app/window/UI automation, including fallback computer use when the primary tool cannot handle an authorized task."
 ---
 
 # Peekaboo
 
-CLI timing flags accept bare milliseconds or `ms`/`s` suffixes, for example `500`, `500ms`, `2s`, or `1.5s`. Coordinate input uses `--at x,y`; add `--global` when a targeted coordinate should remain screen-global.
+Use native Peekaboo commands for macOS apps, windows, menus, dialogs, browser chrome, and pixels. Prefer existing browser tooling for page content, DOM, forms, console, and network; Peekaboo's `browser` command is available when that integration is configured. Stay within the user's authorized task and verify the resulting UI.
 
-Peekaboo is a macOS automation CLI and agent runtime. Prefer the freshly built repo binary, live help, and canonical docs over copied command references because command surfaces move quickly.
+## Select the CLI and execution host
 
-Peekaboo 4 uses `press` for standalone keys and chords, `drag --from/--to` for drags, `see --tree` for CLI AX inspection, `action` for named accessibility actions, and real noun/verb subcommand trees. Use `verify` for stable predicates instead of fixed sleeps. JSON action results include an `effect` value; read-only results omit it. See `docs/v4-migration.md` when converting older invocations.
-
-## Start Here
-
-1. In repo work, build and use the current-source binary:
-   ```bash
-   pnpm run build:cli
-   BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"
-   "$BIN" --version
-   ```
-2. Record the installed PATH binary separately when diagnosing environment drift:
-   ```bash
-   command -v peekaboo && peekaboo --version
-   ```
-3. Confirm permissions and current tool surfaces before automation:
-   ```bash
-   "$BIN" permissions status --json
-   "$BIN" tools --json
-   "$BIN" learn
-   ```
-4. Find command docs:
-   ```bash
-   node scripts/docs-list.mjs
-   ```
-
-## Canonical References
-
-- Live CLI help: `peekaboo <command> --help`
-- Full agent guide: `peekaboo learn`
-- Tool catalog: `peekaboo tools`
-- Command docs in this repo: `docs/commands/README.md` and `docs/commands/*.md`
-- Permissions and bridge behavior: `docs/permissions.md`, `docs/bridge-host.md`, `docs/integrations/subprocess.md`
-- Repo rules: `AGENTS.md`
-
-## Observation Strategy
-
-- Use `peekaboo see --tree --no-screenshot` (CLI) or `inspect_ui` (MCP) for native macOS AX text, labels, buttons, text fields, control state, and element IDs when a screenshot would add noise.
-- Use `peekaboo see` for screenshots, visual layout, annotated maps, pixels, colors, screen/menu-bar targets, or cases where AX text is missing or incomplete.
-- Use `browser` for browser page content, forms, DOM/a11y snapshots, console, network, page screenshots, and performance traces when browser tooling is available.
-- Use native Peekaboo tools for app chrome, browser toolbars, menus, dialogs, permissions, windows, and non-browser apps.
-- Treat element IDs from `see` or `inspect_ui` as valid only for the current visible state. After a mutating action, verify from the action result or fetch fresh state.
-
-## Operating Rules
-
-- Use `peekaboo see --json --path /tmp/<name>.png` or `peekaboo see --tree --no-screenshot --json` before element interactions so you have fresh element IDs and snapshot IDs.
-- Prefer the exact element ID string from the current snapshot for clicks and typing; treat ID shapes as opaque. Use labels when IDs are unavailable and coordinates only as a last resort.
-- Check `peekaboo permissions status --json` before assuming a capture or control failure is a CLI bug.
-- Use `--json` when another tool or agent needs to parse results.
-- Respect the user's desktop: avoid destructive app/window actions unless requested.
-- If a command fails because the target UI changed, recapture with `see` before retrying.
-- `see --json` element bounds are screen coordinates. Snapshot IDs keep element actions tied to the observed UI.
-- When using `see` in agent smoke tests, pass an explicit `/tmp` `--path` so capture artifacts do not land in a user-visible default location.
-- Prefer `--foreground` only when an app requires a key window, Space switch, or foreground mouse event. Background delivery is the default when Peekaboo can resolve a target process.
-
-## Common Workflows
+Use the installed signed CLI for ordinary automation; building Peekaboo is a development task, not a prerequisite. Honor an explicit binary override and inspect its version:
 
 ```bash
-# AX-only state when a screenshot would add noise.
-peekaboo see --tree --no-screenshot --app Calculator --json > /tmp/peekaboo-calc-ax.json
-
-# Visual layout plus element IDs and snapshot ID.
-peekaboo see --app Calculator --path /tmp/calc.png --json > /tmp/calc.json
-ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts j.dig("data","snapshot_id"); puts JSON.pretty_generate((j.dig("data","ui_elements")||[]).map{|e| e.slice("id","label","identifier","bounds")})'
-
-# Click an element discovered in the current snapshot.
-SNAP=$(ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts j.dig("data","snapshot_id")')
-ELEMENT_ID="<element-id-from-current-snapshot>"
-peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAP" --json
-
-# Browser page content and DOM-oriented actions belong to browser tooling.
-peekaboo browser status --json
-
-# Browser toolbar, menus, permission prompts, and native app chrome still belong to Peekaboo.
-peekaboo menu list --app Safari --json
-
-# Routine management examples stay read-only by default.
-peekaboo clipboard get --json
-peekaboo permissions status --all-sources --json
-peekaboo app list --include-hidden --include-background --json
-peekaboo config provider list --json
-peekaboo agent sessions --json
-peekaboo press cmd+shift+t --app Safari --window-id 12345
-peekaboo verify --app Safari --window-exists --timeout 2s --json
+PB="${PEEKABOO_BIN:-$(command -v peekaboo)}"
+"$PB" --version
+"$PB" bridge status --verbose --json
+"$PB" permissions status --all-sources --json
 ```
 
-## Input Path Testing
+The CLI ships separately from `Peekaboo.app`. Keep the release archive's CLI and accompanying compatibility dylibs together. The app's executable is a GUI host, not the CLI; current releases reject CLI-style arguments before Bridge startup. Using the same current signed CLI/app release avoids capability drift, but compatibility is negotiated by protocol and operation capabilities, not simple version equality.
 
-Peekaboo has two broad input paths:
+Host selection depends on the operation. Ordinary automation prefers a healthy reusable daemon, then a capable GUI host, before starting a daemon. Capture, AX inspection, browser, and snapshot-state work first prefer and may start the current CLI build's daemon. An explicit snapshot routes to its unique live producer; explicit socket or local-only overrides remain authoritative. Do not stop hosts merely because several candidates exist.
 
-- UIAX/action path: accessibility actions such as `AXPress`, `AXSetValue`.
-- Synthetic path: pointer/keyboard events, commonly the CAEvent/CGEvent-style path.
-
-Useful overrides:
+When app-held permissions are needed, launch the GUI host and pin the same socket for permission checks and observation:
 
 ```bash
-# Confirm command exposes the override.
-peekaboo click --help | rg 'input-strategy|actionOnly|synthOnly'
-
-# UIAX/action click path from a saved snapshot.
-peekaboo see --app Calculator --path /tmp/calc.png --json > /tmp/calc.json
-SNAP=$(ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts j.dig("data","snapshot_id")')
-ELEMENT_ID="<element-id-from-current-snapshot>"
-peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAP" --input-strategy actionOnly --json --focus-background
-
-# Direct accessibility action; good for proving UIAX independent of pointer events.
-peekaboo action AXPress --on "$ELEMENT_ID" --snapshot "$SNAP" --json
-
-# Synthetic click path; allow focus if you need visible app state to mutate.
-peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAP" --input-strategy synthOnly --json --foreground
-
-# Negative control: coordinates cannot use actionOnly.
-peekaboo click --at 10,10 --input-strategy actionOnly --json
+open -gj -a Peekaboo
+GUI_SOCKET="$HOME/Library/Application Support/Peekaboo/bridge.sock"
+"$PB" bridge status --bridge-socket "$GUI_SOCKET" --verbose --json
+"$PB" permissions status --bridge-socket "$GUI_SOCKET" --json
+"$PB" see --bridge-socket "$GUI_SOCKET" --no-elements --mode screen --path /tmp/peekaboo-screen.png --json
 ```
 
-Interpretation:
+`open -gj` requests a background/hidden launch; first-run onboarding or missing-configuration prompts can still activate the app. Verify the reported host rather than assuming it was selected. The GUI app, daemon, and caller-local CLI have separate TCC contexts. Screen Recording is checked where capture runs, Accessibility where AX runs, and Event Synthesizing where events are sent. Both local and Bridge sources need not have identical grants.
 
-- `actionOnly` success proves live AX re-resolution and action invocation.
-- `synthOnly` success proves coordinate resolution and event delivery, but verify app state independently.
-- `action AXPress` is the cleanest UIAX smoke test.
-- Compare with Computer Use or another AX inspector when labels/descriptions differ.
+## Observe, target, act, verify
 
-## Calculator Smoke Test
-
-Calculator is a handy fixture because it exposes descriptions and identifiers.
+1. Resolve the target with `app list` and `window list`; prefer exact PID/window IDs over broad app names or titles.
+2. Observe with pixels, Accessibility, or both. Ordinary `see` does not activate the target; `--web-focus` explicitly permits a focus action and is not a read-only retry.
+3. Copy opaque element and snapshot IDs from that observation. Prefer an element click, `set-value` for an intended value replacement, or a suitable state-only AX action over coordinate input.
+4. Use background delivery with an exact target. Add `--foreground` when shared-desktop interaction is authorized and needed; do not silently promote a refused background command.
+5. Read the canonical outcome and verify the intended change with a fresh `see`, `verify`, or other readback. A successful dispatch alone does not prove the app changed.
 
 ```bash
-BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"
-"$BIN" permissions status --json > /tmp/peekaboo-skill-refresh-permissions.json
-"$BIN" tools --json > /tmp/peekaboo-skill-refresh-tools.json
-"$BIN" see --tree --no-screenshot --app Calculator --json > /tmp/peekaboo-skill-refresh-calc-ax.json
-"$BIN" see --app Calculator --path /tmp/peekaboo-skill-refresh-calc.png --json --timeout 10s > /tmp/calc.json
-ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts JSON.pretty_generate((j.dig("data","ui_elements")||[]).select{|e| ["Clear","AllClear","One","Two","Add","Equals","StandardInputView"].include?(e["identifier"].to_s)}.map{|e| e.slice("id","label","identifier","description","help","bounds")})'
+"$PB" app list --include-hidden --include-background --json
+"$PB" window list --app Safari --json
 
-SNAP=$(ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts j.dig("data","snapshot_id")')
-BUTTON_ID="<button-id-from-current-snapshot>"
-"$BIN" action AXPress --on "$BUTTON_ID" --snapshot "$SNAP" --json
-"$BIN" click --on "$BUTTON_ID" --snapshot "$SNAP" --input-strategy actionOnly --json --focus-background
+# Pixels only; an exact window also publishes a coordinate receipt.
+"$PB" see --window-id "$WINDOW_ID" --no-elements --path /tmp/peekaboo-window.png --json
+
+# Pixels and element IDs, with an annotated artifact.
+"$PB" see --window-id "$WINDOW_ID" --annotate --path /tmp/peekaboo-elements.png --json
+
+# AX text and IDs without screenshot capture.
+"$PB" see --window-id "$WINDOW_ID" --tree --no-screenshot --json
+
+# Use IDs from the applicable fresh observation, not all examples in sequence.
+"$PB" click --on "$ELEMENT_ID" --snapshot "$SNAPSHOT_ID" --json
+"$PB" scroll --direction down --on "$ELEMENT_ID" --snapshot "$SNAPSHOT_ID" --json
 ```
 
-Expected current behavior:
+After a mutation changes the UI, capture again before using IDs for another action. `requires_fresh_observation: true` consumes the snapshot for mutation. Partial, indeterminate, and unverified results may already have changed the app; never repeat input blindly. Inspect image contents to verify capture and visual results. `sips -g pixelWidth -g pixelHeight <path>` checks dimensions only.
 
-- `see --json` includes `bounds` for each `ui_elements` entry.
-- `see --tree --no-screenshot --json` and `see --json` should expose element IDs plus Calculator identifiers such as `One`, `Two`, and `StandardInputView`. Copy the returned ID exactly instead of assuming a prefix or shape.
-- `tools --json` should include `browser`, `click`, `inspect_ui`, and `see`.
-- Snapshot-backed UIAX must use the captured app/window, not the frontmost app.
+## Background input and coordinates
 
-## Repo Validation
+Background `click` can invoke an element's AX action or focus a writable text field without activating its app. `--input-strategy actionOnly` selects the AX route; coordinate clicks can also use it by hit-testing a pressable AX element. Generic `action AXPress` and `action AXShowMenu` require `--foreground`; only generic `AXIncrement`/`AXDecrement` are background-safe. Prefer dedicated `click` for background activation.
+
+Background typing/paste accept exact window routes even when the app has several windows. App/PID-only routes require a complete inventory with at most one eligible window. Prefer a fresh exact-window snapshot for `type`; it must identify the focused field in the intended internal key window. If needed, click the field, observe again, then type using the new snapshot. Exact routes revalidate process generation, window bounds, and focus. AX text edits need Accessibility; event fallback needs Event Synthesizing.
 
 ```bash
-node scripts/docs-lint.mjs
-ruby -e 'h=File.read("skills/peekaboo/SKILL.md").split(/^---\s*$/,3)[1]; keys=h.lines.grep(/^[A-Za-z0-9_-]+:/).map { |line| line.split(":",2).first }; abort("frontmatter keys: #{keys.inspect}") unless keys.sort == ["description","name"]'
-! rg -n 'elem_[0-9]+' skills/peekaboo/SKILL.md
-! rg -n '^allowed-tools:' skills/peekaboo/SKILL.md
-pnpm run build:cli
-BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"; "$BIN" --version
-"$BIN" click --help | rg -- '--foreground|--focus-background|--input-strategy|Opaque element ID'
-"$BIN" see --help | rg -- '--json|--annotate|--app|--no-web-focus'
-"$BIN" see --help | rg '\-\-tree|\-\-no-screenshot|\-\-app|\-\-json'
-git diff --check -- skills/peekaboo/SKILL.md docs/agent-skill.md docs/commands/see.md docs/automation.md scripts/docs-lint.mjs
+"$PB" type "text" --snapshot "$SNAPSHOT_ID" --json
+"$PB" press Return --app TextEdit --window-id "$WINDOW_ID" --json
+"$PB" paste "text" --app TextEdit --window-id "$WINDOW_ID" --json
 ```
 
-Notes:
+`type` normally succeeds only for a confirmed change. It can return non-success after accepted dispatch, so read the outcome before retrying. Scripts doing their own follow-up observation may opt into `--accept-dispatched`; this does not confirm delivery. Raw background `press` needs an exact window selector or fresh exact-window snapshot; app/PID-only chords require `--foreground`. Default background-only Agent/MCP typing is stricter than the direct CLI: it requires a fresh exact non-dialog snapshot without competing selectors.
 
-- If tests fail with `no such module 'Testing'`, record it as local toolchain fallout; still run builds/lint/live smoke tests.
-- SwiftPM may warn about Commander identity conflicts; do not chase unless the task is dependency hygiene.
-- Keep live validation artifacts under `/tmp/peekaboo-skill-refresh-*` and do not commit or publish screenshots or UI dumps.
+Background `scroll` requires `--on`; app/window flags alone do not establish an element target. Targetless scrolling, `--smooth`, and nonzero `--delay` need `--foreground`. Shared-cursor `move`, `drag`, targetless keyboard input, and `click --long-press` also require explicit foreground mode.
 
-Keep this skill compact. Do not vendor generated command references here; update canonical CLI docs or Commander metadata instead.
+`click --at` uses logical points. Background coordinates are relative to the snapshot window even without target flags; add `--global` for global logical coordinates inside that window. Foreground coordinates are window-relative with target flags and global without them. Ordinary `see` produces logical1x images; do not divide their coordinates by a Retina scale. For `--retina`, crops, or resized previews, use the capture's coordinate metadata and `screen list` bounds/scale to map pixels to logical points.
+
+```bash
+"$PB" see --window-id "$WINDOW_ID" --no-elements --path /tmp/peekaboo-click.png --json
+# Copy the returned snapshot ID before clicking window-local logical points.
+"$PB" click --window-id "$WINDOW_ID" --at 20,40 --snapshot "$SNAPSHOT_ID" --json
+```
+
+Background coordinate clicks require a fresh screenshot snapshot with an exact process/window/bounds receipt; AX-only observations are insufficient. Moved, replaced, or unverifiable targets fail before dispatch. Background right/double/middle/triple clicks can use exact routed events, but completed dispatch remains effect-unverifiable. Observe before deciding whether another click is needed.
+
+## Troubleshooting and references
+
+- Capture permissions belong to the executing host. Compare `permissions status --all-sources`, then pin the intended host for diagnostics and capture. Request only permissions needed for the selected operation; do not replace signed installs with ad-hoc builds against saved TCC/Keychain state.
+- ScreenCaptureKit ownership checks use known potential host identities and ownership records, including Claude Desktop; another process linking the framework does not by itself block capture. If ownership cannot be established, explicit `see --capture-engine classic` (alias `cg`) avoids in-process ScreenCaptureKit on the selected host. `auto` has conditional fallback paths and is not guaranteed to fail whenever Claude is running. Classic still needs valid capture permission evidence on its executing host.
+- Prefer Bridge capture from SSH or background launchd sessions. `--no-remote --capture-engine cg` is a caller-local diagnostic for a known active Aqua session; elsewhere it can return wallpaper-only or redacted pixels despite reporting success.
+- If a concrete snapshot's producer is unavailable or an explicit host does not own it, observe again on the intended host. Do not substitute an unrelated snapshot or weaken the target merely to retry.
+- Use `capture live` for change-aware capture and `capture video` to sample an existing video. Store task captures under an explicit temporary path and inspect/redact them before any authorized sharing.
+- Discover current syntax with `<command> --help`, `learn`, `tools --json`, and `tools describe <name> --json` (MCP schema, not CLI flags). Timing options accept bare milliseconds or `ms`/`s`; prefer explicit suffixes.
+- v4 uses noun inventories (`app list`, `window list`, `screen list`), `see`, `press`, `action`, and `click --at`; use live help when translating older examples.
+
+Canonical references stay usable when this skill is linked into another repository or agent directory:
+
+- [Command index](https://github.com/openclaw/Peekaboo/blob/main/docs/commands/README.md), especially [type](https://github.com/openclaw/Peekaboo/blob/main/docs/commands/type.md), [click](https://github.com/openclaw/Peekaboo/blob/main/docs/commands/click.md), and [scroll](https://github.com/openclaw/Peekaboo/blob/main/docs/commands/scroll.md).
+- [Bridge host](https://github.com/openclaw/Peekaboo/blob/main/docs/bridge-host.md), [permissions](https://github.com/openclaw/Peekaboo/blob/main/docs/permissions.md), and [subprocess integration](https://github.com/openclaw/Peekaboo/blob/main/docs/integrations/subprocess.md).
+- For Peekaboo development, read the checkout's [AGENTS.md](https://github.com/openclaw/Peekaboo/blob/main/AGENTS.md) and [building guide](https://github.com/openclaw/Peekaboo/blob/main/docs/building.md); follow their source-build and test workflow for code changes.

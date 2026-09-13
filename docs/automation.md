@@ -17,7 +17,7 @@ Every input command accepts one of three target shapes:
 
 - **Element ID** — `--on <id>` from a fresh `peekaboo see` capture; preferred when available. Treat IDs as opaque strings and copy the exact value returned by the capture.
 - **Label / role / app** — positional query text such as `peekaboo click "Send" --app Mail`; resolved via the AX tree.
-- **Coordinates** — `--at 480,120`; target-relative when paired with `--app`, `--pid`, or `--window-*`, global otherwise. Add `--global` to force screen coordinates with a target.
+- **Coordinates** — `--at 480,120`; background clicks use the explicit snapshot's window as their origin, even without app/window flags. Foreground coordinates are relative to a selected target window and global without one. Add `--global` to force global logical coordinates; background points must still lie inside the captured window.
 
 Prefer IDs when you can capture them, labels when you can't, and coordinates only as a last resort. The agent and MCP tooling default to the first two.
 

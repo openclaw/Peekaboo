@@ -14,8 +14,8 @@ read_when:
 | --- | --- |
 | `[query]` | Optional positional text query (case-insensitive substring match). |
 | `--on <id>` | Target an opaque Peekaboo element ID copied exactly from current `see` or MCP `inspect_ui` output. |
-| `--at x,y` | Click coordinates. With target flags, coordinates are relative to the resolved target window; without target flags, they are global screen coordinates. |
-| `--global` | Treat `--at` as global screen coordinates even when target flags are supplied. |
+| `--at x,y` | Logical click coordinates. Background clicks are relative to the explicit snapshot's window, including when no target flags are supplied. Foreground clicks are relative to a selected target window, or global when no target window is selected. |
+| `--global` | Treat `--at` as global screen coordinates in either delivery mode. Background clicks still require an exact-window snapshot and a point inside that window. |
 | `--snapshot <id>` | Reuse a prior snapshot. A concrete ID must be `ps1_` plus 32 lowercase ASCII hexadecimal digits; element/query clicks otherwise default to the latest snapshot. Background coordinate clicks require an explicit reference from a fresh exact-window `see`. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — resolve the app/window that should receive the click. In background mode this does not focus the app; with `--foreground` it focuses before clicking. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | `--wait-for <duration>` | Timeout while waiting for the element (default `5s`; bare values are milliseconds). |

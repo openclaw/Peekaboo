@@ -72,8 +72,8 @@ extension ClickCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "at",
-                    help: "x,y — target-relative when --app/--window-* given; global otherwise " +
-                        "(use --global for explicit global)",
+                    help: "x,y — background: relative to the snapshot window; foreground: target-relative " +
+                        "with target flags, global without them. --global overrides either mode",
                     long: "at"
                 ),
                 .commandOption(
@@ -115,7 +115,8 @@ extension ClickCommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "global",
-                    help: "Treat --at as global screen coordinates even with target options",
+                    help: "Treat --at as global screen coordinates instead of snapshot-window or " +
+                        "target-relative coordinates",
                     long: "global"
                 ),
             ],

@@ -36,11 +36,12 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     @OptionGroup var target: InteractionTargetOptions
 
     @Option(
-        help: "x,y — target-relative when --app/--window-* given; global otherwise (use --global for explicit global)"
+        help: "x,y — background: relative to the snapshot window; foreground: target-relative with " +
+            "target flags, global without them. --global overrides either mode"
     )
     var at: String?
 
-    @Flag(help: "Treat --at as global screen coordinates even when target options are supplied")
+    @Flag(help: "Treat --at as global screen coordinates instead of snapshot-window or target-relative coordinates")
     var global = false
 
     @Option(help: "Maximum time to wait for an element (bare values are milliseconds)")
