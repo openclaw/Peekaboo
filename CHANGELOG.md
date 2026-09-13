@@ -4,6 +4,7 @@
 
 - Fix host-routed screen observations with Accessibility elements by validating their semantic owner separately from the screen raster target. #715, #710.
 - Keep action capture running until it samples after the child finishes and retain exact sample-boundary proof in new manifests; capture caps still fail incomplete coverage, while older version-1 manifests remain readable as legacy elapsed-time evidence.
+- Fix application name and bundle resolution being blocked by reaped processes lingering in LaunchServices; require repeated native absence while retaining refusal for uncertain or changing process identities. #709.
 
 ## 4.3.4 - 2026-09-11
 
