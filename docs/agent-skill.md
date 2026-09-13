@@ -7,7 +7,7 @@ read_when:
 
 # Agent Skill for Peekaboo
 
-The [Peekaboo skill](../skills/peekaboo/SKILL.md) teaches agents to observe macOS UI, select an exact target, act in the background where supported, and verify the result. It covers native apps and browser chrome, routes page content to browser tooling, and explains execution-host permissions, snapshot ownership, coordinates, and unverified input outcomes. Ordinary automation uses the installed CLI; source builds belong to Peekaboo development.
+The [Peekaboo skill](https://github.com/openclaw/Peekaboo/blob/main/skills/peekaboo/SKILL.md) teaches agents to observe macOS UI, select an exact target, act in the background where supported, and verify the result. It covers native apps and browser chrome, routes page content to browser tooling, and explains execution-host permissions, snapshot ownership, coordinates, and unverified input outcomes. Ordinary automation uses the installed CLI; source builds belong to Peekaboo development.
 
 ## Prerequisites
 
@@ -58,11 +58,12 @@ For skill/documentation edits, run from the repository root:
 
 ```bash
 node scripts/docs-lint.mjs
+node --test tests/background-capability-guidance.test.mjs
 ruby -e 'h=File.read("skills/peekaboo/SKILL.md").split(/^---\s*$/,3)[1]; keys=h.lines.grep(/^[A-Za-z0-9_-]+:/).map { |line| line.split(":",2).first }; abort("unexpected skill frontmatter") unless keys.sort == ["description","name"]'
 git diff --check
 ```
 
-Source-code changes follow [AGENTS.md](../AGENTS.md) and the [building guide](building.md). Live checks should use a controlled target, inspect the actual screen or state readback, and preserve retry-unsafe outcomes. Image dimensions and command success alone are insufficient proof that the intended UI changed.
+Source-code changes follow [AGENTS.md](https://github.com/openclaw/Peekaboo/blob/main/AGENTS.md) and the [building guide](building.md). Live checks should use a controlled target, inspect the actual screen or state readback, and preserve retry-unsafe outcomes. Image dimensions and command success alone are insufficient proof that the intended UI changed.
 
 ## Canonical references
 

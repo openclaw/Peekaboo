@@ -69,10 +69,12 @@ test('bundled skill never advertises app/PID-only background press', () => {
   }
 
   for (const binary of ['peekaboo', '"$PB"']) {
-    const unsafe = normalizeSkillCommands(`${binary} press return --pid 1234`);
-    assert.equal(isTargetedRawPress(unsafe), true);
-    assert.equal(hasSafeRawPressRoute(unsafe), false);
-    assert.equal(hasSafeRawPressRoute(`${unsafe} --window-id 42`), true);
+    for (const target of ['--app TextEdit', '--pid 1234']) {
+      const unsafe = normalizeSkillCommands(`${binary} press return ${target}`);
+      assert.equal(isTargetedRawPress(unsafe), true);
+      assert.equal(hasSafeRawPressRoute(unsafe), false);
+      assert.equal(hasSafeRawPressRoute(`${unsafe} --window-id 42`), true);
+    }
   }
 });
 
