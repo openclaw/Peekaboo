@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Keep skill guidance checks effective for the selected CLI binary, restore the read-only clipboard example, repair the guide's published links, and run the checks in regular macOS CI.
+- Repair selected-CLI skill checks and published guide links, restore the read-only clipboard example, run guidance checks in regular macOS CI, and make noncooperative detection timeout proof independent of scheduler timing.
 
 - Keep caller screenshot destinations intact when remote evidence is rejected or raw output was not requested, staging ordinary captures before file publication as well as ROI captures. #710.
 
