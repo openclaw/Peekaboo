@@ -52,11 +52,17 @@ let package = Package(
                 .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
             ],
             swiftSettings: approachableConcurrencySettings),
+        .executableTarget(
+            name: "HostWindowCloseFixture",
+            dependencies: ["PeekabooAutomationKit"],
+            path: "Tests/Support/HostWindowCloseFixture",
+            swiftSettings: approachableConcurrencySettings),
         .testTarget(
             name: "PeekabooAutomationKitTests",
             dependencies: [
                 "PeekabooAutomationKit",
                 "PeekabooAutomationKitTestSupport",
+                "HostWindowCloseFixture",
                 .product(name: "PeekabooFoundationTestSupport", package: "PeekabooFoundation"),
             ],
             path: "Tests/PeekabooAutomationKitTests",
