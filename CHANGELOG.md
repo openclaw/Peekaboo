@@ -4,9 +4,9 @@
 
 - Keep skill guidance checks effective for the selected CLI binary, restore the read-only clipboard example, repair the guide's published links, and run the checks in regular macOS CI.
 
-- Update Linux validation to Swift 6.3.3 and CI plus the pinned qualification runtime to Node 26.8.2 with verified universal binary checksums; smoke-test the built CLI catalog in CI.
-
 - Keep caller screenshot destinations intact when remote evidence is rejected or raw output was not requested, staging ordinary captures before file publication as well as ROI captures. #710.
+
+- Update Linux validation to Swift 6.3.3 and CI plus the pinned qualification runtime to Node 26.8.2 with verified universal binary checksums; smoke-test the built CLI catalog in CI.
 
 - Fix host-routed screen observations with Accessibility elements by validating their semantic owner separately from the screen raster target. #715, #710.
 - Keep action capture running until it samples after the child finishes and retain exact sample-boundary proof in new manifests; capture caps still fail incomplete coverage, while older version-1 manifests remain readable as legacy elapsed-time evidence.
