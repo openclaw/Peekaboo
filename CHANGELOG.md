@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Keep background window close, restore, and maximize callbacks on the main thread when the target belongs to the Peekaboo host, preventing embedded macOS apps from crashing while preserving exact-window validation and remote AX deadlines.
+
 ## [4.3.0] - 2026-09-02
 
 ### Highlights
