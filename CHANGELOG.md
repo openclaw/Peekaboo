@@ -2,7 +2,14 @@
 
 ## Unreleased
 
+- Keep caller screenshot destinations intact when remote evidence is rejected or raw output was not requested, staging ordinary captures before file publication as well as ROI captures. #710.
+
 - Fix host-routed screen observations with Accessibility elements by validating their semantic owner separately from the screen raster target. #715, #710.
+- Keep action capture running until it samples after the child finishes and retain exact sample-boundary proof in new manifests; capture caps still fail incomplete coverage, while older version-1 manifests remain readable as legacy elapsed-time evidence.
+- Fix application name and bundle resolution being blocked by reaped processes lingering in LaunchServices; require repeated native absence while retaining refusal for uncertain or changing process identities. #709.
+- Let hosts embedding `PeekabooMCPServer` supply their own MCP transport with the same completion and cleanup lifecycle as stdio. Thanks @semyoren! #716.
+
+- Clarify observation evidence failures and runtime refusal guidance so same-build verification errors do not imply that an update will fix them. #710.
 
 ## 4.3.4 - 2026-09-11
 

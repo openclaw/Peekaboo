@@ -9,6 +9,35 @@ import Testing
 @MainActor
 struct PeekabooBridgeDesktopObservationResultTests {
     @Test
+    func `observation refusal treats unexpected evidence as a diagnostic rather than a target`() throws {
+        let original = Self.readOnlyFixtureResult()
+        let application = try Self.fixture().result.capture.metadata.applicationInfo
+        let observation = DesktopObservationResult(
+            target: original.target,
+            capture: .init(
+                imageData: Data(),
+                metadata: .init(
+                    size: original.capture.metadata.size,
+                    mode: .screen,
+                    applicationInfo: application,
+                    displayInfo: original.capture.metadata.displayInfo,
+                    diagnostics: original.capture.metadata.diagnostics)),
+            elements: original.elements)
+
+        let error = #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try PeekabooBridgeRequestContext.$usesAttestedOperationResultSemantics.withValue(true) {
+                try PeekabooBridgeServer.validateAttestedObservationBinding(
+                    Self.readOnlyRequest,
+                    result: observation,
+                    requireContentDigest: false)
+            }
+        }
+        let expected = "The desktop observation provider returned inconsistent response evidence: " +
+            "unexpected application evidence."
+        #expect(error?.message == expected)
+    }
+
+    @Test
     func `signed observation authenticates exact file bytes and rejects same-size replacement`() async throws {
         let fixture = try Self.fixture()
         let root = URL(fileURLWithPath: "/tmp/pb-ob-content-\(UUID().uuidString)", isDirectory: true)

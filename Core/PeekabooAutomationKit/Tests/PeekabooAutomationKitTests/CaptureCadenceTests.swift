@@ -54,6 +54,32 @@ struct CaptureCadenceTests {
 
 @MainActor
 struct WatchCaptureCadenceSchedulingTests {
+    @Test(arguments: [UInt64(99), 100, 101])
+    func `deferred stop requires a valid sample at its boundary`(sampleStartedAt: UInt64) {
+        let session = Self.makeSession(clock: TestWatchCaptureClock())
+        session.requestStop(afterSampleStartedAtOrAfter: 100)
+        #expect(!session.hasStopRequest())
+        session.recordValidSample(startedAtNanoseconds: sampleStartedAt)
+        #expect(session.hasStopRequest() == (sampleStartedAt >= 100))
+        #expect(session.lastSampleStartedAtMonotonicNanoseconds == sampleStartedAt)
+    }
+
+    @Test
+    func `immediate stop overrides a pending sample boundary`() {
+        let session = Self.makeSession(clock: TestWatchCaptureClock())
+        session.requestStop(afterSampleStartedAtOrAfter: 100)
+        session.requestStop()
+        #expect(session.hasStopRequest())
+    }
+
+    @Test
+    func `an already completed sample satisfies deferred stopping`() {
+        let session = Self.makeSession(clock: TestWatchCaptureClock())
+        session.recordValidSample(startedAtNanoseconds: 100)
+        session.requestStop(afterSampleStartedAtOrAfter: 100)
+        #expect(session.hasStopRequest())
+    }
+
     @Test(arguments: [
         (costMs: UInt64(0), expectedSleepMs: UInt64(100)),
         (costMs: 20, expectedSleepMs: 80),

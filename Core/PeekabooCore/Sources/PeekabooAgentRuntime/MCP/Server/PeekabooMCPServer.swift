@@ -21,6 +21,8 @@ public enum TransportType: CustomStringConvertible, Sendable {
 
 /// Peekaboo MCP Server implementation
 public actor PeekabooMCPServer {
+    @TaskLocal private static var toolCallServingGeneration: UUID?
+
     private enum StrictCallTool: MCP.Method {
         typealias Parameters = Value
         typealias Result = CallTool.Result
@@ -56,6 +58,11 @@ public actor PeekabooMCPServer {
     private let toolRegistry: MCPToolRegistry
     private let logger: os.Logger
     private let toolContext: MCPToolContext
+    private var servingGeneration: UUID?
+    private var startupTask: Task<Void, any Error>?
+    private var shutdownTask: Task<Void, Never>?
+    private var acceptsToolCalls = false
+    private var activeToolCalls: [UUID: Task<CallTool.Result, any Error>] = [:]
     private let serverName = PeekabooMCPVersion.serverName
     private let serverVersion = PeekabooMCPVersion.current
 
@@ -153,24 +160,10 @@ public actor PeekabooMCPServer {
                 throw MCP.MCPError.methodNotFound("Server deallocated")
             }
 
-            let request = try ToolCallRequest(params: params)
-
-            guard let tool = await self.toolRegistry.tool(named: request.name) else {
-                throw MCP.MCPError.invalidParams("Tool '\(request.name)' not found")
+            guard let generation = Self.toolCallServingGeneration else {
+                throw MCP.MCPError.internalError("MCP request has no serving lifetime")
             }
-
-            let arguments = ToolArguments(value: .object(request.arguments))
-            do {
-                try MCPToolArgumentValidator.validateClosedProperties(tool: tool, arguments: arguments)
-            } catch let error as MCPToolArgumentSchemaError {
-                throw MCP.MCPError.invalidParams(
-                    "Invalid arguments for tool '\(request.name)': \(error.localizedDescription)")
-            }
-
-            // Execute tool on main thread
-            let response = try await self.toolContext.execute(tool: tool, arguments: arguments)
-
-            return Self.callToolResult(from: response, toolName: request.name)
+            return try await self.handleToolCall(params, generation: generation)
         }
 
         // Resources list handler (empty for now, but prevents inspector errors)
@@ -218,6 +211,77 @@ public actor PeekabooMCPServer {
             let data = try JSONEncoder().encode(result)
             return try JSONDecoder().decode(Initialize.Result.self, from: data)
         }
+    }
+
+    private func handleToolCall(_ parameters: Value, generation: UUID) async throws -> CallTool.Result {
+        guard self.acceptsToolCalls, self.servingGeneration == generation else {
+            throw MCP.MCPError.internalError("MCP server is shutting down")
+        }
+        let id = UUID()
+        let execution = Task { try await self.executeToolCall(parameters) }
+        self.activeToolCalls[id] = execution
+        defer { self.activeToolCalls[id] = nil }
+        return try await withTaskCancellationHandler {
+            try await execution.value
+        } onCancel: {
+            execution.cancel()
+        }
+    }
+
+    private func executeToolCall(_ parameters: Value) async throws -> CallTool.Result {
+        try Task.checkCancellation()
+        let request = try ToolCallRequest(params: parameters)
+        guard let tool = await self.toolRegistry.tool(named: request.name) else {
+            throw MCP.MCPError.invalidParams("Tool '\(request.name)' not found")
+        }
+        try Task.checkCancellation()
+        let arguments = ToolArguments(value: .object(request.arguments))
+        do {
+            try MCPToolArgumentValidator.validateClosedProperties(tool: tool, arguments: arguments)
+        } catch let error as MCPToolArgumentSchemaError {
+            throw MCP.MCPError.invalidParams(
+                "Invalid arguments for tool '\(request.name)': \(error.localizedDescription)")
+        }
+        let response = try await self.toolContext.execute(tool: tool, arguments: arguments)
+        return Self.callToolResult(from: response, toolName: request.name)
+    }
+
+    private func startServing(transport: any Transport, generation: UUID) async throws {
+        let startup = Task {
+            try await Self.$toolCallServingGeneration.withValue(generation) {
+                try await self.server.start(transport: transport)
+            }
+        }
+        self.startupTask = startup
+        try await startup.value
+    }
+
+    private func stopServing(generation: UUID? = nil) async {
+        if let generation, self.servingGeneration != generation {
+            return
+        }
+        if let shutdownTask = self.shutdownTask {
+            await shutdownTask.value
+            return
+        }
+        self.acceptsToolCalls = false
+        let calls = Array(self.activeToolCalls.values)
+        for call in calls {
+            call.cancel()
+        }
+        let startup = self.startupTask
+        startup?.cancel()
+        let shutdown = Task {
+            // A cancelled connect can still complete; finish startup before disconnecting its SDK session.
+            _ = try? await startup?.value
+            await self.server.stop()
+            // SDK shutdown does not own incoming tool tasks. Keep their context alive until they drain.
+            for call in calls {
+                _ = try? await call.value
+            }
+        }
+        self.shutdownTask = shutdown
+        await shutdown.value
     }
 
     static func callToolResult(from response: ToolResponse, toolName: String? = nil) -> CallTool.Result {
@@ -269,13 +333,20 @@ public actor PeekabooMCPServer {
     }
 
     func startForTesting(transport: any Transport) async throws {
-        try await self.server.start(transport: transport)
+        let generation = UUID()
+        self.servingGeneration = generation
+        self.acceptsToolCalls = true
+        try await self.startServing(transport: transport, generation: generation)
     }
 
     @discardableResult
     func stopForTesting() async -> Bool {
-        await self.server.stop()
-        return await self.releaseToolContextForTeardown()
+        await self.stopServing()
+        let released = await self.releaseToolContextForTeardown()
+        self.servingGeneration = nil
+        self.startupTask = nil
+        self.shutdownTask = nil
+        return released
     }
 
     private func releaseToolContextForTeardown() async -> Bool {
@@ -288,8 +359,8 @@ public actor PeekabooMCPServer {
 
     public func serve(transport: TransportType, port: Int = 8080) async throws {
         self.logger.info("Starting Peekaboo MCP server on \(transport) transport, version: \(self.serverVersion)")
-        do {
-            let serverTransport: any Transport = switch transport {
+        try await self.run {
+            switch transport {
             case .stdio:
                 EOFDrainingTransport(wrapping: StdioTransport())
             case .http:
@@ -298,17 +369,53 @@ public actor PeekabooMCPServer {
             case .sse:
                 throw MCPError.notImplemented("SSE server transport not yet implemented")
             }
-            try await self.server.start(transport: serverTransport)
+        }
+    }
 
-            // Keep the server running
-            await self.server.waitUntilCompleted()
+    /// Serves over a transport supplied by the host process.
+    ///
+    /// For hosts that embed the server instead of spawning the CLI — an application that
+    /// links `PeekabooCore` and speaks MCP over a connection it owns. The lifecycle is the
+    /// one `serve(transport:port:)` gives the built-in stdio transport: the server runs
+    /// until the transport completes, and the tool context is released on the way out,
+    /// on success and on failure alike.
+    public func serve(transport: any Transport) async throws {
+        self.logger.info("Starting Peekaboo MCP server on a host transport, version: \(self.serverVersion)")
+        try await self.run { transport }
+    }
+
+    private func run(makingTransport: () throws -> any Transport) async throws {
+        guard self.servingGeneration == nil else {
+            throw MCPError.executionFailed("MCP server is already serving a transport")
+        }
+        let generation = UUID()
+        self.servingGeneration = generation
+        self.acceptsToolCalls = true
+        defer {
+            self.servingGeneration = nil
+            self.startupTask = nil
+            self.shutdownTask = nil
+        }
+        do {
+            let serverTransport = try makingTransport()
+            try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                try await self.startServing(transport: serverTransport, generation: generation)
+                try Task.checkCancellation()
+                await self.server.waitUntilCompleted()
+                try Task.checkCancellation()
+            } onCancel: {
+                Task { await self.stopServing(generation: generation) }
+            }
         } catch {
+            await self.stopServing(generation: generation)
             let cleanupConfirmed = await self.releaseToolContextForTeardown()
             if !cleanupConfirmed {
                 self.logger.error("Browser session cleanup remains pending after MCP server failure")
             }
             throw error
         }
+        await self.stopServing(generation: generation)
         let cleanupConfirmed = await self.releaseToolContextForTeardown()
         guard cleanupConfirmed else {
             throw MCPError.executionFailed(

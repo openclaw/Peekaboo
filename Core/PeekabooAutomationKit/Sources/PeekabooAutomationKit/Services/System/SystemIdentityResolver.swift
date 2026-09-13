@@ -46,6 +46,7 @@ public enum SystemIdentityResolver {
     enum ProcessStartIdentityObservation: Equatable, Sendable {
         case identity(UInt64)
         case permissionDenied
+        case absent
         case unavailable
 
         var identity: UInt64? {
@@ -125,8 +126,12 @@ public enum SystemIdentityResolver {
         errorCode: Int32) -> ProcessStartIdentityObservation
     {
         guard bytesRead == Int32(MemoryLayout<proc_bsdinfo>.stride) else {
-            // Only a failed full read with explicit EPERM proves the verified permission-denied path.
-            return bytesRead <= 0 && errorCode == EPERM ? .permissionDenied : .unavailable
+            guard bytesRead <= 0 else { return .unavailable }
+            switch errorCode {
+            case EPERM: return .permissionDenied
+            case ESRCH: return .absent
+            default: return .unavailable
+            }
         }
         let seconds = UInt64(info.pbi_start_tvsec)
         let microseconds = UInt64(info.pbi_start_tvusec)

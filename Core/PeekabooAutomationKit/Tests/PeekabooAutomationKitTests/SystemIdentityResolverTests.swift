@@ -15,13 +15,19 @@ struct SystemIdentityResolverTests {
             info: info, bytesRead: size, errorCode: EPERM)
         #expect(readable == .identity(123_000_456))
         #expect(readable.identity == 123_000_456)
+        #expect(SystemIdentityResolver.processStartIdentityObservation(
+            info: info, bytesRead: size, errorCode: ESRCH) == readable)
 
         for bytesRead in [Int32(0), -1] {
             let denied = SystemIdentityResolver.processStartIdentityObservation(
                 info: info, bytesRead: bytesRead, errorCode: EPERM)
             #expect(denied == .permissionDenied)
             #expect(denied.identity == nil)
-            for errorCode in [0, ESRCH, EIO, EACCES] {
+            let absent = SystemIdentityResolver.processStartIdentityObservation(
+                info: info, bytesRead: bytesRead, errorCode: ESRCH)
+            #expect(absent == .absent)
+            #expect(absent.identity == nil)
+            for errorCode in [0, EIO, EACCES] {
                 let unavailable = SystemIdentityResolver.processStartIdentityObservation(
                     info: info, bytesRead: bytesRead, errorCode: errorCode)
                 #expect(unavailable == .unavailable)
@@ -29,8 +35,10 @@ struct SystemIdentityResolverTests {
             }
         }
         for bytesRead in [size - 1, size + 1] {
-            #expect(SystemIdentityResolver.processStartIdentityObservation(
-                info: info, bytesRead: bytesRead, errorCode: EPERM) == .unavailable)
+            for errorCode in [EPERM, ESRCH] {
+                #expect(SystemIdentityResolver.processStartIdentityObservation(
+                    info: info, bytesRead: bytesRead, errorCode: errorCode) == .unavailable)
+            }
         }
         info.pbi_start_tvsec = UInt64.max
         info.pbi_start_tvusec = 999_999

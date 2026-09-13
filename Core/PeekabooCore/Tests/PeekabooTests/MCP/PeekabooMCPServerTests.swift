@@ -36,6 +36,37 @@ struct PeekabooMCPServerTests {
     }
 
     @Test
+    @MainActor
+    func `serve runs on a host-supplied transport until it completes`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        // InMemoryTransport drops messages sent before the receiving peer connects.
+        try await serverTransport.connect()
+        let server = try await PeekabooMCPServer(toolContext: context)
+        let snapshots = await MCPToolUISnapshotStore(owner: server.snapshotOwnerForTesting())
+        let snapshot = await snapshots.createSnapshot()
+        let client = Client(name: "PeekabooHostTransportTests", version: "1.0")
+
+        let serving = Task { try await server.serve(transport: serverTransport) }
+        do {
+            _ = try await client.connect(transport: clientTransport)
+            let (tools, _) = try await client.listTools()
+            #expect(tools.contains { $0.name == "see" })
+            #expect(await snapshots.hasOwnerState())
+        } catch {
+            await client.disconnect()
+            await server.stopForTesting()
+            _ = try? await serving.value
+            throw error
+        }
+
+        await client.disconnect()
+        try await serving.value
+        #expect(await snapshots.getSnapshot(id: snapshot.id) == nil)
+        #expect(await !snapshots.hasOwnerState())
+    }
+
+    @Test
     func `each direct MCP server owns one isolated snapshot namespace`() async throws {
         let first = try await makeServer()
         let second = try await makeServer()
@@ -542,7 +573,8 @@ struct PeekabooMCPServerTests {
     @Test
     @MainActor
     func `wire decoder rejects non-object tool calls and preserves omitted arguments`() async throws {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(
+            permissionsStatusProvider: WireDecoderPermissionsStatusProvider())
         let session = try await MCPWireSession.connect(context: context)
 
         do {
@@ -762,12 +794,21 @@ struct PeekabooMCPServerTests {
     }
 }
 
+@MainActor
+private struct WireDecoderPermissionsStatusProvider: PermissionsStatusProviding {
+    func permissionsStatus() async throws -> PermissionsStatus {
+        PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
+    }
+}
+
 private struct MCPWireSession {
     let client: Client
     let server: PeekabooMCPServer
 
     static func connect(context: MCPToolContext) async throws -> Self {
         let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        // InMemoryTransport drops messages sent before the receiving peer connects.
+        try await serverTransport.connect()
         let server = try await PeekabooMCPServer(toolContext: context)
         let client = Client(name: "PeekabooClickWireTests", version: "1.0")
         try await server.startForTesting(transport: serverTransport)

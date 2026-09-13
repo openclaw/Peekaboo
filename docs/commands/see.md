@@ -165,9 +165,15 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 
 ## Troubleshooting tips
 
+- An inconsistent-response-evidence refusal means the returned capture could not be verified against the request. Check the specific evidence named in the error. Use `--verbose` to identify the selected runtime and Bridge socket before inspecting that host; a current client and host can still hit a runtime bug, so an update is not assumed to resolve every verification refusal.
+
 Observation verification and MCP image reloads limit each artifact to 256 MiB. Reads retain one regular-file
 descriptor and reject files that grow or change during the read. Ordinary symlink paths remain supported;
 oversized or replaced artifacts fail before their content is published.
+
+Remote observations stage screenshot files privately until the response identity, signed content, and raster
+dimensions validate. Rejected evidence leaves an existing caller destination intact and does not create a new
+caller-visible image. Valid-raster `ACCESSIBILITY_INCOMPLETE` failures retain their documented screenshot behavior.
 
 - If the CLI reports **blind typing**, pass an explicit `--app`, `--pid`, `--window-id`, or fresh `--snapshot` so `type` can resolve a background target process, or add `--foreground` when the target app requires focused keyboard input.
 - If a concrete snapshot reports no unique live host affinity, keep the producing host running or capture again. Do

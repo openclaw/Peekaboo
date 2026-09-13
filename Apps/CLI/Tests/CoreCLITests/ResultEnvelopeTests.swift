@@ -99,6 +99,13 @@ struct ResultEnvelopeTests {
             "⛔ Click refused before dispatch; reconnect the Bridge session before retrying")
     }
 
+    @Test func `runtime refusal asks for verification without assuming an outdated build`() {
+        let outcome = DesktopActionOutcome.refused(route: .bridge, reason: .runtimeIncompatible)
+        #expect(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Capture") ==
+            "⛔ Capture refused before dispatch; verify the selected runtime before retrying")
+        #expect(outcome.refusalReason == .runtimeIncompatible)
+    }
+
     @Test func `Space switch human detail never claims unverified dispatch completed`() {
         let dispatched = DesktopActionOutcome.dispatchedUnverified(
             delivery: .init(mechanism: .nativeFramework, mode: .foreground),

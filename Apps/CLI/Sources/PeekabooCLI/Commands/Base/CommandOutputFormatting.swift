@@ -59,7 +59,7 @@ enum ActionOutcomeHumanRenderer {
         case .refreshTarget:
             "refresh the target before retrying"
         case .updateRuntime:
-            "update the runtime before retrying"
+            "verify the selected runtime before retrying"
         case .reconnectSession:
             "reconnect the Bridge session before retrying"
         case .recoverSideEffect:

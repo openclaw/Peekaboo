@@ -77,8 +77,7 @@ extension PeekabooBridgeServer {
         }
         throw PeekabooBridgeErrorEnvelope(
             code: .internalError,
-            message: "The desktop observation provider returned response evidence that did not match " +
-                "the requested \(mismatch).")
+            message: "The desktop observation provider returned inconsistent response evidence: \(mismatch).")
     }
 
     func windowMutationResponse(
