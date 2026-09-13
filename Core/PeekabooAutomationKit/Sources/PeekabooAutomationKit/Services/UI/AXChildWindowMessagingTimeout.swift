@@ -1,7 +1,7 @@
 import ApplicationServices
 
-/// Applies and clears an unchecked per-element AX deadline for detached workers.
-/// Raw workers run off MainActor and cannot use AXorcist's checked `Element.withMessagingTimeout` scope.
+/// Applies and clears an unchecked per-element AX deadline for raw AX operations.
+/// Detached workers cannot use AXorcist's MainActor-checked `Element.withMessagingTimeout` scope.
 /// Application deadlines do not cover returned child references; each child needs its own scope.
 enum AXChildWindowMessagingTimeout {
     static func perform<Result>(

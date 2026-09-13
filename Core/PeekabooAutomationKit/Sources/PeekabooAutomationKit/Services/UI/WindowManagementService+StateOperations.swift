@@ -1084,14 +1084,13 @@ extension CGPoint {
     }
 }
 
-/// Runs the only blocking AX calls used by background close/maximize away from MainActor and
-/// applies a per-element messaging deadline. Cancellation of the caller cannot stop a synchronous
-/// Accessibility message already in the kernel, so the native AX deadline is the hard safety bound.
+/// Keeps remote AX messaging off MainActor with per-element deadlines. In-process AX calls
+/// synchronously invoke AppKit, so host-owned windows must stay on MainActor.
 private enum BoundedBackgroundWindowAX {
     private static let messagingTimeout: Float = 0.75
 
     static func windowPresence(expectedIdentity: WindowMutationIdentity) async -> PinnedMinimizedWindowAXPresence {
-        await Task.detached(priority: .userInitiated) {
+        await self.perform(expectedIdentity: expectedIdentity) {
             let processStartIdentityBeforeScan = SystemIdentityResolver.processStartIdentity(
                 expectedIdentity.ownerProcessIdentifier)
             guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
@@ -1109,11 +1108,11 @@ private enum BoundedBackgroundWindowAX {
                 processStartIdentityBeforeScan: processStartIdentityBeforeScan,
                 processStartIdentityAfterScan: processStartIdentityAfterScan,
                 scan: scan)
-        }.value
+        }
     }
 
     static func dispatchMinimizedRestore(expectedIdentity: WindowMutationIdentity) async -> Bool {
-        await Task.detached(priority: .userInitiated) {
+        await self.perform(expectedIdentity: expectedIdentity) {
             guard expectedIdentity.isMinimized == true,
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID),
                   SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
@@ -1151,14 +1150,14 @@ private enum BoundedBackgroundWindowAX {
                     kAXMinimizedAttribute as CFString,
                     kCFBooleanFalse) == .success
             }
-        }.value
+        }
     }
 
     static func dispatchClose(
         expectedIdentity: WindowMutationIdentity,
         action: BoundedBackgroundWindowCloseAction) async -> Bool
     {
-        await Task.detached(priority: .userInitiated) {
+        await self.perform(expectedIdentity: expectedIdentity) {
             guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
                   let capturedBounds = expectedIdentity.capturedBounds,
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID),
@@ -1213,14 +1212,14 @@ private enum BoundedBackgroundWindowAX {
                     }
                 }
             }
-        }.value
+        }
     }
 
     static func setBounds(
         expectedIdentity: WindowMutationIdentity,
         bounds: CGRect) async -> BackgroundWindowGeometryDispatchResult
     {
-        await Task.detached(priority: .userInitiated) {
+        await self.perform(expectedIdentity: expectedIdentity) {
             guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
                   let capturedBounds = expectedIdentity.capturedBounds,
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID),
@@ -1272,7 +1271,17 @@ private enum BoundedBackgroundWindowAX {
                     identityRemainedPinned: liveProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity &&
                         resolvedCandidateWindowID == expectedIdentity.windowID)
             }
-        }.value
+        }
+    }
+
+    private static func perform<Result: Sendable>(
+        expectedIdentity: WindowMutationIdentity,
+        operation: @escaping @Sendable () -> Result) async -> Result
+    {
+        if expectedIdentity.ownerProcessIdentifier == ProcessInfo.processInfo.processIdentifier {
+            return await MainActor.run(body: operation)
+        }
+        return await Task.detached(priority: .userInitiated, operation: operation).value
     }
 
     private static func exactWindow(windowID: CGWindowID, ownerPID: pid_t) -> AXUIElement? {

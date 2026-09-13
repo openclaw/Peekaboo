@@ -102,6 +102,10 @@ optional focus/identity probes fail closed, while optional AX identifier failure
 After successful setup, the synchronous scope attempts to reset to zero (not the previous timeout); reset failure
 overrides the operation's result or error. Cancellation must be thrown by the operation. Detached raw AX workers retain
 unchecked `AXChildWindowMessagingTimeout` scopes so their blocking calls stay off MainActor.
+Background window close, minimized restore, maximize, and close verification use that remote route only for other
+processes. A window owned by the current host stays on MainActor because in-process AX messaging synchronously
+invokes AppKit and its delegates. Receipt validation stays unchanged; cross-process AX messaging deadlines cannot
+bound synchronous in-process AppKit callbacks.
 
 ## Presentation and verification
 
