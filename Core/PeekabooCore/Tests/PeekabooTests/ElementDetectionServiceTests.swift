@@ -292,24 +292,42 @@ struct ElementDetectionTimeoutRunnerTests {
         }
     }
 
-    @Test
-    func `Detection timeout wins over noncooperative work`() async throws {
-        let startedAt = Date()
-
-        do {
-            _ = try await ElementDetectionTimeoutRunner.run(seconds: 0.02) {
-                let stopAt = Date().addingTimeInterval(0.5)
-                while Date() < stopAt {
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                }
+    @Test(.timeLimit(.minutes(1)))
+    func `Detection timeout wins over noncooperative work`() async {
+        let gate = ElementDetectionTimeoutWorkGate()
+        let task = Task {
+            try await ElementDetectionTimeoutRunner.run(seconds: 1.0) {
+                await gate.wait()
+                await gate.finish()
                 return [DetectedElement]()
             }
+        }
+        let watchdog = Task {
+            do {
+                try await Task.sleep(for: .seconds(10))
+                await gate.release()
+            } catch {}
+        }
+        await gate.waitUntilBlocked()
+        #expect(await gate.hasEntered, "The timed operation must enter before its deadline")
+
+        do {
+            _ = try await task.value
             Issue.record("Expected detection timeout")
         } catch let CaptureError.detectionTimedOut(duration) {
-            #expect(duration == 0.02)
+            #expect(duration == 1.0)
+        } catch {
+            Issue.record("Expected detection timeout, got \(error)")
         }
 
-        #expect(Date().timeIntervalSince(startedAt) < 0.25)
+        // Work remains blocked regardless of cancellation until the caller has returned.
+        #expect(await !gate.isReleased, "Detection timeout must not join noncooperative work")
+        watchdog.cancel()
+        await gate.release()
+        if await gate.hasEntered {
+            await gate.waitUntilFinished()
+        }
+        await watchdog.value
     }
 
     @Test
@@ -335,6 +353,49 @@ struct ElementDetectionTimeoutRunnerTests {
         }
 
         #expect(Date().timeIntervalSince(startedAt) < 0.25)
+    }
+}
+
+private actor ElementDetectionTimeoutWorkGate {
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var entered: CheckedContinuation<Void, Never>?
+    private var finished: CheckedContinuation<Void, Never>?
+    private var hasFinished = false
+    private(set) var hasEntered = false
+    private(set) var isReleased = false
+
+    func wait() async {
+        guard !self.isReleased else { return }
+        await withCheckedContinuation { continuation in
+            self.hasEntered = true
+            self.waiting = continuation
+            self.entered?.resume()
+            self.entered = nil
+        }
+    }
+
+    func waitUntilBlocked() async {
+        guard self.waiting == nil, !self.isReleased else { return }
+        await withCheckedContinuation { self.entered = $0 }
+    }
+
+    func release() {
+        self.isReleased = true
+        self.waiting?.resume()
+        self.waiting = nil
+        self.entered?.resume()
+        self.entered = nil
+    }
+
+    func finish() {
+        self.hasFinished = true
+        self.finished?.resume()
+        self.finished = nil
+    }
+
+    func waitUntilFinished() async {
+        guard !self.hasFinished else { return }
+        await withCheckedContinuation { self.finished = $0 }
     }
 }
 
