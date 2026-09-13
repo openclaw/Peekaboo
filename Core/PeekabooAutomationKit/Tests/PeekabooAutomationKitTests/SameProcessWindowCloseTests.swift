@@ -30,6 +30,8 @@ struct SameProcessWindowCloseTests {
         let targetWindowID = try #require(CGWindowID(exactly: target.windowNumber))
         let siblingWindowID = try #require(CGWindowID(exactly: sibling.windowNumber))
         try #require(target.isVisible && sibling.isVisible)
+        try await self.waitForWindowRegistration(target)
+        try await self.waitForWindowRegistration(sibling)
         let identity = try #require(SystemIdentityResolver.windowMutationIdentity(windowID: targetWindowID))
         let siblingIdentity = try #require(SystemIdentityResolver.windowMutationIdentity(windowID: siblingWindowID))
         #expect(identity.ownerProcessIdentifier == ProcessInfo.processInfo.processIdentifier)
@@ -53,6 +55,19 @@ struct SameProcessWindowCloseTests {
         #expect(siblingDelegate.closeCount == 0)
         #expect(sibling.isVisible)
         #expect(SystemIdentityResolver.validateWindowMutationIdentity(siblingIdentity))
+    }
+
+    private func waitForWindowRegistration(_ window: NSWindow) async throws {
+        let windowID = try #require(CGWindowID(exactly: window.windowNumber))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        // WindowServer initially publishes zero bounds even after orderFront returns.
+        while ContinuousClock.now < deadline {
+            if SystemIdentityResolver.windowIdentity(windowID)?.bounds.size == window.frame.size {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(SystemIdentityResolver.windowIdentity(windowID)?.bounds.size == window.frame.size)
     }
 
     private func makeWindow(title: String, origin: CGPoint) -> NSWindow {
