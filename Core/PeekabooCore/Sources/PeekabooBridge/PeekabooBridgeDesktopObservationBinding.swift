@@ -484,9 +484,14 @@ enum PeekabooBridgeDesktopObservationBinding {
     private static func validateApplicationEvidence(_ result: DesktopObservationResult) -> String? {
         guard let targetApp = result.target.app else {
             if result.capture.metadata.applicationInfo != nil ||
-                result.target.detectionContext?.applicationProcessId != nil ||
-                result.elements?.metadata.windowContext?.applicationProcessId != nil
+                result.target.detectionContext?.applicationProcessId != nil
             {
+                return "unexpected application evidence"
+            }
+            if case .screen = result.target.kind {
+                return self.validateScreenSemanticOwner(result.elements?.metadata.windowContext)
+            }
+            if result.elements?.metadata.windowContext?.applicationProcessId != nil {
                 return "unexpected application evidence"
             }
             return nil
@@ -541,12 +546,57 @@ enum PeekabooBridgeDesktopObservationBinding {
         return nil
     }
 
+    private static func validateScreenSemanticOwner(_ context: WindowContext?) -> String? {
+        guard let context,
+              context.applicationProcessId != nil || context.applicationProcessStartIdentity != nil ||
+              context.windowID != nil || context.windowMutationIdentity != nil || context.focusedElement != nil
+        else { return nil }
+        let mismatch = "screen accessibility owner"
+        guard context.applicationProcessId != nil else { return mismatch }
+        if let windowID = context.windowID, windowID <= 0 || UInt32(exactly: windowID) == nil {
+            return mismatch
+        }
+        if let bounds = context.windowBounds, !self.isValidBounds(bounds) {
+            return mismatch
+        }
+        if let focused = context.focusedElement {
+            guard focused.processIdentifier == context.applicationProcessId,
+                  focused.windowID > 0, UInt32(exactly: focused.windowID) != nil,
+                  !focused.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  self.isValidBounds(focused.frame)
+            else { return mismatch }
+            if let windowID = context.windowID, focused.windowID != windowID {
+                return mismatch
+            }
+            if let bounds = context.windowBounds,
+               !bounds.contains(CGPoint(x: focused.frame.midX, y: focused.frame.midY))
+            {
+                return mismatch
+            }
+        }
+        do {
+            // Screen pixels have no app target. AX carries its own generation-bound semantic owner;
+            // unreceipted window hints must never promote those pixels to exact-window authority.
+            guard try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                DesktopTargetEvidenceAdapter.evidence(context: context),
+            ]) != nil else { return mismatch }
+        } catch {
+            return mismatch
+        }
+        return nil
+    }
+
     private static func validateWindowEvidence(_ result: DesktopObservationResult) -> String? {
         guard let targetWindow = result.target.window else {
             if result.capture.metadata.windowInfo != nil ||
-                result.target.detectionContext?.windowID != nil ||
-                result.elements?.metadata.windowContext?.windowID != nil
+                result.target.detectionContext?.windowID != nil
             {
+                return "unexpected window evidence"
+            }
+            if case .screen = result.target.kind {
+                return nil
+            }
+            if result.elements?.metadata.windowContext?.windowID != nil {
                 return "unexpected window evidence"
             }
             return nil

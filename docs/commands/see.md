@@ -137,6 +137,10 @@ This fallback only runs inside the resolved window (it won’t hop between windo
 
 ## JSON output primer
 
+Screen captures keep a display-scoped raster and separate application-scoped Accessibility evidence. The AX map
+carries its own process generation; it does not make the screenshot an exact-window capture. Use an explicit
+`--window-id` observation when a follow-up coordinate action needs a window-bound capture receipt.
+
 When `--json` is supplied, the CLI prints:
 
 - `snapshot_id` – producer-bound `ps1_` reference for subsequent `click --snapshot …` and `type --snapshot …`.
