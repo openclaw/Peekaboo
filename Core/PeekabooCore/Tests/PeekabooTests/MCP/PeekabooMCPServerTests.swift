@@ -40,6 +40,8 @@ struct PeekabooMCPServerTests {
     func `serve runs on a host-supplied transport until it completes`() async throws {
         let context = await MCPToolTestHelpers.makeContext()
         let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        // InMemoryTransport drops messages sent before the receiving peer connects.
+        try await serverTransport.connect()
         let server = try await PeekabooMCPServer(toolContext: context)
         let snapshots = await MCPToolUISnapshotStore(owner: server.snapshotOwnerForTesting())
         let snapshot = await snapshots.createSnapshot()
@@ -805,6 +807,8 @@ private struct MCPWireSession {
 
     static func connect(context: MCPToolContext) async throws -> Self {
         let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        // InMemoryTransport drops messages sent before the receiving peer connects.
+        try await serverTransport.connect()
         let server = try await PeekabooMCPServer(toolContext: context)
         let client = Client(name: "PeekabooClickWireTests", version: "1.0")
         try await server.startForTesting(transport: serverTransport)

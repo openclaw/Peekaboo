@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Let hosts embedding `PeekabooMCPServer` supply their own MCP transport with the same completion and cleanup lifecycle as stdio. Thanks @semyoren! #716.
+- Fix host-routed screen observations with Accessibility elements by validating their semantic owner separately from the screen raster target. #715, #710.
 
 ## 4.3.4 - 2026-09-11
 
