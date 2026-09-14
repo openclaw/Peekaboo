@@ -132,9 +132,13 @@ struct InvalidInputOrderingCLITests {
         ),
     ])
     func `semantic-invalid JSON requests refuse before runtime discovery`(_ testCase: JSONCase) async throws {
-        let startedAt = ContinuousClock.now
-        let result = try await TestChildProcess.runPeekaboo(testCase.arguments)
-        let elapsed = startedAt.duration(to: .now)
+        // An unavailable explicit host proves ordering without timing process startup.
+        let socketPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-invalid-input-\(UUID().uuidString).sock").path
+        let result = try await TestChildProcess.runPeekaboo(
+            testCase.arguments + ["--bridge-socket", socketPath],
+            isolateFromRemoteHosts: false
+        )
 
         #expect(result.status == .exited(1))
         #expect(result.standardError.isEmpty)
@@ -143,7 +147,6 @@ struct InvalidInputOrderingCLITests {
         #expect(envelope.message == testCase.message)
         #expect(envelope.hint == testCase.hint)
         #expect(envelope.debugLogs.isEmpty)
-        #expect(elapsed < .seconds(2))
     }
 
     @Test(arguments: [
