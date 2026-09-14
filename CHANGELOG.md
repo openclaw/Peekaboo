@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 4.4.0 - 2026-09-13
 
 **Highlights:** Capture works again next to Claude/OpenClaw, hosts embedding PeekabooMCPServer can supply their own MCP transport, and Chrome DevTools MCP 1.9.0 no longer activates DevTools during background reads.
