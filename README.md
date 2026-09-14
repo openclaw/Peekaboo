@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.3.4
+## What's new in 4.4.0
 
-Peekaboo 4.3.4 restores provider-compatible `click` and `paste` MCP schemas while preserving runtime validation, fixes frontmost daemon captures by retaining their application identity and capture mode, and updates SwiftLog for logging dispatch and toolchain compatibility fixes.
+Peekaboo 4.4.0 restores capture while Claude or OpenClaw is running, lets hosts embedding `PeekabooMCPServer` supply their own MCP transport, and updates Chrome DevTools MCP to 1.9.0 without activating DevTools during background reads. It also improves host-routed observations, screenshot publication, application resolution, and background window actions.
 
 ## Automate an app
 
