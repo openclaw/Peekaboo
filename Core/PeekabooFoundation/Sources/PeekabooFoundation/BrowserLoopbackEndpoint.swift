@@ -14,6 +14,7 @@ public struct BrowserLoopbackEndpoint: Equatable, Sendable {
               components.scheme?.lowercased() == "http",
               let normalizedHost = Self.normalizedLoopbackHost(components.host),
               let port = components.port,
+              (1...65535).contains(port),
               components.user == nil,
               components.password == nil,
               components.query == nil,
@@ -23,7 +24,7 @@ public struct BrowserLoopbackEndpoint: Equatable, Sendable {
             return nil
         }
         components.scheme = "http"
-        components.host = normalizedHost
+        components.host = normalizedHost == "::1" ? "[::1]" : normalizedHost
         components.path = "/"
         guard let canonicalBrowserURL = components.url?.absoluteString else { return nil }
         self.normalizedHost = normalizedHost
@@ -54,7 +55,7 @@ public struct BrowserLoopbackEndpoint: Equatable, Sendable {
         switch rawHost?.lowercased() {
         case "localhost": "localhost"
         case "127.0.0.1": "127.0.0.1"
-        case "::1": "::1"
+        case "::1", "[::1]": "::1"
         default: nil
         }
     }

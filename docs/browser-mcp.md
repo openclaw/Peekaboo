@@ -124,7 +124,9 @@ The CLI exposes the safer request-carried equivalent:
 peekaboo browser connect --browser-url http://127.0.0.1:9222 --foreground --json
 ```
 
-Only loopback HTTP endpoints are accepted. This explicit-URL mode resolves `/json/version`, pins the returned browser WebSocket
+Only loopback HTTP endpoints with a port from 1 through 65535 are accepted. Use brackets for IPv6, for example
+`http://[::1]:9222`. IPv6 loopback, IPv4 loopback, and `localhost` retain separate listener identities.
+This explicit-URL mode resolves `/json/version`, pins the returned browser WebSocket
 identity, probes `list_pages` before reporting connected, and revalidates that identity before every later tool call.
 It is the compatibility path for custom or non-Google-signed debuggable browsers; unlike native channel discovery, it
 does not claim a Google code-signing identity or process-bound channel receipt.

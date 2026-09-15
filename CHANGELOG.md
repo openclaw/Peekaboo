@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Accept IPv6 loopback browser endpoints and reject TCP ports outside 1–65535 before discovery or receipt validation.
 - Connect to approval-mode Chrome with one persistent WebSocket for verification and page operations; preserve the approval window, explain HTTP discovery 404s, and refuse silent reconnection or endpoint redirects. Thanks @steipete for the report!
 - Fix CLI browser page actions refusing after a successful connection by keeping scoped-session epochs out of root Bridge requests.
 - Fix foreground browser commands being blocked by an untrusted historical daemon; retain host and receipt checks, allow explicitly selected browser-capable GUI hosts, and distinguish Bridge authentication failures from Chrome approval failures. #739.
