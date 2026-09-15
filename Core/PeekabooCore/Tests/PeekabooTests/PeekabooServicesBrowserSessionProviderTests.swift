@@ -785,6 +785,10 @@ private struct HostBrowserTestFailure: Error {}
 
 @MainActor
 private final class HostBrowserProviderSpy: BrowserMCPManaging {
+    func verifyBrowserConnection(serverName _: String, endpoint _: String) async throws -> BrowserMCPDevToolsVersion {
+        .init(browserVersion: "Chrome/151.0", protocolVersion: "1.3")
+    }
+
     let label: String
     var events: HostBrowserEventLog?
     var connected = false

@@ -216,6 +216,16 @@ enum BrowserMCPLaunchTarget: Sendable, Equatable {
     case exactWebSocket(String)
     case isolated(BrowserMCPChannel)
     case autoConnect(BrowserMCPChannel)
+
+    var requestTimeout: TimeInterval {
+        switch self {
+        case .exactWebSocket:
+            // Approval runs inside tools/call and must retain the existing owner deadline.
+            BrowserConnectionTiming.endToEndTimeoutSeconds
+        case .isolated, .autoConnect:
+            30
+        }
+    }
 }
 
 public protocol BrowserMCPClientProviding: AnyObject, Sendable {
@@ -1176,7 +1186,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
             command: "npx",
             args: args,
             enabled: true,
-            timeout: 30,
+            timeout: target.requestTimeout,
             autoReconnect: false,
             description: description)
     }

@@ -729,6 +729,10 @@ private final class AdapterBrowserMCPClient: BrowserMCPClientProviding, BrowserM
 
 @MainActor
 private final class ConfiguredBrowserMCPManager: BrowserMCPManaging {
+    func verifyBrowserConnection(serverName _: String, endpoint _: String) async throws -> BrowserMCPDevToolsVersion {
+        .init(browserVersion: "Chrome/151.0", protocolVersion: "1.3")
+    }
+
     var addServerCount = 0
     private var connected = false
 

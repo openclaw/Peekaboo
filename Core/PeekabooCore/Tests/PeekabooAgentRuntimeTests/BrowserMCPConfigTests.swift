@@ -1,3 +1,4 @@
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAgentRuntime
 
@@ -12,6 +13,7 @@ struct BrowserMCPConfigTests {
         #expect(config.args.contains("--isolated"))
         #expect(config.args.contains("--headless"))
         #expect(config.args.contains("--channel=stable"))
+        #expect(config.timeout == 30)
         self.expectStructuredCapabilityArguments(config.args)
         #expect(config.args.contains("--no-usage-statistics"))
         #expect(config.args.contains("--no-performance-crux"))
@@ -24,6 +26,7 @@ struct BrowserMCPConfigTests {
 
         #expect(!config.args.contains("--auto-connect"))
         #expect(!config.args.contains("--channel=canary"))
+        #expect(config.timeout == BrowserConnectionTiming.endToEndTimeoutSeconds)
         #expect(config.args.contains(
             "--wsEndpoint=ws://127.0.0.1:9222/devtools/browser/browser-a"))
         self.expectStructuredCapabilityArguments(config.args)

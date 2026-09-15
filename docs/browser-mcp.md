@@ -74,6 +74,8 @@ WebSocket as `--wsEndpoint` to Chrome DevTools MCP. The provider opens one conne
 and answers a private owner verification request with CDP `Browser.getVersion` on that same connection. Peekaboo
 revalidates the process-owned listener and signer before publishing a complete receipt. Approval and provider startup
 share the 90-second connection deadline. Page operations reuse this socket; there is no separate approval probe.
+Exact-WebSocket providers use a 90-second MCP request ceiling so stdio RPC cannot cut off Chrome's 60-second approval
+upgrade. The owner still enforces the shared connection deadline; individual tool timeouts remain provider-controlled.
 Once the child is connected, status, repeated connect, and browser
 execution revalidate the active-port file, kernel listener, PID generation, and bundle without opening another native
 WebSocket or prompting again. Peekaboo never uses legacy HTTP discovery for channel mode or asks the MCP child to
