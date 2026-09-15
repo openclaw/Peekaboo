@@ -4,74 +4,36 @@ import Testing
 @testable import PeekabooAgentRuntime
 
 struct BrowserMCPChannelEndpointResolverTests {
-    @Test
-    func `stable active port and unchanged native listener resolve an exact WebSocket`() async throws {
-        let inspections = ListenerInspections([
-            Self.listener(socket: 100),
-            Self.listener(socket: 100),
-        ])
-        let target = Self.target()
-
+    @Test(arguments: [DarwinLoopbackAddressFamily.ipv4, .ipv6])
+    func `native discovery reserves listener identity without opening Chrome`(family: DarwinLoopbackAddressFamily)
+        async throws
+    {
+        let attempt = BrowserMCPConnectionAttempt.standalone()
         let endpoint = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
-            target: target,
-            activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
-            readActivePort: { _ in Self.activePortData() },
-            inspectListener: { _, _, _ in try inspections.next() },
-            probeWebSocket: { webSocketURL, browserID, _, onDispatch in
-                onDispatch()
-                #expect(webSocketURL.absoluteString ==
-                    "ws://127.0.0.1:9222/devtools/browser/browser-a")
-                #expect(browserID == "browser-a")
-                return Self.version()
-            })
-
-        #expect(endpoint.webSocketDebuggerURL == "ws://127.0.0.1:9222/devtools/browser/browser-a")
-        #expect(endpoint.listenerIdentity == Self.listener(socket: 100))
-        #expect(inspections.remaining == 0)
-    }
-
-    @Test
-    func `DevTools authority is reserved before permission bearing WebSocket probe`() async throws {
-        let order = EndpointReservationOrder()
-        let inspections = ListenerInspections([
-            Self.listener(socket: 100),
-            Self.listener(socket: 100),
-        ])
-
-        _ = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
             target: Self.target(),
+            attempt: attempt,
             activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
             readActivePort: { _ in Self.activePortData() },
-            inspectListener: { _, _, _ in try inspections.next() },
-            probeWebSocket: { _, _, _, onDispatch in
-                #expect(order.wasReserved)
-                onDispatch()
-                return Self.version()
-            },
+            inspectListener: { _, _, _ in Self.listener(socket: 100, family: family) },
             reserveAuthority: { reservation in
                 #expect(reservation.browserID == "browser-a")
-                #expect(reservation.browserURL == "http://127.0.0.1:9222/")
-                order.recordReservation()
+                #expect(reservation.browserURL == "http://\(family.httpHost):9222/")
             })
 
-        #expect(order.wasReserved)
+        #expect(endpoint.webSocketDebuggerURL == "ws://\(family.httpHost):9222/devtools/browser/browser-a")
+        #expect(endpoint.listenerIdentity == Self.listener(socket: 100, family: family))
+        #expect(endpoint.browserVersion == nil)
+        #expect(endpoint.protocolVersion == nil)
+        #expect(!attempt.state.didStartAnyDispatch)
     }
 
     @Test
-    func `same port listener reopen is refused during later revalidation`() async throws {
-        let initialInspections = ListenerInspections([
-            Self.listener(socket: 100),
-            Self.listener(socket: 100),
-        ])
+    func `listener replacement after provider approval fails revalidation`() async throws {
         let endpoint = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
             target: Self.target(),
             activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
             readActivePort: { _ in Self.activePortData() },
-            inspectListener: { _, _, _ in try initialInspections.next() },
-            probeWebSocket: { _, _, _, onDispatch in
-                onDispatch()
-                return Self.version()
-            })
+            inspectListener: { _, _, _ in Self.listener(socket: 100) })
 
         #expect(throws: BrowserMCPConnectionError.self) {
             try BrowserMCPChannelEndpointResolver.revalidateEndpoint(
@@ -81,66 +43,14 @@ struct BrowserMCPChannelEndpointResolverTests {
                 readActivePort: { _ in Self.activePortData() },
                 inspectListener: { _, _, _ in Self.listener(socket: 200) })
         }
-    }
-
-    @Test
-    func `listener handoff during Browser getVersion is refused`() async {
-        let inspections = ListenerInspections([
-            Self.listener(socket: 100),
-            Self.listener(socket: 200),
-        ])
-
-        await #expect(throws: BrowserMCPConnectionError.self) {
-            _ = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
+        #expect(throws: BrowserMCPConnectionError.self) {
+            try BrowserMCPChannelEndpointResolver.revalidateEndpoint(
                 target: Self.target(),
+                expected: endpoint,
                 activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
                 readActivePort: { _ in Self.activePortData() },
-                inspectListener: { _, _, _ in try inspections.next() },
-                probeWebSocket: { _, _, _, onDispatch in
-                    onDispatch()
-                    return Self.version()
-                })
-        }
-    }
-
-    @Test
-    func `IPv6 ownership cannot be silently routed through IPv4`() async throws {
-        let inspections = ListenerInspections([
-            Self.listener(socket: 100, family: .ipv6),
-            Self.listener(socket: 100, family: .ipv6),
-        ])
-
-        let endpoint = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
-            target: Self.target(),
-            activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
-            readActivePort: { _ in Self.activePortData() },
-            inspectListener: { _, _, _ in try inspections.next() },
-            probeWebSocket: { webSocketURL, browserID, _, onDispatch in
-                onDispatch()
-                #expect(webSocketURL.absoluteString == "ws://[::1]:9222/devtools/browser/browser-a")
-                #expect(browserID == "browser-a")
-                return Self.version()
-            })
-
-        #expect(endpoint.browserURL == "http://[::1]:9222/")
-    }
-
-    @Test
-    func `PID reuse during Browser getVersion is refused`() async {
-        let inspections = ListenerInspections([
-            .success(Self.listener(socket: 100)),
-            .failure(DarwinProcessLoopbackListenerInspectionError.processGenerationChanged(81)),
-        ])
-
-        await #expect(throws: BrowserMCPConnectionError.self) {
-            _ = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
-                target: Self.target(),
-                activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
-                readActivePort: { _ in Self.activePortData() },
-                inspectListener: { _, _, _ in try inspections.next() },
-                probeWebSocket: { _, _, _, onDispatch in
-                    onDispatch()
-                    return Self.version()
+                inspectListener: { _, _, _ in
+                    throw DarwinProcessLoopbackListenerInspectionError.processGenerationChanged(81)
                 })
         }
     }
@@ -155,61 +65,30 @@ struct BrowserMCPChannelEndpointResolverTests {
             kernelSocketAddress: 100,
             kernelProtocolControlBlock: 101,
             kernelGeneration: 102)
-        let probes = InvocationCount()
-
         await #expect(throws: BrowserMCPConnectionError.self) {
             _ = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
                 target: Self.target(),
                 activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
                 readActivePort: { _ in Self.activePortData() },
-                inspectListener: { _, _, _ in wrongListener },
-                probeWebSocket: { _, _, _, _ in
-                    probes.increment()
-                    return Self.version()
-                })
+                inspectListener: { _, _, _ in wrongListener })
         }
-        #expect(probes.value == 0)
     }
 
-    @Test
-    func `malformed active port records fail before listener or WebSocket access`() async {
-        let malformedRecords = [
-            Data(),
-            Data("0\n/devtools/browser/browser-a".utf8),
-            Data("70000\n/devtools/browser/browser-a".utf8),
-            Data("9222\n/devtools/page/browser-a".utf8),
-            Data("9222\n/devtools/browser/browser/a".utf8),
-            Data("9222\n/devtools/browser/browser-a?query".utf8),
-            Data("9222\n/devtools/browser/browser%2Fa".utf8),
-            Data("9222\n/devtools/browser/browser-a\nextra".utf8),
-            Data("9222\n/devtools/browser/browser-a\0".utf8),
-        ]
-
-        for record in malformedRecords {
-            let listenerInspections = InvocationCount()
-            let probes = InvocationCount()
-            do {
-                _ = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
-                    target: Self.target(),
-                    activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
-                    readActivePort: { _ in record },
-                    inspectListener: { _, _, _ in
-                        listenerInspections.increment()
-                        return Self.listener(socket: 100)
-                    },
-                    probeWebSocket: { _, _, _, _ in
-                        probes.increment()
-                        return Self.version()
-                    })
-                Issue.record("Expected malformed DevToolsActivePort to be refused")
-            } catch let error as BrowserMCPConnectionError {
-                #expect(error.localizedDescription.contains("running stable Chrome channel"))
-                #expect(!error.localizedDescription.contains("Invalid browser_url"))
-            } catch {
-                Issue.record("Expected a channel-specific connection error, got \(error)")
-            }
-            #expect(listenerInspections.value == 0)
-            #expect(probes.value == 0)
+    @Test(arguments: [
+        "", "0\n/devtools/browser/a", "70000\n/devtools/browser/a", "9222\n/devtools/page/a",
+        "9222\n/devtools/browser/a/b", "9222\n/devtools/browser/a?q", "9222\n/devtools/browser/a%2Fb",
+        "9222\n/devtools/browser/a\nextra", "9222\n/devtools/browser/a\0",
+    ])
+    func `malformed active port fails before listener inspection`(record: String) async {
+        await #expect(throws: BrowserMCPConnectionError.self) {
+            _ = try await BrowserMCPChannelEndpointResolver.resolveEndpoint(
+                target: Self.target(),
+                activePortURL: URL(fileURLWithPath: "/fixture/DevToolsActivePort"),
+                readActivePort: { _ in Data(record.utf8) },
+                inspectListener: { _, _, _ in
+                    Issue.record("Malformed authority must not reach listener inspection")
+                    return Self.listener(socket: 100)
+                })
         }
     }
 
@@ -254,60 +133,5 @@ struct BrowserMCPChannelEndpointResolverTests {
             kernelSocketAddress: socket,
             kernelProtocolControlBlock: socket + 1,
             kernelGeneration: socket + 2)
-    }
-
-    private static func version() -> BrowserMCPDevToolsVersion {
-        .init(
-            browserVersion: "Chrome/151.0",
-            protocolVersion: "1.3")
-    }
-}
-
-private final class InvocationCount: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
-
-    var value: Int {
-        self.lock.withLock { self.count }
-    }
-
-    func increment() {
-        self.lock.withLock { self.count += 1 }
-    }
-}
-
-private final class EndpointReservationOrder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var reserved = false
-
-    var wasReserved: Bool {
-        self.lock.withLock { self.reserved }
-    }
-
-    func recordReservation() {
-        self.lock.withLock { self.reserved = true }
-    }
-}
-
-private final class ListenerInspections: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [Result<DarwinProcessLoopbackListenerIdentity, any Error>]
-
-    init(_ values: [DarwinProcessLoopbackListenerIdentity]) {
-        self.values = values.map(Result.success)
-    }
-
-    init(_ values: [Result<DarwinProcessLoopbackListenerIdentity, any Error>]) {
-        self.values = values
-    }
-
-    var remaining: Int {
-        self.lock.withLock { self.values.count }
-    }
-
-    func next() throws -> DarwinProcessLoopbackListenerIdentity {
-        try self.lock.withLock {
-            try self.values.removeFirst().get()
-        }
     }
 }

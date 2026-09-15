@@ -40,6 +40,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           node --no-warnings scripts/test-chrome-devtools-mcp-contract.mjs
+          node --no-warnings scripts/test-browser-provider-connection.mjs
 
       - name: Docs lint
         run: |
@@ -156,7 +157,7 @@ jobs:
           swift test --no-parallel \
             --filter 'BrowserToolTests|BrowserToolCapabilityIntegrationTests|RemoteBrowserMCPSessionTests|PeekabooServicesBrowserSessionProviderTests|AgentSystemPromptTests'
           swift test --no-parallel \
-            --filter 'BrowserMCPDevToolsWebSocketProberTests|BrowserMCPChannelEndpointResolverTests|BrowserMCPSessionManagerChannelRefusalTests'
+            --filter 'BrowserMCPProviderConnectionTests|BrowserMCPSingleConnectionTests|BrowserMCPChannelEndpointResolverTests|BrowserMCPSessionManagerChannelRefusalTests'
 
       - name: Run focused Swift tests
         working-directory: Core/PeekabooCore

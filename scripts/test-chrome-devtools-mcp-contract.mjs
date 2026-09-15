@@ -72,6 +72,10 @@ const bootstrapSwift = readFileSync(new URL(
 ), "utf8");
 const bootstrap = bootstrapSwift.match(/static let source = #"""\n([\s\S]*?)\n    """#/)[1]
   .replace(/^    /gm, "");
+// The owner verifies Chrome on the persistent provider socket, before page work.
+const connectionBootstrap = bootstrap.split("process.argv =")[0];
+assert.ok(connectionBootstrap.includes("peekaboo_browser_connect"),
+  "native channel connect must verify the provider socket instead of opening a separate approval probe");
 const originalPath = process.env.PATH;
 process.env.PATH = fileURLToPath(new URL("../node_modules/.bin", import.meta.url)) + delimiter + originalPath;
 await import("data:text/javascript," + encodeURIComponent(bootstrap.split("process.argv =")[0]));

@@ -4,6 +4,24 @@ import Testing
 
 struct BrowserMCPDevToolsEndpointResolverTests {
     @Test
+    func `approval mode HTTP 404 explains the native channel route`() async throws {
+        do {
+            _ = try await BrowserMCPDevToolsEndpointResolver.resolveEndpoint("http://127.0.0.1:9222") { request in
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url, statusCode: 404, httpVersion: nil, headerFields: nil))
+                return (Data(), response)
+            }
+            Issue.record("Expected HTTP discovery refusal")
+        } catch let error as BrowserMCPConnectionError {
+            #expect(error.localizedDescription.contains("http://127.0.0.1:9222/json/version"))
+            #expect(error.localizedDescription.contains("HTTP 404"))
+            #expect(error.localizedDescription.contains("--channel stable"))
+            #expect(error.localizedDescription.contains("chrome://inspect/#remote-debugging"))
+        }
+    }
+
+    @Test
     func `direct exact loopback response resolves`() async throws {
         let endpoint = try await BrowserMCPDevToolsEndpointResolver.resolveEndpoint(
             "http://127.0.0.1:9222")

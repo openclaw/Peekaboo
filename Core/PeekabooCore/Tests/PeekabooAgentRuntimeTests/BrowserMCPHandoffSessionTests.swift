@@ -773,7 +773,7 @@ struct BrowserMCPHandoffSessionTests {
                 connectionReceipt: binding.connectionReceipt))
 
         #expect(detection.calls == 0)
-        #expect(await nativeAuthority.revalidationCount == 4)
+        #expect(await nativeAuthority.revalidationCount == 5)
         #expect(await nativeAuthority.initialResolutionCount == 0)
         #expect(await externalResolver.calls == 0)
         #expect(await events.values == [
@@ -1202,6 +1202,10 @@ extension BrowserMCPHandoffSessionTests {
 
 @MainActor
 private final class HandoffProviderSpy: BrowserMCPManaging {
+    func verifyBrowserConnection(serverName _: String, endpoint _: String) async throws -> BrowserMCPDevToolsVersion {
+        .init(browserVersion: "Chrome/151.0", protocolVersion: "1.3")
+    }
+
     let label: String
     var events: HandoffEventLog?
     var connected = false

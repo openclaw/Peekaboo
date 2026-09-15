@@ -67,14 +67,13 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
     }
 
     @Test
-    func `one native approval probe and one MCP child connect while later checks are authority only`() async throws {
+    func `one native resolution and one provider verification while later checks are authority only`() async throws {
         let manager = AuthorityBrowserMCPManager()
         let initialResolutions = AuthorityCounter()
         let revalidations = AuthorityCounter()
         let resolver = BrowserMCPChannelEndpointResolver(
-            resolveInitial: { _, attempt in
+            resolveInitial: { _, _ in
                 initialResolutions.increment()
-                attempt.state.markPermissionDispatchStarted()
                 return Self.endpoint()
             },
             revalidate: { _, expected in
@@ -85,7 +84,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
 
         _ = try await session.connect(channel: .stable)
         #expect(initialResolutions.value == 1)
-        #expect(revalidations.value == 2)
+        #expect(revalidations.value == 3)
 
         _ = await session.status(channel: .stable)
         _ = try await session.connect(channel: .stable)
@@ -98,6 +97,7 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         #expect(initialResolutions.value == 1)
         #expect(revalidations.value >= 5)
         #expect(manager.addServerCount == 1)
+        #expect(manager.versionVerificationCount == 1)
         #expect(manager.executedTools == ["list_pages", "take_snapshot"])
     }
 
@@ -628,6 +628,13 @@ private final class DeadlineBrowserMCPManager: BrowserMCPManaging {
 
 @MainActor
 private final class AuthorityBrowserMCPManager: BrowserMCPManaging {
+    var versionVerificationCount = 0
+
+    func verifyBrowserConnection(serverName _: String, endpoint _: String) async throws -> BrowserMCPDevToolsVersion {
+        self.versionVerificationCount += 1
+        return .init(browserVersion: "Chrome/151.0", protocolVersion: "1.3")
+    }
+
     var connected = false
     var addServerCount = 0
     var removeServerCount = 0
@@ -735,6 +742,10 @@ private final class AuthorityBoolBox: @unchecked Sendable {
 
 @MainActor
 private final class OrderedCleanupBrowserMCPManager: BrowserMCPManaging {
+    func verifyBrowserConnection(serverName _: String, endpoint _: String) async throws -> BrowserMCPDevToolsVersion {
+        .init(browserVersion: "Chrome/151.0", protocolVersion: "1.3")
+    }
+
     var addServerCount = 0
     var removeServerCount = 0
     private var connected = false

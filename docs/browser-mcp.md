@@ -26,13 +26,19 @@ calls `hasDevTools()`, `openDevTools()`, and DevTools-page Puppeteer evaluation 
 An otherwise background-safe console read can therefore grant web user activation in DevTools. Disabling
 JavaScript tools or telemetry transmission does not remove the post-handler probe.
 
-`BrowserMCPProviderBootstrap` applies one in-memory, upstream-shaped fix: collect those two telemetry metadata fields
+`BrowserMCPProviderBootstrap` applies an in-memory telemetry fix: collect those two metadata fields
 only when `ClearcutLogger.get()` returns an active logger. It verifies the package version and SHA-256 of the complete
 published `ToolHandler.js` before loading the module, and refuses changed bytes before server startup or browser
 connection. The bootstrap is embedded in the native CLI and GUI host, so the separately downloaded `npx` provider
 receives the fix too. It does not edit npm caches, suppress tool-owned DevTools reads, change Puppeteer user gestures,
 or weaken Peekaboo's foreground policy. Node's module loader registration supports the provider's existing runtime
 minimum; no extra dependency is needed.
+
+The same bootstrap verifies `browser.js` and the bundled dependency module before disabling automatic reconnection
+and WebSocket redirects. Its private owner tool obtains `Browser.getVersion` through the provider's retained socket.
+Redirects must remain disabled: Puppeteer otherwise follows a redirect while continuing to report the original
+WebSocket URL, which would misattribute the resulting connection. The synthetic socket fixture exercises the real
+bundled Puppeteer, including refusal, reuse, disconnect, and redirect rejection.
 
 The dependency contract test executes this same bootstrap, reproduces the unpatched failure, requires zero metadata
 reads with disabled telemetry on both success and error paths, and verifies enabled telemetry and tool-owned reads.
@@ -63,16 +69,23 @@ Team ID, and CDHash to the PID generation before opening the approval-gated WebS
 after `Browser.getVersion` and around every later listener revalidation. Peekaboo does not approve the prompt
 automatically. Once Chrome publishes
 `DevToolsActivePort`, channel connect reads that owner-controlled file without following symlinks, proves that its one
-exact loopback listener belongs to the detected Chrome PID and process generation, and opens the exact published
-WebSocket. That native connection remains
-pending while Chrome shows its approval prompt, has a bounded 60-second wait, sends CDP `Browser.getVersion`, and then
-revalidates the process-owned listener. Peekaboo then closes the native probe and passes its exact WebSocket URL identity
-as `--wsEndpoint` to Chrome DevTools MCP; the separately owned MCP child opens the second and final WebSocket used for
-execution. A new explicit foreground channel connect therefore creates exactly two legitimate WebSocket connections,
-and Chrome may show one approval dialog for each. Once the child is connected, status, repeated connect, and browser
+exact loopback listener belongs to the detected Chrome PID and process generation, and passes the exact published
+WebSocket as `--wsEndpoint` to Chrome DevTools MCP. The provider opens one connection, waits for Chrome's approval,
+and answers a private owner verification request with CDP `Browser.getVersion` on that same connection. Peekaboo
+revalidates the process-owned listener and signer before publishing a complete receipt. Approval and provider startup
+share the 90-second connection deadline. Page operations reuse this socket; there is no separate approval probe.
+Once the child is connected, status, repeated connect, and browser
 execution revalidate the active-port file, kernel listener, PID generation, and bundle without opening another native
 WebSocket or prompting again. Peekaboo never uses legacy HTTP discovery for channel mode or asks the MCP child to
 rediscover an ambient browser.
+
+Chrome's approval-mode listener deliberately returns HTTP 404 for `/json/version`. This does not mean that the
+WebSocket is unavailable: use `browser connect --channel stable --foreground` for the standard profile. Explicit
+`--browser-url` requires a listener that implements HTTP discovery, as normally used by a separate custom profile.
+`--remote-debugging-pipe` alone exposes process pipes, not a TCP discovery endpoint. Do not relaunch the user's
+profile, switch to an unrelated managed Chrome port, or add a wildcard origin allowance to repair this 404.
+The `chrome://inspect/#remote-debugging` setting enables approval-mode access; Chrome still asks for permission per
+connection. A refused, cancelled, or disconnected connection is never silently retried by the provider.
 
 ## Privacy defaults
 

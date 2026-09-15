@@ -15,6 +15,7 @@ protocol BrowserMCPManaging: AnyObject {
     func addServer(name: String, config: MCPServerConfig) async throws
     func removeServer(name: String) async
     func executeTool(serverName: String, toolName: String, arguments: [String: Any]) async throws -> ToolResponse
+    func verifyBrowserConnection(serverName: String, endpoint: String) async throws -> BrowserMCPDevToolsVersion
 }
 
 extension TachikomaMCPClientManager: BrowserMCPManaging {
@@ -1309,8 +1310,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                   processStartIdentity,
                   channelIdentity) == codeSignatureIdentity
         else {
-            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
-                "the live Chrome bundle or signing identity changed during Browser.getVersion")
+            throw BrowserMCPConnectionError.channelEndpointUnavailable(
+                resolvedChannel,
+                "the live Chrome bundle or signing identity changed during native endpoint discovery")
         }
         let receipt = BrowserMCPConnectionReceipt(
             channel: resolvedChannel,
@@ -1597,11 +1599,52 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         var config = target.config
         config.env["TMPDIR"] = uploadWorkspace.rootPath
         self.uploadWorkspace = uploadWorkspace
-        // Native channel setup has one owner-controlled identity probe, then this separately
-        // owned MCP child opens the session's execution WebSocket. Later validation never probes.
+        // The provider owns the only Chrome socket, including approval and version verification.
         onProviderDispatch()
         try await self.manager.addServer(name: self.serverName, config: config)
         try Task.checkCancellation()
+        var receipt = target.receipt
+        var channelEndpoint = target.channelEndpoint
+        if let endpoint = receipt.webSocketDebuggerURL {
+            let version = try await self.manager.verifyBrowserConnection(
+                serverName: self.serverName, endpoint: endpoint)
+            if target.targetKind == .nativeChannel {
+                guard version.browserVersion.hasPrefix("Chrome/"),
+                      version.browserVersion.count > "Chrome/".count
+                else {
+                    throw BrowserMCPConnectionError.connectionProbeFailed("the provider did not identify Google Chrome")
+                }
+            }
+            guard receipt.browserVersion == nil || receipt.browserVersion == version.browserVersion,
+                  receipt.protocolVersion == nil || receipt.protocolVersion == version.protocolVersion
+            else {
+                throw BrowserMCPConnectionError.connectionProbeFailed("the provider's Chrome version changed")
+            }
+            receipt = BrowserMCPConnectionReceipt(
+                channel: receipt.channel,
+                processIdentifier: receipt.processIdentifier,
+                processStartIdentity: receipt.processStartIdentity,
+                bundleIdentifier: receipt.bundleIdentifier,
+                browserURL: receipt.browserURL,
+                webSocketDebuggerURL: endpoint,
+                devToolsBrowserID: receipt.devToolsBrowserID,
+                browserVersion: version.browserVersion,
+                protocolVersion: version.protocolVersion)
+            if let original = channelEndpoint {
+                channelEndpoint = BrowserMCPDevToolsEndpoint(
+                    browserURL: original.browserURL,
+                    webSocketDebuggerURL: original.webSocketDebuggerURL,
+                    browserID: original.browserID,
+                    browserVersion: version.browserVersion,
+                    protocolVersion: version.protocolVersion,
+                    listenerIdentity: original.listenerIdentity)
+            }
+        }
+        try await self.validate(
+            receipt,
+            channelEndpoint: channelEndpoint,
+            codeSignatureIdentity: target.codeSignatureIdentity,
+            requireDetectedProcess: false)
         let probe = try await self.manager.executeTool(
             serverName: self.serverName,
             toolName: "list_pages",
@@ -1612,15 +1655,15 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 "Chrome DevTools MCP rejected list_pages")
         }
         try await self.validate(
-            target.receipt,
-            channelEndpoint: target.channelEndpoint,
+            receipt,
+            channelEndpoint: channelEndpoint,
             codeSignatureIdentity: target.codeSignatureIdentity,
             requireDetectedProcess: false)
         try Task.checkCancellation()
-        self.connectionReceipt = target.receipt
+        self.connectionReceipt = receipt
         self.providerSessionEpoch = BrowserMCPProviderSessionEpoch()
         self.connectionSupportsReceiptBoundExecution = target.supportsReceiptBoundExecution
-        self.connectionChannelEndpoint = target.channelEndpoint
+        self.connectionChannelEndpoint = channelEndpoint
         self.connectionCodeSignatureIdentity = target.codeSignatureIdentity
         self.connectionTargetKind = target.targetKind
     }

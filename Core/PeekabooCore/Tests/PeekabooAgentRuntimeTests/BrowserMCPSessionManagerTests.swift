@@ -5813,6 +5813,10 @@ private final class AgentRemoteScopedBrowserChild: BrowserMCPScopedSessionEnding
 
 @MainActor
 private final class MockBrowserMCPManager: BrowserMCPManaging {
+    func verifyBrowserConnection(serverName _: String, endpoint _: String) async throws -> BrowserMCPDevToolsVersion {
+        .init(browserVersion: "Chrome/151.0", protocolVersion: "1.3")
+    }
+
     var connected = false
     var hasConfiguredServer = false
     var addedConfigs: [MCPServerConfig] = []

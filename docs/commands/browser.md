@@ -68,13 +68,19 @@ treating an authenticated host's timeout as absence. An explicitly selected untr
 Channel connection requires exactly
 one running official Google-signed Chrome process (Team ID `EQHXZ8M8AV`). Peekaboo pins the signed channel identifier,
 Team ID, and CDHash to its PID generation, safely reads that channel's standard `DevToolsActivePort`, proves its unique
-loopback listener belongs to the detected PID/process generation, keeps the exact WebSocket pending through Chrome's
-approval prompt, verifies it with CDP `Browser.getVersion`, rechecks signer and listener ownership, and gives Chrome DevTools MCP
-only that same WebSocket identity. When more than one process shares a channel, use `--browser-url` with one loopback
+loopback listener belongs to the detected PID/process generation, and gives Chrome DevTools MCP that exact WebSocket.
+The provider retains one connection through Chrome's approval prompt, `Browser.getVersion` verification, and all page
+operations. Peekaboo rechecks signer and listener ownership before publishing the receipt. When more than one process
+shares a channel, use `--browser-url` with one loopback
 DevTools HTTP endpoint. That explicit URL is also the compatibility path for custom or non-Google-signed debuggable
 browsers and does not claim native channel signer authority. Connection output includes the combined process and
 DevTools identity receipt. If the daemon, Chrome generation, signer, listening socket, or endpoint changes, later calls
 fail and require an explicit reconnect.
+
+Chrome's approval-mode listener intentionally returns 404 for `/json/version`; use `--channel stable` for that listener.
+Explicit `--browser-url` requires HTTP discovery. Enable remote debugging at `chrome://inspect/#remote-debugging`
+and approve the connection prompt; a pipe-only launch does not expose a TCP endpoint. The provider never automatically
+reopens a failed connection or switches to another Chrome instance.
 
 A Bridge host-authentication error names the socket, peer PID when available, and failed check (kernel CDHash,
 Apple-anchored signature, signature/hash binding, or allowed Team ID). Relaunch the released signed host at that socket;

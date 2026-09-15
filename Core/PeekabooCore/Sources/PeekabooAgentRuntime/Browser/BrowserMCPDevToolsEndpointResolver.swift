@@ -6,16 +6,16 @@ struct BrowserMCPDevToolsEndpoint: Sendable, Equatable {
     let browserURL: String
     let webSocketDebuggerURL: String
     let browserID: String
-    let browserVersion: String
-    let protocolVersion: String
+    let browserVersion: String?
+    let protocolVersion: String?
     let listenerIdentity: DarwinProcessLoopbackListenerIdentity?
 
     init(
         browserURL: String,
         webSocketDebuggerURL: String,
         browserID: String,
-        browserVersion: String,
-        protocolVersion: String,
+        browserVersion: String? = nil,
+        protocolVersion: String? = nil,
         listenerIdentity: DarwinProcessLoopbackListenerIdentity? = nil)
     {
         self.browserURL = browserURL
@@ -50,11 +50,19 @@ struct BrowserMCPDevToolsEndpointResolver: Sendable {
         request.timeoutInterval = 3
         let (data, response) = try await fetch(request)
         guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.url == versionURL,
-              (200..<300).contains(httpResponse.statusCode)
+              httpResponse.url == versionURL
         else {
             throw BrowserMCPConnectionError.invalidEndpoint(
                 "/json/version did not return direct HTTP success from the exact loopback endpoint")
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let hint = httpResponse.statusCode == 404
+                ? " Chrome's approval-mode listener intentionally omits HTTP discovery. " +
+                "Use --channel stable for the running standard-profile Chrome and check " +
+                "chrome://inspect/#remote-debugging."
+                : " Check the intended Chrome listener and remote-debugging settings."
+            throw BrowserMCPConnectionError.invalidEndpoint(
+                "GET \(versionURL.absoluteString) returned HTTP \(httpResponse.statusCode)." + hint)
         }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let webSocketDebuggerURL = object["webSocketDebuggerUrl"] as? String,

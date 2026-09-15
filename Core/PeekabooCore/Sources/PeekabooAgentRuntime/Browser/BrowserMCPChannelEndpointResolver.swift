@@ -84,7 +84,6 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
                     try StableRegularFileReader.live.read(url, 1024)
                 },
                 inspectListener: DarwinProcessLoopbackListenerInspector.live.inspect,
-                probeWebSocket: BrowserMCPDevToolsWebSocketProber.live.probe,
                 reserveAuthority: reserveAuthority)
         },
         revalidate: { target, expected in
@@ -106,7 +105,6 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
         activePortURL: URL,
         readActivePort: @Sendable (URL) throws -> Data,
         inspectListener: DarwinProcessLoopbackListenerInspector.Inspect,
-        probeWebSocket: BrowserMCPDevToolsWebSocketProber.Probe,
         reserveAuthority: (@MainActor @Sendable (BrowserMCPChannelEndpointReservation) throws -> Void)? = nil)
         async throws
         -> BrowserMCPDevToolsEndpoint
@@ -128,42 +126,11 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
             browserURL: before.browserURL,
             webSocketDebuggerURL: before.webSocketDebuggerURL,
             browserID: before.browserID))
-        let version: BrowserMCPDevToolsVersion
-        do {
-            version = try await probeWebSocket(
-                webSocketURL,
-                before.browserID,
-                attempt.deadline,
-                attempt.state.markPermissionDispatchStarted)
-        } catch BrowserMCPDevToolsWebSocketProbeFailure.cancelled {
-            throw BrowserMCPConnectionError.permissionBearingConnectionCancelled
-        } catch let BrowserMCPDevToolsWebSocketProbeFailure.failed(error) {
-            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
-                "\(target.channel.rawValue) Chrome PID \(target.processIdentifier), approval probe: " +
-                    error.localizedDescription)
-        }
-
-        let after: BrowserMCPChannelEndpointAuthority
-        do {
-            after = try self.resolveAuthority(
-                target: target,
-                activePortURL: activePortURL,
-                readActivePort: readActivePort,
-                inspectListener: inspectListener)
-        } catch {
-            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
-                "Chrome's DevTools authority changed after Browser.getVersion: \(error.localizedDescription)")
-        }
-        guard after == before else {
-            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
-                "Chrome's DevTools authority changed during Browser.getVersion")
-        }
+        try Task.checkCancellation()
         return BrowserMCPDevToolsEndpoint(
             browserURL: before.browserURL,
             webSocketDebuggerURL: before.webSocketDebuggerURL,
             browserID: before.browserID,
-            browserVersion: version.browserVersion,
-            protocolVersion: version.protocolVersion,
             listenerIdentity: before.listener)
     }
 
