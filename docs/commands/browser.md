@@ -60,7 +60,12 @@ completed, or the intended effect occurred. Observe the intended page before dec
 The CLI retains its existing numeric page ID and snapshot-local UID compatibility boundary; this action does not add
 durable cross-invocation capabilities. Persistent MCP/Agent callers use the caller-owned references described below.
 
-Browser state is owned by one current-build reusable daemon across CLI invocations. Channel connection requires exactly
+Browser state is owned by one current-build reusable daemon across CLI invocations, or by the authenticated GUI host
+selected with `--bridge-socket`. Keep that same socket on connect, status, page actions, and disconnect. `bridge status`
+reports general host availability; it does not select a browser connection for later commands. Historical daemon sockets
+that fail local host-signature authentication are excluded from the mutation inventory, without authorizing them or
+treating an authenticated host's timeout as absence. An explicitly selected untrusted host still fails closed.
+Channel connection requires exactly
 one running official Google-signed Chrome process (Team ID `EQHXZ8M8AV`). Peekaboo pins the signed channel identifier,
 Team ID, and CDHash to its PID generation, safely reads that channel's standard `DevToolsActivePort`, proves its unique
 loopback listener belongs to the detected PID/process generation, keeps the exact WebSocket pending through Chrome's
@@ -70,6 +75,14 @@ DevTools HTTP endpoint. That explicit URL is also the compatibility path for cus
 browsers and does not claim native channel signer authority. Connection output includes the combined process and
 DevTools identity receipt. If the daemon, Chrome generation, signer, listening socket, or endpoint changes, later calls
 fail and require an explicit reconnect.
+
+A Bridge host-authentication error names the socket, peer PID when available, and failed check (kernel CDHash,
+Apple-anchored signature, signature/hash binding, or allowed Team ID). Relaunch the released signed host at that socket;
+after replacing a daemon executable, stop its old process and restart it from the current signed CLI. Do not disable
+signature checks or change Chrome permissions to repair a Bridge authentication failure. A refused `Browser.getVersion`
+is a separate Chrome approval/endpoint failure: inspect `browser status` on the same host and
+`chrome://inspect/#remote-debugging`, verify the intended profile, and explicitly reconnect after resolving approval.
+That failure does not establish a usable connection receipt and is never retried automatically.
 
 Browser `type` and `press-key` require `--uid` from a fresh snapshot. Peekaboo focuses that exact page element and sends
 the keyboard operation as one daemon-owned sequence rather than inheriting whichever control another caller focused.

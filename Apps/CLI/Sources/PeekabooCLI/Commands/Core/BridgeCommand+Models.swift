@@ -217,6 +217,10 @@ struct BridgeCandidateErrorReport: Codable, Sendable {
     }
 
     private nonisolated static func authorizationHint(for envelope: PeekabooBridgeErrorEnvelope) -> String {
+        if envelope.isLocalHostAuthenticationFailure || envelope.context == "connectedHostAuthentication" {
+            return "The socket host could not be authenticated. Relaunch the released signed host at the named " +
+                "socket; do not disable signature checks or change Chrome permissions."
+        }
         if envelope.message.hasPrefix("Bundle ") {
             return "Client bundle/signing identifier is not allowlisted for this host. Use the intended signed " +
                 "client or explicitly add its identifier to the host's bundle allowlist; the unsigned-client " +

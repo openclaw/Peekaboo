@@ -4,6 +4,17 @@ import Testing
 
 struct BrowserMCPDevToolsWebSocketProberTests {
     @Test
+    func `approval refusal explains missing receipt and explicit recovery`() throws {
+        let message = try #require(BrowserMCPConnectionError.permissionBearingConnectionFailed(
+            BrowserMCPDevToolsWebSocketProbeError.connectionRefused("HTTP 403").localizedDescription).errorDescription)
+        #expect(message.contains("Browser.getVersion"))
+        #expect(message.contains("No usable browser connection receipt"))
+        #expect(message.contains("same Bridge host"))
+        #expect(message.contains("chrome://inspect/#remote-debugging"))
+        #expect(message.contains("did not retry"))
+    }
+
+    @Test
     func `approval wait keeps one exact exchange pending until Chrome responds`() async throws {
         let barrier = WebSocketProbeBarrier()
         let completed = SynchronizedCounter()

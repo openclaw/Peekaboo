@@ -761,18 +761,8 @@ public actor PeekabooBridgeClient {
     /// their intentionally unauthenticated protocol-1.28 compatibility behavior.
     private func validateTrustedConnectedHost(_ connectedHost: PeekabooBridgeConnectedHostIdentity?) throws {
         guard let trustedHostTeamIDs = self.trustedHostTeamIDs else { return }
-        guard let connectedHost,
-              let liveCodeSignatureHash = connectedHost.liveIdentity.codeSignatureHash,
-              !liveCodeSignatureHash.isEmpty,
-              let signingIdentity = connectedHost.signingIdentity,
-              signingIdentity.codeSignatureHash == liveCodeSignatureHash,
-              let signingTeamIdentifier = signingIdentity.teamIdentifier,
-              trustedHostTeamIDs.contains(signingTeamIdentifier)
-        else {
-            throw PeekabooBridgeErrorEnvelope(
-                code: .unauthorizedClient,
-                message: "Bridge handshake did not come from a trusted connected host")
-        }
+        try PeekabooBridgeConnectedHostTrust.validate(
+            connectedHost, socketPath: self.socketPath, trustedTeamIDs: trustedHostTeamIDs)
     }
 
     private func handshakeCandidate(

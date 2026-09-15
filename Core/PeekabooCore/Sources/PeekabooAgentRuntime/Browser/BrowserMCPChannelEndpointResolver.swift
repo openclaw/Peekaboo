@@ -138,7 +138,9 @@ struct BrowserMCPChannelEndpointResolver: Sendable {
         } catch BrowserMCPDevToolsWebSocketProbeFailure.cancelled {
             throw BrowserMCPConnectionError.permissionBearingConnectionCancelled
         } catch let BrowserMCPDevToolsWebSocketProbeFailure.failed(error) {
-            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(error.localizedDescription)
+            throw BrowserMCPConnectionError.permissionBearingConnectionFailed(
+                "\(target.channel.rawValue) Chrome PID \(target.processIdentifier), approval probe: " +
+                    error.localizedDescription)
         }
 
         let after: BrowserMCPChannelEndpointAuthority

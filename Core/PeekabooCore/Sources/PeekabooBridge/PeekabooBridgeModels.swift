@@ -560,6 +560,8 @@ public enum PeekabooBridgeErrorKind: String, Codable, Sendable {
 }
 
 public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
+    /// Local socket authentication evidence only. Never encoded or accepted from a remote error response.
+    public internal(set) var isLocalHostAuthenticationFailure = false
     public static let standardizedErrorContextPrefix = "standard_error:"
     public let code: PeekabooBridgeErrorCode
     public let message: String

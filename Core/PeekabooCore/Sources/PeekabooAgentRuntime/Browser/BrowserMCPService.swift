@@ -1534,7 +1534,10 @@ public enum BrowserMCPConnectionError: LocalizedError, Equatable {
                 "WebSocket: \(reason). Enable remote debugging and approve Chrome's prompt, or use one exact " +
                 "loopback browser_url for a custom profile."
         case let .permissionBearingConnectionFailed(reason):
-            "The permission-bearing Chrome connection did not complete: \(reason)"
+            "The permission-bearing Chrome connection did not complete: \(reason). " +
+                "No usable browser connection receipt was established. Check browser status on the same Bridge host " +
+                "and Chrome's chrome://inspect/#remote-debugging for the intended profile and pending approval, " +
+                "then reconnect explicitly. Peekaboo did not retry the attachment."
         case .permissionBearingConnectionCancelled:
             "The permission-bearing Chrome connection was cancelled after it started."
         case let .connectionProbeFailed(reason):

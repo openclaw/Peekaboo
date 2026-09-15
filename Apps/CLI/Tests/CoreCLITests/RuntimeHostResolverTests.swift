@@ -929,6 +929,26 @@ extension RuntimeHostResolverTests {
     }
 
     @Test
+    func `browser GUI ownership requires an explicit socket`() async throws {
+        var options = CommandRuntimeOptions()
+        options.requiresBrowserMCP = true
+        let implicit = RuntimeHostResolver.implicitRemoteCandidates(
+            options: options,
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            buildScopedDaemonSocketPath: "/tmp/daemon-current.sock"
+        )
+        #expect(!implicit.isEmpty)
+        #expect(implicit.allSatisfy(\.requireReusableDaemon))
+        #expect(!implicit.contains { $0.socketPath == PeekabooBridgeConstants.peekabooSocketPath })
+
+        options.bridgeSocketPath = PeekabooBridgeConstants.peekabooSocketPath
+        let explicit = try await RuntimeHostResolver.remoteCandidatePlan(options: options, environment: [:])
+        #expect(explicit.candidates.count == 1)
+        #expect(explicit.candidates.first?.socketPath == options.bridgeSocketPath)
+        #expect(explicit.candidates.first?.requireReusableDaemon == false)
+    }
+
+    @Test
     func `Candidate validation selects hosts that hold the required permissions`() async {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/bridge.sock",

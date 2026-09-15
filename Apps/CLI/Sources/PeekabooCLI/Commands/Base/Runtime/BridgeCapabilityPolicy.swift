@@ -664,7 +664,7 @@ enum BridgeCapabilityPolicy {
     }
 
     static func supportsBrowserMCP(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
-        handshake.hostKind == .onDemand &&
+        (handshake.hostKind == .onDemand || handshake.hostKind == .gui) &&
             handshake.negotiatedVersion >= PeekabooBridgeConstants.browserConnectionReceiptVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.browserConnectionReceipts) == true &&
             handshake.supportedOperations.contains(.browserStatus) &&

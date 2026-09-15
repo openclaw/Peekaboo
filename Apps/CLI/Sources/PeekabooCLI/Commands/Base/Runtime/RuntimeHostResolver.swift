@@ -743,7 +743,8 @@ extension RuntimeHostResolver {
             requiresValidatedHistoricalDaemon: false
         )
 
-        if options.requiresApplicationRelaunch || options.requiresSurvivingApplicationHost {
+        if options.requiresApplicationRelaunch || options.requiresSurvivingApplicationHost || options
+            .requiresBrowserMCP {
             return daemons
         }
         if options.requiresApplicationLaunchOptions || options.requiresHostApplicationInventory {

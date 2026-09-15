@@ -432,16 +432,33 @@ enum DaemonControlResolver {
         currentBuildScopedSocketPath: String?
     ) async throws -> [DaemonControlTarget] {
         ManagedAutoDaemonRegistry.pruneStaleRecords(daemonSocketPath: daemonSocketPath)
-        var targets: [DaemonControlTarget] = []
-        for socketPath in self.discoveredHistoricalBuildScopedSocketPaths(
+        return try await self.validatedHistoricalTargets(socketPaths: self.discoveredHistoricalBuildScopedSocketPaths(
             daemonSocketPath: daemonSocketPath,
             currentBuildScopedSocketPath: currentBuildScopedSocketPath
-        ) {
+        ))
+    }
+
+    static func validatedHistoricalTargets(
+        socketPaths: [String],
+        fetchStatus: (DaemonControlClient) async throws -> PeekabooDaemonStatus? = {
+            try await $0.fetchControllableDaemonStatus()
+        }
+    ) async throws -> [DaemonControlTarget] {
+        var targets: [DaemonControlTarget] = []
+        for socketPath in socketPaths {
             let client = DaemonControlClient(
                 socketPath: socketPath,
                 requestTimeoutSec: self.historicalProbeTimeoutSeconds
             )
-            guard let status = try await client.fetchControllableDaemonStatus(),
+            let observedStatus: PeekabooDaemonStatus?
+            do {
+                observedStatus = try await fetchStatus(client)
+            } catch let error as PeekabooBridgeErrorEnvelope where error.isLocalHostAuthenticationFailure {
+                // An unauthenticated historical peer cannot supply a trusted snapshot namespace.
+                // Keep failures from authenticated hosts fatal; they may still own snapshots.
+                continue
+            }
+            guard let status = observedStatus,
                   self.isValidatedHistoricalTarget(status: status, socketPath: socketPath)
             else {
                 continue

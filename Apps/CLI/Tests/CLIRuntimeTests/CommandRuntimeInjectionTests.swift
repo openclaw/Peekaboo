@@ -416,12 +416,12 @@ struct CommandRuntimeInjectionTests {
         #expect(CommandRuntime.supportsBrowserMCP(for: supported))
         #expect(!CommandRuntime.supportsBrowserMCP(for: older))
         #expect(!CommandRuntime.supportsBrowserMCP(for: missingExecute))
-        #expect(!CommandRuntime.supportsBrowserMCP(for: gui))
+        #expect(CommandRuntime.supportsBrowserMCP(for: gui))
         #expect(!CommandRuntime.supportsBrowserMCP(for: missingReceiptCapability))
         #expect(CommandRuntime.supportsRemoteRequirements(for: supported, options: options))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: older, options: options))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: missingExecute, options: options))
-        #expect(!CommandRuntime.supportsRemoteRequirements(for: gui, options: options))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: gui, options: options))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: missingReceiptCapability, options: options))
     }
 

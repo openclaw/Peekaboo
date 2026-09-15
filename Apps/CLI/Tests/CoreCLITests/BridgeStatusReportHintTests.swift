@@ -126,6 +126,19 @@ struct BridgeStatusReportHintTests {
     }
 
     @Test
+    func `host authentication hint never recommends disabling client signature checks`() throws {
+        let error = PeekabooBridgeErrorEnvelope(
+            code: .unauthorizedClient,
+            message: "Bridge host authentication failed",
+            context: "connectedHostAuthentication"
+        )
+        let hint = try #require(BridgeCandidateErrorReport.bridgeEnvelope(error).hint)
+        #expect(hint.contains("socket host"))
+        #expect(hint.contains("Relaunch the released signed host"))
+        #expect(!hint.contains("PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS"))
+    }
+
+    @Test
     func `team authorization refusal retains the signed-client remediation`() throws {
         let refusal = PeekabooBridgeErrorEnvelope(
             code: .unauthorizedClient,

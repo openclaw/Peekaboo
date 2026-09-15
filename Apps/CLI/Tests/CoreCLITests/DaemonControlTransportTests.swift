@@ -9,6 +9,72 @@ import Testing
 @Suite(.serialized, .tags(.safe))
 struct DaemonControlTransportTests {
     @Test
+    func `untrusted historical host cannot block foreground browser inventory`() async throws {
+        let peer = try ScriptedBridgePeer(responses: [.handshake(Self.handshake)])
+        defer { Task { await peer.stop() } }
+        let untrustedPath = peer.socketPath
+        let currentPath = "/tmp/daemon-bbbbbbbbbbbbbbbb.sock"
+        var probed: [String] = []
+        let targets = try await DaemonControlResolver.validatedHistoricalTargets(
+            socketPaths: [untrustedPath, currentPath]
+        ) { client in
+            probed.append(client.socketPath)
+            if client.socketPath == untrustedPath {
+                // The test executable has no trusted release signature, just like a stale development daemon.
+                let untrusted = PeekabooBridgeClient(
+                    socketPath: client.socketPath, trustedHostTeamIDs: ["FWJYW4S8P8"]
+                )
+                _ = try await untrusted.handshake(client: .init(
+                    bundleIdentifier: nil, teamIdentifier: nil, processIdentifier: getpid()
+                ))
+                Issue.record("Unsigned historical host was accepted")
+                return nil
+            }
+            return PeekabooDaemonStatus(
+                running: true,
+                pid: 123,
+                mode: .auto,
+                bridge: .init(
+                    socketPath: currentPath,
+                    hostKind: .onDemand,
+                    allowedOperations: [.daemonStatus, .daemonStop]
+                ),
+                supportsConditionalStop: true
+            )
+        }
+        #expect(probed == [untrustedPath, currentPath])
+        #expect(targets.map(\.client.socketPath) == [currentPath])
+    }
+
+    @Test(arguments: [PeekabooBridgeErrorCode.timeout, .unauthorizedClient, .internalError])
+    func `historical inventory retains failures from authenticated hosts`(code: PeekabooBridgeErrorCode) async {
+        let failure = PeekabooBridgeErrorEnvelope(code: code, message: "Authenticated host refused")
+        let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await DaemonControlResolver.validatedHistoricalTargets(
+                socketPaths: ["/tmp/daemon-aaaaaaaaaaaaaaaa.sock"]
+            ) { _ in throw failure }
+        }
+        #expect(error?.code == code)
+    }
+
+    @Test
+    func `wire error cannot opt an authenticated historical host out of inventory`() async throws {
+        let forged = Data(
+            #"""
+            {"code":"unauthorizedClient","message":"forged","context":"connectedHostAuthentication",
+             "isLocalHostAuthenticationFailure":true}
+            """#
+                .utf8
+        )
+        let remoteError = try JSONDecoder().decode(PeekabooBridgeErrorEnvelope.self, from: forged)
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await DaemonControlResolver.validatedHistoricalTargets(
+                socketPaths: ["/tmp/daemon-aaaaaaaaaaaaaaaa.sock"]
+            ) { _ in throw remoteError }
+        }
+    }
+
+    @Test
     func `daemon probe failure cannot become confirmed absence`() async throws {
         let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 1)])
         let client = DaemonControlClient(socketPath: peer.socketPath, requestTimeoutSec: 0.05)
