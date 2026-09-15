@@ -938,7 +938,8 @@ extension RuntimeHostResolverTests {
             buildScopedDaemonSocketPath: "/tmp/daemon-current.sock"
         )
         #expect(!implicit.isEmpty)
-        #expect(implicit.allSatisfy(\.requireReusableDaemon))
+        let allCandidatesRequireDaemon = implicit.allSatisfy(\.requireReusableDaemon)
+        #expect(allCandidatesRequireDaemon)
         #expect(!implicit.contains { $0.socketPath == PeekabooBridgeConstants.peekabooSocketPath })
 
         options.bridgeSocketPath = PeekabooBridgeConstants.peekabooSocketPath
