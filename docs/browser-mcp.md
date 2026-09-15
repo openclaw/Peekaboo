@@ -87,6 +87,9 @@ profile, switch to an unrelated managed Chrome port, or add a wildcard origin al
 The `chrome://inspect/#remote-debugging` setting enables approval-mode access; Chrome still asks for permission per
 connection. A refused, cancelled, or disconnected connection is never silently retried by the provider.
 
+CLI page commands reuse the root connection's exact receipt. A provider epoch in root status is diagnostic; the
+client includes epoch authority only in authenticated scoped-session requests, where the host enforces it.
+
 ## Privacy defaults
 
 Peekaboo starts Chrome DevTools MCP with:

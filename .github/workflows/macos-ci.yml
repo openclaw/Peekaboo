@@ -157,7 +157,7 @@ jobs:
           swift test --no-parallel \
             --filter 'BrowserToolTests|BrowserToolCapabilityIntegrationTests|RemoteBrowserMCPSessionTests|PeekabooServicesBrowserSessionProviderTests|AgentSystemPromptTests'
           swift test --no-parallel \
-            --filter 'BrowserMCPProviderConnectionTests|BrowserMCPSingleConnectionTests|BrowserMCPChannelEndpointResolverTests|BrowserMCPSessionManagerChannelRefusalTests'
+            --filter 'BrowserMCPProviderConnectionTests|BrowserMCPSingleConnectionTests|BrowserMCPChannelEndpointResolverTests|BrowserMCPSessionManagerChannelRefusalTests|PeekabooBridgeBrowserRootEpochTests'
 
       - name: Run focused Swift tests
         working-directory: Core/PeekabooCore
