@@ -119,6 +119,7 @@ enum DetachedExactWindowFocusReader {
         var visited: [AXUIElement] = []
         var roleAndFrameMatches: [AXUIElement] = []
         var exactMatches: [AXUIElement] = []
+        var exactMatchFrames: [CGRect] = []
         while let element = queue.first, visited.count < 4096 {
             queue.removeFirst()
             guard !visited.contains(where: { CFEqual($0, element) }) else { continue }
@@ -140,20 +141,35 @@ enum DetachedExactWindowFocusReader {
                     frame: observedFrame ?? .zero)
                 if FocusedElementReceiptResolver.matches(candidate, expected: expected, phase: phase) {
                     exactMatches.append(element)
+                    exactMatchFrames.append(candidate.frame)
                 }
             }
             queue.append(contentsOf: self.elementArrayAttribute(kAXChildrenAttribute, of: element))
         }
 
         // A window whose AX tree exceeds the visit cap can still yield a unique focused match in the
-        // scanned prefix; `exactMatches.count == 1` below proves uniqueness among what was seen. Do not
+        // scanned prefix; receiver selection below disambiguates matches among what was seen. Do not
         // fail a large tree outright, or exact-window type/press would refuse in deep-hierarchy apps.
         guard !roleAndFrameMatches.isEmpty else { return .failure(.frameMismatch) }
         guard !exactMatches.isEmpty else {
             return .failure(expected.identifier?.isEmpty == false ? .identifierMismatch : .titleMismatch)
         }
-        guard exactMatches.count == 1, let element = exactMatches.first else {
-            return .failure(.multipleFocusedElements)
+        let element: AXUIElement
+        if phase == .continuation, exactMatches.count > 1 {
+            let candidateFocused = exactMatches.map { self.boolAttribute(kAXFocusedAttribute, of: $0) == true }
+            guard let index = self.selectContinuationReceiver(
+                candidateFrames: exactMatchFrames,
+                candidateFocused: candidateFocused,
+                expectedFrame: expected.frame)
+            else {
+                return .failure(.multipleFocusedElements)
+            }
+            element = exactMatches[index]
+        } else {
+            guard exactMatches.count == 1, let match = exactMatches.first else {
+                return .failure(.multipleFocusedElements)
+            }
+            element = match
         }
         guard let focused = self.boolAttribute(kAXFocusedAttribute, of: element) else {
             return .failure(.focusedAttributeUnreadable)
@@ -184,6 +200,26 @@ enum DetachedExactWindowFocusReader {
             value: includesValue && self.allowsValueRead(role: expected.role, subrole: subrole)
                 ? self.stringAttribute(kAXValueAttribute as String, of: element)
                 : nil))
+    }
+
+    static func selectContinuationReceiver(
+        candidateFrames: [CGRect],
+        candidateFocused: [Bool],
+        expectedFrame: CGRect) -> Int?
+    {
+        guard candidateFrames.count == candidateFocused.count, !candidateFrames.isEmpty else { return nil }
+        if candidateFrames.count == 1 {
+            return 0
+        }
+
+        // Preserve the captured receiver's position before allowing focus to disambiguate reflow.
+        let frameMatches = candidateFrames.indices.filter { candidateFrames[$0] == expectedFrame }
+        if frameMatches.count == 1 {
+            return frameMatches.first
+        }
+
+        let focusedMatches = candidateFocused.indices.filter { candidateFocused[$0] }
+        return focusedMatches.count == 1 ? focusedMatches.first : nil
     }
 
     static func readKeyWindow(processIdentifier: pid_t) -> ExactKeyWindowSnapshot? {
