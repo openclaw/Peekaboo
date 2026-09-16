@@ -145,7 +145,9 @@ enum DetachedExactWindowFocusReader {
             queue.append(contentsOf: self.elementArrayAttribute(kAXChildrenAttribute, of: element))
         }
 
-        guard queue.isEmpty else { return .failure(.multipleFocusedElements) }
+        // A window whose AX tree exceeds the visit cap can still yield a unique focused match in the
+        // scanned prefix; `exactMatches.count == 1` below proves uniqueness among what was seen. Do not
+        // fail a large tree outright, or exact-window type/press would refuse in deep-hierarchy apps.
         guard !roleAndFrameMatches.isEmpty else { return .failure(.frameMismatch) }
         guard !exactMatches.isEmpty else {
             return .failure(expected.identifier?.isEmpty == false ? .identifierMismatch : .titleMismatch)

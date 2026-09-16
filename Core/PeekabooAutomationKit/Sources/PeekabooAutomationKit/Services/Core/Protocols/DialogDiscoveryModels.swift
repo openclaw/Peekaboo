@@ -14,9 +14,11 @@ public enum DialogSystemAlertHosts {
         guard let bundle = application.bundleIdentifier,
               let expected = self.executables[bundle]
         else { return false }
-        return application.executablePath == expected &&
-            application.bundlePath == URL(fileURLWithPath: expected)
-            .deletingLastPathComponent().deletingLastPathComponent().path
+        // `bundlePath` is the `.app`/`.bundle` wrapper reported by `NSRunningApplication.bundleURL`,
+        // which is three levels up from the executable at `<wrapper>/Contents/MacOS/<exe>`.
+        let expectedBundle = URL(fileURLWithPath: expected)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+        return application.executablePath == expected && application.bundlePath == expectedBundle
     }
 }
 

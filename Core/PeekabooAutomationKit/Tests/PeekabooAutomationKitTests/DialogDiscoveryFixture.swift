@@ -55,7 +55,8 @@ final class DialogDiscoveryFixture {
             processStartIdentity: generation,
             bundleIdentifier: bundle,
             name: bundle == "com.apple.UserNotificationCenter" ? "UserNotificationCenter" : "Editor",
-            bundlePath: URL(fileURLWithPath: executable).deletingLastPathComponent().deletingLastPathComponent().path,
+            bundlePath: URL(fileURLWithPath: executable)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path,
             executablePath: executable,
             activationPolicy: policy)
     }
