@@ -417,7 +417,10 @@ struct CLIActionResultConsumerTests {
         #expect(outcome["dispatch_state"] as? String == "none")
         #expect(error["retry_safe"] as? Bool == true)
         #expect(error["mutation_dispatched"] as? Bool == false)
-        #expect(result.combinedOutput.contains("inventory was incomplete"))
+        // A partial inventory no longer blanket-refuses: it is routed through the authoritative
+        // selector census, which here refuses the fuzzy `Fixt` (the app is "Fixture") as a non-exact
+        // mutation target. The refusal stays retry-safe and never dispatches the menu action.
+        #expect(result.combinedOutput.contains("No running application exactly matched"))
         #expect(menu.clickItemCalls.isEmpty)
         #expect(menu.clickPathCalls.isEmpty)
     }

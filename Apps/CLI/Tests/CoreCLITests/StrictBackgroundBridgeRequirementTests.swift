@@ -46,7 +46,10 @@ struct StrictBackgroundBridgeRequirementTests {
 
     @Test
     func `dialog semantic errors refuse before runtime resolution`() {
-        #expect(throws: PreDispatchActionError.self) {
+        // A targetless `dialog click --button` is now a valid background system-alert discovery
+        // request: it binds without a pre-dispatch refusal and fails closed later if discovery is
+        // incomplete or ambiguous.
+        #expect(throws: Never.self) {
             _ = try CommanderCLIBinder.makeRuntimeOptions(
                 from: ParsedValues(positional: [], options: ["button": ["OK"]], flags: []),
                 commandType: DialogCommand.ClickSubcommand.self
