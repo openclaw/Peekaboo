@@ -1065,6 +1065,12 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
         let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
+    struct WaitForElementCall {
+        let target: ClickTarget
+        let timeout: TimeInterval
+        let snapshotId: String?
+    }
+
     struct TargetedHotkeyCall {
         let keys: String
         let holdDuration: Int
@@ -1124,6 +1130,8 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
     var foregroundModifierClickError: (any Error)?
     private(set) var pixelFocusTypeRequests: [ExactWindowPixelFocusTypeRequest] = []
     private(set) var foregroundModifierClickRequests: [ForegroundModifierClickRequest] = []
+    private(set) var waitForElementCalls: [WaitForElementCall] = []
+    var waitForElementResult = WaitForElementResult(found: true, element: nil, waitTime: 0)
 
     init(
         accessibilityGranted: Bool,
@@ -1292,10 +1300,12 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
         self.accessibilityGranted
     }
 
-    func waitForElement(target _: ClickTarget, timeout _: TimeInterval, snapshotId _: String?) async throws
+    func waitForElement(target: ClickTarget, timeout: TimeInterval, snapshotId: String?) async throws
         -> WaitForElementResult
     {
-        WaitForElementResult(found: false, element: nil, waitTime: 0)
+        self.waitForElementCalls.append(
+            WaitForElementCall(target: target, timeout: timeout, snapshotId: snapshotId))
+        return self.waitForElementResult
     }
 
     func drag(_: DragOperationRequest) async throws {}

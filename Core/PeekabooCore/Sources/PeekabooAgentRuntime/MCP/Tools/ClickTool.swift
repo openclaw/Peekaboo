@@ -67,6 +67,7 @@ public struct ClickTool: MCPTool {
                     description: """
                     Optional. Maximum milliseconds to wait for element to become actionable. Default: 5000.
                     """,
+                    minimum: 0,
                     default: 5000),
                 "double": SchemaBuilder.boolean(
                     description: "Optional. Double-click instead of single click.",
@@ -212,6 +213,10 @@ public struct ClickTool: MCPTool {
             return try await self.resolveCoordinates(raw, request: request)
         case let .elementId(identifier):
             let snapshot = try await self.requireSnapshot(id: request.snapshotId)
+            try await self.waitForActionableElement(
+                .elementId(identifier),
+                waitForMilliseconds: request.waitForMilliseconds,
+                snapshotId: snapshot.id)
             let element = try await self.requireElement(id: identifier, snapshot: snapshot)
             return ClickResolution(
                 location: element.centerPoint,
@@ -228,6 +233,10 @@ public struct ClickTool: MCPTool {
                 snapshotId: snapshot.id)
         case let .query(text):
             let snapshot = try await self.requireSnapshot(id: request.snapshotId)
+            try await self.waitForActionableElement(
+                .query(text),
+                waitForMilliseconds: request.waitForMilliseconds,
+                snapshotId: snapshot.id)
             let element = try await self.findElement(matching: text, snapshot: snapshot)
             return ClickResolution(
                 location: element.centerPoint,
@@ -741,6 +750,34 @@ public struct ClickTool: MCPTool {
         "Background coordinate clicks require a nonempty capture-owned snapshot/reference_id from see for the " +
         "exact target window. PID-only or app-only coordinates are refused; run see, then retry with its snapshot."
 
+    private func waitForActionableElement(
+        _ target: ClickTarget,
+        waitForMilliseconds: Int,
+        snapshotId: String) async throws
+    {
+        let result = try await self.context.automation.waitForElement(
+            target: target,
+            timeout: TimeInterval(waitForMilliseconds) / 1000,
+            snapshotId: snapshotId)
+        guard result.found else {
+            throw ClickToolError(
+                Self.waitTimeoutMessage(for: target, waitForMilliseconds: waitForMilliseconds),
+                refusalReason: .targetUnavailable)
+        }
+    }
+
+    private static func waitTimeoutMessage(for target: ClickTarget, waitForMilliseconds: Int) -> String {
+        switch target {
+        case let .elementId(identifier):
+            "Element '\(identifier)' not found after \(waitForMilliseconds)ms. " +
+                "Run 'see' or 'inspect_ui' to update UI state."
+        case let .query(query):
+            "No actionable element found matching '\(query)' after \(waitForMilliseconds)ms"
+        case .coordinates:
+            "Element not found after \(waitForMilliseconds)ms"
+        }
+    }
+
     private func requireSnapshot(id: String?) async throws -> UISnapshot {
         guard let snapshot = await self.getSnapshot(id: id) else {
             throw ClickToolError(
@@ -786,7 +823,7 @@ public struct ClickTool: MCPTool {
 
 // MARK: - Supporting Types
 
-private struct ClickRequest {
+struct ClickRequest {
     let target: ClickRequestTarget
     let snapshotId: String?
     let intent: ClickIntent
@@ -795,6 +832,7 @@ private struct ClickRequest {
     let coordinateSpace: CaptureCoordinateSpace?
     let coordinateReference: String?
     let modifiers: [PointerModifier]
+    let waitForMilliseconds: Int
 
     init(arguments: ToolArguments) throws {
         let rawCoordinateSpace = Self.nonEmptyString(arguments.getString("coordinate_space"))
@@ -838,6 +876,7 @@ private struct ClickRequest {
         }
 
         self.snapshotId = snapshotId
+        self.waitForMilliseconds = try Self.parseWaitFor(arguments)
         if let snapshotId, let coordinateReference, snapshotId != coordinateReference {
             throw ClickToolError("snapshot and coordinate_reference must match when both are provided.")
         }
@@ -897,6 +936,27 @@ private struct ClickRequest {
         }
     }
 
+    private static let defaultWaitForMilliseconds = 5000
+
+    private static func parseWaitFor(_ arguments: ToolArguments) throws -> Int {
+        let raw: Double?
+        do {
+            raw = try arguments.validatedNumber("wait_for")
+        } catch {
+            throw ClickToolError(error.localizedDescription)
+        }
+        guard let raw else {
+            return Self.defaultWaitForMilliseconds
+        }
+        guard raw.isFinite, raw >= 0 else {
+            throw ClickToolError("wait_for must be a non-negative number of milliseconds.")
+        }
+        guard let milliseconds = Int(exactly: raw.rounded()) else {
+            throw ClickToolError("wait_for is outside the supported integer range.")
+        }
+        return milliseconds
+    }
+
     private static func parseModifiers(_ arguments: ToolArguments) throws -> [PointerModifier] {
         guard let value = arguments.getValue(for: "modifiers") else { return [] }
         guard case let .array(items) = value, !items.isEmpty else {
@@ -929,13 +989,13 @@ private struct ClickRequest {
     }
 }
 
-private enum ClickRequestTarget {
+enum ClickRequestTarget {
     case coordinates(String)
     case elementId(String)
     case query(String)
 }
 
-private enum ClickToolDeliveryMode {
+enum ClickToolDeliveryMode {
     case background
     case foreground
 }
@@ -1010,7 +1070,7 @@ private struct CapturedCoordinateSnapshot {
     let bounds: CGRect?
 }
 
-private struct ClickIntent {
+struct ClickIntent {
     let automationType: ClickType
     let displayVerb: String
 
@@ -1039,7 +1099,7 @@ private struct ClickIntent {
     }
 }
 
-private struct ClickToolError: Error {
+struct ClickToolError: Error {
     let message: String
     let refusalReason: DesktopActionOutcome.RefusalReason
 
