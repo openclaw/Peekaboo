@@ -95,11 +95,15 @@ export class PeekabooMCPWrapper {
     }, this.delay);
   }
 
-  shutdown() {
+  shutdown({ exitIfIdle = false } = {}) {
     this.shuttingDown = true;
     this.clearRestartTimer();
     if (this.child && !this.child.killed) {
       this.child.kill('SIGTERM');
+      return;
+    }
+    if (exitIfIdle) {
+      process.exit(0);
     }
   }
 
@@ -117,17 +121,17 @@ if (isMainModule()) {
 
   process.on('SIGINT', () => {
     console.error('\n[Peekaboo MCP] SIGINT received, shutting down...');
-    wrapper.shutdown();
+    wrapper.shutdown({ exitIfIdle: true });
   });
 
   process.on('SIGTERM', () => {
     console.error('[Peekaboo MCP] SIGTERM received, shutting down...');
-    wrapper.shutdown();
+    wrapper.shutdown({ exitIfIdle: true });
   });
 
   process.on('uncaughtException', (err) => {
     console.error('[Peekaboo MCP] Uncaught exception:', err);
-    wrapper.shutdown();
+    wrapper.shutdown({ exitIfIdle: true });
   });
 
   process.on('unhandledRejection', (reason) => {
