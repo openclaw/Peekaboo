@@ -311,8 +311,10 @@ struct SnapshotHostAffinityRuntimeTests {
         #expect(RuntimeHostResolver.snapshotAffinityCandidates(from: plan) == [explicit])
     }
 
-    @Test
-    func `full runtime accepts an explicit socket only when that host owns the snapshot`() async throws {
+    @Test(arguments: [false, true])
+    func `full runtime accepts an explicit socket only when that host owns the snapshot`(
+        socketFromEnvironment: Bool
+    ) async throws {
         try await CLIBridgeHostFixture.withHosts { hosts in
             let snapshots = InMemorySnapshotManager()
             let snapshotID = try await snapshots.createSnapshot()
@@ -324,10 +326,14 @@ struct SnapshotHostAffinityRuntimeTests {
                 snapshots: snapshots
             )
             var options = CommandRuntimeOptions()
-            options.bridgeSocketPath = socketPath
+            options.bridgeSocketPath = socketFromEnvironment ? nil : socketPath
             options.explicitSnapshotID = snapshotID
+            var localServiceConstructions = 0
             let dependencies = RuntimeHostResolver.Dependencies(
-                makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
+                makeLocalServices: { _ in
+                    localServiceConstructions += 1
+                    return PeekabooServices(snapshotManager: InMemorySnapshotManager())
+                },
                 claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
                 inspectScreenCaptureKitOwner: { nil },
                 remoteCandidatePlan: { _, _ in self.explicitPlan(socketPath: socketPath) },
@@ -336,13 +342,14 @@ struct SnapshotHostAffinityRuntimeTests {
 
             let resolution = try await RuntimeHostResolver.resolveServices(
                 options: options,
-                environment: [:],
+                environment: socketFromEnvironment ? ["PEEKABOO_BRIDGE_SOCKET": socketPath] : [:],
                 configurationInput: nil,
                 dependencies: dependencies
             )
 
             #expect(resolution.selectedRemoteSocketPath == socketPath)
             #expect(try await resolution.services.snapshots.ownsSnapshot(snapshotId: snapshotID))
+            #expect(localServiceConstructions == 0)
         }
     }
 
@@ -359,8 +366,12 @@ struct SnapshotHostAffinityRuntimeTests {
             var options = CommandRuntimeOptions()
             options.bridgeSocketPath = socketPath
             options.explicitSnapshotID = SnapshotReferenceFixtures.first.rawValue
+            var localServiceConstructions = 0
             let dependencies = RuntimeHostResolver.Dependencies(
-                makeLocalServices: { _ in PeekabooServices(snapshotManager: InMemorySnapshotManager()) },
+                makeLocalServices: { _ in
+                    localServiceConstructions += 1
+                    return PeekabooServices(snapshotManager: InMemorySnapshotManager())
+                },
                 claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
                 inspectScreenCaptureKitOwner: { nil },
                 remoteCandidatePlan: { _, _ in self.explicitPlan(socketPath: socketPath) },
@@ -379,6 +390,7 @@ struct SnapshotHostAffinityRuntimeTests {
                 #expect(error.code == .SNAPSHOT_NOT_FOUND)
                 #expect(error.localizedDescription.contains("no unique live host affinity"))
             }
+            #expect(localServiceConstructions == 0)
         }
     }
 
@@ -438,6 +450,7 @@ struct SnapshotHostAffinityRuntimeTests {
         let snapshotID = try await snapshots.createSnapshot()
         let services = PeekabooServices(snapshotManager: snapshots)
         var probes: [String] = []
+        var localServiceConstructions = 0
         var options = CommandRuntimeOptions()
         options.explicitSnapshotID = snapshotID
         options.inputStrategy = .actionFirst
@@ -446,10 +459,15 @@ struct SnapshotHostAffinityRuntimeTests {
             options: options,
             environment: [:],
             configurationInput: nil,
-            dependencies: self.dependencies(
-                localServices: services,
-                candidates: [remote],
-                probe: { candidate, _, _, _ in
+            dependencies: RuntimeHostResolver.Dependencies(
+                makeLocalServices: { _ in
+                    localServiceConstructions += 1
+                    return services
+                },
+                claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
+                inspectScreenCaptureKitOwner: { nil },
+                remoteCandidatePlan: { _, _ in self.plan(candidates: [remote]) },
+                snapshotAffinityProbe: { candidate, _, _, _ in
                     probes.append(candidate.socketPath)
                     return .missing
                 }
@@ -458,6 +476,7 @@ struct SnapshotHostAffinityRuntimeTests {
 
         #expect(resolution.selectedRemoteSocketPath == nil)
         #expect(resolution.hostDescription == "local (snapshot producer)")
+        #expect(localServiceConstructions == 1)
         #expect(Set(probes) == Set([
             remote.socketPath,
             "/tmp/daemon.sock",
@@ -474,10 +493,15 @@ struct SnapshotHostAffinityRuntimeTests {
         let services = PeekabooServices(snapshotManager: snapshots)
         var probeCount = 0
         var planCount = 0
+        var localServiceConstructions = 0
         var options = CommandRuntimeOptions()
+        options.bridgeSocketPath = "/tmp/unused-explicit.sock"
         options.explicitSnapshotID = owned
         let dependencies = RuntimeHostResolver.Dependencies(
-            makeLocalServices: { _ in services },
+            makeLocalServices: { _ in
+                localServiceConstructions += 1
+                return services
+            },
             claimScreenCaptureKitOwner: { throw POSIXError(.EPERM) },
             inspectScreenCaptureKitOwner: { nil },
             remoteCandidatePlan: { _, _ in
@@ -500,6 +524,7 @@ struct SnapshotHostAffinityRuntimeTests {
         #expect(try await resolution.services.snapshots.ownsSnapshot(snapshotId: owned))
         #expect(planCount == 0)
         #expect(probeCount == 0)
+        #expect(localServiceConstructions == 1)
 
         options.explicitSnapshotID = SnapshotReferenceFixtures.second.rawValue
         await #expect(throws: PreDispatchActionError.self) {
@@ -512,6 +537,7 @@ struct SnapshotHostAffinityRuntimeTests {
         }
         #expect(planCount == 0)
         #expect(probeCount == 0)
+        #expect(localServiceConstructions == 2)
     }
 
     @Test

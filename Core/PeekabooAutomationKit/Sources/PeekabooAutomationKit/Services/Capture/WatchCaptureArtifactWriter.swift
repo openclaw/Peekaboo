@@ -41,6 +41,7 @@ enum WatchCaptureArtifactWriter {
         else {
             throw PeekabooError.captureFailed(reason: "Failed to build contact sheet context")
         }
+        context.interpolationQuality = .high
 
         for (idx, frame) in framesToUse.enumerated() {
             guard let expectedSHA256 = frame.sha256 else {
@@ -61,13 +62,12 @@ enum WatchCaptureArtifactWriter {
             else {
                 throw PeekabooError.fileIOError("Contact sheet source frame is unreadable: \(frame.file)")
             }
-            let resized = self.resize(image: image, to: thumbSize) ?? image
             let row = idx / columns
             let col = idx % columns
             let origin = CGPoint(
                 x: CGFloat(col) * thumbSize.width,
                 y: CGFloat(rows - row - 1) * thumbSize.height)
-            context.draw(resized, in: CGRect(origin: origin, size: thumbSize))
+            context.draw(image, in: CGRect(origin: origin, size: thumbSize))
         }
 
         guard let cg = context.makeImage() else {

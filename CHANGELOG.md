@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Skip unused local service initialization when snapshot commands target an explicit Bridge socket.
+- Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.
+- Reduce MCP outcome validation overhead by encoding typed metadata directly, retaining canonical result and retry-safety checks.
+- Skip formatting metadata for disabled CLI log messages.
 - Accept IPv6 loopback browser endpoints and reject TCP ports outside 1–65535 before discovery or receipt validation.
 - Connect to approval-mode Chrome with one persistent WebSocket for verification and page operations; preserve the approval window, explain HTTP discovery 404s, and refuse silent reconnection or endpoint redirects. Thanks @steipete for the report!
 - Fix CLI browser page actions refusing after a successful connection by keeping scoped-session epochs out of root Bridge requests.

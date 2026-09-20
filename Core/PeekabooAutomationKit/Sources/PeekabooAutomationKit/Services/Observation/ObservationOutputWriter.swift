@@ -250,9 +250,7 @@ public final class ObservationOutputWriter {
         case .png:
             return data
         case .jpg:
-            guard let image = NSImage(data: data),
-                  let tiff = image.tiffRepresentation,
-                  let bitmap = NSBitmapImageRep(data: tiff),
+            guard let bitmap = NSBitmapImageRep(data: data),
                   let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.92])
             else {
                 throw OperationError.captureFailed(reason: "Failed to convert screenshot to JPEG")

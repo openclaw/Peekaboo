@@ -65,18 +65,18 @@ enum RuntimeHostResolver {
         }
 
         let concreteSnapshotID = options.explicitSnapshotID
-        let localSnapshotServices = concreteSnapshotID.map { _ in dependencies.makeLocalServices(options) }
         guard self.shouldResolveKnownRemoteEndpoints(
             options: options,
             environment: environment,
             configurationInput: configurationInput
         )
         else {
-            if let concreteSnapshotID, let localSnapshotServices {
+            let localServices = dependencies.makeLocalServices(options)
+            if let concreteSnapshotID {
                 let resolvedHandshakeCache = dependencies.makeRemoteHandshakeCache()
                 let owner = try await self.resolveSnapshotAffinityOwner(
                     snapshotID: concreteSnapshotID,
-                    localServices: localSnapshotServices,
+                    localServices: localServices,
                     candidates: [],
                     identity: resolvedHandshakeCache.identity,
                     handshakeCache: resolvedHandshakeCache
@@ -86,7 +86,7 @@ enum RuntimeHostResolver {
                 }
             }
             return self.localResolution(
-                services: localSnapshotServices ?? dependencies.makeLocalServices(options),
+                services: localServices,
                 hostDescription: "local (in-process)",
                 snapshotInvalidationRemoteSocketPaths: [],
                 captureSafety: captureSafety
@@ -127,7 +127,7 @@ enum RuntimeHostResolver {
             var permissionRejections: [String] = []
             var resolution = try await self.resolveSnapshotAffinityServices(
                 snapshotID: concreteSnapshotID,
-                localServices: explicitSocket == nil ? localSnapshotServices : nil,
+                localServices: explicitSocket == nil ? dependencies.makeLocalServices(options) : nil,
                 context: context,
                 permissionRejections: &permissionRejections,
                 probe: dependencies.snapshotAffinityProbe

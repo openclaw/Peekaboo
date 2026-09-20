@@ -461,7 +461,8 @@ cannot negotiate producer-bound references fails before dispatch. There is no â€
 cross-host recreation, or speculative replay.
 
 `--bridge-socket` and `PEEKABOO_BRIDGE_SOCKET` are strict: only that authenticated listener may claim the reference,
-and failure is terminal. `--no-remote` and `PEEKABOO_NO_REMOTE` check only the caller-local manager. Without either
+and failure is terminal. These remote snapshot routes skip the unused caller-local service container.
+`--no-remote` and `PEEKABOO_NO_REMOTE` check only the caller-local manager. Without either
 override, the ownership probe can select Claude.app or Clawdbot.app even though those sockets are not general implicit
 routing fallbacks.
 

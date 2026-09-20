@@ -95,12 +95,12 @@ final class Logger: @unchecked Sendable {
 
     /// Log a message at a specific level
     private func log(_ level: LogLevel, _ message: String, category: String? = nil, metadata: [String: Any]? = nil) {
+        guard level >= self.minimumLogLevel || (level == .verbose && self.verboseMode) else { return }
+
         // Convert metadata to a string representation outside the async closure
         let metadataString: String? = metadata.flatMap { dict in
             dict.isEmpty ? nil : dict.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
         }
-
-        guard level >= self.minimumLogLevel || (level == .verbose && self.verboseMode) else { return }
 
         let timestamp = self.iso8601Formatter.string(from: Date())
         let levelName = level.name
