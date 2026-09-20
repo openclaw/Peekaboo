@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Avoid rewriting temporary screenshots during MCP image resizing while preserving validated, atomic final output.
 - Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
 - Skip unused local service initialization when snapshot commands target an explicit Bridge socket.
 - Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.

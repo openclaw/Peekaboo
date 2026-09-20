@@ -369,10 +369,6 @@ extension ImageTool {
                     reason: "Failed to downscale image to max_dimension \(maxDimension)")
             }
 
-            if result.resized, let savedPath {
-                try result.data.write(to: URL(fileURLWithPath: savedPath), options: .atomic)
-            }
-
             downscaledCaptures.append(CaptureResult(
                 imageData: result.data,
                 savedPath: capture.savedPath,
@@ -616,7 +612,7 @@ extension ImageTool {
     func downscale(
         imageData: Data,
         maxDimension: Int,
-        format: ImageFormatOption) -> (data: Data, resized: Bool, size: CGSize)?
+        format: ImageFormatOption) -> (data: Data, size: CGSize)?
     {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil }
 
@@ -629,7 +625,7 @@ extension ImageTool {
 
         let longest = max(width, height)
         guard longest > CGFloat(maxDimension) else {
-            return (imageData, false, CGSize(width: width, height: height))
+            return (imageData, CGSize(width: width, height: height))
         }
 
         let options: [CFString: Any] = [
@@ -646,9 +642,6 @@ extension ImageTool {
             return nil
         }
 
-        return (
-            encodedData,
-            true,
-            CGSize(width: thumbnail.width, height: thumbnail.height))
+        return (encodedData, CGSize(width: thumbnail.width, height: thumbnail.height))
     }
 }
