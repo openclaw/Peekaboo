@@ -139,6 +139,7 @@ public struct FileSnapshotInfo: Sendable, Codable {
 /// Errors that can occur during file operations.
 public enum FileServiceError: LocalizedError, Sendable {
     case invalidSnapshotID
+    case invalidRetentionHours
     case snapshotNotFound(String)
     case directoryNotFound(URL)
     case insufficientPermissions(URL)
@@ -149,6 +150,8 @@ public enum FileServiceError: LocalizedError, Sendable {
         case .invalidSnapshotID:
             "Invalid snapshot ID: expected ps1_ plus 32 lowercase hex digits, or a cleanup-only legacy " +
                 "timestamp in 1234567890123-1234 form"
+        case .invalidRetentionHours:
+            "Retention hours must be a positive number of hours"
         case let .snapshotNotFound(snapshotId):
             "Snapshot '\(snapshotId)' not found"
         case let .directoryNotFound(url):

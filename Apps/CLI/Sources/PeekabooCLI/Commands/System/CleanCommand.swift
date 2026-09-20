@@ -29,8 +29,7 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
               a regular snapshot.json; legacy IDs cannot drive automation.
         """,
 
-        showHelpOnEmptyInvocation: true
-    )
+        showHelpOnEmptyInvocation: true)
 
     @Flag(help: "Remove all snapshot data")
     var allSnapshots = false
@@ -76,12 +75,14 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
             if self.allSnapshots {
                 result = try await self.services.files.cleanAllSnapshots(dryRun: self.dryRun)
             } else if let hours = effectiveOlderThan {
+                guard hours > 0 else {
+                    throw ValidationError("--older-than must be a positive number of hours")
+                }
                 result = try await self.services.files.cleanOldSnapshots(hours: hours, dryRun: self.dryRun)
             } else if let snapshotId = snapshot {
                 result = try await self.services.files.cleanSpecificSnapshot(
                     snapshotId: snapshotId,
-                    dryRun: self.dryRun
-                )
+                    dryRun: self.dryRun)
             } else {
                 throw ValidationError("No cleanup option specified")
             }
@@ -94,15 +95,13 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
                 let outputData = CleanResultPayload(
                     result: result,
                     executionTime: executionTime,
-                    requestedSnapshotId: requestedSnapshotId
-                )
+                    requestedSnapshotId: requestedSnapshotId)
                 outputSuccessCodable(data: outputData, logger: self.outputLogger)
             } else {
                 self.printResults(
                     result,
                     executionTime: executionTime,
-                    requestedSnapshotId: requestedSnapshotId
-                )
+                    requestedSnapshotId: requestedSnapshotId)
             }
 
         } catch let error as ValidationError {
@@ -130,8 +129,8 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
     private func printResults(
         _ result: SnapshotCleanResult,
         executionTime: TimeInterval,
-        requestedSnapshotId: String?
-    ) {
+        requestedSnapshotId: String?)
+    {
         if result.dryRun {
             print("🔍 Dry run mode - no files will be deleted")
             print("")
@@ -189,7 +188,7 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
 
 private func handleFileServiceError(_ error: FileServiceError, jsonOutput: Bool, logger: Logger) {
     let errorCode: ErrorCode = switch error {
-    case .invalidSnapshotID:
+    case .invalidSnapshotID, .invalidRetentionHours:
         .VALIDATION_ERROR
     case .snapshotNotFound:
         .SNAPSHOT_NOT_FOUND

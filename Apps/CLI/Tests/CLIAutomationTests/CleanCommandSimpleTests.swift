@@ -90,8 +90,7 @@ struct CleanCommandSimpleTests {
             bytesFreed: 3072,
             snapshotDetails: snapshotDetails,
             dryRun: false,
-            executionTime: 1.5
-        )
+            executionTime: 1.5)
 
         #expect(result.snapshotsRemoved == 2)
         #expect(result.bytesFreed == 3072)
@@ -107,8 +106,7 @@ struct CleanCommandSimpleTests {
 
         let jsonResult = try await InProcessCommandRunner.run(
             ["clean", "--snapshot", missingSnapshotID, "--json"],
-            services: services
-        )
+            services: services)
 
         #expect(jsonResult.exitStatus == 0)
         let jsonData = try #require(jsonResult.stdout.data(using: .utf8))
@@ -119,8 +117,7 @@ struct CleanCommandSimpleTests {
 
         let textResult = try await InProcessCommandRunner.run(
             ["clean", "--snapshot", missingSnapshotID],
-            services: services
-        )
+            services: services)
 
         #expect(textResult.exitStatus == 0)
         #expect(textResult.stdout.contains("was not found on disk"))
@@ -131,21 +128,36 @@ struct CleanCommandSimpleTests {
     @MainActor
     func `Clean invalid snapshot ID reports validation error`() async throws {
         let services = TestServicesFactory.makePeekabooServices(
-            files: StubFileService(cleanSpecificError: .invalidSnapshotID)
-        )
+            files: StubFileService(cleanSpecificError: .invalidSnapshotID))
 
         let result = try await InProcessCommandRunner.run(
             ["clean", "--snapshot", "../outside", "--json"],
-            services: services
-        )
+            services: services)
 
         #expect(result.exitStatus == 1)
         let response = try JSONDecoder().decode(
             JSONResponse.self,
-            from: Data(result.combinedOutput.utf8)
-        )
+            from: Data(result.combinedOutput.utf8))
         #expect(response.success == false)
         #expect(response.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
         #expect(response.error?.message == FileServiceError.invalidSnapshotID.localizedDescription)
+    }
+
+    @Test(arguments: ["-1", "0"])
+    @MainActor
+    func `Clean older-than non-positive hours reports validation error`(_ hours: String) async throws {
+        let services = TestServicesFactory.makePeekabooServices(files: StubFileService())
+
+        let result = try await InProcessCommandRunner.run(
+            ["clean", "--older-than", hours, "--json"],
+            services: services)
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(
+            JSONResponse.self,
+            from: Data(result.combinedOutput.utf8))
+        #expect(response.success == false)
+        #expect(response.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(response.error?.message == "--older-than must be a positive number of hours")
     }
 }

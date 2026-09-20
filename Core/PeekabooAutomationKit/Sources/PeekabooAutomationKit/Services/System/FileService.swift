@@ -71,6 +71,10 @@ public final class FileService: FileServiceProtocol {
     }
 
     public func cleanOldSnapshots(hours: Int, dryRun: Bool) async throws -> SnapshotCleanResult {
+        guard hours > 0 else {
+            throw FileServiceError.invalidRetentionHours
+        }
+
         let cacheDir = self.getSnapshotCacheDirectory()
         var snapshotDetails: [SnapshotDetail] = []
         var totalBytesFreed: Int64 = 0
