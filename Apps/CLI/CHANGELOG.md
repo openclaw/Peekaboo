@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
 - Skip unused local services for explicit Bridge snapshot commands, avoid formatting disabled log messages, and reduce image-conversion and MCP outcome-validation overhead.
 
 ## 4.4.0 - 2026-09-13

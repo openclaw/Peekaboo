@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
 - Skip unused local service initialization when snapshot commands target an explicit Bridge socket.
 - Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.
 - Reduce MCP outcome validation overhead by encoding typed metadata directly, retaining canonical result and retry-safety checks.
