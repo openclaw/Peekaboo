@@ -335,6 +335,51 @@ extension RuntimeHostResolver {
             SystemIdentityResolver.processStartIdentity(getpid()) == owner.processStartIdentity
     }
 
+    static func resolveExplicitAutomaticClassicCapture(
+        context: RemoteResolutionContext,
+        owner: ScreenCaptureKitOwnerLease.OwnerReceipt,
+        permissionRejections: inout [String]
+    ) async throws -> Resolution? {
+        try Task.checkCancellation()
+        let options = context.options
+        guard let explicitSocket = context.candidatePlan.explicitSocket,
+              !options.usesPerToolSnapshotInvalidation,
+              options.requiresScreenCapturePermission,
+              options.transportsCaptureEnginePreference,
+              options.requiresScreenCaptureKitOwnerCapability,
+              self.captureEnginePreferenceForOwnership(options: options, environment: context.environment) == .auto,
+              !self.screenCaptureKitOwnerIsCurrentProcess(owner),
+              let candidate = context.candidatePlan.candidates.first(where: {
+                  NSString(string: $0.socketPath).standardizingPath ==
+                      NSString(string: explicitSocket).standardizingPath
+              }),
+              let entry = context.handshakeCache.entry(for: candidate, identity: context.identity),
+              let hostIdentity = entry.response.hostIdentity,
+              hostIdentity.processIdentifier != owner.processIdentifier,
+              hostIdentity.processStartIdentity != nil,
+              BridgeCapabilityPolicy.supportsClassicCaptureWithoutScreenCaptureKit(for: entry.response),
+              BridgeCapabilityPolicy.supportsDesktopObservationCaptureEngine(for: entry.response),
+              BridgeCapabilityPolicy.screenCaptureKitReadinessRefusal(for: entry.response) == nil
+        else { return nil }
+
+        // Select classic before dispatch so neither permission probing nor a legacy fallback can enter SCK.
+        var classicOptions = options
+        classicOptions.captureEnginePreference = "classic"
+        classicOptions.requiresCaptureEnginePreferenceHost = true
+        classicOptions.requiresCaptureEnginePreferenceCapability = true
+        guard var resolution = try await self.resolveRemoteServices(
+            candidates: [candidate],
+            identity: context.identity,
+            options: classicOptions,
+            snapshotInvalidationRemoteSocketPaths: context.snapshotInvalidationRemoteSocketPaths,
+            permissionRejections: &permissionRejections,
+            makeRemoteServices: context.makeRemoteServices,
+            handshakeCache: context.handshakeCache
+        ) else { return nil }
+        resolution.captureEngineSafetyOverride = .legacy
+        return resolution
+    }
+
     static func screenCaptureKitOwnerCandidates(
         from runtimeCandidates: [ImplicitRemoteCandidate]
     ) -> [ImplicitRemoteCandidate] {
@@ -554,7 +599,8 @@ extension RuntimeHostResolver {
             message: "Selected socket: \(selectedSocket). The ScreenCaptureKit owner is \(ownerText), but its " +
                 "owner socket is unavailable in the process ownership receipt. No capture was dispatched.",
             code: .CAPTURE_FAILED,
-            hint: "Change or remove --bridge-socket to select the exact owner host with the required capture contract.",
+            hint: "Explicit --capture-engine classic can avoid ScreenCaptureKit on this socket if the host proves " +
+                "a safe classic path. Modern capture requires a Bridge host served by the exact owner generation.",
             reason: .runtimeIncompatible,
             screenCaptureKitOwnershipDiagnostic: self.ownerDiagnostic(owner)
         )

@@ -182,7 +182,7 @@ enum RuntimeHostResolver {
             recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker,
             makeRemoteServices: dependencies.makeRemoteServices
         ))
-        resolution.captureEngineSafetyOverride = captureSafety.engineOverride
+        resolution.captureEngineSafetyOverride = captureSafety.engineOverride ?? resolution.captureEngineSafetyOverride
         resolution.toolCapturePreflightRefusal = captureSafety.toolPreflightRefusal
         return resolution
     }
@@ -325,6 +325,13 @@ enum RuntimeHostResolver {
             if let resolved = try await context.resolveRemoteServices(
                 candidates: ownerAwareCandidates,
                 requiredOwner: preferredScreenCaptureKitOwner,
+                permissionRejections: &permissionRejections
+            ) {
+                return resolved
+            }
+            if let resolved = try await self.resolveExplicitAutomaticClassicCapture(
+                context: context,
+                owner: preferredScreenCaptureKitOwner,
                 permissionRejections: &permissionRejections
             ) {
                 return resolved

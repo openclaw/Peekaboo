@@ -250,6 +250,12 @@ on that same socket when it proves no in-process SCK, while auto and modern retu
 AX-only operations remain independent. Typed ownership errors also survive capture, permission, and Bridge error
 conversion; a refused SCK entry does not erase an earlier desktop mutation outcome.
 
+For one-shot CLI capture with an explicit socket, a credible live SCK owner in a different process can make an
+otherwise ready host unsuitable for automatic SCK capture. When that authenticated host also proves classic capture
+and request-local engine selection, the CLI selects explicit classic before transport and keeps the same socket and
+process generation. This automatic-engine exception does not change raw Bridge auto/modern admission, unknown-readiness
+refusals, implicit routing, or persistent MCP startup. Explicit modern remains bound to the exact SCK owner.
+
 Typed terminal error fields additionally require the raw client offer `screenCaptureKitOwnershipDiagnostics`, bound to
 an authenticated operation session. Before computing the terminal response digest and signing its receipt, the host
 removes only the new diagnostic fields for sessions without that offer. This preserves shipped clients that decode

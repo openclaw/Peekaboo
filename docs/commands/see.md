@@ -77,6 +77,12 @@ peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.
 | `--max-elements <n>` | Override maximum collected AX elements (`PEEKABOO_AX_MAX_ELEMENTS` fallback, default 1000). |
 | `--max-children <n>` | Override maximum AX children visited per node (`PEEKABOO_AX_MAX_CHILDREN` fallback, default 250). |
 
+With an explicit `--bridge-socket`, omitted or `auto` capture can use classic on that same host when another process
+holds the ScreenCaptureKit lease. The selected host must pass readiness and authenticate its process generation,
+safe classic path, and request-local engine selection. Explicit `modern`/`sckit` still requires the exact SCK owner;
+the CLI does not reroute, change the target, or stop the other process. Unknown readiness and implicit host selection
+retain their existing refusal rules.
+
 Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to find the active popover and OCR its text.
 
 `--ocr` is additive: Accessibility controls remain the authoritative actionable elements, while Vision text is
