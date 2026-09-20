@@ -89,7 +89,7 @@ enum CommanderRegistryBuilder {
         return CommanderCommandDescriptor(metadata: metadata, type: type, subcommands: childDescriptors)
     }
 
-    private static func commandName(for type: any ParsableCommand.Type) -> String {
+    static func commandName(for type: any ParsableCommand.Type) -> String {
         if let explicit = type.commandDescription.commandName {
             return explicit
         }

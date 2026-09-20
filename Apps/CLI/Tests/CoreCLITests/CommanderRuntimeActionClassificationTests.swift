@@ -8,14 +8,39 @@ struct CommanderRuntimeActionClassificationTests {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         for (path, descriptor) in Self.leafDescriptors(descriptors) {
             let expected = (descriptor.type.init() as? any ActionOutputFormattable)?.defaultEffect != nil
-            let actual = CommanderRuntimeRouter.isActionInvocation(argv: ["peekaboo"] + path)
+            for arguments in [
+                path,
+                ["peekaboo"] + path,
+                ["/tmp/peekaboo"] + path + ["--json"],
+                ["peekaboo"] + path + ["--", "--json"],
+            ] {
+                let actual = CommanderRuntimeRouter.isActionInvocation(argv: arguments)
+                #expect(
+                    actual == expected,
+                    "Incorrect result-envelope classification for \(arguments.joined(separator: " "))"
+                )
+            }
+        }
+    }
 
-            #expect(actual == expected, "Incorrect result-envelope classification for \(path.joined(separator: " "))")
+    @Test
+    func `omitted default subcommands keep the registered leaf classification`() throws {
+        for descriptor in CommanderRegistryBuilder.buildDescriptors() {
+            guard let defaultName = descriptor.metadata.defaultSubcommandName else { continue }
+            let defaultCommand = try #require(descriptor.subcommands.first { $0.metadata.name == defaultName })
+            let expected = (defaultCommand.type.init() as? any ActionOutputFormattable)?.defaultEffect != nil
+            for suffix in [[], ["--json"], ["--unknown-option"], ["--", "--json"]] {
+                let arguments = ["peekaboo", descriptor.metadata.name] + suffix
+                #expect(CommanderRuntimeRouter.isActionInvocation(argv: arguments) == expected)
+            }
         }
     }
 
     @Test
     func `unknown and incomplete command paths are not actions`() {
+        #expect(!CommanderRuntimeRouter.isActionInvocation(argv: []))
+        #expect(!CommanderRuntimeRouter.isActionInvocation(argv: ["peekaboo"]))
+        #expect(!CommanderRuntimeRouter.isActionInvocation(argv: ["peekaboo", "--json", "--version"]))
         #expect(!CommanderRuntimeRouter.isActionInvocation(argv: ["peekaboo", "unknown", "--json"]))
         #expect(!CommanderRuntimeRouter.isActionInvocation(argv: ["peekaboo", "window", "--json"]))
         #expect(!CommanderRuntimeRouter.isActionInvocation(argv: ["peekaboo", "window", "unknown", "--json"]))
