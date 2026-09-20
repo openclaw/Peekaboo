@@ -24,6 +24,32 @@ test('idle shutdown with exitIfIdle requests process.exit 0', () => {
   assert.equal(wrapper.shuttingDown, true);
 });
 
+test('second shutdown while a killed child still exists does not process.exit', () => {
+  const wrapper = new PeekabooMCPWrapper({ binaryPath: '/bin/sh', initialDelayMs: 50, maxDelayMs: 50 });
+  let killCount = 0;
+  wrapper.child = {
+    killed: false,
+    kill() {
+      killCount += 1;
+      this.killed = true;
+    },
+  };
+  const exits = [];
+  const originalExit = process.exit;
+  process.exit = code => {
+    exits.push(code);
+  };
+  try {
+    wrapper.shutdown({ exitIfIdle: true });
+    wrapper.shutdown({ exitIfIdle: true });
+  } finally {
+    process.exit = originalExit;
+  }
+  assert.equal(killCount, 1);
+  assert.equal(wrapper.child.killed, true);
+  assert.deepEqual(exits, []);
+});
+
 test('shutdown clears pending restart backoff', async () => {
   const root = await mkdtemp(join(tmpdir(), 'peekaboo-mcp-restart-'));
   const countPath = join(root, 'count');

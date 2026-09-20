@@ -98,8 +98,10 @@ export class PeekabooMCPWrapper {
   shutdown({ exitIfIdle = false } = {}) {
     this.shuttingDown = true;
     this.clearRestartTimer();
-    if (this.child && !this.child.killed) {
-      this.child.kill('SIGTERM');
+    if (this.child) {
+      if (!this.child.killed) {
+        this.child.kill('SIGTERM');
+      }
       return;
     }
     if (exitIfIdle) {
