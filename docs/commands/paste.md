@@ -18,7 +18,7 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 | `--file-path` | Copy a file or image into the clipboard, then paste. |
 | `--data-base64` + `--uti` | Paste raw base64 payload with explicit UTI (e.g. `public.rtf`). |
 | `--also-text` | Optional plain-text companion when pasting binary. |
-| `--restore-delay <duration>` | Delay before restoring the previous clipboard (default `150ms`; bare values are milliseconds). |
+| `--restore-delay <duration>` | Delay before restoring the previous clipboard (default `150ms`; bare values are milliseconds; maximum `10000ms`). |
 | Target flags | `--app <name>`, `--pid <pid>`, or an exact window selector for background paste. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global Cmd+V. |
 | Focus flags | Foreground focus controls (`--space-switch`, `--no-auto-focus`, etc.). |

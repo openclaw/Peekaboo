@@ -29,7 +29,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     @Flag(name: .long, help: "Allow payloads larger than 10 MB")
     var allowLarge = false
 
-    @Option(help: "Delay before restoring the previous clipboard (bare values are milliseconds; default: 150ms)")
+    @Option(
+        help: "Delay before restoring the previous clipboard (bare values are milliseconds; " +
+            "default: 150ms, maximum 10000ms)"
+    )
     var restoreDelay: CLIDuration?
 
     @OptionGroup var target: InteractionTargetOptions
@@ -47,6 +50,19 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
     private var resolvedRestoreDelayMs: Int {
         self.restoreDelay?.roundedMilliseconds ?? 150
+    }
+
+    mutating func validate() throws {
+        try self.target.validate()
+        try KeyboardDeliverySupport.validateForegroundFlags(
+            foreground: self.focusOptions.foreground,
+            focusOptions: self.focusOptions
+        )
+        guard (0...ClipboardPasteTransactionGate.maximumRestoreDelayMilliseconds)
+            .contains(self.resolvedRestoreDelayMs)
+        else {
+            throw ValidationError("--restore-delay must be between 0 and 10000ms")
+        }
     }
 
     private var hasExplicitPayload: Bool {
@@ -67,11 +83,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         do {
-            try self.target.validate()
-            try KeyboardDeliverySupport.validateForegroundFlags(
-                foreground: self.focusOptions.foreground,
-                focusOptions: self.focusOptions
-            )
+            try self.validate()
 
             guard self.hasExplicitPayload else {
                 try await self.pasteCurrentClipboard(
