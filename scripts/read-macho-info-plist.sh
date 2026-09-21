@@ -25,12 +25,18 @@ done
 
 [[ "$BINARY" == /* && -f "$BINARY" && ! -L "$BINARY" ]] || fail 'invalid binary path'
 architectures="$(/usr/bin/lipo -archs "$BINARY")" || fail 'could not read architectures'
+binary_info="$(/usr/bin/lipo -info "$BINARY")" || fail 'could not inspect architecture container'
 work_dir="$(mktemp -d /tmp/peekaboo-macho-info.XXXXXX)"
 trap 'rm -rf "$work_dir"' EXIT
 expected_value=""
+has_expected_value=false
 for architecture in $architectures; do
-  thin_binary="$work_dir/thin-$architecture"
-  /usr/bin/lipo -thin "$architecture" "$BINARY" -output "$thin_binary" || fail 'could not thin architecture'
+  thin_binary="$BINARY"
+  # A fat container can hold just one architecture; its offsets still require thinning.
+  if [[ "$binary_info" != 'Non-fat file:'* ]]; then
+    thin_binary="$work_dir/thin-$architecture"
+    /usr/bin/lipo -thin "$architecture" "$BINARY" -output "$thin_binary" || fail 'could not thin architecture'
+  fi
   load_commands="$(/usr/bin/otool -l "$thin_binary")" || fail 'could not inspect Mach-O load commands'
   section="$(/usr/bin/awk '
     $1 == "sectname" { wanted = ($2 == "__info_plist"); segment = ""; size = "" }
@@ -49,12 +55,14 @@ for architecture in $architectures; do
   /bin/dd if="$thin_binary" of="$plist_file" bs=1 skip="$offset" count="$size" 2>/dev/null
   /usr/bin/plutil -lint "$plist_file" >/dev/null || fail 'embedded Info.plist is invalid'
   if [[ -n "$KEY" ]]; then
-    current_value="$(/usr/bin/plutil -extract "$KEY" raw -o - "$plist_file")"
+    current_value="$(/usr/bin/plutil -extract "$KEY" raw -o - "$plist_file")" || \
+      fail "embedded Info.plist key missing: $KEY"
   else
     current_value="$(/bin/cat "$plist_file")"
   fi
-  if [[ -z "$expected_value" ]]; then
+  if [[ "$has_expected_value" == false ]]; then
     expected_value="$current_value"
+    has_expected_value=true
   elif [[ "$current_value" != "$expected_value" ]]; then
     fail "embedded Info.plist differs for architecture $architecture"
   fi
