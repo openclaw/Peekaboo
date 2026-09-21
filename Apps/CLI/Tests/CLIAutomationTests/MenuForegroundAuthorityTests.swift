@@ -136,7 +136,7 @@ struct MenuForegroundAuthorityTests {
 
     private struct Fixture {
         let application: ServiceApplicationInfo
-        let services: PeekabooServices
+        let services: InputExecutionHostServices
         let applications: StubApplicationService
         let windows: OutcomeStubWindowService
         let menu: OutcomeStubMenuService
@@ -169,6 +169,7 @@ struct MenuForegroundAuthorityTests {
         )
         let windows = OutcomeStubWindowService(windowsByApp: ["PID:42": [window]])
         windows.actionOutcome = .confirmedChange(
+            route: .bridge,
             delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
             unitCount: .one
         )
@@ -176,11 +177,13 @@ struct MenuForegroundAuthorityTests {
             menusByApp: Dictionary(uniqueKeysWithValues: menuIdentifiers.map { ($0, structure) })
         )
         let applications = StubApplicationService(applications: [application])
-        let services = TestServicesFactory.makePeekabooServices(
+        let base = TestServicesFactory.makePeekabooServices(
             applications: applications,
             windows: windows,
             menu: menu
         )
+        // Synthetic window receipts must reach the injected focus service, never native desktop focus.
+        let services = InputExecutionHostServices(host: .remote, base: base)
         return Fixture(
             application: application,
             services: services,
