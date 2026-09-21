@@ -331,6 +331,7 @@ verify_binary_artifact() {
     local label="$2"
     local require_online_notarization="${3:-$MAC_APP_NOTARIZE}"
     local expected_source_commit="${4:-}"
+    local expected_architecture="${5:-${CLI_ARCHITECTURES[0]}}"
     local version_output
     local provenance_json
     local source_commit
@@ -364,11 +365,12 @@ verify_binary_artifact() {
     fi
 
     lipo_output=$(lipo -archs "$binary_path")
-    if [ "$UNIVERSAL" = true ]; then
+    if [ "$expected_architecture" = universal ]; then
         case " $lipo_output " in *" x86_64 "*) ;; *) fail "$label binary is missing x86_64 slice" ;; esac
         case " $lipo_output " in *" arm64 "*) ;; *) fail "$label binary is missing arm64 slice" ;; esac
     else
-        case " $lipo_output " in *" arm64 "*) ;; *) fail "$label binary is missing arm64 slice" ;; esac
+        [[ "$lipo_output" == "$expected_architecture" ]] ||
+            fail "$label binary must contain only the $expected_architecture slice"
     fi
 
     version_output=$("$binary_path" --version)
@@ -471,15 +473,17 @@ EOF
 }
 
 verify_cli_tarball() {
-    local tarball_path="$1"
+    local tarball_path="$1" architecture="$2"
+    local artifact_dir="peekaboo-macos-$architecture"
     local verify_dir
     verify_dir=$(mktemp -d /tmp/peekaboo-cli-verify.XXXXXX)
 
     [ -f "$tarball_path" ] || fail "CLI tarball missing: $tarball_path"
-    tar -tzf "$tarball_path" | grep -Fx "$CLI_ARTIFACT_DIR/peekaboo" >/dev/null ||
-        fail "CLI tarball does not contain $CLI_ARTIFACT_DIR/peekaboo"
+    tar -tzf "$tarball_path" | grep -Fx "$artifact_dir/peekaboo" >/dev/null ||
+        fail "CLI tarball does not contain $artifact_dir/peekaboo"
     tar -xzf "$tarball_path" -C "$verify_dir"
-    verify_binary_artifact "$verify_dir/$CLI_ARTIFACT_DIR/peekaboo" "CLI tarball"
+    verify_binary_artifact "$verify_dir/$artifact_dir/peekaboo" "CLI $architecture tarball" \
+        "$MAC_APP_NOTARIZE" "$RELEASE_SOURCE_COMMIT" "$architecture"
     rm -rf "$verify_dir"
 }
 
@@ -543,12 +547,15 @@ EOF
 }
 
 verify_checksums_file() {
-    local checksum_path="$RELEASE_DIR/checksums.txt"
+    local checksum_path="$RELEASE_DIR/checksums.txt" architecture tarball_name
     [ -f "$checksum_path" ] || fail "checksums.txt missing"
     (cd "$RELEASE_DIR" && shasum -a 256 -c checksums.txt >/dev/null) ||
         fail "checksums.txt verification failed"
-    grep -Fq "  $CLI_TARBALL_NAME" "$checksum_path" ||
-        fail "checksums.txt missing $CLI_TARBALL_NAME"
+    for architecture in "${CLI_ARCHITECTURES[@]}"; do
+        tarball_name="peekaboo-macos-$architecture.tar.gz"
+        grep -Fq "  $tarball_name" "$checksum_path" ||
+            fail "checksums.txt missing $tarball_name"
+    done
     grep -Fq "  $(basename "$NPM_PACKAGE_PATH")" "$checksum_path" ||
         fail "checksums.txt missing $(basename "$NPM_PACKAGE_PATH")"
     grep -Fq "  release-plan.json" "$checksum_path" ||
@@ -572,7 +579,7 @@ verify_checksums_file() {
 }
 
 verify_release_artifacts() {
-    local APP_ZIP_TREE_SHA256
+    local APP_ZIP_TREE_SHA256 architecture
     echo -e "\n${BLUE}Verifying release artifacts...${NC}"
     require_command tar
     require_command shasum
@@ -580,7 +587,9 @@ verify_release_artifacts() {
     require_command codesign
     assert_release_plan
 
-    verify_cli_tarball "$RELEASE_DIR/$CLI_TARBALL_NAME"
+    for architecture in "${CLI_ARCHITECTURES[@]}"; do
+        verify_cli_tarball "$RELEASE_DIR/peekaboo-macos-$architecture.tar.gz" "$architecture"
+    done
     verify_npm_tarball "$NPM_PACKAGE_PATH"
     verify_checksums_file
 
@@ -611,13 +620,16 @@ verify_release_artifacts() {
 }
 
 expected_release_assets_json() {
-    local expected_assets expected_assets_json
+    local expected_assets expected_assets_json architecture tarball_name
     expected_assets=(
-        "$CLI_TARBALL_NAME=$(stat -f%z "$RELEASE_DIR/$CLI_TARBALL_NAME")=$(sha256_file "$RELEASE_DIR/$CLI_TARBALL_NAME")"
         "$(basename "$NPM_PACKAGE_PATH")=$(stat -f%z "$NPM_PACKAGE_PATH")=$(sha256_file "$NPM_PACKAGE_PATH")"
         "checksums.txt=$(stat -f%z "$RELEASE_DIR/checksums.txt")=$(sha256_file "$RELEASE_DIR/checksums.txt")"
         "release-plan.json=$(stat -f%z "$RELEASE_DIR/release-plan.json")=$(sha256_file "$RELEASE_DIR/release-plan.json")"
     )
+    for architecture in "${CLI_ARCHITECTURES[@]}"; do
+        tarball_name="peekaboo-macos-$architecture.tar.gz"
+        expected_assets+=("$tarball_name=$(stat -f%z "$RELEASE_DIR/$tarball_name")=$(sha256_file "$RELEASE_DIR/$tarball_name")")
+    done
     if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
         expected_assets+=("release-proof.md=$(stat -f%z "$RELEASE_DIR/release-proof.md")=$(sha256_file "$RELEASE_DIR/release-proof.md")")
     fi
@@ -943,8 +955,12 @@ process.stdout.write(JSON.stringify({
 }
 
 prepare_release_assets() {
-    RELEASE_ASSETS=(
-        "$RELEASE_DIR/$CLI_TARBALL_NAME"
+    local architecture
+    RELEASE_ASSETS=()
+    for architecture in "${CLI_ARCHITECTURES[@]}"; do
+        RELEASE_ASSETS+=("$RELEASE_DIR/peekaboo-macos-$architecture.tar.gz")
+    done
+    RELEASE_ASSETS+=(
         "$NPM_PACKAGE_PATH"
         "$RELEASE_DIR/release-plan.json"
     )
@@ -1039,8 +1055,6 @@ process.stdout.write([
         fail "Release helper differs from the retained release plan"
     RELEASE_HELPER_PIN="$helper_pin"
 
-    CLI_ARTIFACT_DIR=peekaboo-macos-universal
-    CLI_TARBALL_NAME=peekaboo-macos-universal.tar.gz
     MAC_APP_ZIP_PATH="$RELEASE_DIR/Peekaboo-${VERSION}.app.zip"
     MAC_APP_DMG_PATH="$RELEASE_DIR/Peekaboo-${VERSION}.dmg"
     shopt -s nullglob
@@ -1239,6 +1253,11 @@ OBSERVED_RELEASE_OPTION_FINGERPRINT="$SKIP_CHECKS|$CREATE_GITHUB_RELEASE|$PUBLIS
 [[ "$RELEASE_OPTION_FINGERPRINT" == "$OBSERVED_RELEASE_OPTION_FINGERPRINT" ]] ||
     fail "Release manifest changed command-line publication authority"
 validate_publication_options
+# This inventory also owns retained-publication verification and upload.
+CLI_ARCHITECTURES=(arm64)
+if [ "$UNIVERSAL" = true ]; then
+    CLI_ARCHITECTURES=(universal arm64 x86_64)
+fi
 CLI_SIGN_IDENTITY="${MAC_RELEASE_CLI_CODESIGN_IDENTITY:-Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)}"
 CLI_SIGN_TEAM_ID="${MAC_RELEASE_CLI_CODESIGN_TEAM_ID:-FWJYW4S8P8}"
 CLI_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$CLI_SIGN_TEAM_ID\""
@@ -1316,13 +1335,9 @@ echo -e "${BLUE}Building version: ${VERSION}${NC}"
 if [ "$UNIVERSAL" = true ]; then
     echo -e "\n${BLUE}Building universal binary...${NC}"
     BUILD_SCRIPT="build:swift:all"
-    CLI_ARTIFACT_DIR="peekaboo-macos-universal"
-    CLI_TARBALL_NAME="peekaboo-macos-universal.tar.gz"
 else
     echo -e "\n${BLUE}Building arm64 binary...${NC}"
     BUILD_SCRIPT="build:swift"
-    CLI_ARTIFACT_DIR="peekaboo-macos-arm64"
-    CLI_TARBALL_NAME="peekaboo-macos-arm64.tar.gz"
 fi
 
 if [ "$REUSE_BUILT_CLI" = true ]; then
@@ -1368,64 +1383,11 @@ if [[ "$CREATE_GITHUB_RELEASE" == true && "$PUBLISH_NPM" == true &&
 fi
 write_release_plan
 
-# Create CLI release directory
-CLI_RELEASE_DIR="$BUILD_DIR/$CLI_ARTIFACT_DIR"
-mkdir -p "$CLI_RELEASE_DIR"
-
-# Copy files for CLI release
-cp "$PROJECT_ROOT/peekaboo" "$CLI_RELEASE_DIR/"
-for runtime_library in "$PROJECT_ROOT"/libswiftCompatibility*.dylib; do
-    [ -e "$runtime_library" ] || continue
-    cp "$runtime_library" "$CLI_RELEASE_DIR/"
+# Package from copies so npm retains the original universal CLI and libraries.
+for architecture in "${CLI_ARCHITECTURES[@]}"; do
+    "$PROJECT_ROOT/scripts/package-cli-artifact.sh" \
+        "$PROJECT_ROOT" "$BUILD_DIR" "$RELEASE_DIR" "$VERSION" "$architecture"
 done
-cp "$PROJECT_ROOT/LICENSE" "$CLI_RELEASE_DIR/"
-echo "$VERSION" > "$CLI_RELEASE_DIR/VERSION"
-
-# Create minimal README for binary distribution
-cat > "$CLI_RELEASE_DIR/README.md" << EOF
-# Peekaboo CLI v${VERSION}
-
-Lightning-fast macOS screenshots & AI vision analysis.
-
-## Installation
-
-\`\`\`bash
-# Make binary executable
-chmod +x peekaboo
-
-# Move to your PATH
-sudo mv peekaboo /usr/local/bin/
-
-# Verify installation
-peekaboo --version
-\`\`\`
-
-## Quick Start
-
-\`\`\`bash
-# Capture screenshot
-peekaboo see --no-elements --app Safari --path screenshot.png
-
-# List applications
-peekaboo app list
-
-# Capture and analyze a window with AI
-peekaboo see --app Safari --analyze "What is shown?"
-\`\`\`
-
-## Documentation
-
-Full documentation: https://github.com/openclaw/Peekaboo
-
-## License
-
-MIT License - see LICENSE file
-EOF
-
-# Create tarball
-echo -e "${BLUE}Creating tarball...${NC}"
-cd "$BUILD_DIR"
-tar -czf "$RELEASE_DIR/$CLI_TARBALL_NAME" "$CLI_ARTIFACT_DIR"
 
 # Create npm package tarball
 echo -e "${BLUE}Creating npm package...${NC}"
@@ -1446,7 +1408,10 @@ cd "$RELEASE_DIR"
 
 # Generate SHA256 checksums
 if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$CLI_TARBALL_NAME" > checksums.txt
+    : > checksums.txt
+    for architecture in "${CLI_ARCHITECTURES[@]}"; do
+        shasum -a 256 "peekaboo-macos-$architecture.tar.gz" >> checksums.txt
+    done
     shasum -a 256 "$(basename "$NPM_PACKAGE")" >> checksums.txt
     shasum -a 256 "release-plan.json" >> checksums.txt
     if [[ -n "$RELEASE_PROOF_SHA256" ]]; then
@@ -1571,6 +1536,6 @@ fi
 echo -e "\n${GREEN}🎉 Release build complete!${NC}"
 echo -e "${BLUE}Next steps:${NC}"
 echo "1. Review artifacts in: $RELEASE_DIR"
-echo "2. Test the binary: tar -xzf $RELEASE_DIR/$CLI_TARBALL_NAME && ./$CLI_ARTIFACT_DIR/peekaboo --version"
+echo "2. Extract a CLI archive and follow its README to install the binary and runtime libraries"
 echo "3. Follow docs/RELEASING.md; use --resume-publication after any partial public action"
 echo "4. Update Homebrew formula with new version and SHA256"

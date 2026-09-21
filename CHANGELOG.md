@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add smaller arm64 and x86_64 CLI release archives alongside the universal archive, with matching Swift runtime libraries and checksums.
+
 - Avoid rewriting temporary screenshots during MCP image resizing while preserving validated, atomic final output.
 - Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
 - Let automatic screenshots use the proven classic path on an explicitly selected Bridge host when another process owns ScreenCaptureKit; keep explicit modern capture strict.

@@ -363,6 +363,9 @@ assert.equal(foreignRun.stdout, publishedBody);
 const expectedAssets = {
   'checksums.txt': { size: 42, sha256: 'c'.repeat(64) },
   'release-plan.json': { size: 84, sha256: 'd'.repeat(64) },
+  'peekaboo-macos-universal.tar.gz': { size: 300, sha256: '1'.repeat(64) },
+  'peekaboo-macos-arm64.tar.gz': { size: 150, sha256: '2'.repeat(64) },
+  'peekaboo-macos-x86_64.tar.gz': { size: 160, sha256: '3'.repeat(64) },
 };
 const release = {
   tagName: 'v9.8.7',
@@ -409,6 +412,9 @@ assert.throws(() => validateGitHubRelease({
 }), /tag differs from the frozen source commit/);
 for (const changed of [
   { ...release, isDraft: false },
+  { ...release, assets: release.assets.filter(asset => asset.name !== 'peekaboo-macos-arm64.tar.gz') },
+  { ...release, assets: release.assets.map(asset => asset.name === 'peekaboo-macos-x86_64.tar.gz' ?
+    { ...asset, digest: 'sha256:' + '4'.repeat(64) } : asset) },
   { ...release, body: `${notes}drift\n` },
   { ...release, assets: release.assets.map((asset, index) => index === 0 ? { ...asset, size: 43 } : asset) },
   { ...release, assets: release.assets.map((asset, index) => index === 0 ?
