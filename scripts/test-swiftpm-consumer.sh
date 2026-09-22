@@ -152,6 +152,6 @@ _ = makeEmbeddedRuntime
 EOF
 
 swift package --package-path "${consumer_dir}" resolve
-swift build --package-path "${consumer_dir}" --configuration release
+swift build ${PEEKABOO_BUILD_JOBS:+--jobs "$PEEKABOO_BUILD_JOBS"} --package-path "${consumer_dir}" --configuration release
 
 printf 'SwiftPM consumer contract passed for: %s\n' "${ROOT_DIR}"

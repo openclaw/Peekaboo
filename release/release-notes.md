@@ -1,15 +1,28 @@
-## 4.4.0 - 2026-09-13
+## 4.5.0 - 2026-09-22
 
-**Highlights:** Capture works again next to Claude/OpenClaw, hosts embedding PeekabooMCPServer can supply their own MCP transport, and Chrome DevTools MCP 1.9.0 no longer activates DevTools during background reads.
+**Highlights:** Prevent snapshot data loss, crashes, and stuck desktop mutations; restore reliable Chrome connections; and ship smaller architecture-specific CLI downloads with automatic Homebrew selection.
 
-- Capture no longer refuses when other apps such as Claude or OpenClaw are running; scope ScreenCaptureKit coordination to Peekaboo hosts and preserve real capture errors.
-- Let hosts embedding `PeekabooMCPServer` supply their own MCP transport with the same completion and cleanup lifecycle as stdio. Thanks @semyoren! #716.
-- Update Chrome DevTools MCP to 1.9.0 with a verified telemetry opt-out patch that prevents background reads from probing or activating DevTools; preserve single-file uploads across the provider's new array schema and re-audit browser routing.
-- Fix host-routed screen observations with Accessibility elements by validating their semantic owner separately from the screen raster target. #715, #710.
-- Keep caller screenshot destinations intact when remote evidence is rejected or raw output was not requested, staging ordinary captures before file publication as well as ROI captures. #710.
-- Fix application name and bundle resolution being blocked by reaped processes lingering in LaunchServices; require repeated native absence while retaining refusal for uncertain or changing process identities. #709.
-- Keep background window close, restore, and maximize callbacks on the main thread when the target belongs to the Peekaboo host, preventing embedded macOS apps from crashing while preserving exact-window validation and remote AX deadlines.
-- Keep action capture running until it samples after the child finishes and retain exact sample-boundary proof in new manifests; capture caps still fail incomplete coverage, while older version-1 manifests remain readable as legacy elapsed-time evidence.
-- Clarify observation evidence failures and runtime refusal guidance so same-build verification errors do not imply that an update will fix them. #710.
-- Strengthen selected-CLI guidance checks, repair published guide links, restore the read-only clipboard example, run guidance checks in regular macOS CI, and make noncooperative detection timeout proof independent of scheduler timing.
-- Update Linux validation to Swift 6.3.3 and CI plus the pinned qualification runtime to Node 26.8.2 with verified universal binary checksums; smoke-test the built CLI catalog in CI.
+- Reject zero and negative snapshot retention hours before cleanup can remove any data. Thanks @SebTardif! #751.
+- Avoid stack overflow when normalizing deeply nested OpenAI model prefixes while preserving generation settings. Thanks @SebTardif! #752.
+- Validate menu-bar window-list status and counts before allocating buffers or consuming results, preventing negative-count crashes. Thanks @SebTardif! #753.
+- Reject overflowing scroll amounts before focus or input instead of trapping in tick arithmetic; preserve signed and zero amounts.
+- Bound desktop mutation lock acquisition and reserve concurrent mutation IDs before waiting, preventing hangs and orphaned barriers. Thanks @SebTardif! #758.
+- Preserve valid long input delays and prevent overflow in typing and scrolling waits. Thanks @SebTardif! #746, #747.
+- Connect to approval-mode Chrome with one persistent WebSocket for verification and page operations; preserve the approval window, explain HTTP discovery 404s, and refuse silent reconnection or endpoint redirects. Thanks @steipete for the report!
+- Fix CLI browser page actions refusing after a successful connection by keeping scoped-session epochs out of root Bridge requests.
+- Fix foreground browser commands being blocked by an untrusted historical daemon; retain host and receipt checks, allow explicitly selected browser-capable GUI hosts, and distinguish Bridge authentication failures from Chrome approval failures. #739.
+- Accept IPv6 loopback browser endpoints and reject TCP ports outside 1–65535 before discovery or receipt validation.
+- Preserve snapshot lookup failures during clicks instead of misreporting timeouts and other errors as stale snapshots. Thanks @SebTardif! #756.
+- Reject empty MCP Accessibility results for an explicitly requested window while preserving empty app and frontmost inspections. Thanks @SebTardif! #755.
+- Let automatic screenshots use the proven classic path on an explicitly selected Bridge host when another process owns ScreenCaptureKit; keep explicit modern capture strict.
+- Stop Inspector screen-change notifications when monitoring ends or its controller is released, and prevent duplicate observer registration. Thanks @SebTardif! #754.
+- Add smaller arm64 and x86_64 CLI release archives alongside the universal archive, with matching Swift runtime libraries and checksums.
+- Use architecture-specific macOS CLI archives for Homebrew when a release provides the complete verified pair. Thanks @vincentkoc! #766.
+- Read embedded source stamps from single-architecture CLI binaries as well as universal builds, retaining cross-slice consistency checks.
+- Avoid rewriting temporary screenshots during MCP image resizing while preserving validated, atomic final output.
+- Skip unused local service initialization when snapshot commands target an explicit Bridge socket.
+- Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
+- Reduce MCP outcome validation overhead by encoding typed metadata directly, retaining canonical result and retry-safety checks.
+- Skip formatting metadata for disabled CLI log messages.
+- Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.
+- Refresh CI and the verified qualification runtime to Node 26.9.0, pnpm to 11.27.1, Swift Configuration to 1.2.1, KeyboardShortcuts to 3.1.0, and Sparkle to 2.10.0 for current macOS compatibility fixes.

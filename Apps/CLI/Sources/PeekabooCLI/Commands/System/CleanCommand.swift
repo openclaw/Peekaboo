@@ -29,7 +29,8 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
               a regular snapshot.json; legacy IDs cannot drive automation.
         """,
 
-        showHelpOnEmptyInvocation: true)
+        showHelpOnEmptyInvocation: true
+    )
 
     @Flag(help: "Remove all snapshot data")
     var allSnapshots = false
@@ -80,7 +81,8 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
             } else if let snapshotId = snapshot {
                 result = try await self.services.files.cleanSpecificSnapshot(
                     snapshotId: snapshotId,
-                    dryRun: self.dryRun)
+                    dryRun: self.dryRun
+                )
             } else {
                 throw ValidationError("No cleanup option specified")
             }
@@ -91,13 +93,15 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
                 let outputData = CleanResultPayload(
                     result: result,
                     executionTime: executionTime,
-                    requestedSnapshotId: requestedSnapshotId)
+                    requestedSnapshotId: requestedSnapshotId
+                )
                 outputSuccessCodable(data: outputData, logger: self.outputLogger)
             } else {
                 self.printResults(
                     result,
                     executionTime: executionTime,
-                    requestedSnapshotId: requestedSnapshotId)
+                    requestedSnapshotId: requestedSnapshotId
+                )
             }
 
         } catch let error as ValidationError {
@@ -125,8 +129,8 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
     private func printResults(
         _ result: SnapshotCleanResult,
         executionTime: TimeInterval,
-        requestedSnapshotId: String?)
-    {
+        requestedSnapshotId: String?
+    ) {
         if result.dryRun {
             print("🔍 Dry run mode - no files will be deleted")
             print("")

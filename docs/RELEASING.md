@@ -55,6 +55,12 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 
 ## 2. Validate the preparation patch
 
+On a busy Mac, run the commands below and the release driver under `nice -n 19`.
+Set `PEEKABOO_BUILD_JOBS=2` to cap the preflight, safe tests, consumer check, and app build;
+append `--jobs 2` to `SWIFT_OPTIMIZATION_FLAGS` for the architecture-specific CLI builds
+(default optimization flags: `-Xswiftc -Osize -Xlinker -dead_strip`). The preflight compiler
+check allows 90 minutes so low-priority builds can complete without skipping a gate.
+
 ```bash
 pnpm run format
 pnpm run lint

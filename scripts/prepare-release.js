@@ -286,10 +286,10 @@ function checkSwift() {
   try {
     // Capture build output to check for warnings. Start from a clean SwiftPM
     // state so an interrupted release build cannot poison the next preflight.
-    swiftBuildOutput = execSync('python3 scripts/setup-swift-workspace.py setup && cd Apps/CLI && swift package reset && python3 ../../scripts/setup-swift-workspace.py run --release -- swift build --arch arm64 -c release 2>&1', {
+    swiftBuildOutput = execSync('python3 scripts/setup-swift-workspace.py setup && cd Apps/CLI && swift package reset && python3 ../../scripts/setup-swift-workspace.py run --release -- swift build ${PEEKABOO_BUILD_JOBS:+--jobs "$PEEKABOO_BUILD_JOBS"} --arch arm64 -c release 2>&1', {
       cwd: projectRoot,
       encoding: 'utf8',
-      timeout: 600_000
+      timeout: 5_400_000
     });
   } catch (error) {
     logError('Swift build failed during analyzer check');
