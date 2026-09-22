@@ -11,6 +11,7 @@
 - Let automatic screenshots use the proven classic path on an explicitly selected Bridge host when another process owns ScreenCaptureKit; keep explicit modern capture strict.
 - Skip unused local service initialization when snapshot commands target an explicit Bridge socket.
 - Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.
+- Avoid stack overflow when normalizing deeply nested OpenAI model prefixes while preserving generation settings. Thanks @SebTardif! #752.
 - Reduce MCP outcome validation overhead by encoding typed metadata directly, retaining canonical result and retry-safety checks.
 - Skip formatting metadata for disabled CLI log messages.
 - Validate menu-bar window-list status and counts before allocating buffers or consuming results, preventing negative-count crashes. Thanks @SebTardif! #753.
