@@ -924,7 +924,7 @@ extension TypeService {
                 keyboardDelivery: .init(mechanism: .globalEvents, mode: .foreground))
 
             if delay > 0 {
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try await Task.sleep(for: .seconds(delay))
             }
         }
     }

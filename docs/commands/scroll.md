@@ -17,7 +17,7 @@ read_when:
 | `--on <element-id>` | Scroll relative to a Peekaboo element from the current/most recent snapshot. |
 | `--snapshot <id>` | Override the snapshot used to resolve `--on`. |
 | `--foreground` | Focus the target and allow synthetic wheel events at the physical pointer. Required without `--on`. |
-| `--delay <duration>` | Time between synthetic ticks (default `0`; bare values are milliseconds; nonzero requires `--foreground`). |
+| `--delay <duration>` | Time between synthetic ticks (default `0`; bare values are milliseconds; nonzero requires `--foreground`). Valid long delays remain cancellable; cancelling a wait stops the remaining ticks. |
 | `--smooth` | Use smaller synthetic increments; requires `--foreground`. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>`. Background mode uses these only to resolve/refresh the target; foreground mode focuses it first. |
 | Foreground focus flags | `--space-switch`, `--bring-to-current-space`, timeout, and retry controls require `--foreground`. |

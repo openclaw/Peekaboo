@@ -9,6 +9,7 @@
 - Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
 - Stop Inspector screen-change notifications when monitoring ends or its controller is released, and prevent duplicate observer registration. Thanks @SebTardif! #754.
 - Let automatic screenshots use the proven classic path on an explicitly selected Bridge host when another process owns ScreenCaptureKit; keep explicit modern capture strict.
+- Preserve valid long input delays and prevent overflow in typing and scrolling waits. Thanks @SebTardif! #746, #747.
 - Skip unused local service initialization when snapshot commands target an explicit Bridge socket.
 - Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.
 - Avoid stack overflow when normalizing deeply nested OpenAI model prefixes while preserving generation settings. Thanks @SebTardif! #752.

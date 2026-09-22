@@ -453,7 +453,7 @@ public final class ScrollService {
 
     private func sleepBetweenTicks(context: ScrollExecutionContext) async throws {
         if context.delay > 0 {
-            try await Task.sleep(nanoseconds: UInt64(context.delay) * 1_000_000)
+            try await Task.sleep(for: .milliseconds(context.delay))
         } else if context.smooth {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
