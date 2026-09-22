@@ -110,6 +110,18 @@ Call `image` or `see` against a known Playground fixture and confirm the respons
 
 Capture a fresh `see` snapshot, then call `click`, `type`, or another interaction tool with an identifier from that snapshot. Verify the result in Playground's OSLog output.
 
+### Mutation Reservation and Cancellation
+
+CLI and MCP mutation preparation waits asynchronously for the cross-process watermark lock, with a 15-second
+monotonic deadline. A timeout or cancellation before acquisition refuses the action without dispatching input.
+Embedded `MCPToolSnapshotMutationCoordinating` implementations may suspend in `prepareMutation` and
+`prepareConcurrentMutation`; callers must await them. The context revalidates the frozen target after preparation,
+cancels unused reservations on refusal or cancellation, and retains recovery debt if cancellation cleanup fails.
+
+Focused regressions use disposable lock directories and synthetic process generations. They cover duplicate
+reservation IDs, cancellation and retry, independent concurrent reservations, and process replacement during
+preparation without sending input to the desktop.
+
 ### Agent Integration
 
 Provider-backed `agent` and `analyze` calls require configuration at server startup. Test missing-credential and invalid-model failures as well as the successful path.

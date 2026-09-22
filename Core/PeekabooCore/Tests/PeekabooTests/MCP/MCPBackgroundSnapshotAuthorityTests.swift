@@ -1,4 +1,6 @@
 import CoreGraphics
+import Foundation
+import MCP
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
@@ -39,6 +41,74 @@ struct MCPBackgroundSnapshotAuthorityTests {
         #expect(!response.isError)
         #expect(automation.lastPerformAction?.target == "B1")
         #expect(automation.lastPerformAction?.snapshotId == snapshotID)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `target generation is revalidated after preparation suspends`(cancelSucceeds: Bool) async throws {
+        let identity = AutomationTestFixtures.processIdentity(processIdentifier: 42, processStartIdentity: 1001)
+        let graph = try LinkedApplicationInventoryGraph(nodes: [
+            .init(application: Self.processScopedApplication(processIdentity: identity), windows: []),
+        ])
+        let applications = ScriptedApplicationInventoryService(graph: graph)
+        let coordinator = SuspendingAuthorityCoordinator(cancelSucceeds: cancelSucceeds) {
+            applications.applications = [Self.processScopedApplication(processIdentity:
+                AutomationTestFixtures.processIdentity(processIdentifier: 42, processStartIdentity: 1002))]
+        }
+        let snapshotID = SnapshotReferenceFixtures.id(215)
+        let context = try await Self.makeProcessScopedContext(
+            snapshotID: snapshotID,
+            processIdentity: identity,
+            automation: StubAutomationService(),
+            applications: applications,
+            snapshotMutationCoordinator: coordinator)
+        let response = try await context.execute(
+            tool: PreparedAuthorityTool(coordinator: coordinator),
+            arguments: ToolArguments(raw: ["on": "B1", "action": "AXIncrement", "snapshot": snapshotID]))
+
+        #expect(response.isError)
+        Self.expectSafeTargetRefusal(response)
+        #expect(coordinator.prepareCount == 1)
+        #expect(coordinator.dispatchCount == 0)
+        #expect(coordinator.cancelCount == 1)
+        #expect(coordinator.completionCount == 0)
+        let pending = await context.snapshotExecutionGate.pendingInvalidation()
+        #expect((pending != nil) == !cancelSucceeds)
+        if !cancelSucceeds {
+            #expect(pending?.scope.id == coordinator.preparedScope?.id)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `prepared target either dispatches or cancels without abandoning its reservation`(cancel: Bool) async throws {
+        let identity = AutomationTestFixtures.processIdentity(processIdentifier: 42, processStartIdentity: 1001)
+        let coordinator = SuspendingAuthorityCoordinator {
+            if cancel {
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+        }
+        let snapshotID = SnapshotReferenceFixtures.id(216)
+        let context = try await Self.makeProcessScopedContext(
+            snapshotID: snapshotID,
+            processIdentity: identity,
+            automation: StubAutomationService(),
+            snapshotMutationCoordinator: coordinator)
+        let request = Task { @MainActor in
+            try await context.execute(
+                tool: PreparedAuthorityTool(coordinator: coordinator),
+                arguments: ToolArguments(raw: ["on": "B1", "action": "AXIncrement", "snapshot": snapshotID]))
+        }
+        if cancel {
+            await #expect(throws: CancellationError.self) { _ = try await request.value }
+        } else {
+            #expect(try await !request.value.isError)
+        }
+        #expect(coordinator.prepareCount == 1)
+        #expect(coordinator.dispatchCount == (cancel ? 0 : 1))
+        #expect(coordinator.cancelCount == (cancel ? 1 : 0))
+        #expect(coordinator.completionCount == (cancel ? 0 : 1))
+        #expect(await context.snapshotExecutionGate.pendingInvalidation() == nil)
     }
 
     @Test
@@ -412,7 +482,8 @@ struct MCPBackgroundSnapshotAuthorityTests {
         snapshotID: String,
         processIdentity: ApplicationProcessIdentity,
         automation: StubAutomationService,
-        applications: ScriptedApplicationInventoryService? = nil) async throws -> MCPToolContext
+        applications: ScriptedApplicationInventoryService? = nil,
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil) async throws -> MCPToolContext
     {
         let application = Self.processScopedApplication(processIdentity: processIdentity)
         let graph = try LinkedApplicationInventoryGraph(nodes: [
@@ -433,6 +504,7 @@ struct MCPBackgroundSnapshotAuthorityTests {
             applications: applications ?? ScriptedApplicationInventoryService(graph: graph),
             windows: ScriptedWindowInventoryService(graph: graph),
             snapshots: snapshots,
+            snapshotMutationCoordinator: snapshotMutationCoordinator,
             snapshotOwner: owner)
         let mirroredSnapshot = await context.uiSnapshots.createSnapshot(id: snapshotID)
         await mirroredSnapshot.setTargetMetadata(from: windowContext)
@@ -504,5 +576,64 @@ private final class ReplacingSnapshotAuthorityApplicationService: ScriptedApplic
             throw PeekabooError.appNotFound("replacement fixture exhausted")
         }
         return self.responses.removeFirst()
+    }
+}
+
+@MainActor
+private final class SuspendingAuthorityCoordinator: MCPToolSnapshotMutationCoordinating {
+    private let onPrepared: @MainActor () -> Void
+    private let cancelSucceeds: Bool
+    private(set) var prepareCount = 0
+    private(set) var dispatchCount = 0
+    private(set) var cancelCount = 0
+    private(set) var completionCount = 0
+    private(set) var preparedScope: MCPToolSnapshotMutationScope?
+
+    init(cancelSucceeds: Bool = true, onPrepared: @escaping @MainActor () -> Void) {
+        self.cancelSucceeds = cancelSucceeds
+        self.onPrepared = onPrepared
+    }
+
+    func prepareMutation(_ scope: MCPToolSnapshotMutationScope) async throws {
+        self.prepareCount += 1
+        self.preparedScope = scope
+        await Task.yield()
+        self.onPrepared()
+    }
+
+    func cancelMutation(_: MCPToolSnapshotMutationScope) async -> Bool {
+        self.cancelCount += 1
+        return self.cancelSucceeds
+    }
+
+    func completeMutation(_: MCPToolSnapshotMutationScope, succeeded _: Bool) async -> Bool {
+        self.completionCount += 1
+        return true
+    }
+
+    func dispatch() throws -> ToolResponse {
+        self.dispatchCount += 1
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        return try ToolResponse.text("dispatched", meta: MCPToolResponseMetadataProjector.metadata(outcome: outcome))
+    }
+}
+
+private struct PreparedAuthorityTool: MCPTool {
+    let name = "action"
+    let description = "Records dispatch after asynchronous preparation"
+    let inputSchema = SchemaBuilder.object(properties: [
+        "on": SchemaBuilder.string(),
+        "action": SchemaBuilder.string(),
+        "snapshot": SchemaBuilder.string(),
+    ], required: ["on", "action"])
+    let coordinator: SuspendingAuthorityCoordinator
+
+    @MainActor
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        try self.coordinator.dispatch()
     }
 }

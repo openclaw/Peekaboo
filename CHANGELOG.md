@@ -15,6 +15,7 @@
 - Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.
 - Avoid stack overflow when normalizing deeply nested OpenAI model prefixes while preserving generation settings. Thanks @SebTardif! #752.
 - Reduce MCP outcome validation overhead by encoding typed metadata directly, retaining canonical result and retry-safety checks.
+- Bound desktop mutation lock acquisition and reserve concurrent mutation IDs before waiting, preventing hangs and orphaned barriers. Thanks @SebTardif! #758.
 - Skip formatting metadata for disabled CLI log messages.
 - Validate menu-bar window-list status and counts before allocating buffers or consuming results, preventing negative-count crashes. Thanks @SebTardif! #753.
 - Accept IPv6 loopback browser endpoints and reject TCP ports outside 1–65535 before discovery or receipt validation.

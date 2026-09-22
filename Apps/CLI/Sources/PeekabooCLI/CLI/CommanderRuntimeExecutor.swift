@@ -144,7 +144,9 @@ enum CommanderRuntimeExecutor {
         let createdDurableMutation: Bool
         if needsCallerBarrier {
             do {
-                createdDurableMutation = try runtime.interactionMutationTracker.beginDurableMutation()
+                createdDurableMutation = try await runtime.interactionMutationTracker.beginDurableMutation()
+            } catch let error as CancellationError {
+                throw error
             } catch {
                 throw CommanderRuntimeExecutorError.mutationBarrierFailed(error)
             }
@@ -153,6 +155,7 @@ enum CommanderRuntimeExecutor {
         }
         let result: T
         do {
+            try Task.checkCancellation()
             result = try await runtime.interactionMutationTracker.withPendingDurableMutationVisible(
                 createdByCurrentCommand: createdDurableMutation,
                 operation: operation

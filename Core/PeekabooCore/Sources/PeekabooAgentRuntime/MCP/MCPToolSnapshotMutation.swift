@@ -345,11 +345,11 @@ public struct MCPToolMutationBarrierCompletion: Sendable, Equatable {
 
 public protocol MCPToolSnapshotMutationCoordinating: Sendable {
     @MainActor
-    func prepareMutation(_ scope: MCPToolSnapshotMutationScope) throws
+    func prepareMutation(_ scope: MCPToolSnapshotMutationScope) async throws
 
     /// Records a mutation that owns a caller-local execution lane without acquiring the shared durable barrier.
     @MainActor
-    func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) throws
+    func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) async throws
 
     @MainActor
     func completeMutationBarrier(
@@ -367,11 +367,11 @@ public protocol MCPToolSnapshotMutationCoordinating: Sendable {
 
 extension MCPToolSnapshotMutationCoordinating {
     @MainActor
-    public func prepareMutation(_: MCPToolSnapshotMutationScope) throws {}
+    public func prepareMutation(_: MCPToolSnapshotMutationScope) async throws {}
 
     @MainActor
-    public func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) throws {
-        try self.prepareMutation(scope)
+    public func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) async throws {
+        try await self.prepareMutation(scope)
     }
 
     @MainActor

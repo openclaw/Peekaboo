@@ -204,9 +204,9 @@ func withMainActorCommandTimeout<T: Sendable>(
     }
 
     let race = TimeoutRace()
-    let pendingMutation = try desktopMutationWatermarkStore?.beginMutation()
+    let pendingMutation = try await desktopMutationWatermarkStore?.beginMutationCancellable()
     do {
-        try interactionMutationTracker?.retainDurableMutationLease()
+        try await interactionMutationTracker?.retainDurableMutationLease()
     } catch {
         if let desktopMutationWatermarkStore, let pendingMutation {
             try? desktopMutationWatermarkStore.cancelMutation(pendingMutation)

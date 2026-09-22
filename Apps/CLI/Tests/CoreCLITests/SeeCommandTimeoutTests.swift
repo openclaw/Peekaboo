@@ -107,7 +107,7 @@ struct SeeCommandTimeoutTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = DesktopMutationWatermarkStore(directoryURL: root)
         let tracker = InteractionMutationTracker(desktopMutationWatermarkStore: store)
-        #expect(try tracker.beginDurableMutation())
+        #expect(try await tracker.beginDurableMutation())
         let gate = IgnoredCancellationWorkGate()
         defer { Task { await gate.release() } }
 

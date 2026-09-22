@@ -8,6 +8,8 @@ final class InteractionMutationTracker {
     private let desktopMutationWatermarkStore: DesktopMutationWatermarkStore
     private var pendingDesktopMutation: DesktopMutationWatermarkStore.PendingMutation?
     private var pendingConcurrentDesktopMutations: [UUID: DesktopMutationWatermarkStore.PendingMutation] = [:]
+    private var concurrentMutationAcquisitionsInFlight: Set<UUID> = []
+    private var durableMutationAcquisitionInFlight = false
     private var durableMutationLeaseCount = 0
     private(set) var mutationStartedAt: Date?
     private(set) var mutationSequence: UInt64 = 0
@@ -25,7 +27,10 @@ final class InteractionMutationTracker {
     }
 
     var hasPendingDurableMutation: Bool {
-        self.pendingDesktopMutation != nil || !self.pendingConcurrentDesktopMutations.isEmpty
+        self.pendingDesktopMutation != nil
+            || self.durableMutationAcquisitionInFlight
+            || !self.pendingConcurrentDesktopMutations.isEmpty
+            || !self.concurrentMutationAcquisitionsInFlight.isEmpty
     }
 
     @discardableResult
@@ -71,29 +76,47 @@ final class InteractionMutationTracker {
     }
 
     @discardableResult
-    func beginDurableMutation(at startedAt: Date = Date()) throws -> Bool {
+    func beginDurableMutation(at startedAt: Date = Date()) async throws -> Bool {
         guard self.pendingDesktopMutation == nil else { return false }
-        self.pendingDesktopMutation = try self.desktopMutationWatermarkStore.beginMutation(at: startedAt)
+        guard !self.durableMutationAcquisitionInFlight else {
+            throw PeekabooError.operationError(message: "A previous local desktop mutation barrier is still pending")
+        }
+        self.durableMutationAcquisitionInFlight = true
+        defer { self.durableMutationAcquisitionInFlight = false }
+        self.pendingDesktopMutation = try await self.desktopMutationWatermarkStore.beginMutationCancellable(
+            at: startedAt
+        )
         self.durableMutationLeaseCount = 1
         return true
     }
 
-    func retainDurableMutationLease(at startedAt: Date = Date()) throws {
-        if self.pendingDesktopMutation == nil {
-            self.pendingDesktopMutation = try self.desktopMutationWatermarkStore.beginMutation(at: startedAt)
-            self.durableMutationLeaseCount = 1
-        } else {
+    func retainDurableMutationLease(at startedAt: Date = Date()) async throws {
+        if self.pendingDesktopMutation != nil {
             self.durableMutationLeaseCount += 1
+            return
         }
-    }
-
-    func beginConcurrentDurableMutation(id: UUID, at startedAt: Date = Date()) throws {
-        guard self.pendingConcurrentDesktopMutations[id] == nil else {
-            throw PeekabooError.operationError(message: "Concurrent desktop mutation was prepared more than once")
+        guard !self.durableMutationAcquisitionInFlight else {
+            throw PeekabooError.operationError(
+                message: "A previous local desktop mutation barrier is still pending"
+            )
         }
-        self.pendingConcurrentDesktopMutations[id] = try self.desktopMutationWatermarkStore.beginMutation(
+        self.durableMutationAcquisitionInFlight = true
+        defer { self.durableMutationAcquisitionInFlight = false }
+        self.pendingDesktopMutation = try await self.desktopMutationWatermarkStore.beginMutationCancellable(
             at: startedAt
         )
+        self.durableMutationLeaseCount = 1
+    }
+
+    func beginConcurrentDurableMutation(id: UUID, at startedAt: Date = Date()) async throws {
+        guard self.pendingConcurrentDesktopMutations[id] == nil,
+              self.concurrentMutationAcquisitionsInFlight.insert(id).inserted
+        else {
+            throw PeekabooError.operationError(message: "Concurrent desktop mutation was prepared more than once")
+        }
+        defer { self.concurrentMutationAcquisitionsInFlight.remove(id) }
+        self.pendingConcurrentDesktopMutations[id] = try await self.desktopMutationWatermarkStore
+            .beginMutationCancellable(at: startedAt)
     }
 
     func completeConcurrentDurableMutation(
@@ -648,12 +671,12 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
         self.hasRemoteSelection = targets.selectedRemoteSocketPath != nil
     }
 
-    func prepareMutation(_ scope: MCPToolSnapshotMutationScope) throws {
-        try self.prepareMutation(scope, durableBarrier: .exclusive)
+    func prepareMutation(_ scope: MCPToolSnapshotMutationScope) async throws {
+        try await self.prepareMutation(scope, durableBarrier: .exclusive)
     }
 
-    func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) throws {
-        try self.prepareMutation(scope, durableBarrier: .concurrent)
+    func prepareConcurrentMutation(_ scope: MCPToolSnapshotMutationScope) async throws {
+        try await self.prepareMutation(scope, durableBarrier: .concurrent)
     }
 
     private enum DurableBarrierMode {
@@ -664,20 +687,20 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
     private func prepareMutation(
         _ scope: MCPToolSnapshotMutationScope,
         durableBarrier: DurableBarrierMode
-    ) throws {
+    ) async throws {
         guard scope.effect != .freshObservation else { return }
         let needsCallerBarrier = !self.hasRemoteSelection || scope.effect != .mutationProducingFreshObservation
         if needsCallerBarrier {
             switch durableBarrier {
             case .exclusive:
-                guard try self.mutationTracker.beginDurableMutation(at: scope.startedAt) else {
+                guard try await self.mutationTracker.beginDurableMutation(at: scope.startedAt) else {
                     throw PeekabooError.operationError(
                         message: "A previous local desktop mutation barrier is still pending"
                     )
                 }
                 self.preparedLocalMutationIDs.insert(scope.id)
             case .concurrent:
-                try self.mutationTracker.beginConcurrentDurableMutation(id: scope.id, at: scope.startedAt)
+                try await self.mutationTracker.beginConcurrentDurableMutation(id: scope.id, at: scope.startedAt)
                 self.preparedConcurrentMutationIDs.insert(scope.id)
             }
         }

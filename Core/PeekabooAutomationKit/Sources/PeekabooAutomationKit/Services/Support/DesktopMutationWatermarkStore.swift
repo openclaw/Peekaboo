@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import os.log
+import PeekabooFoundation
 
 /// Cross-process high-water mark for mutations that make implicit UI snapshots stale.
 ///
@@ -91,6 +92,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     }
 
     private static let currentVersion = 1
+    public static let defaultExclusiveWaitNanoseconds: UInt64 = 15_000_000_000
     private static let watermarkFileName = "desktop-mutation-watermark.json"
     private static let lockFileName = "desktop-mutation-watermark.lock"
     private static let pendingDirectoryName = "desktop-mutation-pending"
@@ -273,19 +275,27 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
 
     /// Waits for the cross-process barrier without blocking an actor executor and stops promptly when its task is
     /// cancelled. Bridge requests use this before dispatch so a disconnected client cannot remain queued in `flock`.
+    /// A monotonic deadline (15s by default) throws instead of waiting forever; the lock is never skipped.
     public func beginMutationCancellable(
         at startedAt: Date = Date(),
-        target: DesktopOperationScope = .global) async throws -> PendingMutation
+        target: DesktopOperationScope = .global,
+        exclusiveWaitNanoseconds: UInt64 = DesktopMutationWatermarkStore.defaultExclusiveWaitNanoseconds)
+        async throws -> PendingMutation
     {
         let descriptor = try self.openLockDescriptor()
         defer { close(descriptor) }
 
+        let waitStarted = DispatchTime.now().uptimeNanoseconds
         while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
             let code = errno
             guard code == EWOULDBLOCK || code == EAGAIN || code == EINTR else {
                 throw self.lockError(code: code)
             }
             try Task.checkCancellation()
+            if DispatchTime.now().uptimeNanoseconds &- waitStarted >= exclusiveWaitNanoseconds {
+                throw PeekabooError.timeout(
+                    "Timed out waiting for the exclusive desktop mutation watermark lock")
+            }
             try await Task.sleep(for: .milliseconds(10))
         }
         defer { _ = flock(descriptor, LOCK_UN) }

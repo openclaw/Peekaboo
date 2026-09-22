@@ -39,8 +39,8 @@ struct BrowserMutationLaneInvalidatorTests {
         _ = try await snapshots.createSnapshot()
         _ = try await externalSnapshots.createSnapshot()
 
-        try coordinator.prepareConcurrentMutation(first)
-        try coordinator.prepareConcurrentMutation(second)
+        try await coordinator.prepareConcurrentMutation(first)
+        try await coordinator.prepareConcurrentMutation(second)
         #expect(tracker.hasPendingDurableMutation)
         #expect(store.effectiveWatermark() != nil)
         #expect(await externalSnapshots.getMostRecentSnapshot() == nil)
@@ -82,8 +82,8 @@ struct BrowserMutationLaneInvalidatorTests {
         let completed = MCPToolSnapshotMutationScope(toolName: "browser", effect: .mutation)
         let refused = MCPToolSnapshotMutationScope(toolName: "browser", effect: .mutation)
 
-        try coordinator.prepareConcurrentMutation(completed)
-        try coordinator.prepareConcurrentMutation(refused)
+        try await coordinator.prepareConcurrentMutation(completed)
+        try await coordinator.prepareConcurrentMutation(refused)
         let completionScope = completed.completed(at: Date(), preserving: nil)
         let barrierCompletion = try coordinator.completeMutationBarrier(completionScope)
         let completedBarrier = try #require(barrierCompletion)
@@ -116,8 +116,8 @@ struct BrowserMutationLaneInvalidatorTests {
         let first = MCPToolSnapshotMutationScope(toolName: "browser", effect: .mutation)
         let second = MCPToolSnapshotMutationScope(toolName: "browser", effect: .mutation)
 
-        try coordinator.prepareConcurrentMutation(first)
-        try coordinator.prepareConcurrentMutation(second)
+        try await coordinator.prepareConcurrentMutation(first)
+        try await coordinator.prepareConcurrentMutation(second)
         #expect(tracker.mutationStartedAt != nil)
         #expect(tracker.hasPendingDurableMutation)
 
