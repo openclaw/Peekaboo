@@ -22,6 +22,8 @@ read_when:
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>`. Background mode uses these only to resolve/refresh the target; foreground mode focuses it first. |
 | Foreground focus flags | `--space-switch`, `--bring-to-current-space`, timeout, and retry controls require `--foreground`. |
 
+Amounts whose magnitude or smooth-mode tick count cannot be represented are rejected before focus or input.
+
 ## Implementation notes
 - If you pass `--on` without a snapshot, the command automatically looks up `services.snapshots.getMostRecentSnapshot()` so you rarely need to wire IDs manually.
 - A concrete `--snapshot <id>` is authoritative and never triggers an observation refresh or a new capture. Omitted, blank, `latest`, `most-recent`, and `most_recent` references may refresh missing elements and therefore can require a capture-capable host.

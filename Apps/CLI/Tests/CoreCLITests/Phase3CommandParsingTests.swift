@@ -8,6 +8,30 @@ import Testing
 @Suite(.tags(.fast))
 @MainActor
 struct Phase3CommandParsingTests {
+    @Test(arguments: [false, true])
+    func `Scroll rejects overflowing amounts before runtime`(smooth: Bool) throws {
+        let amounts = smooth ? [Int.min, Int.max, Int.max / 10 + 1, -(Int.max / 10 + 1)] : [Int.min]
+        for amount in amounts {
+            let command = try ScrollCommand.parse(
+                ["--direction", "down", "--foreground", "--amount=\(amount)"] + (smooth ? ["--smooth"] : [])
+            )
+            #expect(throws: ValidationError.self) {
+                try command.validateBeforeRuntime()
+            }
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `Scroll preserves signed zero and representable boundary amounts`(smooth: Bool) throws {
+        let limit = smooth ? Int.max / 10 : Int.max
+        for amount in [0, -3, 3, -limit, limit] {
+            let command = try ScrollCommand.parse(
+                ["--direction", "down", "--foreground", "--amount=\(amount)"] + (smooth ? ["--smooth"] : [])
+            )
+            try command.validateBeforeRuntime()
+        }
+    }
+
     @Test
     func `Press parses xdotool chords and sequences`() throws {
         var command = try PressCommand.parse(["--foreground", "cmd+shift+t", "Return"])

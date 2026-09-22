@@ -48,6 +48,38 @@ struct ScrollServiceTargetResolutionTests {
         #expect(decoded.expectedWindow == expectedWindow)
     }
 
+    @Test(arguments: [false, true])
+    @MainActor
+    func `unrepresentable scroll amounts refuse before lane preparation or input`(smooth: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scroll-range-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let amounts = smooth ? [Int.min, Int.max, Int.max / 10 + 1, -(Int.max / 10 + 1)] : [Int.min]
+        for amount in amounts {
+            let synthetic = ScrollRecordingSyntheticInputDriver()
+            var preparations = 0
+            let service = ScrollService(
+                snapshotManager: InMemorySnapshotManager(
+                    desktopMutationWatermarkStore: DesktopMutationWatermarkStore(directoryURL: root)),
+                syntheticInputDriver: synthetic,
+                desktopOperationExecutor: DesktopOperationExecutor(
+                    laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root)))
+            do {
+                _ = try await service.scrollWithLanePreparation(
+                    ScrollRequest(direction: .down, amount: amount, smooth: smooth, foreground: true),
+                    lanePreparation: { preparations += 1 })
+                Issue.record("Expected an invalid scroll amount to be refused")
+            } catch let error as PeekabooError {
+                guard case .invalidInput = error else {
+                    Issue.record("Expected invalid input, received \(error)")
+                    continue
+                }
+            }
+            #expect(preparations == 0)
+            #expect(synthetic.events.isEmpty)
+        }
+    }
+
     @Test
     @MainActor
     func `foreground synthetic scroll reports exact emitted tick count`() async throws {

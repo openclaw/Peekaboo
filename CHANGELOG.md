@@ -17,6 +17,7 @@
 - Reduce MCP outcome validation overhead by encoding typed metadata directly, retaining canonical result and retry-safety checks.
 - Bound desktop mutation lock acquisition and reserve concurrent mutation IDs before waiting, preventing hangs and orphaned barriers. Thanks @SebTardif! #758.
 - Skip formatting metadata for disabled CLI log messages.
+- Reject overflowing scroll amounts before focus or input instead of trapping in tick arithmetic; preserve signed and zero amounts.
 - Validate menu-bar window-list status and counts before allocating buffers or consuming results, preventing negative-count crashes. Thanks @SebTardif! #753.
 - Accept IPv6 loopback browser endpoints and reject TCP ports outside 1–65535 before discovery or receipt validation.
 - Connect to approval-mode Chrome with one persistent WebSocket for verification and page operations; preserve the approval window, explain HTTP discovery 404s, and refuse silent reconnection or endpoint redirects. Thanks @steipete for the report!
