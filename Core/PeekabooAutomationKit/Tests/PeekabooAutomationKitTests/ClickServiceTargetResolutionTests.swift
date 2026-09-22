@@ -184,7 +184,7 @@ struct ClickServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst))
 
         do {
-            try await service.click(target: .elementId("B1"), clickType: .single, snapshotId: "missing")
+            try await service.click(target: .elementId("B1"), clickType: .single, snapshotId: Self.snapshotID)
             Issue.record("Expected stale element error for missing action snapshot.")
         } catch let error as ActionInputError {
             #expect(error == .staleElement)
@@ -206,7 +206,7 @@ struct ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .query("missing-\(UUID().uuidString)"),
                 clickType: .single,
-                snapshotId: "missing")
+                snapshotId: Self.snapshotID)
             Issue.record("Expected stale element error for missing synthetic snapshot.")
         } catch let error as ActionInputError {
             #expect(error == .staleElement)
@@ -214,6 +214,43 @@ struct ClickServiceTargetResolutionTests {
             Issue.record("Unexpected error: \(error)")
         }
         #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `snapshot lookup timeout is not treated as stale`() async {
+        let lookupError = PeekabooError.timeout("Snapshot lookup timed out")
+        let cases: [(UIInputStrategy, ClickTarget)] = [
+            (.actionFirst, .elementId("B1")),
+            (.actionOnly, .elementId("B1")),
+            (.synthOnly, .elementId("B1")),
+            (.synthOnly, .query("Button")),
+        ]
+
+        for (strategy, target) in cases {
+            let snapshots = SnapshotMutationRecordingManager(wrapping: InMemorySnapshotManager())
+            snapshots.getDetectionResultError = lookupError
+            let service = ClickService(
+                snapshotManager: snapshots,
+                inputPolicy: UIInputPolicy(defaultStrategy: strategy))
+
+            do {
+                try await service.click(
+                    target: target,
+                    clickType: .single,
+                    snapshotId: Self.snapshotID)
+                Issue.record("Expected snapshot lookup timeout for \(strategy)")
+            } catch let error as ActionInputError {
+                Issue.record("Mapped snapshot lookup timeout to \(error) for \(strategy)")
+            } catch let error as PeekabooError {
+                guard case .timeout = error else {
+                    Issue.record("Unexpected PeekabooError \(error) for \(strategy)")
+                    continue
+                }
+            } catch {
+                Issue.record("Unexpected error \(error) for \(strategy)")
+            }
+        }
     }
 
     @Test
@@ -1179,7 +1216,7 @@ extension ClickServiceTargetResolutionTests {
             try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "missing",
+                snapshotId: Self.snapshotID,
                 targetProcessIdentifier: 12345)
         }
         #expect(synthetic.events.isEmpty)

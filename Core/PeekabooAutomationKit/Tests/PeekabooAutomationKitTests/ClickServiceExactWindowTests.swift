@@ -409,7 +409,7 @@ struct ClickServiceExactWindowTests {
             _ = try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "expired-snapshot",
+                snapshotId: Self.snapshotID,
                 expectedWindowIdentity: WindowMutationIdentity(
                     windowID: 42,
                     ownerProcessIdentifier: getpid(),

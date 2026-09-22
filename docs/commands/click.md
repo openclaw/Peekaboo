@@ -63,6 +63,7 @@ without it, the client does not request that fallback, while ordinary `AXPress` 
 - Right-click (`--right`) issues `AXShowMenu` without waiting for the context menu to close: a successfully opened menu runs a nested tracking runloop in the target app, so the command reports success once the menu is up instead of timing out behind it.
 
 ## Implementation notes
+- A missing snapshot is stale; a snapshot lookup timeout or other service failure retains its original error instead of being reported as a stale snapshot. No click is dispatched when lookup fails.
 - Result application labels reuse the application/window and snapshot metadata already bound for dispatch. Point diagnostics are prepared before dispatch and retained for output; formatting does not refetch snapshots, enumerate, or re-resolve applications after clicking. Missing names use the bound PID, window ID, or `Unknown`, and never borrow an unrelated frontmost app. Presentation does not change the canonical action outcome or target receipt.
 - Validation requires exactly one targeting strategy (`[query]`, `--on`, or `--at`) and parses coordinate strings into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
 - When no `--snapshot` is provided, element/query clicks may use the most recent snapshot. Foreground global coordinates remain snapshot-free. Background coordinates never infer ownership at dispatch time: they resolve through the explicit capture snapshot and pass its exact receipt through the automation/Bridge boundary.
