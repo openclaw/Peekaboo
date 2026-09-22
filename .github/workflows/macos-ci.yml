@@ -48,6 +48,9 @@ jobs:
           node --test tests/docs-site-toc.test.mjs
           node --test tests/background-capability-guidance.test.mjs
 
+      - name: Verify Homebrew release handoff
+        run: node --test tests/homebrew-release-assets.test.mjs
+
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
           set -euo pipefail

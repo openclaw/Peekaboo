@@ -10,24 +10,39 @@ on:
         required: true
 
 # Cross-repository dispatch uses only the explicit HOMEBREW_TAP_TOKEN below.
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   update-homebrew-formula:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || format('v{0}', github.event.inputs.version) }}
     steps:
-      - name: Resolve release tag
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26.8.2"
+
+      - name: Select release assets
+        id: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            echo "RELEASE_TAG=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
-          else
-            echo "RELEASE_TAG=v${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
-          fi
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" |
+            node scripts/select-homebrew-release-assets.mjs "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch tap formula update
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          ASSETS_JSON: ${{ steps.assets.outputs.assets }}
+          MACOS_ARTIFACT: ${{ steps.assets.outputs.macos_artifact }}
         run: |
+          set -euo pipefail
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::Set HOMEBREW_TAP_TOKEN with workflow access to openclaw/homebrew-tap"
             exit 1
@@ -36,13 +51,19 @@ jobs:
           request_id="peekaboo-${RELEASE_TAG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           expected_title="Update peekaboo for ${RELEASE_TAG} (${request_id})"
 
+          if [ -n "$ASSETS_JSON" ]; then
+            artifact_args=(-f "assets=$ASSETS_JSON")
+          else
+            artifact_args=(-f "macos_artifact=$MACOS_ARTIFACT")
+          fi
+
           gh workflow run update-formula.yml \
             --repo openclaw/homebrew-tap \
             --ref main \
             -f formula=peekaboo \
             -f tag="$RELEASE_TAG" \
-            -f repository="${{ github.repository }}" \
-            -f macos_artifact="peekaboo-macos-universal.tar.gz" \
+            -f repository="$GITHUB_REPOSITORY" \
+            "${artifact_args[@]}" \
             -f request_id="$request_id"
 
           run_id=""
