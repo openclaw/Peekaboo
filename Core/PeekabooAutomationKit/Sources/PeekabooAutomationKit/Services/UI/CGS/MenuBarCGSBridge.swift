@@ -15,8 +15,6 @@ private struct CGSWindowListOption: OptionSet {
 
 // MARK: - Dynamic loading helpers
 
-// MARK: - Dynamic loading helpers
-
 private func loadCGSHandle() -> UnsafeMutableRawPointer? {
     let handles = [
         "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
@@ -101,25 +99,18 @@ func cgsProcessMenuBarWindowIDs(onScreenOnly: Bool = true) -> [CGWindowID] {
         return []
     }
 
-    var windowCount: Int32 = 0
-    _ = getCount(mainConn(), 0, &windowCount)
-    if windowCount <= 0 {
-        return []
-    }
+    let connection = mainConn()
+    guard var ids = CGSWindowIDList.read(
+        count: { getCount(connection, 0, $0) },
+        list: { getMenuBarList(connection, 0, $0, $1, $2) })
+    else { return [] }
 
-    var list = [CGWindowID](repeating: 0, count: Int(windowCount))
-    var realCount: Int32 = 0
-    let result = getMenuBarList(mainConn(), 0, windowCount, &list, &realCount)
-    guard result == 0 else { return [] }
-    var ids = Array(list.prefix(Int(realCount)))
-
-    if onScreenOnly {
-        var onScreenCount: Int32 = 0
-        _ = getOnScreenCount(mainConn(), 0, &onScreenCount)
-        var onScreen = [CGWindowID](repeating: 0, count: Int(onScreenCount))
-        var onScreenReal: Int32 = 0
-        _ = getOnScreenList(mainConn(), 0, onScreenCount, &onScreen, &onScreenReal)
-        let filter = Set(onScreen.prefix(Int(onScreenReal)))
+    if onScreenOnly,
+       let onScreen = CGSWindowIDList.read(
+           count: { getOnScreenCount(connection, 0, $0) },
+           list: { getOnScreenList(connection, 0, $0, $1, $2) })
+    {
+        let filter = Set(onScreen)
         ids = ids.filter { filter.contains($0) }
     }
 
