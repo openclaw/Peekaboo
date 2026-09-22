@@ -7,6 +7,7 @@
 - Read embedded source stamps from single-architecture CLI binaries as well as universal builds, retaining cross-slice consistency checks.
 - Avoid rewriting temporary screenshots during MCP image resizing while preserving validated, atomic final output.
 - Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
+- Stop Inspector screen-change notifications when monitoring ends or its controller is released, and prevent duplicate observer registration. Thanks @SebTardif! #754.
 - Let automatic screenshots use the proven classic path on an explicitly selected Bridge host when another process owns ScreenCaptureKit; keep explicit modern capture strict.
 - Skip unused local service initialization when snapshot commands target an explicit Bridge socket.
 - Reduce capture postprocessing by drawing contact-sheet cells directly and converting screenshots to JPEG without an intermediate TIFF.
