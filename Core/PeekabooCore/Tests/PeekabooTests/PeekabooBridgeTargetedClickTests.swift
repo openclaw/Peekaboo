@@ -742,7 +742,7 @@ struct PeekabooBridgeTargetedClickTests {
             try await remote.click(
                 target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: "expired-snapshot",
+                snapshotId: SnapshotReference.generate().rawValue,
                 targetProcessIdentifier: getpid())
             Issue.record("Expected stale snapshot error")
         } catch let failure as DesktopActionFailure {
