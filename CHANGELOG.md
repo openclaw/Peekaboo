@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Refresh CI and the verified qualification runtime to Node 26.9.0, pnpm to 11.27.1, Swift Configuration to 1.2.1, KeyboardShortcuts to 3.1.0, and Sparkle to 2.10.0 for current macOS compatibility fixes.
 - Reject zero and negative snapshot retention hours before cleanup can remove any data. Thanks @SebTardif! #751.
 - Add smaller arm64 and x86_64 CLI release archives alongside the universal archive, with matching Swift runtime libraries and checksums.
 - Read embedded source stamps from single-architecture CLI binaries as well as universal builds, retaining cross-slice consistency checks.

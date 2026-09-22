@@ -165,7 +165,7 @@ node_app="$TEST_DIR/PeekabooQualificationNode.app"
 mkdir -p "$node_app/Contents/MacOS" "$node_app/Contents/Resources"
 cp -X "$TEST_DIR/runtime-universal" "$node_app/Contents/MacOS/node"
 make_info_plist "$node_app/Contents/Info.plist" node boo.peekaboo.qualification-node
-/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 26.8.2' "$node_app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 26.9.0' "$node_app/Contents/Info.plist"
 printf 'fixture node license\n' > "$node_app/Contents/Resources/LICENSE"
 cp -X "$raw_inputs/tools/qualification-node.entitlements" \
   "$node_app/Contents/Resources/qualification-node.entitlements"
@@ -174,7 +174,7 @@ node_license_sha="$(sha "$node_app/Contents/Resources/LICENSE")"
 node_entitlements_sha="$(sha "$node_app/Contents/Resources/qualification-node.entitlements")"
 jq -n --arg binarySHA "$node_binary_sha" --argjson binarySize "$node_binary_size" \
   --arg licenseSHA "$node_license_sha" --arg entitlementsSHA "$node_entitlements_sha" '
- {version:1,runtime_version:"26.8.2",identifier:"boo.peekaboo.qualification-node",
+ {version:1,runtime_version:"26.9.0",identifier:"boo.peekaboo.qualification-node",
   executable_path:"Contents/MacOS/node",universal_binary_sha256:$binarySHA,universal_binary_size:$binarySize,
   architectures:["arm64","x86_64"],license:{path:"Contents/Resources/LICENSE",sha256:$licenseSHA},
   entitlements:{path:"Contents/Resources/qualification-node.entitlements",sha256:$entitlementsSHA},
@@ -182,7 +182,7 @@ jq -n --arg binarySHA "$node_binary_sha" --argjson binarySize "$node_binary_size
   x86_64:{url:"fixture://x86_64",archive_sha256:$binarySHA,binary_sha256:$binarySHA}}}' > \
   "$node_app/Contents/Resources/PeekabooQualificationNodeSource.json"
 /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$node_app" > "$candidate/qualification-node-app-tree.json"
-/usr/bin/ditto -c -k --norsrc --keepParent "$node_app" "$candidate/PeekabooQualificationNode-26.8.2.app.zip"
+/usr/bin/ditto -c -k --norsrc --keepParent "$node_app" "$candidate/PeekabooQualificationNode-26.9.0.app.zip"
 
 volume="$TEST_DIR/volume"
 mkdir -p "$volume/.background"
@@ -251,7 +251,7 @@ EOF
 chmod 755 "$fake_tools/codesign"
 
 cli_archive_sha="$(sha "$candidate/peekaboo-macos-universal.tar.gz")"; app_zip_sha="$(sha "$candidate/Peekaboo-$VERSION.app.zip")"
-playground_zip_sha="$(sha "$candidate/Playground-$VERSION.app.zip")"; node_zip_sha="$(sha "$candidate/PeekabooQualificationNode-26.8.2.app.zip")"
+playground_zip_sha="$(sha "$candidate/Playground-$VERSION.app.zip")"; node_zip_sha="$(sha "$candidate/PeekabooQualificationNode-26.9.0.app.zip")"
 dmg_sha="$(sha "$candidate/Peekaboo-$VERSION.dmg")"; controller_sha="$(sha "$candidate/qualification/peekaboo-certification-controller")"
 monitor_sha="$(sha "$candidate/qualification/background-computer-use-probe")"; cli_executable_sha="$(sha "$cli_package/peekaboo")"
 playground_manifest_sha="$(sha "$playground_app/Contents/Resources/PeekabooPlaygroundSource.json")"
@@ -261,7 +261,7 @@ jq -n --arg version "$VERSION" --arg source "$SOURCE_COMMIT" --arg lockSHA "$loc
  --arg cliArchiveSHA "$cli_archive_sha" --argjson cliArchiveSize "$(size "$candidate/peekaboo-macos-universal.tar.gz")" \
  --arg cliExecutableSHA "$cli_executable_sha" --arg appSHA "$app_zip_sha" --argjson appSize "$(size "$candidate/Peekaboo-$VERSION.app.zip")" \
  --arg playgroundSHA "$playground_zip_sha" --argjson playgroundSize "$(size "$candidate/Playground-$VERSION.app.zip")" \
- --arg nodeSHA "$node_zip_sha" --argjson nodeSize "$(size "$candidate/PeekabooQualificationNode-26.8.2.app.zip")" \
+ --arg nodeSHA "$node_zip_sha" --argjson nodeSize "$(size "$candidate/PeekabooQualificationNode-26.9.0.app.zip")" \
  --arg dmgSHA "$dmg_sha" --argjson dmgSize "$(size "$candidate/Peekaboo-$VERSION.dmg")" \
  --arg controllerSHA "$controller_sha" --argjson controllerSize "$(size "$candidate/qualification/peekaboo-certification-controller")" \
  --arg monitorSHA "$monitor_sha" --argjson monitorSize "$(size "$candidate/qualification/background-computer-use-probe")" \
@@ -291,7 +291,7 @@ jq -n --arg version "$VERSION" --arg source "$SOURCE_COMMIT" --arg lockSHA "$loc
    peekaboo_app_zip:{path:("Peekaboo-"+$version+".app.zip"),sha256:$appSHA,size:$appSize,cdhash:"1111111111111111111111111111111111111111",source_commit:$source,tree_manifest:bound("peekaboo-app-tree.json")},
    peekaboo_dmg:{path:("Peekaboo-"+$version+".dmg"),sha256:$dmgSHA,size:$dmgSize,cdhash:"1111111111111111111111111111111111111111",source_commit:$source,payload_receipt:bound("peekaboo-dmg-payload.json")},
    playground_app_zip:{path:("Playground-"+$version+".app.zip"),sha256:$playgroundSHA,size:$playgroundSize,cdhash:"1111111111111111111111111111111111111111",source_commit:$source,embedded_manifest_sha256:$playgroundManifestSHA,tree_manifest:bound("playground-app-tree.json")},
-   qualification_node_app_zip:{path:"PeekabooQualificationNode-26.8.2.app.zip",sha256:$nodeSHA,size:$nodeSize,cdhash:"1111111111111111111111111111111111111111",source_commit:$source,embedded_runtime_manifest_sha256:$nodeManifestSHA,tree_manifest:bound("qualification-node-app-tree.json"),runtime:{version:"26.8.2",identifier:"boo.peekaboo.qualification-node",executable_path:"Contents/MacOS/node",architectures:["arm64","x86_64"],unsigned_binary_sha256:$nodeBinarySHA,unsigned_binary_size:$nodeBinarySize,binary_sha256:$nodeBinarySHA,binary_cdhashes:{arm64:"1111111111111111111111111111111111111111",x86_64:"2222222222222222222222222222222222222222"},binary_size:$nodeBinarySize,license:{path:"Contents/Resources/LICENSE",sha256:$nodeLicenseSHA},entitlements:{path:"Contents/Resources/qualification-node.entitlements",sha256:$nodeEntitlementsSHA},inputs:{arm64:{url:"fixture://arm64",archive_sha256:$nodeBinarySHA,binary_sha256:$nodeBinarySHA},x86_64:{url:"fixture://x86_64",archive_sha256:$nodeBinarySHA,binary_sha256:$nodeBinarySHA}}}},
+   qualification_node_app_zip:{path:"PeekabooQualificationNode-26.9.0.app.zip",sha256:$nodeSHA,size:$nodeSize,cdhash:"1111111111111111111111111111111111111111",source_commit:$source,embedded_runtime_manifest_sha256:$nodeManifestSHA,tree_manifest:bound("qualification-node-app-tree.json"),runtime:{version:"26.9.0",identifier:"boo.peekaboo.qualification-node",executable_path:"Contents/MacOS/node",architectures:["arm64","x86_64"],unsigned_binary_sha256:$nodeBinarySHA,unsigned_binary_size:$nodeBinarySize,binary_sha256:$nodeBinarySHA,binary_cdhashes:{arm64:"1111111111111111111111111111111111111111",x86_64:"2222222222222222222222222222222222222222"},binary_size:$nodeBinarySize,license:{path:"Contents/Resources/LICENSE",sha256:$nodeLicenseSHA},entitlements:{path:"Contents/Resources/qualification-node.entitlements",sha256:$nodeEntitlementsSHA},inputs:{arm64:{url:"fixture://arm64",archive_sha256:$nodeBinarySHA,binary_sha256:$nodeBinarySHA},x86_64:{url:"fixture://x86_64",archive_sha256:$nodeBinarySHA,binary_sha256:$nodeBinarySHA}}}},
    qualification_monitor:{path:"qualification/background-computer-use-probe",sha256:$monitorSHA,size:$monitorSize,cdhash:"1111111111111111111111111111111111111111",cdhashes:{arm64:"1111111111111111111111111111111111111111",x86_64:"2222222222222222222222222222222222222222"},source_commit:$source,identifier:"boo.peekaboo.background-computer-use-probe",architectures:["arm64","x86_64"],source:{path:"scripts/support/background-computer-use-probe.swift",sha256:$monitorSourceSHA},tree_manifest:bound("qualification-tree.json")},
    certification_controller:{path:"qualification/peekaboo-certification-controller",sha256:$controllerSHA,size:$controllerSize,cdhash:"1111111111111111111111111111111111111111",cdhashes:{arm64:"1111111111111111111111111111111111111111",x86_64:"2222222222222222222222222222222222222222"},source_commit:$source,identifier:"boo.peekaboo.peekaboo-certification-controller",architectures:["arm64","x86_64"],source_manifest:{path:"controller-source-manifest.json",sha256:$controllerReceiptSHA,aggregate_sha256:$sourceAggregate},tree_manifest:bound("qualification-tree.json")}}}
 ' > "$candidate/terminal-artifacts.partial.json"
@@ -312,7 +312,7 @@ jq --arg validator "$(sha "$candidate/tools/validate-terminal-artifact-manifest.
 rm -f "$candidate/terminal-artifacts.partial.json"
 
 (cd "$candidate" && /usr/bin/shasum -a 256 peekaboo-macos-universal.tar.gz "Peekaboo-$VERSION.app.zip" \
- "Peekaboo-$VERSION.dmg" "Playground-$VERSION.app.zip" PeekabooQualificationNode-26.8.2.app.zip \
+ "Peekaboo-$VERSION.dmg" "Playground-$VERSION.app.zip" PeekabooQualificationNode-26.9.0.app.zip \
  cli-tree.json cli-notary-tree.json peekaboo-app-tree.json peekaboo-dmg-payload.json playground-app-tree.json \
  qualification-node-app-tree.json qualification/peekaboo-certification-controller \
  qualification/background-computer-use-probe qualification-tree.json controller-source-manifest.json \

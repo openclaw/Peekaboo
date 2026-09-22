@@ -389,7 +389,7 @@ the helper is privately snapshotted, checked for drift, and verified against ret
 
 Final terminal qualification also requires `--terminal-artifact-manifest` beside the prebuilt Playground. Portable schema 7
 binds the zipped app, its exact post-staple tree receipt, Foundation identity/notary receipt, and the pinned universal
-Node 26.8.2 qualification app. **That terminal-manifest/pinned-Node integration is not yet implemented by this native
+Node 26.9.0 qualification app. **That terminal-manifest/pinned-Node integration is not yet implemented by this native
 harness; fixture validation alone does not establish terminal qualification.** The qualification consumer must extract
 and verify that Node app before any candidate action and run
 qualification JavaScript only with `PeekabooQualificationNode.app/Contents/MacOS/node`; ambient `node`, PATH, and an
