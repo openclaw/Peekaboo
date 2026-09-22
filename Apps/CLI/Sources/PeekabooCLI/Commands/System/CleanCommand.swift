@@ -61,14 +61,12 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
         let startTime = Date()
 
         do {
-            // Validate options
             let effectiveOlderThan = self.effectiveOlderThan
             let optionCount = [allSnapshots, effectiveOlderThan != nil, self.snapshot != nil].count { $0 }
             guard optionCount == 1 else {
                 throw ValidationError("Specify exactly one of: --all-snapshots, --older-than, or --snapshot")
             }
 
-            // Perform cleanup based on option using the FileService
             let result: SnapshotCleanResult
             let requestedSnapshotId = self.snapshot
 
@@ -87,10 +85,8 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
                 throw ValidationError("No cleanup option specified")
             }
 
-            // Calculate execution time
             let executionTime = Date().timeIntervalSince(startTime)
 
-            // Output results
             if self.jsonOutput {
                 let outputData = CleanResultPayload(
                     result: result,

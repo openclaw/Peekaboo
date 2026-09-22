@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject zero and negative snapshot retention hours before cleanup can remove any data. Thanks @SebTardif! #751.
 - Add smaller arm64 and x86_64 CLI release archives alongside the universal archive, with matching Swift runtime libraries and checksums.
 - Read embedded source stamps from single-architecture CLI binaries as well as universal builds, retaining cross-slice consistency checks.
 - Avoid rewriting temporary screenshots during MCP image resizing while preserving validated, atomic final output.

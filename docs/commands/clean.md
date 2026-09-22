@@ -13,11 +13,12 @@ read_when:
 | Flag | Effect |
 | --- | --- |
 | `--all-snapshots` | Delete every producer-owned or cleanup-eligible legacy snapshot directory. |
-| `--older-than <hours>` | Delete eligible snapshots older than the given hour threshold (defaults to 24 if omitted). |
+| `--older-than <hours>` | Delete eligible snapshots older than a positive number of hours (defaults to 24 for `--dry-run` without a selection flag). |
 | `--snapshot <id>` | Remove one eligible on-disk snapshot: a producer-owned `ps1_` reference or a strict legacy timestamp directory. |
 | `--dry-run` | Print what would be removed without touching disk. |
 
 Only one of the three selection flags may be supplied at a time; the command validates this before doing any IO.
+Zero and negative retention hours fail with `VALIDATION_ERROR`, including in dry-run mode, before any snapshots are removed.
 
 Current snapshot references use exactly `ps1_` followed by 32 lowercase ASCII hexadecimal digits. Cleanup removes one
 only when its on-disk producer marker binds the directory to that same reference. The 128-bit random reference is
@@ -50,6 +51,5 @@ peekaboo clean --snapshot 1787675983803-1514 --dry-run
 ```
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
-- Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
+- Preview cleanup with `--dry-run`. Cache cleanup operates on disk and does not require Screen Recording or Accessibility permission.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

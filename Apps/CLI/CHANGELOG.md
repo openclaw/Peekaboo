@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Reject zero and negative snapshot retention hours before cleanup can remove any data. Thanks @SebTardif! #751.
 - Avoid rewriting temporary screenshots during MCP image resizing while preserving validated, atomic final output.
 - Reduce JSON CLI startup work by avoiding duplicate command-signature reflection.
 - Skip unused local services for explicit Bridge snapshot commands, avoid formatting disabled log messages, and reduce image-conversion and MCP outcome-validation overhead.
