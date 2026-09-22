@@ -5,8 +5,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE_LOCK="$ROOT_DIR/Apps/Peekaboo.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 MAC_LOCK="$ROOT_DIR/Apps/Mac/Package.resolved"
-EXPECTED_SPARKLE_VERSION=2.9.6
-EXPECTED_SPARKLE_REVISION=ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a
+EXPECTED_SPARKLE_VERSION=2.10.0
+EXPECTED_SPARKLE_REVISION=eef1a539a373c1f1a320624b1130fc5de7b2e100
 TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/peekaboo-release-resolution-test.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
