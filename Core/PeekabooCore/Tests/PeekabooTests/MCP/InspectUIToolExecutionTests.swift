@@ -150,6 +150,64 @@ struct InspectUIToolExecutionTests {
         #expect(output.contains("Try `see` for screenshot-based detection"))
     }
 
+    @Test(arguments: ["frontmost", "application", "window"])
+    func `empty AX results respect the requested window scope`(scope: String) async throws {
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot-inspect-empty-exact-window",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 0,
+                method: "AXorcist",
+                windowContext: WindowContext(
+                    applicationName: "Calendar",
+                    applicationBundleId: "com.apple.iCal",
+                    applicationProcessId: 858,
+                    windowTitle: "Calendar",
+                    windowID: 119)))
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: detectionResult)
+        }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+
+        let arguments = switch scope {
+        case "window":
+            ToolArguments(raw: ["app_target": "PID:858", "window_id": 119])
+        case "application":
+            ToolArguments(raw: ["app_target": "PID:858"])
+        default:
+            ToolArguments(raw: [:])
+        }
+        let response = try await InspectUITool(context: context).execute(arguments: arguments)
+
+        if scope != "window" {
+            #expect(!response.isError)
+            #expect(response.meta?.objectValue?["element_count"] == .double(0))
+            #expect(try await snapshots.listSnapshots().count == 1)
+            return
+        }
+
+        #expect(response.isError)
+        guard case let .text(text: output, annotations: _, _meta: _) = response.content.first,
+              case let .object(meta)? = response.meta
+        else {
+            Issue.record("Expected structured inspect_ui failure")
+            return
+        }
+        #expect(output.contains("Failed to inspect UI"))
+        #expect(output.contains("Exact window 119"))
+        #expect(output.contains("no usable Accessibility elements"))
+        #expect(meta["error_code"] == .string("ACCESSIBILITY_INCOMPLETE"))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["effect"] == nil)
+        #expect(try await snapshots.listSnapshots().isEmpty)
+    }
+
     @Test
     func `Inspect UI rejects an empty truncated AX result`() async throws {
         let detectionResult = ElementDetectionResult(
@@ -397,10 +455,16 @@ extension InspectUIToolExecutionTests {
         return ElementDetectionResult(
             snapshotId: id,
             screenshotPath: "",
-            elements: DetectedElements(),
+            elements: DetectedElements(buttons: [
+                DetectedElement(
+                    id: "B1",
+                    type: .button,
+                    label: "OK",
+                    bounds: CGRect(x: 24, y: 34, width: 60, height: 24)),
+            ]),
             metadata: DetectionMetadata(
                 detectionTime: 0,
-                elementCount: 0,
+                elementCount: 1,
                 method: "fixture",
                 windowContext: WindowContext(
                     applicationProcessId: processIdentifier,
@@ -804,7 +868,11 @@ extension InspectUIToolExecutionTests {
         let automation = await MainActor.run {
             InspectUITestAutomationService(
                 accessibilityGranted: true,
-                detectionResult: Self.emptyDetectionResult(id: "snapshot-inspect-window-id"))
+                detectionResult: Self.targetedDetectionResult(
+                    id: "snapshot-inspect-window-id",
+                    processIdentifier: 1234,
+                    processStartIdentity: 1,
+                    windowID: 42))
         }
         let context = await Self.makeContext(automation: automation, windows: windows)
         let tool = InspectUITool(context: context)
