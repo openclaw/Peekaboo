@@ -51,6 +51,7 @@ CHANGELOG
 mkdir -p "$FIXTURE_ROOT/release"
 cp "$FIXTURE_ROOT/CHANGELOG.md" "$FIXTURE_ROOT/release/release-notes.md"
 printf '%s\n' 'fixture license' >"$FIXTURE_ROOT/LICENSE"
+printf '%s\n' 'original appcast' >"$FIXTURE_ROOT/appcast.xml"
 cat >"$FIXTURE_ROOT/.gitignore" <<'IGNORE'
 /build/
 /peekaboo
@@ -296,6 +297,75 @@ tar -xzf "$FIXTURE_ROOT/build/release/peekaboo-release-reuse-fixture-9.9.9.tgz" 
 for name in peekaboo libswiftCompatibilitySpan.dylib; do
   cmp "$FIXTURE_ROOT/$name" "$TEST_ROOT/extracted-npm/package/$name"
 done
+
+# App packaging changes the tracked feed before these archive consumers run.
+# Exercise that real transition with the driver's frozen-feed state check.
+(
+  export PATH="$FAKE_BIN:$PATH"
+  export PEEKABOO_REUSE_TEST_LOG="$VERIFY_LOG" PEEKABOO_REUSE_NODE_LOG="$NODE_LOG"
+  export PEEKABOO_REUSE_REAL_NODE="$REAL_NODE" PEEKABOO_REUSE_TEST_SOURCE_COMMIT="$FIXTURE_COMMIT"
+  export PEEKABOO_NM_BIN="$FAKE_BIN/nm" PEEKABOO_STRINGS_BIN="$FAKE_BIN/strings"
+  source "$FIXTURE_ROOT/scripts/source-provenance.sh"
+  source "$FIXTURE_ROOT/scripts/native-only-policy.sh"
+  fail() { echo "$*" >&2; exit 1; }
+  require_command() { command -v "$1" >/dev/null || fail "Missing $1"; }
+  # Refused archives exit before normal cleanup; keep them under the fixture trap.
+  mktemp() {
+    case "${2:-}" in
+      /tmp/peekaboo-cli-verify.*|/tmp/peekaboo-npm-verify.*)
+        command mktemp "$1" "$TEST_ROOT/${2##*/}" ;;
+      *) command mktemp "$@" ;;
+    esac
+  }
+  for function_name in sha256_file verify_release_source_state verify_release_binary_entitlements \
+    verify_release_binary_apple_events_policy verify_binary_artifact verify_cli_tarball verify_npm_tarball; do
+    sed -n "/^$function_name() {$/,/^}$/p" "$FIXTURE_ROOT/scripts/release-binaries.sh" >> "$TEST_ROOT/archive-source-checks.sh"
+  done
+  source "$TEST_ROOT/archive-source-checks.sh"
+  PROJECT_ROOT="$FIXTURE_ROOT"
+  RELEASE_CONTRACT="$FIXTURE_ROOT/scripts/release-driver-contract.mjs"
+  RELEASE_SOURCE_COMMIT="$FIXTURE_COMMIT"
+  VERSION=9.9.9
+  CLI_ARCHITECTURES=(universal arm64 x86_64)
+  CLI_SIGN_IDENTITY='Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)'
+  CLI_SIGN_TEAM_ID=FWJYW4S8P8
+  CLI_SIGN_REQUIREMENT='anchor apple generic and certificate leaf[subject.OU] = "FWJYW4S8P8"'
+  MAC_APP_NOTARIZE=true
+  printf '%s\n' 'generated appcast' > "$FIXTURE_ROOT/appcast.xml"
+  RELEASE_APPCAST_SHA256=$(sha256_file "$FIXTURE_ROOT/appcast.xml")
+  for architecture in universal arm64 x86_64; do
+    verify_cli_tarball "$FIXTURE_ROOT/build/release/peekaboo-macos-$architecture.tar.gz" "$architecture"
+  done
+  verify_npm_tarball "$FIXTURE_ROOT/build/release/peekaboo-release-reuse-fixture-9.9.9.tgz"
+
+  assert_source_refused() {
+    local label="$1" expected="$2"
+    shift 2
+    if ("$@") > "$TEST_ROOT/$label.out" 2>&1; then
+      fail "$label accepted an invalid publication source"
+    fi
+    grep -Fq "$expected" "$TEST_ROOT/$label.out" || fail "$label failed for the wrong reason"
+  }
+  archive="$FIXTURE_ROOT/build/release/peekaboo-macos-universal.tar.gz"
+  npm_archive="$FIXTURE_ROOT/build/release/peekaboo-release-reuse-fixture-9.9.9.tgz"
+  printf '%s\n' 'tampered appcast' > "$FIXTURE_ROOT/appcast.xml"
+  assert_source_refused changed-appcast 'checkout changed' verify_cli_tarball "$archive" universal
+  printf '%s\n' 'generated appcast' > "$FIXTURE_ROOT/appcast.xml"
+  touch "$FIXTURE_ROOT/untracked-input"
+  assert_source_refused untracked-after-appcast 'checkout changed' verify_cli_tarball "$archive" universal
+  rm -f "$FIXTURE_ROOT/untracked-input"
+  printf '%s\n' 'changed license' > "$FIXTURE_ROOT/LICENSE"
+  assert_source_refused tracked-after-appcast 'checkout changed' verify_npm_tarball "$npm_archive"
+  printf '%s\n' 'fixture license' > "$FIXTURE_ROOT/LICENSE"
+  PEEKABOO_REUSE_TEST_SOURCE_COMMIT="$MISMATCH_COMMIT"
+  assert_source_refused cli-stamp-after-appcast 'source mismatch' verify_cli_tarball "$archive" universal
+  assert_source_refused npm-stamp-after-appcast 'source mismatch' verify_npm_tarball "$npm_archive"
+  PEEKABOO_REUSE_TEST_SOURCE_COMMIT="$FIXTURE_COMMIT"
+  RELEASE_SOURCE_COMMIT="$MISMATCH_COMMIT"
+  assert_source_refused head-after-appcast 'checkout changed' verify_cli_tarball "$archive" universal
+  printf '%s\n' 'original appcast' > "$FIXTURE_ROOT/appcast.xml"
+  printf 'archive source checks: frozen appcast accepted; changed feed, source, and stamps refused\n'
+)
 
 # These same consumers are used by new publication and retained-publication resume.
 # Functions and their variables are loaded from the exact driver under test.

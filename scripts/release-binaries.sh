@@ -128,7 +128,7 @@ release_helper_pin() {
 verify_release_source_state() {
     local observed_head status observed_appcast_sha
     observed_head=$(git -C "$PROJECT_ROOT" rev-parse HEAD) || return 1
-    status=$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=all) || return 1
+    status=$(git -C "$PROJECT_ROOT" status --porcelain=v1 --untracked-files=all --ignore-submodules=none) || return 1
     observed_appcast_sha=""
     [[ -z "${RELEASE_APPCAST_SHA256:-}" ]] || observed_appcast_sha=$(sha256_file "$PROJECT_ROOT/appcast.xml")
     EXPECTED_COMMIT="$RELEASE_SOURCE_COMMIT" OBSERVED_COMMIT="$observed_head" \
@@ -335,7 +335,6 @@ verify_binary_artifact() {
     local version_output
     local provenance_json
     local source_commit
-    local provenance_status=0
     local binary_size
     local lipo_output
     local authority
@@ -390,14 +389,13 @@ verify_binary_artifact() {
     peekaboo_is_exact_source_commit "$source_commit" ||
         fail "$label has no exact source commit in version JSON"
     if [ -n "$expected_source_commit" ]; then
-        peekaboo_validate_artifact_source_commit \
-            "$PROJECT_ROOT" "$source_commit" "$expected_source_commit" || provenance_status=$?
-        case "$provenance_status" in
-            0) ;;
-            4) fail "$label release checkout changed or became dirty during verification" ;;
-            5) fail "$label source mismatch: expected $expected_source_commit, got $source_commit" ;;
-            *) fail "$label source provenance validation failed (status $provenance_status)" ;;
-        esac
+        [[ "$expected_source_commit" == "$RELEASE_SOURCE_COMMIT" ]] ||
+            fail "$label expected source differs from the frozen release"
+        # Packaging has generated the appcast; its exact bytes belong to the release state.
+        verify_release_source_state ||
+            fail "$label release checkout changed during verification"
+        [[ "$source_commit" == "$expected_source_commit" ]] ||
+            fail "$label source mismatch: expected $expected_source_commit, got $source_commit"
     fi
 }
 
@@ -497,9 +495,11 @@ verify_npm_tarball() {
         fail "npm package does not contain peekaboo binary"
     tar -xzf "$npm_path" -C "$verify_dir"
     if [ -x "$verify_dir/package/peekaboo" ]; then
-        verify_binary_artifact "$verify_dir/package/peekaboo" "npm package"
+        verify_binary_artifact "$verify_dir/package/peekaboo" "npm package" \
+            "$MAC_APP_NOTARIZE" "$RELEASE_SOURCE_COMMIT"
     elif [ -x "$verify_dir/peekaboo" ]; then
-        verify_binary_artifact "$verify_dir/peekaboo" "npm package"
+        verify_binary_artifact "$verify_dir/peekaboo" "npm package" \
+            "$MAC_APP_NOTARIZE" "$RELEASE_SOURCE_COMMIT"
     else
         fail "npm package peekaboo binary missing after extraction"
     fi
