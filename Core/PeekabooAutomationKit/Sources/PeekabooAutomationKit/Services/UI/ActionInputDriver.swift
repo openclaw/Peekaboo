@@ -821,8 +821,7 @@ extension ActionInputDriver {
         pages: Int) -> ScrollBarValueChange?
     {
         guard scrollBar.isValueSettable,
-              let currentValue = self.numericValue(scrollBar.value),
-              currentValue.isFinite
+              let currentValue = self.numericValue(scrollBar.value)
         else { return nil }
 
         let minimumValue = scrollBar.doubleAttribute(AXAttributeNames.kAXMinValueAttribute) ?? 0
@@ -934,18 +933,34 @@ extension ActionInputDriver {
         _ element: any AutomationElementRepresenting,
         matches direction: PeekabooFoundation.ScrollDirection) -> Bool
     {
-        guard let frame = element.frame else { return true }
-        switch direction {
+        let wantsVertical = switch direction {
         case .up, .down:
-            return frame.height >= frame.width
+            true
         case .left, .right:
-            return frame.width >= frame.height
+            false
         }
+        switch element.stringAttribute(AXAttributeNames.kAXOrientationAttribute) {
+        case kAXVerticalOrientationValue:
+            return wantsVertical
+        case kAXHorizontalOrientationValue:
+            return !wantsVertical
+        default:
+            break
+        }
+
+        guard let frame = element.frame,
+              frame.origin.x.isFinite, frame.origin.y.isFinite,
+              frame.size.width.isFinite, frame.size.height.isFinite,
+              frame.size.width > 0, frame.size.height > 0,
+              frame.size.width != frame.size.height
+        else { return false }
+        return (frame.size.height > frame.size.width) == wantsVertical
     }
 
     private static func numericValue(_ value: Any?) -> Double? {
         guard let number = value as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID()
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite
         else {
             return nil
         }
