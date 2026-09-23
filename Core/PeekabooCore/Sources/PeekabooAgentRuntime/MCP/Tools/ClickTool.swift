@@ -65,8 +65,12 @@ public struct ClickTool: MCPTool {
                     minLength: 1),
                 "wait_for": SchemaBuilder.number(
                     description: """
-                    Optional. Maximum milliseconds to wait for element to become actionable. Default: 5000.
+                    Optional. Maximum milliseconds to re-observe the selected exact window until a query matches.
+                    Default: 5000. Maximum: 60000. A missing snapshot-local on id is reported immediately and is not
+                    remapped onto a later observation. 0 checks the current snapshot once.
                     """,
+                    minimum: 0,
+                    maximum: 60000,
                     default: 5000),
                 "double": SchemaBuilder.boolean(
                     description: "Optional. Double-click instead of single click.",
@@ -228,21 +232,119 @@ public struct ClickTool: MCPTool {
                 snapshotId: snapshot.id)
         case let .query(text):
             let snapshot = try await self.requireSnapshot(id: request.snapshotId)
-            let element = try await self.findElement(matching: text, snapshot: snapshot)
-            return ClickResolution(
-                location: element.centerPoint,
-                automationTarget: .elementId(element.id),
-                elementDescription: element.humanDescription,
-                targetApp: snapshot.applicationName,
-                windowTitle: snapshot.windowTitle,
-                elementRole: element.humanRole,
-                elementLabel: element.displayLabel,
-                targetProcessIdentifier: snapshot.applicationProcessId,
-                targetWindowID: snapshot.windowID,
-                expectedWindowIdentity: snapshot.windowMutationIdentity,
-                expectedWindowBounds: snapshot.windowBounds,
-                snapshotId: snapshot.id)
+            if let element = await self.matchingElement(query: text, snapshot: snapshot) {
+                return self.resolution(for: element, snapshot: snapshot)
+            }
+            guard request.waitForMilliseconds > 0 else {
+                throw ClickToolError(
+                    "No elements found matching query: '\(text)'",
+                    refusalReason: .targetUnavailable)
+            }
+            return try await self.waitForQuery(
+                text,
+                in: snapshot,
+                timeoutMilliseconds: request.waitForMilliseconds)
         }
+    }
+
+    private func matchingElement(query: String, snapshot: UISnapshot) async -> UIElement? {
+        do {
+            return try await self.findElement(matching: query, snapshot: snapshot)
+        } catch {
+            return nil
+        }
+    }
+
+    private func resolution(for element: UIElement, snapshot: UISnapshot) -> ClickResolution {
+        ClickResolution(
+            location: element.centerPoint,
+            automationTarget: .elementId(element.id),
+            elementDescription: element.humanDescription,
+            targetApp: snapshot.applicationName,
+            windowTitle: snapshot.windowTitle,
+            elementRole: element.humanRole,
+            elementLabel: element.displayLabel,
+            targetProcessIdentifier: snapshot.applicationProcessId,
+            targetWindowID: snapshot.windowID,
+            expectedWindowIdentity: snapshot.windowMutationIdentity,
+            expectedWindowBounds: snapshot.windowBounds,
+            snapshotId: snapshot.id)
+    }
+
+    /// Re-runs the production `see` observation for the authorized window. The click already holds the
+    /// MCP execution gate, so a concurrent `see` cannot publish the control that appears during the wait.
+    private func waitForQuery(
+        _ query: String,
+        in snapshot: UISnapshot,
+        timeoutMilliseconds: Int) async throws -> ClickResolution
+    {
+        guard let windowID = snapshot.windowID,
+              let identity = snapshot.windowMutationIdentity,
+              identity.windowID == windowID
+        else {
+            throw ClickToolError(
+                "wait_for requires the selected snapshot to name one exact window. Run see on that window, " +
+                    "then click with query.",
+                refusalReason: .targetUnavailable)
+        }
+        let deadline = Date().addingTimeInterval(TimeInterval(timeoutMilliseconds) / 1000)
+        while Date() < deadline {
+            try Task.checkCancellation()
+            let observed = try await self.observeExactWindow(windowID: windowID)
+            guard let observedIdentity = observed.windowMutationIdentity,
+                  observedIdentity.windowID == identity.windowID,
+                  observedIdentity.ownerProcessIdentifier == identity.ownerProcessIdentifier,
+                  observedIdentity.ownerProcessStartIdentity == identity.ownerProcessStartIdentity,
+                  observedIdentity.capturedBounds == identity.capturedBounds
+            else {
+                await self.discardObservation(observed)
+                throw ClickToolError(
+                    "The selected click target changed while waiting. Run see again.",
+                    refusalReason: .targetUnavailable)
+            }
+            if let element = await self.matchingElement(query: query, snapshot: observed) {
+                return self.resolution(for: element, snapshot: observed)
+            }
+            await self.discardObservation(observed)
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 {
+                break
+            }
+            try await Task.sleep(nanoseconds: UInt64(min(remaining, 0.2) * 1_000_000_000))
+        }
+        throw ClickToolError(
+            "No elements found matching query: '\(query)' after \(timeoutMilliseconds)ms",
+            refusalReason: .targetUnavailable)
+    }
+
+    private func observeExactWindow(windowID: Int) async throws -> UISnapshot {
+        let response = try await SeeTool(context: self.context).execute(arguments: ToolArguments(raw: [
+            "window_id": windowID,
+            "annotate": false,
+        ]))
+        guard !response.isError else {
+            let text = response.content.compactMap { item -> String? in
+                guard case let .text(text, _, _) = item else { return nil }
+                return text
+            }.joined(separator: "\n")
+            throw ClickToolError(
+                text.isEmpty ? "Exact-window observation failed." : text,
+                refusalReason: .targetUnavailable)
+        }
+        guard case let .object(fields)? = response.meta,
+              case let .string(snapshotID) = fields["snapshot_id"],
+              let observed = await self.getSnapshot(id: snapshotID)
+        else {
+            throw ClickToolError(
+                "Exact-window observation did not publish a snapshot.",
+                refusalReason: .targetUnavailable)
+        }
+        return observed
+    }
+
+    private func discardObservation(_ snapshot: UISnapshot) async {
+        try? await self.context.snapshots.cleanSnapshot(snapshotId: snapshot.id)
+        await self.context.uiSnapshots.removeSnapshot(id: snapshot.id)
     }
 
     @MainActor
@@ -795,6 +897,7 @@ private struct ClickRequest {
     let coordinateSpace: CaptureCoordinateSpace?
     let coordinateReference: String?
     let modifiers: [PointerModifier]
+    let waitForMilliseconds: Int
 
     init(arguments: ToolArguments) throws {
         let rawCoordinateSpace = Self.nonEmptyString(arguments.getString("coordinate_space"))
@@ -843,6 +946,7 @@ private struct ClickRequest {
         }
         self.coordinateSpace = coordinateSpace
         self.coordinateReference = coordinateReference
+        self.waitForMilliseconds = try Self.waitForMilliseconds(arguments)
         self.modifiers = try Self.parseModifiers(arguments)
         let isDouble = arguments.getBool("double") ?? false
         let isRight = arguments.getBool("right") ?? false
@@ -919,6 +1023,15 @@ private struct ClickRequest {
             }
             return canonical
         }
+    }
+
+    private static func waitForMilliseconds(_ arguments: ToolArguments) throws -> Int {
+        guard let raw = arguments.getNumber("wait_for") else { return 5000 }
+        guard raw.isFinite, raw >= 0, raw <= 60000 else {
+            throw ClickToolError(
+                "wait_for must be a finite number of milliseconds from 0 through 60000.")
+        }
+        return Int(raw.rounded(.down))
     }
 
     private static func nonEmptyString(_ value: String?) -> String? {
