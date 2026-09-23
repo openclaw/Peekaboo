@@ -84,10 +84,12 @@ read_when:
   and request-local engine selection can serve automatic `see` and `image` observations without changing hosts.
   Explicit modern capture and SCK-only `capture live`/`verify_state` final screenshots remain refused before transport
   for that Agent process. Classic fallback does not relax target, snapshot, listener-identity, or signed-result checks.
-- All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
+- Agent executions run under the top-level command runtime, so environment variables, credentials, and logging levels match the top-level CLI state. Text-task dry-run previews bypass runtime construction entirely.
 - New configurations select GPT-5.6 and Opus 5. Credential-only Anthropic discovery uses Opus 4.8 for zero-retention compatibility, while saved configuration and session model pins remain unchanged.
 - `--dry-run` is a zero-provider text-task preview: it echoes the normalized instruction with explicit zero
-  model/tool/session effects. A missing task or audio input is invalid instead of entering chat/help or transcription.
+  model/tool/session effects. It neither selects nor probes a UI host, so unavailable Bridge sockets, capture owners,
+  or UI permissions cannot block a valid preview. A missing task or audio input is invalid instead of entering
+  chat/help or transcription; step limits and the Agent-disable switch are still validated.
 - Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone and `--audio-file` loads a WAV/CAF file.
 - Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.
   Token requests are capped to model capability; unsupported temperature controls are omitted automatically.

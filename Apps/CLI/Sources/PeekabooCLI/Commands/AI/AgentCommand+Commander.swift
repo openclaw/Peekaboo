@@ -119,6 +119,15 @@ struct AgentRunSubcommand: RuntimeBackedCommand {
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = AgentRunSubcommand.localRuntimeOptions()
 
+    mutating func runWithoutRuntimeIfPossible() throws -> Bool {
+        try self.validateBeforeRuntime()
+        let command = self.makeAgentCommand()
+        guard let instruction = command.newTaskDryRunInstruction else { return false }
+        _ = try command.validateAgentRunPreflight()
+        command.displayDryRunPreview(instruction: instruction)
+        return true
+    }
+
     mutating func run(using runtime: CommandRuntime) async throws {
         var command = self.makeAgentCommand()
         try await command.run(using: runtime)

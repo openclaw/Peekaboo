@@ -65,6 +65,9 @@ enum CommanderRuntimeExecutor {
         runtimeFactory: RuntimeFactory
     ) async throws {
         if var runtimeCommand = command as? any AsyncRuntimeCommand {
+            if try runtimeCommand.runWithoutRuntimeIfPossible() {
+                return
+            }
             // Reuse the options already bound to configurable commands. Besides avoiding duplicate policy work,
             // this keeps private capability files single-read: one validated byte sequence flows into runtime
             // construction even if the pathname is replaced immediately afterward.

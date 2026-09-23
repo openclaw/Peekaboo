@@ -384,7 +384,7 @@ extension AgentCommand {
         return value == "1" || value == "true"
     }
 
-    private func validateAgentRunPreflight() throws -> Int {
+    func validateAgentRunPreflight() throws -> Int {
         if self.isAgentDisabled() {
             try self.failAgentCommand(
                 message: "Agent service not available because PEEKABOO_DISABLE_AGENT is set.",

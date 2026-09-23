@@ -14,12 +14,21 @@ protocol PreRuntimeValidatingCommand: ParsableCommand {
 /// Commands conforming to this protocol receive a `CommandRuntime` instance
 /// containing logger, services, and configuration instead of accessing singletons.
 protocol AsyncRuntimeCommand: ParsableCommand {
+    /// Complete a request-only mode without constructing services or selecting a UI host.
+    @MainActor
+    mutating func runWithoutRuntimeIfPossible() throws -> Bool
+
     /// Run the command with injected runtime context.
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws
 }
 
 extension AsyncRuntimeCommand {
+    @MainActor
+    mutating func runWithoutRuntimeIfPossible() throws -> Bool {
+        false
+    }
+
     /// Default synchronous run() implementation that builds the runtime context
     /// and executes the async implementation on the main actor.
     mutating func run() throws {
@@ -29,8 +38,10 @@ extension AsyncRuntimeCommand {
 
         Task { @MainActor in
             do {
-                let runtime = try await CommandRuntime.makeDefaultAsync()
-                try await commandCopy.run(using: runtime)
+                if try !commandCopy.runWithoutRuntimeIfPossible() {
+                    let runtime = try await CommandRuntime.makeDefaultAsync()
+                    try await commandCopy.run(using: runtime)
+                }
             } catch {
                 thrownError = error
             }
