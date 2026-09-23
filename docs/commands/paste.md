@@ -52,6 +52,7 @@ peekaboo paste "Hello" --app TextEdit --foreground
 ```
 
 ## Notes
+- Restore delays must be between `0` and `10000ms`, inclusive. Existing CLI scripts or MCP callers using longer delays must reduce them; invalid values fail before clipboard access or input delivery. Direct calls to the shared consumption-wait helper are capped at 10 seconds as a backstop.
 - File paths for `--file-path` accept `~/...`.
 - Successful background text JSON reports delivery mode and target PID. Clipboard-backed background delivery returns `INTERACTION_FAILED` with the explicit retry-unsafe message instead of a success payload.
 - After Cmd+V dispatch begins, cancellation or a delivery error is indeterminate. A clipboard restoration failure is always reported with a canonical partial or indeterminate retry-unsafe outcome, including for receiptless providers. Inspect fresh UI state rather than replaying the paste.

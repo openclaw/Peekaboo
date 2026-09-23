@@ -117,16 +117,16 @@ extension PeekabooAgentService {
 
     private func normalizedOpenAIModelID(_ modelId: String) -> String {
         let normalized = modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let parsed = ProviderParser.parse(normalized) else {
-            return normalized
+        var remaining = normalized[...]
+        while let slash = remaining.firstIndex(of: "/") {
+            let provider = remaining[..<slash].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard provider == "openai" || provider == "chatgpt" else { break }
+            let model = remaining[remaining.index(after: slash)...].unicodeScalars
+            guard let modelStart = model.firstIndex(where: { !CharacterSet.whitespacesAndNewlines.contains($0) })
+            else { break }
+            remaining = remaining[modelStart...]
         }
-
-        switch parsed.provider.lowercased() {
-        case "openai", "chatgpt":
-            return self.normalizedOpenAIModelID(parsed.model)
-        default:
-            return normalized
-        }
+        return String(remaining)
     }
 
     private func maxOutputTokens(for model: LanguageModel) -> Int {

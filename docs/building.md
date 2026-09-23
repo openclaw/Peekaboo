@@ -48,6 +48,16 @@ preventing the SDK's macOS 27 default from producing an Intel architecture depre
 uses `--arch arm64`; supported
 architectures and the minimum macOS version are unchanged.
 
+Inspect an embedded source stamp without executing the binary:
+
+```bash
+scripts/read-macho-info-plist.sh --binary /absolute/path/to/peekaboo --key PeekabooSourceCommit
+```
+
+The helper reads both single-architecture and universal Mach-O files. Universal slices must agree on the requested
+key; omit `--key` to read and compare the complete embedded Info.plist instead. Missing keys or mismatched slices fail
+without emitting a value. This is metadata inspection, not signature verification.
+
 ## Commander dependency resolution
 
 Run this once in each initialized source checkout before using Swift or opening Xcode directly, and again after moving

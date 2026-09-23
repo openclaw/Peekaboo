@@ -470,6 +470,7 @@ if [[ "$SKIP_BUILD" == true ]]; then
 else
   log "Building $APP_NAME.app $VERSION"
   python3 "$ROOT/scripts/setup-swift-workspace.py" run --release -- xcodebuild \
+    ${PEEKABOO_BUILD_JOBS:+-jobs "$PEEKABOO_BUILD_JOBS"} \
     -workspace "$WORKSPACE" \
     -scheme "$SCHEME" \
     -configuration "$CONFIGURATION" \

@@ -52,19 +52,6 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         self.restoreDelay?.roundedMilliseconds ?? 150
     }
 
-    mutating func validate() throws {
-        try self.target.validate()
-        try KeyboardDeliverySupport.validateForegroundFlags(
-            foreground: self.focusOptions.foreground,
-            focusOptions: self.focusOptions
-        )
-        guard (0...ClipboardPasteTransactionGate.maximumRestoreDelayMilliseconds)
-            .contains(self.resolvedRestoreDelayMs)
-        else {
-            throw ValidationError("--restore-delay must be between 0 and 10000ms")
-        }
-    }
-
     private var hasExplicitPayload: Bool {
         // Any payload source OR payload-modifier flag counts: `paste --uti public.rtf`
         // or `paste --allow-large` without data must fail validation, not silently
@@ -911,6 +898,19 @@ struct PasteResult: Codable {
 
 @MainActor
 extension PasteCommand: ParsableCommand {
+    mutating func validate() throws {
+        try self.target.validate()
+        try KeyboardDeliverySupport.validateForegroundFlags(
+            foreground: self.focusOptions.foreground,
+            focusOptions: self.focusOptions
+        )
+        guard (0...ClipboardPasteTransactionGate.maximumRestoreDelayMilliseconds)
+            .contains(self.resolvedRestoreDelayMs)
+        else {
+            throw ValidationError("--restore-delay must be between 0 and 10000ms")
+        }
+    }
+
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
             CommandDescription(

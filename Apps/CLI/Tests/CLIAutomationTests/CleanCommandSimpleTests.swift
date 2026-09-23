@@ -148,4 +148,24 @@ struct CleanCommandSimpleTests {
         #expect(response.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
         #expect(response.error?.message == FileServiceError.invalidSnapshotID.localizedDescription)
     }
+
+    @Test(arguments: ["-1", "0"])
+    @MainActor
+    func `Clean older-than non-positive hours reports validation error`(_ hours: String) async throws {
+        let services = TestServicesFactory.makePeekabooServices(files: StubFileService())
+
+        let result = try await InProcessCommandRunner.run(
+            ["clean", "--older-than", hours, "--json"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(
+            JSONResponse.self,
+            from: Data(result.combinedOutput.utf8)
+        )
+        #expect(response.success == false)
+        #expect(response.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(response.error?.message == "--older-than must be a positive number of hours")
+    }
 }

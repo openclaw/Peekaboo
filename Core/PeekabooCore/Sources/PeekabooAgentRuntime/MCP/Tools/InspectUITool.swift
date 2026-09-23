@@ -114,7 +114,7 @@ public struct InspectUITool: MCPTool {
                 outcome: actionResult.outcome,
                 targetIdentity: resolvedTarget)
             observationActionResult = validatedActionResult
-            try Self.requireUsableAXOnlyEvidence(result)
+            try Self.requireUsableAXOnlyEvidence(result, requestedWindowID: windowContext.windowID)
             let snapshotResult = self.bindResult(result, to: snapshot.id)
 
             try await self.context.snapshots.storeDetectionResult(
@@ -187,24 +187,47 @@ public struct InspectUITool: MCPTool {
 
     // MARK: - Private Helpers
 
-    private static func requireUsableAXOnlyEvidence(_ result: ElementDetectionResult) throws {
-        guard result.elements.all.isEmpty,
-              let truncationInfo = result.metadata.truncationInfo,
-              truncationInfo.isTruncated
-        else { return }
+    private static func requireUsableAXOnlyEvidence(
+        _ result: ElementDetectionResult,
+        requestedWindowID: Int?) throws
+    {
+        guard result.elements.all.isEmpty else { return }
 
-        let message = truncationInfo.automationToolRemediationMessage(
-            budget: result.metadata.windowContext?.traversalBudget,
-            applicationScopedFallback: result.metadata.isApplicationScopedAccessibilityFallback)
-        if truncationInfo.deadlineReached {
-            throw PeekabooError.timeout(message)
+        if let truncationInfo = result.metadata.truncationInfo, truncationInfo.isTruncated {
+            let message = truncationInfo.automationToolRemediationMessage(
+                budget: result.metadata.windowContext?.traversalBudget,
+                applicationScopedFallback: result.metadata.isApplicationScopedAccessibilityFallback)
+            if truncationInfo.deadlineReached {
+                throw PeekabooError.timeout(message)
+            }
+            if truncationInfo.incompleteAccessibilityRead,
+               result.metadata.windowContext?.windowID != nil
+            {
+                throw PeekabooError.accessibilityIncomplete(message)
+            }
+            throw PeekabooError.operationError(message: message)
         }
-        if truncationInfo.incompleteAccessibilityRead,
-           result.metadata.windowContext?.windowID != nil
-        {
-            throw PeekabooError.accessibilityIncomplete(message)
-        }
-        throw PeekabooError.operationError(message: message)
+
+        guard let windowID = requestedWindowID else { return }
+
+        // Older Bridge hosts could omit truncationInfo while still returning an empty exact-window map.
+        throw PeekabooError.accessibilityIncomplete(
+            Self.emptyExactWindowMessage(
+                windowID: windowID,
+                budget: result.metadata.windowContext?.traversalBudget,
+                applicationScopedFallback: result.metadata.isApplicationScopedAccessibilityFallback))
+    }
+
+    private static func emptyExactWindowMessage(
+        windowID: Int,
+        budget: AXTraversalBudget?,
+        applicationScopedFallback: Bool) -> String
+    {
+        let guidance = DetectionTruncationInfo(incompleteAccessibilityRead: true)
+            .automationToolRemediationMessage(
+                budget: budget,
+                applicationScopedFallback: applicationScopedFallback)
+        return "Exact window \(windowID) returned no usable Accessibility elements. \(guidance)"
     }
 
     private static func failureResponse(_ error: any Error) -> ToolResponse {

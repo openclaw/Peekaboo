@@ -55,6 +55,12 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
 
 ## 2. Validate the preparation patch
 
+On a busy Mac, run the commands below and the release driver under `nice -n 19`.
+Set `PEEKABOO_BUILD_JOBS=2` to cap the preflight, safe tests, consumer check, and app build;
+append `--jobs 2` to `SWIFT_OPTIMIZATION_FLAGS` for the architecture-specific CLI builds
+(default optimization flags: `-Xswiftc -Osize -Xlinker -dead_strip`). The preflight compiler
+check allows 90 minutes so low-priority builds can complete without skipping a gate.
+
 ```bash
 pnpm run format
 pnpm run lint
@@ -96,7 +102,7 @@ workflow context. PR runs independently check out only the event's PR head; a ma
 
 This read-only, secretless macOS lane runs unfiltered suites for PeekabooCore, AutomationKit, Protocols, Visualizer,
 UICore, Inspector, Playground, and all five pinned submodules. It keeps per-package logs, exit status, built-in skips,
-submodule revisions, and actual toolchain metadata. A separate `full-safe` matrix job uses Node 24, the exact repository
+submodule revisions, and actual toolchain metadata. A separate `full-safe` matrix job uses the pinned CI Node version, the exact repository
 pnpm pin, and a frozen dependency install. Before that install, it installs ripgrep for the shell contracts and `uv`
 for the real fixture DMG integration, retaining their actual versions in `full-safe/ripgrep-version.txt` and
 `full-safe/uv-version.txt`. It then invokes the unchanged `pnpm run test:safe` command once. It covers the

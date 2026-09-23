@@ -19,7 +19,7 @@ that snapshot. Use `press` for standalone keys or chords.
 | `--snapshot <id>` | Target a specific snapshot. Background-only Agent/MCP requires an explicit fresh exact non-dialog ID and does not infer `latest`. |
 | `--at x,y` | Atomically focus one pixel in the exact captured window and type without activating it. Requires an explicit non-`latest` screenshot snapshot and cannot be combined with target selectors or `--foreground`. |
 | `--coordinate-space <space>` | Interpret `--at` as `global_display_points` (default), `image_pixels`, or `normalized` coordinates from that snapshot. |
-| `--delay <duration>` | Time between synthetic keystrokes (default `0`; bare values are milliseconds). |
+| `--delay <duration>` | Time between synthetic keystrokes (default `0`; bare values are milliseconds). Valid long delays remain cancellable; cancelling a wait stops the remaining input. |
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
 | `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
 | `--clear` | Clear before typing. Background targets prefer one AXValue replacement; keyboard fallback uses Cmd+A, Delete. |

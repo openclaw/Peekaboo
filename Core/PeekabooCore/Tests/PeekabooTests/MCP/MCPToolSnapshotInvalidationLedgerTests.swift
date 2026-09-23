@@ -131,7 +131,7 @@ struct MCPToolSnapshotInvalidationLedgerTests {
         let coordinator = LegacyBarrierMutationCoordinator()
         let scope = MCPToolSnapshotMutationScope(toolName: "browser", effect: .mutation)
 
-        try coordinator.prepareConcurrentMutation(scope)
+        try await coordinator.prepareConcurrentMutation(scope)
         #expect(await coordinator.cancelMutation(scope))
 
         #expect(coordinator.sharedPrepareCount == 1)

@@ -105,6 +105,7 @@ public final class ScrollService {
         laneCompletion: @escaping @MainActor (UIInputExecutionResult) async -> Void = { _ in }) async throws
         -> UIAutomationActionResult<UIInputExecutionResult>
     {
+        try ScrollRequest.validateAmount(request.amount, smooth: request.smooth)
         self.logRequest(request)
         var bundleIdentifier: String?
         var preparedElement: AutomationElement?
@@ -248,8 +249,6 @@ public final class ScrollService {
             where !request.foreground && error.allowsSynthesisFallback
         {
             throw PeekabooError.invalidInput(Self.foregroundRequiredMessage(for: error))
-        } catch {
-            throw error
         }
     }
 
@@ -453,7 +452,7 @@ public final class ScrollService {
 
     private func sleepBetweenTicks(context: ScrollExecutionContext) async throws {
         if context.delay > 0 {
-            try await Task.sleep(nanoseconds: UInt64(context.delay) * 1_000_000)
+            try await Task.sleep(for: .milliseconds(context.delay))
         } else if context.smooth {
             try await Task.sleep(nanoseconds: 10_000_000)
         }

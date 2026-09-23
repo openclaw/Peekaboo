@@ -52,14 +52,6 @@ public enum ClickTarget: Sendable, Codable {
     }
 }
 
-// ClickType is now in PeekabooFoundation
-
-// ScrollDirection is now in PeekabooFoundation
-
-// SwipeDirection is now in PeekabooFoundation
-
-// ModifierKey is now in PeekabooFoundation
-
 public struct ScrollRequest: Sendable, Codable {
     public var direction: PeekabooFoundation.ScrollDirection
     public var amount: Int
@@ -98,6 +90,14 @@ public struct ScrollRequest: Sendable, Codable {
         self.snapshotId = snapshotId
         self.expectedWindow = expectedWindow
         self.foreground = foreground
+    }
+
+    public nonisolated static func validateAmount(_ amount: Int, smooth: Bool) throws {
+        let maximumMagnitude = smooth ? Int.max / 10 : Int.max
+        guard amount >= -maximumMagnitude, amount <= maximumMagnitude else {
+            throw PeekabooError.invalidInput(
+                "Scroll amount must be between \(-maximumMagnitude) and \(maximumMagnitude)")
+        }
     }
 
     private enum CodingKeys: String, CodingKey {

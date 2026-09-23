@@ -68,7 +68,7 @@ struct AppToolLifecyclePinningTests {
         try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: response)
         #expect(response.meta?.objectValue?["target_receipt"] == nil)
         #expect(service.mutationInventoryCount == 1)
-        #expect(service.findCalls.isEmpty)
+        #expect(service.findCalls == ["TextEdit"])
         #expect(service.quitCalls.isEmpty)
         #expect(service.hideRequests.isEmpty)
         #expect(service.terminationCount == 0)

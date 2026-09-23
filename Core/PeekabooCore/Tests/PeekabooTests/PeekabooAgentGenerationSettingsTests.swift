@@ -230,6 +230,30 @@ struct PeekabooAgentGenerationSettingsTests {
             }
     }
 
+    @Test(arguments: [9, 200, 100_000])
+    @MainActor
+    func `Nested OpenAI prefixes preserve GPT 5 settings without recursive growth`(depth: Int) throws {
+        try self.withTemporaryConfig(#"{"agent":{"temperature":0.7}}"#) {
+            let agentService = try PeekabooAgentService(services: PeekabooServices())
+            let nestedID = String(repeating: "openai/", count: depth) + "gpt-5"
+            #expect(agentService.generationSettings(for: .openRouter(modelId: nestedID)).temperature == nil)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Nested prefix normalization preserves whitespace and invalid suffix behavior`() throws {
+        try self.withTemporaryConfig(#"{"agent":{"temperature":0.7}}"#) {
+            let agentService = try PeekabooAgentService(services: PeekabooServices())
+            let spacedID = " \n OPENAI \t/\u{00A0}ChatGPT / \tgpt-5 \n"
+            #expect(agentService.generationSettings(for: .openRouter(modelId: spacedID)).temperature == nil)
+
+            for modelID in ["openai/", "openai/other/gpt-5", "/gpt-5"] {
+                #expect(agentService.generationSettings(for: .openRouter(modelId: modelID)).temperature == 0.7)
+            }
+        }
+    }
+
     private func withTemporaryConfig(_ configurationJSON: String, body: () throws -> Void) throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-config-\(UUID().uuidString)", isDirectory: true)

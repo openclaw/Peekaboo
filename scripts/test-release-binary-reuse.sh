@@ -16,7 +16,7 @@ VERIFY_LOG="$TEST_ROOT/verify.log"
 NODE_LOG="$TEST_ROOT/node.log"
 mkdir -p "$FIXTURE_ROOT/scripts" "$FAKE_BIN"
 
-cp "$ROOT_DIR/scripts/release-binaries.sh" "$FIXTURE_ROOT/scripts/"
+cp "$ROOT_DIR/scripts/release-binaries.sh" "$ROOT_DIR/scripts/package-cli-artifact.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/native-only-policy.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/source-provenance.sh" "$FIXTURE_ROOT/scripts/"
 cp "$ROOT_DIR/scripts/release-version.sh" "$FIXTURE_ROOT/scripts/"
@@ -51,9 +51,11 @@ CHANGELOG
 mkdir -p "$FIXTURE_ROOT/release"
 cp "$FIXTURE_ROOT/CHANGELOG.md" "$FIXTURE_ROOT/release/release-notes.md"
 printf '%s\n' 'fixture license' >"$FIXTURE_ROOT/LICENSE"
+printf '%s\n' 'original appcast' >"$FIXTURE_ROOT/appcast.xml"
 cat >"$FIXTURE_ROOT/.gitignore" <<'IGNORE'
 /build/
 /peekaboo
+/libswiftCompatibility*.dylib
 IGNORE
 
 cat >"$FIXTURE_ROOT/scripts/verify-swift-runtime-libraries.sh" <<'RUNTIME'
@@ -107,7 +109,14 @@ cat >"$FAKE_BIN/lipo" <<'LIPO'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' architectures >>"${PEEKABOO_REUSE_TEST_LOG:?}"
-printf '%s\n' "${PEEKABOO_REUSE_TEST_ARCHS:-x86_64 arm64}"
+if [[ "$1" == -archs ]]; then
+  architecture=$(sed -n 's/^# fixture-architecture: //p' "$2")
+  printf '%s\n' "${architecture:-${PEEKABOO_REUSE_TEST_ARCHS:-x86_64 arm64}}"
+else
+  [[ "$2" == -thin && "$4" == -output ]]
+  cp "$1" "$5"
+  printf '\n# fixture-architecture: %s\n' "$3" >> "$5"
+fi
 LIPO
 
 cat >"$FAKE_BIN/nm" <<'NM'
@@ -132,7 +141,7 @@ destination=$3
 package_root=$(mktemp -d /tmp/peekaboo-reuse-npm.XXXXXX)
 trap 'rm -rf "$package_root"' EXIT
 mkdir -p "$package_root/package"
-cp peekaboo "$package_root/package/peekaboo"
+cp peekaboo libswiftCompatibility*.dylib "$package_root/package/"
 tar -czf "$destination/peekaboo-release-reuse-fixture-9.9.9.tgz" -C "$package_root" package
 printf '%s\n' "$destination/peekaboo-release-reuse-fixture-9.9.9.tgz"
 PNPM
@@ -180,7 +189,8 @@ else
 fi
 exit 0
 CANDIDATE
-chmod +x "$FIXTURE_ROOT/peekaboo"
+printf 'fixture runtime library\n' > "$FIXTURE_ROOT/libswiftCompatibilitySpan.dylib"
+chmod +x "$FIXTURE_ROOT/peekaboo" "$FIXTURE_ROOT/libswiftCompatibilitySpan.dylib"
 # Release candidates must be meaningfully sized; pad this executable with shell
 # comments without changing its behavior.
 dd if=/dev/zero bs=1048576 count=2 2>/dev/null | tr '\0' '#' >>"$FIXTURE_ROOT/peekaboo"
@@ -199,7 +209,7 @@ run_release() {
       PEEKABOO_REUSE_REAL_NODE="$REAL_NODE" \
       PEEKABOO_REUSE_MUTATE_DURING_PREFLIGHT="${4:-0}" \
       PEEKABOO_REUSE_TEST_FILE_OUTPUT="${5:-single}" \
-      ./scripts/release-binaries.sh --reuse-built-cli --skip-mac-app --no-appcast
+      ./scripts/release-binaries.sh --reuse-built-cli --skip-mac-app --no-appcast "${@:6}"
   )
 }
 
@@ -263,6 +273,139 @@ if ! run_release "$FIXTURE_COMMIT" safe 'x86_64 arm64' 0 extended >"$TEST_ROOT/s
 fi
 grep -Fq 'Release artifacts created successfully' "$TEST_ROOT/success.out"
 [[ "$(shasum -a 256 "$FIXTURE_ROOT/peekaboo" | awk '{print $1}')" == "$candidate_sha_before" ]]
+[[ "$(cat "$FIXTURE_ROOT/libswiftCompatibilitySpan.dylib")" == 'fixture runtime library' ]]
+
+# The real producer must package both binary and runtime slices without changing npm inputs.
+for architecture in universal arm64 x86_64; do
+  archive="$FIXTURE_ROOT/build/release/peekaboo-macos-$architecture.tar.gz"
+  extract="$TEST_ROOT/extracted-$architecture"
+  mkdir "$extract"
+  tar -xzf "$archive" -C "$extract"
+  payload="$extract/peekaboo-macos-$architecture"
+  for name in peekaboo libswiftCompatibilitySpan.dylib; do
+    if [[ "$architecture" == universal ]]; then
+      cmp "$FIXTURE_ROOT/$name" "$payload/$name"
+    else
+      grep -Fx "# fixture-architecture: $architecture" "$payload/$name" >/dev/null
+    fi
+  done
+  # shellcheck disable=SC2016
+  grep -Fx '    sudo install -m 755 "$library" "$install_dir/"' "$payload/README.md" >/dev/null
+done
+mkdir "$TEST_ROOT/extracted-npm"
+tar -xzf "$FIXTURE_ROOT/build/release/peekaboo-release-reuse-fixture-9.9.9.tgz" -C "$TEST_ROOT/extracted-npm"
+for name in peekaboo libswiftCompatibilitySpan.dylib; do
+  cmp "$FIXTURE_ROOT/$name" "$TEST_ROOT/extracted-npm/package/$name"
+done
+
+# App packaging changes the tracked feed before these archive consumers run.
+# Exercise that real transition with the driver's frozen-feed state check.
+(
+  export PATH="$FAKE_BIN:$PATH"
+  export PEEKABOO_REUSE_TEST_LOG="$VERIFY_LOG" PEEKABOO_REUSE_NODE_LOG="$NODE_LOG"
+  export PEEKABOO_REUSE_REAL_NODE="$REAL_NODE" PEEKABOO_REUSE_TEST_SOURCE_COMMIT="$FIXTURE_COMMIT"
+  export PEEKABOO_NM_BIN="$FAKE_BIN/nm" PEEKABOO_STRINGS_BIN="$FAKE_BIN/strings"
+  source "$FIXTURE_ROOT/scripts/source-provenance.sh"
+  source "$FIXTURE_ROOT/scripts/native-only-policy.sh"
+  fail() { echo "$*" >&2; exit 1; }
+  require_command() { command -v "$1" >/dev/null || fail "Missing $1"; }
+  # Refused archives exit before normal cleanup; keep them under the fixture trap.
+  mktemp() {
+    case "${2:-}" in
+      /tmp/peekaboo-cli-verify.*|/tmp/peekaboo-npm-verify.*)
+        command mktemp "$1" "$TEST_ROOT/${2##*/}" ;;
+      *) command mktemp "$@" ;;
+    esac
+  }
+  for function_name in sha256_file verify_release_source_state verify_release_binary_entitlements \
+    verify_release_binary_apple_events_policy verify_binary_artifact verify_cli_tarball verify_npm_tarball; do
+    sed -n "/^$function_name() {$/,/^}$/p" "$FIXTURE_ROOT/scripts/release-binaries.sh" >> "$TEST_ROOT/archive-source-checks.sh"
+  done
+  source "$TEST_ROOT/archive-source-checks.sh"
+  PROJECT_ROOT="$FIXTURE_ROOT"
+  RELEASE_CONTRACT="$FIXTURE_ROOT/scripts/release-driver-contract.mjs"
+  RELEASE_SOURCE_COMMIT="$FIXTURE_COMMIT"
+  VERSION=9.9.9
+  CLI_ARCHITECTURES=(universal arm64 x86_64)
+  CLI_SIGN_IDENTITY='Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)'
+  CLI_SIGN_TEAM_ID=FWJYW4S8P8
+  CLI_SIGN_REQUIREMENT='anchor apple generic and certificate leaf[subject.OU] = "FWJYW4S8P8"'
+  MAC_APP_NOTARIZE=true
+  printf '%s\n' 'generated appcast' > "$FIXTURE_ROOT/appcast.xml"
+  RELEASE_APPCAST_SHA256=$(sha256_file "$FIXTURE_ROOT/appcast.xml")
+  for architecture in universal arm64 x86_64; do
+    verify_cli_tarball "$FIXTURE_ROOT/build/release/peekaboo-macos-$architecture.tar.gz" "$architecture"
+  done
+  verify_npm_tarball "$FIXTURE_ROOT/build/release/peekaboo-release-reuse-fixture-9.9.9.tgz"
+
+  assert_source_refused() {
+    local label="$1" expected="$2"
+    shift 2
+    if ("$@") > "$TEST_ROOT/$label.out" 2>&1; then
+      fail "$label accepted an invalid publication source"
+    fi
+    grep -Fq "$expected" "$TEST_ROOT/$label.out" || fail "$label failed for the wrong reason"
+  }
+  archive="$FIXTURE_ROOT/build/release/peekaboo-macos-universal.tar.gz"
+  npm_archive="$FIXTURE_ROOT/build/release/peekaboo-release-reuse-fixture-9.9.9.tgz"
+  printf '%s\n' 'tampered appcast' > "$FIXTURE_ROOT/appcast.xml"
+  assert_source_refused changed-appcast 'checkout changed' verify_cli_tarball "$archive" universal
+  printf '%s\n' 'generated appcast' > "$FIXTURE_ROOT/appcast.xml"
+  touch "$FIXTURE_ROOT/untracked-input"
+  assert_source_refused untracked-after-appcast 'checkout changed' verify_cli_tarball "$archive" universal
+  rm -f "$FIXTURE_ROOT/untracked-input"
+  printf '%s\n' 'changed license' > "$FIXTURE_ROOT/LICENSE"
+  assert_source_refused tracked-after-appcast 'checkout changed' verify_npm_tarball "$npm_archive"
+  printf '%s\n' 'fixture license' > "$FIXTURE_ROOT/LICENSE"
+  PEEKABOO_REUSE_TEST_SOURCE_COMMIT="$MISMATCH_COMMIT"
+  assert_source_refused cli-stamp-after-appcast 'source mismatch' verify_cli_tarball "$archive" universal
+  assert_source_refused npm-stamp-after-appcast 'source mismatch' verify_npm_tarball "$npm_archive"
+  PEEKABOO_REUSE_TEST_SOURCE_COMMIT="$FIXTURE_COMMIT"
+  RELEASE_SOURCE_COMMIT="$MISMATCH_COMMIT"
+  assert_source_refused head-after-appcast 'checkout changed' verify_cli_tarball "$archive" universal
+  printf '%s\n' 'original appcast' > "$FIXTURE_ROOT/appcast.xml"
+  printf 'archive source checks: frozen appcast accepted; changed feed, source, and stamps refused\n'
+)
+
+# These same consumers are used by new publication and retained-publication resume.
+# Functions and their variables are loaded from the exact driver under test.
+# shellcheck disable=SC1091,SC2034,SC2329
+(
+  fail() { echo "$*" >&2; exit 1; }
+  for function_name in sha256_file verify_checksums_file expected_release_assets_json prepare_release_assets; do
+    sed -n "/^$function_name() {$/,/^}$/p" "$FIXTURE_ROOT/scripts/release-binaries.sh" >> "$TEST_ROOT/driver-consumers.sh"
+  done
+  source "$TEST_ROOT/driver-consumers.sh"
+  RELEASE_DIR="$FIXTURE_ROOT/build/release"
+  CLI_ARCHITECTURES=(universal arm64 x86_64)
+  NPM_PACKAGE_PATH="$RELEASE_DIR/peekaboo-release-reuse-fixture-9.9.9.tgz"
+  RELEASE_PROOF_SHA256=""
+  INCLUDE_MAC_APP=false
+  MAC_APP_ZIP_PATH=""
+  verify_checksums_file
+  expected_release_assets_json > "$TEST_ROOT/assets.json"
+  prepare_release_assets
+  printf '%s\n' "${RELEASE_ASSETS[@]}" > "$TEST_ROOT/upload-assets.txt"
+  "$REAL_NODE" --input-type=module - "$TEST_ROOT/assets.json" "$TEST_ROOT/upload-assets.txt" <<'ASSETS'
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+const inventory = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const uploads = fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').map(value => path.basename(value));
+assert.deepEqual(uploads.sort(), Object.keys(inventory).sort());
+for (const architecture of ['universal', 'arm64', 'x86_64']) {
+  assert.ok(inventory['peekaboo-macos-' + architecture + '.tar.gz']);
+}
+ASSETS
+  cp "$RELEASE_DIR/checksums.txt" "$TEST_ROOT/checksums-original"
+  sed '/peekaboo-macos-x86_64.tar.gz/d' "$TEST_ROOT/checksums-original" > "$RELEASE_DIR/checksums.txt"
+  if (verify_checksums_file) > "$TEST_ROOT/missing-thin-checksum.out" 2>&1; then
+    echo 'release accepted an omitted thin archive checksum' >&2
+    exit 1
+  fi
+  grep -F 'missing peekaboo-macos-x86_64.tar.gz' "$TEST_ROOT/missing-thin-checksum.out" >/dev/null
+  cp "$TEST_ROOT/checksums-original" "$RELEASE_DIR/checksums.txt"
+)
 
 first_candidate=$(grep -n -m1 '^candidate-executed$' "$VERIFY_LOG" | cut -d: -f1)
 for required_gate in \
@@ -285,6 +428,19 @@ if grep -Eq 'pnpm run build:swift|build-swift-(arm|universal)' "$VERIFY_LOG"; th
   echo 'reuse lane rebuilt the CLI' >&2
   exit 1
 fi
+
+if ! run_release "$FIXTURE_COMMIT" safe arm64 0 single --arm64-only >"$TEST_ROOT/arm64-only.out" 2>&1; then
+  echo 'local arm64-only packaging rejected an already-thin CLI' >&2
+  exit 1
+fi
+[[ -f "$FIXTURE_ROOT/build/release/peekaboo-macos-arm64.tar.gz" ]]
+[[ ! -e "$FIXTURE_ROOT/build/release/peekaboo-macos-universal.tar.gz" ]]
+[[ ! -e "$FIXTURE_ROOT/build/release/peekaboo-macos-x86_64.tar.gz" ]]
+mkdir "$TEST_ROOT/extracted-arm64-only"
+tar -xzf "$FIXTURE_ROOT/build/release/peekaboo-macos-arm64.tar.gz" -C "$TEST_ROOT/extracted-arm64-only"
+for name in peekaboo libswiftCompatibilitySpan.dylib; do
+  cmp "$FIXTURE_ROOT/$name" "$TEST_ROOT/extracted-arm64-only/peekaboo-macos-arm64/$name"
+done
 
 cp "$FIXTURE_ROOT/peekaboo" "$TEST_ROOT/candidate-before-mutation"
 : >"$VERIFY_LOG"

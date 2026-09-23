@@ -7,6 +7,45 @@ struct UtilityTests {
     @Suite(.tags(.safe), .serialized)
     struct LoggerTests {
         @Test
+        func `Filtered log messages do not render metadata`() {
+            CLIInstrumentation.LoggerControl.clearDebugLogs()
+            CLIInstrumentation.LoggerControl.setVerboseMode(false)
+            CLIInstrumentation.LoggerControl.setJsonOutputMode(true)
+            CLIInstrumentation.LoggerControl.setMinimumLogLevel(.warning)
+            defer {
+                CLIInstrumentation.LoggerControl.setJsonOutputMode(false)
+                CLIInstrumentation.LoggerControl.resetMinimumLogLevel()
+                CLIInstrumentation.LoggerControl.clearDebugLogs()
+            }
+
+            let value = MetadataDescriptionProbe()
+            logVerbose("Suppressed verbose", metadata: ["value": value])
+            logDebug("Suppressed debug", metadata: ["value": value])
+            logInfo("Suppressed info", metadata: ["value": value])
+            CLIInstrumentation.LoggerControl.flush()
+
+            #expect(value.renderCount == 0)
+            #expect(CLIInstrumentation.LoggerControl.debugLogs().isEmpty)
+
+            logWarn("Visible warning", metadata: ["value": value])
+            CLIInstrumentation.LoggerControl.flush()
+
+            #expect(value.renderCount == 1)
+            #expect(CLIInstrumentation.LoggerControl.debugLogs().contains {
+                $0.contains("WARN: Visible warning {value=rendered}")
+            })
+        }
+
+        private final class MetadataDescriptionProbe: CustomStringConvertible {
+            private(set) var renderCount = 0
+
+            var description: String {
+                self.renderCount += 1
+                return "rendered"
+            }
+        }
+
+        @Test
         func `Logger captures messages in JSON mode`() {
             CLIInstrumentation.LoggerControl.clearDebugLogs()
             CLIInstrumentation.LoggerControl.setJsonOutputMode(true)
@@ -36,13 +75,12 @@ struct UtilityTests {
             defer { CLIInstrumentation.LoggerControl.resetMinimumLogLevel() }
 
             logDebug("Test message")
-            Thread.sleep(forTimeInterval: 0.1)
+            CLIInstrumentation.LoggerControl.flush()
 
             let logsBefore = CLIInstrumentation.LoggerControl.debugLogs()
             #expect(!logsBefore.isEmpty)
 
             CLIInstrumentation.LoggerControl.clearDebugLogs()
-            Thread.sleep(forTimeInterval: 0.1)
 
             let logsAfter = CLIInstrumentation.LoggerControl.debugLogs()
             CLIInstrumentation.LoggerControl.setJsonOutputMode(false)
@@ -54,19 +92,17 @@ struct UtilityTests {
         func `Logger outputs to stderr in normal mode`() {
             // Ensure clean state
             CLIInstrumentation.LoggerControl.clearDebugLogs()
-            Thread.sleep(forTimeInterval: 0.05)
             CLIInstrumentation.LoggerControl.setJsonOutputMode(false)
-            Thread.sleep(forTimeInterval: 0.05)
             CLIInstrumentation.LoggerControl.setMinimumLogLevel(.debug)
             defer { CLIInstrumentation.LoggerControl.resetMinimumLogLevel() }
 
-            // These will output to stderr, we just verify they don't crash
             logDebug("Debug to stderr")
             logInfo("Info to stderr")
             logWarn("Warn to stderr")
             logError("Error to stderr")
 
-            #expect(Bool(true))
+            CLIInstrumentation.LoggerControl.flush()
+            #expect(CLIInstrumentation.LoggerControl.debugLogs().isEmpty)
         }
     }
 

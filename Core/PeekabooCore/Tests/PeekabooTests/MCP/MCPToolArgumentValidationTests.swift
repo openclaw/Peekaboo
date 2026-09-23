@@ -112,6 +112,16 @@ struct MCPToolArgumentValidationTests {
                 "text": .string("must-not-type"),
                 "pid": .double(1234.9),
             ]),
+            (PasteTool(context: context), [
+                "text": .string("must-not-type"),
+                "foreground": .bool(true),
+                "restore_delay_ms": .int(10001),
+            ]),
+            (PasteTool(context: context), [
+                "text": .string("must-not-type"),
+                "foreground": .bool(true),
+                "restore_delay_ms": .int(-1),
+            ]),
         ]
 
         for (tool, values) in cases {
@@ -294,7 +304,7 @@ struct MCPToolArgumentValidationTests {
     func `Paste tool rejects restore_delay_ms outside 0...10000ms`() async throws {
         let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
         let tool = PasteTool(context: context)
-        for delay in [10001, 9_007_199_254_740_992] {
+        for delay in [-1, 10001, 9_007_199_254_740_992] {
             let response = try await tool.execute(arguments: ToolArguments(raw: [
                 "text": "hi",
                 "foreground": true,

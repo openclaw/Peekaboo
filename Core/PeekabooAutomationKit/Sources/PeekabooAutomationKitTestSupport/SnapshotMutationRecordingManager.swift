@@ -22,6 +22,7 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     public private(set) var createExplicitCallCount = 0
     public var failFinish = false
     public var ownsSnapshotError: (any Error)?
+    public var getDetectionResultError: (any Error)?
 
     private let wrapped: any SnapshotManagerProtocol
     private let producerBoundSnapshotReferencesOverride: Bool?
@@ -103,7 +104,10 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     }
 
     public func getDetectionResult(snapshotId: String) async throws -> ElementDetectionResult? {
-        try await self.wrapped.getDetectionResult(snapshotId: snapshotId)
+        if let getDetectionResultError {
+            throw getDetectionResultError
+        }
+        return try await self.wrapped.getDetectionResult(snapshotId: snapshotId)
     }
 
     public func getMostRecentSnapshot() async -> String? {

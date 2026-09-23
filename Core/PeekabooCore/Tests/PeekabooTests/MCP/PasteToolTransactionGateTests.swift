@@ -128,8 +128,7 @@ struct PasteToolTransactionGateTests {
                     isHiddenKnown: false,
                     activationPolicy: nil,
                     metadataWarnings: ["metadata timed out"]),
-                message: "Application inventory was incomplete while resolving 'Incomplete Helper'. " +
-                    "metadata timed out"),
+                message: "Application inventory was unavailable while resolving 'Incomplete Helper'."),
         ]
 
         for (application, message) in ineligibleApplications {

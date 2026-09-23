@@ -31,7 +31,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "26.8.2"
+          node-version: "26.9.0"
 
       - name: Build docs site
         run: node scripts/build-docs-site.mjs

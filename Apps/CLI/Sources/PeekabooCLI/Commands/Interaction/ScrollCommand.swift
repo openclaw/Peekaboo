@@ -300,6 +300,11 @@ RuntimeBackedCommand {
     }
 
     private func validatedScrollDirection() throws -> ScrollDirection {
+        do {
+            try ScrollRequest.validateAmount(self.amount, smooth: self.smooth)
+        } catch {
+            throw ValidationError(error.localizedDescription)
+        }
         try self.target.validate()
         try self.validateDeliveryMode()
         guard let scrollDirection = ScrollDirection(rawValue: self.direction.lowercased()) else {

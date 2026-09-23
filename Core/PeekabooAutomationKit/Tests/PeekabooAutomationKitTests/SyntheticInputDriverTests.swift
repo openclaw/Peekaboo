@@ -172,6 +172,79 @@ struct SyntheticInputDriverTests {
         ])
     }
 
+    @Test(arguments: [60000, 9_007_199_254_740_992, Int.max])
+    func `long typing delays cancel after the first synthetic character`(milliseconds: Int) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("type-delay-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let signal = AsyncStream<Void>.makeStream()
+        let synthetic = RecordingSyntheticInputDriver()
+        synthetic.onType = {
+            signal.continuation.yield()
+            signal.continuation.finish()
+        }
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            desktopOperationExecutor: DesktopOperationExecutor(
+                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root)))
+        let operation = Task { @MainActor in
+            defer { signal.continuation.finish() }
+            return try await service.type(
+                text: "ab", target: nil, clearExisting: false,
+                typingDelay: milliseconds, snapshotId: nil)
+        }
+
+        for await _ in signal.stream {
+            break
+        }
+        operation.cancel()
+        await #expect(throws: CancellationError.self) {
+            _ = try await operation.value
+        }
+        #expect(synthetic.events == [.type("a", delayPerCharacter: 0)])
+    }
+
+    @Test(arguments: [60000, 9_007_199_254_740_992, Int.max])
+    func `long scroll delays cancel after the first synthetic tick`(milliseconds: Int) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scroll-delay-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let signal = AsyncStream<Void>.makeStream()
+        let point = CGPoint(x: 20, y: 40)
+        let synthetic = RecordingSyntheticInputDriver(currentLocation: point)
+        synthetic.onScroll = {
+            signal.continuation.yield()
+            signal.continuation.finish()
+        }
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            desktopOperationExecutor: DesktopOperationExecutor(
+                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root)))
+        let operation = Task { @MainActor in
+            defer { signal.continuation.finish() }
+            return try await service.scroll(ScrollRequest(
+                direction: .down, amount: 2, delay: milliseconds, foreground: true))
+        }
+
+        for await _ in signal.stream {
+            break
+        }
+        operation.cancel()
+        await #expect(throws: CancellationError.self) {
+            _ = try await operation.value
+        }
+        #expect(synthetic.events == [
+            .currentLocation,
+            .scroll(deltaX: 0, deltaY: -50, at: point),
+        ])
+    }
+
     @Test
     func `type action security tracks only nonempty text delivered to a secure field`() {
         #expect(TypeService.actionTypesSensitiveText(.text("secret"), focusedElementIsSecure: true))
@@ -226,6 +299,8 @@ private final class RecordingSyntheticInputDriver: SyntheticInputDriving {
 
     private let location: CGPoint?
     private(set) var events: [Event] = []
+    var onType: (() -> Void)?
+    var onScroll: (() -> Void)?
 
     init(currentLocation: CGPoint? = nil) {
         self.location = currentLocation
@@ -261,10 +336,12 @@ private final class RecordingSyntheticInputDriver: SyntheticInputDriving {
 
     func scroll(deltaX: Double, deltaY: Double, at point: CGPoint?) throws {
         self.events.append(.scroll(deltaX: deltaX, deltaY: deltaY, at: point))
+        self.onScroll?()
     }
 
     func type(_ text: String, delayPerCharacter: TimeInterval) throws {
         self.events.append(.type(text, delayPerCharacter: delayPerCharacter))
+        self.onType?()
     }
 
     func tapKey(_ key: SpecialKey, modifiers: CGEventFlags) throws {

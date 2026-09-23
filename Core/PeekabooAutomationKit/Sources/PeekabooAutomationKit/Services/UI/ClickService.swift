@@ -294,6 +294,13 @@ public final class ClickService {
         }
     }
 
+    private func requiredDetectionResult(snapshotId: String) async throws -> ElementDetectionResult {
+        guard let result = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
+            throw ActionInputError.staleElement
+        }
+        return result
+    }
+
     private func resolveAutomationElement(
         target: ClickTarget,
         snapshotId: String?,
@@ -307,10 +314,7 @@ public final class ClickService {
             guard let snapshotId else {
                 return nil
             }
-            guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId)
-            else {
-                throw ActionInputError.staleElement
-            }
+            let detectionResult = try await self.requiredDetectionResult(snapshotId: snapshotId)
             guard let element = detectionResult.elements.findById(id) else {
                 throw ActionInputError.unsupported(.missingElement)
             }
@@ -336,10 +340,7 @@ public final class ClickService {
         case let .query(query):
             var detectionResult: ElementDetectionResult?
             if let snapshotId {
-                guard let loadedResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId)
-                else {
-                    throw ActionInputError.staleElement
-                }
+                let loadedResult = try await self.requiredDetectionResult(snapshotId: snapshotId)
                 detectionResult = loadedResult
                 if let element = Self.resolveTargetElement(query: query, in: loadedResult) {
                     try self.requireExactWindowForTargetedAction(
@@ -445,9 +446,7 @@ public final class ClickService {
             }
             return nil
         }
-        guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
-            throw ActionInputError.staleElement
-        }
+        let detectionResult = try await self.requiredDetectionResult(snapshotId: snapshotId)
         guard let snapshotProcessIdentifier = detectionResult.metadata.windowContext?.applicationProcessId else {
             throw PeekabooError.invalidInput(
                 "Snapshot does not identify its target process; capture a fresh target snapshot")
@@ -532,9 +531,7 @@ public final class ClickService {
         guard let snapshotId else {
             throw NotFoundError.element(id)
         }
-        guard let detectionResult = try? await snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
-            throw ActionInputError.staleElement
-        }
+        let detectionResult = try await self.requiredDetectionResult(snapshotId: snapshotId)
         guard let element = detectionResult.elements.findById(id) else {
             throw NotFoundError.element(id)
         }
@@ -580,9 +577,7 @@ public final class ClickService {
         var detectionResult: ElementDetectionResult?
 
         if let snapshotId {
-            guard let loadedResult = try? await snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
-                throw ActionInputError.staleElement
-            }
+            let loadedResult = try await self.requiredDetectionResult(snapshotId: snapshotId)
             detectionResult = loadedResult
             if let match = Self.resolveTargetElement(query: query, in: loadedResult) {
                 found = true
@@ -1162,8 +1157,11 @@ extension ClickService {
             return requested
         }
         guard let targetWindowID, let targetProcessIdentifier else { return nil }
-        guard let snapshotId,
-              let detection = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
+        guard let snapshotId else {
+            throw PeekabooError.snapshotStale(
+                "Exact-window click snapshot has no capture-time process-generation receipt and bounds")
+        }
+        guard let detection = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
               detection.metadata.windowContext != nil
         else {
             throw PeekabooError.snapshotStale(

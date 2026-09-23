@@ -1,5 +1,7 @@
+import Darwin
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -342,7 +344,7 @@ struct InteractionMutationInvalidatorTests {
             effect: .mutationProducingFreshObservation
         )
 
-        try coordinator.prepareMutation(scope)
+        try await coordinator.prepareMutation(scope)
         let firstPendingRead = try #require(store.effectiveWatermark())
         try await Task.sleep(for: .milliseconds(2))
         #expect(try #require(store.effectiveWatermark()) > firstPendingRead)
@@ -383,7 +385,7 @@ struct InteractionMutationInvalidatorTests {
         let scope = MCPToolSnapshotMutationScope(toolName: "click", effect: .mutation)
         let coordinator = runtime.toolSnapshotMutationCoordinator
 
-        try coordinator.prepareMutation(scope)
+        try await coordinator.prepareMutation(scope)
         #expect(tracker.hasPendingDurableMutation)
         #expect(await coordinator.cancelMutation(scope))
 
@@ -394,7 +396,7 @@ struct InteractionMutationInvalidatorTests {
     }
 
     @Test
-    func `Remote ordinary tools retain a caller barrier while remote observations use host certificate`() throws {
+    func `Remote ordinary tools retain a caller barrier while remote observations use host certificate`() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-cli-remote-tool-barrier-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -415,7 +417,7 @@ struct InteractionMutationInvalidatorTests {
         let coordinator = runtime.toolSnapshotMutationCoordinator
         let mutation = MCPToolSnapshotMutationScope(toolName: "shell", effect: .mutation)
 
-        try coordinator.prepareMutation(mutation)
+        try await coordinator.prepareMutation(mutation)
         #expect(store.effectiveWatermark() != nil)
         let completedMutation = mutation.completed(at: Date(), preserving: nil)
         #expect(try coordinator.completeMutationBarrier(completedMutation) != nil)
@@ -424,12 +426,12 @@ struct InteractionMutationInvalidatorTests {
             toolName: "see",
             effect: .mutationProducingFreshObservation
         )
-        try coordinator.prepareMutation(observation)
+        try await coordinator.prepareMutation(observation)
         #expect(try coordinator.completeMutationBarrier(observation.completed(at: Date(), preserving: nil)) == nil)
     }
 
     @Test
-    func `Observation timeouts borrow only local or existing caller barriers`() throws {
+    func `Observation timeouts borrow only local or existing caller barriers`() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-cli-timeout-barrier-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -466,7 +468,7 @@ struct InteractionMutationInvalidatorTests {
         )
         #expect(remoteRuntime.observationTimeoutMutationTracker == nil)
 
-        #expect(try remoteTracker.beginDurableMutation())
+        #expect(try await remoteTracker.beginDurableMutation())
         #expect(remoteRuntime.observationTimeoutMutationTracker === remoteTracker)
         try remoteTracker.cancelDurableMutation()
     }
@@ -599,7 +601,7 @@ extension InteractionMutationInvalidatorTests {
             services: PeekabooServices(snapshotManager: snapshots),
             interactionMutationTracker: tracker
         )
-        #expect(try tracker.beginDurableMutation())
+        #expect(try await tracker.beginDurableMutation())
         let mutationCutoff = tracker.begin()
         tracker.markInvalidationFailed(through: mutationCutoff)
 
@@ -1050,6 +1052,59 @@ extension InteractionMutationInvalidatorTests {
         #expect(tracker.mutationStartedAt == nil)
         #expect(alternateSnapshots.invalidationCalls == 1)
         #expect(await selectedSnapshots.getMostRecentSnapshot() == nil)
+    }
+
+    @Test
+    func `Overlapping durable mutation waits reserve tracker state before the flock`() async throws {
+        let desktop = try CLIDesktopFixture()
+        defer { desktop.removeDirectory() }
+        let lockPath = desktop.root.appendingPathComponent("desktop-mutation-watermark.lock").path
+        let holder = open(lockPath, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard holder >= 0 else {
+            Issue.record("Could not create watermark lock file")
+            return
+        }
+        defer {
+            flock(holder, LOCK_UN)
+            close(holder)
+        }
+        guard flock(holder, LOCK_EX | LOCK_NB) == 0 else {
+            Issue.record("Could not take exclusive lock for the fixture holder")
+            return
+        }
+
+        let tracker = InteractionMutationTracker(desktopMutationWatermarkStore: desktop.watermarkStore)
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        let first = Task { @MainActor in
+            continuation.yield(())
+            continuation.finish()
+            return try await tracker.beginDurableMutation()
+        }
+        for await _ in started {}
+        #expect(tracker.hasPendingDurableMutation)
+        await #expect(throws: PeekabooError.self) {
+            _ = try await tracker.beginDurableMutation()
+        }
+
+        await #expect(throws: PeekabooError.self) {
+            try await tracker.retainDurableMutationLease()
+        }
+        flock(holder, LOCK_UN)
+        #expect(try await first.value)
+        try await tracker.retainDurableMutationLease()
+        try tracker.cancelDurableMutation()
+        #expect(tracker.hasPendingDurableMutation)
+        try tracker.cancelDurableMutation()
+        #expect(!tracker.hasPendingDurableMutation)
+        let pendingDirectory = desktop.root.appendingPathComponent(
+            "desktop-mutation-pending",
+            isDirectory: true
+        )
+        let leftover = try FileManager.default.contentsOfDirectory(
+            at: pendingDirectory,
+            includingPropertiesForKeys: nil
+        ).count
+        #expect(leftover == 0)
     }
 }
 

@@ -269,6 +269,38 @@ final class FileServiceSnapshotCleanupTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.outsideSentinel), fixture.outsideSentinelContents)
     }
 
+    func testCleanOldSnapshotsRejectsNonPositiveHoursWithoutDeletingDirectories() async throws {
+        let fixture = try self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.container) }
+        let service = FileService(snapshotCacheDirectory: fixture.cacheRoot)
+        let manager = SnapshotManager(
+            snapshotStorageURL: fixture.cacheRoot,
+            snapshotReferenceGenerator: { SnapshotReferenceFixtures.first })
+        let owned = try await manager.createSnapshot()
+        let snapshotURL = fixture.cacheRoot.appendingPathComponent(owned, isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: snapshotURL.path))
+
+        for hours in [0, -1] {
+            for dryRun in [true, false] {
+                do {
+                    _ = try await service.cleanOldSnapshots(hours: hours, dryRun: dryRun)
+                    XCTFail("Expected invalid retention hours for hours=\(hours) dryRun=\(dryRun)")
+                } catch FileServiceError.invalidRetentionHours {
+                    // Expected.
+                } catch {
+                    XCTFail(
+                        "Expected FileServiceError.invalidRetentionHours for hours=\(hours) " +
+                            "dryRun=\(dryRun), got \(error)")
+                }
+
+                XCTAssertTrue(FileManager.default.fileExists(atPath: snapshotURL.path))
+                XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.cacheRoot.path))
+                XCTAssertEqual(try Data(contentsOf: fixture.rootSentinel), fixture.rootSentinelContents)
+                XCTAssertEqual(try Data(contentsOf: fixture.outsideSentinel), fixture.outsideSentinelContents)
+            }
+        }
+    }
+
     private func assertInvalidSnapshotID(
         _ snapshotID: String,
         dryRun: Bool,

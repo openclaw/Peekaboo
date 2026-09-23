@@ -267,8 +267,8 @@ struct MCPToolExecutionTests {
         #expect(Self.imageDimensions(from: savedData) == CGSize(width: 600, height: 400))
     }
 
-    @Test
-    func `Image tool downscales saved fallback when capture data is empty`() async throws {
+    @Test(arguments: [false, true])
+    func `Image tool downscales in memory without rewriting its source`(emptyCaptureData: Bool) async throws {
         let highResPNG = Self.makePNGData(width: 3000, height: 2000)
         let context = await MCPToolTestHelpers.makeLegacyContext()
         let tool = ImageTool(context: context)
@@ -278,7 +278,7 @@ struct MCPToolExecutionTests {
         defer { try? FileManager.default.removeItem(atPath: outputPath) }
         try highResPNG.write(to: URL(fileURLWithPath: outputPath))
         let capture = CaptureResult(
-            imageData: Data(),
+            imageData: emptyCaptureData ? Data() : highResPNG,
             savedPath: outputPath,
             metadata: CaptureMetadata(size: CGSize(width: 3000, height: 2000), mode: .screen))
         let observation = DesktopObservationResult(
@@ -299,7 +299,7 @@ struct MCPToolExecutionTests {
         #expect(Self.imageDimensions(from: deliveredCapture.imageData) == CGSize(width: 600, height: 400))
         #expect(deliveredCapture.metadata.size == CGSize(width: 600, height: 400))
         let savedData = try Data(contentsOf: URL(fileURLWithPath: outputPath))
-        #expect(Self.imageDimensions(from: savedData) == CGSize(width: 600, height: 400))
+        #expect(savedData == highResPNG)
     }
 
     @Test

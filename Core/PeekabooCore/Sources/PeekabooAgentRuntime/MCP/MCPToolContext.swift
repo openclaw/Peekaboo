@@ -320,35 +320,42 @@ extension MCPToolContext {
         }
         let executionArguments = targetAuthorization.arguments
 
-        // All potentially suspending coordinator work completed before authorization. From this generation check to
-        // entering the leaf there is no suspension; app/window/type/paste leaves then retain their own dispatch
-        // receipt.
-
         let scope = MCPToolSnapshotMutationScope(
             toolName: tool.name,
             effect: effect,
             preservedSnapshotID: effect == .mutationProducingFreshObservation
                 ? executionArguments.getString("snapshot")
                 : nil)
+        var mutationPrepared = false
         var toolStarted = false
         do {
             try Task.checkCancellation()
-            try self.prepareMutation(scope, usesCoordinatorBarrier: usesCoordinatorBarrier)
-            toolStarted = true
-            var response = try await AuthorizedDesktopTargetPlan.$current.withValue(
-                targetAuthorization.targetPlan)
-            {
-                try await Self.$snapshotObservationStartedAt.withValue(
-                    effect == .mutationProducingFreshObservation ? scope.startedAt : nil)
-                {
-                    try await tool.execute(arguments: executionArguments)
+            try await self.prepareMutation(scope, usesCoordinatorBarrier: usesCoordinatorBarrier)
+            mutationPrepared = true
+            try Task.checkCancellation()
+            // Preparation may suspend; revalidate the frozen target after it, immediately before entering the leaf.
+            var response: ToolResponse
+            if let rejection = try await self.backgroundTargetRevalidation(targetAuthorization, toolName: tool.name) {
+                response = rejection
+            } else {
+                try Task.checkCancellation()
+                toolStarted = true
+                response = try await AuthorizedDesktopTargetPlan.$current.withValue(targetAuthorization.targetPlan) {
+                    try await Self.$snapshotObservationStartedAt.withValue(
+                        effect == .mutationProducingFreshObservation ? scope.startedAt : nil)
+                    {
+                        try await tool.execute(arguments: executionArguments)
+                    }
                 }
             }
             if Self.explicitlyNotDispatched(
                 response,
                 requiresCanonicalOutcome: self.executionPolicy == .backgroundOnly)
             {
-                let cancelled = await self.snapshotMutationCoordinator?.cancelMutation(scope) ?? true
+                let cancelled = await self.cleanupFailedMutation(
+                    scope,
+                    toolStarted: false,
+                    usesCoordinatorBarrier: usesCoordinatorBarrier)
                 await self.releaseMutationLane(mutationLane)
                 guard cancelled else {
                     return ToolResponse.error(
@@ -405,24 +412,40 @@ extension MCPToolContext {
             await self.releaseMutationLane(mutationLane)
             return response
         } catch {
-            if toolStarted {
-                let failedScope = scope.completed(at: Date(), preserving: nil)
-                let cleanupSucceeded = await self.completeMutation(
-                    failedScope,
-                    succeeded: false,
-                    snapshotMutationCoordinator: self.snapshotMutationCoordinator,
+            if mutationPrepared {
+                _ = await self.cleanupFailedMutation(
+                    scope,
+                    toolStarted: toolStarted,
                     usesCoordinatorBarrier: usesCoordinatorBarrier)
-                if !cleanupSucceeded {
-                    await sharedInvalidationGate.recordPendingInvalidation(
-                        failedScope,
-                        owner: self.uiSnapshots.owner,
-                        usesCoordinatorBarrier: usesCoordinatorBarrier,
-                        snapshotMutationCoordinator: self.snapshotMutationCoordinator)
-                }
             }
             await self.releaseMutationLane(mutationLane)
             throw error
         }
+    }
+
+    private func cleanupFailedMutation(
+        _ scope: MCPToolSnapshotMutationScope,
+        toolStarted: Bool,
+        usesCoordinatorBarrier: Bool) async -> Bool
+    {
+        let failedScope = scope.completed(at: Date(), preserving: nil)
+        let succeeded = if toolStarted {
+            await self.completeMutation(
+                failedScope,
+                succeeded: false,
+                snapshotMutationCoordinator: self.snapshotMutationCoordinator,
+                usesCoordinatorBarrier: usesCoordinatorBarrier)
+        } else {
+            await self.snapshotMutationCoordinator?.cancelMutation(scope) ?? true
+        }
+        if !succeeded {
+            await self.snapshotExecutionGate.recordPendingInvalidation(
+                failedScope,
+                owner: self.uiSnapshots.owner,
+                usesCoordinatorBarrier: usesCoordinatorBarrier,
+                snapshotMutationCoordinator: self.snapshotMutationCoordinator)
+        }
+        return succeeded
     }
 
     private func executionRejection(
@@ -508,12 +531,6 @@ extension MCPToolContext {
         if let rejection = authorization.rejection {
             return MutationTargetPreflight(authorization: authorization, rejection: rejection)
         }
-        if let rejection = try await self.backgroundTargetRevalidation(
-            authorization,
-            toolName: toolName)
-        {
-            return MutationTargetPreflight(authorization: authorization, rejection: rejection)
-        }
         let rejection = self.backgroundMutationCapabilityRejection(
             toolName: toolName,
             effect: effect)
@@ -591,12 +608,12 @@ extension MCPToolContext {
     @MainActor
     private func prepareMutation(
         _ scope: MCPToolSnapshotMutationScope,
-        usesCoordinatorBarrier: Bool) throws
+        usesCoordinatorBarrier: Bool) async throws
     {
         if usesCoordinatorBarrier {
-            try self.snapshotMutationCoordinator?.prepareMutation(scope)
+            try await self.snapshotMutationCoordinator?.prepareMutation(scope)
         } else {
-            try self.snapshotMutationCoordinator?.prepareConcurrentMutation(scope)
+            try await self.snapshotMutationCoordinator?.prepareConcurrentMutation(scope)
         }
     }
 

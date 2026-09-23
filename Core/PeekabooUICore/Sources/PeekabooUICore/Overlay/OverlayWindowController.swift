@@ -14,13 +14,28 @@ public class OverlayWindowController {
     private var overlayWindows: [NSScreen: NSWindow] = [:]
     private let overlayManager: OverlayManager
     private let preset: any ElementStyleProvider
+    private let notificationCenter: NotificationCenter
+    private var screenChangeObserver: (any NSObjectProtocol)?
 
-    public init(
+    public convenience init(
         overlayManager: OverlayManager,
         preset: any ElementStyleProvider = InspectorVisualizationPreset())
     {
+        self.init(overlayManager: overlayManager, preset: preset, notificationCenter: .default)
+    }
+
+    init(
+        overlayManager: OverlayManager,
+        preset: any ElementStyleProvider = InspectorVisualizationPreset(),
+        notificationCenter: NotificationCenter)
+    {
         self.overlayManager = overlayManager
         self.preset = preset
+        self.notificationCenter = notificationCenter
+    }
+
+    isolated deinit {
+        self.stopMonitoringScreenChanges()
     }
 
     /// Shows overlay windows on all screens
@@ -99,7 +114,8 @@ public class OverlayWindowController {
 extension OverlayWindowController {
     /// Starts monitoring for screen configuration changes
     public func startMonitoringScreenChanges() {
-        NotificationCenter.default.addObserver(
+        guard self.screenChangeObserver == nil else { return }
+        self.screenChangeObserver = self.notificationCenter.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main)
@@ -112,10 +128,10 @@ extension OverlayWindowController {
 
     /// Stops monitoring screen changes
     public func stopMonitoringScreenChanges() {
-        NotificationCenter.default.removeObserver(
-            self,
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil)
+        if let screenChangeObserver {
+            self.notificationCenter.removeObserver(screenChangeObserver)
+            self.screenChangeObserver = nil
+        }
     }
 
     private func handleScreenChange() {

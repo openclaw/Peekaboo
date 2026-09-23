@@ -62,20 +62,21 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
         let startTime = Date()
 
         do {
-            // Validate options
             let effectiveOlderThan = self.effectiveOlderThan
             let optionCount = [allSnapshots, effectiveOlderThan != nil, self.snapshot != nil].count { $0 }
             guard optionCount == 1 else {
                 throw ValidationError("Specify exactly one of: --all-snapshots, --older-than, or --snapshot")
             }
 
-            // Perform cleanup based on option using the FileService
             let result: SnapshotCleanResult
             let requestedSnapshotId = self.snapshot
 
             if self.allSnapshots {
                 result = try await self.services.files.cleanAllSnapshots(dryRun: self.dryRun)
             } else if let hours = effectiveOlderThan {
+                guard hours > 0 else {
+                    throw ValidationError("--older-than must be a positive number of hours")
+                }
                 result = try await self.services.files.cleanOldSnapshots(hours: hours, dryRun: self.dryRun)
             } else if let snapshotId = snapshot {
                 result = try await self.services.files.cleanSpecificSnapshot(
@@ -86,10 +87,8 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
                 throw ValidationError("No cleanup option specified")
             }
 
-            // Calculate execution time
             let executionTime = Date().timeIntervalSince(startTime)
 
-            // Output results
             if self.jsonOutput {
                 let outputData = CleanResultPayload(
                     result: result,
@@ -189,7 +188,7 @@ struct CleanCommand: OutputFormattable, RuntimeBackedCommand {
 
 private func handleFileServiceError(_ error: FileServiceError, jsonOutput: Bool, logger: Logger) {
     let errorCode: ErrorCode = switch error {
-    case .invalidSnapshotID:
+    case .invalidSnapshotID, .invalidRetentionHours:
         .VALIDATION_ERROR
     case .snapshotNotFound:
         .SNAPSHOT_NOT_FOUND

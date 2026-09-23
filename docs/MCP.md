@@ -195,6 +195,10 @@ one window selector so stale inputs cannot redirect work to a sibling window fro
 positive 32-bit integer; strings, fractional numbers, zero, negative values, and out-of-range values fail before
 capture or Accessibility traversal begins.
 
+For an explicit `window_id`, `inspect_ui` rejects an empty Accessibility result even when an older host omits truncation
+metadata, returning `ACCESSIBILITY_INCOMPLETE` in that case. Existing timeout and truncation diagnostics take precedence.
+App and frontmost inspections may still return a successful empty list, even when the host reports the window it inspected.
+
 `see` also accepts the closed `capture_engine` values `auto` (default), `modern`, and `classic`. The choice is carried
 in that observation request to the selected host; incapable hosts refuse it before capture. `classic` never enters
 ScreenCaptureKit, so it is the safe request-local recovery path when the selected legacy host blocks auto/modern

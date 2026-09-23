@@ -201,9 +201,7 @@ enum MCPToolResponseMetadataProjector {
             return .absent
         }
         guard outcomeFields.values.allSatisfy(Self.isBoundedActionOutcomeField),
-              let object = try? Value.object(outcomeFields).toAnyAgentToolValue().toJSON(),
-              JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object),
+              let data = try? JSONEncoder().encode(Value.object(outcomeFields)),
               let projection = try? JSONDecoder().decode(DesktopActionOutcome.Projection.self, from: data)
         else {
             return .invalid

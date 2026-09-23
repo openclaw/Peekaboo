@@ -250,6 +250,12 @@ on that same socket when it proves no in-process SCK, while auto and modern retu
 AX-only operations remain independent. Typed ownership errors also survive capture, permission, and Bridge error
 conversion; a refused SCK entry does not erase an earlier desktop mutation outcome.
 
+For one-shot CLI capture with an explicit socket, a credible live SCK owner in a different process can make an
+otherwise ready host unsuitable for automatic SCK capture. When that authenticated host also proves classic capture
+and request-local engine selection, the CLI selects explicit classic before transport and keeps the same socket and
+process generation. This automatic-engine exception does not change raw Bridge auto/modern admission, unknown-readiness
+refusals, implicit routing, or persistent MCP startup. Explicit modern remains bound to the exact SCK owner.
+
 Typed terminal error fields additionally require the raw client offer `screenCaptureKitOwnershipDiagnostics`, bound to
 an authenticated operation session. Before computing the terminal response digest and signing its receipt, the host
 removes only the new diagnostic fields for sessions without that offer. This preserves shipped clients that decode
@@ -461,7 +467,8 @@ cannot negotiate producer-bound references fails before dispatch. There is no â€
 cross-host recreation, or speculative replay.
 
 `--bridge-socket` and `PEEKABOO_BRIDGE_SOCKET` are strict: only that authenticated listener may claim the reference,
-and failure is terminal. `--no-remote` and `PEEKABOO_NO_REMOTE` check only the caller-local manager. Without either
+and failure is terminal. These remote snapshot routes skip the unused caller-local service container.
+`--no-remote` and `PEEKABOO_NO_REMOTE` check only the caller-local manager. Without either
 override, the ownership probe can select Claude.app or Clawdbot.app even though those sockets are not general implicit
 routing fallbacks.
 
