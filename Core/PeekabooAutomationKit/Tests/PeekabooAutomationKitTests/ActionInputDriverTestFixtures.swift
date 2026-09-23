@@ -287,6 +287,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
     private let actionErrors: [String: any Error]
     private let actionFailureAfterSuccesses: Int?
     private let sequencedActionFailure: (any Error)?
+    private let valueSetterError: (any Error)?
     private let valueSetterDoesNotChange: Bool
     private let focusSetterDoesNotChange: Bool
     var performedActions: [String] = []
@@ -324,6 +325,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
         actionErrors: [String: any Error] = [:],
         actionFailureAfterSuccesses: Int? = nil,
         sequencedActionFailure: (any Error)? = nil,
+        valueSetterError: (any Error)? = nil,
         valueSetterDoesNotChange: Bool = false,
         focusSetterDoesNotChange: Bool = false)
     {
@@ -360,6 +362,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
         self.actionErrors = actionErrors
         self.actionFailureAfterSuccesses = actionFailureAfterSuccesses
         self.sequencedActionFailure = sequencedActionFailure
+        self.valueSetterError = valueSetterError
         self.valueSetterDoesNotChange = valueSetterDoesNotChange
         self.focusSetterDoesNotChange = focusSetterDoesNotChange
     }
@@ -386,6 +389,9 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
             throw AccessibilitySystemError(.attributeUnsupported)
         }
         self.setValues.append(value)
+        if let valueSetterError {
+            throw valueSetterError
+        }
         guard !self.valueSetterDoesNotChange else { return }
         switch value {
         case let .bool(value):
