@@ -317,7 +317,7 @@ enum BackgroundInputDriver {
         guard try self.setText(text, on: element) else {
             return false
         }
-        _ = self.setSelectedTextRange(CFRange(location: text.utf16.count, length: 0), on: element)
+        _ = try? self.setSelectedTextRange(CFRange(location: text.utf16.count, length: 0), on: element)
         return true
     }
 
@@ -338,7 +338,7 @@ enum BackgroundInputDriver {
         guard try self.setText(edit.text, on: element) else {
             return false
         }
-        _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+        _ = try? self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
         return true
     }
 
@@ -357,7 +357,10 @@ enum BackgroundInputDriver {
             return false
         }
 
-        return self.setSelectedTextRange(CFRange(location: 0, length: currentText.utf16.count), on: element)
+        return try self.setSelectedTextRange(
+            CFRange(location: 0, length: currentText.utf16.count),
+            on: element,
+            operation: .hotkey)
     }
 
     private static func post(_ event: CGEvent, to pid: pid_t) {
@@ -705,14 +708,7 @@ enum BackgroundInputDriver {
             element,
             kAXValueAttribute as CFString,
             text as CFTypeRef)
-        switch error {
-        case .success:
-            return true
-        case .apiDisabled:
-            throw PeekabooError.permissionDeniedAccessibility
-        default:
-            return false
-        }
+        return try self.textMutationAccepted(error)
     }
 
     private static func selectedTextRange(from element: AXUIElement) -> CFRange? {
@@ -737,15 +733,19 @@ enum BackgroundInputDriver {
     }
 
     @discardableResult
-    private static func setSelectedTextRange(_ range: CFRange, on element: AXUIElement) -> Bool {
+    private static func setSelectedTextRange(
+        _ range: CFRange,
+        on element: AXUIElement,
+        operation: InputDeliveryIndeterminateError.Operation = .type) throws -> Bool
+    {
         var range = range
         guard let value = AXValueCreate(.cfRange, &range) else {
             return false
         }
-        return AXUIElementSetAttributeValue(
+        return try self.textMutationAccepted(AXUIElementSetAttributeValue(
             element,
             kAXSelectedTextRangeAttribute as CFString,
-            value) == .success
+            value), operation: operation)
     }
 
     private static func stringAttribute(_ attributeName: CFString, from element: AXUIElement) -> String? {
@@ -935,6 +935,32 @@ enum BackgroundInputDriver {
 }
 
 extension BackgroundInputDriver {
+    static func textMutationAccepted(
+        _ error: AXError,
+        operation: InputDeliveryIndeterminateError.Operation = .type) throws -> Bool
+    {
+        if error == .success {
+            return true
+        }
+        switch ActionInputDriver.classify(error) {
+        case .unsupported:
+            return false
+        case .permissionDenied:
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .permissionDenied,
+                message: "Accessibility permission is denied for the text edit.")
+        case .staleElement:
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The accessibility text receiver is stale; observe it again.")
+        case .targetUnavailable, .failed:
+            throw InputDeliveryIndeterminateError(
+                operation: operation,
+                causeDescription: "Accessibility text mutation returned AX error \(error.rawValue).",
+                delivery: .init(mechanism: .accessibilityValue, mode: .background))
+        }
+    }
+
     static func performFocusedTextKey(
         _ key: PeekabooFoundation.SpecialKey,
         targetProcessIdentifier: pid_t) throws -> FocusedTextKeyDispatch
@@ -952,23 +978,23 @@ extension BackgroundInputDriver {
         switch key {
         case .leftArrow:
             let location = self.cursorLocationMovingLeft(from: selection, in: currentText)
-            return self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
+            return try self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
                 ? .accessibilityValue
                 : .unsupported
 
         case .rightArrow:
             let location = self.cursorLocationMovingRight(from: selection, in: currentText)
-            return self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
+            return try self.setSelectedTextRange(CFRange(location: location, length: 0), on: element)
                 ? .accessibilityValue
                 : .unsupported
 
         case .home:
-            return self.setSelectedTextRange(CFRange(location: 0, length: 0), on: element)
+            return try self.setSelectedTextRange(CFRange(location: 0, length: 0), on: element)
                 ? .accessibilityValue
                 : .unsupported
 
         case .end:
-            return self.setSelectedTextRange(CFRange(location: textLength, length: 0), on: element)
+            return try self.setSelectedTextRange(CFRange(location: textLength, length: 0), on: element)
                 ? .accessibilityValue
                 : .unsupported
 
@@ -978,7 +1004,7 @@ extension BackgroundInputDriver {
             }
             let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
             guard try self.setText(edit.text, on: element) else { return .unsupported }
-            _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            _ = try? self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
             return .accessibilityValue
 
         case .forwardDelete:
@@ -987,13 +1013,13 @@ extension BackgroundInputDriver {
             }
             let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
             guard try self.setText(edit.text, on: element) else { return .unsupported }
-            _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            _ = try? self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
             return .accessibilityValue
 
         case .space:
             let edit = self.textByReplacingSelection(in: currentText, selection: selection, replacement: " ")
             guard try self.setText(edit.text, on: element) else { return .unsupported }
-            _ = self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
+            _ = try? self.setSelectedTextRange(CFRange(location: edit.cursorLocation, length: 0), on: element)
             return .accessibilityValue
 
         default:

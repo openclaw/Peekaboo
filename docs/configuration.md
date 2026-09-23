@@ -43,7 +43,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 | Auto daemon idle timeout | - | `PEEKABOO_DAEMON_IDLE_TIMEOUT_SECONDS` | Seconds before an auto-started daemon exits while idle (default 300). |
 | Tool allow-list | `tools.allow` | `PEEKABOO_ALLOW_TOOLS` | CSV or space list. If set, only these tools are exposed (env replaces config). |
 | Tool deny-list | `tools.deny` | `PEEKABOO_DISABLE_TOOLS` | CSV or space list. Always removed; env list is additive with config. |
-| UI input strategy | `input.*` | `PEEKABOO_INPUT_STRATEGY` and per-verb variants | Choose action invocation versus synthetic input. Built-in policy uses `actionFirst` for click/scroll and `synthFirst` for type/hotkey. |
+| UI input strategy | `input.*` | `PEEKABOO_INPUT_STRATEGY` and per-verb variants | Choose action invocation versus synthetic input. Built-in policy uses `actionFirst` for click/scroll/type and `synthFirst` for hotkey. |
 | Element detection boxes | `visualizer.elementDetectionEnabled` | `PEEKABOO_VISUAL_ELEMENT_BOXES` | Draw a bounding box per accessibility element during `peekaboo see`. Default `false` (visually noisy); env var overrides config. The Peekaboo.app settings toggle writes the same config key. |
 
 ## GameBridge manifest budget
@@ -126,8 +126,9 @@ models.
 ## UI Input Strategy
 
 Input strategy controls whether UI interactions use accessibility action invocation or synthetic input. The built-in
-policy keeps the global default at `synthFirst`, flips click and scroll to `actionFirst`, keeps type and hotkey at
-`synthFirst`, and exposes `setValue`/`performAction` as action-only operations.
+policy keeps the global default and hotkey at `synthFirst`, selects `actionFirst` for click, scroll, and type,
+and exposes `setValue`/`performAction` as action-only operations. An explicit global strategy overrides the built-in
+click/scroll/type preferences unless a more specific configured override wins.
 
 Precedence is `--input-strategy` CLI flag, then environment, then config file, then built-in default. The CLI flag forces local execution because the current bridge protocol does not forward per-call strategy overrides.
 
@@ -138,6 +139,10 @@ Valid values:
 - `actionOnly`: use action invocation only.
 - `synthOnly`: use synthetic input only.
 
+For background typing, `actionOnly` forbids keyboard events and both synthetic strategies skip AX value/selection
+edits. `actionFirst` falls back per unsupported unit, never after an accepted or uncertain write. Native text edits
+can therefore work with Accessibility alone; Event Synthesizing permission is checked only before needed events.
+
 Config example:
 
 ```json
@@ -146,7 +151,7 @@ Config example:
     "defaultStrategy": "synthFirst",
     "click": "actionFirst",
     "scroll": "actionFirst",
-    "type": "synthFirst",
+    "type": "actionFirst",
     "hotkey": "synthFirst",
     "setValue": "actionOnly",
     "performAction": "actionOnly",

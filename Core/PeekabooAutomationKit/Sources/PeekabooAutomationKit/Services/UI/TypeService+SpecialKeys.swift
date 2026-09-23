@@ -12,30 +12,6 @@ extension TypeService {
         try TypeServiceSpecialKeyMapping.postKey(keyCode)
         return .dispatched(delivery: keyboardDelivery, keyPressCount: 1)
     }
-
-    static func typeTargetedSpecialKey(
-        _ key: PeekabooFoundation.SpecialKey,
-        targetProcessIdentifier: pid_t,
-        keyboardDelivery: DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
-    {
-        switch try BackgroundInputDriver.performFocusedTextKey(
-            key,
-            targetProcessIdentifier: targetProcessIdentifier)
-        {
-        case .accessibilityValue:
-            return .dispatched(
-                delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                keyPressCount: 0)
-        case .noChange:
-            return .noChange
-        case .unsupported:
-            let keyCode = TypeServiceSpecialKeyMapping.keyCode(for: key)
-            try BackgroundInputDriver.tapKey(
-                keyCode: keyCode,
-                targetProcessIdentifier: targetProcessIdentifier)
-            return .dispatched(delivery: keyboardDelivery, keyPressCount: 1)
-        }
-    }
 }
 
 enum TypeServiceSpecialKeyMapping {

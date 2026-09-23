@@ -425,7 +425,8 @@ extension ConfigurationManager {
             cliStrategy: cliStrategy,
             envVar: "PEEKABOO_TYPE_INPUT_STRATEGY",
             globalEnvStrategy: globalEnvStrategy,
-            configStrategy: config?.type)
+            configStrategy: config?.type,
+            builtInStrategy: config?.defaultStrategy == nil ? UIInputPolicy.currentBehavior.type : nil)
         let hotkeyStrategy = self.resolveUIInputStrategyOverride(
             cliStrategy: cliStrategy,
             envVar: "PEEKABOO_HOTKEY_INPUT_STRATEGY",

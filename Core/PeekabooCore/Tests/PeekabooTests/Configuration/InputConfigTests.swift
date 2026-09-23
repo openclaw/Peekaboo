@@ -30,14 +30,15 @@ struct InputConfigTests {
     }
 
     @Test
-    func `UI input policy defaults click and scroll to action-first rollout behavior`() throws {
+    func `UI input policy defaults click scroll and type to action-first`() throws {
         try withIsolatedInputPolicyEnvironment(configJSON: nil) {
             let policy = ConfigurationManager.shared.getUIInputPolicy()
 
+            #expect(policy == .currentBehavior)
             #expect(policy.defaultStrategy == .synthFirst)
             #expect(policy.strategy(for: .click) == .actionFirst)
             #expect(policy.strategy(for: .scroll) == .actionFirst)
-            #expect(policy.strategy(for: .type) == .synthFirst)
+            #expect(policy.strategy(for: .type) == .actionFirst)
             #expect(policy.strategy(for: .hotkey) == .synthFirst)
             #expect(policy.strategy(for: .setValue) == .actionOnly)
             #expect(policy.strategy(for: .performAction) == .actionOnly)
@@ -73,12 +74,12 @@ struct InputConfigTests {
         }
     }
 
-    @Test
-    func `configured default strategy overrides built-in click and scroll rollout defaults`() throws {
+    @Test(arguments: [UIInputStrategy.synthFirst, .synthOnly])
+    func `configured default strategy overrides built-in action-first defaults`(strategy: UIInputStrategy) throws {
         let configJSON = """
         {
           "input": {
-            "defaultStrategy": "synthOnly"
+            "defaultStrategy": "\(strategy.rawValue)"
           }
         }
         """
@@ -86,14 +87,115 @@ struct InputConfigTests {
         try withIsolatedInputPolicyEnvironment(configJSON: configJSON) {
             let policy = ConfigurationManager.shared.getUIInputPolicy()
 
-            #expect(policy.defaultStrategy == .synthOnly)
-            #expect(policy.strategy(for: .click) == .synthOnly)
-            #expect(policy.strategy(for: .scroll) == .synthOnly)
-            #expect(policy.strategy(for: .type) == .synthOnly)
-            #expect(policy.strategy(for: .hotkey) == .synthOnly)
+            #expect(policy.defaultStrategy == strategy)
+            #expect(policy.strategy(for: .click) == strategy)
+            #expect(policy.strategy(for: .scroll) == strategy)
+            #expect(policy.strategy(for: .type) == strategy)
+            #expect(policy.strategy(for: .hotkey) == strategy)
             #expect(policy.strategy(for: .setValue) == .actionOnly)
             #expect(policy.strategy(for: .performAction) == .actionOnly)
         }
+    }
+
+    @Test
+    func `explicit synth-first type config overrides the built-in default`() throws {
+        let configJSON = """
+        {
+          "input": {
+            "type": "synthFirst"
+          }
+        }
+        """
+
+        try withIsolatedInputPolicyEnvironment(configJSON: configJSON) {
+            let policy = ConfigurationManager.shared.getUIInputPolicy()
+
+            #expect(policy.strategy(for: .type) == .synthFirst)
+            #expect(policy.strategy(for: .click) == .actionFirst)
+        }
+    }
+
+    @Test(arguments: ["defaultStrategy", "type"])
+    func `explicit per-app synth-first type overrides the built-in default`(key: String) throws {
+        let configJSON = """
+        {
+          "input": {
+            "perApp": {
+              "com.example.Editor": {
+                "\(key)": "synthFirst"
+              }
+            }
+          }
+        }
+        """
+
+        try withIsolatedInputPolicyEnvironment(configJSON: configJSON) {
+            let policy = ConfigurationManager.shared.getUIInputPolicy()
+
+            #expect(policy.strategy(for: .type) == .actionFirst)
+            #expect(policy.strategy(for: .type, bundleIdentifier: "com.example.Editor") == .synthFirst)
+            #expect(policy.strategy(for: .type, bundleIdentifier: "com.example.Other") == .actionFirst)
+        }
+    }
+
+    @Test(arguments: ["PEEKABOO_INPUT_STRATEGY", "PEEKABOO_TYPE_INPUT_STRATEGY"])
+    func `explicit synth-first environment overrides type and per-app config`(key: String) throws {
+        let configJSON = """
+        {
+          "input": {
+            "defaultStrategy": "actionOnly",
+            "type": "actionOnly",
+            "perApp": {
+              "com.example.Editor": {
+                "defaultStrategy": "actionOnly",
+                "type": "actionOnly"
+              }
+            }
+          }
+        }
+        """
+        var environment = ["PEEKABOO_INPUT_STRATEGY": "actionOnly"]
+        environment[key] = "synthFirst"
+
+        try withIsolatedInputPolicyEnvironment(configJSON: configJSON, environment: environment) {
+            let policy = ConfigurationManager.shared.getUIInputPolicy()
+            let expectedHotkey: UIInputStrategy = key == "PEEKABOO_INPUT_STRATEGY" ? .synthFirst : .actionOnly
+
+            #expect(policy.strategy(for: .type) == .synthFirst)
+            #expect(policy.strategy(for: .type, bundleIdentifier: "com.example.Editor") == .synthFirst)
+            #expect(policy.strategy(for: .hotkey) == expectedHotkey)
+            #expect(policy.strategy(for: .hotkey, bundleIdentifier: "com.example.Editor") == expectedHotkey)
+        }
+    }
+
+    @Test
+    func `explicit CLI synth-first overrides type environment and per-app config`() throws {
+        let configJSON = """
+        {
+          "input": {
+            "type": "actionOnly",
+            "perApp": {
+              "com.example.Editor": {
+                "defaultStrategy": "actionOnly",
+                "type": "actionOnly"
+              }
+            }
+          }
+        }
+        """
+
+        try withIsolatedInputPolicyEnvironment(
+            configJSON: configJSON,
+            environment: [
+                "PEEKABOO_INPUT_STRATEGY": "actionOnly",
+                "PEEKABOO_TYPE_INPUT_STRATEGY": "actionOnly",
+            ]) {
+                let policy = ConfigurationManager.shared.getUIInputPolicy(cliStrategy: .synthFirst)
+
+                #expect(policy.defaultStrategy == .synthFirst)
+                #expect(policy.strategy(for: .type) == .synthFirst)
+                #expect(policy.strategy(for: .type, bundleIdentifier: "com.example.Editor") == .synthFirst)
+            }
     }
 
     @Test
