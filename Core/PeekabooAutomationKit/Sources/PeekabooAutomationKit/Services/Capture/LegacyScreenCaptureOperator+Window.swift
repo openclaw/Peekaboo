@@ -122,9 +122,9 @@ extension LegacyScreenCaptureOperator {
                 windowLevel: 0,
                 alpha: 1.0,
                 index: resolvedIndex,
-                isOffScreen: !(targetWindow[kCGWindowIsOnscreen as String] as? Bool ?? true),
+                isOffScreen: !SystemIdentityResolver.windowIsOnScreen(targetWindow),
                 layer: targetWindow[kCGWindowLayer as String] as? Int ?? 0,
-                isOnScreen: targetWindow[kCGWindowIsOnscreen as String] as? Bool ?? true,
+                isOnScreen: SystemIdentityResolver.windowIsOnScreen(targetWindow),
                 sharingState: (targetWindow[kCGWindowSharingState as String] as? Int).flatMap {
                     WindowSharingState(rawValue: $0)
                 },
@@ -229,8 +229,9 @@ extension LegacyScreenCaptureOperator {
                 windowLevel: 0,
                 alpha: 1.0,
                 index: resolvedIndex,
+                isOffScreen: !SystemIdentityResolver.windowIsOnScreen(targetWindow),
                 layer: targetWindow[kCGWindowLayer as String] as? Int ?? 0,
-                isOnScreen: targetWindow[kCGWindowIsOnscreen as String] as? Bool ?? true,
+                isOnScreen: SystemIdentityResolver.windowIsOnScreen(targetWindow),
                 sharingState: (targetWindow[kCGWindowSharingState as String] as? Int).flatMap {
                     WindowSharingState(rawValue: $0)
                 },

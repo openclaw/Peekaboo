@@ -219,7 +219,7 @@ struct WindowEnumerationContext {
         let sharingState = sharingRaw.flatMap { WindowSharingState(rawValue: $0) }
         let windowTitle = (windowInfo[kCGWindowName as String] as? String) ?? ""
         let isMinimized = bounds.origin.x < -10000 || bounds.origin.y < -10000
-        let isOnScreen = windowInfo[kCGWindowIsOnscreen as String] as? Bool ?? !isMinimized
+        let isOnScreen = SystemIdentityResolver.windowIsOnScreen(windowInfo)
         guard let mutationIdentity = SystemIdentityResolver.windowMutationIdentity(
             windowID: windowID,
             expectedOwnerProcessIdentifier: ownerPID,

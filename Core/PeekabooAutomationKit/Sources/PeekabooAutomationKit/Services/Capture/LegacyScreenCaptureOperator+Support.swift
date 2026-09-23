@@ -94,7 +94,7 @@ extension LegacyScreenCaptureOperator {
         let windowID = window[kCGWindowNumber as String] as? Int ?? index
         let layer = window[kCGWindowLayer as String] as? Int ?? 0
         let alpha = window[kCGWindowAlpha as String] as? CGFloat ?? 1.0
-        let isOnScreen = window[kCGWindowIsOnscreen as String] as? Bool ?? true
+        let isOnScreen = SystemIdentityResolver.windowIsOnScreen(window)
         let sharingRaw = window[kCGWindowSharingState as String] as? Int
         let sharingState = sharingRaw.flatMap { WindowSharingState(rawValue: $0) }
 

@@ -66,7 +66,7 @@ struct WindowCGInfoLookup {
 
         let layer = Self.intValue(windowInfo[kCGWindowLayer as String]) ?? 0
         let alpha = Self.cgFloatValue(windowInfo[kCGWindowAlpha as String]) ?? 1.0
-        let isOnScreen = windowInfo[kCGWindowIsOnscreen as String] as? Bool ?? false
+        let isOnScreen = SystemIdentityResolver.windowIsOnScreen(windowInfo)
         let sharingRaw = Self.intValue(windowInfo[kCGWindowSharingState as String])
         let sharingState = sharingRaw.flatMap { WindowSharingState(rawValue: $0) }
         let isMainWindow = isMainWindowProvider(cgWindowID)

@@ -263,6 +263,11 @@ public enum SystemIdentityResolver {
         }
     }
 
+    static func windowIsOnScreen(_ window: [String: Any]) -> Bool {
+        // CoreGraphics defines an absent key as not ordered on screen, even with ordinary window bounds.
+        window[kCGWindowIsOnscreen as String] as? Bool ?? false
+    }
+
     private static func windowIdentity(from window: [String: Any]) -> SystemWindowIdentity? {
         guard let rawWindowID = intValue(window[kCGWindowNumber as String]),
               let windowID = CGWindowID(exactly: rawWindowID),
@@ -281,7 +286,7 @@ public enum SystemIdentityResolver {
             bounds: bounds,
             layer: Self.intValue(window[kCGWindowLayer as String]) ?? 0,
             alpha: Self.cgFloatValue(window[kCGWindowAlpha as String]) ?? 1,
-            isOnScreen: window[kCGWindowIsOnscreen as String] as? Bool ?? false,
+            isOnScreen: self.windowIsOnScreen(window),
             sharingState: Self.intValue(window[kCGWindowSharingState as String])
                 .flatMap(WindowSharingState.init(rawValue:)),
             applicationName: window[kCGWindowOwnerName as String] as? String)
