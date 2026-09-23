@@ -134,12 +134,13 @@ struct TypeServicePixelFocusTests {
         let service = TypeService(
             snapshotManager: manager,
             clickService: click,
-            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
             targetedCharacterTyper: { _, _, delivery in
                 .dispatched(delivery: delivery, keyPressCount: 1)
             },
+            targetedKeyTapper: { _, _, _ in Issue.record("AX clear must not emit keyboard events") },
             targetedTextReplacer: { text, _ in
                 value.set(text)
                 return true
@@ -188,7 +189,7 @@ struct TypeServicePixelFocusTests {
             let service = TypeService(
                 snapshotManager: manager,
                 clickService: click,
-                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
                 randomSource: SystemTypingCadenceRandomSource(),
                 focusedElementSecurityProbe: { _ in false },
                 targetedCharacterTyper: { _, _, _ in
@@ -197,6 +198,7 @@ struct TypeServicePixelFocusTests {
                         delivery: .init(mechanism: .accessibilityValue, mode: .background),
                         keyPressCount: 0)
                 },
+                targetedKeyTapper: { _, _, _ in Issue.record("AX clear must not emit keyboard events") },
                 targetedTextReplacer: { text, _ in
                     value.set(text)
                     return true
@@ -339,6 +341,69 @@ struct TypeServicePixelFocusTests {
             #expect(failure.outcome.dispatchState.unitCount?.rawValue == 2)
             #expect(failure.targetReceipt == DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
         }
+    }
+
+    @Test
+    func `action-only typing refusal preserves completed pixel focus without events`() async throws {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(
+            processIdentity: .init(processIdentifier: getpid(), processStartIdentity: 43))
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
+        let executor = DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
+            coordinationRootURL: self.temporaryRoot()))
+        var focusCount = 0
+        var typingAttempts = 0
+        var eventCount = 0
+        let service = TypeService(
+            snapshotManager: manager,
+            clickService: ClickService(
+                snapshotManager: manager,
+                exactWindowIdentityValidator: { _, _ in true },
+                processStartIdentityProvider: { _ in 43 },
+                desktopOperationExecutor: executor,
+                exactWindowPixelFocusExecutor: { _, window in
+                    focusCount += 1
+                    return Self.focusAction(for: window)
+                }),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedInputDriver: TargetedTypeInputDriver(
+                insertText: { _, _ in
+                    typingAttempts += 1
+                    return false
+                },
+                performTextKey: { _, _ in
+                    Issue.record("No editing key requested")
+                    return .unsupported
+                },
+                replaceText: { _, _ in
+                    Issue.record("No replacement requested")
+                    return false
+                },
+                typeCharacter: { _, _ in eventCount += 1 },
+                tapKey: { _, _, _ in eventCount += 1 }),
+            targetBundleIdentifier: { _ in nil },
+            desktopOperationExecutor: executor)
+        let exactWindow = try #require(fixture.targetIdentity.exactWindow)
+        do {
+            _ = try await service.typeActionsByFocusingPixel(
+                .init(
+                    point: CGPoint(x: 40, y: 50),
+                    actions: [.text("ab")],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotID: fixture.snapshotID,
+                    windowIdentity: exactWindow.identity,
+                    windowBounds: exactWindow.bounds),
+                deliveryValidator: { _ in })
+            Issue.record("Expected the unsupported typing leaf to refuse")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
+            #expect(failure.targetReceipt == DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
+        }
+        #expect(focusCount == 1)
+        #expect(typingAttempts == 1)
+        #expect(eventCount == 0)
     }
 
     @Test

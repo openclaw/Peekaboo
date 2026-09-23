@@ -52,6 +52,7 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
         defaultStrategy: .synthFirst,
         click: .actionFirst,
         scroll: .actionFirst,
+        type: .actionFirst,
         setValue: .actionOnly,
         performAction: .actionOnly)
 

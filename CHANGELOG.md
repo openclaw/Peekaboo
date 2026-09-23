@@ -2,7 +2,9 @@
 
 ## Unreleased
 
+- Honor background typing strategies for text, editing keys, and clear; make the native-AX-first default explicit as `actionFirst`, keep synthetic-only choices free of AX value/selection edits, and refuse ambiguous AX failures without duplicating input through keyboard fallback. Legacy named-element SDK replacements now prefer AX by default; explicit strategies and foreground CLI keyboard behavior are preserved.
 - Bound paste clipboard-restoration waits to 10 seconds so excessive delays cannot monopolize the shared paste lock; CLI and MCP callers using longer delays must reduce them. Thanks @SebTardif! #759.
+
 ## 4.5.0 - 2026-09-22
 
 **Highlights:** Prevent snapshot data loss, crashes, and stuck desktop mutations; restore reliable Chrome connections; and ship smaller architecture-specific CLI downloads with automatic Homebrew selection.

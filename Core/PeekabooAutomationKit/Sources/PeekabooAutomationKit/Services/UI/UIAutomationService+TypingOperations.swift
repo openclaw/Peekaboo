@@ -20,15 +20,17 @@ extension UIAutomationService {
      * - Throws: `PeekabooError` if target element cannot be found or typing fails
      *
      * ## Focus Management
-     * - **Targeted Typing**: Automatically focuses the specified element before typing
+     * - **Targeted Typing**: Synthetic delivery focuses the specified element before typing
      * - **Global Typing**: Types into whatever element currently has focus
      * - **Focus Validation**: Ensures element can accept text input before proceeding
      *
      * ## Text Handling
      * - **Unicode Support**: Full Unicode character support including emoji
      * - **Special Characters**: Handles newlines, tabs, and special key combinations
-     * - **Content Clearing**: Optional clearing of existing content via Cmd+A, Delete
-     * - **Typing Simulation**: Realistic typing with configurable delays between characters
+     * - **Content Clearing**: Action-first named-target replacement prefers one AX value edit;
+     *   unsupported targets use synthetic Cmd+A, Delete
+     * - **Typing Simulation**: Synthetic delivery honors configurable delays between characters;
+     *   direct AX replacement does not focus the element or simulate keystrokes
      *
      * ## Visual Feedback
      * When visualizer is connected, displays:
