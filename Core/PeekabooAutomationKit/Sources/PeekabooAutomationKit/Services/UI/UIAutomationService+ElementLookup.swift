@@ -181,12 +181,7 @@ extension UIAutomationService {
     private func focusInfo(for element: Element, processIdentifier: pid_t?) -> UIFocusInfo {
         let app = processIdentifier.flatMap { AXApp(pid: $0) }
         let runningApp = processIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
-        let window = element.attribute(Attribute<Element>(AXAttributeNames.kAXWindowAttribute))
-        window?.setMessagingTimeout(0.05)
-        defer { window?.setMessagingTimeout(0) }
-        let windowID = AXWindowResolver().windowID(from: element.underlyingElement).map(Int.init) ?? window.flatMap {
-            WindowIdentityService().getWindowID(from: $0, messagingTimeout: 0.05)
-        }.map(Int.init)
+        let windowID = AXWindowIDResolver.owningWindowID(of: element.underlyingElement).map(Int.init)
         return UIFocusInfo(
             role: element.role() ?? "Unknown",
             title: element.title(),

@@ -245,7 +245,7 @@ struct AutomationElement: AutomationElementRepresenting {
         var processIdentifier: pid_t = 0
         guard AXUIElementGetPid(self.element.underlyingElement, &processIdentifier) == .success,
               processIdentifier > 0,
-              let windowID = AXWindowResolver().windowID(from: self.element.underlyingElement).map(Int.init),
+              let windowID = AXWindowIDResolver.owningWindowID(of: self.element.underlyingElement).map(Int.init),
               windowID > 0,
               let role = self.role,
               let frame = self.frame,
