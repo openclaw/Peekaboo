@@ -65,8 +65,10 @@ public struct ClickTool: MCPTool {
                     minLength: 1),
                 "wait_for": SchemaBuilder.number(
                     description: """
-                    Optional. Maximum milliseconds to wait for element to become actionable. Default: 5000.
+                    Optional. Maximum milliseconds to wait for the element to appear in the selected snapshot.
+                    Default: 5000. Snapshot-local element ids are not remapped onto a different window or process.
                     """,
+                    minimum: 0,
                     default: 5000),
                 "double": SchemaBuilder.boolean(
                     description: "Optional. Double-click instead of single click.",
@@ -211,11 +213,13 @@ public struct ClickTool: MCPTool {
         case let .coordinates(raw):
             return try await self.resolveCoordinates(raw, request: request)
         case let .elementId(identifier):
-            let snapshot = try await self.requireSnapshot(id: request.snapshotId)
-            let element = try await self.requireElement(id: identifier, snapshot: snapshot)
+            let (snapshot, element) = try await self.waitForSelectedSnapshotElement(
+                snapshotId: request.snapshotId,
+                waitForMilliseconds: request.waitForMilliseconds,
+                match: .elementId(identifier))
             return ClickResolution(
                 location: element.centerPoint,
-                automationTarget: .elementId(identifier),
+                automationTarget: .elementId(element.id),
                 elementDescription: element.humanDescription,
                 targetApp: snapshot.applicationName,
                 windowTitle: snapshot.windowTitle,
@@ -227,8 +231,10 @@ public struct ClickTool: MCPTool {
                 expectedWindowBounds: snapshot.windowBounds,
                 snapshotId: snapshot.id)
         case let .query(text):
-            let snapshot = try await self.requireSnapshot(id: request.snapshotId)
-            let element = try await self.findElement(matching: text, snapshot: snapshot)
+            let (snapshot, element) = try await self.waitForSelectedSnapshotElement(
+                snapshotId: request.snapshotId,
+                waitForMilliseconds: request.waitForMilliseconds,
+                match: .query(text))
             return ClickResolution(
                 location: element.centerPoint,
                 automationTarget: .elementId(element.id),
@@ -750,19 +756,84 @@ public struct ClickTool: MCPTool {
         return snapshot
     }
 
-    private func requireElement(id: String, snapshot: UISnapshot) async throws -> UIElement {
-        guard let element = await snapshot.getElement(byId: id) else {
-            throw ClickToolError(
-                "Element '\(id)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.",
-                refusalReason: .targetUnavailable)
-        }
-        guard !element.isOCRSemanticEvidence else {
-            throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
-        }
-        return element
+    private enum SelectedSnapshotMatch {
+        case elementId(String)
+        case query(String)
     }
 
-    private func findElement(matching query: String, snapshot: UISnapshot) async throws -> UIElement {
+    /// Waits only inside the snapshot selected at the start of the click.
+    /// A later latest snapshot is usable only when it names the same process generation and exact window.
+    /// Element ids are snapshot-local and are never copied onto a different target.
+    private func waitForSelectedSnapshotElement(
+        snapshotId: String?,
+        waitForMilliseconds: Int,
+        match: SelectedSnapshotMatch) async throws -> (UISnapshot, UIElement)
+    {
+        let deadline = Date().addingTimeInterval(TimeInterval(waitForMilliseconds) / 1000)
+        var selectedContract: SelectedSnapshotContract?
+        while true {
+            try Task.checkCancellation()
+            let snapshot = try await self.requireSnapshot(id: snapshotId)
+            let contract = SelectedSnapshotContract(snapshot)
+            if let selectedContract, selectedContract != contract {
+                throw ClickToolError(
+                    "The selected click target changed while waiting. Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
+            }
+            selectedContract = contract
+            if let element = try await self.matchedElement(match, snapshot: snapshot) {
+                return (snapshot, element)
+            }
+            if Date() >= deadline {
+                throw ClickToolError(
+                    self.waitTimeoutMessage(match, waitForMilliseconds: waitForMilliseconds),
+                    refusalReason: .targetUnavailable)
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func matchedElement(
+        _ match: SelectedSnapshotMatch,
+        snapshot: UISnapshot) async throws -> UIElement?
+    {
+        switch match {
+        case let .elementId(identifier):
+            guard let element = await snapshot.getElement(byId: identifier) else { return nil }
+            guard !element.isOCRSemanticEvidence else {
+                throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+            }
+            return element
+        case let .query(text):
+            return try await self.queryMatch(text, snapshot: snapshot)
+        }
+    }
+
+    private func waitTimeoutMessage(_ match: SelectedSnapshotMatch, waitForMilliseconds: Int) -> String {
+        switch match {
+        case let .elementId(identifier):
+            "Element '\(identifier)' not found after \(waitForMilliseconds)ms. " +
+                "Run 'see' or 'inspect_ui' to update UI state."
+        case let .query(query):
+            "No elements found matching query: '\(query)' after \(waitForMilliseconds)ms"
+        }
+    }
+
+    private struct SelectedSnapshotContract: Equatable {
+        let processIdentifier: Int32?
+        let processStartIdentity: UInt64?
+        let windowID: Int?
+        let windowMutationIdentity: WindowMutationIdentity?
+
+        init(_ snapshot: UISnapshot) {
+            self.processIdentifier = snapshot.applicationProcessId
+            self.processStartIdentity = snapshot.applicationProcessIdentity?.processStartIdentity
+            self.windowID = snapshot.windowID
+            self.windowMutationIdentity = snapshot.windowMutationIdentity
+        }
+    }
+
+    private func queryMatch(_ query: String, snapshot: UISnapshot) async throws -> UIElement? {
         let searchText = query.lowercased()
         let elements = await snapshot.uiElements
         let matches = elements.filter { element in
@@ -770,13 +841,7 @@ public struct ClickTool: MCPTool {
                 element.label?.lowercased().contains(searchText) ?? false ||
                 element.value?.lowercased().contains(searchText) ?? false
         }
-
-        guard !matches.isEmpty else {
-            throw ClickToolError(
-                "No elements found matching query: '\(query)'",
-                refusalReason: .targetUnavailable)
-        }
-
+        guard !matches.isEmpty else { return nil }
         guard let match = SnapshotElementQuerySelector.preferred(in: matches) else {
             throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
         }
@@ -795,6 +860,7 @@ private struct ClickRequest {
     let coordinateSpace: CaptureCoordinateSpace?
     let coordinateReference: String?
     let modifiers: [PointerModifier]
+    let waitForMilliseconds: Int
 
     init(arguments: ToolArguments) throws {
         let rawCoordinateSpace = Self.nonEmptyString(arguments.getString("coordinate_space"))
@@ -838,6 +904,7 @@ private struct ClickRequest {
         }
 
         self.snapshotId = snapshotId
+        self.waitForMilliseconds = try Self.parseWaitFor(arguments)
         if let snapshotId, let coordinateReference, snapshotId != coordinateReference {
             throw ClickToolError("snapshot and coordinate_reference must match when both are provided.")
         }
@@ -895,6 +962,25 @@ private struct ClickRequest {
                 throw ClickToolError("modifier-click cannot use Control or right-click contextual input")
             }
         }
+    }
+
+    private static let defaultWaitForMilliseconds = 5000
+
+    private static func parseWaitFor(_ arguments: ToolArguments) throws -> Int {
+        let raw: Double?
+        do {
+            raw = try arguments.validatedNumber("wait_for")
+        } catch {
+            throw ClickToolError(error.localizedDescription)
+        }
+        guard let raw else { return Self.defaultWaitForMilliseconds }
+        guard raw.isFinite, raw >= 0 else {
+            throw ClickToolError("wait_for must be a non-negative number of milliseconds.")
+        }
+        guard let milliseconds = Int(exactly: raw.rounded()) else {
+            throw ClickToolError("wait_for is outside the supported integer range.")
+        }
+        return milliseconds
     }
 
     private static func parseModifiers(_ arguments: ToolArguments) throws -> [PointerModifier] {

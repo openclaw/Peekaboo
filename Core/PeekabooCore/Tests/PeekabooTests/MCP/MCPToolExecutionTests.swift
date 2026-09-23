@@ -1292,10 +1292,13 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
         self.accessibilityGranted
     }
 
+    private(set) var waitForElementCallCount = 0
+
     func waitForElement(target _: ClickTarget, timeout _: TimeInterval, snapshotId _: String?) async throws
         -> WaitForElementResult
     {
-        WaitForElementResult(found: false, element: nil, waitTime: 0)
+        self.waitForElementCallCount += 1
+        return WaitForElementResult(found: false, element: nil, waitTime: 0)
     }
 
     func drag(_: DragOperationRequest) async throws {}
