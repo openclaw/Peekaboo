@@ -342,11 +342,11 @@ extension RuntimeHostResolver {
     ) async throws -> Resolution? {
         try Task.checkCancellation()
         let options = context.options
+        let supportsAutomaticObservation = options.usesPersistentDynamicCaptureRuntime ||
+            (!options.usesPerToolSnapshotInvalidation && options.requiresScreenCapturePermission &&
+                options.transportsCaptureEnginePreference && options.requiresScreenCaptureKitOwnerCapability)
         guard let explicitSocket = context.candidatePlan.explicitSocket,
-              !options.usesPerToolSnapshotInvalidation,
-              options.requiresScreenCapturePermission,
-              options.transportsCaptureEnginePreference,
-              options.requiresScreenCaptureKitOwnerCapability,
+              supportsAutomaticObservation,
               self.captureEnginePreferenceForOwnership(options: options, environment: context.environment) == .auto,
               !self.screenCaptureKitOwnerIsCurrentProcess(owner),
               let candidate = context.candidatePlan.candidates.first(where: {
@@ -359,14 +359,21 @@ extension RuntimeHostResolver {
               hostIdentity.processStartIdentity != nil,
               BridgeCapabilityPolicy.supportsClassicCaptureWithoutScreenCaptureKit(for: entry.response),
               BridgeCapabilityPolicy.supportsDesktopObservationCaptureEngine(for: entry.response),
-              BridgeCapabilityPolicy.screenCaptureKitReadinessRefusal(for: entry.response) == nil
+              !options.usesPersistentDynamicCaptureRuntime || entry.response.screenCaptureKitReadiness?
+                  .permitsAttempt == true,
+                  BridgeCapabilityPolicy.screenCaptureKitReadinessRefusal(for: entry.response) == nil
         else { return nil }
 
         // Select classic before dispatch so neither permission probing nor a legacy fallback can enter SCK.
         var classicOptions = options
         classicOptions.captureEnginePreference = "classic"
+        classicOptions.requiresDesktopObservation = true
+        classicOptions.requiresScreenCaptureKitOwnerCapability = true
         classicOptions.requiresCaptureEnginePreferenceHost = true
         classicOptions.requiresCaptureEnginePreferenceCapability = true
+        classicOptions.remoteCapturePolicy = .classicOnly(self.ownerRefusal(
+            owner: owner, explicitSocket: explicitSocket
+        ).failure)
         guard var resolution = try await self.resolveRemoteServices(
             candidates: [candidate],
             identity: context.identity,

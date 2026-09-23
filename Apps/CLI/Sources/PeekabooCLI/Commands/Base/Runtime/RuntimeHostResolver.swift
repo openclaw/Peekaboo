@@ -901,6 +901,7 @@ extension RuntimeHostResolver {
         )
         return RemotePeekabooServices(
             client: client,
+            capturePolicy: options.remoteCapturePolicy,
             supportsTargetedHotkeys: targetedHotkey.isEnabled,
             supportsProcessGenerationPinnedHotkeys:
             BridgeCapabilityPolicy.supportsProcessGenerationPinnedHotkeys(for: handshake),

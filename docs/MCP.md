@@ -201,9 +201,15 @@ App and frontmost inspections may still return a successful empty list, even whe
 
 `see` also accepts the closed `capture_engine` values `auto` (default), `modern`, and `classic`. The choice is carried
 in that observation request to the selected host; incapable hosts refuse it before capture. `classic` never enters
-ScreenCaptureKit, so it is the safe request-local recovery path when the selected legacy host blocks auto/modern
+ScreenCaptureKit, so it is the safe request-local recovery path when the selected host proves classic but blocks auto/modern
 capture. A selected-host owner refusal remains fixed for the MCP process lifetime; update or relaunch that exact host
 and start a fresh MCP process before retrying auto/modern capture.
+
+When a different live process holds ScreenCaptureKit, an explicitly selected ready host that proves classic capture
+and request-local engine selection can instead serve automatic `see` and `image` observations as classic on that
+same authenticated connection. Explicit `modern` and SCK-only capture operations remain refused before transport
+for the process lifetime. Missing capabilities, unknown readiness, implicit routing, and caller-local behavior do
+not gain this fallback, and a replaced listener requires a fresh runtime.
 
 Every successful MCP `see` response includes the selected raw or annotated screenshot as inline image content. When
 multiple calls intentionally share the same `path`, each response still returns pixels owned by its own capture; the

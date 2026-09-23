@@ -9,7 +9,7 @@ import Testing
 @Suite(.serialized, .tags(.safe))
 @MainActor
 struct ExplicitAutoClassicOwnerRuntimeTests {
-    @Test(arguments: ["auto", "omitted"], ["flag", "environment"])
+    @Test(arguments: ["auto", "omitted"], ["flag", "environment", "persistent"])
     func `automatic capture uses classic on its selected host around a distinct live owner`(
         engine: String,
         socketSource: String
@@ -17,9 +17,12 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
         try await Self.checkRoute(engine: engine, scenario: "allowed", socketSource: socketSource)
     }
 
-    @Test(arguments: ["modern", "sckit"])
-    func `explicit modern never gains classic fallback around a distinct live owner`(engine: String) async throws {
-        try await Self.checkRoute(engine: engine, scenario: "explicitModern")
+    @Test(arguments: ["modern", "sckit"], ["flag", "persistent"])
+    func `explicit modern never gains classic fallback around a distinct live owner`(
+        engine: String,
+        socketSource: String
+    ) async throws {
+        try await Self.checkRoute(engine: engine, scenario: "explicitModern", socketSource: socketSource)
     }
 
     @Test(
@@ -38,7 +41,6 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
             "missingReadiness",
             "blockedReadiness",
             "implicit",
-            "persistent",
         ]
     )
     func `automatic owner fallback preserves proof identity readiness and runtime boundaries`(
@@ -46,6 +48,7 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
         scenario: String
     ) async throws {
         try await Self.checkRoute(engine: engine, scenario: scenario)
+        try await Self.checkRoute(engine: engine, scenario: scenario, socketSource: "persistent")
     }
 
     @Test(arguments: ["auto", "omitted"])
@@ -64,18 +67,24 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
         let explicitSocket = scenario == "implicit" ? nil : socket
         let environment = socketSource == "environment" ? ["PEEKABOO_BRIDGE_SOCKET": socket] : [:]
         var arguments: [String: [String]] = [:]
-        if let explicitSocket, socketSource == "flag" {
+        if let explicitSocket, socketSource != "environment" {
             arguments["bridge-socket"] = [explicitSocket]
         }
         if engine != "omitted" {
             arguments["captureEngine"] = [engine]
         }
-        let commandType: any ParsableCommand.Type = scenario == "persistent" ? MCPCommand.Serve.self : SeeCommand.self
         var options = try CommanderCLIBinder.makeRuntimeOptions(
-            from: .init(positional: [], options: arguments, flags: scenario == "persistent" ? [] : ["noElements"]),
-            commandType: commandType,
+            from: .init(positional: [], options: arguments, flags: ["noElements"]),
+            commandType: SeeCommand.self,
             environment: environment
         ).applyingEnvironmentOverrides(environment: environment)
+        if socketSource == "persistent" {
+            options.requiresAgentService = true
+            options.usesPerToolSnapshotInvalidation = true
+            options.requiresScreenCapturePermission = false
+            options.transportsCaptureEnginePreference = false
+            options.requiresScreenCaptureKitOwnerCapability = false
+        }
         options.autoStartDaemon = false
 
         var handshakes: [String] = []
@@ -138,6 +147,9 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
                 #expect(handshake.hostIdentity?.processStartIdentity == response.hostIdentity?.processStartIdentity)
                 #expect(resolvedOptions.requiresCaptureEnginePreferenceCapability)
                 #expect(resolvedOptions.requiresScreenCaptureKitOwnerCapability)
+                if case .classicOnly = resolvedOptions.remoteCapturePolicy {} else {
+                    Issue.record("Automatic classic routing must constrain the entire remote capture graph")
+                }
                 #expect(BridgeCapabilityPolicy.supportsRemoteRequirements(for: handshake, options: resolvedOptions))
                 remoteFactoryEngines.append(ObservationCommandSupport.captureEnginePreference(
                     cliValue: resolvedOptions.captureEnginePreference,
@@ -240,7 +252,10 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: "selected-fixture",
-            supportedOperations: [.captureScreen, .desktopObservation, .inspectAccessibilityTree, .ownsSnapshot],
+            supportedOperations: [
+                .captureScreen, .desktopObservation, .inspectAccessibilityTree, .ownsSnapshot,
+                .invalidateImplicitLatestSnapshot,
+            ],
             permissions: .init(screenRecording: true, accessibility: true, appleScript: false, postEvent: false),
             enabledOperations: scenario == "disabledObservation" ? [.captureScreen] : nil,
             hostIdentity: scenario == "missingHostIdentity" ? nil : .init(
