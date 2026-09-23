@@ -47,6 +47,29 @@ struct Phase3CommandParsingTests {
     }
 
     @Test
+    func `Paste accepts restore delay bounds of 0 and 10000ms`() throws {
+        for value in ["0", "10000", "10s"] {
+            var command = try PasteCommand.parse(["hello", "--foreground", "--restore-delay", value])
+            try command.validate()
+            #expect((0...10000).contains(command.restoreDelay?.roundedMilliseconds ?? -1))
+        }
+    }
+
+    @Test
+    func `Paste rejects restore delay above 10000ms`() throws {
+        for value in ["10001", "9007199254740992"] {
+            var command = try PasteCommand.parse(["hello", "--foreground", "--restore-delay", value])
+            do {
+                try command.validate()
+                Issue.record("Expected validation failure for --restore-delay \(value)")
+            } catch {
+                let description = String(describing: error)
+                #expect(description.contains("--restore-delay must be between 0 and 10000ms"))
+            }
+        }
+    }
+
+    @Test
     func `Press rejects invalid and removed chord syntax`() throws {
         for value in ["cmd+shift", "cmd+c+v", "cmd++c", "cmd,c", "cmd c", "notakey"] {
             var command = try PressCommand.parse([value])

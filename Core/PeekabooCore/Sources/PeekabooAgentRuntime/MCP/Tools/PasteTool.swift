@@ -88,8 +88,9 @@ public struct PasteTool: MCPTool {
                 description: "Allow payloads larger than 10 MB.",
                 default: false)
             properties["restore_delay_ms"] = SchemaBuilder.integer(
-                description: "Delay before restoring the previous clipboard (ms). Default: 150.",
+                description: "Delay before restoring the previous clipboard (ms). Default: 150. Maximum: 10000.",
                 minimum: 0,
+                maximum: 10000,
                 default: 150)
             properties["foreground"] = SchemaBuilder.boolean(
                 description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
@@ -112,6 +113,7 @@ public struct PasteTool: MCPTool {
             windowIndex: arguments.validatedInt("window_index"),
             windowId: arguments.validatedInt("window_id"))
         try Self.validatePayloadShape(arguments)
+        _ = try Self.restoreDelayMilliseconds(arguments)
     }
 
     @MainActor
@@ -129,8 +131,8 @@ public struct PasteTool: MCPTool {
 
             let foreground = arguments.getBool("foreground") ?? false
             let expectedPIDIdentity = try self.explicitPIDIdentity(target: target)
+            let restoreDelayMs = try Self.restoreDelayMilliseconds(arguments)
             let payload = try self.makePayload(arguments: arguments)
-            let restoreDelayMs = try max(0, arguments.validatedInt("restore_delay_ms") ?? 150)
 
             if case let .explicit(request, text?) = payload, !foreground {
                 let destination = try await self.resolveDeliveryDestination(
@@ -999,6 +1001,16 @@ public struct PasteTool: MCPTool {
             throw MCPInteractionTargetError.invalidProcessIdentifier
         }
         return processIdentifier
+    }
+
+    private static func restoreDelayMilliseconds(_ arguments: ToolArguments) throws -> Int {
+        let restoreDelayMs = try arguments.validatedInt("restore_delay_ms") ?? 150
+        guard (0...ClipboardPasteTransactionGate.maximumRestoreDelayMilliseconds).contains(restoreDelayMs) else {
+            throw PasteToolError(
+                "restore_delay_ms must be between 0 and 10000ms",
+                refusalReason: .invalidRequest)
+        }
+        return restoreDelayMs
     }
 
     private static func validatePayloadShape(_ arguments: ToolArguments) throws {

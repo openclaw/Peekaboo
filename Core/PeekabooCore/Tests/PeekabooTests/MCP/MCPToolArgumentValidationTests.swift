@@ -112,6 +112,16 @@ struct MCPToolArgumentValidationTests {
                 "text": .string("must-not-type"),
                 "pid": .double(1234.9),
             ]),
+            (PasteTool(context: context), [
+                "text": .string("must-not-type"),
+                "foreground": .bool(true),
+                "restore_delay_ms": .int(10001),
+            ]),
+            (PasteTool(context: context), [
+                "text": .string("must-not-type"),
+                "foreground": .bool(true),
+                "restore_delay_ms": .int(-1),
+            ]),
         ]
 
         for (tool, values) in cases {
@@ -273,6 +283,58 @@ struct MCPToolArgumentValidationTests {
         }
 
         #expect(await counter.value == cases.count)
+    }
+
+    @Test
+    func `Paste tool restore_delay_ms advertises a 10s maximum`() async {
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
+        let tool = PasteTool(context: context)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(restoreDelay)? = properties["restore_delay_ms"]
+        else {
+            Issue.record("Expected paste restore_delay_ms integer schema")
+            return
+        }
+        #expect(restoreDelay["minimum"] == .int(0))
+        #expect(restoreDelay["maximum"] == .int(10000))
+    }
+
+    @Test
+    func `Paste tool rejects restore_delay_ms outside 0...10000ms`() async throws {
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
+        let tool = PasteTool(context: context)
+        for delay in [-1, 10001, 9_007_199_254_740_992] {
+            let response = try await tool.execute(arguments: ToolArguments(raw: [
+                "text": "hi",
+                "foreground": true,
+                "restore_delay_ms": delay,
+            ]))
+            #expect(response.isError)
+            guard case let .text(message, _, _)? = response.content.first else {
+                Issue.record("Expected paste restore_delay_ms validation text")
+                continue
+            }
+            #expect(message.contains("restore_delay_ms must be between 0 and 10000ms"))
+            try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .invalidRequest, in: response)
+        }
+    }
+
+    @Test
+    func `Paste tool accepts restore_delay_ms bounds of 0 and 10000ms before targeting checks`() async throws {
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
+        let tool = PasteTool(context: context)
+        for delay in [0, 10000] {
+            let response = try await tool.execute(arguments: ToolArguments(raw: [
+                "restore_delay_ms": delay,
+            ]))
+            #expect(response.isError)
+            guard case let .text(message, _, _)? = response.content.first else {
+                Issue.record("Expected targeting validation for accepted restore_delay_ms \(delay)")
+                continue
+            }
+            #expect(!message.contains("restore_delay_ms must be between"))
+        }
     }
 }
 

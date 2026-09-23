@@ -23,7 +23,8 @@ extension PasteCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "restoreDelay",
-                    help: "Clipboard restore delay; bare values are milliseconds, or use ms/s suffixes",
+                    help: "Clipboard restore delay; bare values are milliseconds, or use ms/s suffixes " +
+                        "(maximum 10000ms)",
                     long: "restore-delay"
                 ),
             ],

@@ -178,11 +178,25 @@ public enum ClipboardPasteTransactionGate {
         SystemIdentityResolver.processStartIdentity(processIdentifier)
     }
 
-    /// Waits for the receiving application to consume Cmd+V without inheriting caller cancellation.
+    /// Matches Press delay/hold so a huge restore delay cannot hold the exclusive paste lock unbounded.
+    public static let maximumRestoreDelayMilliseconds = 10000
+
+    public static func cappedRestoreDelayMilliseconds(_ milliseconds: Int) -> Int {
+        min(max(0, milliseconds), self.maximumRestoreDelayMilliseconds)
+    }
+
+    static func pasteConsumptionSleepDuration(milliseconds: Int) -> Duration? {
+        let capped = self.cappedRestoreDelayMilliseconds(milliseconds)
+        guard capped > 0 else { return nil }
+        return .milliseconds(capped)
+    }
+
+    /// Waits for Cmd+V consumption, capped at ``maximumRestoreDelayMilliseconds``.
+    /// Detached so cancellation cannot restore the previous clipboard before the receiver reads it.
     public static func waitForPasteConsumption(milliseconds: Int) async {
-        guard milliseconds > 0 else { return }
+        guard let delay = self.pasteConsumptionSleepDuration(milliseconds: milliseconds) else { return }
         let settle = Task.detached {
-            try? await Task.sleep(for: .milliseconds(milliseconds))
+            try? await Task.sleep(for: delay)
         }
         await settle.value
     }

@@ -188,6 +188,54 @@ struct ClipboardPasteTransactionGateTests {
         #expect(fileInfo.st_mode & mode_t(S_IRUSR | S_IWUSR) == mode_t(S_IRUSR | S_IWUSR))
     }
 
+    @Test
+    func `Restore delay cap maps huge values onto 10s without sleeping them`() {
+        #expect(ClipboardPasteTransactionGate.maximumRestoreDelayMilliseconds == 10000)
+        #expect(ClipboardPasteTransactionGate.cappedRestoreDelayMilliseconds(3_600_000) == 10000)
+        #expect(ClipboardPasteTransactionGate.cappedRestoreDelayMilliseconds(10001) == 10000)
+        #expect(ClipboardPasteTransactionGate.cappedRestoreDelayMilliseconds(10000) == 10000)
+        #expect(ClipboardPasteTransactionGate.cappedRestoreDelayMilliseconds(150) == 150)
+        #expect(ClipboardPasteTransactionGate.cappedRestoreDelayMilliseconds(0) == 0)
+        #expect(ClipboardPasteTransactionGate.cappedRestoreDelayMilliseconds(-1) == 0)
+        #expect(
+            ClipboardPasteTransactionGate.pasteConsumptionSleepDuration(milliseconds: 3_600_000) ==
+                .milliseconds(10000))
+        #expect(ClipboardPasteTransactionGate.pasteConsumptionSleepDuration(milliseconds: 0) == nil)
+        #expect(ClipboardPasteTransactionGate.pasteConsumptionSleepDuration(milliseconds: -50) == nil)
+    }
+
+    @Test
+    func `Huge restore delay wait returns within the 10s cap`() async {
+        let clock = ContinuousClock()
+        let started = clock.now
+        await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: 60000)
+        let elapsed = clock.now - started
+        #expect(elapsed >= .seconds(9))
+        #expect(elapsed < .seconds(12))
+    }
+
+    @Test
+    func `Zero restore delay returns immediately`() async {
+        let clock = ContinuousClock()
+        let started = clock.now
+        await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: 0)
+        #expect(clock.now - started < .milliseconds(100))
+    }
+
+    @Test
+    func `Paste consumption wait ignores cancellation during the capped settle`() async throws {
+        let clock = ContinuousClock()
+        let started = clock.now
+        let wait = Task {
+            await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: 180)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        wait.cancel()
+        await wait.value
+        #expect(clock.now - started >= .milliseconds(140))
+        #expect(clock.now - started < .milliseconds(1000))
+    }
+
     private func holdPasteTransactionLock() async throws -> Int32 {
         try await ClipboardPasteTransactionGate.withExclusiveTransaction {}
         let fd = open(
