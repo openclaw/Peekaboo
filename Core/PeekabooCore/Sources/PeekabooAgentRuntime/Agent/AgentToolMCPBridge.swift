@@ -135,12 +135,10 @@ enum AgentToolMCPBridge {
         default:
             AnyAgentToolValue(array: values)
         }
-        let valueWithReceipt = Self.attachingVerificationReceipt(from: response, to: value)
         return AgentToolMCPBridgeResult(
             value: Self.attachingResponseMetadata(
                 from: response,
-                contentValue: value,
-                receiptValue: valueWithReceipt),
+                contentValue: value),
             images: images,
             failure: nil)
     }
@@ -189,10 +187,9 @@ enum AgentToolMCPBridge {
 
     private static func attachingResponseMetadata(
         from response: ToolResponse,
-        contentValue: AnyAgentToolValue,
-        receiptValue: AnyAgentToolValue) -> AnyAgentToolValue
+        contentValue: AnyAgentToolValue) -> AnyAgentToolValue
     {
-        guard let metadata = response.meta else { return receiptValue }
+        guard let metadata = response.meta else { return contentValue }
 
         var payload: [String: AnyAgentToolValue] = [
             "result": contentValue,
@@ -201,11 +198,7 @@ enum AgentToolMCPBridge {
         for (key, value) in MCPToolResponseMetadataProjector.agentFields(from: response.meta) {
             payload[key] = TypedValueBridge.anyAgentValue(from: value)
         }
-        if let text = contentValue.stringValue {
-            payload["text"] = AnyAgentToolValue(string: text)
-        }
-        if let receipt = receiptValue.objectValue?["verification_receipt"] {
-            payload["content"] = contentValue
+        if let receipt = Self.verificationReceipt(from: response) {
             payload["verification_receipt"] = receipt
         }
         return AnyAgentToolValue(object: payload)
@@ -465,16 +458,13 @@ enum AgentToolMCPBridge {
         ])
     }
 
-    private static func attachingVerificationReceipt(
-        from response: ToolResponse,
-        to value: AnyAgentToolValue) -> AnyAgentToolValue
-    {
+    private static func verificationReceipt(from response: ToolResponse) -> AnyAgentToolValue? {
         guard case let .object(metadata)? = response.meta,
               let status = metadata["status"]?.stringValue,
               ["satisfied", "unsatisfied", "unknown"].contains(status),
               case let .array(predicates)? = metadata["predicates"]
         else {
-            return value
+            return nil
         }
 
         var receipt: [String: AnyAgentToolValue] = [
@@ -494,10 +484,7 @@ enum AgentToolMCPBridge {
                 receipt[key] = AnyAgentToolValue(int: int)
             }
         }
-        return AnyAgentToolValue(object: [
-            "content": value,
-            "verification_receipt": AnyAgentToolValue(object: receipt),
-        ])
+        return AnyAgentToolValue(object: receipt)
     }
 
     private struct StructuredValueBudget {

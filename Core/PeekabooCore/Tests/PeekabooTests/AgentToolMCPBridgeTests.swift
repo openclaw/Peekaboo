@@ -33,7 +33,9 @@ struct AgentToolMCPBridgeTests {
         #expect(receipt["target"]?.objectValue?["pid"]?.intValue == 42)
         #expect(receipt["target"]?.objectValue?["window_id"]?.intValue == 7)
         #expect(receipt["predicates"]?.arrayValue?.first?.objectValue?["expected_value"]?.stringValue == "42")
-        #expect(bridged.value.objectValue?["content"]?.stringValue?.contains("Verification satisfied") == true)
+        #expect(bridged.value.objectValue?["result"]?.stringValue?.contains("Verification satisfied") == true)
+        #expect(bridged.value.objectValue?["content"] == nil)
+        #expect(bridged.value.objectValue?["text"] == nil)
     }
 
     @Test
@@ -56,6 +58,30 @@ struct AgentToolMCPBridgeTests {
 
         let toolJSON = try JSONSerialization.data(withJSONObject: bridged.value.toJSON())
         let toolText = try #require(String(data: toolJSON, encoding: .utf8))
+        #expect(!toolText.contains(encodedImage))
+    }
+
+    @Test
+    func `Image response metadata keeps one observation and its separate image`() throws {
+        let encodedImage = Self.makePNGData(width: 2, height: 2).base64EncodedString()
+        let response = ToolResponse(
+            content: [
+                .text(text: "Synthetic observation", annotations: nil, _meta: nil),
+                .image(data: encodedImage, mimeType: "image/png", annotations: nil, _meta: nil),
+            ],
+            meta: .object(["snapshot_id": .string("synthetic-snapshot")]))
+
+        let bridged = AgentToolMCPBridge.convert(response)
+        let payload = try #require(bridged.value.objectValue)
+
+        #expect(payload["result"]?.stringValue == "Synthetic observation")
+        #expect(payload["meta"]?.objectValue?["snapshot_id"]?.stringValue == "synthetic-snapshot")
+        #expect(payload["text"] == nil)
+        #expect(payload["content"] == nil)
+        #expect(bridged.images.count == 1)
+        #expect(bridged.images[0].data == encodedImage)
+        #expect(bridged.images[0].mimeType == "image/png")
+        let toolText = try #require(String(data: JSONEncoder().encode(bridged.value), encoding: .utf8))
         #expect(!toolText.contains(encodedImage))
     }
 

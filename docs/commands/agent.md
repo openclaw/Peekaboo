@@ -97,6 +97,8 @@ read_when:
 - Native `ollama/<model>` runs replay each assistant tool call and named tool result on the next model turn. Ollama
   support is model-dependent, and native text arrives incrementally with a model-dependent chunk cadence. See the
   [Ollama guide](../providers/ollama.md).
+- Native tool observations appear once in Agent context, with action safety metadata and verification receipts
+  preserved separately. Existing saved sessions remain readable; this does not compact or discard observation history.
 
 ### JSON execution trace
 

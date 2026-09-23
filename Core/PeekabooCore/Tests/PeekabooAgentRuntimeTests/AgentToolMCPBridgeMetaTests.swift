@@ -1,11 +1,12 @@
 import MCP
+import Tachikoma
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 
 struct AgentToolMCPBridgeMetaTests {
     @Test
-    func `Text content preserves summary metadata`() throws {
+    func `Text content preserves summary metadata without duplicating the result`() throws {
         let text = "native tool output"
         let response = ToolResponse.text(
             text,
@@ -22,7 +23,8 @@ struct AgentToolMCPBridgeMetaTests {
         }
 
         #expect(payload["result"] as? String == text)
-        #expect(payload["text"] as? String == text)
+        #expect(payload["text"] == nil)
+        #expect(payload["content"] == nil)
         guard let summary = ToolEventSummary.from(resultJSON: payload) else {
             Issue.record("Converted response is missing summary metadata")
             return
@@ -36,6 +38,26 @@ struct AgentToolMCPBridgeMetaTests {
         let converted = convertToolResponseToAgentToolResult(.text(text))
 
         #expect(try converted.toJSON() as? String == text)
+    }
+
+    @Test
+    func `Inspection payload encoding removes only the duplicated observation bytes`() throws {
+        let text = (["UI Text Inspection", "Snapshot ID: synthetic-snapshot", "Elements found: 92"] +
+            (0..<92).map { "  elem_\($0) - \"Synthetic control \($0)\" - value: \"ready\" - [value settable]" })
+            .joined(separator: "\n")
+        let receipt: Value = .object(["pid": .int(42), "window_id": .int(7)])
+        let converted = AgentToolMCPBridge.convert(.text(text, meta: .object(["target_receipt": receipt])))
+        var formerPayload = try #require(converted.value.objectValue)
+        formerPayload["text"] = AnyAgentToolValue(string: text)
+        let encoder = JSONEncoder()
+        let currentBytes = try encoder.encode(converted.value).count
+        let formerBytes = try encoder.encode(AnyAgentToolValue(object: formerPayload)).count
+        let encodedTextBytes = try encoder.encode(text).count
+
+        #expect(formerBytes - currentBytes == encodedTextBytes + 8)
+        #expect(currentBytes * 100 < formerBytes * 55)
+        #expect(converted.value.objectValue?["target_receipt"] ==
+            converted.value.objectValue?["meta"]?.objectValue?["target_receipt"])
     }
 
     @Test
