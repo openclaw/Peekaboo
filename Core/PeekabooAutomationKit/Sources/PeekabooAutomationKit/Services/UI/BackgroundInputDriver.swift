@@ -670,6 +670,13 @@ enum BackgroundInputDriver {
         else {
             return nil
         }
+        // Web controls may accept AXValue/selection writes without applying them. Choose events
+        // before any AX mutation, never as a retry after an accepted write.
+        guard try BackgroundTextInputRoute.resolve(
+            focusedElement: element,
+            application: application,
+            targetProcessIdentifier: targetProcessIdentifier).permitsAccessibilityEditing()
+        else { return nil }
         return element
     }
 
@@ -965,6 +972,7 @@ extension BackgroundInputDriver {
         _ key: PeekabooFoundation.SpecialKey,
         targetProcessIdentifier: pid_t) throws -> FocusedTextKeyDispatch
     {
+        guard key.mayUseAccessibilityValueDelivery else { return .unsupported }
         try self.validateLiveTarget(targetProcessIdentifier)
         guard let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier),
               let currentText = try self.textValue(from: element)
