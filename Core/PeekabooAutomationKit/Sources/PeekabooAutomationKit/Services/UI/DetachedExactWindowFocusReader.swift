@@ -126,19 +126,16 @@ enum DetachedExactWindowFocusReader {
             visited.append(element)
             AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
 
-            let observedRole = self.stringAttribute(kAXRoleAttribute as String, of: element)
-            let observedFrame = self.frame(of: element)
-            if observedRole == expected.role,
-               phase == .continuation || observedFrame == expected.frame
+            if let candidate = self.candidateIdentity(
+                observedRole: self.stringAttribute(kAXRoleAttribute as String, of: element),
+                expected: expected,
+                phase: phase,
+                frame: self.frame(of: element),
+                metadata: (
+                    title: self.stringAttribute(kAXTitleAttribute as String, of: element),
+                    identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element)))
             {
                 roleAndFrameMatches.append(element)
-                let candidate = FocusedElementIdentity(
-                    processIdentifier: expected.processIdentifier,
-                    windowID: expected.windowID,
-                    role: observedRole ?? "",
-                    title: self.stringAttribute(kAXTitleAttribute as String, of: element),
-                    identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
-                    frame: observedFrame ?? .zero)
                 if FocusedElementReceiptResolver.matches(candidate, expected: expected, phase: phase) {
                     exactMatches.append(element)
                     exactMatchFrames.append(candidate.frame)
@@ -200,6 +197,27 @@ enum DetachedExactWindowFocusReader {
             value: includesValue && self.allowsValueRead(role: expected.role, subrole: subrole)
                 ? self.stringAttribute(kAXValueAttribute as String, of: element)
                 : nil))
+    }
+
+    static func candidateIdentity(
+        observedRole: String?,
+        expected: FocusedElementIdentity,
+        phase: KeyboardFocusValidationPhase,
+        frame: @autoclosure () -> CGRect?,
+        metadata: @autoclosure () -> (title: String?, identifier: String?)) -> FocusedElementIdentity?
+    {
+        // Most scanned nodes cannot receive this input; avoid their two frame AX calls.
+        guard observedRole == expected.role else { return nil }
+        let observedFrame = frame()
+        guard phase == .continuation || observedFrame == expected.frame else { return nil }
+        let metadata = metadata()
+        return FocusedElementIdentity(
+            processIdentifier: expected.processIdentifier,
+            windowID: expected.windowID,
+            role: expected.role,
+            title: metadata.title,
+            identifier: metadata.identifier,
+            frame: observedFrame ?? .zero)
     }
 
     static func selectContinuationReceiver(
