@@ -5,8 +5,8 @@
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 - Align internal and public SwiftPM consumers on AXorcist 0.1.11 to preserve native numeric values, improve geometry/range parsing, and reject invalid scroll amounts before input dispatch.
 - Keep Agent text-task dry-run previews independent of UI hosts, capture ownership, and permissions while preserving input validation and foreground-authority reporting. #776.
-- Bound paste clipboard-restoration waits to 10 seconds so excessive delays cannot monopolize the shared paste lock; CLI and MCP callers using longer delays must reduce them. Thanks @SebTardif! #759.
 - Honor MCP query-click waits with fresh, receipt-pinned Accessibility reads without screenshots; refuse changed targets and late matches while preserving the original modifier-click authority. Thanks @SebTardif! #785.
+- Bound paste clipboard-restoration waits to 10 seconds so excessive delays cannot monopolize the shared paste lock; CLI and MCP callers using longer delays must reduce them. Thanks @SebTardif! #759.
 - Avoid reading geometry for unrelated Accessibility roles during exact-window keyboard focus checks, preserving per-character receiver validation.
 - Let Agent and MCP automatic observations use proven classic capture on an explicitly selected ready Bridge while another process owns ScreenCaptureKit; keep explicit modern and raw SCK-only requests refused before transport. #778.
 

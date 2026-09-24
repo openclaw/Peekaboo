@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 - Update AXorcist to 0.1.11 for native numeric fidelity, geometry/range parsing improvements, and invalid-scroll refusal before input dispatch.
+- Honor MCP query-click waits with fresh, receipt-pinned Accessibility reads without screenshots; refuse changed targets and late matches while preserving the original modifier-click authority. Thanks @SebTardif! #785.
 - Reject paste restore delays above 10 seconds while preserving the 150ms default and cancellation-safe clipboard restoration. Thanks @SebTardif! #759.
 
 ## 4.5.0 - 2026-09-22
