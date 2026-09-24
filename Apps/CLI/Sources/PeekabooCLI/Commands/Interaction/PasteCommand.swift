@@ -872,12 +872,15 @@ extension PasteCommand {
             )
             return result
         } catch {
+            let metadata = actionErrorEnvelopeMetadata(for: error, isActionCommand: true)
             if clipboardMutation?.wasAttempted != true,
                actionSequence?.mutationDisposition.mutationDispatched != true,
-               let failure = error as? DesktopActionFailure,
-               failure.outcome.state == .refused,
-               failure.outcome.dispatchState == .none,
-               failure.outcome.retrySafety == .safe {
+               let outcome = metadata.outcome,
+               outcome.state == .refused,
+               outcome.dispatchState == .none,
+               outcome.retrySafety == .safe,
+               metadata.retrySafe == true,
+               metadata.mutationDispatched == false {
                 // Refusal proves no new effects, not ownership of another operation's pending mark.
                 if !hadPriorMark,
                    sequence < UInt64.max,

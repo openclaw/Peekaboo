@@ -116,12 +116,65 @@ struct PasteObservationInvalidationTests {
     }
 
     @Test
-    func `Canonical failure after a partial clipboard write still invalidates and restores`() async throws {
+    func `Wrapped background target refusal preserves observations before clipboard access`() async throws {
+        let state = try await PasteQualificationState()
+        defer { state.removeDirectory() }
+        let applications = StubApplicationService(applications: [])
+        let automation = OutcomeStubAutomationService()
+        let clipboard = Self.makeClipboard()
+        let windows = PasteFocusWindowService()
+        let gate = AdmittedPasteGate()
+        var command = PasteCommand()
+        command.transactionGate = gate
+        command.target.app = "Missing App"
+        command.runtimeOptions.jsonOutput = true
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: applications,
+            windows: windows,
+            snapshots: state.snapshots,
+            clipboard: clipboard,
+            automation: automation
+        )
+
+        let response = try await Self.runRefused(command, services: services, state: state)
+
+        #expect(response.error?.code == "APP_NOT_FOUND")
+        #expect(response.outcome?.state == .refused)
+        #expect(response.error?.retry_safe == true)
+        #expect(response.error?.mutation_dispatched == false)
+        #expect(response.outcome?.requiresFreshObservation == false)
+        #expect(gate.admissionCalls == 1)
+        #expect(gate.bodyCalls == 1)
+        #expect(automation.outcomeHotkeyCallCount == 0)
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(automation.exactHotkeyCalls.isEmpty)
+        #expect(windows.focusCalls.isEmpty)
+        #expect(applications.activateCalls.isEmpty)
+        #expect(clipboard.getCallCount == 0)
+        #expect(clipboard.saveCallCount == 0)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.restoreCallCount == 0)
+        #expect(clipboard.clearCallCount == 0)
+        #expect(state.tracker.mutationStartedAt == nil)
+        #expect(!state.tracker.hasPendingDurableMutation)
+        try await state.expectLatestAndLeasePreserved()
+    }
+
+    @Test(arguments: [false, true])
+    func `Canonical failure after a partial clipboard write still invalidates and restores`(
+        wrapped: Bool
+    ) async throws {
         let state = try await PasteQualificationState()
         defer { state.removeDirectory() }
         let automation = OutcomeStubAutomationService()
         let clipboard = Self.makeClipboard()
-        clipboard.setError = Self.timeoutFailure
+        clipboard.setError = wrapped ? PreDispatchActionError(
+            message: "Synthetic partial clipboard write failure",
+            code: .TIMEOUT,
+            hint: nil,
+            reason: .targetUnavailable
+        ) : Self.timeoutFailure
         clipboard.setMutatesBeforeThrow = true
         let gate = AdmittedPasteGate()
         var command = Self.currentClipboardCommand(gate: gate)
@@ -145,6 +198,54 @@ struct PasteObservationInvalidationTests {
         #expect(automation.outcomeHotkeyCallCount == 0)
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(gate.bodyCalls == 1)
+        #expect(await state.snapshots.getMostRecentSnapshot() == nil)
+        #expect(state.snapshots.effectiveImplicitLatestInvalidationWatermark != nil)
+        try await state.expectExplicitLeaseReusable()
+    }
+
+    enum EnvelopeEvidence: String, CaseIterable, Sendable {
+        case aggregateDispatch
+        case unsafeRetry
+        case dispatchedOverride
+        case untypedRefusal
+    }
+
+    @Test(arguments: EnvelopeEvidence.allCases)
+    func `Envelope evidence cannot be weakened to a wrapped leaf refusal`(evidence: EnvelopeEvidence) async throws {
+        let state = try await PasteQualificationState()
+        defer { state.removeDirectory() }
+        var envelope = PasteQualificationEnvelopeFailure(envelopeActionFailure: Self.timeoutFailure)
+        switch evidence {
+        case .aggregateDispatch:
+            envelope.envelopeActionOutcome = .indeterminate(evidence: .completionUnknown, unitCount: .one)
+        case .unsafeRetry:
+            envelope.envelopeRetrySafe = false
+        case .dispatchedOverride:
+            envelope.envelopeMutationDispatched = true
+        case .untypedRefusal:
+            envelope.envelopeActionFailure = nil
+            envelope.envelopeRetrySafe = true
+            envelope.envelopeMutationDispatched = false
+        }
+        let automation = OutcomeStubAutomationService()
+        let clipboard = Self.makeClipboard()
+        clipboard.getError = envelope
+        let gate = AdmittedPasteGate()
+        let command = Self.currentClipboardCommand(gate: gate)
+        let services = TestServicesFactory.makePeekabooServices(
+            snapshots: state.snapshots,
+            clipboard: clipboard,
+            automation: automation
+        )
+
+        _ = try await Self.runRefused(command, services: services, state: state)
+
+        #expect(gate.bodyCalls == 1)
+        #expect(clipboard.getCallCount == 1)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.restoreCallCount == 0)
+        #expect(automation.outcomeHotkeyCallCount == 0)
+        #expect(automation.hotkeyCalls.isEmpty)
         #expect(await state.snapshots.getMostRecentSnapshot() == nil)
         #expect(state.snapshots.effectiveImplicitLatestInvalidationWatermark != nil)
         try await state.expectExplicitLeaseReusable()
@@ -399,6 +500,15 @@ private struct PasteQualificationState {
 
 private enum PasteQualificationError: Error {
     case unclassified
+}
+
+private struct PasteQualificationEnvelopeFailure: ResultEnvelopeError {
+    var envelopeActionFailure: DesktopActionFailure?
+    var envelopeActionOutcome: DesktopActionOutcome?
+    var envelopeRetrySafe: Bool?
+    var envelopeMutationDispatched: Bool?
+    let envelopeEffect: ActionEffect? = .refused
+    let envelopeHint: String? = nil
 }
 
 @MainActor
