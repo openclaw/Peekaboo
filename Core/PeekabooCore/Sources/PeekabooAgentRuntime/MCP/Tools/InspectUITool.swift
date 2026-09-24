@@ -10,6 +10,7 @@ import TachikomaMCP
 public struct InspectUITool: MCPTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "InspectUITool")
     private let context: MCPToolContext
+    private let pinnedWindowContext: WindowContext?
 
     public let name = "inspect_ui"
 
@@ -68,6 +69,12 @@ public struct InspectUITool: MCPTool {
 
     public init(context: MCPToolContext = .shared) {
         self.context = context
+        self.pinnedWindowContext = nil
+    }
+
+    init(context: MCPToolContext, pinnedWindowContext: WindowContext) {
+        self.context = context
+        self.pinnedWindowContext = pinnedWindowContext
     }
 
     @MainActor
@@ -90,7 +97,7 @@ public struct InspectUITool: MCPTool {
             newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
             newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
             activeSnapshotID = snapshot.id
-            let windowContext = try self.makeWindowContext(
+            let windowContext = try self.pinnedWindowContext ?? self.makeWindowContext(
                 for: target,
                 webFocus: request.webFocus,
                 traversalBudget: request.traversalBudget)
@@ -115,6 +122,7 @@ public struct InspectUITool: MCPTool {
                 targetIdentity: resolvedTarget)
             observationActionResult = validatedActionResult
             try Self.requireUsableAXOnlyEvidence(result, requestedWindowID: windowContext.windowID)
+            try self.validatePinnedWindow(result)
             let snapshotResult = self.bindResult(result, to: snapshot.id)
 
             try await self.context.snapshots.storeDetectionResult(
@@ -173,6 +181,9 @@ public struct InspectUITool: MCPTool {
                     await self.context.uiSnapshots.removeSnapshot(id: newlyCreatedSnapshotID)
                 }
             }
+            if self.pinnedWindowContext != nil, error is CancellationError {
+                throw CancellationError()
+            }
             self.logger.error("Inspect UI tool execution failed: \(presentedError.localizedDescription)")
             if let failure = presentedError as? DesktopActionFailure {
                 return try await MCPDesktopActionFailureHandler.response(
@@ -186,6 +197,21 @@ public struct InspectUITool: MCPTool {
     }
 
     // MARK: - Private Helpers
+
+    private func validatePinnedWindow(_ result: ElementDetectionResult) throws {
+        guard let expected = self.pinnedWindowContext?.windowMutationIdentity else { return }
+        guard let context = result.metadata.windowContext,
+              context.applicationProcessId == expected.ownerProcessIdentifier,
+              context.applicationProcessStartIdentity == expected.ownerProcessStartIdentity,
+              context.windowID == expected.windowID,
+              context.windowBounds == expected.capturedBounds,
+              let actual = context.windowMutationIdentity,
+              actual.hasSameStableReceipt(as: expected),
+              !result.metadata.isApplicationScopedAccessibilityFallback
+        else {
+            throw PeekabooError.snapshotStale("The selected click window changed while waiting. Run see again.")
+        }
+    }
 
     private static func requireUsableAXOnlyEvidence(
         _ result: ElementDetectionResult,

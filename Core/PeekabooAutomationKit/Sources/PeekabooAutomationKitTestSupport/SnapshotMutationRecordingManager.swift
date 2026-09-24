@@ -23,6 +23,8 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     public var failFinish = false
     public var ownsSnapshotError: (any Error)?
     public var getDetectionResultError: (any Error)?
+    public var cleanSnapshotError: (any Error)?
+    public private(set) var cleanCalls: [String] = []
 
     private let wrapped: any SnapshotManagerProtocol
     private let producerBoundSnapshotReferencesOverride: Bool?
@@ -145,6 +147,10 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     }
 
     public func cleanSnapshot(snapshotId: String) async throws {
+        self.cleanCalls.append(snapshotId)
+        if let cleanSnapshotError {
+            throw cleanSnapshotError
+        }
         try await self.wrapped.cleanSnapshot(snapshotId: snapshotId)
     }
 
