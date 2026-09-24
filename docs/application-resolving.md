@@ -159,6 +159,24 @@ A textual app/PID mismatch is not synchronously detectable in the legacy resolve
 
 ## Implementation Details
 
+### Swift running-state checks
+
+`ApplicationService.isApplicationRunning(identifier:)` is now `async throws`. Direct concrete-service callers must
+change `await` to `try await` and either handle or propagate lookup failures:
+
+```swift
+let running = try await applicationService.isApplicationRunning(identifier: "PID:12345")
+```
+
+A unique running match returns `true`; a missing match returns `false`. Ambiguous names or bundle IDs and other
+resolution failures throw instead of reporting that the application stopped. Avoid `try? ... ?? false`, which would
+restore that ambiguity-to-stopped behavior. Use a PID from the ambiguity suggestions to select one instance.
+
+The `ApplicationServiceProtocol` and Bridge-backed service signatures were already throwing. Bridge transports failures
+in its existing error envelope, including the ambiguity message and tied PIDs; it does not preserve the native Swift
+error enum. Dock launch verification also surfaces the lookup failure, but only after the launch may have dispatched:
+inspect the action outcome before retrying it.
+
 ### ApplicationResolvable Protocol
 
 Commands with application parameters can conform to the `ApplicationResolvable` protocol:

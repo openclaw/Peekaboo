@@ -47,6 +47,7 @@ jobs:
           node scripts/docs-lint.mjs
           node --test tests/docs-site-toc.test.mjs
           node --test tests/background-capability-guidance.test.mjs
+          node --test tests/ambient-state-test-policy.test.mjs
 
       - name: Verify Homebrew release handoff
         run: node --test tests/homebrew-release-assets.test.mjs
@@ -148,6 +149,15 @@ jobs:
           grep -Fq 'Suite DialogOperationDeadlineTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
+      - name: Run application running-state contracts
+        working-directory: Core/PeekabooAutomationKit
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/application-running-state.log"
+          swift test --no-parallel --filter ApplicationRunningStateTests 2>&1 | tee "$test_log"
+          grep -Fq 'Suite ApplicationRunningStateTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Build PeekabooCore
         working-directory: Core/PeekabooCore
         run: |
@@ -169,6 +179,15 @@ jobs:
         working-directory: Core/PeekabooCore
         run: |
           swift test --no-parallel --filter 'PeekabooBridgeClientHostTrustTests|CaptureDiagnosticWireCompatibilityTests|PeekabooBridgeCancellationTests'
+
+      - name: Run Bridge application running-state contracts
+        working-directory: Core/PeekabooCore
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/bridge-application-running-state.log"
+          swift test --no-parallel --filter PeekabooBridgeApplicationRunningStateTests 2>&1 | tee "$test_log"
+          grep -Fq 'Suite PeekabooBridgeApplicationRunningStateTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run browser capability and guidance contracts
         working-directory: Core/PeekabooCore
