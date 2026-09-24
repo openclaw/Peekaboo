@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooFoundation
 
 /// A Cmd+V request crossed the point where the receiver may have consumed it,
 /// but Peekaboo cannot truthfully claim a verified paste result.
@@ -58,6 +59,7 @@ public enum ClipboardPasteTransactionGate {
         case systemCall(operation: String, path: String, code: Int32)
         case unsafeDirectory(path: String)
         case unsafeLockFile(path: String)
+        case lockTimeout(path: String)
 
         var errorDescription: String? {
             switch self {
@@ -70,9 +72,14 @@ public enum ClipboardPasteTransactionGate {
                 return "Clipboard paste transaction lock directory is unsafe: \(path)"
             case let .unsafeLockFile(path):
                 return "Clipboard paste transaction lock is not a regular file owned by the current user: \(path)"
+            case let .lockTimeout(path):
+                return "Timed out waiting for the exclusive clipboard paste transaction lock at \(path)."
             }
         }
     }
+
+    /// Matches the exclusive ScreenCaptureKit and desktop-mutation flock waits.
+    static let maximumLockWait: Duration = .seconds(15)
 
     /// Serializes callers in a shared host before they enter the file-lock wait loop.
     @MainActor private static var isActive = false
@@ -81,19 +88,24 @@ public enum ClipboardPasteTransactionGate {
     public static func withExclusiveTransaction<T: Sendable>(
         _ operation: () async throws -> T) async throws -> T
     {
-        try await self.withExclusiveTransaction(lockPath: self.defaultLockPath, operation)
+        try await self.withExclusiveTransaction(lockPath: self.defaultLockPath, operation: operation)
     }
 
     @MainActor
     static func withExclusiveTransaction<T: Sendable>(
         lockPath: String,
-        _ operation: () async throws -> T) async throws -> T
+        lockWait: Duration = Self.maximumLockWait,
+        now: @MainActor () -> ContinuousClock.Instant = { ContinuousClock.now },
+        retrySleep: @MainActor () async throws -> Void = { try await Task.sleep(for: .milliseconds(10)) },
+        operation: () async throws -> T) async throws -> T
     {
+        let deadline = now().advanced(by: lockWait)
         try Task.checkCancellation()
         while self.isActive {
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(10))
+            try self.checkLockDeadline(deadline, now: now(), path: lockPath)
+            try await retrySleep()
         }
+        try self.checkLockDeadline(deadline, now: now(), path: lockPath)
         self.isActive = true
         defer { self.isActive = false }
 
@@ -127,13 +139,28 @@ public enum ClipboardPasteTransactionGate {
                 throw GateError.systemCall(operation: "flock", path: standardizedLockPath, code: errno)
             }
 
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(10))
+            try self.checkLockDeadline(deadline, now: now(), path: standardizedLockPath)
+            try await retrySleep()
         }
         defer { flock(fd, LOCK_UN) }
 
-        try Task.checkCancellation()
+        try self.checkLockDeadline(deadline, now: now(), path: standardizedLockPath)
         return try await operation()
+    }
+
+    @MainActor
+    private static func checkLockDeadline(
+        _ deadline: ContinuousClock.Instant,
+        now: ContinuousClock.Instant,
+        path: String) throws
+    {
+        try Task.checkCancellation()
+        guard now < deadline else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: GateError.lockTimeout(path: path).localizedDescription,
+                standardErrorCode: .timeout)
+        }
     }
 
     static var defaultLockPath: String {

@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 public struct PasteTool: MCPTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PasteTool")
     private let context: MCPToolContext
+    private let transactionGate: any ClipboardPasteTransactionGating
 
     public let name = "paste"
 
@@ -102,7 +103,12 @@ public struct PasteTool: MCPTool {
     }
 
     public init(context: MCPToolContext = .shared) {
+        self.init(context: context, transactionGate: NativeClipboardPasteTransactionGate())
+    }
+
+    init(context: MCPToolContext, transactionGate: any ClipboardPasteTransactionGating) {
         self.context = context
+        self.transactionGate = transactionGate
     }
 
     func validateArgumentSemantics(_ arguments: ToolArguments) throws {
@@ -153,7 +159,7 @@ public struct PasteTool: MCPTool {
             }
 
             if case .current = payload {
-                let outcome = try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+                let outcome = try await self.transactionGate.withExclusiveTransaction {
                     let destination = try await self.resolveDeliveryDestination(
                         target: target,
                         foreground: foreground,
@@ -186,7 +192,7 @@ public struct PasteTool: MCPTool {
             guard case let .explicit(request, _) = payload else {
                 throw PasteToolError("Invalid paste payload.", refusalReason: .invalidRequest)
             }
-            let outcome = try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+            let outcome = try await self.transactionGate.withExclusiveTransaction {
                 let destination = try await self.resolveDeliveryDestination(
                     target: target,
                     foreground: foreground,
@@ -288,11 +294,13 @@ public struct PasteTool: MCPTool {
         _ failure: DesktopActionFailure,
         focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
     {
+        let standardErrorFields = ObservationActionResultSupport.standardErrorFields(failure)
         let failure = focusResult?.preservingFailure(failure, operation: "Paste") ?? failure
         return try await MCPDesktopActionFailureHandler.response(
             for: failure,
             uiSnapshots: self.context.uiSnapshots,
-            snapshotID: nil)
+            snapshotID: nil,
+            additionalFields: standardErrorFields)
     }
 
     @MainActor

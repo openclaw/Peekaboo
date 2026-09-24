@@ -13,6 +13,124 @@ import UniformTypeIdentifiers
 struct PasteToolTransactionGateTests {
     private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
 
+    @Test(arguments: [false, true])
+    @MainActor
+    func `paste admission timeout preserves observations and releases the MCP reservation`(
+        explicitPayload: Bool) async throws
+    {
+        let automation = OutcomePasteAutomationService(hotkeyResponse: .outcome(.confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: .one)))
+        let windows = RecordingWindowService()
+        let clipboard = TransactionGateClipboardService()
+        let snapshots = InMemorySnapshotManager()
+        let coordinator = MCPSnapshotLeaseMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard,
+            snapshots: snapshots,
+            snapshotMutationCoordinator: coordinator,
+            executionPolicy: .unrestricted)
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
+        let snapshotID = await snapshot.id
+        let gate = PasteAdmissionTestGate(refusalsRemaining: 1)
+        let tool = PasteTool(context: context, transactionGate: gate)
+        var values: [String: Any] = ["foreground": true, "restore_delay_ms": 0]
+        if explicitPayload {
+            values["dataBase64"] = "cGF5bG9hZA=="
+            values["uti"] = "public.data"
+        }
+        let arguments = ToolArguments(raw: values)
+
+        let refused = try await context.execute(tool: tool, arguments: arguments)
+
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: refused)
+        #expect(refused.meta?.objectValue?["error_code"] == .string(StandardErrorCode.timeout.rawValue))
+        #expect(gate.admissionCalls == 1)
+        #expect(gate.bodyCalls == 0)
+        #expect(clipboard.getCallCount == 0)
+        #expect(clipboard.saveCallCount == 0)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.restoreCallCount == 0)
+        #expect(clipboard.clearCallCount == 0)
+        #expect(windows.focusCalls.isEmpty)
+        #expect(automation.lastHotkeyKeys == nil)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(clipboard.current.textPreview == "prior")
+        #expect(await context.uiSnapshots.getSnapshot(id: nil)?.id == snapshotID)
+        #expect(await snapshots.getMostRecentSnapshot() == snapshotID)
+        #expect(coordinator.prepareCount == 1)
+        #expect(coordinator.cancelCount == 1)
+        #expect(coordinator.completeCount == 0)
+        #expect(await context.snapshotExecutionGate.pendingInvalidation() == nil)
+
+        let recovered = try await context.execute(tool: tool, arguments: arguments)
+
+        #expect(!recovered.isError)
+        #expect(gate.admissionCalls == 2)
+        #expect(gate.bodyCalls == 1)
+        #expect(automation.lastHotkeyKeys == "cmd,v")
+        #expect(automation.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
+        #expect(windows.focusCalls.isEmpty)
+        #expect(clipboard.current.textPreview == "prior")
+        #expect(clipboard.setCallCount == (explicitPayload ? 1 : 0))
+        #expect(clipboard.restoreCallCount == (explicitPayload ? 1 : 0))
+        #expect(coordinator.prepareCount == 2)
+        #expect(coordinator.cancelCount == 1)
+        #expect(coordinator.completeCount == 1)
+        #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+        #expect(await context.snapshotExecutionGate.pendingInvalidation() == nil)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `admitted paste retains prior focus when its input lane times out`(explicitPayload: Bool) async throws {
+        let automation = OutcomePasteAutomationService(hotkeyResponse: .failure(PasteAdmissionTestGate.timeoutFailure))
+        let windows = RecordingWindowService()
+        let clipboard = TransactionGateClipboardService()
+        let snapshots = InMemorySnapshotManager()
+        let coordinator = MCPSnapshotLeaseMutationCoordinator()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard,
+            snapshots: snapshots,
+            snapshotMutationCoordinator: coordinator,
+            executionPolicy: .unrestricted)
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
+        let snapshotID = await snapshot.id
+        let gate = PasteAdmissionTestGate()
+        let tool = PasteTool(context: context, transactionGate: gate)
+        var values: [String: Any] = ["app": "Editor", "foreground": true, "restore_delay_ms": 0]
+        if explicitPayload {
+            values["dataBase64"] = "cGF5bG9hZA=="
+            values["uti"] = "public.data"
+        }
+
+        let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: values))
+
+        #expect(response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("indeterminate"))
+        #expect(metadata["error_code"] == .string(StandardErrorCode.timeout.rawValue))
+        #expect(metadata["mutation_dispatched"] == .bool(true))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["requires_fresh_observation"] == .bool(true))
+        #expect(metadata["dispatched_unit_count"] == .int(1))
+        #expect(metadata["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        #expect(gate.admissionCalls == 1)
+        #expect(gate.bodyCalls == 1)
+        #expect(windows.focusCalls.count == 1)
+        #expect(automation.lastHotkeyKeys == nil)
+        #expect(clipboard.current.textPreview == "prior")
+        #expect(clipboard.restoreCallCount == (explicitPayload ? 1 : 0))
+        #expect(coordinator.cancelCount == 0)
+        #expect(coordinator.completeCount == 1)
+        #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+        #expect(await context.uiSnapshots.getSnapshot(id: snapshotID) != nil)
+    }
+
     @Test
     func `MCP paste re-resolves its process after shared-lock contention`() async throws {
         let heldFD = try self.holdPasteTransactionLock()
@@ -925,6 +1043,37 @@ private enum ExpectedFocusError: Error {
 
 private enum ExpectedPasteToolDispatchError: Error {
     case afterPosting
+}
+
+@MainActor
+private final class PasteAdmissionTestGate: ClipboardPasteTransactionGating {
+    private var refusalsRemaining: Int
+    private(set) var admissionCalls = 0
+    private(set) var bodyCalls = 0
+
+    static var timeoutFailure: DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "Synthetic paste admission deadline expired before dispatch.",
+            standardErrorCode: .timeout)
+    }
+
+    init(refusalsRemaining: Int = 0) {
+        self.refusalsRemaining = refusalsRemaining
+    }
+
+    @MainActor
+    func withExclusiveTransaction<T: Sendable>(
+        _ operation: () async throws -> T) async throws -> T
+    {
+        self.admissionCalls += 1
+        if self.refusalsRemaining > 0 {
+            self.refusalsRemaining -= 1
+            throw Self.timeoutFailure
+        }
+        self.bodyCalls += 1
+        return try await operation()
+    }
 }
 
 @MainActor

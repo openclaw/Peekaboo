@@ -2,9 +2,6 @@
 
 ## Unreleased
 
-- Preserve existing background Cmd+A selection receipts as one unverified Accessibility value mutation through exact-window CLI/MCP checks; stop on ambiguous AX errors without replay. Input-strategy and hold behavior are unchanged.
-- Bind background Cmd+A selection to its retained exact-window receiver, refusing changed or unreadable receiver identities before writing or replaying input.
-- Preserve known typing prefixes and zero-input refusal receipts when shared Accessibility setters fail, without replaying input or changing typing strategy.
 - Propagate ambiguous application running-state checks instead of reporting matching apps as stopped; direct Swift `ApplicationService` callers must now use `try await`. Thanks @SebTardif! #795.
 - Resolve background keyboard focus through the native owning-window link when web text fields do not expose a direct window ID, preserving exact process, window, and focus validation.
 - Accept structured MCP experimental capabilities during initialization, restoring Codex connections; pin the upstream decoder repair and document its Swift dictionary-type migration. Thanks @Wudib! #745.
@@ -14,14 +11,20 @@
 - Keep Agent text-task dry-run previews independent of UI hosts, capture ownership, and permissions while preserving input validation and foreground-authority reporting. #776.
 - Honor MCP query-click waits with fresh, receipt-pinned Accessibility reads without screenshots; refuse changed targets and late matches while preserving the original modifier-click authority. Thanks @SebTardif! #785.
 - Bound paste clipboard-restoration waits to 10 seconds so excessive delays cannot monopolize the shared paste lock; CLI and MCP callers using longer delays must reduce them. Thanks @SebTardif! #759.
+- Bound clipboard-backed paste admission to one 15-second monotonic deadline across in-process and file-lock waits; refuse late acquisition with retry-safe `TIMEOUT` before clipboard or input changes, while preserving admitted settle and restoration. Thanks @SebTardif! #793.
+- Preserve typed desktop-action timeout, snapshot, and element error codes consistently across CLI JSON renderers without changing prior-effect or retry-safety metadata. #793.
 - Restore default MCP startup on explicitly selected GUI Bridge hosts that support isolated browser sessions, preserving capability checks and caller-owned session cleanup. Thanks @smhanov! #744.
 - Refuse ordinary CLI typing and MCP clicks, actions, value changes, snapshot-backed scrolling, typing, and key presses from consumed or pending snapshots before focus or input; centralize mutation-lease handling while preserving historical reads and existing modifier-click/pixel-focus ownership.
+- Bound desktop operation lane admission to a shared 15-second deadline across turnstiles and scoped locks; refuse late acquisition before dispatch while preserving earlier effects and admitted operation lifetimes. Thanks @SebTardif! #794.
 - Avoid reading geometry for unrelated Accessibility roles during exact-window keyboard focus checks, preserving per-character receiver validation.
 - Bound targeted dialog hierarchy discovery off the main actor using the caller's timeout, preserving large/deep trees and exact receipts; reject late candidates and report timeout or incomplete Accessibility evidence with specific error codes.
 - Exclude twice-confirmed absent processes from read-only application inventory while keeping denied, unavailable, and changing identities partial. Thanks @SkidCentrel! #784.
 - Limit ambiguous application suggestions to tied matching names and PIDs instead of exposing the entire running-app inventory, while keeping selector ambiguity fail-closed.
 - Let Agent and MCP automatic observations use proven classic capture on an explicitly selected ready Bridge while another process owns ScreenCaptureKit; keep explicit modern and raw SCK-only requests refused before transport. #778.
 - Restore reliable background scrolling by preferring owned numeric scrollbars, while keeping page fallback after definite value rejection and stopping after ambiguous input; eligible targets now use scrollbar increments instead of page distances.
+- Preserve existing background Cmd+A selection receipts as one unverified Accessibility value mutation through exact-window CLI/MCP checks; stop on ambiguous AX errors without replay. Input-strategy and hold behavior are unchanged.
+- Bind background Cmd+A selection to its retained exact-window receiver, refusing changed or unreadable receiver identities before writing or replaying input.
+- Preserve known typing prefixes and zero-input refusal receipts when shared Accessibility setters fail, without replaying input or changing typing strategy.
 
 ## 4.5.0 - 2026-09-22
 

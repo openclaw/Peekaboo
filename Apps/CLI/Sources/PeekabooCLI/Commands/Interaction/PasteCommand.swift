@@ -40,6 +40,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
+    var transactionGate: any ClipboardPasteTransactionGating = NativeClipboardPasteTransactionGate()
 
     private var resolvedText: String? {
         if let primary = self.text, !primary.isEmpty {
@@ -97,8 +98,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             let actionSequence = CommandActionSequenceAccumulator()
             let actionRoute = commandActionRoute(for: self.services)
             let outcome = try await self.preservingPasteSequence(actionSequence, route: actionRoute) {
-                try await self.withInteractionMutationInvalidation {
-                    try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+                try await self.transactionGate.withExclusiveTransaction {
+                    try await self.withInteractionMutationInvalidation {
                         let deliveryTarget = try await self.preDispatchBackgroundTarget(
                             expectedPIDIdentity: expectedPIDIdentity
                         )
@@ -453,8 +454,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let actionSequence = CommandActionSequenceAccumulator()
         let actionRoute = commandActionRoute(for: self.services)
         let outcome = try await self.preservingPasteSequence(actionSequence, route: actionRoute) {
-            let outcome = try await self.withInteractionMutationInvalidation {
-                try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+            let outcome = try await self.transactionGate.withExclusiveTransaction {
+                try await self.withInteractionMutationInvalidation {
                     let deliveryTarget = try await self.preDispatchBackgroundTarget(
                         expectedPIDIdentity: expectedPIDIdentity
                     )

@@ -1,6 +1,8 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -329,6 +331,40 @@ struct DesktopOperationLaneCoordinatorTests {
     }
 
     @Test
+    func `Held lane lock fails at the deadline and never dispatches`() async throws {
+        let root = Self.temporaryDirectory(named: "lock-deadline")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let lockURL = root.appendingPathComponent("global.lock")
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        #expect(descriptor >= 0)
+        #expect(flock(descriptor, LOCK_EX) == 0)
+        defer {
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
+        }
+
+        let coordinator = DesktopOperationLaneCoordinator(
+            coordinationRootURL: root,
+            lockWait: .milliseconds(80))
+        var dispatched = false
+        let clock = ContinuousClock()
+        let started = clock.now
+        do {
+            try await coordinator.run(scope: .global, access: .write) {
+                dispatched = true
+            }
+            Issue.record("Expected the held lane lock to time out")
+        } catch let failure as DesktopActionFailure {
+            Self.expectAdmissionTimeout(failure, path: lockURL.path)
+        }
+        let elapsed = clock.now - started
+        #expect(elapsed >= .milliseconds(60))
+        #expect(elapsed < .seconds(2))
+        #expect(dispatched == false)
+    }
+
+    @Test
     func `Nested acquisition fails instead of deadlocking`() async throws {
         let root = Self.temporaryDirectory(named: "nested")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -430,7 +466,7 @@ struct DesktopOperationLaneCoordinatorTests {
         #expect(await laterReaderStarted.isOpen)
     }
 
-    private static func window(
+    static func window(
         windowID: Int,
         process: ApplicationProcessIdentity = .init(processIdentifier: 600, processStartIdentity: 10),
         bounds: CGRect = CGRect(x: 0, y: 0, width: 100, height: 100)) -> WindowMutationIdentity
@@ -443,7 +479,7 @@ struct DesktopOperationLaneCoordinatorTests {
             isMinimized: false)
     }
 
-    private static func temporaryDirectory(named name: String) -> URL {
+    static func temporaryDirectory(named name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-operation-lanes-\(name)-\(UUID().uuidString)", isDirectory: true)
     }

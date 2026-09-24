@@ -120,6 +120,20 @@ jobs:
       - name: Show Swift toolchain version
         run: swift --version
 
+      - name: Run clipboard paste admission gate contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/clipboard-paste-admission-gate.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^PeekabooAutomationKitTests\.ClipboardPasteTransactionGateTests/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite ClipboardPasteTransactionGateTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run mutation inventory, selector, and host window contracts
         working-directory: Core/PeekabooAutomationKit
         env:
@@ -140,6 +154,16 @@ jobs:
           test_log="$RUNNER_TEMP/application-running-state.log"
           swift test --no-parallel --filter ApplicationRunningStateTests 2>&1 | tee "$test_log"
           grep -Fq 'Suite ApplicationRunningStateTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
+      - name: Run desktop operation lane lock contracts
+        working-directory: Core/PeekabooAutomationKit
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/desktop-operation-lane-lock-contracts.log"
+          swift test --no-parallel --filter 'DesktopOperationLaneCoordinatorTests' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite DesktopOperationLaneCoordinatorTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Build PeekabooCore
@@ -171,6 +195,22 @@ jobs:
           grep -Fq 'Suite MCPExactWindowKeyboardToolTests passed after ' "$test_log"
           grep -Fq 'Suite TypeServiceAXFailureReceiptTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
+      - name: Run MCP paste admission timeout regressions
+        working-directory: Core/PeekabooCore
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/mcp-paste-admission-timeout.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^PeekabooTests\.PasteToolTransactionGateTests/`(paste admission timeout preserves observations and releases the MCP reservation|admitted paste retains prior focus when its input lane times out)`\(explicitPayload:\)(/|$)' \
+            2>&1 | tee "$test_log"
+          grep -Eq 'Test "paste admission timeout preserves observations and releases the MCP reservation"( with 2 test cases)? passed after ' "$test_log"
+          grep -Eq 'Test "admitted paste retains prior focus when its input lane times out"( with 2 test cases)? passed after ' "$test_log"
+          grep -Fq 'Suite PasteToolTransactionGateTests passed after ' "$test_log"
+          grep -Eq 'Test run with 2 tests( in 1 suite)? passed after ' "$test_log"
 
       - name: Run Bridge negotiation and cancellation contracts
         working-directory: Core/PeekabooCore
@@ -354,6 +394,22 @@ jobs:
         working-directory: Apps/CLI
         run: |
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION
+
+      - name: Run CLI paste admission timeout regression (skip automation)
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/cli-paste-admission-timeout.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
+            --filter '^CLIAutomationTests\.PasteCommandTests/`Admission timeout preserves observations and a later clipboard paste recovers`\(binaryPayload:\)(/|$)' \
+            2>&1 | tee "$test_log"
+          grep -Eq 'Test "Admission timeout preserves observations and a later clipboard paste recovers"( with 2 test cases)? passed after ' "$test_log"
+          grep -Fq 'Suite PasteCommandTests passed after ' "$test_log"
+          grep -Eq 'Test run with 1 test( in 1 suite)? passed after ' "$test_log"
 
       - name: Run taskless agent resume regression (skip automation)
         working-directory: Apps/CLI
