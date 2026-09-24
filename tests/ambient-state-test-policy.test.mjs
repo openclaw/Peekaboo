@@ -61,6 +61,45 @@ for (const name of [
   });
 }
 
+test("hosted CI runs exact hotkey receipt Core guards", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const body = workflow.split("      - name: Run exact hotkey receipt regressions\n")[1];
+  assert.ok(body, "Missing exact hotkey receipt CI step");
+  const step = body.split("\n      - name:")[0];
+  assert.match(step, /working-directory: Core\/PeekabooCore/);
+  assert.ok(step.includes("--filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests)/'"));
+  assert.ok(step.includes("Suite HotkeySelectAllReceiptTests passed after "));
+  assert.ok(step.includes("Suite MCPExactWindowKeyboardToolTests passed after "));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+  assert.doesNotMatch(step, /RUN_(?:AUTOMATION_TESTS|AUTOMATION_ACTIONS|LOCAL_TESTS): "true"/);
+});
+
+test("hosted mocked Press CI enables only its exact injected-service suite", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const body = workflow.split("      - name: Run mocked Press receipt regressions\n")[1];
+  assert.ok(body, "Missing mocked Press receipt CI step");
+  const step = body.split("\n      - name:")[0];
+  assert.match(step, /working-directory: Apps\/CLI/);
+  assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"/);
+  assert.match(step, /PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"/);
+  assert.match(step, /RUN_AUTOMATION_READ: "true"/);
+  for (const name of ["RUN_AUTOMATION_TESTS", "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS"]) {
+    assert.ok(step.includes(`${name}: "false"`));
+  }
+  assert.ok(step.includes("--filter '^CLIAutomationTests[.]PressCommandTests/'"));
+  assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
+  assert.ok(step.includes("Suite PressCommandTests passed after "));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+  assert.doesNotMatch(step, /-DPEEKABOO_SKIP_AUTOMATION/);
+
+  const source = readFileSync(`${repositoryRoot}/Apps/CLI/Tests/CLIAutomationTests/PressCommandTests.swift`, "utf8");
+  assert.match(source, /automation: StubAutomationService = StubAutomationService\(\)/);
+  assert.match(source, /windows: any WindowManagementServiceProtocol = StubWindowService/);
+  assert.doesNotMatch(source, /executePeekabooCLI|NSWorkspace|NSApplication|BackgroundInputDriver/);
+});
+
 test("hosted See proof retains target inclusion without opting into ambient tests", () => {
   const manifest = readFileSync(`${repositoryRoot}/Apps/CLI/Package.swift`, "utf8");
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");

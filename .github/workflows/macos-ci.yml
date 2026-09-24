@@ -149,6 +149,18 @@ jobs:
           swift test --no-parallel --filter 'MCPToolExecutionTests|MCPToolErrorHandlingTests|MCPElementActionToolExecutionTests|MCPSeeExactWindowTests|ClickToolQueryWaitTests|InspectUIToolExecutionTests'
           swift test --no-parallel --filter 'MCPDesktopActionOutcomeProjectionTests|MCPCompositeActionOutcomeTests'
 
+      - name: Run exact hotkey receipt regressions
+        working-directory: Core/PeekabooCore
+        run: |
+          set -o pipefail
+          test_log="$RUNNER_TEMP/hotkey-receipt-contracts.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests)/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite HotkeySelectAllReceiptTests passed after ' "$test_log"
+          grep -Fq 'Suite MCPExactWindowKeyboardToolTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run Bridge negotiation and cancellation contracts
         working-directory: Core/PeekabooCore
         run: |
@@ -330,6 +342,23 @@ jobs:
         run: |
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
             --filter 'AgentCommandBasicTests|AgentCommandValidationIntegrationTests'
+
+      - name: Run mocked Press receipt regressions
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          RUN_AUTOMATION_READ: "true"
+          RUN_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_ACTIONS: "false"
+          RUN_LOCAL_TESTS: "false"
+        run: |
+          set -o pipefail
+          test_log="$RUNNER_TEMP/press-receipt-contracts.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^CLIAutomationTests[.]PressCommandTests/' 2>&1 | tee "$test_log"
+          grep -Fq 'Suite PressCommandTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run See configuration environment regressions
         working-directory: Apps/CLI
