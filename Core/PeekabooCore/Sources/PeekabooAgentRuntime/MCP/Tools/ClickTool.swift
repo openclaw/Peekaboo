@@ -368,8 +368,13 @@ public struct ClickTool: MCPTool {
         let matches = try await self.context.windows.listWindows(target: .windowId(windowID))
         let exactMatches = matches.filter { $0.windowID == windowID }
         guard !exactMatches.isEmpty,
-              exactMatches.allSatisfy({
-                  $0.bounds == identity.capturedBounds && $0.mutationIdentity == identity
+              exactMatches.allSatisfy({ window in
+                  guard window.bounds == identity.capturedBounds,
+                        let current = window.mutationIdentity
+                  else { return false }
+                  // listWindows fills isMinimized. A see receipt leaves it unset.
+                  // That hint is not evidence the WindowServer target changed.
+                  return current.hasSameStableReceipt(as: identity)
               })
         else {
             throw ClickToolError(

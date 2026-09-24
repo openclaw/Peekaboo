@@ -121,6 +121,39 @@ struct ClickToolQueryWaitTests {
     }
 
     @Test
+    func `listed minimized hint does not reject the see receipt`() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 100, height: 40)
+        let liveIdentity = WindowMutationIdentity(
+            windowID: 6781,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 1001,
+            capturedBounds: bounds,
+            isMinimized: false)
+        let windows = MinimizedHintWindowService(window: ServiceWindowInfo(
+            windowID: 6781,
+            title: "Fixture",
+            bounds: bounds,
+            isMinimized: false,
+            mutationIdentity: liveIdentity))
+        let observation = CountingObservationService()
+        let context = await MCPToolTestHelpers.makeLegacyContext(
+            automation: MockAutomationService(accessibilityGranted: true),
+            windows: windows,
+            desktopObservation: observation)
+        let snapshot = await context.uiSnapshots.createSnapshot()
+        await Self.pinExactWindow(on: snapshot)
+        let snapshotID = await snapshot.id
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "query": "LateControl",
+            "snapshot": snapshotID,
+            "wait_for": 5000,
+        ]))
+        #expect(Self.responseText(response).contains("changed while waiting") == false)
+        let observed = await observation.callCount
+        #expect(observed == 1)
+    }
+
+    @Test
     func `reassigned window is refused before observation`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let windows = EmptyRecordingWindowService()
@@ -208,6 +241,33 @@ struct ClickToolQueryWaitTests {
             windowBounds: bounds,
             windowMutationIdentity: identity,
             traversalBudget: nil))
+    }
+}
+
+private actor MinimizedHintWindowService: WindowManagementServiceProtocol {
+    let window: ServiceWindowInfo
+
+    init(window: ServiceWindowInfo) {
+        self.window = window
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+    func focusWindow(target _: WindowTarget) async throws {}
+
+    func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
+        if case let .windowId(windowID) = target, windowID == self.window.windowID {
+            return [self.window]
+        }
+        return []
+    }
+
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        self.window
     }
 }
 
