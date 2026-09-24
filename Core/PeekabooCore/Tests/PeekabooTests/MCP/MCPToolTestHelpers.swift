@@ -24,6 +24,59 @@ enum MCPToolTestHelpers {
         return snapshot
     }
 
+    @MainActor
+    static func createElementActionSnapshot(
+        in context: MCPToolContext,
+        processIdentity: ApplicationProcessIdentity = MCPToolTestHelpers.elementActionProcessIdentity) async throws
+        -> UISnapshot
+    {
+        let snapshot = try await self.createSnapshot(in: context)
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationProcessId: processIdentity.processIdentifier,
+            applicationProcessStartIdentity: processIdentity.processStartIdentity))
+        try await self.publishSnapshotMetadata(snapshot, in: context)
+        return snapshot
+    }
+
+    @MainActor
+    static func createSnapshot(in context: MCPToolContext) async throws -> UISnapshot {
+        guard let producer = context.snapshots as? InMemorySnapshotManager else {
+            throw PeekabooError.commandFailed("Paired snapshot fixtures require an explicit in-memory producer")
+        }
+        let snapshotID = try await producer.createSnapshot()
+        return await context.uiSnapshots.createSnapshot(id: snapshotID)
+    }
+
+    @MainActor
+    static func publishSnapshotMetadata(_ snapshot: UISnapshot, in context: MCPToolContext) async throws {
+        guard let producer = context.snapshots as? InMemorySnapshotManager else {
+            throw PeekabooError.commandFailed("Paired snapshot fixtures require an explicit in-memory producer")
+        }
+        let screenshotMetadata = await snapshot.screenshotMetadata
+        let windowContext = WindowContext(
+            applicationName: snapshot.applicationName,
+            applicationBundleId: screenshotMetadata?.applicationInfo?.bundleIdentifier,
+            applicationProcessId: snapshot.applicationProcessId,
+            applicationProcessStartIdentity: snapshot.applicationProcessIdentity?.processStartIdentity,
+            windowTitle: snapshot.windowTitle,
+            windowID: snapshot.windowID,
+            windowBounds: snapshot.windowBounds,
+            windowMutationIdentity: snapshot.windowMutationIdentity,
+            focusedElement: snapshot.focusedElement)
+        let result = await ElementDetectionResult(
+            snapshotId: snapshot.id,
+            screenshotPath: snapshot.screenshotPath ?? "/tmp/peekaboo-test.png",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "paired-test-fixture",
+                windowContext: windowContext,
+                truncationInfo: nil,
+                captureCoordinateContext: snapshot.screenshotCoordinateContext))
+        try await producer.storeDetectionResult(snapshotId: snapshot.id, result: result)
+    }
+
     static func makeContext(
         automation: (any UIAutomationServiceProtocol)? = nil,
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,

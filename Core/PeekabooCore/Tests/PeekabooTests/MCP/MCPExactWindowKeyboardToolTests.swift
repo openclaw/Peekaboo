@@ -124,7 +124,8 @@ struct MCPExactWindowKeyboardToolTests {
             windowBounds: window.bounds,
             windowMutationIdentity: window.mutationIdentity,
             focusedElement: focusedIdentity))
-        let fixture = await Self.makeFixture(focusedWindowID: 42)
+        let snapshots = try await InMemorySnapshotManager.containing(snapshot.detectionResult)
+        let fixture = await Self.makeFixture(focusedWindowID: 42, snapshots: snapshots)
 
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "snapshot": snapshot.id,
@@ -160,7 +161,8 @@ struct MCPExactWindowKeyboardToolTests {
             windowBounds: window.bounds,
             windowMutationIdentity: window.mutationIdentity,
             focusedElement: staleButtonFocus))
-        let fixture = await Self.makeFixture(focusedWindowID: 42)
+        let snapshots = try await InMemorySnapshotManager.containing(snapshot.detectionResult)
+        let fixture = await Self.makeFixture(focusedWindowID: 42, snapshots: snapshots)
 
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "snapshot": snapshot.id,

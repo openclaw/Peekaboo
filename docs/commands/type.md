@@ -41,6 +41,7 @@ that snapshot. Use `press` for standalone keys or chords.
 - Escape handling splits literal text and key presses: `"Hello\nWorld"` becomes `text("Hello"), key(.return), text("World")`, so newlines don’t require separate flags.
 - Exact window selectors and fresh exact-window snapshots preserve PID generation, window ID/bounds, and focused-element identity through dispatch. Stale or ambiguous receipts fail before typing.
 - Focused web controls may expose their exact owner through the native `AXWindow` link instead of a direct window ID; both paths retain the same exact-window checks.
+- Ordinary snapshot-backed CLI and MCP typing reserve the snapshot before focus or input. A pending mutation or a prior outcome requiring fresh observation refuses further typing, including `--accept-dispatched`; read-only inspection of that snapshot remains available. Pixel-focus typing retains its single service-owned reservation.
 - A fresh exact-window `see` records focus only when exactly one element in that window explicitly reports
   `AXFocused=true`. Cached trees, a first editable-field guess, and application-level focus from another window are
   never accepted. To focus a known field without activating the app, use its fresh element ID with background

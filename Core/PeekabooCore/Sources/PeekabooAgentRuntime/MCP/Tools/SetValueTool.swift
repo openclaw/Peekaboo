@@ -79,15 +79,22 @@ public struct SetValueTool: MCPTool {
             let snapshot = try await self.effectiveSnapshot(request.snapshotId)
             effectiveSnapshotId = snapshot.id
             let expectedTarget = try MCPElementActionSnapshotAuthority.expectedTargetIdentity(snapshot)
-            let actionResult = try await outcomeAutomation.setValueWithOutcome(
-                target: request.target,
-                value: request.value,
-                snapshotId: effectiveSnapshotId)
-            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-                actionResult,
-                policy: .confirmed(requiring: .background),
-                targetRequirement: .compatible(expectedTarget),
-                operation: "Set value")
+            let actionResult = try await self.context.snapshots.withSnapshotMutation(
+                snapshotId: effectiveSnapshotId,
+                targetIdentity: expectedTarget,
+                operation: {
+                    let result = try await outcomeAutomation.setValueWithOutcome(
+                        target: request.target,
+                        value: request.value,
+                        snapshotId: snapshot.id)
+                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                        result,
+                        policy: .confirmed(requiring: .background),
+                        targetRequirement: .compatible(expectedTarget),
+                        operation: "Set value")
+                    return result
+                },
+                outcome: { $0.outcome })
             let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: effectiveSnapshotId,

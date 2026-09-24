@@ -140,11 +140,33 @@ public struct PressTool: MCPTool {
             let targetFocusCompleted = deliveryPlan.focusResult != nil
 
             let startTime = Date()
-            let run = try await self.dispatchSequence(
-                chords: chords,
-                parameters: parameters,
-                target: deliveryPlan.target,
-                focusResult: deliveryPlan.focusResult)
+            let result = try await self.context.snapshots.withSnapshotMutation(
+                snapshotId: snapshotID,
+                targetIdentity: deliveryPlan.target.exactWindow.map { DesktopTargetIdentity(exactWindow: $0) },
+                operation: {
+                    do {
+                        return try await Result<PressSequenceRun, PressSequenceFailure>.success(self.dispatchSequence(
+                            chords: chords,
+                            parameters: parameters,
+                            target: deliveryPlan.target,
+                            focusResult: deliveryPlan.focusResult))
+                    } catch let failure as PressSequenceFailure {
+                        return .failure(failure)
+                    }
+                },
+                outcome: { result in
+                    switch result {
+                    case let .success(run): run.resolution.outcome
+                    case let .failure(failure): failure.failure.outcome
+                    }
+                },
+                fallbackRequiresFreshObservation: { result in
+                    switch result {
+                    case let .success(run): run.resolution.requiresFreshObservation
+                    case let .failure(failure): failure.failure.outcome.projection.requiresFreshObservation
+                    }
+                })
+            let run = try result.get()
             let display = chords.map(\.displayValue)
             let elapsed = Date().timeIntervalSince(startTime)
             let sequenceResolution = run.resolution

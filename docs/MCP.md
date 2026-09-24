@@ -276,6 +276,12 @@ The `click` and `paste` tools publish flat object schemas without root-level `on
 can forward them to providers such as Anthropic without schema rewriting. Peekaboo enforces cross-field constraints
 at runtime before dispatch; the flat catalog does not relax target, receipt, or foreground-consent requirements.
 
+Snapshot-backed `click`, `action`, `set_value`, `scroll`, `type`, and `press` reserve mutation authority in the snapshot's
+producer store before focus or input. Pending or consumed snapshots are refused before dispatch. Outcomes requiring
+fresh observation, missing canonical outcomes, and unknown completion prevent replay; explicit historical reads remain
+available. Confirmed outcomes that do not require fresh observation release the reservation. Modifier-click and
+pixel-focus typing retain their existing single host-owned lease. Selector-driven `paste` remains snapshot-independent.
+
 The `click` tool accepts exactly one target shape: `on`, `query`, or `coords`. Runtime validation requires every
 background `coords` call to include either `snapshot` or `coordinate_reference`; a PID alone is only a consistency
 check and never replaces the receipt. Both fields must be nonempty and identify a fresh exact-window `see` capture.

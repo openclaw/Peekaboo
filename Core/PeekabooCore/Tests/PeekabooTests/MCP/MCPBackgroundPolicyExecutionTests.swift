@@ -561,8 +561,9 @@ struct MCPBackgroundPolicyExecutionTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             windows: windows,
+            snapshots: InMemorySnapshotManager(),
             snapshotOwner: Self.uiSnapshots.owner)
-        let snapshot = await Self.uiSnapshots.createSnapshot()
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/exact-window-coordinate-snapshot.png",
@@ -574,6 +575,8 @@ struct MCPBackgroundPolicyExecutionTests {
                     bundleIdentifier: "com.example.snapshot",
                     name: "SnapshotApp"),
                 windowInfo: window))
+
+        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
 
         let tool = ClickTool(context: context)
         let arguments = ToolArguments(raw: [

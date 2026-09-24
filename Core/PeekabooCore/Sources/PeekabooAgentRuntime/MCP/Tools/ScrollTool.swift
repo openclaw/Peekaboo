@@ -139,10 +139,63 @@ public struct ScrollTool: MCPTool {
 
     @MainActor
     private func performScroll(request: ScrollToolRequest) async throws -> ToolResponse {
-        let automation = self.context.automation
         let startTime = Date()
-
         let target = try await self.resolveTargetDescription(request: request)
+        let execution: ScrollExecution
+        do {
+            execution = try await self.context.snapshots.withSnapshotMutation(
+                snapshotId: target.snapshotId,
+                targetIdentity: target.expectedWindow.map { DesktopTargetIdentity(exactWindow: $0) },
+                operation: { try await self.dispatchScroll(request: request, target: target) },
+                outcome: { $0.resolution.outcome },
+                fallbackRequiresFreshObservation: { $0.resolution.requiresFreshObservation })
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: target.snapshotId)
+        }
+
+        let resolution = execution.resolution
+        let responseOutcome = resolution.outcome
+        let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
+            uiSnapshots: self.context.uiSnapshots,
+            snapshotID: target.snapshotId,
+            mutationDispatched: resolution.mutationDispatched)
+        let executionTime = Date().timeIntervalSince(startTime)
+        let scrollDescription = request.smooth ? "smooth scroll" : "scroll"
+        let duration = String(format: "%.2f", executionTime) + "s"
+        let message = "\(AgentDisplayTokens.Status.success) Performed \(scrollDescription) \(request.direction) " +
+            "(\(request.amount) ticks) \(target.description) in \(duration)"
+
+        let summary = ToolEventSummary(
+            targetApp: target.appName,
+            actionDescription: request.smooth ? "Smooth scroll" : "Scroll",
+            scrollDirection: request.direction.rawValue,
+            scrollAmount: Double(request.amount),
+            notes: target.description)
+        var baseMeta: [String: Value] = [:]
+        if execution.focusCompleted, responseOutcome == nil {
+            baseMeta["effect"] = .string(DesktopActionOutcome.Effect.unverifiable.rawValue)
+            baseMeta["mutation_dispatched"] = .bool(resolution.mutationDispatched)
+            baseMeta["retry_safe"] = .bool(resolution.retrySafe)
+            baseMeta["requires_fresh_observation"] = .bool(resolution.requiresFreshObservation)
+        }
+        if let invalidatedSnapshotId {
+            baseMeta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
+        }
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: baseMeta,
+            outcome: responseOutcome)
+        return ToolResponse.text(message, meta: ToolEventSummary.merge(summary: summary, into: meta))
+    }
+
+    @MainActor
+    private func dispatchScroll(
+        request: ScrollToolRequest,
+        target: ScrollTargetDescription) async throws -> ScrollExecution
+    {
+        let automation = self.context.automation
         let setupFocusResult: MCPInteractionFocusResult? = if request.foreground {
             try await self.focusTargetIfNeeded(target)
         } else {
@@ -170,16 +223,10 @@ public struct ScrollTool: MCPTool {
                 actionResult.outcome,
                 operation: "Scroll")
         } catch let failure as DesktopActionFailure {
-            return try await MCPDesktopActionFailureHandler.response(
-                for: setupFocusResult?.preservingFailure(failure, operation: "Scroll") ?? failure,
-                uiSnapshots: self.context.uiSnapshots,
-                snapshotID: target.snapshotId)
+            throw setupFocusResult?.preservingFailure(failure, operation: "Scroll") ?? failure
         } catch {
             guard let setupFocusResult else { throw error }
-            return try await MCPDesktopActionFailureHandler.response(
-                for: setupFocusResult.preservingFailure(error, operation: "Scroll"),
-                uiSnapshots: self.context.uiSnapshots,
-                snapshotID: target.snapshotId)
+            throw setupFocusResult.preservingFailure(error, operation: "Scroll")
         }
 
         var sequence = DesktopActionSequenceAccumulator()
@@ -192,39 +239,9 @@ public struct ScrollTool: MCPTool {
                 delivery: nil,
                 unitCount: nil))
         }
-        let resolution = sequence.successResolution()
-        let responseOutcome = resolution.outcome
-        let mutationDispatched = resolution.mutationDispatched
-        let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
-            uiSnapshots: self.context.uiSnapshots,
-            snapshotID: target.snapshotId,
-            mutationDispatched: mutationDispatched)
-        let executionTime = Date().timeIntervalSince(startTime)
-        let scrollDescription = request.smooth ? "smooth scroll" : "scroll"
-        let duration = String(format: "%.2f", executionTime) + "s"
-        let message = "\(AgentDisplayTokens.Status.success) Performed \(scrollDescription) \(request.direction) " +
-            "(\(request.amount) ticks) \(target.description) in \(duration)"
-
-        let summary = ToolEventSummary(
-            targetApp: target.appName,
-            actionDescription: request.smooth ? "Smooth scroll" : "Scroll",
-            scrollDirection: request.direction.rawValue,
-            scrollAmount: Double(request.amount),
-            notes: target.description)
-        var baseMeta: [String: Value] = [:]
-        if setupFocusResult != nil, responseOutcome == nil {
-            baseMeta["effect"] = .string(DesktopActionOutcome.Effect.unverifiable.rawValue)
-            baseMeta["mutation_dispatched"] = .bool(resolution.mutationDispatched)
-            baseMeta["retry_safe"] = .bool(resolution.retrySafe)
-            baseMeta["requires_fresh_observation"] = .bool(resolution.requiresFreshObservation)
-        }
-        if let invalidatedSnapshotId {
-            baseMeta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-        }
-        let meta = try MCPToolResponseMetadataProjector.metadata(
-            merging: baseMeta,
-            outcome: responseOutcome)
-        return ToolResponse.text(message, meta: ToolEventSummary.merge(summary: summary, into: meta))
+        return ScrollExecution(
+            focusCompleted: setupFocusResult != nil,
+            resolution: sequence.successResolution())
     }
 
     @MainActor
@@ -332,6 +349,11 @@ private struct ScrollTargetDescription {
     let windowTitle: String?
     let windowID: Int?
     let expectedWindow: UIAutomationTarget.ExactWindow?
+}
+
+private struct ScrollExecution {
+    let focusCompleted: Bool
+    let resolution: DesktopActionSequenceAccumulator.Resolution
 }
 
 private struct ScrollToolValidationError: Error {

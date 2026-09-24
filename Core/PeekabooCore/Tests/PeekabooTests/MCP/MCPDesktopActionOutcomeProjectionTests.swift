@@ -159,12 +159,14 @@ struct MCPDesktopActionOutcomeProjectionTests {
         let automation = StubAutomationService()
         automation.uiAutomationOutcomeTargetIdentity = try DesktopTargetIdentity(
             processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
-        let snapshotID = await snapshot.id
 
         for outcome in DesktopActionOutcomeFixtures.canonicalOutcomes {
+            let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
+            let snapshotID = await snapshot.id
             automation.actionOutcome = outcome
             let response = try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
                 "on": "B1",
@@ -194,10 +196,12 @@ struct MCPDesktopActionOutcomeProjectionTests {
         automation.uiAutomationOutcomeScript.append(
             DesktopActionOutcome.confirmedNoChange(),
             for: .setValue)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(
-            in: context.uiSnapshots,
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(
+            in: context,
             processIdentity: process)
         let snapshotID = await snapshot.id
 
@@ -240,25 +244,27 @@ struct MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .confirmedNoChange()
         automation.uiAutomationOutcomeTargetIdentity = try DesktopTargetIdentity(
             processIdentity: .init(processIdentifier: 43, processStartIdentity: 1002))
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
-        let snapshotID = await snapshot.id
 
-        let responses = try await [
-            ActionTool(context: context).execute(arguments: ToolArguments(raw: [
-                "on": "B1",
-                "action": "AXPress",
-                "snapshot": snapshotID,
-            ])),
-            SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
-                "on": "T1",
-                "value": "hello",
-                "snapshot": snapshotID,
-            ])),
-        ]
-
-        for response in responses {
+        for tool in ["action", "set_value"] {
+            let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
+            let snapshotID = await snapshot.id
+            let response = if tool == "action" {
+                try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
+                    "on": "B1",
+                    "action": "AXPress",
+                    "snapshot": snapshotID,
+                ]))
+            } else {
+                try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
+                    "on": "T1",
+                    "value": "hello",
+                    "snapshot": snapshotID,
+                ]))
+            }
             let meta = try #require(response.meta?.objectValue)
             #expect(response.isError)
             #expect(meta["state"] == .string("indeterminate"))
@@ -281,9 +287,11 @@ struct MCPDesktopActionOutcomeProjectionTests {
             let automation = StubAutomationService()
             automation.actionOutcome = .confirmedNoChange()
             automation.uiAutomationOutcomeTargetIdentity = nil
-            let context = await MCPToolTestHelpers.makeContext(automation: automation)
+            let context = await MCPToolTestHelpers.makeContext(
+                automation: automation,
+                snapshots: InMemorySnapshotManager())
             await context.uiSnapshots.removeOwner()
-            let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+            let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
             let snapshotID = await snapshot.id
 
             let response = if tool == "action" {
@@ -426,8 +434,10 @@ struct MCPDesktopActionOutcomeProjectionTests {
     func `returned non dispatched outcome preserves its request snapshot`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .refused(reason: .permissionDenied)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
         let snapshotID = await snapshot.id
 
         let response = try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -479,21 +489,25 @@ struct MCPDesktopActionOutcomeProjectionTests {
             processIdentity: .init(processIdentifier: 42, processStartIdentity: 1001))
         automation.uiAutomationOutcomeScript.append(elementOutcome, for: .performAction)
         automation.uiAutomationOutcomeScript.append(elementOutcome, for: .setValue)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
-        let snapshotID = await snapshot.id
+        let actionSnapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
+        let setValueSnapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
+        let actionSnapshotID = await actionSnapshot.id
+        let setValueSnapshotID = await setValueSnapshot.id
 
         let elementResponses = try await [
             ActionTool(context: context).execute(arguments: ToolArguments(raw: [
                 "on": "B1",
                 "action": "AXPress",
-                "snapshot": snapshotID,
+                "snapshot": actionSnapshotID,
             ])),
             SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
                 "on": "T1",
                 "value": "hello",
-                "snapshot": snapshotID,
+                "snapshot": setValueSnapshotID,
             ])),
         ]
         let otherResponses = try await [
@@ -535,8 +549,10 @@ struct MCPDesktopActionOutcomeProjectionTests {
                 unitCount: .one,
                 message: "One of three page units was accepted"),
             for: .scroll)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let snapshotID = await Self.makeExactScrollSnapshot(uiSnapshots: context.uiSnapshots)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
+        let snapshotID = try await Self.makeExactScrollSnapshot(context: context)
 
         let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
             "direction": "down",
@@ -595,9 +611,10 @@ struct MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .confirmedNoChange()
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: MCPFocusResultWindowService())
+            windows: MCPFocusResultWindowService(),
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
             "direction": "down",
@@ -625,9 +642,10 @@ struct MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .refused(reason: .permissionDenied)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: MCPFocusResultWindowService())
+            windows: MCPFocusResultWindowService(),
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
             "direction": "down",
@@ -896,7 +914,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = outcome
         let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
-        let snapshot = await context.uiSnapshots.createSnapshot()
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
         let snapshotID = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/focus-outcome.png",
@@ -923,6 +941,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
                 frame: CGRect(x: 10, y: 10, width: 100, height: 30),
                 isActionable: true),
         ])
+        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "T1",
@@ -946,7 +965,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
             message: "Typing was refused")
         let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "T1",
@@ -971,7 +990,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         automation.uiAutomationOutcomeScript.append(.refused(reason: .permissionDenied), for: .typeActions)
         let context = await Self.makeBackgroundTypingContext(automation: automation)
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "T1",
@@ -996,7 +1015,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .confirmedNoChange()
         automation.targetedTypeError = PeekabooError.invalidInput("typing refused before dispatch")
         let context = await Self.makeBackgroundTypingContext(automation: automation)
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "T1",
@@ -1017,8 +1036,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.actionOutcome = .dispatchedUnverified(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             evidence: .deliveryAccepted)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let snapshot = await context.uiSnapshots.createSnapshot()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
+        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
         let snapshotID = await snapshot.id
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -1231,7 +1253,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
             delivery: .init(mechanism: .accessibilityAction, mode: .background))
         let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "T1",
@@ -1260,7 +1282,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.uiAutomationOutcomeScript.append(.confirmedNoChange(), for: .typeActions)
         let context = await Self.makeBackgroundTypingContext(automation: automation)
         await context.uiSnapshots.removeOwner()
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "T1",
@@ -1286,7 +1308,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
             .confirmedChange(delivery: .init(mechanism: .processTargetedEvents, mode: .background)),
             for: .typeActions)
         let context = await Self.makeBackgroundTypingContext(automation: automation)
-        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+        let snapshotID = try await Self.makeTextFieldSnapshot(context: context)
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "T1",
@@ -1314,9 +1336,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
         automation.elementActionError = DesktopActionFailure.refused(
             reason: .permissionDenied,
             message: "Accessibility permission is required")
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
         let snapshotID = await snapshot.id
 
         let response = try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -1389,9 +1413,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
                 message: "This Bridge host cannot return a verifiable set-value result.",
                 hint: "Update and relaunch Peekaboo before retrying set-value."),
             for: .setValue)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         await context.uiSnapshots.removeOwner()
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
         let snapshotID = await snapshot.id
 
         let response = try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -1474,12 +1500,13 @@ extension MCPDesktopActionOutcomeProjectionTests {
         ])
         return await MCPToolTestHelpers.makeContext(
             automation: automation,
-            applications: applications)
+            applications: applications,
+            snapshots: InMemorySnapshotManager())
     }
 
     @MainActor
-    private static func makeExactScrollSnapshot(uiSnapshots: MCPToolUISnapshotStore) async -> String {
-        let snapshot = await uiSnapshots.createSnapshot()
+    private static func makeExactScrollSnapshot(context: MCPToolContext) async throws -> String {
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
         let snapshotID = await snapshot.id
         let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
         await snapshot.setScreenshot(
@@ -1516,12 +1543,13 @@ extension MCPDesktopActionOutcomeProjectionTests {
                 frame: CGRect(x: 10, y: 10, width: 100, height: 30),
                 isActionable: true),
         ])
+        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
         return snapshotID
     }
 
     @MainActor
-    private static func makeTextFieldSnapshot(uiSnapshots: MCPToolUISnapshotStore) async -> String {
-        let snapshot = await uiSnapshots.createSnapshot()
+    private static func makeTextFieldSnapshot(context: MCPToolContext) async throws -> String {
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
         let snapshotID = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/type-outcome.png",
@@ -1548,6 +1576,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
                 frame: CGRect(x: 10, y: 10, width: 100, height: 30),
                 isActionable: true),
         ])
+        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
         return snapshotID
     }
 }

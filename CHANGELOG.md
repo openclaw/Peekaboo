@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Resolve background keyboard focus through the native owning-window link when web text fields do not expose a direct window ID, preserving exact process, window, and focus validation.
+- Refuse MCP clicks, actions, value changes, snapshot-backed scrolls, and key presses from consumed or pending snapshots before input; share mutation leases while preserving historical reads and existing modifier-click/pixel-focus ownership.
+- Refuse ordinary CLI and MCP typing from consumed or pending snapshots before focus or input, sharing the existing mutation-lease policy while preserving historical readback and pixel-focus lease ownership.
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 - Stop reporting hidden windows as on screen when native visibility metadata is omitted or as minimized in text listings; align native and classic capture metadata while preserving exact-window targeting and partial-inventory diagnostics. #779.
 - Align internal and public SwiftPM consumers on AXorcist 0.1.11 to preserve native numeric values, improve geometry/range parsing, and reject invalid scroll amounts before input dispatch.

@@ -838,9 +838,11 @@ struct MCPToolExecutionTests {
     @Test
     func `set_value tool calls element action service`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         let tool = SetValueTool(context: context)
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
         let snapshotId = await snapshot.id
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -866,9 +868,11 @@ struct MCPToolExecutionTests {
     @Test
     func `set_value tool forwards latest snapshot id when snapshot argument is omitted`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         let tool = SetValueTool(context: context)
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
         let snapshotId = await snapshot.id
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -906,8 +910,10 @@ struct MCPToolExecutionTests {
                     .attributed(to: receipt),
                 for: .setValue)
         }
-        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let context = await MCPToolTestHelpers.makeLegacyContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
         let snapshotID = await snapshot.id
 
         let response = try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -937,9 +943,11 @@ struct MCPToolExecutionTests {
     @Test
     func `action tool validates request shape`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(
+            automation: automation,
+            snapshots: InMemorySnapshotManager())
         let tool = ActionTool(context: context)
-        let snapshot = await MCPToolTestHelpers.createElementActionSnapshot(in: context.uiSnapshots)
+        let snapshot = try await MCPToolTestHelpers.createElementActionSnapshot(in: context)
         let snapshotId = await snapshot.id
 
         let missing = try await tool.execute(arguments: ToolArguments(raw: ["on": "B1"]))

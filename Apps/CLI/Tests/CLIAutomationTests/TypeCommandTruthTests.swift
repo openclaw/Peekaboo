@@ -9,10 +9,10 @@ import Testing
 @Suite(.tags(.safe), .serialized)
 @MainActor
 struct TypeCommandTruthTests {
-    private static let pid: pid_t = 2468
-    private static let generation: UInt64 = 71
-    private static let windowID = 901
-    private static let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
+    static let pid: pid_t = 2468
+    static let generation: UInt64 = 71
+    static let windowID = 901
+    static let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
 
     @Test
     func `Exact-window Type never reports dispatched-unverified events as typed characters`() async throws {
@@ -391,7 +391,7 @@ struct TypeCommandTruthTests {
         #expect(outcome["retry_safe"] as? Bool == false)
     }
 
-    private func automation(focused: FocusedElementIdentity) -> OutcomeStubAutomationService {
+    func automation(focused: FocusedElementIdentity) -> OutcomeStubAutomationService {
         let automation = OutcomeStubAutomationService()
         automation.targetedFocusedElement = UIFocusInfo(
             role: focused.role,
@@ -407,7 +407,7 @@ struct TypeCommandTruthTests {
         return automation
     }
 
-    private func context(automation: OutcomeStubAutomationService) -> TestServicesFactory.AutomationTestContext {
+    func context(automation: OutcomeStubAutomationService) -> TestServicesFactory.AutomationTestContext {
         let app = ServiceApplicationInfo(
             processIdentifier: Self.pid,
             processStartIdentity: Self.generation,
@@ -427,9 +427,10 @@ struct TypeCommandTruthTests {
         )
     }
 
-    private func storeSnapshot(
+    func storeSnapshot(
         focused: FocusedElementIdentity,
-        context: TestServicesFactory.AutomationTestContext
+        context: TestServicesFactory.AutomationTestContext,
+        elements: DetectedElements = DetectedElements()
     ) async throws -> String {
         let snapshotID = try await context.snapshots.createSnapshot()
         let windowContext = WindowContext(
@@ -447,10 +448,10 @@ struct TypeCommandTruthTests {
             result: ElementDetectionResult(
                 snapshotId: snapshotID,
                 screenshotPath: "/tmp/type-truth.png",
-                elements: DetectedElements(),
+                elements: elements,
                 metadata: DetectionMetadata(
                     detectionTime: 0,
-                    elementCount: 0,
+                    elementCount: elements.all.count,
                     method: "test",
                     windowContext: windowContext
                 )
@@ -459,14 +460,14 @@ struct TypeCommandTruthTests {
         return snapshotID
     }
 
-    private func runType(
+    func runType(
         _ arguments: [String],
         context: TestServicesFactory.AutomationTestContext
     ) async throws -> CommandRunResult {
         try await InProcessCommandRunner.run(["type"] + arguments, services: context.services)
     }
 
-    private func textFocus(identifier: String = "editor") -> FocusedElementIdentity {
+    func textFocus(identifier: String = "editor") -> FocusedElementIdentity {
         FocusedElementIdentity(
             processIdentifier: Self.pid,
             windowID: Self.windowID,
@@ -476,7 +477,7 @@ struct TypeCommandTruthTests {
         )
     }
 
-    private static var identity: WindowMutationIdentity {
+    static var identity: WindowMutationIdentity {
         WindowMutationIdentity(
             windowID: self.windowID,
             ownerProcessIdentifier: self.pid,

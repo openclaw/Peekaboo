@@ -114,92 +114,20 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 try Task.checkCancellation()
                 throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
             }
-            let targetPID = deliveryTarget.processIdentifier
-            self.resolvedRuntime.beginInteractionMutation()
-            let actionSequence = CommandActionSequenceAccumulator()
-            let actionRoute = commandActionRoute(for: self.services)
-            if targetPID == nil {
-                let focusSnapshotID = observation.focusSnapshotId(for: self.target)
-                if let focusResult = try await ensureConfirmedForegroundFocus(
-                    snapshotId: focusSnapshotID,
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services,
-                    operation: "Typing setup focus"
-                ) {
-                    try actionSequence.record(focusResult, operation: "Typing setup focus")
-                }
-            }
-            let actionResult: UIAutomationActionResult<TypeResult>
-            do {
-                actionResult = try await self.executeTypeActions(
-                    actions: actions,
-                    snapshotId: observation.snapshotId,
-                    target: deliveryTarget
-                )
-                try self.requireAcceptedTyping(
-                    actionResult,
-                    deliveryMode: Self.delivery(for: deliveryTarget).mode,
-                    operation: "Typing"
-                )
-                let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
-                    route: actionRoute,
-                    delivery: Self.delivery(for: deliveryTarget),
-                    unitCount: .one
-                )
-                if deliveryTarget.processIdentifier == nil {
-                    try actionSequence.recordExactTargetLeaf(
-                        outcome: actionResult.outcome,
-                        targetIdentity: actionResult.targetIdentity,
-                        operation: "Typing",
-                        receiptlessStep: receiptlessStep
+            let result = try await SnapshotMutationCoordinator.perform(
+                snapshotId: observation.snapshotId,
+                snapshots: self.services.snapshots,
+                operation: {
+                    try await self.performPreparedType(
+                        actions: actions,
+                        observation: observation,
+                        target: deliveryTarget
                     )
-                } else {
-                    try actionSequence.record(
-                        actionResult,
-                        operation: "Typing",
-                        receiptlessStep: receiptlessStep
-                    )
-                }
-            } catch let failure as DesktopActionFailure {
-                let composed = actionSequence.preservingFailure(
-                    failure,
-                    fallbackRoute: actionRoute,
-                    message: "Typing failed after foreground setup may have changed focus.",
-                    hint: "Observe the target before deciding whether to retry typing."
-                )
-                throw composed
-            } catch let error as InputDeliveryIndeterminateError {
-                let delivery = Self.delivery(for: deliveryTarget)
-                let composed = actionSequence.preservingFailure(
-                    error.desktopActionFailure(delivery: delivery, route: actionRoute),
-                    fallbackRoute: actionRoute,
-                    message: "Typing outcome is indeterminate.",
-                    hint: "Observe the target before deciding whether to retry typing."
-                )
-                throw composed
-            } catch {
-                let composed = actionSequence.preservingFailure(
-                    error,
-                    fallbackRoute: actionRoute,
-                    message: "Typing failed after foreground setup may have changed focus.",
-                    hint: "Observe the target before deciding whether to retry typing."
-                )
-                throw composed
-            }
-            await InteractionObservationInvalidator.invalidateAfterMutation(
-                targets: self.resolvedRuntime.interactionMutationTargets,
-                logger: self.logger,
-                reason: "type"
+                },
+                outcome: { $0.outcome }
             )
-            let compositeResult = actionSequence.result(payload: actionResult.payload)
             self.renderResult(
-                TypeCommandRenderInput(
-                    typeResult: compositeResult.payload,
-                    outcome: compositeResult.outcome,
-                    typingOutcome: actionResult.outcome,
-                    targetIdentity: compositeResult.targetIdentity
-                ),
+                result,
                 actions: actions,
                 startTime: startTime,
                 target: deliveryTarget
@@ -211,6 +139,93 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             self.handleError(error)
             throw ExitCode.failure
         }
+    }
+
+    private func performPreparedType(
+        actions: [TypeAction],
+        observation: InteractionObservationContext,
+        target deliveryTarget: UIAutomationTarget
+    ) async throws -> TypeCommandRenderInput {
+        self.resolvedRuntime.beginInteractionMutation()
+        let actionSequence = CommandActionSequenceAccumulator()
+        let actionRoute = commandActionRoute(for: self.services)
+        if deliveryTarget.processIdentifier == nil {
+            let focusSnapshotID = observation.focusSnapshotId(for: self.target)
+            if let focusResult = try await ensureConfirmedForegroundFocus(
+                snapshotId: focusSnapshotID,
+                target: self.target,
+                options: self.focusOptions,
+                services: self.services,
+                operation: "Typing setup focus"
+            ) {
+                try actionSequence.record(focusResult, operation: "Typing setup focus")
+            }
+        }
+        let actionResult: UIAutomationActionResult<TypeResult>
+        do {
+            actionResult = try await self.executeTypeActions(
+                actions: actions,
+                snapshotId: observation.snapshotId,
+                target: deliveryTarget
+            )
+            try self.requireAcceptedTyping(
+                actionResult,
+                deliveryMode: Self.delivery(for: deliveryTarget).mode,
+                operation: "Typing"
+            )
+            let receiptlessStep = DesktopActionSequenceAccumulator.Step.dispatched(
+                route: actionRoute,
+                delivery: Self.delivery(for: deliveryTarget),
+                unitCount: .one
+            )
+            if deliveryTarget.processIdentifier == nil {
+                try actionSequence.recordExactTargetLeaf(
+                    outcome: actionResult.outcome,
+                    targetIdentity: actionResult.targetIdentity,
+                    operation: "Typing",
+                    receiptlessStep: receiptlessStep
+                )
+            } else {
+                try actionSequence.record(
+                    actionResult,
+                    operation: "Typing",
+                    receiptlessStep: receiptlessStep
+                )
+            }
+        } catch let failure as DesktopActionFailure {
+            throw actionSequence.preservingFailure(
+                failure,
+                fallbackRoute: actionRoute,
+                message: "Typing failed after foreground setup may have changed focus.",
+                hint: "Observe the target before deciding whether to retry typing."
+            )
+        } catch let error as InputDeliveryIndeterminateError {
+            throw actionSequence.preservingFailure(
+                error.desktopActionFailure(delivery: Self.delivery(for: deliveryTarget), route: actionRoute),
+                fallbackRoute: actionRoute,
+                message: "Typing outcome is indeterminate.",
+                hint: "Observe the target before deciding whether to retry typing."
+            )
+        } catch {
+            throw actionSequence.preservingFailure(
+                error,
+                fallbackRoute: actionRoute,
+                message: "Typing failed after foreground setup may have changed focus.",
+                hint: "Observe the target before deciding whether to retry typing."
+            )
+        }
+        await InteractionObservationInvalidator.invalidateAfterMutation(
+            targets: self.resolvedRuntime.interactionMutationTargets,
+            logger: self.logger,
+            reason: "type"
+        )
+        let compositeResult = actionSequence.result(payload: actionResult.payload)
+        return TypeCommandRenderInput(
+            typeResult: compositeResult.payload,
+            outcome: compositeResult.outcome,
+            typingOutcome: actionResult.outcome,
+            targetIdentity: compositeResult.targetIdentity
+        )
     }
 
     private mutating func prepare(using runtime: CommandRuntime) {

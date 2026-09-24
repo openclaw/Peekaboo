@@ -137,11 +137,22 @@ public struct ClickTool: MCPTool {
             let modifierResult: ForegroundModifierClickResult?
             let actionResult: UIAutomationActionResult<Void>
             if request.modifiers.isEmpty {
-                actionResult = try await self.performClick(
-                    resolution: resolution,
-                    intent: request.intent,
-                    deliveryMode: request.deliveryMode,
-                    targetProcessIdentity: effectiveTargetProcessIdentity)
+                actionResult = try await self.context.snapshots.withSnapshotMutation(
+                    snapshotId: resolution.snapshotIdToInvalidate,
+                    operation: {
+                        do {
+                            return try await self.performClick(
+                                resolution: resolution,
+                                intent: request.intent,
+                                deliveryMode: request.deliveryMode,
+                                targetProcessIdentity: effectiveTargetProcessIdentity)
+                        } catch let error as ClickToolError {
+                            throw DesktopActionFailure.preDispatchRefusal(
+                                reason: error.refusalReason,
+                                message: error.message)
+                        }
+                    },
+                    outcome: { $0.outcome })
                 modifierResult = nil
             } else {
                 let result = try await self.performModifierClick(

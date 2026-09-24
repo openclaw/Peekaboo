@@ -273,7 +273,6 @@ extension TypeTool {
         let plannedTarget = try await self.backgroundKeyboardTarget(
             request: request,
             snapshot: snapshotContext)
-        let targetProcessIdentifier = plannedTarget?.processIdentifier.map(Int.init)
         let targetWindowID = plannedTarget?.exactWindow?.identity.windowID
         let effectiveSnapshotId = snapshotContext?.id
         mutationTracker.snapshotId = effectiveSnapshotId
@@ -284,6 +283,36 @@ extension TypeTool {
             requiresCompositeTypeDelivery: Self.requiresCompositeTypeDelivery(actions),
             automation: automation)
 
+        let input = try await self.context.snapshots.withSnapshotMutation(
+            snapshotId: effectiveSnapshotId,
+            targetIdentity: plannedTarget?.exactWindow.map { DesktopTargetIdentity(exactWindow: $0) },
+            operation: {
+                try await self.performOrdinaryType(
+                    request: request,
+                    actions: actions,
+                    preparedTarget: TypePreparedTarget(
+                        elementContext: targetContext,
+                        automationTarget: plannedTarget,
+                        snapshotID: effectiveSnapshotId),
+                    startedAt: startTime,
+                    mutationTracker: mutationTracker)
+            },
+            outcome: { $0.sequenceResolution.outcome })
+        return try await self.successResponse(input)
+    }
+
+    @MainActor
+    private func performOrdinaryType(
+        request: TypeRequest,
+        actions: [TypeAction],
+        preparedTarget: TypePreparedTarget,
+        startedAt: Date,
+        mutationTracker: TypeMutationTracker) async throws -> TypeSuccessInput
+    {
+        let automation = self.context.automation
+        let targetContext = preparedTarget.elementContext
+        let plannedTarget = preparedTarget.automationTarget
+        let effectiveSnapshotId = preparedTarget.snapshotID
         let focusResult: TypeFocusResult
         do {
             focusResult = try await self.focusIfNeeded(
@@ -393,16 +422,16 @@ extension TypeTool {
                 unitCount: Self.singleDispatchUnit))
         }
         let sequenceResolution = sequence.successResolution()
-        return try await self.successResponse(TypeSuccessInput(
+        return TypeSuccessInput(
             request: request,
             targetContext: targetContext,
-            targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: targetWindowID,
+            targetProcessIdentifier: plannedTarget?.processIdentifier.map(Int.init),
+            targetWindowID: plannedTarget?.exactWindow?.identity.windowID,
             snapshotID: effectiveSnapshotId,
-            startedAt: startTime,
+            startedAt: startedAt,
             actionResult: typeActionResult,
             focusCompleted: focusResult.completed,
-            sequenceResolution: sequenceResolution))
+            sequenceResolution: sequenceResolution)
     }
 
     private func resolvePixelFocusTarget(
@@ -1096,6 +1125,12 @@ private struct BackgroundTypeRequest {
     let cadence: TypingCadence
     let snapshotId: String?
     let target: UIAutomationTarget
+}
+
+private struct TypePreparedTarget {
+    let elementContext: TargetElementContext?
+    let automationTarget: UIAutomationTarget?
+    let snapshotID: String?
 }
 
 private struct TypeSuccessInput {
