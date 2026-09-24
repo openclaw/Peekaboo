@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -9,6 +10,40 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct ClickToolQueryWaitTests {
+    @Test(arguments: [
+        (PeekabooError.permissionDeniedAccessibility, "permission_denied"),
+        (PeekabooError.timeout("Synthetic AX timeout"), "target_unavailable"),
+        (PeekabooError.notImplemented("Synthetic unsupported AX host"), "runtime_incompatible"),
+    ])
+    func `native inspection errors retain their codes and remediation`(scenario: (PeekabooError, String)) async throws {
+        let (error, reason) = scenario
+        let fixture = try await ClickQueryWaitFixture.make(steps: [.nativeError(error)])
+        let response = try await fixture.execute()
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string(reason))
+        #expect(response.meta?.objectValue?["error_code"] == .string(error.code.rawValue))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(fixture.automation.requests.count == 1)
+        #expect(fixture.automation.targetedClickCalls.isEmpty)
+        #expect(fixture.snapshots.createCalls.isEmpty)
+    }
+
+    @Test(arguments: [DesktopActionOutcome.RefusalReason.permissionDenied, .runtimeIncompatible])
+    func `inspection refusal retains its original classification`(reason: DesktopActionOutcome
+        .RefusalReason) async throws
+    {
+        let fixture = try await ClickQueryWaitFixture.make(steps: [.refused(reason)])
+        let response = try await fixture.execute()
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string(reason.rawValue))
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(false))
+        #expect(fixture.automation.requests.count == 1)
+        #expect(fixture.automation.targetedClickCalls.isEmpty)
+        #expect(fixture.snapshots.createCalls.isEmpty)
+    }
+
     @Test
     func `missing snapshot-local id does not wait`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)

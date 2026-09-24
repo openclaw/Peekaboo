@@ -146,7 +146,7 @@ jobs:
       - name: Run MCP action fixtures and outcome contract tests
         working-directory: Core/PeekabooCore
         run: |
-          swift test --no-parallel --filter 'MCPToolExecutionTests|MCPToolErrorHandlingTests|MCPElementActionToolExecutionTests|MCPSeeExactWindowTests'
+          swift test --no-parallel --filter 'MCPToolExecutionTests|MCPToolErrorHandlingTests|MCPElementActionToolExecutionTests|MCPSeeExactWindowTests|ClickToolQueryWaitTests|InspectUIToolExecutionTests'
           swift test --no-parallel --filter 'MCPDesktopActionOutcomeProjectionTests|MCPCompositeActionOutcomeTests'
 
       - name: Run Bridge negotiation and cancellation contracts

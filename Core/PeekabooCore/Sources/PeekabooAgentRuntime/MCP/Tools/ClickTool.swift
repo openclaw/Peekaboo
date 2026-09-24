@@ -189,6 +189,9 @@ public struct ClickTool: MCPTool {
             await self.discardObservation(id: waitedSnapshotID)
             var failureFields = (try? MCPDesktopTargetMetadataProjector.fields(actionTargetIdentity)) ?? [:]
             failureFields["click_type"] = .string(request.intent.automationType.rawValue)
+            if let code = failure.standardErrorCode {
+                failureFields["error_code"] = .string(code.rawValue)
+            }
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
                 uiSnapshots: self.context.uiSnapshots,
@@ -888,6 +891,20 @@ extension ClickTool {
                 deadline: wait.deadline)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            let reason: DesktopActionOutcome.RefusalReason = if error.category == .permissions {
+                .permissionDenied
+            } else if case .notImplemented = error {
+                .runtimeIncompatible
+            } else {
+                .targetUnavailable
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: reason,
+                message: "Exact-window observation failed: \(error.localizedDescription)",
+                standardErrorCode: error.code)
         } catch {
             throw ClickToolError(
                 "Exact-window observation failed: \(error.localizedDescription)",
@@ -931,7 +948,12 @@ extension ClickTool {
 
     private func discardObservation(id: String?) async {
         guard let id else { return }
-        try? await self.context.snapshots.cleanSnapshot(snapshotId: id)
+        do {
+            try await self.context.snapshots.cleanSnapshot(snapshotId: id)
+        } catch {
+            self.logger.error(
+                "Temporary query observation cleanup failed: \(error.localizedDescription, privacy: .private)")
+        }
         await self.context.uiSnapshots.removeSnapshot(id: id)
     }
 }

@@ -98,6 +98,8 @@ final class ClickQueryWaitAutomationService: MockAutomationService, ScriptedUIAu
         case matchAfterGate(ClickQueryWaitObservationGate)
         case matchFromIncompleteTree
         case throwCancellation
+        case refused(DesktopActionOutcome.RefusalReason)
+        case nativeError(PeekabooError)
         case invalid(InvalidEvidence)
     }
 
@@ -135,6 +137,12 @@ final class ClickQueryWaitAutomationService: MockAutomationService, ScriptedUIAu
         self.steps.removeFirst()
         if case .throwCancellation = step {
             throw CancellationError()
+        }
+        if case let .refused(reason) = step {
+            throw DesktopActionFailure.preDispatchRefusal(reason: reason, message: "Synthetic AX refusal")
+        }
+        if case let .nativeError(error) = step {
+            throw error
         }
         if case let .matchAfterGate(gate) = step {
             await gate.entered.open()
