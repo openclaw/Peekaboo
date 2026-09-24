@@ -39,7 +39,8 @@ enum MCPToolTestHelpers {
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
         snapshotOwner: MCPToolSnapshotOwner = MCPToolSnapshotOwner(),
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
-        exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider()) async
+        exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider(),
+        capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil) async
         -> MCPToolContext
     {
         await MainActor.run {
@@ -78,7 +79,8 @@ enum MCPToolTestHelpers {
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
                 snapshotExecutionGate: snapshotExecutionGate,
                 snapshotOwner: snapshotOwner,
-                executionPolicy: executionPolicy)
+                executionPolicy: executionPolicy,
+                capturePreflightRefusal: capturePreflightRefusal)
         }
     }
 
@@ -95,11 +97,13 @@ enum MCPToolTestHelpers {
         screens: (any ScreenServiceProtocol)? = nil,
         clipboard: (any ClipboardServiceProtocol)? = nil,
         snapshots: (any SnapshotManagerProtocol)? = nil,
+        desktopObservation: (any DesktopObservationServiceProtocol)? = nil,
         permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
-        exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider()) async
+        exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider(),
+        capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil) async
         -> MCPToolContext
     {
         await self.makeContext(
@@ -111,12 +115,14 @@ enum MCPToolTestHelpers {
             screens: screens,
             clipboard: clipboard,
             snapshots: snapshots,
+            desktopObservation: desktopObservation,
             permissionsStatusProvider: permissionsStatusProvider,
             snapshotMutationCoordinator: snapshotMutationCoordinator,
             snapshotExecutionGate: snapshotExecutionGate,
             snapshotOwner: .legacyProcess,
             executionPolicy: executionPolicy,
-            exactWindowMetadataProvider: exactWindowMetadataProvider)
+            exactWindowMetadataProvider: exactWindowMetadataProvider,
+            capturePreflightRefusal: capturePreflightRefusal)
     }
 
     static func expectCanonicalOutcomeMetadata(

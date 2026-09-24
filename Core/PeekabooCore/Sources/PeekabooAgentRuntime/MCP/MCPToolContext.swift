@@ -466,6 +466,11 @@ extension MCPToolContext {
         return self.capturePreflightResponse(tool: tool, arguments: arguments)
     }
 
+    /// The capture-owner refusal `see` would return, without taking the execution gate the click already holds.
+    func nestedScreenCapturePreflightRefusal() -> ToolResponse? {
+        self.capturePreflightResponse(toolName: "see", arguments: ToolArguments(raw: [:]))
+    }
+
     private func mutationLane(
         for toolName: String,
         arguments: ToolArguments) -> MutationLane
@@ -656,13 +661,20 @@ extension MCPToolContext {
         tool: any MCPTool,
         arguments: ToolArguments) -> ToolResponse?
     {
+        self.capturePreflightResponse(toolName: tool.name, arguments: arguments)
+    }
+
+    private func capturePreflightResponse(
+        toolName: String,
+        arguments: ToolArguments) -> ToolResponse?
+    {
         guard let capturePreflightRefusal else { return nil }
         guard let requiresOwnerPreflight = MCPToolCaptureRequirement.requiresScreenCaptureKitOwnerPreflight(
-            toolName: tool.name,
+            toolName: toolName,
             arguments: arguments)
         else {
             return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
-                message: "Tool '\(tool.name)' has no capture-safety classification and is refused while " +
+                message: "Tool '\(toolName)' has no capture-safety classification and is refused while " +
                     "ScreenCaptureKit ownership is unavailable.",
                 reason: .runtimeIncompatible,
                 additionalFields: ["error_code": .string("CAPTURE_POLICY_UNCLASSIFIED")])
