@@ -921,7 +921,7 @@ extension WatchCaptureSessionTests {
 
     @Test
     @MainActor
-    func `Stop request cancels in-flight transient capture backoff`() async throws {
+    func `Stop request cancels pending transient capture retry`() async throws {
         let png = Self.makePNG(size: CGSize(width: 20, height: 20))
         let capture = StubTransientScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
         let screens = StubScreenService()
@@ -951,40 +951,45 @@ extension WatchCaptureSessionTests {
                 outputRoot: output,
                 autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
 
-        let transientFailure = AsyncStream<Void>.makeStream()
-        capture.onTransientFailure = {
-            transientFailure.continuation.yield()
+        capture.onTransientFailure = { [weak session] in
+            session?.requestStop()
         }
 
+        let completed = VideoDecoderTestSignal()
+        let callerDrained = VideoDecoderTestSignal()
         let task = Task { @MainActor in
-            try await session.run()
+            defer {
+                completed.signal()
+                callerDrained.signal()
+            }
+            return try await session.run()
+        }
+        defer { task.cancel() }
+
+        let didComplete = await completed.waitWithWatchdog()
+        #expect(didComplete, "Session did not complete after the transient attempt requested stop")
+        if didComplete {
+            do {
+                let result = try await task.value
+                // The fallback runner owns the retry; cancellation must not fabricate a dropped frame.
+                #expect(!result.warnings.contains { $0.code == .transientCaptureFailure })
+                #expect(result.frames.count == 1)
+                #expect(result.warnings.contains { $0.code == .noMotion })
+            } catch {
+                Issue.record(error)
+            }
         }
 
-        var sawTransientFailure = false
-        for await _ in transientFailure.stream {
-            sawTransientFailure = true
-            break
+        #expect(await capture.transientRetryFinished.waitWithWatchdog(), "Transient retry did not finish cleanup")
+        #expect(capture.observedRetryCancellation)
+        #expect(capture.attemptCount == 2)
+
+        task.cancel()
+        let drained = await callerDrained.waitWithWatchdog()
+        #expect(drained, "Session caller did not finish cleanup")
+        if drained {
+            _ = await task.result
         }
-        #expect(sawTransientFailure)
-        #expect(capture.attemptCount >= 1)
-
-        // Ensure requestStop() lands inside the 350ms transient backoff window.
-        try await Task.sleep(nanoseconds: 15_000_000)
-
-        let stopStarted = Date()
-        session.requestStop()
-        let result = try await task.value
-        let stopElapsed = Date().timeIntervalSince(stopStarted)
-
-        print("PROOF transient_stop_elapsed_ms=\(Int(stopElapsed * 1000))")
-
-        // The fallback runner owns this retry and cancellation wins before it surfaces an error
-        // to the session, so reporting a dropped transient frame here would be fabricated.
-        #expect(!result.warnings.contains { $0.code == .transientCaptureFailure })
-        #expect(result.frames.count == 1)
-        #expect(result.warnings.contains { $0.code == .noMotion })
-        // Unfixed raw Task.sleep still waits ~350ms before the loop can observe stop.
-        #expect(stopElapsed < 0.08)
     }
 
     @Test
@@ -1437,6 +1442,8 @@ private struct FailingVideoFrameDecoder: VideoFrameDecoding {
 private final class StubTransientScreenCaptureService: ScreenCaptureServiceProtocol {
     private let success: StubScreenCaptureService
     private(set) var attemptCount = 0
+    private(set) var observedRetryCancellation = false
+    let transientRetryFinished = VideoDecoderTestSignal()
     var onTransientFailure: (() -> Void)?
 
     private static let transientError = NSError(
@@ -1486,14 +1493,20 @@ private final class StubTransientScreenCaptureService: ScreenCaptureServiceProto
                 scale: scale)
         }
         let runner = ScreenCaptureFallbackRunner(apis: [.modern])
-        return try await runner.run(
-            operationName: "captureFrontmost",
-            logger: MockLoggingService().logger(category: "test"),
-            correlationId: "watch-stop-inner-retry")
-        { _ in
-            self.attemptCount += 1
-            self.onTransientFailure?()
-            throw Self.transientError
+        defer { self.transientRetryFinished.signal() }
+        do {
+            return try await runner.run(
+                operationName: "captureFrontmost",
+                logger: MockLoggingService().logger(category: "test"),
+                correlationId: "watch-stop-inner-retry")
+            { _ in
+                self.attemptCount += 1
+                self.onTransientFailure?()
+                throw Self.transientError
+            }
+        } catch {
+            self.observedRetryCancellation = error is CancellationError
+            throw error
         }
     }
 
