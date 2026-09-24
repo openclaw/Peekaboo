@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bound selected-dialog metadata extraction to the targeted list's remaining timeout without blocking the main actor or accepting late results; read native text values directly while preserving optional metadata defaults and exact dialog discovery.
 - Resolve background keyboard focus through the native owning-window link when web text fields do not expose a direct window ID, preserving exact process, window, and focus validation.
 - Accept structured MCP experimental capabilities during initialization, restoring Codex connections; pin the upstream decoder repair and document its Swift dictionary-type migration. Thanks @Wudib! #745.
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.

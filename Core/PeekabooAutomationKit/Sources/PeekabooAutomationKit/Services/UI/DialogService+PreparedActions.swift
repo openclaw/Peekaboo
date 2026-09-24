@@ -168,7 +168,10 @@ extension DialogService {
             let resolvedTarget = try self.resolvedTargetWithUniqueWindowProof(
                 selected,
                 candidates: dialogs)
-            return self.dialogElements(for: selected.dialog, resolvedTarget: resolvedTarget)
+            return try await self.readDialogMetadata(
+                for: selected.dialog,
+                owner: selected.target.identity.processIdentity,
+                resolvedTarget: resolvedTarget)
         }
     }
 }
@@ -704,6 +707,24 @@ extension DialogService {
             "process_start_identity_decimal": String(target.identity.ownerProcessStartIdentity),
             "window_id": String(target.identity.windowID),
         ]
+    }
+
+    func readDialogMetadata(
+        for dialog: Element,
+        owner: ApplicationProcessIdentity,
+        resolvedTarget: ResolvedDialogTargetEvidence? = nil) async throws -> DialogElements
+    {
+        let budget = try DialogOperationDeadline.resolve(operationName: "dialog metadata extraction")
+        try budget.check()
+        let metadata = try await self.discoveryReaders.metadata(dialog, owner, budget)
+        try budget.check()
+        return DialogElements(
+            dialogInfo: metadata.dialogInfo,
+            buttons: metadata.buttons,
+            textFields: metadata.textFields,
+            staticTexts: metadata.staticTexts,
+            otherElements: metadata.otherElements,
+            resolvedTarget: resolvedTarget)
     }
 
     func dialogElements(

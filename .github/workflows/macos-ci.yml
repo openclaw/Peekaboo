@@ -132,6 +132,22 @@ jobs:
           grep -Fq 'Suite SameProcessWindowCloseTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
+      - name: Run targeted dialog metadata and deadline contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+        run: |
+          set -o pipefail
+          test_log="$RUNNER_TEMP/dialog-metadata-contracts.log"
+          swift test --no-parallel \
+            --filter 'DialogMetadataReaderTests|DialogMetadataContractTests|DialogHierarchyReaderTests|DialogHierarchyAttributeTests|DialogOperationDeadlineTests|ElementDetectionDetachedRunnerTests' \
+            2>&1 | tee "$test_log"
+          grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"
+          grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"
+          grep -Fq 'Suite DialogOperationDeadlineTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Build PeekabooCore
         working-directory: Core/PeekabooCore
         run: |

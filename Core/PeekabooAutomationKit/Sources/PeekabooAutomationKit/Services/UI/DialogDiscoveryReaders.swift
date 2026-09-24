@@ -49,6 +49,13 @@ struct DialogDiscoveryReaders {
         try await DialogHierarchyReader.read($0, owner: $1, budget: $2)
     }
 
+    var metadata: @MainActor (
+        Element,
+        ApplicationProcessIdentity,
+        DialogOperationDeadline) async throws -> DialogElements = {
+        try await DialogMetadataReader.read($0, owner: $1, budget: $2)
+    }
+
     var classificationReadable: @MainActor (Element) -> Bool = { element in
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element.underlyingElement, kAXSubroleAttribute as CFString, &value)

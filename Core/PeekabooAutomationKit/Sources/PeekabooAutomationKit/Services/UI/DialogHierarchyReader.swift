@@ -15,38 +15,13 @@ enum DialogHierarchyReader {
         owner: ApplicationProcessIdentity,
         budget: DialogOperationDeadline) async throws -> DialogHierarchyNode
     {
-        let identity = ReadOnlyAXIdentity(element: element.underlyingElement)
-        let result = try await self.run(owner: owner, budget: budget) {
+        let identity = DialogAXReadIdentity(element: element.underlyingElement)
+        let result = try await DialogAXReadRunner.run(owner: owner, budget: budget) {
             try self.readNode(identity.element, budget: budget)
         }
         var seen: Set<Element> = []
         let children = result.children.map { Element($0.element) }.filter { seen.insert($0).inserted }
         return DialogHierarchyNode(evidence: result.evidence, children: children)
-    }
-
-    static func run<Output: Sendable>(
-        owner: ApplicationProcessIdentity,
-        budget: DialogOperationDeadline,
-        operation: @escaping @Sendable () throws -> Output) async throws -> Output
-    {
-        try budget.check()
-        // Only C reads run here: no AXorcist caches, messaging-timeout changes, service state,
-        // or mutation callbacks can outlive the caller.
-        do {
-            let result = try await ElementDetectionTimeoutRunner.runDetached(
-                targetProcessIdentifier: owner.processIdentifier,
-                targetProcessStartIdentity: owner.processStartIdentity,
-                seconds: budget.remainingSeconds,
-                maximumPendingOperationCount: 1)
-            {
-                try budget.check()
-                return try operation()
-            }
-            try budget.check()
-            return result
-        } catch CaptureError.detectionTimedOut {
-            throw budget.timeoutError
-        }
     }
 
     private static func readNode(_ element: AXUIElement, budget: DialogOperationDeadline) throws -> RawNode {
@@ -67,7 +42,7 @@ enum DialogHierarchyReader {
                 identifier: identifier ?? "",
                 title: title ?? "",
                 isModal: modal),
-            children: ((sheets ?? []) + (children ?? [])).map { ReadOnlyAXIdentity(element: $0) })
+            children: ((sheets ?? []) + (children ?? [])).map { DialogAXReadIdentity(element: $0) })
     }
 
     private static func attribute<Value>(
@@ -111,13 +86,6 @@ enum DialogHierarchyReader {
 
     private struct RawNode: Sendable {
         let evidence: DialogElementEvidence
-        let children: [ReadOnlyAXIdentity]
-    }
-
-    /// The AX C API is thread-safe, but its CF identity is not annotated Sendable. These immutable
-    /// retains are read-only even after cancellation: the worker never sets attributes or timeouts.
-    /// AXorcist wrappers are accessed/created only on MainActor, after the worker result is admitted.
-    private struct ReadOnlyAXIdentity: @unchecked Sendable {
-        let element: AXUIElement
+        let children: [DialogAXReadIdentity]
     }
 }

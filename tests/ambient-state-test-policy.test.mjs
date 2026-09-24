@@ -24,6 +24,33 @@ const runtimeTests = readFileSync(
   "utf8",
 );
 
+test("hosted dialog metadata proof runs owner and output contracts without live automation", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const marker = "      - name: Run targeted dialog metadata and deadline contracts\n";
+  assert.ok(workflow.includes(marker), "Missing hosted dialog metadata proof");
+  const step = workflow.split(marker)[1].split("\n      - name:")[0];
+  const suites = [
+    "DialogMetadataReaderTests", "DialogMetadataContractTests", "DialogHierarchyReaderTests",
+    "DialogHierarchyAttributeTests", "DialogOperationDeadlineTests", "ElementDetectionDetachedRunnerTests",
+  ];
+  assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
+  assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"/);
+  assert.match(step, /PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"/);
+  assert.doesNotMatch(step, /(?:RUN_AUTOMATION_ACTIONS|RUN_AUTOMATION_TESTS): "true"/);
+  assert.match(step, /swift test --no-parallel/);
+  assert.equal(step.match(/--filter '([^']+)'/)?.[1], suites.join("|"));
+  for (const suite of suites) {
+    const source = readFileSync(
+      `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/${suite}.swift`, "utf8",
+    );
+    assert.match(source, new RegExp(`(?:class|struct) ${suite}\\b`), `${suite} must exist in this checkout`);
+  }
+  assert.match(step, /set -o pipefail/);
+  assert.ok(step.includes(`grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"`));
+  assert.ok(step.includes(`grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"`));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+});
+
 test("safe suite forces ambient-state tests off", () => {
   assert.match(
     packageJSON.scripts["test:safe"],
