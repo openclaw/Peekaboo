@@ -148,12 +148,14 @@ struct DaemonLaunchPolicyTests {
         }
     }
 
-    @Test
-    func `on demand daemon launch removes request scoped capture engine environment`() async throws {
+    @Test(arguments: [false, true])
+    func `on demand daemon launch removes request scoped capture engine environment`(delayStartup: Bool) async throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-daemon-engine-env-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: outputURL) }
-        let command = "printf '%s' \"${PEEKABOO_CAPTURE_ENGINE-unset}\" > \(outputURL.path); exec /bin/sleep 30"
+        // Exercise startup beyond the former 200 ms readiness assumption.
+        let startup = delayStartup ? "/bin/sleep 0.3; " : ""
+        let command = startup + "printf '%s' \"${PEEKABOO_CAPTURE_ENGINE-unset}\" > \(outputURL.path)"
         let environment = DaemonLaunchPolicy.onDemandDaemonEnvironment([
             "PATH": "/usr/bin:/bin",
             "PEEKABOO_CAPTURE_ENGINE": "modern",
@@ -163,17 +165,17 @@ struct DaemonLaunchPolicyTests {
             _ = try await DaemonLaunchPolicy.launchDaemon(
                 socketPath: "/tmp/peekaboo-daemon-engine-env-\(UUID().uuidString).sock",
                 arguments: ["-c", command],
-                timeout: 0.2,
                 executableURL: URL(fileURLWithPath: "/bin/sh"),
                 logHandle: .nullDevice,
                 environment: environment
             )
-            Issue.record("Expected daemon readiness to time out")
+            Issue.record("Expected the environment fixture to exit")
         } catch let error as DaemonLaunchPolicy.DaemonLaunchError {
-            guard case .timedOut = error else {
-                Issue.record("Expected a readiness timeout, got \(error)")
+            guard case let .exited(_, exitStatus, _) = error else {
+                Issue.record("Expected the environment fixture to exit, got \(error)")
                 return
             }
+            try #require(exitStatus == 0)
         }
 
         #expect(try String(contentsOf: outputURL, encoding: .utf8) == "unset")
