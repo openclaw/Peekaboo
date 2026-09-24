@@ -38,6 +38,7 @@ enum RemoteDesktopObservationCapabilityPolicy {
 @MainActor
 public final class RemoteDesktopObservationService: DesktopObservationActionResultProviding {
     private let client: PeekabooBridgeClient
+    private let capturePolicy: RemoteCapturePolicy
     private let supportsDesktopObservationOCR: Bool
     private let supportsDesktopObservationCaptureEngine: Bool
     private let supportsExactWindowROIObservation: Bool
@@ -45,12 +46,14 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
 
     public convenience init(
         client: PeekabooBridgeClient,
+        capturePolicy: RemoteCapturePolicy = .unrestricted,
         supportsDesktopObservationOCR: Bool = false,
         supportsDesktopObservationCaptureEngine: Bool = false,
         supportsExactWindowROIObservation: Bool = false)
     {
         self.init(
             client: client,
+            capturePolicy: capturePolicy,
             supportsDesktopObservationOCR: supportsDesktopObservationOCR,
             supportsDesktopObservationCaptureEngine: supportsDesktopObservationCaptureEngine,
             supportsExactWindowROIObservation: supportsExactWindowROIObservation,
@@ -59,12 +62,14 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
 
     package init(
         client: PeekabooBridgeClient,
+        capturePolicy: RemoteCapturePolicy = .unrestricted,
         supportsDesktopObservationOCR: Bool = false,
         supportsDesktopObservationCaptureEngine: Bool = false,
         supportsExactWindowROIObservation: Bool,
         artifactInstallationPreflight: @escaping @MainActor @Sendable () throws -> Void)
     {
         self.client = client
+        self.capturePolicy = capturePolicy
         self.supportsDesktopObservationOCR = supportsDesktopObservationOCR
         self.supportsDesktopObservationCaptureEngine = supportsDesktopObservationCaptureEngine
         self.supportsExactWindowROIObservation = supportsExactWindowROIObservation
@@ -78,6 +83,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
     public func observeActionResult(
         _ request: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
     {
+        let request = try self.capturePolicy.applying(to: request)
         guard
             !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request)
             || self.supportsDesktopObservationOCR

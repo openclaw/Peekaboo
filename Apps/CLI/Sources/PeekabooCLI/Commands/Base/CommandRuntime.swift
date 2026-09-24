@@ -18,6 +18,8 @@ struct CommandRuntimeOptions {
     var jsonOutput = false
     var logLevel: LogLevel?
     var captureEnginePreference: String?
+    /// The selected remote route may safely support classic observations but not ScreenCaptureKit.
+    var remoteCapturePolicy: RemoteCapturePolicy = .unrestricted
     /// This command carries the capture-engine choice in its remote request instead of
     /// requiring the caller process to own capture/TCC.
     var transportsCaptureEnginePreference = false

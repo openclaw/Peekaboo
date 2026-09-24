@@ -1,6 +1,7 @@
 import CoreGraphics
 import Darwin
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 @testable import PeekabooBridge
@@ -132,6 +133,23 @@ struct RemoteCaptureEnginePlanCacheRoutingTests {
         #expect(observation.modernHits == 1)
         #expect(observation.legacyCalls == 2)
         #expect(observation.ownerReceipts.count == 2)
+
+        let classicOnly = RemoteDesktopObservationService(
+            client: firstClient,
+            capturePolicy: .classicOnly(.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "Synthetic route only permits classic capture")),
+            supportsDesktopObservationCaptureEngine: true)
+        let rewritten = try await classicOnly.observe(Self.request(engine: .auto))
+        #expect(rewritten.capture.metadata.diagnostics?.windowPlanCacheStatus == nil)
+        #expect(observation.requestedEngines == [.modern, .modern, .legacy, .auto, .legacy])
+        let rewrittenReceipt = try #require(await firstClient.lastOperationReceipt())
+        #expect(rewrittenReceipt.payload.listenerInstanceID == listener.listenerInstanceID)
+        #expect(rewrittenReceipt.payload.sessionID == firstSession.sessionID)
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await classicOnly.observe(Self.request(engine: .modern))
+        }
+        #expect(observation.requestedEngines == [.modern, .modern, .legacy, .auto, .legacy])
         await host.stop()
     }
 

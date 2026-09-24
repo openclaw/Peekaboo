@@ -77,9 +77,13 @@ read_when:
   capability-disabled host refuses before launch, and a response lost after pipe release is retry-unsafe. Its
   qualification-only CLI adapter emits the canonical signed receipt bundle and is deliberately absent from help and
   shell completions; ordinary users should invoke `peekaboo agent` directly.
-- An unrelated legacy ScreenCaptureKit owner does not block Agent startup or non-capturing app/window/Accessibility
+- An unrelated legacy owner-unaware Bridge does not block Agent startup or non-capturing app/window/Accessibility
   tools through an explicitly selected current Bridge. Pixel-producing calls remain refused before dispatch for that
   process lifetime; after fixing the owner, start a fresh Agent process before retrying capture.
+- When another live process holds ScreenCaptureKit, an explicitly selected ready Bridge that proves classic capture
+  and request-local engine selection can serve automatic `see` and `image` observations without changing hosts.
+  Explicit modern capture and SCK-only `capture live`/`verify_state` final screenshots remain refused before transport
+  for that Agent process. Classic fallback does not relax target, snapshot, listener-identity, or signed-result checks.
 - All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
 - New configurations select GPT-5.6 and Opus 5. Credential-only Anthropic discovery uses Opus 4.8 for zero-retention compatibility, while saved configuration and session model pins remain unchanged.
 - `--dry-run` is a zero-provider text-task preview: it echoes the normalized instruction with explicit zero

@@ -33,6 +33,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
 
     public init(
         client: PeekabooBridgeClient,
+        capturePolicy: RemoteCapturePolicy = .unrestricted,
         supportsTargetedHotkeys: Bool = false,
         supportsProcessGenerationPinnedHotkeys: Bool = false,
         targetedHotkeyUnavailableReason: String? = nil,
@@ -95,7 +96,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             supportsDesktopObservationCaptureEngine
 
         self.logging = LoggingService()
-        self.screenCapture = RemoteScreenCaptureService(client: client)
+        self.screenCapture = RemoteScreenCaptureService(client: client, capturePolicy: capturePolicy)
         self.applications = RemoteApplicationService(
             client: client,
             localFallback: allowLocalApplicationFallback ? ApplicationService() : nil,
@@ -193,6 +194,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         self.desktopObservation = if supportsDesktopObservation {
             RemoteDesktopObservationService(
                 client: client,
+                capturePolicy: capturePolicy,
                 supportsDesktopObservationOCR: supportsRemoteDesktopObservationOCR,
                 supportsDesktopObservationCaptureEngine: supportsRemoteCaptureEnginePreference,
                 supportsExactWindowROIObservation: supportsExactWindowROIObservation)
