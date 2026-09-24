@@ -13,6 +13,7 @@ struct ClickQueryWaitFixture {
     let automation: ClickQueryWaitAutomationService
     let screenCapture: MockScreenCaptureService
     let desktopObservation: ClickQueryWaitUnexpectedObservationService
+    let storage: InMemorySnapshotManager
     let snapshots: SnapshotMutationRecordingManager
     let initialSnapshotID: String
     let target: LinkedDesktopTargetFixture
@@ -52,6 +53,7 @@ struct ClickQueryWaitFixture {
             automation: automation,
             screenCapture: screenCapture,
             desktopObservation: desktopObservation,
+            storage: memorySnapshots,
             snapshots: snapshots,
             initialSnapshotID: linked.snapshotID,
             target: linked.desktopTarget)

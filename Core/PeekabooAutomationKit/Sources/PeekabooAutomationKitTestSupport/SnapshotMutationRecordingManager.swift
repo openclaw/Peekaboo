@@ -24,6 +24,8 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     public var failFinish = false
     public var ownsSnapshotError: (any Error)?
     public var getDetectionResultError: (any Error)?
+    /// Suspends after real acquisition, before the caller receives the lease.
+    public var afterBeginSnapshotMutation: (@MainActor (SnapshotMutationLease) async -> Void)?
 
     private let wrapped: any SnapshotManagerProtocol
     private let producerBoundSnapshotReferencesOverride: Bool?
@@ -193,7 +195,9 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
 
     public func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
         self.beginCalls.append(snapshotId)
-        return try await self.wrapped.beginSnapshotMutation(snapshotId: snapshotId)
+        let lease = try await self.wrapped.beginSnapshotMutation(snapshotId: snapshotId)
+        await self.afterBeginSnapshotMutation?(lease)
+        return lease
     }
 
     public func finishSnapshotMutation(

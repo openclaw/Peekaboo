@@ -179,6 +179,74 @@ struct ClickToolQueryWaitTests {
         #expect(await fixture.context.uiSnapshots.getSnapshot(id: nil) == nil)
         #expect(await fixture.snapshots.getMostRecentSnapshot() == nil)
         try await Self.expectSourceRetained(fixture)
+        try await Self.expectOriginalLeaseReleased(fixture)
+        Self.expectNoCapture(fixture)
+    }
+
+    @Test(arguments: [false, true])
+    func `pending or consumed original authority refuses a fresh query match`(consumed: Bool) async throws {
+        let fixture = try await ClickQueryWaitFixture.make(steps: [.match])
+        let originalLease = try await fixture.storage.beginSnapshotMutation(snapshotId: fixture.initialSnapshotID)
+        if consumed {
+            try await fixture.storage.finishSnapshotMutation(originalLease, requiresFreshObservation: true)
+        }
+
+        let response = try await fixture.execute()
+
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: response)
+        #expect(fixture.automation.requests.count == 1)
+        #expect(fixture.automation.targetedClickCalls.isEmpty)
+        #expect(fixture.automation.clickCalls.isEmpty)
+        #expect(fixture.automation.uiAutomationOutcomeScript.totalCallCount == 0)
+        #expect(fixture.snapshots.beginCalls == [fixture.initialSnapshotID])
+        #expect(fixture.snapshots.finishCalls.isEmpty)
+        try await Self.expectMatchedSnapshotDiscarded(fixture)
+        try await Self.expectSourceRetained(fixture)
+        Self.expectNoCapture(fixture)
+        if !consumed {
+            try await fixture.storage.finishSnapshotMutation(originalLease, requiresFreshObservation: false)
+        }
+    }
+
+    @Test
+    func `deadline crossed during lease acquisition releases original authority without dispatch`() async throws {
+        let fixture = try await ClickQueryWaitFixture.make(steps: [.match])
+        let acquired = AsyncTestLatch()
+        let resume = AsyncTestLatch()
+        let finished = AsyncTestLatch()
+        let originalSnapshotID = fixture.initialSnapshotID
+        fixture.snapshots.afterBeginSnapshotMutation = { lease in
+            #expect(lease.snapshotId == originalSnapshotID)
+            await acquired.open()
+            await resume.wait()
+        }
+        let execution = fixture.startExecution(waitFor: 500, finished: finished)
+
+        let leaseWasAcquired = await acquired.opensWithin(.seconds(1))
+        #expect(leaseWasAcquired)
+        if leaseWasAcquired {
+            try? await Task.sleep(for: .milliseconds(525))
+            #expect(await finished.isOpen == false)
+        }
+        // Release before throwing assertions so a failure cannot strand the acquired test lease.
+        await resume.open()
+        let completed = await finished.opensWithin(.seconds(1))
+        #expect(completed)
+        fixture.snapshots.afterBeginSnapshotMutation = nil
+        guard completed else {
+            execution.cancel()
+            return
+        }
+        let response = try await execution.value
+
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: response)
+        #expect(Self.responseText(response).contains("within 500ms"))
+        #expect(fixture.automation.targetedClickCalls.isEmpty)
+        #expect(fixture.automation.clickCalls.isEmpty)
+        #expect(fixture.automation.uiAutomationOutcomeScript.totalCallCount == 0)
+        try await Self.expectMatchedSnapshotDiscarded(fixture)
+        try await Self.expectSourceRetained(fixture)
+        try await Self.expectOriginalLeaseReleased(fixture)
         Self.expectNoCapture(fixture)
     }
 
@@ -409,6 +477,16 @@ struct ClickToolQueryWaitTests {
         #expect(await fixture.context.uiSnapshots.getSnapshot(id: fixture.initialSnapshotID) != nil)
         #expect(try await fixture.snapshots.getUIAutomationSnapshot(snapshotId: fixture.initialSnapshotID) != nil)
         #expect(try await fixture.snapshots.listSnapshots().map(\.id) == [fixture.initialSnapshotID])
+    }
+
+    private static func expectOriginalLeaseReleased(_ fixture: ClickQueryWaitFixture) async throws {
+        #expect(fixture.snapshots.beginCalls == [fixture.initialSnapshotID])
+        #expect(fixture.snapshots.finishCalls.count == 1)
+        let completion = try #require(fixture.snapshots.finishCalls.first)
+        #expect(completion.lease.snapshotId == fixture.initialSnapshotID)
+        #expect(!completion.requiresFreshObservation)
+        let reusable = try await fixture.storage.beginSnapshotMutation(snapshotId: fixture.initialSnapshotID)
+        try await fixture.storage.finishSnapshotMutation(reusable, requiresFreshObservation: false)
     }
 
     private static func expectNotDispatched(_ response: ToolResponse) {
