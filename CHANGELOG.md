@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid downloading CLI CI build caches that are immediately discarded; key reusable dependency state by toolchain, manifests, locks, and submodules instead of every commit.
+
 - Propagate ambiguous application running-state checks instead of reporting matching apps as stopped; direct Swift `ApplicationService` callers must now use `try await`. Thanks @SebTardif! #795.
 - Resolve background keyboard focus through the native owning-window link when web text fields do not expose a direct window ID, preserving exact process, window, and focus validation.
 - Accept structured MCP experimental capabilities during initialization, restoring Codex connections; pin the upstream decoder repair and document its Swift dictionary-type migration. Thanks @Wudib! #745.

@@ -276,16 +276,14 @@ jobs:
       - name: Compute SwiftPM cache key (CLI)
         id: cache-key-cli
         env:
-          CACHE_PREFIX: ${{ runner.os }}-spm-cli-
+          CACHE_PREFIX: ${{ runner.os }}-spm-cli-dependencies-v2-
         run: |
           set -euo pipefail
-          if [ -f Apps/CLI/Package.resolved ]; then
-            HASH=$(shasum Apps/CLI/Package.resolved | awk '{print $1}')
-          else
-            echo "Package.resolved missing, falling back to commit SHA"
-            HASH=${GITHUB_SHA}
-          fi
-          echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
+          TOOLCHAIN_HASH=$({ swift --version && xcodebuild -version; } | shasum -a 256 | awk '{print $1}')
+          SOURCE_HASH=$(git ls-files --stage -- Package.swift '**/Package.swift' '**/Package.resolved' \
+            .gitmodules AXorcist Commander Swiftdansi Tachikoma TauTUI | shasum -a 256 | awk '{print $1}')
+          echo "key=${CACHE_PREFIX}${TOOLCHAIN_HASH}-${SOURCE_HASH}" >> "$GITHUB_OUTPUT"
+          echo "restore-prefix=${CACHE_PREFIX}${TOOLCHAIN_HASH}-" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (CLI)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -293,10 +291,9 @@ jobs:
           path: |
             ~/.swiftpm
             ~/.cache/org.swift.swiftpm
-            Apps/CLI/.build
           key: ${{ steps.cache-key-cli.outputs.key }}
           restore-keys: |
-            ${{ runner.os }}-spm-cli-
+            ${{ steps.cache-key-cli.outputs.restore-prefix }}
 
       - name: Clean SwiftPM trait state (CLI)
         run: |
@@ -318,9 +315,6 @@ jobs:
           fi
           if [ -d Apps/CLI/.swiftpm ]; then
             find Apps/CLI/.swiftpm -type f -name traits.json -print -delete || true
-          fi
-          if [ -d Apps/CLI/.build/checkouts ]; then
-            find Apps/CLI/.build/checkouts -type d -name .swiftpm -prune -print -exec rm -rf {} + || true
           fi
           # Avoid caching any package-local state that might remember old trait selections.
           rm -rf Apps/CLI/.build || true
