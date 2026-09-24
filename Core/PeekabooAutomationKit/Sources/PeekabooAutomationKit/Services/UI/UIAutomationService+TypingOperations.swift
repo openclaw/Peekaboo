@@ -20,17 +20,21 @@ extension UIAutomationService {
      * - Throws: `PeekabooError` if target element cannot be found or typing fails
      *
      * ## Focus Management
-     * - **Targeted Typing**: Synthetic delivery focuses the specified element before typing
+     * - **Targeted Typing**: Focuses the specified element before typing; direct AX replacement is
+     *   eligible only when a fresh check proves the named element already receives focus
      * - **Global Typing**: Types into whatever element currently has focus
      * - **Focus Validation**: Ensures element can accept text input before proceeding
+     * - **Focus Read Failures**: Unreadable or uncertain focus stops before input; it is not an
+     *   unsupported-action result and never permits synthetic fallback
      *
      * ## Text Handling
      * - **Unicode Support**: Full Unicode character support including emoji
      * - **Special Characters**: Handles newlines, tabs, and special key combinations
-     * - **Content Clearing**: Action-first named-target replacement prefers one AX value edit;
-     *   unsupported targets use synthetic Cmd+A, Delete
-     * - **Typing Simulation**: Synthetic delivery honors configurable delays between characters;
-     *   direct AX replacement does not focus the element or simulate keystrokes
+     * - **Content Clearing**: Uses Cmd+A, Delete for synthetic delivery; action-first replacement
+     *   may use one AX value edit only with zero typing delay and an already-focused named target
+     * - **Typing Simulation**: Honors configurable delays between characters. A requested positive
+     *   delay or a successfully read focus mismatch uses synthetic delivery under actionFirst;
+     *   actionOnly refuses without dispatch. Explicit synthetic strategies are unchanged
      *
      * ## Visual Feedback
      * When visualizer is connected, displays:
@@ -75,7 +79,7 @@ extension UIAutomationService {
      * ```
      *
      * - Important: Requires Accessibility permission for element-based typing
-     * - Note: Typing delay of 0 results in instant text insertion
+     * - Note: Typing delay of 0 adds no per-character delay
      */
     public func type(
         text: String,

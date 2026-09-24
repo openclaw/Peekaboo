@@ -143,6 +143,18 @@ For background typing, `actionOnly` forbids keyboard events and both synthetic s
 edits. `actionFirst` falls back per unsupported unit, never after an accepted or uncertain write. Native text edits
 can therefore work with Accessibility alone; Event Synthesizing permission is checked only before needed events.
 
+The legacy SDK `type(text:target:clearExisting:typingDelay:snapshotId:)` preserves its named-target focus and
+per-character delay contract under the built-in `actionFirst` policy. Direct AX replacement requires
+`clearExisting: true`, zero `typingDelay`, and a fresh check proving the named target is the current keyboard
+receiver; cached focus or a frontmost app/window alone is insufficient.
+A requested positive delay or a successfully read focus mismatch makes the action route unsupported:
+`actionFirst` uses the existing synthetic focus/clear/type path, while `actionOnly` refuses without dispatch.
+An unreadable or uncertain focus check instead stops before input under either action strategy, without fallback.
+Permission failures, `cannotComplete`, missing or malformed focus values, and timeouts are errors, not evidence
+that the target is unfocused. Explicit `synthFirst` and `synthOnly` retain their existing synthetic behavior.
+These SDK eligibility checks do not change the global/per-app strategy precedence or the CLI foreground
+action-array path.
+
 Config example:
 
 ```json

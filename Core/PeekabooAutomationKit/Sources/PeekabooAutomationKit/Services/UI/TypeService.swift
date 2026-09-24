@@ -98,6 +98,7 @@ public final class TypeService {
     private let syntheticInputDriver: any SyntheticInputDriving
     private let automationElementResolver: any AutomationElementResolving
     private let focusedElementSecurityProbe: @MainActor (pid_t?) -> Bool
+    private let focusedUIElementReader: @MainActor () throws -> AXUIElement
     private let targetedCharacterTyper: (@MainActor (
         Character,
         pid_t,
@@ -173,6 +174,7 @@ public final class TypeService {
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
         randomSource: any TypingCadenceRandomSource,
         focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField,
+        focusedUIElementReader: @escaping @MainActor () throws -> AXUIElement = TypeService.readCurrentFocusedElement,
         targetedCharacterTyper: (@MainActor (
             Character,
             pid_t,
@@ -215,6 +217,7 @@ public final class TypeService {
         self.automationElementResolver = automationElementResolver
         self.cadenceRandom = randomSource
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
+        self.focusedUIElementReader = focusedUIElementReader
         self.targetedCharacterTyper = targetedCharacterTyper
         self.targetedSpecialKeyTyper = targetedSpecialKeyTyper
         var targetedInputDriver = targetedInputDriver
@@ -296,6 +299,7 @@ public final class TypeService {
                     text: text,
                     target: target,
                     clearExisting: clearExisting,
+                    typingDelay: typingDelay,
                     snapshotId: snapshotId)
             },
             synthesis: DesktopOperationPlan.SynthesisRoute {
@@ -318,6 +322,7 @@ public final class TypeService {
         text: String,
         target: String?,
         clearExisting: Bool,
+        typingDelay: Int,
         snapshotId: String?) async throws -> UIInputExecutionResult.Action
     {
         guard let target,
@@ -325,11 +330,39 @@ public final class TypeService {
         else {
             throw ActionInputError.unsupported(.missingElement)
         }
-
+        guard clearExisting else {
+            throw ActionInputError.unsupported(.attributeUnsupported)
+        }
+        guard typingDelay == 0 else {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
+        // Whole-value replacement cannot establish focus or honor requested per-keystroke pacing.
+        // Read the live global receiver; AXorcist's stored AXFocused attribute may be stale.
+        let focusedElement = try self.focusedUIElementReader()
+        guard CFEqual(focusedElement, element.element.underlyingElement) else {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
         return try self.actionInputDriver.trySetText(
             element: element,
             text: text,
             replace: clearExisting)
+    }
+
+    static func readCurrentFocusedElement() throws -> AXUIElement {
+        try Element.systemWide().withMessagingTimeout(0.25) { systemWide in
+            var focused: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(
+                systemWide.underlyingElement,
+                kAXFocusedUIElementAttribute as CFString,
+                &focused)
+            guard result == .success else {
+                throw AccessibilitySystemError(result)
+            }
+            guard let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+                throw ActionInputError.failed("Current keyboard focus returned no valid accessibility element")
+            }
+            return unsafeDowncast(focused, to: AXUIElement.self)
+        }
     }
 
     private func performSyntheticType(

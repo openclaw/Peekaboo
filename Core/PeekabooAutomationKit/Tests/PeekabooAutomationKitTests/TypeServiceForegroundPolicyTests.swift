@@ -1,5 +1,7 @@
 import AppKit
 import ApplicationServices
+import struct AXorcist.AccessibilitySystemError
+import enum AXorcist.AXMessagingTimeoutError
 import struct AXorcist.Element
 import enum AXorcist.MouseButton
 import enum AXorcist.SpecialKey
@@ -11,9 +13,12 @@ import Testing
 
 @MainActor
 struct TypeServiceForegroundPolicyTests {
-    @Test
-    func `built-in named legacy replacement uses AX without synthetic input`() async throws {
-        let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior)
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly])
+    func `already-focused zero-delay replacement uses fresh focus despite cached unfocused state`(
+        strategy: UIInputStrategy) async throws
+    {
+        let policy = strategy == .actionFirst ? UIInputPolicy.currentBehavior : UIInputPolicy(defaultStrategy: strategy)
+        let fixture = try await ForegroundTypePolicyFixture(policy: policy, cachedFocused: false)
         defer { fixture.cleanup() }
 
         let result = try await fixture.service.type(
@@ -23,12 +28,242 @@ struct TypeServiceForegroundPolicyTests {
             typingDelay: 0,
             snapshotId: fixture.snapshotID)
 
-        #expect(result.strategy == .actionFirst)
+        #expect(result.strategy == strategy)
         #expect(result.path == .action)
+        #expect(result.fallbackReason == nil)
         #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+        #expect(fixture.focus.readCount == 1)
         #expect(fixture.action.replacementFlags == [true])
         #expect(fixture.action.field.setValues == [.string("after")])
         #expect(fixture.action.field.stringValue == "after")
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test
+    func `positive legacy typing delay falls back before any AX replacement`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior)
+        defer { fixture.cleanup() }
+        fixture.focus.failure = ActionInputError.permissionDenied
+
+        let result = try await fixture.service.type(
+            text: "ab",
+            target: "Input",
+            clearExisting: true,
+            typingDelay: 1,
+            snapshotId: fixture.snapshotID)
+
+        #expect(result.strategy == .actionFirst)
+        #expect(result.path == .synth)
+        #expect(result.fallbackReason == .actionUnsupported)
+        #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(fixture.focus.readCount == 0)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
+        #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
+        #expect(fixture.synthetic.pointer.events == [.click(
+            point: CGPoint(x: 120, y: 45), button: .left, count: 1)])
+    }
+
+    @Test
+    func `action-only refuses positive legacy typing delay without dispatch`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: .actionOnly))
+        defer { fixture.cleanup() }
+        fixture.focus.failure = ActionInputError.permissionDenied
+
+        await #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
+            try await fixture.service.type(
+                text: "ab",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 1,
+                snapshotId: fixture.snapshotID)
+        }
+
+        #expect(fixture.focus.readCount == 0)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test
+    func `fresh mismatched focus ignores cached focused state and falls back before AX`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior, cachedFocused: true)
+        defer { fixture.cleanup() }
+        fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
+
+        let result = try await fixture.service.type(
+            text: "ab",
+            target: "Input",
+            clearExisting: true,
+            typingDelay: 0,
+            snapshotId: fixture.snapshotID)
+
+        #expect(result.strategy == .actionFirst)
+        #expect(result.path == .synth)
+        #expect(result.fallbackReason == .actionUnsupported)
+        #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
+        #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
+        #expect(fixture.synthetic.pointer.events == [.click(
+            point: CGPoint(x: 120, y: 45), button: .left, count: 1)])
+    }
+
+    @Test
+    func `action-only refuses fresh mismatched focus despite cached focused state`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(
+            policy: UIInputPolicy(defaultStrategy: .actionOnly),
+            cachedFocused: true)
+        defer { fixture.cleanup() }
+        fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
+
+        await #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
+            try await fixture.service.type(
+                text: "ab",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: fixture.snapshotID)
+        }
+
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], [
+        ActionInputError.permissionDenied,
+        .targetUnavailable,
+        .staleElement,
+        .failed("focus probe failure"),
+    ])
+    func `failed fresh focus read never authorizes fallback`(
+        strategy: UIInputStrategy,
+        failure: ActionInputError) async throws
+    {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: strategy))
+        defer { fixture.cleanup() }
+        fixture.focus.failure = failure
+
+        await #expect(throws: failure) {
+            try await fixture.service.type(
+                text: "ab",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: fixture.snapshotID)
+        }
+
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], [
+        AXError.apiDisabled,
+        .cannotComplete,
+        .invalidUIElement,
+        .attributeUnsupported,
+        .noValue,
+    ])
+    func `native focus read errors remain strict even when the attribute is unsupported`(
+        strategy: UIInputStrategy,
+        axError: AXError) async throws
+    {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: strategy))
+        defer { fixture.cleanup() }
+        fixture.focus.failure = AccessibilitySystemError(axError)
+
+        let failure = await #expect(throws: AccessibilitySystemError.self) {
+            try await fixture.service.type(
+                text: "ab",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: fixture.snapshotID)
+        }
+
+        #expect(failure?.axError == axError)
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly])
+    func `focus read timeout scope failure never authorizes fallback`(strategy: UIInputStrategy) async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: strategy))
+        defer { fixture.cleanup() }
+        let failure = AXMessagingTimeoutError.systemFailure(code: AXError.cannotComplete.rawValue)
+        fixture.focus.failure = failure
+
+        await #expect(throws: failure) {
+            try await fixture.service.type(
+                text: "ab",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: fixture.snapshotID)
+        }
+
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test
+    func `legacy action route reads focus again for every call`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: .actionOnly))
+        defer { fixture.cleanup() }
+
+        let first = try await fixture.service.type(
+            text: "first",
+            target: "Input",
+            clearExisting: true,
+            typingDelay: 0,
+            snapshotId: fixture.snapshotID)
+        #expect(first.path == .action)
+        #expect(fixture.focus.readCount == 1)
+
+        fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
+        await #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
+            try await fixture.service.type(
+                text: "not delivered",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: fixture.snapshotID)
+        }
+        #expect(fixture.focus.readCount == 2)
+        #expect(fixture.action.field.stringValue == "first")
+
+        fixture.focus.element = AXUIElementCreateApplication(getpid())
+        let last = try await fixture.service.type(
+            text: "last",
+            target: "Input",
+            clearExisting: true,
+            typingDelay: 0,
+            snapshotId: fixture.snapshotID)
+
+        #expect(last.path == .action)
+        #expect(fixture.focus.readCount == 3)
+        #expect(fixture.action.replacementFlags == [true, true])
+        #expect(fixture.action.field.setValues == [.string("first"), .string("last")])
+        #expect(fixture.action.field.stringValue == "last")
         #expect(fixture.synthetic.events.isEmpty)
         #expect(fixture.synthetic.pointer.events.isEmpty)
     }
@@ -49,6 +284,7 @@ struct TypeServiceForegroundPolicyTests {
         #expect(result.path == .synth)
         #expect(result.fallbackReason == .missingElement)
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(fixture.focus.readCount == 0)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
@@ -71,15 +307,17 @@ struct TypeServiceForegroundPolicyTests {
         #expect(summary.result.totalCharacters == 2)
         #expect(summary.result.keyPresses == 4)
         #expect(summary.result.specialKeyPresses == 2)
+        #expect(fixture.focus.readCount == 0)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
         #expect(fixture.synthetic.pointer.events.isEmpty)
     }
 
-    @Test(arguments: [UIInputStrategy.synthFirst, .synthOnly])
+    @Test(arguments: [UIInputStrategy.synthFirst, .synthOnly], [0, 1])
     func `explicit synthetic strategy keeps named legacy replacement synthetic`(
-        strategy: UIInputStrategy) async throws
+        strategy: UIInputStrategy,
+        typingDelay: Int) async throws
     {
         let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: strategy))
         defer { fixture.cleanup() }
@@ -88,13 +326,14 @@ struct TypeServiceForegroundPolicyTests {
             text: "ab",
             target: "Input",
             clearExisting: true,
-            typingDelay: 0,
+            typingDelay: typingDelay,
             snapshotId: fixture.snapshotID)
 
         #expect(result.strategy == strategy)
         #expect(result.path == .synth)
         #expect(result.fallbackReason == nil)
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(fixture.focus.readCount == 0)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
@@ -115,11 +354,14 @@ private final class ForegroundTypePolicyFixture {
     let snapshotID = SnapshotReferenceFixtures.first.rawValue
     let action = ForegroundTypeActionDriver()
     let synthetic = ForegroundTypeSyntheticDriver()
+    let focus: ForegroundTypeFocusProbe
     let service: TypeService
     private let coordinationRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("foreground-type-policy-\(UUID().uuidString)", isDirectory: true)
 
-    init(policy: UIInputPolicy) async throws {
+    init(policy: UIInputPolicy, cachedFocused: Bool = false) async throws {
+        let focus = ForegroundTypeFocusProbe(element: AXUIElementCreateApplication(getpid()))
+        self.focus = focus
         let detected = DetectedElement(
             id: "T1",
             type: .textField,
@@ -140,9 +382,10 @@ private final class ForegroundTypePolicyFixture {
             inputPolicy: policy,
             actionInputDriver: self.action,
             syntheticInputDriver: self.synthetic,
-            automationElementResolver: ForegroundTypeElementResolver(),
+            automationElementResolver: ForegroundTypeElementResolver(cachedFocused: cachedFocused),
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
+            focusedUIElementReader: { try focus.read() },
             desktopOperationExecutor: DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
                 coordinationRootURL: self.coordinationRoot)))
     }
@@ -154,12 +397,19 @@ private final class ForegroundTypePolicyFixture {
 
 @MainActor
 private struct ForegroundTypeElementResolver: AutomationElementResolving {
-    /// Cached role metadata keeps secure-field classification entirely in memory.
-    private let element = AutomationElement(Element(
-        AXUIElementCreateApplication(getpid()),
-        attributes: ["AXRole": .string("AXTextField"), "AXSubrole": .string("AXUnknown")],
-        children: [],
-        actions: []))
+    private let element: AutomationElement
+
+    init(cachedFocused: Bool) {
+        self.element = AutomationElement(Element(
+            AXUIElementCreateApplication(getpid()),
+            attributes: [
+                "AXRole": .string("AXTextField"),
+                "AXSubrole": .string("AXUnknown"),
+                "AXFocused": .bool(cachedFocused),
+            ],
+            children: [],
+            actions: []))
+    }
 
     func resolve(
         detectedElement _: DetectedElement,
@@ -176,6 +426,25 @@ private struct ForegroundTypeElementResolver: AutomationElementResolving {
         requireTextInput _: Bool) -> AutomationElement?
     {
         self.element
+    }
+}
+
+@MainActor
+private final class ForegroundTypeFocusProbe {
+    var element: AXUIElement
+    var failure: (any Error)?
+    private(set) var readCount = 0
+
+    init(element: AXUIElement) {
+        self.element = element
+    }
+
+    func read() throws -> AXUIElement {
+        self.readCount += 1
+        if let failure = self.failure {
+            throw failure
+        }
+        return self.element
     }
 }
 
