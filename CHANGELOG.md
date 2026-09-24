@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Resolve background keyboard focus through the native owning-window link when web text fields do not expose a direct window ID, preserving exact process, window, and focus validation.
+- Accept structured MCP experimental capabilities during initialization, restoring Codex connections; pin the upstream decoder repair and document its Swift dictionary-type migration. Thanks @Wudib! #745.
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 - Stop reporting hidden windows as on screen when native visibility metadata is omitted or as minimized in text listings; align native and classic capture metadata while preserving exact-window targeting and partial-inventory diagnostics. #779.
 - Align internal and public SwiftPM consumers on AXorcist 0.1.11 to preserve native numeric values, improve geometry/range parsing, and reject invalid scroll amounts before input dispatch.
