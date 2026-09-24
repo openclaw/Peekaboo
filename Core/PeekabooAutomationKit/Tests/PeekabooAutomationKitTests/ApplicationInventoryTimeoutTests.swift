@@ -568,8 +568,16 @@ struct ApplicationInventoryTimeoutTests {
 
     enum NativeInventoryPhase: String, CaseIterable, Sendable {
         case listingPID, listingCatalog, listingFinalGeneration
+        case listingAbsenceObservation, listingAbsenceConfirmation
         case mutationPID, mutationSelector, mutationFinalGeneration
         case mutationEligibility, mutationEligibilityRecheck, mutationDeniedGenerationRecheck
+
+        var readsAbsence: Bool {
+            switch self {
+            case .listingAbsenceObservation, .listingAbsenceConfirmation: true
+            default: false
+            }
+        }
 
         var readsDeniedGeneration: Bool {
             switch self {
@@ -581,7 +589,8 @@ struct ApplicationInventoryTimeoutTests {
         @MainActor
         func observe(_ service: ApplicationService) async throws -> [ServiceApplicationInfo] {
             switch self {
-            case .listingPID, .listingCatalog, .listingFinalGeneration:
+            case .listingPID, .listingCatalog, .listingFinalGeneration,
+                 .listingAbsenceObservation, .listingAbsenceConfirmation:
                 try await service.listApplications().data.applications
             case .mutationPID, .mutationSelector, .mutationFinalGeneration,
                  .mutationEligibility, .mutationEligibilityRecheck, .mutationDeniedGenerationRecheck:
@@ -609,9 +618,17 @@ struct ApplicationInventoryTimeoutTests {
             gate.waitWithEmergencyRelease()
             gate.markFinished()
         }
-        let deniedIdentityProvider: ApplicationService.MutationIdentityObservationProvider = { identifier in
+        let identityObservationProvider: ApplicationService.MutationIdentityObservationProvider = { identifier in
             #expect(identifier == pid)
             let read = generationReads.withValue { $0 += 1; return $0 }
+            if phase.readsAbsence {
+                #expect(read == 2 || read == 3)
+                #expect(selectorReads.value == 0)
+                #expect(metadataReads.value == 0)
+                #expect(eligibilityReads.value == 0)
+                block(read == 2 ? .listingAbsenceObservation : .listingAbsenceConfirmation)
+                return .absent
+            }
             if read == 3 {
                 block(.mutationDeniedGenerationRecheck)
             }
@@ -634,6 +651,10 @@ struct ApplicationInventoryTimeoutTests {
             processStartIdentityProvider: { identifier in
                 #expect(identifier == pid)
                 let read = generationReads.withValue { $0 += 1; return $0 }
+                if phase.readsAbsence {
+                    #expect(read == 1)
+                    return nil
+                }
                 if read == 2 {
                     if phase == .listingFinalGeneration {
                         #expect(metadataReads.value == 1)
@@ -647,7 +668,8 @@ struct ApplicationInventoryTimeoutTests {
                 }
                 return 7
             },
-            mutationIdentityObservationProvider: phase.readsDeniedGeneration ? deniedIdentityProvider : nil,
+            mutationIdentityObservationProvider: phase.readsDeniedGeneration || phase.readsAbsence
+                ? identityObservationProvider : nil,
             mutationEligibilityProvider: { identifier in
                 #expect(identifier == pid)
                 let read = eligibilityReads.withValue { $0 += 1; return $0 }
