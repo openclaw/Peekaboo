@@ -391,7 +391,7 @@ enum AutomationServiceBridge {
                     reason: "Exact-window hotkeys require a focused-element receipt"
                 )
             }
-            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+            return try await ExactWindowKeyboardRuntime.validateHotkeyRouteReceipt(
                 outcomeService.hotkeyWithOutcome(
                     keys: keys,
                     holdDuration: holdDuration,
@@ -401,6 +401,7 @@ enum AutomationServiceBridge {
                         focusedElement: focusedElement
                     )
                 ),
+                keys: keys,
                 operation: "Background hotkeys"
             )
         }

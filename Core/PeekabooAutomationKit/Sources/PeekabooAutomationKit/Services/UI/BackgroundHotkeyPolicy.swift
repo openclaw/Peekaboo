@@ -9,7 +9,7 @@ public enum BackgroundHotkeyPolicy {
     /// Process-targeted CoreGraphics events have no acknowledgement from the receiving app. Lifecycle and
     /// window-management shortcuts therefore use Peekaboo's semantic commands, which can verify their effects.
     public static func validate(keys: String) throws {
-        let parsedKeys = try Self.parsedKeys(keys)
+        let parsedKeys = try HotkeyService.parsedKeys(keys)
         let plan = try HotkeyService.HotkeyChord(keys: parsedKeys).plan
 
         guard plan.modifierFlags == .maskCommand,
@@ -23,17 +23,6 @@ public enum BackgroundHotkeyPolicy {
             "Background \(chord) cannot be verified after process-targeted delivery. " +
                 "Use `\(alternative)` for verified background behavior, or add `--foreground` " +
                 "to send \(chord) explicitly.")
-    }
-
-    private static func parsedKeys(_ keys: String) throws -> [String] {
-        let parsed = keys
-            .components(separatedBy: CharacterSet(charactersIn: ",+").union(.whitespacesAndNewlines))
-            .map { HotkeyService.HotkeyKey.normalizedName(for: $0) }
-            .filter { !$0.isEmpty }
-        guard !parsed.isEmpty else {
-            throw PeekabooError.invalidInput("Hotkey string is empty")
-        }
-        return parsed
     }
 
     private static func semanticAlternative(for primaryKey: String) -> String? {

@@ -7,7 +7,7 @@ extension HotkeyService {
         try HotkeyChord(keys: keys).plan
     }
 
-    func parsedKeys(_ keys: String) throws -> [String] {
+    nonisolated static func parsedKeys(_ keys: String) throws -> [String] {
         let parsed = keys
             .components(separatedBy: CharacterSet(charactersIn: ",+").union(.whitespacesAndNewlines))
             .map { HotkeyKey.normalizedName(for: $0) }
