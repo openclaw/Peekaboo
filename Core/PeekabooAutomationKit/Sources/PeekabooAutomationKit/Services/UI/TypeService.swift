@@ -184,7 +184,12 @@ public final class TypeService {
             pid_t,
             DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary)? = nil,
         targetedKeyTapper: (@MainActor (CGKeyCode, CGEventFlags, pid_t) throws -> Void)? = nil,
-        targetedTextReplacer: (@MainActor (String, pid_t) throws -> Bool)? = nil,
+        targetedTextReplacer: (@MainActor (
+            String,
+            pid_t,
+            UIAutomationTarget.ExactWindow?,
+            KeyboardFocusValidationPhase,
+            Element?) throws -> Bool)? = nil,
         targetedInputDriver: TargetedTypeInputDriver = TargetedTypeInputDriver(),
         targetBundleIdentifier: @escaping @MainActor (pid_t) -> String? = {
             NSRunningApplication(processIdentifier: $0)?.bundleIdentifier
@@ -467,6 +472,7 @@ public final class TypeService {
         targetProcessIdentifier: pid_t?,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
         continuationValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+        validatedReceiverProvider: @escaping @MainActor @Sendable () -> Element? = { nil },
         expectedProcessIdentity: ApplicationProcessIdentity? = nil,
         lanePreparation: @escaping @MainActor () async -> Void = {},
         laneCompletion: @escaping @MainActor (TypeActionExecutionSummary) async -> Void = { _ in }) async throws
@@ -486,6 +492,7 @@ public final class TypeService {
             automationTarget: automationTarget,
             deliveryValidator: deliveryValidator,
             continuationValidator: continuationValidator,
+            validatedReceiverProvider: validatedReceiverProvider,
             lanePreparation: lanePreparation,
             laneCompletion: laneCompletion)
     }
@@ -497,6 +504,7 @@ public final class TypeService {
         automationTarget: UIAutomationTarget,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
         continuationValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+        validatedReceiverProvider: @escaping @MainActor @Sendable () -> Element? = { nil },
         lanePreparation: @escaping @MainActor () async -> Void = {},
         laneCompletion: @escaping @MainActor (TypeActionExecutionSummary) async -> Void = { _ in }) async throws
         -> TypeActionExecutionSummary
@@ -517,7 +525,8 @@ public final class TypeService {
                 automationTarget: automationTarget,
                 targetedStrategy: strategy,
                 deliveryValidator: deliveryValidator,
-                continuationValidator: continuationValidator)
+                continuationValidator: continuationValidator,
+                validatedReceiverProvider: validatedReceiverProvider)
             guard let payloadSummary else {
                 throw PeekabooError.operationError(message: "Type action execution produced no payload")
             }
@@ -592,7 +601,8 @@ public final class TypeService {
         automationTarget: UIAutomationTarget,
         targetedStrategy: UIInputStrategy,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)?,
-        continuationValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
+        continuationValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+        validatedReceiverProvider: @escaping @MainActor @Sendable () -> Element? = { nil }) async throws
         -> TypeActionPayloadSummary
     {
         let targetProcessIdentifier = automationTarget.processIdentifier
@@ -628,6 +638,9 @@ public final class TypeService {
                             let dispatch = try await self.typeCharacter(
                                 character,
                                 targetProcessIdentifier: targetProcessIdentifier,
+                                exactWindow: automationTarget.exactWindow,
+                                phase: emittedUnitCount > 0 ? .continuation : .initial,
+                                validatedReceiver: validatedReceiverProvider(),
                                 targetedStrategy: targetedStrategy,
                                 keyboardDelivery: keyboardDelivery)
                             deliverySummary.record(dispatch)
@@ -657,9 +670,10 @@ public final class TypeService {
                     do {
                         let dispatch = try self.dispatchSpecialKey(
                             key,
-                            targetProcessIdentifier: targetProcessIdentifier,
-                            targetedStrategy: targetedStrategy,
-                            keyboardDelivery: keyboardDelivery)
+                            automationTarget: automationTarget,
+                            phase: emittedUnitCount > 0 ? .continuation : .initial,
+                            validatedReceiver: validatedReceiverProvider(),
+                            targetedStrategy: targetedStrategy)
                         deliverySummary.record(dispatch)
                         keyPresses += dispatch.keyPressCount
                         specialKeyPresses += dispatch.keyPressCount
@@ -681,10 +695,12 @@ public final class TypeService {
                 case .clear:
                     let clearSummary = try await self.clearCurrentField(
                         targetProcessIdentifier: targetProcessIdentifier,
+                        exactWindow: automationTarget.exactWindow,
                         targetedStrategy: targetedStrategy,
                         keyboardDelivery: keyboardDelivery,
                         deliveryValidator: deliveryValidator,
                         continuationValidator: continuationValidator,
+                        validatedReceiverProvider: validatedReceiverProvider,
                         priorEmittedUnitCount: emittedUnitCount)
                     emittedUnitCount += clearSummary.dispatchedUnitCount
                     deliverySummary.record(clearSummary)
@@ -828,28 +844,35 @@ extension TypeService {
 
     private func dispatchSpecialKey(
         _ key: PeekabooFoundation.SpecialKey,
-        targetProcessIdentifier: pid_t?,
-        targetedStrategy: UIInputStrategy,
-        keyboardDelivery: DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
+        automationTarget: UIAutomationTarget,
+        phase: KeyboardFocusValidationPhase,
+        validatedReceiver: Element?,
+        targetedStrategy: UIInputStrategy) throws -> TypeActionDispatchSummary
     {
-        if let targetProcessIdentifier {
-            try self.targetedSpecialKeyTyper?(key, targetProcessIdentifier, keyboardDelivery) ??
+        let keyboardDelivery = automationTarget.keyboardDelivery
+        if let targetProcessIdentifier = automationTarget.processIdentifier {
+            return try self.targetedSpecialKeyTyper?(key, targetProcessIdentifier, keyboardDelivery) ??
                 self.targetedInputDriver.specialKey(
                     key,
                     processIdentifier: targetProcessIdentifier,
+                    exactWindow: automationTarget.exactWindow,
+                    phase: phase,
+                    validatedReceiver: validatedReceiver,
                     strategy: targetedStrategy,
                     keyboardDelivery: keyboardDelivery)
         } else {
-            try self.typeSpecialKey(key, keyboardDelivery: keyboardDelivery)
+            return try self.typeSpecialKey(key, keyboardDelivery: keyboardDelivery)
         }
     }
 
     private func clearCurrentField(
         targetProcessIdentifier: pid_t? = nil,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
         targetedStrategy: UIInputStrategy = .synthOnly,
         keyboardDelivery: DesktopActionOutcome.Delivery? = nil,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
         continuationValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+        validatedReceiverProvider: @MainActor @Sendable () -> Element? = { nil },
         priorEmittedUnitCount: Int = 0) async throws -> TypeActionDispatchSummary
     {
         self.logger.debug("Clearing current field")
@@ -865,6 +888,9 @@ extension TypeService {
             do {
                 if try self.targetedInputDriver.clearUsingAccessibility(
                     processIdentifier: targetProcessIdentifier,
+                    exactWindow: exactWindow,
+                    phase: priorEmittedUnitCount > 0 ? .continuation : .initial,
+                    validatedReceiver: validatedReceiverProvider(),
                     strategy: targetedStrategy)
                 {
                     do {
@@ -1002,6 +1028,9 @@ extension TypeService {
     private func typeCharacter(
         _ char: Character,
         targetProcessIdentifier: pid_t? = nil,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil,
         targetedStrategy: UIInputStrategy = .synthOnly,
         keyboardDelivery: DesktopActionOutcome.Delivery) async throws -> TypeActionDispatchSummary
     {
@@ -1010,6 +1039,9 @@ extension TypeService {
                 self.targetedInputDriver.character(
                     char,
                     processIdentifier: targetProcessIdentifier,
+                    exactWindow: exactWindow,
+                    phase: phase,
+                    validatedReceiver: validatedReceiver,
                     strategy: targetedStrategy,
                     keyboardDelivery: keyboardDelivery)
         } else {
@@ -1060,7 +1092,8 @@ extension TypeService {
         _ request: ExactWindowPixelFocusTypeRequest,
         deliveryValidator: @escaping @MainActor @Sendable (
             FocusedElementIdentity) async throws -> Void,
-        continuationValidator: (@MainActor @Sendable (FocusedElementIdentity) async throws -> Void)? = nil) async throws
+        continuationValidator: (@MainActor @Sendable (FocusedElementIdentity) async throws -> Void)? = nil,
+        validatedReceiverProvider: @escaping @MainActor @Sendable () -> Element? = { nil }) async throws
         -> UIAutomationActionResult<TypeResult>
     {
         guard request.point.x.isFinite, request.point.y.isFinite else {
@@ -1083,8 +1116,12 @@ extension TypeService {
             result = try await self.executePixelFocusType(
                 request,
                 exactWindow: exactWindow,
-                deliveryValidator: deliveryValidator,
-                continuationValidator: continuationValidator,
+                deliveryValidator: { element, phase in
+                    let validator = phase == .continuation ? continuationValidator ?? deliveryValidator :
+                        deliveryValidator
+                    try await validator(element)
+                },
+                validatedReceiverProvider: validatedReceiverProvider,
                 planDidEnter: { planEntryState.entered = true })
         } catch let error as SnapshotTargetReceiptPreDispatchError {
             try? await self.snapshotManager.finishSnapshotMutation(
@@ -1164,8 +1201,8 @@ extension TypeService {
         _ request: ExactWindowPixelFocusTypeRequest,
         exactWindow: UIAutomationTarget.ExactWindow,
         deliveryValidator: @escaping @MainActor @Sendable (
-            FocusedElementIdentity) async throws -> Void,
-        continuationValidator: (@MainActor @Sendable (FocusedElementIdentity) async throws -> Void)?,
+            FocusedElementIdentity, KeyboardFocusValidationPhase) async throws -> Void,
+        validatedReceiverProvider: @escaping @MainActor @Sendable () -> Element?,
         planDidEnter: @escaping @MainActor @Sendable () -> Void) async throws
         -> UIAutomationActionResult<TypeResult>
     {
@@ -1223,26 +1260,26 @@ extension TypeService {
 
                     let focusedElement = focus.payload
                     let validateFocusedElement: @MainActor @Sendable () async throws -> Void = {
-                        try await deliveryValidator(focusedElement)
+                        try await deliveryValidator(focusedElement, .initial)
                     }
                     try await validateFocusedElement()
-                    let effectConfirmation = try ExactLiteralTypingEffectConfirmation.plan(
-                        actions: request.actions,
-                        target: .init(
-                            identity: exactWindow.identity,
-                            bounds: exactWindow.bounds,
-                            focusedElement: focusedElement))
+                    let typingExactWindow = try UIAutomationTarget.ExactWindow(
+                        identity: exactWindow.identity,
+                        bounds: exactWindow.bounds,
+                        focusedElement: focusedElement)
+                    let effectConfirmation = ExactLiteralTypingEffectConfirmation.plan(
+                        actions: request.actions, target: typingExactWindow)
                     let confirmationPreflightValue = await self.prepareEffectConfirmationBaseline(
                         effectConfirmation,
                         lanePreparation: {})
                     let typed = try await self.performTypeActions(
                         request.actions,
                         cadence: request.cadence,
-                        automationTarget: automationTarget,
+                        automationTarget: .exactWindow(typingExactWindow),
                         targetedStrategy: targetedStrategy,
                         deliveryValidator: validateFocusedElement,
-                        continuationValidator: { try await (continuationValidator ?? deliveryValidator)(focusedElement)
-                        })
+                        continuationValidator: { try await deliveryValidator(focusedElement, .continuation) },
+                        validatedReceiverProvider: validatedReceiverProvider)
                     guard let typingDelivery = typed.delivery,
                           let typingUnits = DesktopActionOutcome.DispatchUnitCount(typed.dispatchedUnitCount)
                     else {

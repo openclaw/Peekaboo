@@ -1,4 +1,5 @@
 import ApplicationServices
+import struct AXorcist.Element
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
@@ -38,6 +39,15 @@ struct TargetedTypeInputPolicyTests {
             let usesAccessibility = strategy == .actionOnly || strategy == .actionFirst
             let units = usesAccessibility ? payload.actionUnits : payload.eventUnits
             #expect(fixture.actionCalls.count == (usesAccessibility ? payload.actionUnits : 0))
+            #expect(fixture.actionProcessIdentifiers == Array(
+                repeating: getpid(), count: usesAccessibility ? payload.actionUnits : 0))
+            #expect(fixture.actionWindows == Array(
+                repeating: fixture.requestedExactWindow, count: usesAccessibility ? payload.actionUnits : 0))
+            #expect(fixture.actionReceiverIdentities == Array(
+                repeating: fixture.providedReceiver.map { ObjectIdentifier($0.underlyingElement) },
+                count: usesAccessibility ? payload.actionUnits : 0))
+            #expect(fixture.actionPhases.map { $0 == .initial } == (usesAccessibility
+                    ? [true] + Array(repeating: false, count: payload.actionUnits - 1) : []))
             #expect(fixture.eventCalls.count == (usesAccessibility ? 0 : payload.eventUnits))
             #expect(result.result.keyPresses == (usesAccessibility ? 0 : payload.eventUnits))
             #expect(result.result.specialKeyPresses == (usesAccessibility || payload == .text ? 0 : payload.eventUnits))
@@ -53,6 +63,23 @@ struct TargetedTypeInputPolicyTests {
                 #expect(fixture.validationEventCounts == [0, 1, 2])
             }
         }
+    }
+
+    @Test(arguments: [false, true])
+    func `native text key and clear retain the receiver receipt after an accepted prefix`(
+        exactWindow: Bool) async throws
+    {
+        let fixture = Fixture()
+        _ = try await fixture.run(
+            [.text("ab"), .key(.space), .clear], strategy: .actionOnly, exactWindow: exactWindow)
+
+        #expect(fixture.actionCalls == ["insert:a", "insert:b", "edit:space", "clear"])
+        #expect(fixture.actionProcessIdentifiers == Array(repeating: getpid(), count: 4))
+        #expect(fixture.actionWindows == Array(repeating: fixture.requestedExactWindow, count: 4))
+        #expect(fixture.actionReceiverIdentities == Array(
+            repeating: fixture.providedReceiver.map { ObjectIdentifier($0.underlyingElement) }, count: 4))
+        #expect(fixture.actionPhases.map { $0 == .initial } == [true, false, false, false])
+        #expect(fixture.eventCalls.isEmpty)
     }
 
     @Test(arguments: Payload.allCases)
@@ -283,6 +310,12 @@ struct TargetedTypeInputPolicyTests {
 @MainActor
 private final class Fixture {
     var actionCalls: [String] = []
+    var actionProcessIdentifiers: [pid_t] = []
+    var actionWindows: [UIAutomationTarget.ExactWindow?] = []
+    var actionPhases: [KeyboardFocusValidationPhase] = []
+    var actionReceiverIdentities: [ObjectIdentifier?] = []
+    var providedReceiver: Element?
+    var requestedExactWindow: UIAutomationTarget.ExactWindow?
     var eventCalls: [String] = []
     var validationEventCounts: [Int] = []
     var actionResult = FocusedTextKeyDispatch.accessibilityValue
@@ -311,9 +344,24 @@ private final class Fixture {
         exactWindow: Bool = true) async throws -> TypeService.TypeActionExecutionSummary
     {
         let driver = TargetedTypeInputDriver(
-            insertText: { text, _ in try self.action("insert:\(text)") == .accessibilityValue },
-            performTextKey: { key, _ in try self.action("edit:\(key.rawValue)") },
-            replaceText: { _, _ in try self.action("clear") == .accessibilityValue },
+            insertText: { text, pid, window, phase, receiver in
+                try self.action(
+                    "insert:\(text)", processIdentifier: pid, exactWindow: window, phase: phase, receiver: receiver)
+                    == .accessibilityValue
+            },
+            performTextKey: { key, pid, window, phase, receiver in
+                try self.action(
+                    "edit:\(key.rawValue)",
+                    processIdentifier: pid,
+                    exactWindow: window,
+                    phase: phase,
+                    receiver: receiver)
+            },
+            replaceText: { _, pid, window, phase, receiver in
+                try self.action(
+                    "clear", processIdentifier: pid, exactWindow: window, phase: phase, receiver: receiver)
+                    == .accessibilityValue
+            },
             typeCharacter: { character, _ in try self.event("text:\(character)") },
             tapKey: { code, flags, _ in try self.event("key:\(code):\(flags.rawValue)") })
         let service = TypeService(
@@ -335,6 +383,8 @@ private final class Fixture {
                 ownerProcessStartIdentity: process.processStartIdentity,
                 capturedBounds: bounds),
             bounds: bounds)) : .process(.init(processIdentifier: process.processIdentifier, identity: process))
+        self.requestedExactWindow = target.exactWindow
+        self.providedReceiver = exactWindow ? Element(AXUIElementCreateApplication(process.processIdentifier)) : nil
         return try await service.typeActionsTrackingSecureInput(
             actions,
             cadence: .fixed(milliseconds: 0),
@@ -348,11 +398,22 @@ private final class Fixture {
                         reason: .targetUnavailable,
                         message: "Synthetic fixture target changed")
                 }
-            })
+            },
+            validatedReceiverProvider: { self.providedReceiver })
     }
 
-    private func action(_ name: String) throws -> FocusedTextKeyDispatch {
+    private func action(
+        _ name: String,
+        processIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow?,
+        phase: KeyboardFocusValidationPhase,
+        receiver: Element?) throws -> FocusedTextKeyDispatch
+    {
         self.actionCalls.append(name)
+        self.actionProcessIdentifiers.append(processIdentifier)
+        self.actionWindows.append(exactWindow)
+        self.actionPhases.append(phase)
+        self.actionReceiverIdentities.append(receiver.map { ObjectIdentifier($0.underlyingElement) })
         if let actionError, self.actionCalls.count == self.actionErrorAt {
             _ = try BackgroundInputDriver.textMutationAccepted(actionError)
         }

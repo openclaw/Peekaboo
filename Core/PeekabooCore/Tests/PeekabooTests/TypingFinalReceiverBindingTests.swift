@@ -1,0 +1,396 @@
+import ApplicationServices
+@preconcurrency import AXorcist
+import CoreGraphics
+import Foundation
+import PeekabooFoundation
+import Testing
+@testable import PeekabooAutomationKit
+
+@MainActor
+struct TypingFinalReceiverBindingTests {
+    enum Payload: CaseIterable, Sendable {
+        case text, clear, editingKey
+
+        var actions: [TypeAction] {
+            switch self {
+            case .text: [.text("x")]
+            case .clear: [.clear]
+            case .editingKey: [.key(.leftArrow)]
+            }
+        }
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
+    func `native typing refuses a sibling selected after receipt validation`(
+        strategy: UIInputStrategy,
+        payload: Payload) async
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.switchAfterValidation = 1
+        await self.expectRefusal {
+            _ = try await fixture.run(payload.actions, strategy: strategy)
+        }
+
+        #expect(fixture.validatedReceivers == [.a])
+        #expect(fixture.nativeLookups == [.b])
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+        #expect(fixture.events.isEmpty)
+        #expect(fixture.values[.a] == "alpha")
+        #expect(fixture.values[.b] == "bravo")
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
+    func `a noneditable sibling cannot turn receiver drift into event fallback`(
+        strategy: UIInputStrategy,
+        payload: Payload) async
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.switchAfterValidation = 1
+        fixture.editable[.b] = false
+        await self.expectRefusal {
+            _ = try await fixture.run(payload.actions, strategy: strategy)
+        }
+        #expect(fixture.nativeLookups == [.b])
+        #expect(fixture.editabilityReads.isEmpty)
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test(arguments: [true, false], Payload.allCases)
+    func `a focused receipt requires both validated and observed native proof`(
+        missingValidatedProof: Bool,
+        payload: Payload) async
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.providesNativeProof = !missingValidatedProof
+        fixture.snapshotIncludesNativeProof = missingValidatedProof
+        await self.expectRefusal { _ = try await fixture.run(payload.actions) }
+        #expect(fixture.nativeLookups == [.a])
+        #expect(fixture.editabilityReads.isEmpty)
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
+    func `an accepted prefix cannot rebind after continuation validation`(
+        strategy: UIInputStrategy,
+        payload: Payload) async
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.identifiers[.b] = "a"
+        fixture.frames[.b] = TypingReceiverFixture.reflowedFrame
+        fixture.switchAfterValidation = 2
+        do {
+            _ = try await fixture.run([.text("p")] + payload.actions, strategy: strategy)
+            Issue.record("Expected the sibling receiver to stop continuation")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .type)
+            #expect(error.emittedUnitCount == 1)
+            #expect(error.retrySafe == false)
+            let failure = error.desktopActionFailure(delivery: nil)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
+        } catch {
+            Issue.record("Expected accepted-prefix evidence, got \(error)")
+        }
+        #expect(fixture.validatedReceivers == [.a, .a])
+        #expect(fixture.nativeLookups == [.a, .b])
+        #expect(fixture.nativePhases.map { $0 == .initial } == [true, false])
+        #expect(fixture.textWrites == [.a])
+        #expect(fixture.selectionWrites == [.a])
+        #expect(fixture.events.isEmpty)
+        #expect(fixture.values[.a] == "alphap")
+        #expect(fixture.values[.b] == "bravo")
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
+    func `the retained receiver can reflow after an accepted prefix`(
+        strategy: UIInputStrategy,
+        payload: Payload) async throws
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.reflowAfterTextWrite = 1
+        let result = try await fixture.run([.text("p")] + payload.actions, strategy: strategy)
+        #expect(fixture.nativeLookups == [.a, .a])
+        #expect(fixture.nativePhases.map { $0 == .initial } == [true, false])
+        #expect(!fixture.textWrites.contains(.b))
+        #expect(!fixture.selectionWrites.contains(.b))
+        #expect(fixture.events.isEmpty)
+        #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 2)
+        #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
+    }
+
+    @Test(arguments: Payload.allCases)
+    func `a stable retained receiver accepts native edits`(payload: Payload) async throws {
+        let fixture = TypingReceiverFixture()
+        let result = try await fixture.run(payload.actions)
+        #expect(fixture.nativeLookups == [.a])
+        #expect(fixture.nativePhases.map { $0 == .initial } == [true])
+        #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 1)
+        #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test
+    func `a no change key does not advance the receiver validation phase`() async throws {
+        let fixture = TypingReceiverFixture()
+        fixture.selections[.a] = CFRange(location: 0, length: 0)
+        let result = try await fixture.run([.key(.delete), .text("x")])
+        #expect(fixture.nativePhases.map { $0 == .initial } == [true, true])
+        #expect(fixture.textWrites == [.a])
+        #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 1)
+    }
+
+    @Test(arguments: [true, false])
+    func `window only and process only routes retain current focus behavior`(exactWindow: Bool) async throws {
+        let fixture = TypingReceiverFixture()
+        fixture.focusedReceiver = .b
+        fixture.providesNativeProof = false
+        fixture.snapshotIncludesNativeProof = false
+        let result = try await fixture.run([.text("x")], exactWindow: exactWindow, focusedReceipt: false)
+        #expect(fixture.nativeLookups == [.b])
+        #expect(fixture.textWrites == [.b])
+        #expect(fixture.values[.b] == "bravox")
+        #expect(fixture.events.isEmpty)
+        #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 1)
+    }
+
+    @Test(arguments: [UIInputStrategy.synthFirst, .synthOnly], Payload.allCases)
+    func `explicit synthetic strategies never resolve a native edit receiver`(
+        strategy: UIInputStrategy,
+        payload: Payload) async throws
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.providesNativeProof = false
+        fixture.snapshotIncludesNativeProof = false
+        let result = try await fixture.run(payload.actions, strategy: strategy)
+        #expect(fixture.nativeLookups.isEmpty)
+        #expect(fixture.nativePhases.isEmpty)
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+        #expect(fixture.events.count == (payload == .clear ? 2 : 1))
+        #expect(result.executionResult.outcome.delivery?.mechanism == .windowTargetedEvents)
+    }
+
+    private func expectRefusal(_ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+            Issue.record("Expected a final receiver refusal before dispatch")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.dispatchState == .none)
+        } catch {
+            Issue.record("Expected a pre-dispatch receiver refusal, got \(error)")
+        }
+    }
+}
+
+@MainActor
+private final class TypingReceiverFixture {
+    enum Receiver: String, Hashable {
+        case a, b
+    }
+
+    static let processIdentifier: pid_t = 4242
+    static let processStartIdentity: UInt64 = 91
+    static let windowID = 42
+    static let windowBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+    static let initialFrame = CGRect(x: 20, y: 30, width: 180, height: 24)
+    static let reflowedFrame = CGRect(x: 40, y: 60, width: 200, height: 24)
+
+    var focusedReceiver = Receiver.a
+    var switchAfterValidation: Int?
+    var reflowAfterTextWrite: Int?
+    var providesNativeProof = true
+    var snapshotIncludesNativeProof = true
+    var validatedReceiver: Element?
+    var validatedReceivers: [Receiver] = []
+    var nativeLookups: [Receiver] = []
+    var nativePhases: [KeyboardFocusValidationPhase] = []
+    var editabilityReads: [Receiver] = []
+    var textWrites: [Receiver] = []
+    var selectionWrites: [Receiver] = []
+    var events: [String] = []
+    var values: [Receiver: String] = [.a: "alpha", .b: "bravo"]
+    var selections: [Receiver: CFRange] = [
+        .a: CFRange(location: 5, length: 0),
+        .b: CFRange(location: 5, length: 0),
+    ]
+    var frames: [Receiver: CGRect] = [
+        .a: TypingReceiverFixture.initialFrame,
+        .b: TypingReceiverFixture.initialFrame,
+    ]
+    var editable: [Receiver: Bool] = [.a: true, .b: true]
+    var identifiers: [Receiver: String] = [.a: "a", .b: "b"]
+    /// These are equality tokens only; no Accessibility attributes or actions are queried.
+    private let nativeElements: [Receiver: Element] = [
+        .a: Element(AXUIElementCreateApplication(424_201)),
+        .b: Element(AXUIElementCreateApplication(424_202)),
+    ]
+
+    private var access: BackgroundInputDriver.FocusedTextEditAccess<Receiver> {
+        BackgroundInputDriver.FocusedTextEditAccess(
+            focusedElement: {
+                self.nativeLookups.append(self.focusedReceiver)
+                return self.focusedReceiver
+            },
+            isEditable: {
+                self.editabilityReads.append($0)
+                return self.editable[$0] == true
+            },
+            textValue: { self.values[$0] },
+            selectedRange: { self.selections[$0] },
+            focusSnapshot: { self.snapshot(for: $0) },
+            setText: { text, receiver in
+                self.textWrites.append(receiver)
+                self.values[receiver] = text
+                if self.textWrites.count == self.reflowAfterTextWrite {
+                    self.frames[.a] = Self.reflowedFrame
+                }
+                return true
+            },
+            selectRange: { range, receiver in
+                self.selectionWrites.append(receiver)
+                self.selections[receiver] = range
+                return true
+            })
+    }
+
+    func run(
+        _ actions: [TypeAction],
+        strategy: UIInputStrategy = .actionFirst,
+        exactWindow: Bool = true,
+        focusedReceipt: Bool = true) async throws -> TypeService.TypeActionExecutionSummary
+    {
+        let coordinationRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-typing-receiver-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: coordinationRoot) }
+        let driver = TargetedTypeInputDriver(
+            insertText: { text, pid, window, phase, validatedReceiver in
+                #expect(pid == Self.processIdentifier)
+                self.nativePhases.append(phase)
+                return try BackgroundInputDriver.insertTextIntoFocusedText(
+                    text,
+                    exactWindow: window,
+                    phase: phase,
+                    validatedReceiver: validatedReceiver,
+                    access: self.access)
+            },
+            performTextKey: { key, pid, window, phase, validatedReceiver in
+                #expect(pid == Self.processIdentifier)
+                self.nativePhases.append(phase)
+                return try BackgroundInputDriver.performFocusedTextKey(
+                    key,
+                    exactWindow: window,
+                    phase: phase,
+                    validatedReceiver: validatedReceiver,
+                    access: self.access)
+            },
+            replaceText: { text, pid, window, phase, validatedReceiver in
+                #expect(pid == Self.processIdentifier)
+                self.nativePhases.append(phase)
+                return try BackgroundInputDriver.replaceFocusedText(
+                    with: text,
+                    exactWindow: window,
+                    phase: phase,
+                    validatedReceiver: validatedReceiver,
+                    access: self.access)
+            },
+            typeCharacter: { character, _ in self.events.append("text:\(character)") },
+            tapKey: { code, flags, _ in self.events.append("key:\(code):\(flags.rawValue)") })
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: strategy),
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            focusedUIElementReader: {
+                Issue.record("Background typing must not read foreground focus")
+                throw PeekabooError.invalidInput("Unexpected foreground focus read")
+            },
+            targetedInputDriver: driver,
+            targetBundleIdentifier: { _ in "example.typing-receiver-fixture" },
+            exactFocusedElementValueReader: { _ in .failure(.focusNotConfirmed) },
+            exactFocusedValueRunner: { _, _, _, _ in nil },
+            processStartIdentityProvider: { _ in 91 },
+            desktopOperationExecutor: DesktopOperationExecutor(
+                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: coordinationRoot)),
+            operationFinalizer: {})
+        let process = ApplicationProcessIdentity(
+            processIdentifier: Self.processIdentifier,
+            processStartIdentity: Self.processStartIdentity)
+        let target: UIAutomationTarget = try exactWindow ? .exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: Self.windowID,
+                ownerProcessIdentifier: process.processIdentifier,
+                ownerProcessStartIdentity: process.processStartIdentity,
+                capturedBounds: Self.windowBounds),
+            bounds: Self.windowBounds,
+            focusedElement: focusedReceipt ? self.expectedReceipt : nil)) : .process(.init(
+            processIdentifier: process.processIdentifier,
+            identity: process))
+        return try await service.typeActionsTrackingSecureInput(
+            actions,
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: target,
+            deliveryValidator: {
+                try self.validate(phase: .initial, requiresReceipt: exactWindow && focusedReceipt)
+            },
+            continuationValidator: {
+                try self.validate(phase: .continuation, requiresReceipt: exactWindow && focusedReceipt)
+            },
+            validatedReceiverProvider: { self.validatedReceiver })
+    }
+
+    private var expectedReceipt: FocusedElementIdentity {
+        FocusedElementIdentity(
+            processIdentifier: Self.processIdentifier,
+            windowID: Self.windowID,
+            role: "AXTextField",
+            title: nil,
+            identifier: Receiver.a.rawValue,
+            frame: Self.initialFrame)
+    }
+
+    private func validate(phase: KeyboardFocusValidationPhase, requiresReceipt: Bool) throws {
+        if requiresReceipt {
+            let current = self.receipt(for: self.focusedReceiver)
+            if phase == .initial {
+                try FocusedElementReceiptResolver.validate(current, matches: self.expectedReceipt)
+            } else {
+                try FocusedElementReceiptResolver.validateContinuation(current, matches: self.expectedReceipt)
+            }
+        }
+        self.validatedReceiver = self.providesNativeProof ? self.nativeElements[self.focusedReceiver] : nil
+        self.validatedReceivers.append(self.focusedReceiver)
+        if self.validatedReceivers.count == self.switchAfterValidation {
+            self.focusedReceiver = .b
+        }
+    }
+
+    private func receipt(for receiver: Receiver) -> FocusedElementIdentity {
+        FocusedElementIdentity(
+            processIdentifier: Self.processIdentifier,
+            windowID: Self.windowID,
+            role: "AXTextField",
+            title: nil,
+            identifier: self.identifiers[receiver],
+            frame: self.frames[receiver] ?? .zero)
+    }
+
+    private func snapshot(for receiver: Receiver) -> ExactWindowFocusSnapshot {
+        ExactWindowFocusSnapshot(
+            processIdentifier: Self.processIdentifier,
+            windowID: Self.windowID,
+            frame: self.frames[receiver] ?? .zero,
+            role: "AXTextField",
+            identifier: self.identifiers[receiver],
+            nativeElement: self.snapshotIncludesNativeProof
+                ? self.nativeElements[receiver].map { RetainedFocusElement(element: $0.underlyingElement) }
+                : nil)
+    }
+}

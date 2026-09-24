@@ -2,6 +2,15 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
+/// AX references use the thread-safe CF API; this immutable handle crosses only the focus-reader boundary.
+struct RetainedFocusElement: @unchecked Sendable, Equatable {
+    let element: AXUIElement
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        CFEqual(lhs.element, rhs.element)
+    }
+}
+
 struct ExactWindowFocusSnapshot: Sendable, Equatable {
     let processIdentifier: pid_t
     let windowID: Int?
@@ -11,6 +20,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
     let title: String?
     let identifier: String?
     let value: String?
+    let nativeElement: RetainedFocusElement?
 
     init(
         processIdentifier: pid_t,
@@ -20,7 +30,8 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
         subrole: String? = nil,
         title: String? = nil,
         identifier: String? = nil,
-        value: String? = nil)
+        value: String? = nil,
+        nativeElement: RetainedFocusElement? = nil)
     {
         self.processIdentifier = processIdentifier
         self.windowID = windowID
@@ -30,6 +41,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
         self.title = title
         self.identifier = identifier
         self.value = value
+        self.nativeElement = nativeElement
     }
 }
 
@@ -81,7 +93,8 @@ enum DetachedExactWindowFocusReader {
             role: role,
             subrole: subrole,
             title: self.stringAttribute(kAXTitleAttribute as String, of: focusedElement),
-            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: focusedElement))
+            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: focusedElement),
+            nativeElement: RetainedFocusElement(element: focusedElement))
     }
 
     static func read(expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> {
@@ -200,7 +213,8 @@ enum DetachedExactWindowFocusReader {
             identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
             value: includesValue && self.allowsValueRead(role: expected.role, subrole: subrole)
                 ? self.stringAttribute(kAXValueAttribute as String, of: element)
-                : nil))
+                : nil,
+            nativeElement: RetainedFocusElement(element: element)))
     }
 
     static func candidateIdentity(

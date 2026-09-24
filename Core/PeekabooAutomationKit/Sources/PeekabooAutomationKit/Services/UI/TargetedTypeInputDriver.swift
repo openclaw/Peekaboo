@@ -1,20 +1,43 @@
+import AXorcist
 import CoreGraphics
 import PeekabooFoundation
 
 /// Primitive operations stay separate so a policy cannot cross into its forbidden mutation path.
 @MainActor
 struct TargetedTypeInputDriver {
-    var insertText: (String, pid_t) throws -> Bool = { text, pid in
-        try BackgroundInputDriver.insertTextIntoFocusedText(text, targetProcessIdentifier: pid)
+    var insertText: (String, pid_t, UIAutomationTarget.ExactWindow?, KeyboardFocusValidationPhase, Element?) throws
+        -> Bool = { text, pid, exactWindow, phase, validatedReceiver in
+            try BackgroundInputDriver.insertTextIntoFocusedText(
+                text,
+                targetProcessIdentifier: pid,
+                exactWindow: exactWindow,
+                phase: phase,
+                validatedReceiver: validatedReceiver)
+        }
+
+    var performTextKey: (
+        PeekabooFoundation.SpecialKey,
+        pid_t,
+        UIAutomationTarget.ExactWindow?,
+        KeyboardFocusValidationPhase,
+        Element?) throws -> FocusedTextKeyDispatch = { key, pid, exactWindow, phase, validatedReceiver in
+        try BackgroundInputDriver.performFocusedTextKey(
+            key,
+            targetProcessIdentifier: pid,
+            exactWindow: exactWindow,
+            phase: phase,
+            validatedReceiver: validatedReceiver)
     }
 
-    var performTextKey: (PeekabooFoundation.SpecialKey, pid_t) throws -> FocusedTextKeyDispatch = { key, pid in
-        try BackgroundInputDriver.performFocusedTextKey(key, targetProcessIdentifier: pid)
-    }
-
-    var replaceText: (String, pid_t) throws -> Bool = { text, pid in
-        try BackgroundInputDriver.replaceFocusedText(with: text, targetProcessIdentifier: pid)
-    }
+    var replaceText: (String, pid_t, UIAutomationTarget.ExactWindow?, KeyboardFocusValidationPhase, Element?) throws
+        -> Bool = { text, pid, exactWindow, phase, validatedReceiver in
+            try BackgroundInputDriver.replaceFocusedText(
+                with: text,
+                targetProcessIdentifier: pid,
+                exactWindow: exactWindow,
+                phase: phase,
+                validatedReceiver: validatedReceiver)
+        }
 
     var typeCharacter: (Character, pid_t) throws -> Void = { character, pid in
         try BackgroundInputDriver.typeCharacter(character, targetProcessIdentifier: pid)
@@ -27,6 +50,9 @@ struct TargetedTypeInputDriver {
     func character(
         _ character: Character,
         processIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil,
         strategy: UIInputStrategy,
         keyboardDelivery: DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
     {
@@ -34,7 +60,8 @@ struct TargetedTypeInputDriver {
             strategy: strategy,
             keyboardDelivery: keyboardDelivery,
             action: {
-                try self.insertText(String(character), processIdentifier) ? .accessibilityValue : .unsupported
+                try self.insertText(String(character), processIdentifier, exactWindow, phase, validatedReceiver)
+                    ? .accessibilityValue : .unsupported
             },
             synthesis: { try self.typeCharacter(character, processIdentifier) })
     }
@@ -42,19 +69,28 @@ struct TargetedTypeInputDriver {
     func specialKey(
         _ key: PeekabooFoundation.SpecialKey,
         processIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil,
         strategy: UIInputStrategy,
         keyboardDelivery: DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
     {
         try self.dispatch(
             strategy: strategy,
             keyboardDelivery: keyboardDelivery,
-            action: { try self.performTextKey(key, processIdentifier) },
+            action: { try self.performTextKey(key, processIdentifier, exactWindow, phase, validatedReceiver) },
             synthesis: { try self.tapKey(TypeServiceSpecialKeyMapping.keyCode(for: key), [], processIdentifier) })
     }
 
-    func clearUsingAccessibility(processIdentifier: pid_t, strategy: UIInputStrategy) throws -> Bool {
+    func clearUsingAccessibility(
+        processIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil,
+        strategy: UIInputStrategy) throws -> Bool
+    {
         guard strategy == .actionFirst || strategy == .actionOnly else { return false }
-        if try self.replaceText("", processIdentifier) {
+        if try self.replaceText("", processIdentifier, exactWindow, phase, validatedReceiver) {
             return true
         }
         try Self.requireSynthesisAllowed(strategy)

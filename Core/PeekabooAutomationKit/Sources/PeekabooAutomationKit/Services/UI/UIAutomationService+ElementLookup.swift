@@ -72,11 +72,12 @@ extension UIAutomationService {
         return self.focusInfo(for: focusedElement, processIdentifier: targetProcessIdentifier)
     }
 
+    @discardableResult
     func requireExactWindowKeyboardFocus(
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect,
         expectedFocusedElement: FocusedElementIdentity? = nil,
-        phase: KeyboardFocusValidationPhase = .initial) async throws
+        phase: KeyboardFocusValidationPhase = .initial) async throws -> ExactWindowFocusSnapshot
     {
         let identityValidator = self.exactWindowIdentityValidator
         let targetProcessIdentifier = expectedWindowIdentity.ownerProcessIdentifier
@@ -150,6 +151,7 @@ extension UIAutomationService {
         else {
             throw self.exactWindowKeyboardFocusChangedError()
         }
+        return focused
     }
 
     private static func focusedElementMatches(

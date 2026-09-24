@@ -1,5 +1,11 @@
+import AXorcist
 import Foundation
 import PeekabooFoundation
+
+@MainActor
+private final class ValidatedTypingReceiver {
+    var element: Element?
+}
 
 extension UIAutomationService {
     // MARK: - Typing Operations
@@ -169,23 +175,29 @@ extension UIAutomationService {
     public func typeActionsByFocusingPixelWithOutcome(
         _ request: ExactWindowPixelFocusTypeRequest) async throws -> UIAutomationActionResult<TypeResult>
     {
+        let validatedReceiver = ValidatedTypingReceiver()
         let validator: @MainActor @Sendable (FocusedElementIdentity) async throws -> Void = { focusedElement in
-            try await self.requireExactWindowKeyboardFocus(
+            validatedReceiver.element = nil
+            let snapshot = try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: request.windowIdentity,
                 expectedWindowBounds: request.windowBounds,
                 expectedFocusedElement: focusedElement)
+            validatedReceiver.element = snapshot.nativeElement.map { Element($0.element) }
         }
         return try await self.normalizingSnapshotErrors {
             try await self.typeService.typeActionsByFocusingPixel(
                 request,
                 deliveryValidator: validator,
                 continuationValidator: { focusedElement in
-                    try await self.requireExactWindowKeyboardFocus(
+                    validatedReceiver.element = nil
+                    let snapshot = try await self.requireExactWindowKeyboardFocus(
                         expectedWindowIdentity: request.windowIdentity,
                         expectedWindowBounds: request.windowBounds,
                         expectedFocusedElement: focusedElement,
                         phase: .continuation)
-                })
+                    validatedReceiver.element = snapshot.nativeElement.map { Element($0.element) }
+                },
+                validatedReceiverProvider: { validatedReceiver.element })
         }
     }
 
@@ -216,7 +228,7 @@ extension UIAutomationService {
             bounds: expectedWindowBounds)
         let automationTarget = UIAutomationTarget.exactWindow(exactWindow)
         let validator: @MainActor @Sendable () async throws -> Void = {
-            try await self.requireExactWindowKeyboardFocus(
+            _ = try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds)
         }
@@ -258,18 +270,23 @@ extension UIAutomationService {
             bounds: target.windowBounds,
             focusedElement: target.focusedElement)
         let automationTarget = UIAutomationTarget.exactWindow(exactWindow)
+        let validatedReceiver = ValidatedTypingReceiver()
         let validator: @MainActor @Sendable () async throws -> Void = {
-            try await self.requireExactWindowKeyboardFocus(
+            validatedReceiver.element = nil
+            let snapshot = try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: target.windowIdentity,
                 expectedWindowBounds: target.windowBounds,
                 expectedFocusedElement: target.focusedElement)
+            validatedReceiver.element = snapshot.nativeElement.map { Element($0.element) }
         }
         let continuationValidator: @MainActor @Sendable () async throws -> Void = {
-            try await self.requireExactWindowKeyboardFocus(
+            validatedReceiver.element = nil
+            let snapshot = try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: target.windowIdentity,
                 expectedWindowBounds: target.windowBounds,
                 expectedFocusedElement: target.focusedElement,
                 phase: .continuation)
+            validatedReceiver.element = snapshot.nativeElement.map { Element($0.element) }
         }
         let summary = try await self.normalizingSnapshotErrors {
             try await self.typeService.typeActionsTrackingSecureInput(
@@ -278,7 +295,8 @@ extension UIAutomationService {
                 snapshotId: snapshotId,
                 automationTarget: automationTarget,
                 deliveryValidator: validator,
-                continuationValidator: continuationValidator)
+                continuationValidator: continuationValidator,
+                validatedReceiverProvider: { validatedReceiver.element })
         }
         return UIAutomationActionResult(
             payload: summary.result,

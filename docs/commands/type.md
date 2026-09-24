@@ -53,6 +53,9 @@ that snapshot. Use `press` for standalone keys or chords.
   exact internal key window must still agree. This applies to both Accessibility edits and keyboard events. Process
   relaunch, window/bounds drift, sibling or ambiguous focus, a different internal key window, or an unreadable focus
   attribute stops delivery with retry-unsafe prefix evidence after any input was emitted.
+- Receipt-pinned Accessibility text, clear, and editing-key writes retain the native receiver selected by that unit's
+  focus validation. A different or unreadable final receiver refuses before mutation or keyboard fallback, even when
+  it exposes the same role and identifier; the retained receiver can still reflow under continuation validation.
 - A delivered trailing special key may intentionally change focus, so it returns dispatched-unverified without an
   unchanged-focus check afterward. Any remaining input still requires the same receiver's continuation proof.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.

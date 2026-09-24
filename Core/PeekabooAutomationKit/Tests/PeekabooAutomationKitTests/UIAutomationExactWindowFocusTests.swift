@@ -52,7 +52,7 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
 
         let start = ContinuousClock.now
         do {
-            try await validation.value
+            _ = try await validation.value
             XCTFail("Expected exact-window validation timeout")
         } catch let PeekabooError.invalidInput(message) {
             XCTAssertTrue(message.contains("target"))

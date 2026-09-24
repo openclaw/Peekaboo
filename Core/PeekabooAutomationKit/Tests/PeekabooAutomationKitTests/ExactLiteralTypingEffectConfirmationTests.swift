@@ -1,3 +1,5 @@
+import ApplicationServices
+import struct AXorcist.Element
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
@@ -253,7 +255,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             automationTarget: .exactWindow(target),
-            deliveryValidator: {})
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
 
         #expect(summary.executionResult.outcome.state == .confirmedChange)
         #expect(summary.executionResult.outcome.delivery == .init(
@@ -280,7 +283,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             automationTarget: .exactWindow(target),
-            deliveryValidator: {})
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
 
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
         #expect(clock.sleepCount == 3)
@@ -300,7 +304,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             targetedCharacterTyper: { _, _, delivery in
                 .dispatched(delivery: delivery, keyPressCount: 1)
             },
-            targetedTextReplacer: { text, _ in
+            targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
                 return true
             },
@@ -319,7 +323,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             automationTarget: .exactWindow(target),
-            deliveryValidator: {})
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
 
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
         #expect(observedTimeouts.get() == [
@@ -350,7 +355,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             automationTarget: .exactWindow(target),
-            deliveryValidator: {})
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
 
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
         #expect(clock.sleepCount == 1)
@@ -383,7 +389,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             automationTarget: .exactWindow(target),
-            deliveryValidator: {})
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
 
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
         #expect(clock.sleepCount == 1)
@@ -408,7 +415,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             automationTarget: .exactWindow(target),
-            deliveryValidator: {})
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
 
         #expect(summary.executionResult.outcome.state == .dispatchedUnverified)
         #expect(clock.sleepCount == 1)
@@ -428,7 +436,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
                     delivery: .init(mechanism: .accessibilityValue, mode: .background),
                     keyPressCount: 0)
             },
-            targetedTextReplacer: { text, _ in
+            targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
                 return true
             },
@@ -443,6 +451,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             snapshotId: nil,
             automationTarget: .exactWindow(target),
             deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver,
             lanePreparation: { value.set("after preparation") })
 
         #expect(value.get() == "safe")
@@ -464,7 +473,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
-            targetedTextReplacer: { text, _ in
+            targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
                 return true
             },
@@ -478,7 +487,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
             automationTarget: .exactWindow(target),
-            deliveryValidator: {})
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
 
         #expect(value.get().isEmpty)
         #expect(summary.executionResult.outcome.state == .confirmedChange)
@@ -514,7 +524,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
                         delivery: .init(mechanism: .accessibilityValue, mode: .background),
                         keyPressCount: 0)
                 },
-                targetedTextReplacer: { _, _ in true },
+                targetedTextReplacer: { _, _, _, _, _ in true },
+                exactFocusedElementValueReader: { _ in .failure(.focusedAttributeUnreadable) },
                 processStartIdentityProvider: { _ in 33 })
 
             do {
@@ -523,7 +534,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
                     cadence: .fixed(milliseconds: 0),
                     snapshotId: nil,
                     automationTarget: .exactWindow(target),
-                    deliveryValidator: {})
+                    deliveryValidator: {},
+                    validatedReceiverProvider: Self.validatedReceiver)
                 Issue.record("Expected the configured character failure")
             } catch let error as InputDeliveryIndeterminateError {
                 #expect(error.emittedUnitCount == testCase.units)
@@ -573,7 +585,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
             targetedCharacterTyper: { _, _, _ in .noChange },
-            targetedTextReplacer: { _, _ in true },
+            targetedTextReplacer: { _, _, _, _, _ in true },
             exactFocusedElementValueReader: { focusedElement in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
@@ -585,6 +597,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             snapshotId: nil,
             automationTarget: .exactWindow(target),
             deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver,
             lanePreparation: { value.set("safe") })
 
         #expect(value.get() == "safe")
@@ -595,6 +608,11 @@ struct ExactLiteralTypingEffectConfirmationTests {
         #expect(summary.executionResult.outcome.dispatchState.unitCount == .one)
         #expect(summary.result.keyPresses == 0)
         #expect(summary.result.specialKeyPresses == 0)
+    }
+
+    @MainActor
+    private static func validatedReceiver() -> Element? {
+        Element(AXUIElementCreateApplication(333))
     }
 
     private func target(
@@ -632,7 +650,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             targetedCharacterTyper: { _, _, delivery in
                 .dispatched(delivery: delivery, keyPressCount: 1)
             },
-            targetedTextReplacer: { text, _ in
+            targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
                 return true
             },

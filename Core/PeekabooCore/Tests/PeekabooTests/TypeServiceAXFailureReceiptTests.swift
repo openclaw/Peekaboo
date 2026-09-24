@@ -159,7 +159,7 @@ struct TypeServiceAXFailureReceiptTests {
                     Issue.record("AX failure must not fall back to keyboard input")
                     throw FixtureError.unexpectedKeyboardFallback
                 },
-                targetedTextReplacer: { text, processIdentifier in
+                targetedTextReplacer: { text, processIdentifier, _, _, _ in
                     #expect(text.isEmpty)
                     try self.applyNativeResult("clear", processIdentifier: processIdentifier)
                     return true

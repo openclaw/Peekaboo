@@ -1,3 +1,5 @@
+import ApplicationServices
+import struct AXorcist.Element
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
@@ -42,6 +44,7 @@ struct TypeServiceTargetResolutionTests {
         let expected = Self.focusedIdentity()
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
             targetedCharacterTyper: { character, _, delivery in
                 typed.append(character)
                 return .dispatched(delivery: delivery, keyPressCount: 1)
@@ -136,6 +139,7 @@ struct TypeServiceTargetResolutionTests {
             bounds: bounds))
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
             targetedSpecialKeyTyper: { _, _, delivery in
                 delivered = true
                 return .dispatched(delivery: delivery, keyPressCount: 1)
@@ -169,6 +173,7 @@ struct TypeServiceTargetResolutionTests {
         var validationCount = 0
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
             targetedCharacterTyper: { character, _, delivery in
                 typed.append(character)
                 actual = Self.focusedIdentity(windowID: 43)
@@ -369,6 +374,7 @@ struct TypeServiceTargetResolutionTests {
             mechanism: .accessibilityValue,
             mode: .background)
         var keyTaps: [(CGKeyCode, CGEventFlags)] = []
+        let receiver = Element(AXUIElementCreateApplication(processIdentifier))
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
@@ -378,13 +384,18 @@ struct TypeServiceTargetResolutionTests {
             targetedKeyTapper: { keyCode, modifiers, _ in
                 keyTaps.append((keyCode, modifiers))
             },
-            targetedTextReplacer: { _, _ in false })
+            targetedTextReplacer: { _, _, _, _, validatedReceiver in
+                #expect(validatedReceiver.map { ObjectIdentifier($0.underlyingElement) } ==
+                    ObjectIdentifier(receiver.underlyingElement))
+                return false
+            })
 
         let summary = try await service.typeActionsTrackingSecureInput(
             [.clear, .text("x")],
             cadence: .fixed(milliseconds: 0),
             snapshotId: nil,
-            automationTarget: target)
+            automationTarget: target,
+            validatedReceiverProvider: { receiver })
 
         #expect(keyTaps.map(\.0) == [0x00, TypeServiceSpecialKeyMapping.keyCode(for: .delete)])
         #expect(summary.result.totalCharacters == 1)

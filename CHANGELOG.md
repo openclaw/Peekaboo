@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bind receipt-pinned Accessibility typing, clear, and editing-key writes to the native receiver selected by focus validation; refuse last-moment receiver changes before mutation or keyboard fallback while preserving continuation reflow.
 - Preserve existing background Cmd+A selection receipts as one unverified Accessibility value mutation through exact-window CLI/MCP checks; stop on ambiguous AX errors without replay. Input-strategy and hold behavior are unchanged.
 - Bind background Cmd+A selection to its retained exact-window receiver, refusing changed or unreadable receiver identities before writing or replaying input.
 - Preserve known typing prefixes and zero-input refusal receipts when shared Accessibility setters fail, without replaying input or changing typing strategy.
