@@ -625,7 +625,7 @@ struct PeekabooBridgeCancellationTests {
             return
         }
         let occupiedLane = await #expect(throws: PeekabooError.self) {
-            _ = try await DialogHierarchyReader.run(
+            _ = try await DialogAXReadRunner.run(
                 owner: dialogs.owner,
                 budget: DialogOperationDeadline.bounded(timeoutSeconds: 1, operationName: "occupied dialog lane"))
             {
@@ -790,7 +790,7 @@ private final class CancellationTestDialogService: DialogServiceProtocol {
             children: [])
         var readers = DialogDiscoveryReaders()
         readers.hierarchyNode = { _, owner, budget in
-            try await DialogHierarchyReader.run(owner: owner, budget: budget) {
+            try await DialogAXReadRunner.run(owner: owner, budget: budget) {
                 stages.append(.started)
                 _ = release.wait(timeout: .now() + 10)
                 stages.append(.finished)
