@@ -3,8 +3,6 @@
 ## Unreleased
 
 - Resolve background keyboard focus through the native owning-window link when web text fields do not expose a direct window ID, preserving exact process, window, and focus validation.
-- Refuse MCP clicks, actions, value changes, snapshot-backed scrolls, and key presses from consumed or pending snapshots before input; share mutation leases while preserving historical reads and existing modifier-click/pixel-focus ownership.
-- Refuse ordinary CLI and MCP typing from consumed or pending snapshots before focus or input, sharing the existing mutation-lease policy while preserving historical readback and pixel-focus lease ownership.
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 - Stop reporting hidden windows as on screen when native visibility metadata is omitted or as minimized in text listings; align native and classic capture metadata while preserving exact-window targeting and partial-inventory diagnostics. #779.
 - Align internal and public SwiftPM consumers on AXorcist 0.1.11 to preserve native numeric values, improve geometry/range parsing, and reject invalid scroll amounts before input dispatch.
@@ -12,6 +10,7 @@
 - Honor MCP query-click waits with fresh, receipt-pinned Accessibility reads without screenshots; refuse changed targets and late matches while preserving the original modifier-click authority. Thanks @SebTardif! #785.
 - Bound paste clipboard-restoration waits to 10 seconds so excessive delays cannot monopolize the shared paste lock; CLI and MCP callers using longer delays must reduce them. Thanks @SebTardif! #759.
 - Restore default MCP startup on explicitly selected GUI Bridge hosts that support isolated browser sessions, preserving capability checks and caller-owned session cleanup. Thanks @smhanov! #744.
+- Refuse ordinary CLI typing and MCP clicks, actions, value changes, snapshot-backed scrolling, typing, and key presses from consumed or pending snapshots before focus or input; centralize mutation-lease handling while preserving historical reads and existing modifier-click/pixel-focus ownership.
 - Avoid reading geometry for unrelated Accessibility roles during exact-window keyboard focus checks, preserving per-character receiver validation.
 - Bound targeted dialog hierarchy discovery off the main actor using the caller's timeout, preserving large/deep trees and exact receipts; reject late candidates and report timeout or incomplete Accessibility evidence with specific error codes.
 - Exclude twice-confirmed absent processes from read-only application inventory while keeping denied, unavailable, and changing identities partial. Thanks @SkidCentrel! #784.
