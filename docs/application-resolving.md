@@ -126,9 +126,14 @@ The native mutation inventory excludes an unreadable helper without marking the 
 
 LaunchServices can also retain records for processes that have exited. Two consecutive failed full-BSD generation
 reads with explicit `ESRCH` confirm native absence and exclude that stale row without making mutation inventory
-partial. A partial native read, arbitrary failure, or transition between absence and a readable generation remains
-an uncertain omission. A process that disappears after its generation was read also remains an omission; retry with
-a fresh inventory. Read-only listing and explicit-PID targeting keep their existing behavior.
+partial. Read-only application discovery also excludes a stale row when its initial process-generation identity is
+missing and two consecutive native observations both confirm absence. A permission denial, unavailable observation,
+or transition from absence to a readable generation must still keep read-only inventory partial. This does not apply
+the mutation-only prohibited-helper exclusion to read-only discovery.
+
+A partial native read, arbitrary failure, or transition between absence and a readable generation remains an uncertain
+omission. A process that disappears after its generation was read also remains an omission; retry with a fresh
+inventory. Generation-pinned explicit-PID targeting is unchanged.
 
 ### Allowed Redundancy
 

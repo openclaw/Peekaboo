@@ -162,6 +162,7 @@ extension ApplicationService {
         let frontmostProvider = self.frontmostProcessIdentifierProvider
         let windowCatalogProvider = self.applicationWindowCatalogProvider
         let generationProvider = self.processStartIdentityProvider
+        let identityObservationProvider = self.mutationIdentityObservationProvider
         let candidates = try await DetachedApplicationInventoryWorker.shared.run(
             seconds: self.remainingInventoryTime(until: overallDeadline))
         {
@@ -170,12 +171,21 @@ extension ApplicationService {
             let frontmostProcessIdentifier = frontmostProvider()
             let windowCatalog = windowCatalogProvider()
             let windowsByProcessIdentifier = Dictionary(grouping: windowCatalog ?? [], by: \.ownerPID)
-            return processIdentifiers.map { processIdentifier in
+            return processIdentifiers.compactMap { processIdentifier -> ApplicationInventoryCandidate? in
+                let processStartIdentity = generationProvider(processIdentifier)
+                // LaunchServices may retain reaped PIDs. Match mutation inventory's absence proof;
+                // a permission denial, unavailable read, or new generation must still stay partial.
+                if processStartIdentity == nil,
+                   identityObservationProvider(processIdentifier) == .absent,
+                   identityObservationProvider(processIdentifier) == .absent
+                {
+                    return nil
+                }
                 let rawWindows = windowsByProcessIdentifier[processIdentifier] ?? []
                 let renderableWindows = rawWindows.filter(\.isRenderable)
                 return ApplicationInventoryCandidate(
                     processIdentifier: processIdentifier,
-                    processStartIdentity: generationProvider(processIdentifier),
+                    processStartIdentity: processStartIdentity,
                     windows: renderableWindows.isEmpty ? rawWindows : renderableWindows,
                     windowCatalogAvailable: windowCatalog != nil,
                     fallbackName: rawWindows.lazy.compactMap(\.applicationName).first,
