@@ -122,14 +122,17 @@ public struct ClickTool: MCPTool {
 
         let startTime = Date()
         var snapshotIdToInvalidate: String?
+        var waitedSnapshotID: String?
         var actionTargetIdentity: DesktopTargetIdentity?
 
         do {
             let resolution = try await self.resolveClickTarget(for: request)
             snapshotIdToInvalidate = resolution.snapshotIdToInvalidate
+            waitedSnapshotID = resolution.queryWait == nil ? nil : resolution.snapshotId
             let effectiveTargetProcessIdentity = try await self.backgroundProcessIdentity(
                 request: request,
                 resolution: resolution)
+            try resolution.queryWait?.checkDeadline()
             let effectiveTargetProcessIdentifier = effectiveTargetProcessIdentity?.processIdentifier
             let modifierResult: ForegroundModifierClickResult?
             let actionResult: UIAutomationActionResult<Void>
@@ -163,6 +166,7 @@ public struct ClickTool: MCPTool {
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: resolution.snapshotIdToInvalidate,
                 outcome: outcome)
+            await self.discardObservation(id: waitedSnapshotID)
             let executionTime = Date().timeIntervalSince(startTime)
             return try self.buildResponse(
                 intent: request.intent,
@@ -176,12 +180,13 @@ public struct ClickTool: MCPTool {
                     modifiers: request.modifiers,
                     modifierResult: modifierResult))
         } catch is CancellationError {
+            await self.discardObservation(id: waitedSnapshotID)
             throw CancellationError()
-        } catch let refusal as ClickNestedCaptureRefusal {
-            return refusal.response
         } catch let error as ClickToolError {
+            await self.discardObservation(id: waitedSnapshotID)
             return try Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
+            await self.discardObservation(id: waitedSnapshotID)
             var failureFields = (try? MCPDesktopTargetMetadataProjector.fields(actionTargetIdentity)) ?? [:]
             failureFields["click_type"] = .string(request.intent.automationType.rawValue)
             return try await MCPDesktopActionFailureHandler.response(
@@ -190,6 +195,7 @@ public struct ClickTool: MCPTool {
                 snapshotID: snapshotIdToInvalidate,
                 additionalFields: failureFields)
         } catch let error as InputDeliveryIndeterminateError {
+            await self.discardObservation(id: waitedSnapshotID)
             // Target mode does not prove the mechanism: element clicks can use Accessibility while
             // coordinate clicks synthesize events. Legacy errors do not carry that route.
             let delivery: DesktopActionOutcome.Delivery? = nil
@@ -201,6 +207,7 @@ public struct ClickTool: MCPTool {
                     "emitted_units": error.emittedUnitCount.map(Value.int) ?? .null,
                 ])
         } catch {
+            await self.discardObservation(id: waitedSnapshotID)
             self.logger.error("Click execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform click: \(error.localizedDescription)")
         }
@@ -245,149 +252,9 @@ public struct ClickTool: MCPTool {
             return try await self.waitForQuery(
                 text,
                 in: snapshot,
-                timeoutMilliseconds: request.waitForMilliseconds)
+                timeoutMilliseconds: request.waitForMilliseconds,
+                usesOriginalCoordinateAuthority: !request.modifiers.isEmpty)
         }
-    }
-
-    private func matchingElement(query: String, snapshot: UISnapshot) async throws -> UIElement? {
-        do {
-            return try await self.findElement(matching: query, snapshot: snapshot)
-        } catch let error as ClickToolError
-            where error.message == OCRSemanticEvidencePolicy.interactionRefusalMessage
-        {
-            throw error
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            return nil
-        }
-    }
-
-    private func resolution(for element: UIElement, snapshot: UISnapshot) -> ClickResolution {
-        ClickResolution(
-            location: element.centerPoint,
-            automationTarget: .elementId(element.id),
-            elementDescription: element.humanDescription,
-            targetApp: snapshot.applicationName,
-            windowTitle: snapshot.windowTitle,
-            elementRole: element.humanRole,
-            elementLabel: element.displayLabel,
-            targetProcessIdentifier: snapshot.applicationProcessId,
-            targetWindowID: snapshot.windowID,
-            expectedWindowIdentity: snapshot.windowMutationIdentity,
-            expectedWindowBounds: snapshot.windowBounds,
-            snapshotId: snapshot.id)
-    }
-
-    /// Re-runs the production `see` observation for the authorized window. The click already holds the
-    /// MCP execution gate, so a concurrent `see` cannot publish the control that appears during the wait.
-    private func waitForQuery(
-        _ query: String,
-        in snapshot: UISnapshot,
-        timeoutMilliseconds: Int) async throws -> ClickResolution
-    {
-        guard let windowID = snapshot.windowID,
-              let identity = snapshot.windowMutationIdentity,
-              identity.windowID == windowID
-        else {
-            throw ClickToolError(
-                "wait_for requires the selected snapshot to name one exact window. Run see on that window, " +
-                    "then click with query.",
-                refusalReason: .targetUnavailable)
-        }
-        let deadline = Date().addingTimeInterval(TimeInterval(timeoutMilliseconds) / 1000)
-        while Date() < deadline {
-            try Task.checkCancellation()
-            if let refusal = self.context.nestedScreenCapturePreflightRefusal() {
-                throw ClickNestedCaptureRefusal(response: refusal)
-            }
-            try await self.requireCurrentWindowMatches(windowID: windowID, identity: identity)
-            let observed = try await self.observeExactWindow(windowID: windowID)
-            guard let observedIdentity = observed.windowMutationIdentity,
-                  observedIdentity.windowID == identity.windowID,
-                  observedIdentity.ownerProcessIdentifier == identity.ownerProcessIdentifier,
-                  observedIdentity.ownerProcessStartIdentity == identity.ownerProcessStartIdentity,
-                  observedIdentity.capturedBounds == identity.capturedBounds
-            else {
-                await self.discardObservation(observed)
-                throw ClickToolError(
-                    "The selected click target changed while waiting. Run see again.",
-                    refusalReason: .targetUnavailable)
-            }
-            let element: UIElement?
-            do {
-                element = try await self.matchingElement(query: query, snapshot: observed)
-            } catch {
-                await self.discardObservation(observed)
-                throw error
-            }
-            if let element {
-                return self.resolution(for: element, snapshot: observed)
-            }
-            await self.discardObservation(observed)
-            let remaining = deadline.timeIntervalSinceNow
-            if remaining <= 0 {
-                break
-            }
-            try await Task.sleep(nanoseconds: UInt64(min(remaining, 0.2) * 1_000_000_000))
-        }
-        throw ClickToolError(
-            "No elements found matching query: '\(query)' after \(timeoutMilliseconds)ms",
-            refusalReason: .targetUnavailable)
-    }
-
-    private func observeExactWindow(windowID: Int) async throws -> UISnapshot {
-        let response = try await SeeTool(context: self.context).execute(arguments: ToolArguments(raw: [
-            "window_id": windowID,
-            "annotate": false,
-        ]))
-        guard !response.isError else {
-            let text = response.content.compactMap { item -> String? in
-                guard case let .text(text, _, _) = item else { return nil }
-                return text
-            }.joined(separator: "\n")
-            throw ClickToolError(
-                text.isEmpty ? "Exact-window observation failed." : text,
-                refusalReason: .targetUnavailable)
-        }
-        guard case let .object(fields)? = response.meta,
-              case let .string(snapshotID) = fields["snapshot_id"],
-              let observed = await self.getSnapshot(id: snapshotID)
-        else {
-            throw ClickToolError(
-                "Exact-window observation did not publish a snapshot.",
-                refusalReason: .targetUnavailable)
-        }
-        return observed
-    }
-
-    private func requireCurrentWindowMatches(
-        windowID: Int,
-        identity: WindowMutationIdentity) async throws
-    {
-        let matches = try await self.context.windows.listWindows(target: .windowId(windowID))
-        let exactMatches = matches.filter { $0.windowID == windowID }
-        guard !exactMatches.isEmpty,
-              exactMatches.allSatisfy({ window in
-                  guard window.bounds == identity.capturedBounds,
-                        let current = window.mutationIdentity
-                  else { return false }
-                  // listWindows fills isMinimized. A see receipt leaves it unset.
-                  // That hint is not evidence the WindowServer target changed.
-                  return current.hasSameStableReceipt(as: identity)
-              })
-        else {
-            throw ClickToolError(
-                "The selected click target changed while waiting. Run see again.",
-                refusalReason: .targetUnavailable)
-        }
-    }
-
-    private func discardObservation(_ snapshot: UISnapshot) async {
-        let screenshotPath = await snapshot.screenshotPath
-        ClickObservationFileCleanup.remove(screenshotPath: screenshotPath)
-        try? await self.context.snapshots.cleanSnapshot(snapshotId: snapshot.id)
-        await self.context.uiSnapshots.removeSnapshot(id: snapshot.id)
     }
 
     @MainActor
@@ -397,7 +264,7 @@ public struct ClickTool: MCPTool {
         modifiers: [PointerModifier]) async throws
         -> UIAutomationActionResult<ForegroundModifierClickResult>
     {
-        guard let snapshotID = resolution.snapshotId,
+        guard let snapshotID = resolution.modifierSnapshotId ?? resolution.snapshotId,
               let identity = resolution.expectedWindowIdentity,
               let bounds = resolution.expectedWindowBounds,
               resolution.targetWindowID == identity.windowID,
@@ -419,6 +286,7 @@ public struct ClickTool: MCPTool {
                 refusalReason: .runtimeIncompatible)
         }
         let result: UIAutomationActionResult<ForegroundModifierClickResult>
+        try resolution.queryWait?.checkDeadline()
         do {
             result = try await service.foregroundModifierClickWithOutcome(
                 ForegroundModifierClickRequest(
@@ -520,6 +388,7 @@ public struct ClickTool: MCPTool {
                         refusalReason: .targetUnavailable)
                 }
                 if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    try resolution.queryWait?.checkDeadline()
                     return try await outcomeAutomation.clickWithOutcome(
                         target: target,
                         clickType: intent.automationType,
@@ -527,6 +396,7 @@ public struct ClickTool: MCPTool {
                         expectedWindowIdentity: expectedWindowIdentity,
                         expectedWindowBounds: expectedWindowBounds)
                 }
+                try resolution.queryWait?.checkDeadline()
                 try await exactWindowAutomation.click(
                     target: target,
                     clickType: intent.automationType,
@@ -555,6 +425,7 @@ public struct ClickTool: MCPTool {
                 return UIAutomationActionResult(payload: (), outcome: nil)
             }
         } else {
+            try resolution.queryWait?.checkDeadline()
             if let outcomeAutomation = self.context.automation as? any UIAutomationActionOutcomeProviding {
                 return try await outcomeAutomation.clickWithOutcome(
                     target: target,
@@ -907,25 +778,161 @@ public struct ClickTool: MCPTool {
         return element
     }
 
-    private func findElement(matching query: String, snapshot: UISnapshot) async throws -> UIElement {
+    private func matchingElement(query: String, elements: [UIElement]) throws -> UIElement? {
         let searchText = query.lowercased()
-        let elements = await snapshot.uiElements
         let matches = elements.filter { element in
             element.title?.lowercased().contains(searchText) ?? false ||
                 element.label?.lowercased().contains(searchText) ?? false ||
                 element.value?.lowercased().contains(searchText) ?? false
         }
 
-        guard !matches.isEmpty else {
-            throw ClickToolError(
-                "No elements found matching query: '\(query)'",
-                refusalReason: .targetUnavailable)
-        }
+        guard !matches.isEmpty else { return nil }
 
         guard let match = SnapshotElementQuerySelector.preferred(in: matches) else {
             throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
         }
         return match
+    }
+}
+
+extension ClickTool {
+    private func matchingElement(query: String, snapshot: UISnapshot) async throws -> UIElement? {
+        try await self.matchingElement(query: query, elements: snapshot.uiElements)
+    }
+
+    private func resolution(
+        for element: UIElement,
+        snapshot: UISnapshot,
+        queryWait: ClickQueryWait? = nil,
+        originalSnapshotID: String? = nil,
+        modifierSnapshotID: String? = nil) -> ClickResolution
+    {
+        ClickResolution(
+            location: element.centerPoint,
+            automationTarget: .elementId(element.id),
+            elementDescription: element.humanDescription,
+            targetApp: snapshot.applicationName,
+            windowTitle: snapshot.windowTitle,
+            elementRole: element.humanRole,
+            elementLabel: element.displayLabel,
+            targetProcessIdentifier: snapshot.applicationProcessId,
+            targetWindowID: snapshot.windowID,
+            expectedWindowIdentity: snapshot.windowMutationIdentity,
+            expectedWindowBounds: snapshot.windowBounds,
+            snapshotId: snapshot.id,
+            snapshotIdToInvalidate: originalSnapshotID,
+            queryWait: queryWait,
+            modifierSnapshotId: modifierSnapshotID)
+    }
+
+    /// Poll fresh Accessibility evidence inside the existing mutation lane without capturing pixels or focusing.
+    private func waitForQuery(
+        _ query: String,
+        in snapshot: UISnapshot,
+        timeoutMilliseconds: Int,
+        usesOriginalCoordinateAuthority: Bool) async throws -> ClickResolution
+    {
+        guard let windowID = snapshot.windowID,
+              let identity = snapshot.windowMutationIdentity,
+              identity.windowID == windowID
+        else {
+            throw ClickToolError(
+                "wait_for requires the selected snapshot to name one exact window. Run see on that window, " +
+                    "then click with query.",
+                refusalReason: .targetUnavailable)
+        }
+        let wait = ClickQueryWait(query: query, timeoutMilliseconds: timeoutMilliseconds)
+        while wait.remaining > 0 {
+            try Task.checkCancellation()
+            try wait.checkDeadline()
+            let observed = try await self.observeExactWindow(identity: identity, wait: wait)
+            try wait.checkDeadline()
+            let element = try self.matchingElement(
+                query: query,
+                elements: DetectedElementSnapshotConverter.convert(observed.elements.all))
+            if let element {
+                return try await self.storeMatchedObservation(
+                    observed,
+                    for: element,
+                    wait: wait,
+                    originalSnapshotID: snapshot.id,
+                    usesOriginalCoordinateAuthority: usesOriginalCoordinateAuthority)
+            }
+            let remaining = wait.remaining
+            if remaining <= 0 {
+                break
+            }
+            try await Task.sleep(nanoseconds: UInt64(min(remaining, 0.2) * 1_000_000_000))
+        }
+        throw wait.timeoutError
+    }
+
+    private func observeExactWindow(
+        identity: WindowMutationIdentity,
+        wait: ClickQueryWait) async throws -> ElementDetectionResult
+    {
+        let windowContext = WindowContext(
+            applicationProcessId: identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+            windowID: identity.windowID,
+            windowBounds: identity.capturedBounds,
+            windowMutationIdentity: identity,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: false,
+            requiresFreshAccessibilityTree: true,
+            accessibilityTimeoutSeconds: wait.remaining,
+            allowApplicationScopedAccessibilityFallback: false)
+        do {
+            return try await InspectUITool(context: self.context).observeExactWindow(
+                windowContext: windowContext,
+                deadline: wait.deadline)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw ClickToolError(
+                "Exact-window observation failed: \(error.localizedDescription)",
+                refusalReason: .targetUnavailable)
+        }
+    }
+
+    private func storeMatchedObservation(
+        _ observation: ElementDetectionResult,
+        for element: UIElement,
+        wait: ClickQueryWait,
+        originalSnapshotID: String,
+        usesOriginalCoordinateAuthority: Bool) async throws -> ClickResolution
+    {
+        try wait.checkDeadline()
+        let snapshotID = try await self.context.snapshots.createSnapshot()
+        do {
+            try wait.checkDeadline()
+            try await self.context.snapshots.storeDetectionResult(
+                snapshotId: snapshotID,
+                result: ElementDetectionResult(
+                    snapshotId: snapshotID,
+                    screenshotPath: "",
+                    elements: observation.elements,
+                    metadata: observation.metadata))
+            // Internal matches never enter the capped UI store or evict the caller's screenshot authority.
+            let snapshot = UISnapshot(id: snapshotID)
+            await snapshot.setTargetMetadata(from: observation.metadata.windowContext)
+            try wait.checkDeadline()
+            return self.resolution(
+                for: element,
+                snapshot: snapshot,
+                queryWait: wait,
+                originalSnapshotID: originalSnapshotID,
+                modifierSnapshotID: usesOriginalCoordinateAuthority ? originalSnapshotID : nil)
+        } catch {
+            await self.discardObservation(id: snapshotID)
+            throw error
+        }
+    }
+
+    private func discardObservation(id: String?) async {
+        guard let id else { return }
+        try? await self.context.snapshots.cleanSnapshot(snapshotId: id)
+        await self.context.uiSnapshots.removeSnapshot(id: id)
     }
 }
 
@@ -1096,6 +1103,34 @@ private enum ClickToolDeliveryMode {
     case foreground
 }
 
+private struct ClickQueryWait {
+    let query: String
+    let timeoutMilliseconds: Int
+    let deadline: ContinuousClock.Instant
+
+    init(query: String, timeoutMilliseconds: Int) {
+        self.query = query
+        self.timeoutMilliseconds = timeoutMilliseconds
+        self.deadline = .now.advanced(by: .milliseconds(timeoutMilliseconds))
+    }
+
+    var remaining: TimeInterval {
+        let duration = ContinuousClock.now.duration(to: self.deadline).components
+        return max(0, Double(duration.seconds) + Double(duration.attoseconds) / 1e18)
+    }
+
+    var timeoutError: ClickToolError {
+        ClickToolError(
+            "No elements found matching query: '\(self.query)' within \(self.timeoutMilliseconds)ms",
+            refusalReason: .targetUnavailable)
+    }
+
+    func checkDeadline() throws {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < self.deadline else { throw self.timeoutError }
+    }
+}
+
 private struct ClickResolution {
     let location: CGPoint
     let automationTarget: ClickTarget
@@ -1112,6 +1147,8 @@ private struct ClickResolution {
     let snapshotIdToInvalidate: String?
     let coordinateSpace: CaptureCoordinateSpace?
     let coordinateReference: String?
+    let queryWait: ClickQueryWait?
+    let modifierSnapshotId: String?
 
     init(
         location: CGPoint,
@@ -1128,7 +1165,9 @@ private struct ClickResolution {
         snapshotId: String?,
         snapshotIdToInvalidate: String? = nil,
         coordinateSpace: CaptureCoordinateSpace? = nil,
-        coordinateReference: String? = nil)
+        coordinateReference: String? = nil,
+        queryWait: ClickQueryWait? = nil,
+        modifierSnapshotId: String? = nil)
     {
         self.location = location
         self.automationTarget = automationTarget
@@ -1145,6 +1184,8 @@ private struct ClickResolution {
         self.snapshotIdToInvalidate = snapshotIdToInvalidate ?? snapshotId
         self.coordinateSpace = coordinateSpace
         self.coordinateReference = coordinateReference
+        self.queryWait = queryWait
+        self.modifierSnapshotId = modifierSnapshotId
     }
 }
 
@@ -1191,22 +1232,6 @@ private struct ClickIntent {
         } else {
             self.automationType = .single
             self.displayVerb = "Clicked"
-        }
-    }
-}
-
-private struct ClickNestedCaptureRefusal: Error {
-    let response: ToolResponse
-}
-
-enum ClickObservationFileCleanup {
-    static func remove(screenshotPath: String?) {
-        guard let screenshotPath, !screenshotPath.isEmpty else { return }
-        try? FileManager.default.removeItem(atPath: screenshotPath)
-        let annotated = ObservationOutputWriter.annotatedScreenshotPath(
-            forRawScreenshotPath: screenshotPath)
-        if annotated != screenshotPath {
-            try? FileManager.default.removeItem(atPath: annotated)
         }
     }
 }

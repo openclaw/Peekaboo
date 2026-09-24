@@ -176,6 +176,43 @@ struct PeekabooBridgeOperationScopeTests {
 
     @Test
     @MainActor
+    func `Receipt bound inspection rejects a stale generation before handler dispatch`() async throws {
+        let identity = self.window(windowID: 75)
+        let request = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: WindowContext(
+            applicationProcessId: identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+            windowID: identity.windowID,
+            windowBounds: identity.capturedBounds,
+            windowMutationIdentity: identity,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: false,
+            requiresFreshAccessibilityTree: true,
+            allowApplicationScopedAccessibilityFallback: false)))
+        let proposed = try #require(request.desktopReadOperationLane)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-stale-inspect-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let server = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root),
+            windowOwnerProcessIdentifierProvider: { _ in identity.ownerProcessIdentifier },
+            windowBoundsProvider: { _ in identity.capturedBounds },
+            processStartIdentityProvider: { _ in identity.ownerProcessStartIdentity + 1 })
+        var dispatchCount = 0
+
+        await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            try await server.withValidatedDesktopReadOperationLane(for: request, proposed: proposed) {
+                dispatchCount += 1
+            }
+        }
+
+        #expect(dispatchCount == 0)
+    }
+
+    @Test
+    @MainActor
     func `Exact read fails closed without redispatch when the process generation changes`() async throws {
         let identity = self.window(windowID: 76)
         let request = PeekabooBridgeRequest.inspectAccessibilityTree(.init(windowContext: WindowContext(

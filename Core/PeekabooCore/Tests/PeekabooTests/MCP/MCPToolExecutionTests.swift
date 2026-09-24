@@ -1112,6 +1112,7 @@ class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHo
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsProcessGenerationPinnedClicks = true
+    var supportsExactWindowTargetedClicks = true
     var supportsStatelessClickVariants = true
     var pinnedClickError: ((ClickTarget) -> (any Error)?)?
     var pinnedTypeError: (([TypeAction]) -> (any Error)?)?

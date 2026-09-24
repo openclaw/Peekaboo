@@ -95,32 +95,18 @@ public struct InspectUITool: MCPTool {
                 webFocus: request.webFocus,
                 traversalBudget: request.traversalBudget)
 
-            let actionResult = try await self.context.automation.inspectAccessibilityTreeResult(
-                windowContext: windowContext)
-            try ObservationActionResultSemantics.requirePublishableOutcome(
-                actionResult.outcome,
-                targetIdentity: actionResult.targetIdentity,
-                operation: "Inspect UI",
-                requiresOutcome: request.webFocus)
-            let result = actionResult.payload
-            let resolvedTarget = try ObservationActionResultSemantics.coalescedTarget(
-                actionTarget: actionResult.targetIdentity,
-                payload: result,
-                outcome: actionResult.outcome,
-                operation: "Inspect UI",
+            let validatedActionResult = try await self.inspectActionResult(
+                windowContext: windowContext,
+                requiresOutcome: request.webFocus,
                 requiresTarget: request.webFocus && target.requiresStableMutationTarget)
-            let validatedActionResult = UIAutomationActionResult(
-                payload: result,
-                outcome: actionResult.outcome,
-                targetIdentity: resolvedTarget)
             observationActionResult = validatedActionResult
+            let result = validatedActionResult.payload
             try Self.requireUsableAXOnlyEvidence(result, requestedWindowID: windowContext.windowID)
             let snapshotResult = self.bindResult(result, to: snapshot.id)
 
             try await self.context.snapshots.storeDetectionResult(
                 snapshotId: snapshot.id,
                 result: snapshotResult)
-
             await snapshot.setTargetMetadata(from: snapshotResult.metadata.windowContext)
             await snapshot.setUIElements(self.convertElements(snapshotResult.elements.all))
 
@@ -185,7 +171,125 @@ public struct InspectUITool: MCPTool {
         }
     }
 
+    @MainActor
+    func observeExactWindow(
+        windowContext: WindowContext,
+        deadline: ContinuousClock.Instant) async throws -> ElementDetectionResult
+    {
+        try Task.checkCancellation()
+        guard let identity = windowContext.windowMutationIdentity,
+              let bounds = identity.capturedBounds,
+              windowContext.applicationProcessId == identity.ownerProcessIdentifier,
+              windowContext.applicationProcessStartIdentity == identity.ownerProcessStartIdentity,
+              windowContext.windowID == identity.windowID,
+              windowContext.windowBounds == bounds,
+              windowContext.shouldFocusWebContent != true,
+              windowContext.includeMenuBarElements == false,
+              windowContext.requiresFreshAccessibilityTree == true,
+              windowContext.allowApplicationScopedAccessibilityFallback != true
+        else {
+            throw PeekabooError.invalidInput("Query polling requires one fresh, read-only exact-window receipt.")
+        }
+        _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+            .init(
+                processIdentifier: windowContext.applicationProcessId,
+                processIdentity: identity.processIdentity,
+                windowID: windowContext.windowID,
+                windowIdentity: identity,
+                windowBounds: bounds),
+        ])
+        let remaining = ContinuousClock.now.duration(to: deadline).components
+        let seconds = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
+        guard seconds > 0 else {
+            throw PeekabooError.timeout("The query wait expired before its Accessibility observation started.")
+        }
+        let requestContext = WindowContext(
+            applicationName: windowContext.applicationName,
+            applicationBundleId: windowContext.applicationBundleId,
+            applicationBundlePath: windowContext.applicationBundlePath,
+            applicationExecutablePath: windowContext.applicationExecutablePath,
+            applicationProcessId: identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+            windowTitle: windowContext.windowTitle,
+            windowID: identity.windowID,
+            windowBounds: bounds,
+            windowMutationIdentity: identity,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: false,
+            traversalBudget: windowContext.traversalBudget,
+            requiresFreshAccessibilityTree: true,
+            accessibilityTimeoutSeconds: seconds,
+            allowApplicationScopedAccessibilityFallback: false)
+        let actionResult: UIAutomationActionResult<ElementDetectionResult>
+        do {
+            actionResult = try await self.inspectActionResult(
+                windowContext: requestContext,
+                requiresOutcome: false,
+                requiresTarget: false,
+                timeoutSeconds: seconds)
+        } catch VerifyStateDeadlineError.timedOut {
+            throw PeekabooError.timeout("The query wait expired before its Accessibility observation completed.")
+        }
+        try Self.validatePinnedObservation(actionResult.payload, context: windowContext, deadline: deadline)
+        try Self.requireUsableAXOnlyEvidence(actionResult.payload, requestedWindowID: windowContext.windowID)
+        return actionResult.payload
+    }
+
     // MARK: - Private Helpers
+
+    @MainActor
+    private func inspectActionResult(
+        windowContext: WindowContext,
+        requiresOutcome: Bool,
+        requiresTarget: Bool,
+        timeoutSeconds: TimeInterval? = nil) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        let automation = self.context.automation
+        let actionResult: UIAutomationActionResult<ElementDetectionResult> = if let timeoutSeconds {
+            try await VerifyStateDeadlineRunner.run(seconds: timeoutSeconds) {
+                try await automation.inspectAccessibilityTreeResult(windowContext: windowContext)
+            }
+        } else {
+            try await automation.inspectAccessibilityTreeResult(windowContext: windowContext)
+        }
+        try ObservationActionResultSemantics.requirePublishableOutcome(
+            actionResult.outcome,
+            targetIdentity: actionResult.targetIdentity,
+            operation: "Inspect UI",
+            requiresOutcome: requiresOutcome)
+        let resolvedTarget = try ObservationActionResultSemantics.coalescedTarget(
+            actionTarget: actionResult.targetIdentity,
+            payload: actionResult.payload,
+            outcome: actionResult.outcome,
+            operation: "Inspect UI",
+            requiresTarget: requiresTarget)
+        return UIAutomationActionResult(
+            payload: actionResult.payload,
+            outcome: actionResult.outcome,
+            targetIdentity: resolvedTarget)
+    }
+
+    private static func validatePinnedObservation(
+        _ result: ElementDetectionResult,
+        context: WindowContext,
+        deadline: ContinuousClock.Instant) throws
+    {
+        try Task.checkCancellation()
+        if ContinuousClock.now >= deadline {
+            throw PeekabooError.timeout("The query wait expired before its Accessibility observation completed.")
+        }
+        guard let expected = context.windowMutationIdentity,
+              let observed = result.metadata.windowContext,
+              observed.windowMutationIdentity?.hasSameStableReceipt(as: expected) == true,
+              observed.applicationProcessId == expected.ownerProcessIdentifier,
+              observed.applicationProcessStartIdentity == expected.ownerProcessStartIdentity,
+              observed.windowID == expected.windowID,
+              observed.windowBounds == expected.capturedBounds,
+              !result.metadata.isApplicationScopedAccessibilityFallback
+        else {
+            throw PeekabooError.snapshotStale("The selected click target changed while waiting. Run see again.")
+        }
+    }
 
     private static func requireUsableAXOnlyEvidence(
         _ result: ElementDetectionResult,

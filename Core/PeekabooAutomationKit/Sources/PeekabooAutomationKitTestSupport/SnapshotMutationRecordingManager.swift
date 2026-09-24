@@ -20,6 +20,7 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     public private(set) var ownsCalls: [String] = []
     public private(set) var createCalls: [Date?] = []
     public private(set) var createExplicitCallCount = 0
+    public private(set) var storeDetectionResultCalls: [String] = []
     public var failFinish = false
     public var ownsSnapshotError: (any Error)?
     public var getDetectionResultError: (any Error)?
@@ -100,6 +101,7 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     }
 
     public func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
+        self.storeDetectionResultCalls.append(snapshotId)
         try await self.wrapped.storeDetectionResult(snapshotId: snapshotId, result: result)
     }
 
