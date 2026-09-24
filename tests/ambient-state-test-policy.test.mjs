@@ -67,9 +67,10 @@ test("hosted CI runs exact hotkey receipt Core guards", () => {
   assert.ok(body, "Missing exact hotkey receipt CI step");
   const step = body.split("\n      - name:")[0];
   assert.match(step, /working-directory: Core\/PeekabooCore/);
-  assert.ok(step.includes("--filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests)/'"));
+  assert.ok(step.includes("--filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests|TypeServiceAXFailureReceiptTests)/'"));
   assert.ok(step.includes("Suite HotkeySelectAllReceiptTests passed after "));
   assert.ok(step.includes("Suite MCPExactWindowKeyboardToolTests passed after "));
+  assert.ok(step.includes("Suite TypeServiceAXFailureReceiptTests passed after "));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
   assert.doesNotMatch(step, /RUN_(?:AUTOMATION_TESTS|AUTOMATION_ACTIONS|LOCAL_TESTS): "true"/);

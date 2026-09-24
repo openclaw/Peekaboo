@@ -656,7 +656,7 @@ public final class TypeService {
         } catch let error as InputDeliveryIndeterminateError {
             throw InputDeliveryIndeterminateError(
                 operation: error.operation,
-                emittedUnitCount: error.emittedUnitCount,
+                emittedUnitCount: error.emittedUnitCount ?? (emittedUnitCount > 0 ? emittedUnitCount : nil),
                 causeDescription: error.causeDescription,
                 delivery: Self.combinedDelivery(
                     accumulatedDelivery(),
@@ -973,8 +973,15 @@ extension TypeService {
     private static func indeterminateDeliveryError(
         from error: any Error,
         emittedUnitCount: Int?,
-        delivery: DesktopActionOutcome.Delivery? = nil) -> InputDeliveryIndeterminateError
+        delivery: DesktopActionOutcome.Delivery? = nil) -> any Error
     {
+        if (emittedUnitCount ?? 0) == 0,
+           let failure = error as? DesktopActionFailure,
+           failure.outcome.state == .refused,
+           failure.outcome.dispatchState == .none
+        {
+            return failure
+        }
         if let error = error as? InputDeliveryIndeterminateError {
             return InputDeliveryIndeterminateError(
                 operation: error.operation,
