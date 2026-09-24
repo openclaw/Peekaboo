@@ -98,6 +98,18 @@ Do not paste live credential values into test logs or committed fixtures.
 
 ### Tool Discovery
 
+The initialize handshake accepts arbitrary JSON values in `capabilities.experimental`, including the
+`{"codex/auth-change": {}}` declaration sent by Codex. Malformed known capabilities still fail decoding.
+`PeekabooMCPInitializationTests` sends raw requests through the production server and verifies that a successful
+initialize reaches `tools/list`, without invoking desktop tools.
+
+Peekaboo temporarily pins Swift MCP SDK commit `f7077e0d5cd57e0b2a497862017aa94ee344252f`, the single-commit
+decoder repair in [swift-sdk#276](https://github.com/modelcontextprotocol/swift-sdk/pull/276) on top of 0.12.1.
+Replace the Core and CLI manifest pins with a tagged SDK containing that repair when available, then regenerate
+the Core, Mac, and Xcode workspace lockfiles. The SDK's Swift `Client.Capabilities.experimental` type becomes
+`[String: Value]?`; source integrations passing a typed `[String: String]` dictionary must convert its values
+with `mapValues(Value.string)`. Dictionary literals and the CLI/MCP wire interface retain their existing syntax.
+
 - Confirm the changed tool appears once.
 - Inspect its description, required properties, and enum values.
 - Compare the schema with the corresponding implementation under `Core/PeekabooCore/Sources/PeekabooAgentRuntime/MCP/Tools`.

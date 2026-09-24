@@ -63,7 +63,6 @@ public actor PeekabooMCPServer {
     private var shutdownTask: Task<Void, Never>?
     private var acceptsToolCalls = false
     private var activeToolCalls: [UUID: Task<CallTool.Result, any Error>] = [:]
-    private let serverName = PeekabooMCPVersion.serverName
     private let serverVersion = PeekabooMCPVersion.current
 
     public init(
@@ -175,41 +174,6 @@ public actor PeekabooMCPServer {
         // Resources read handler (returns error for now)
         await self.server.withMethodHandler(ReadResource.self) { params in
             throw MCP.MCPError.invalidParams("Resource '\(params.uri)' not found")
-        }
-
-        // Initialize handler
-        await self.server.withMethodHandler(Initialize.self) { [weak self] request in
-            guard let self else {
-                throw MCP.MCPError.methodNotFound("Server deallocated")
-            }
-
-            let clientDescription = "\(request.clientInfo.name) \(request.clientInfo.version)"
-            let protocolVersion = request.protocolVersion
-            self.logger.info(
-                """
-                Client connected: \(clientDescription, privacy: .public), \
-                protocol: \(protocolVersion, privacy: .public)
-                """)
-
-            // Create a response struct that matches Initialize.Result
-            struct InitializeResult: Codable {
-                let protocolVersion: String
-                let capabilities: Server.Capabilities
-                let serverInfo: Server.Info
-                let instructions: String?
-            }
-
-            let result = await InitializeResult(
-                protocolVersion: "2024-11-05",
-                capabilities: self.server.capabilities,
-                serverInfo: Server.Info(
-                    name: self.serverName,
-                    version: self.serverVersion),
-                instructions: nil)
-
-            // Convert to Initialize.Result via JSON
-            let data = try JSONEncoder().encode(result)
-            return try JSONDecoder().decode(Initialize.Result.self, from: data)
         }
     }
 

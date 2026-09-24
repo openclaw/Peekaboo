@@ -52,6 +52,10 @@ let package = Package(
         .package(path: "../PeekabooExternalDependencies"),
         .package(path: "../PeekabooVisualizer"),
         .package(path: "../../Tachikoma"),
+        // Pin swift-sdk#276's capability decoder until it is included in a tagged SDK.
+        .package(
+            url: "https://github.com/modelcontextprotocol/swift-sdk.git",
+            revision: "f7077e0d5cd57e0b2a497862017aa94ee344252f"),
         .package(url: "https://github.com/apple/swift-configuration", from: "1.0.0"),
     ],
     targets: [
@@ -114,6 +118,7 @@ let package = Package(
         .target(
             name: "PeekabooAgentRuntime",
             dependencies: [
+                .product(name: "MCP", package: "swift-sdk"),
                 .target(name: "PeekabooAutomation"),
                 .product(name: "PeekabooAutomationKit", package: "PeekabooAutomationKit"),
                 .product(name: "PeekabooVisualizer", package: "PeekabooVisualizer"),

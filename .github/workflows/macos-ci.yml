@@ -140,7 +140,7 @@ jobs:
       - name: Run MCP wire and background policy tests
         working-directory: Core/PeekabooCore
         run: |
-          swift test --no-parallel --filter PeekabooMCPServerTests
+          swift test --no-parallel --filter 'PeekabooMCPServerTests|PeekabooMCPInitializationTests'
           swift test --no-parallel --filter 'MCPToolArgumentValidationTests|MCPToolExecutionPolicyTests|MCPPolicyAwareCatalogTests|MCPBackgroundPolicyExecutionTests'
 
       - name: Run MCP action fixtures and outcome contract tests
@@ -292,6 +292,30 @@ jobs:
           catalog = result["data"]
           assert catalog["count"] == len(catalog["tools"]) > 0, catalog
           print(f"Built CLI returned {catalog['count']} tools")
+          PY
+
+      - name: Smoke test structured MCP initialization over stdio
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          request = {
+              "jsonrpc": "2.0", "id": 0, "method": "initialize",
+              "params": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {"experimental": {"codex/auth-change": {}}},
+                  "clientInfo": {"name": "synthetic-initialize-client", "version": "1.0"},
+              },
+          }
+          result = subprocess.run(
+              [os.environ["PEEKABOO_CLI_BINARY"], "mcp", "--no-remote"],
+              input=json.dumps(request) + "\n", text=True, capture_output=True, timeout=30,
+              env={**os.environ, "PEEKABOO_ALLOW_TOOLS": "permissions"}, check=True)
+          response = json.loads(result.stdout)
+          assert response["id"] == 0 and "error" not in response, response
+          assert response["result"]["protocolVersion"] == "2025-06-18", response
+          print("Built CLI accepted structured experimental capabilities over stdio")
           PY
 
       - name: Run CLI unit tests (skip automation)
