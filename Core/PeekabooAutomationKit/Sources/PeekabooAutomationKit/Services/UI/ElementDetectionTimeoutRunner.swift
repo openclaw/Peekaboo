@@ -70,7 +70,7 @@ import PeekabooFoundation
                     processStartIdentity: processStartIdentity,
                     maximumPendingOperationCount: maximumPendingOperationCount)
                 {
-                    guard state.claimWork() else { return }
+                    guard state.claimWork() else { return nil }
                     let result: Result<T, any Error> = autoreleasepool {
                         do {
                             return try .success(operation())
@@ -78,7 +78,7 @@ import PeekabooFoundation
                             return .failure(error)
                         }
                     }
-                    state.complete(with: result)
+                    return { state.complete(with: result) }
                 }
                 if !enqueued {
                     state.timeOut()
@@ -94,7 +94,7 @@ import PeekabooFoundation
     }
 }
 
-private final class AXObservationWorkerPool: @unchecked Sendable {
+final class AXObservationWorkerPool: @unchecked Sendable {
     private struct Key: Hashable {
         let pid: Int32
         let processStartIdentity: UInt64?
@@ -125,7 +125,7 @@ private final class AXObservationWorkerPool: @unchecked Sendable {
         pid: Int32,
         processStartIdentity: UInt64?,
         maximumPendingOperationCount: Int?,
-        operation: @escaping @Sendable () -> Void)
+        operation: @escaping @Sendable () -> (@Sendable () -> Void)?)
         -> Bool
     {
         let key = Key(pid: pid, processStartIdentity: processStartIdentity)
@@ -145,8 +145,11 @@ private final class AXObservationWorkerPool: @unchecked Sendable {
         }
         guard let lane else { return false }
         lane.queue.async {
-            defer { self.complete(key: key) }
-            operation()
+            let publish = operation()
+            // Retain occupied capacity until native work really returns, but release it before
+            // waking a caller that may immediately enqueue its next read on this same lane.
+            self.complete(key: key)
+            publish?()
         }
         return true
     }

@@ -5,6 +5,28 @@ import XCTest
 
 @MainActor
 final class ElementDetectionDetachedRunnerTests: XCTestCase {
+    func testCompletedSlotIsReleasedBeforePublishingAndAllowsImmediateReentry() async {
+        let pool = AXObservationWorkerPool()
+        let completed = expectation(description: "immediate same-lane reentry completed")
+        XCTAssertTrue(pool.enqueue(pid: 910_000, processStartIdentity: 100, maximumPendingOperationCount: 1) {
+            {
+                let admitted = pool.enqueue(
+                    pid: 910_000,
+                    processStartIdentity: 100,
+                    maximumPendingOperationCount: 1)
+                {
+                    completed.fulfill()
+                    return nil
+                }
+                XCTAssertTrue(admitted, "Publication must observe the previous native read's slot as released")
+                if !admitted {
+                    completed.fulfill()
+                }
+            }
+        })
+        await fulfillment(of: [completed], timeout: 2)
+    }
+
     func testDetachedDeadlineWinsEvenWhenMainActorWorkStarvesCallerResumption() async {
         let finished = expectation(description: "deadline caller resumed")
         let caller = Task { @MainActor in

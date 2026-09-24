@@ -102,12 +102,11 @@ extension DialogService {
             throw self.targetUnavailable("File dialog owning window receipt is incomplete or ambiguous.")
         }
 
-        let currentDialogs = self.freshDialogElements(in: handle.element)
+        let currentDialogs = try await self.freshDialogElements(in: handle.element, owner: processIdentity)
         let retainedMatches = (currentDialogs.structural + currentDialogs.legacy).filter {
             Self.sameElement($0, dialog)
         }
-        guard currentDialogs.readable,
-              retainedMatches.count == 1,
+        guard retainedMatches.count == 1,
               retainedMatches.first.map(self.isFileDialogElement) == true
         else {
             throw self.targetUnavailable("File dialog changed while retaining its exact owning window.")

@@ -322,12 +322,9 @@ extension DialogService {
         retainedTarget: UIAutomationTarget.ExactWindow) async throws -> [OverwriteConfirmationCandidate]
     {
         let observation = try await self.retainedFileDialogWindowObservation(target: retainedTarget)
-        let dialogs = self.freshDialogElements(in: observation.window)
-        guard dialogs.readable else {
-            throw self.targetUnavailable(
-                "Overwrite confirmation hierarchy became unreadable before Replace dispatch.")
-        }
-
+        let dialogs = try await self.freshDialogElements(
+            in: observation.window,
+            owner: retainedTarget.identity.processIdentity)
         var candidates: [OverwriteConfirmationCandidate] = []
         for dialog in dialogs.structural {
             let owned = self.ownedOverwriteButtons(in: dialog)

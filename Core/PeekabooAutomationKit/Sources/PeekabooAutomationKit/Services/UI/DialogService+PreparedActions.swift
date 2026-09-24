@@ -15,6 +15,10 @@ extension DialogService {
                 guard candidates.count == 1, let candidate = candidates.first else {
                     throw self.actionCandidateRefusal(request: request, candidates: candidates)
                 }
+                let buttonTitle = candidate.discoveryProof?.buttonTitle ??
+                    candidate.button.title() ?? request.buttonText ?? "Dismiss"
+                let buttonIdentifier = candidate.button.attribute(Attribute<String>("AXIdentifier"))
+                try Task.checkCancellation()
 
                 let receipt = PreparedDialogActionReceipt(
                     token: UUID(),
@@ -28,9 +32,8 @@ extension DialogService {
                     window: candidate.window,
                     dialog: candidate.dialog,
                     button: candidate.button,
-                    resolvedButtonTitle: candidate.discoveryProof?.buttonTitle ??
-                        candidate.button.title() ?? request.buttonText ?? "Dismiss",
-                    resolvedButtonIdentifier: candidate.button.attribute(Attribute<String>("AXIdentifier")),
+                    resolvedButtonTitle: buttonTitle,
+                    resolvedButtonIdentifier: buttonIdentifier,
                     createdAt: Date()))
                 return receipt
             }
@@ -196,7 +199,6 @@ extension DialogService {
     struct FreshDialogElements {
         let structural: [Element]
         let legacy: [Element]
-        let readable: Bool
     }
 
     struct DialogTargetRevalidationObservation {
@@ -289,7 +291,10 @@ extension DialogService {
         }
         var structuralCandidates: [TargetedDialogCandidate] = []
         var legacyCandidates: [TargetedDialogCandidate] = []
+        let discoveryBudget = DialogHierarchyBudget()
         for window in windows {
+            try Task.checkCancellation()
+            try discoveryBudget.checkDeadline()
             guard let identity = window.mutationIdentity,
                   identity.processIdentity == processIdentity,
                   identity.windowID == window.windowID,
@@ -311,11 +316,10 @@ extension DialogService {
                 application: application,
                 window: window,
                 windowResolutionProof: windowResolutionProof)
-            let freshDialogs = self.freshDialogElements(in: handle.element)
-            guard freshDialogs.readable else {
-                throw self.targetUnavailable(
-                    "Dialog hierarchy became unreadable while preparing the exact target.")
-            }
+            let freshDialogs = try await self.freshDialogElements(
+                in: handle.element,
+                owner: processIdentity,
+                budget: discoveryBudget)
             for dialog in freshDialogs.structural {
                 guard dialog.pid() == processIdentity.processIdentifier else { continue }
                 structuralCandidates.append(TargetedDialogCandidate(
@@ -344,6 +348,7 @@ extension DialogService {
                 message: "Dialog owner changed process generation during planning.",
                 hint: "List the application and dialog again before retrying.")
         }
+        try Task.checkCancellation()
         return switch membership {
         case .structuralMutation:
             structuralCandidates
@@ -454,33 +459,41 @@ extension DialogService {
         return windows
     }
 
-    func freshDialogElements(in window: Element) -> FreshDialogElements {
+    func freshDialogElements(
+        in window: Element,
+        owner: ApplicationProcessIdentity,
+        budget: DialogHierarchyBudget = DialogHierarchyBudget()) async throws -> FreshDialogElements
+    {
         var structuralDialogs: [Element] = []
         var legacyDialogs: [Element] = []
         var visited: Set<Element> = []
-        var stack = [window]
-        var readable = true
+        var stack = [(window, 0)]
 
-        while let element = stack.popLast() {
+        while let (element, depth) = stack.popLast() {
+            try Task.checkCancellation()
+            try budget.checkDeadline()
             guard visited.insert(element).inserted else { continue }
-            let evidence = DialogElementClassifier.evidence(for: element)
+            guard visited.count <= budget.maximumNodeCount, depth <= budget.maximumDepth else {
+                throw DialogHierarchyReadError.traversalLimit
+            }
+            let node = try await self.discoveryReaders.hierarchyNode(element, owner, budget.deadline)
+            try Task.checkCancellation()
+            try budget.checkDeadline()
+            let evidence = node.evidence
             if DialogElementClassifier.isStructuralDialog(evidence) {
                 structuralDialogs.append(element)
             } else if DialogElementClassifier.permitsLegacyReadHeuristics(evidence),
-                      self.isDialogElement(element, matching: nil)
+                      DialogElementClassifier.isDialog(evidence)
             {
                 legacyDialogs.append(element)
             }
-            let traversal = Self.traversalChildren(of: element)
-            readable = readable && traversal.readable
-            stack.append(contentsOf: traversal.elements.reversed())
+            stack.append(contentsOf: node.children.reversed().map { ($0, depth + 1) })
         }
         return FreshDialogElements(
             structural: DialogTraversal.preferredStructuralDialogs(
                 in: window,
                 candidates: structuralDialogs),
-            legacy: legacyDialogs,
-            readable: readable)
+            legacy: legacyDialogs)
     }
 
     func semanticButtons(in dialog: Element, request: DialogActionPreparationRequest) -> [Element] {
@@ -564,7 +577,9 @@ extension DialogService {
             throw self.targetUnavailable("Dialog window receipt changed before \(operation).")
         }
 
-        let freshDialogs = self.freshDialogElements(in: currentWindow.element)
+        let freshDialogs = try await self.freshDialogElements(
+            in: currentWindow.element,
+            owner: expected.identity.processIdentity)
         guard Self.isValidDialogTargetRevalidation(
             expected: expected,
             observation: DialogTargetRevalidationObservation(
@@ -572,7 +587,7 @@ extension DialogService {
                 windowIdentity: window?.mutationIdentity,
                 windowBounds: window?.bounds,
                 retainedWindowMatches: Self.sameElement(currentWindow.element, retainedWindow),
-                hierarchyReadable: freshDialogs.readable,
+                hierarchyReadable: true,
                 structuralDialogCount: freshDialogs.structural.count,
                 retainedDialogMatches: freshDialogs.structural.first.map {
                     Self.sameElement($0, retainedDialog)
