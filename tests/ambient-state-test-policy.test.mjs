@@ -31,6 +31,24 @@ test("safe suite forces ambient-state tests off", () => {
   );
 });
 
+test("application running-state CI executes both production and Bridge suites with nonempty guards", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  for (const [name, packagePath, suite] of [
+    ["Run application running-state contracts", "Core/PeekabooAutomationKit", "ApplicationRunningStateTests"],
+    ["Run Bridge application running-state contracts", "Core/PeekabooCore", "PeekabooBridgeApplicationRunningStateTests"],
+  ]) {
+    const step = workflow.split(`      - name: ${name}\n`)[1]?.split("\n      - ")[0];
+    assert.ok(step, `Missing CI step: ${name}`);
+    assert.ok(step.includes(`working-directory: ${packagePath}`));
+    assert.ok(step.includes("set -euo pipefail"));
+    assert.ok(step.includes(`swift test --no-parallel --filter ${suite} 2>&1 | tee "$test_log"`));
+    assert.ok(step.includes(`grep -Fq 'Suite ${suite} passed after ' "$test_log"`));
+    assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' \"$test_log\""));
+    assert.doesNotMatch(step, /(?:RUN_AUTOMATION_ACTIONS|PEEKABOO_INCLUDE_AUTOMATION_TESTS): "true"/);
+  }
+  assert.ok(workflow.includes("node --test tests/ambient-state-test-policy.test.mjs"));
+});
+
 test("ambient-state tests require the exact shared opt-in", () => {
   assert.match(
     runtimeTests,

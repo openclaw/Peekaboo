@@ -541,16 +541,20 @@ extension ApplicationService {
         return self.createApplicationInfo(from: app)
     }
 
-    public func isApplicationRunning(identifier: String) async -> Bool {
+    /// Returns false only when no running application matches; ambiguity and lookup errors propagate.
+    public func isApplicationRunning(identifier: String) async throws -> Bool {
         self.logger.debug("Checking if application is running: \(identifier)")
-        do {
-            _ = try await self.findApplication(identifier: identifier)
-            self.logger.debug("Application is running: \(identifier)")
-            return true
-        } catch {
-            self.logger.debug("Application is not running: \(identifier)")
+        // Running state needs selector resolution, not window and presentation metadata.
+        guard let resolution = try ApplicationIdentifierMatcher.resolution(
+            for: identifier,
+            in: self.applicationSelectorCandidatesProvider())
+        else {
             return false
         }
+        guard !resolution.hasWinningTie else {
+            throw PeekabooError.ambiguousAppIdentifier(identifier, suggestions: resolution.ambiguitySuggestions)
+        }
+        return true
     }
 
     func createApplicationInfo(from app: NSRunningApplication) -> ServiceApplicationInfo {
