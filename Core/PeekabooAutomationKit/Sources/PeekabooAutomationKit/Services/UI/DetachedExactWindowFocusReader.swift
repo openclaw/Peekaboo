@@ -54,8 +54,12 @@ enum DetachedExactWindowFocusReader {
         guard let focusedElement = self.elementAttribute(kAXFocusedUIElementAttribute, of: application) else {
             return nil
         }
+        return self.read(element: focusedElement, processIdentifier: processIdentifier)
+    }
 
+    static func read(element focusedElement: AXUIElement, processIdentifier: pid_t) -> ExactWindowFocusSnapshot? {
         AXUIElementSetMessagingTimeout(focusedElement, self.messagingTimeout)
+        defer { AXUIElementSetMessagingTimeout(focusedElement, 0) }
         var focusedProcessIdentifier: pid_t = 0
         guard AXUIElementGetPid(focusedElement, &focusedProcessIdentifier) == .success,
               focusedProcessIdentifier == processIdentifier

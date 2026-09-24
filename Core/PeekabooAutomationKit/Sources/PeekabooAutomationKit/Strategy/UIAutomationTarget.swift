@@ -388,7 +388,7 @@ public enum ExactWindowKeyboardRuntime {
     {
         let chord = try? HotkeyService.HotkeyChord(keys: HotkeyService.parsedKeys(keys))
         let isSelectAll = chord?.plan.primaryKey == "a" && chord?.plan.modifierFlags == .maskCommand
-        // A focused selection write retains the exact receiver; generic menu actions do not prove that route.
+        // The selection primitive validates its retained receiver; generic menu actions do not prove that route.
         return try self.validateRouteReceipt(
             result,
             operation: operation,

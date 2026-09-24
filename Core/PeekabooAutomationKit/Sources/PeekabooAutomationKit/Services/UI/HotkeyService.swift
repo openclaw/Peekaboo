@@ -25,7 +25,8 @@ public final class HotkeyService {
     private let heldInterEventDelay: @MainActor @Sendable () -> Void
     let inputPolicy: UIInputPolicy
     private let actionInputDriver: any ActionInputDriving
-    private let focusedTextHotkey: @MainActor (String, CGEventFlags, pid_t) throws -> Bool
+    private let focusedTextHotkey: @MainActor (
+        String, CGEventFlags, pid_t, UIAutomationTarget.ExactWindow?) throws -> Bool
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
 
@@ -51,12 +52,15 @@ public final class HotkeyService {
     init(
         inputPolicy: UIInputPolicy = .currentBehavior,
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
-        focusedTextHotkey: @escaping @MainActor (String, CGEventFlags, pid_t) throws -> Bool = { key, flags, pid in
-            try BackgroundInputDriver.performFocusedTextHotkey(
-                primaryKey: key,
-                modifierFlags: flags,
-                targetProcessIdentifier: pid)
-        },
+        focusedTextHotkey: @escaping @MainActor (
+            String, CGEventFlags, pid_t, UIAutomationTarget.ExactWindow?) throws
+            -> Bool = { key, flags, pid, exactWindow in
+                try BackgroundInputDriver.performFocusedTextHotkey(
+                    primaryKey: key,
+                    modifierFlags: flags,
+                    targetProcessIdentifier: pid,
+                    exactWindow: exactWindow)
+            },
         postEventAccessEvaluator: @escaping @MainActor @Sendable ()
             -> Bool = { CGPreflightPostEventAccess() },
         eventPoster: @escaping @MainActor @Sendable (CGEvent, pid_t) -> Void = HotkeyService.defaultTargetedEventPoster,
@@ -232,7 +236,12 @@ public final class HotkeyService {
                     emittedUnitCount: 0)
                 try Self.validateTargetProcess(targetProcessIdentifier)
                 let plan = try self.makeHotkeyPlan(parsedKeys)
-                if try self.focusedTextHotkey(plan.primaryKey, plan.modifierFlags, targetProcessIdentifier) {
+                if try self.focusedTextHotkey(
+                    plan.primaryKey,
+                    plan.modifierFlags,
+                    targetProcessIdentifier,
+                    automationTarget.exactWindow)
+                {
                     if automationTarget.exactWindow == nil {
                         try await self.validateDelivery(targetValidator, emittedUnitCount: 1)
                     }
