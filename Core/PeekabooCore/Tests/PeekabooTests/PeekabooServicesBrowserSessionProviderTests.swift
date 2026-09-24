@@ -12,8 +12,10 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct PeekabooServicesBrowserSessionProviderTests {
-    @Test
-    func `Bridge bootstrap receives concrete provider and empty sessions stay provider free`() async throws {
+    @Test(arguments: [PeekabooBridgeHostKind.gui, .onDemand, .inProcess])
+    func `Bridge bootstrap receives concrete provider and empty sessions stay provider free`(
+        hostKind: PeekabooBridgeHostKind) async throws
+    {
         let child = HostBrowserProviderSpy(label: "child")
         let fixture = Self.fixture(children: [child])
 
@@ -22,7 +24,7 @@ struct PeekabooServicesBrowserSessionProviderTests {
         let host = PeekabooBridgeBootstrap.makeHost(
             services: fixture.services,
             configuration: .init(
-                hostKind: .inProcess,
+                hostKind: hostKind,
                 socketPath: "/tmp/peekaboo-browser-provider-test.sock",
                 allowlistedTeams: [],
                 allowlistedBundles: [],

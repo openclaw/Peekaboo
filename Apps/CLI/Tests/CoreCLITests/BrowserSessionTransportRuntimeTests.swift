@@ -6,13 +6,15 @@ import Testing
 @Suite(.tags(.safe))
 @MainActor
 struct BrowserSessionTransportRuntimeTests {
-    @Test
-    func `runtime injects browser session transport only for exact negotiated capability`() throws {
+    @Test(arguments: [PeekabooBridgeHostKind.onDemand, .gui])
+    func `runtime injects browser session transport only for exact negotiated capability`(
+        hostKind: PeekabooBridgeHostKind
+    ) throws {
         let client = PeekabooBridgeClient(
             socketPath: "/private/tmp/peekaboo-browser-session-transport-test.sock",
             requestTimeoutSec: 0.1
         )
-        let supported = Self.handshake()
+        let supported = Self.handshake(hostKind: hostKind)
         let supportedServices = RuntimeHostResolver.remoteServices(
             client: client,
             handshake: supported,
@@ -22,11 +24,10 @@ struct BrowserSessionTransportRuntimeTests {
         #expect(supportedBrowser.hasScopedSessionTransport)
 
         for unsupported in [
-            Self.handshake(minor: 37),
-            Self.handshake(hostKind: .gui),
-            Self.handshake(includeCapability: false),
-            Self.handshake(omitting: .browserSessionControl),
-            Self.handshake(disabling: .browserSessionBootstrap),
+            Self.handshake(minor: 37, hostKind: hostKind),
+            Self.handshake(hostKind: hostKind, includeCapability: false),
+            Self.handshake(hostKind: .helper),
+            Self.handshake(hostKind: .inProcess),
         ] {
             let services = RuntimeHostResolver.remoteServices(
                 client: client,
@@ -38,15 +39,21 @@ struct BrowserSessionTransportRuntimeTests {
         }
     }
 
-    @Test
-    func `capability policy requires every scoped browser operation enabled`() {
-        #expect(BridgeCapabilityPolicy.supportsBrowserConnectionHandoff(for: Self.handshake()))
+    @Test(arguments: [PeekabooBridgeHostKind.onDemand, .gui], Self.operations)
+    func `capability policy requires every scoped browser operation supported and enabled`(
+        hostKind: PeekabooBridgeHostKind,
+        operation: PeekabooBridgeOperation
+    ) {
+        #expect(BridgeCapabilityPolicy.supportsBrowserConnectionHandoff(for: Self.handshake(hostKind: hostKind)))
         #expect(!BridgeCapabilityPolicy.supportsBrowserConnectionHandoff(
-            for: Self.handshake(disabling: .browserExecute)
+            for: Self.handshake(hostKind: hostKind, omitting: operation)
+        ))
+        #expect(!BridgeCapabilityPolicy.supportsBrowserConnectionHandoff(
+            for: Self.handshake(hostKind: hostKind, disabling: operation)
         ))
     }
 
-    private static let operations: [PeekabooBridgeOperation] = [
+    private nonisolated static let operations: [PeekabooBridgeOperation] = [
         .browserStatus,
         .browserConnect,
         .browserExecute,

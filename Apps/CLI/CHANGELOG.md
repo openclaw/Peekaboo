@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update AXorcist to 0.1.11 for native numeric fidelity, geometry/range parsing improvements, and invalid-scroll refusal before input dispatch.
 - Reject paste restore delays above 10 seconds while preserving the 150ms default and cancellation-safe clipboard restoration. Thanks @SebTardif! #759.
+- Restore default MCP startup on capable explicitly selected GUI Bridge hosts without dropping the browser tool or borrowing shared connections. Thanks @smhanov! #744.
 
 ## 4.5.0 - 2026-09-22
 

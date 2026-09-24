@@ -683,7 +683,7 @@ enum BridgeCapabilityPolicy {
         ]
         let supported = Set(handshake.supportedOperations)
         let enabled = Set(handshake.enabledOperations ?? handshake.supportedOperations)
-        return handshake.hostKind == .onDemand &&
+        return (handshake.hostKind == .onDemand || handshake.hostKind == .gui) &&
             handshake.negotiatedVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.browserConnectionHandoff) == true &&
             requiredOperations.isSubset(of: supported) &&
