@@ -7,6 +7,25 @@ import XCTest
 
 @MainActor
 final class DialogHierarchyReaderTests: XCTestCase {
+    func testServiceOperationSharesOneFallbackAcrossRepeatedDiscovery() async throws {
+        let root = Self.element(940_000)
+        let owner = ApplicationProcessIdentity(processIdentifier: 940_000, processStartIdentity: 123)
+        var observed: [DialogOperationDeadline] = []
+        var readers = DialogDiscoveryReaders()
+        readers.hierarchyNode = { _, _, budget in
+            observed.append(budget)
+            return Self.node(role: "AXSheet")
+        }
+        let service = Self.service(readers)
+        try await service.runDialogOperation(scope: .global, access: .read) {
+            _ = try await service.freshDialogElements(in: root, owner: owner)
+            _ = try await service.freshDialogElements(in: root, owner: owner)
+        }
+        XCTAssertEqual(observed.count, 2)
+        XCTAssertEqual(observed[0].timeoutSeconds, 20)
+        XCTAssertEqual(observed[0].deadline, observed[1].deadline)
+    }
+
     func testStalledNativeReadDoesNotStarveMainActorOrPublishLateCandidates() async throws {
         try await self.assertAbandonedRead(cancelling: false, pid: 940_001)
     }
@@ -24,8 +43,8 @@ final class DialogHierarchyReaderTests: XCTestCase {
         let owner = ApplicationProcessIdentity(processIdentifier: pid, processStartIdentity: 123)
         let node = Self.node(role: "AXSheet")
         var readers = DialogDiscoveryReaders()
-        readers.hierarchyNode = { _, identity, deadline in
-            try await DialogHierarchyReader.run(owner: identity, deadline: deadline) {
+        readers.hierarchyNode = { _, identity, budget in
+            try await DialogHierarchyReader.run(owner: identity, budget: budget) {
                 started.fulfill()
                 _ = release.wait(timeout: .now() + 10)
                 return node
@@ -38,7 +57,9 @@ final class DialogHierarchyReaderTests: XCTestCase {
             let result = try await service.freshDialogElements(
                 in: root,
                 owner: owner,
-                budget: DialogHierarchyBudget(deadline: .now.advanced(by: .seconds(cancelling ? 10 : 1))))
+                budget: DialogOperationDeadline.bounded(
+                    timeoutSeconds: cancelling ? 10 : 1,
+                    operationName: "dialog test"))
             published = true
             if result.structural.count == 1 {
                 mutationCount += 1
@@ -56,7 +77,7 @@ final class DialogHierarchyReaderTests: XCTestCase {
             XCTFail("Stalled discovery must not publish a candidate")
         } catch is CancellationError {
             XCTAssertTrue(cancelling)
-        } catch is CaptureError {
+        } catch PeekabooError.timeout {
             XCTAssertFalse(cancelling)
         } catch {
             XCTFail("Unexpected discovery error: \(error)")
@@ -64,12 +85,15 @@ final class DialogHierarchyReaderTests: XCTestCase {
         XCTAssertFalse(published)
         XCTAssertEqual(mutationCount, 0)
         do {
-            _ = try await DialogHierarchyReader.run(owner: owner, deadline: .now.advanced(by: .seconds(1))) {
+            _ = try await DialogHierarchyReader.run(
+                owner: owner,
+                budget: DialogOperationDeadline.bounded(timeoutSeconds: 1, operationName: "dialog test"))
+            {
                 XCTFail("An abandoned native read must retain its generation lane until it really finishes")
                 return node
             }
             XCTFail("The still-occupied worker lane must refuse more work")
-        } catch is CaptureError {}
+        } catch PeekabooError.timeout {}
 
         release.signal()
         _ = try await ElementDetectionTimeoutRunner.runDetached(
@@ -105,21 +129,21 @@ final class DialogHierarchyReaderTests: XCTestCase {
         let root = Self.element(940_004)
         let child = Self.element(940_005)
         let owner = ApplicationProcessIdentity(processIdentifier: 940_004, processStartIdentity: 123)
-        let budget = DialogHierarchyBudget(deadline: .now.advanced(by: .milliseconds(100)))
+        let budget = try DialogOperationDeadline.bounded(timeoutSeconds: 0.1, operationName: "dialog test")
         var deadlines: [ContinuousClock.Instant] = []
         var readers = DialogDiscoveryReaders()
-        readers.hierarchyNode = { element, _, deadline in
-            deadlines.append(deadline)
+        readers.hierarchyNode = { element, _, budget in
+            deadlines.append(budget.deadline)
             if element == root {
                 return Self.node(role: "AXWindow", children: [child])
             }
-            try await ContinuousClock().sleep(until: deadline)
+            try await ContinuousClock().sleep(until: budget.deadline)
             return Self.node(role: "AXSheet")
         }
         do {
             _ = try await Self.service(readers).freshDialogElements(in: root, owner: owner, budget: budget)
             XCTFail("Incomplete hierarchy must not publish an apparently unique sheet")
-        } catch DialogHierarchyReadError.deadlineExceeded {}
+        } catch PeekabooError.timeout {}
         XCTAssertEqual(deadlines, [budget.deadline, budget.deadline])
     }
 
@@ -158,31 +182,46 @@ final class DialogHierarchyReaderTests: XCTestCase {
             if element == sheet {
                 return Self.node(role: "AXSheet")
             }
-            throw DialogHierarchyReadError.unreadable
+            throw PeekabooError.accessibilityIncomplete("Unreadable dialog classification")
         }
         do {
             _ = try await Self.service(readers).freshDialogElements(in: root, owner: owner)
             XCTFail("One readable sheet does not establish complete discovery")
-        } catch DialogHierarchyReadError.unreadable {}
+        } catch PeekabooError.accessibilityIncomplete {}
     }
 
-    func testNodeAndDepthLimitsRefuseTruncatedUniqueCandidates() async throws {
-        let root = Self.element(940_012)
-        let child = Self.element(940_013)
+    func testLargeAndDeepReadableHierarchiesRetainCompleteUniqueDialog() async throws {
+        let nodes = (0..<1024).map { Self.element(941_000 + Int32($0)) }
+        let indices = Dictionary(uniqueKeysWithValues: nodes.enumerated().map { ($1, $0) })
         let owner = ApplicationProcessIdentity(processIdentifier: 940_012, processStartIdentity: 123)
-        for budget in [
-            DialogHierarchyBudget(maximumNodeCount: 1),
-            DialogHierarchyBudget(maximumDepth: 0),
-        ] {
+        for deep in [false, true] {
+            var visitedCount = 0
             var readers = DialogDiscoveryReaders()
             readers.hierarchyNode = { element, _, _ in
-                Self.node(role: "AXSheet", children: element == root ? [child] : [])
+                visitedCount += 1
+                let index = try XCTUnwrap(indices[element])
+                let children = deep
+                    ? (index + 1 < nodes.count ? [nodes[index + 1]] : [])
+                    : (index == 0 ? Array(nodes.dropFirst()) : [])
+                return Self.node(role: index == nodes.count - 1 ? "AXSheet" : "AXGroup", children: children)
             }
-            do {
-                _ = try await Self.service(readers).freshDialogElements(in: root, owner: owner, budget: budget)
-                XCTFail("Traversal limits must refuse rather than claim uniqueness")
-            } catch DialogHierarchyReadError.traversalLimit {}
+            let result = try await Self.service(readers).freshDialogElements(in: nodes[0], owner: owner)
+            XCTAssertEqual(result.structural, [nodes[nodes.count - 1]])
+            XCTAssertEqual(visitedCount, nodes.count)
         }
+    }
+
+    func testLargeHierarchyPreservesAmbiguityBeyondTheFirstSheet() async throws {
+        let nodes = (0..<1024).map { Self.element(943_000 + Int32($0)) }
+        let owner = ApplicationProcessIdentity(processIdentifier: 943_000, processStartIdentity: 123)
+        var readers = DialogDiscoveryReaders()
+        readers.hierarchyNode = { element, _, _ in
+            Self.node(
+                role: element == nodes[1] || element == nodes[1023] ? "AXSheet" : "AXGroup",
+                children: element == nodes[0] ? Array(nodes.dropFirst()) : [])
+        }
+        let result = try await Self.service(readers).freshDialogElements(in: nodes[0], owner: owner)
+        XCTAssertEqual(result.structural, [nodes[1], nodes[1023]])
     }
 
     private static func element(_ pid: Int32) -> Element {

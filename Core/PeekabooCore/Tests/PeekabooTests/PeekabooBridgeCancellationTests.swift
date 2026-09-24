@@ -1,10 +1,12 @@
+import ApplicationServices
+import AXorcist
 import Darwin
 import Dispatch
 import Foundation
-import PeekabooAutomationKit
 import PeekabooCore
 import PeekabooFoundation
 import Testing
+@_spi(Testing) @testable import PeekabooAutomationKit
 @testable import PeekabooBridge
 
 @Suite(.serialized)
@@ -559,6 +561,93 @@ struct PeekabooBridgeCancellationTests {
         await host.stop()
     }
 
+    @Test
+    @MainActor
+    func `connected dialog cancellation abandons discovery before adapter receipt or input`() async throws {
+        let socketPath = "/tmp/pb-dialog-cancel-\(UUID().uuidString).sock"
+        defer {
+            try? FileManager.default.removeItem(atPath: socketPath)
+            try? FileManager.default.removeItem(atPath: "\(socketPath).lock")
+        }
+        let dialogs = CancellationTestDialogService()
+        defer { dialogs.releaseWorker() }
+        let server = PeekabooBridgeServer(
+            services: CancellationTestDialogServices(dialogs: dialogs),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.prepareDialogAction, .exactDialogClickButton, .permissionsStatus],
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
+            })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 30)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 30)
+        try await Self.negotiateLegacyTransport(client)
+        let preparation = try DialogActionPreparationRequest(
+            target: DialogTargetSelector(processIdentifier: dialogs.owner.processIdentifier, windowID: 700),
+            kind: .clickButton,
+            buttonText: "Cancel")
+        let requestTask = Task {
+            let receipt = try await client.prepareDialogAction(preparation)
+            return try await client.performPreparedDialogAction(receipt)
+        }
+        defer { requestTask.cancel() }
+        let startDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !dialogs.workerStarted, ContinuousClock.now < startDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(dialogs.workerStarted)
+        #expect(!dialogs.workerFinished)
+
+        requestTask.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await requestTask.value }
+        let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < cancellationDeadline {
+            if dialogs.observedCancellation, await host.activeRequestCountForTesting() == 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(dialogs.observedCancellation)
+        #expect(await host.activeRequestCountForTesting() == 0)
+        #expect(try await Self.waitForConnectionCount(0, host: host))
+        #expect(!dialogs.workerFinished)
+        #expect(dialogs.candidateCount == 0)
+        #expect(dialogs.adapterReceiptCount == 0)
+        #expect(dialogs.inputCallCount == 0)
+
+        let response = try await client.send(.permissionsStatus)
+        guard case .permissionsStatus = response else {
+            Issue.record("Expected the Bridge to remain responsive while the detached dialog read drains")
+            return
+        }
+        let occupiedLane = await #expect(throws: PeekabooError.self) {
+            _ = try await DialogHierarchyReader.run(
+                owner: dialogs.owner,
+                budget: DialogOperationDeadline.bounded(timeoutSeconds: 1, operationName: "occupied dialog lane"))
+            {
+                Issue.record("Cancelled native read released its lane before actual completion")
+                return false
+            }
+        }
+        #expect(occupiedLane?.code == .timeout)
+
+        dialogs.releaseWorker()
+        _ = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: dialogs.owner.processIdentifier,
+            targetProcessStartIdentity: dialogs.owner.processStartIdentity,
+            seconds: 2) { true }
+        #expect(dialogs.workerFinished)
+        #expect(dialogs.candidateCount == 0)
+        #expect(dialogs.adapterReceiptCount == 0)
+        #expect(dialogs.inputCallCount == 0)
+        #expect(await host.activeRequestCountForTesting() == 0)
+        await host.stop()
+    }
+
     private static func mutatingObservationRequest(snapshotID: String) -> DesktopObservationRequest {
         DesktopObservationRequest(
             target: .screen(index: 0),
@@ -651,6 +740,141 @@ struct PeekabooBridgeCancellationTests {
 
 private enum CancellationTestError: Error {
     case timedOutWaitingForCondition
+}
+
+@MainActor
+private final class CancellationTestDialogServices: PeekabooBridgeServiceProviding {
+    private let base = StubServices(snapshots: InMemorySnapshotManager())
+    let dialogs: any DialogServiceProtocol
+
+    init(dialogs: any DialogServiceProtocol) {
+        self.dialogs = dialogs
+    }
+
+    var permissions: PermissionsService { self.base.permissions }
+    var screenCapture: any ScreenCaptureServiceProtocol { self.base.screenCapture }
+    var automation: any UIAutomationServiceProtocol { self.base.automation }
+    var windows: any WindowManagementServiceProtocol { self.base.windows }
+    var applications: any ApplicationServiceProtocol { self.base.applications }
+    var menu: any MenuServiceProtocol { self.base.menu }
+    var dock: any DockServiceProtocol { self.base.dock }
+    var snapshots: any SnapshotManagerProtocol { self.base.snapshots }
+    var desktopObservation: any DesktopObservationServiceProtocol { self.base.desktopObservation }
+}
+
+private enum CancellationTestDialogReadStage: Sendable, Equatable {
+    case started
+    case finished
+}
+
+/// Exercises production traversal and its worker; receipt publication and input are synthetic adapter sentinels.
+@MainActor
+private final class CancellationTestDialogService: DialogServiceProtocol {
+    let owner = ApplicationProcessIdentity(processIdentifier: 940_201, processStartIdentity: 123)
+    private let workerStages: CancellationTestLockedValues<CancellationTestDialogReadStage>
+    private let workerRelease: DispatchSemaphore
+    private let service: DialogService
+    private(set) var observedCancellation = false
+    private(set) var candidateCount = 0
+    private(set) var adapterReceiptCount = 0
+    private(set) var inputCallCount = 0
+
+    init() {
+        let stages = CancellationTestLockedValues<CancellationTestDialogReadStage>()
+        let release = DispatchSemaphore(value: 0)
+        self.workerStages = stages
+        self.workerRelease = release
+        let node = DialogHierarchyNode(
+            evidence: DialogElementEvidence(
+                role: "AXSheet", subrole: "", roleDescription: "", identifier: "", title: ""),
+            children: [])
+        var readers = DialogDiscoveryReaders()
+        readers.hierarchyNode = { _, owner, budget in
+            try await DialogHierarchyReader.run(owner: owner, budget: budget) {
+                stages.append(.started)
+                _ = release.wait(timeout: .now() + 10)
+                stages.append(.finished)
+                return node
+            }
+        }
+        self.service = DialogService(syntheticInputDriver: SyntheticInputDriver(), discoveryReaders: readers)
+    }
+
+    var workerStarted: Bool { self.workerStages.values.contains(.started) }
+    var workerFinished: Bool { self.workerStages.values.contains(.finished) }
+
+    func releaseWorker() {
+        self.workerRelease.signal()
+    }
+
+    func prepareDialogAction(_ request: DialogActionPreparationRequest) async throws -> PreparedDialogActionReceipt {
+        do {
+            let candidates = try await self.service.freshDialogElements(
+                in: Element(AXUIElementCreateApplication(self.owner.processIdentifier)),
+                owner: self.owner)
+            self.candidateCount += candidates.structural.count
+            let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+            let target = try UIAutomationTarget.ExactWindow(
+                identity: WindowMutationIdentity(
+                    windowID: 700,
+                    ownerProcessIdentifier: self.owner.processIdentifier,
+                    ownerProcessStartIdentity: self.owner.processStartIdentity,
+                    capturedBounds: bounds),
+                bounds: bounds)
+            self.adapterReceiptCount += 1
+            return PreparedDialogActionReceipt(token: UUID(), kind: request.kind, target: target)
+        } catch is CancellationError {
+            self.observedCancellation = true
+            throw CancellationError()
+        }
+    }
+
+    func performPreparedDialogAction(_: PreparedDialogActionReceipt) async throws -> DialogActionResult {
+        self.inputCallCount += 1
+        throw PeekabooError.notImplemented("Synthetic input must remain unreachable")
+    }
+
+    func findActiveDialog(windowTitle _: String?, appName _: String?) async throws -> DialogInfo {
+        throw PeekabooError.notImplemented("unused")
+    }
+
+    func clickButton(buttonText _: String, windowTitle _: String?, appName _: String?) async throws
+        -> DialogActionResult
+    {
+        self.inputCallCount += 1
+        throw PeekabooError.notImplemented("unused")
+    }
+
+    func enterText(
+        text _: String,
+        fieldIdentifier _: String?,
+        clearExisting _: Bool,
+        windowTitle _: String?,
+        appName _: String?) async throws -> DialogActionResult
+    {
+        self.inputCallCount += 1
+        throw PeekabooError.notImplemented("unused")
+    }
+
+    func handleFileDialog(
+        path _: String?,
+        filename _: String?,
+        actionButton _: String?,
+        ensureExpanded _: Bool,
+        appName _: String?) async throws -> DialogActionResult
+    {
+        self.inputCallCount += 1
+        throw PeekabooError.notImplemented("unused")
+    }
+
+    func dismissDialog(force _: Bool, windowTitle _: String?, appName _: String?) async throws -> DialogActionResult {
+        self.inputCallCount += 1
+        throw PeekabooError.notImplemented("unused")
+    }
+
+    func listDialogElements(windowTitle _: String?, appName _: String?) async throws -> DialogElements {
+        throw PeekabooError.notImplemented("unused")
+    }
 }
 
 private actor CancellationTestCompletionProbe {

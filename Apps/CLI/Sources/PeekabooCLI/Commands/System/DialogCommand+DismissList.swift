@@ -249,8 +249,9 @@ extension DialogCommand {
                 resolveAppHint: false,
                 beginsInteractionMutation: false,
                 handlesValidationError: false,
+                handlesPeekabooError: true,
                 operation: { context in
-                    let elements = try await withMainActorCommandTimeout(
+                    let elements = try await DialogCommand.withTimeout(
                         seconds: timeoutSeconds,
                         operationName: "dialog list"
                     ) {

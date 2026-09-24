@@ -1,5 +1,6 @@
 import ApplicationServices
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -96,11 +97,11 @@ struct DialogHierarchyAttributeTests {
         value: CFTypeRef? = nil,
         error: AXError = .success)
     {
-        let failure = #expect(throws: DialogHierarchyReadError.self) {
+        let failure = #expect(throws: PeekabooError.self) {
             let _: Value? = try DialogHierarchyReader.attributeValue(value, error: error)
         }
         guard let failure else { return }
-        guard case .unreadable = failure else {
+        guard case .accessibilityIncomplete = failure else {
             Issue.record("Expected an unreadable attribute failure, received \(failure)")
             return
         }

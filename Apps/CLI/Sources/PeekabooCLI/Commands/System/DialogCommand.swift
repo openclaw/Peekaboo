@@ -20,6 +20,27 @@ struct DialogCommand: ParsableCommand {
         let actionSequence: CommandActionSequenceAccumulator
     }
 
+    static func withTimeout<Result: Sendable>(
+        seconds: TimeInterval,
+        operationName: String,
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
+        operation: @escaping @MainActor () async throws -> Result
+    ) async throws -> Result {
+        let budget = try DialogOperationDeadline.bounded(timeoutSeconds: seconds, operationName: operationName)
+        return try await DialogOperationDeadline.$current.withValue(budget) {
+            try budget.check()
+            return try await withMainActorCommandTimeout(
+                seconds: budget.remainingSeconds,
+                operationName: operationName,
+                timeoutError: {
+                    PeekabooError.timeout(operation: budget.operationName, duration: budget.timeoutSeconds)
+                },
+                desktopMutationWatermarkStore: desktopMutationWatermarkStore,
+                operation: operation
+            )
+        }
+    }
+
     static func exactResultTargetIdentity(
         from result: DialogActionResult,
         matching selector: DialogTargetSelector? = nil,
@@ -215,6 +236,8 @@ struct DialogCommand: ParsableCommand {
         switch error {
         case .timeout:
             .TIMEOUT
+        case .accessibilityIncomplete:
+            .ACCESSIBILITY_INCOMPLETE
         case .invalidInput:
             .INVALID_INPUT
         default:

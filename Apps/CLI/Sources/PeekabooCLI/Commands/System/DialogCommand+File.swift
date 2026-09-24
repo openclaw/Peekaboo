@@ -56,7 +56,7 @@ extension DialogCommand {
                     }
                 },
                 operation: { context in
-                    let result = try await withMainActorCommandTimeout(
+                    let result = try await DialogCommand.withTimeout(
                         seconds: self.timeout.seconds,
                         operationName: "dialog file",
                         desktopMutationWatermarkStore: DesktopMutationWatermarkStore()

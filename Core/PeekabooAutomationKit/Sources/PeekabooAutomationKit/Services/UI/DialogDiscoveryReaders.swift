@@ -45,8 +45,8 @@ struct DialogDiscoveryReaders {
     var hierarchyNode: @MainActor (
         Element,
         ApplicationProcessIdentity,
-        ContinuousClock.Instant) async throws -> DialogHierarchyNode = {
-        try await DialogHierarchyReader.read($0, owner: $1, deadline: $2)
+        DialogOperationDeadline) async throws -> DialogHierarchyNode = {
+        try await DialogHierarchyReader.read($0, owner: $1, budget: $2)
     }
 
     var classificationReadable: @MainActor (Element) -> Bool = { element in

@@ -12,7 +12,7 @@ extension DialogService {
         ensureExpanded: Bool = false,
         appName: String?) async throws -> DialogActionResult
     {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        try await self.runDialogOperation(scope: .global, access: .write) {
             self.logger.info("Handling file dialog")
             if let path {
                 self.logger.debug("Path: \(path)")

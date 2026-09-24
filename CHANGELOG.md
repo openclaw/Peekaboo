@@ -9,7 +9,7 @@
 - Bound paste clipboard-restoration waits to 10 seconds so excessive delays cannot monopolize the shared paste lock; CLI and MCP callers using longer delays must reduce them. Thanks @SebTardif! #759.
 - Restore default MCP startup on explicitly selected GUI Bridge hosts that support isolated browser sessions, preserving capability checks and caller-owned session cleanup. Thanks @smhanov! #744.
 - Avoid reading geometry for unrelated Accessibility roles during exact-window keyboard focus checks, preserving per-character receiver validation.
-- Bound targeted dialog hierarchy discovery off the main actor so stalled Accessibility reads cannot delay cancellation or publish late action candidates; preserve exact receipts and refuse incomplete structural evidence.
+- Bound targeted dialog hierarchy discovery off the main actor using the caller's timeout, preserving large/deep trees and exact receipts; reject late candidates and report timeout or incomplete Accessibility evidence with specific error codes.
 - Exclude twice-confirmed absent processes from read-only application inventory while keeping denied, unavailable, and changing identities partial. Thanks @SkidCentrel! #784.
 - Let Agent and MCP automatic observations use proven classic capture on an explicitly selected ready Bridge while another process owns ScreenCaptureKit; keep explicit modern and raw SCK-only requests refused before transport. #778.
 - Restore reliable background scrolling by preferring owned numeric scrollbars, while keeping page fallback after definite value rejection and stopping after ambiguous input; eligible targets now use scrollbar increments instead of page distances.

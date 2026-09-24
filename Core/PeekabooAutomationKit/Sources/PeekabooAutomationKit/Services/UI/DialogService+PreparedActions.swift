@@ -10,7 +10,7 @@ extension DialogService {
         -> PreparedDialogActionReceipt
     {
         do {
-            return try await self.operationLaneCoordinator.run(scope: .global, access: .read) {
+            return try await self.runDialogOperation(scope: .global, access: .read) {
                 let candidates = try await self.preparedActionCandidates(for: request)
                 guard candidates.count == 1, let candidate = candidates.first else {
                     throw self.actionCandidateRefusal(request: request, candidates: candidates)
@@ -19,6 +19,7 @@ extension DialogService {
                     candidate.button.title() ?? request.buttonText ?? "Dismiss"
                 let buttonIdentifier = candidate.button.attribute(Attribute<String>("AXIdentifier"))
                 try Task.checkCancellation()
+                try DialogOperationDeadline.current?.check()
 
                 let receipt = PreparedDialogActionReceipt(
                     token: UUID(),
@@ -53,7 +54,7 @@ extension DialogService {
     public func performPreparedDialogAction(_ receipt: PreparedDialogActionReceipt) async throws
         -> DialogActionResult
     {
-        try await self.operationLaneCoordinator.run(
+        try await self.runDialogOperation(
             scope: .window(receipt.target.identity),
             access: .write)
         {
@@ -76,6 +77,11 @@ extension DialogService {
             let leafOutcome: DesktopActionOutcome
             do {
                 try Task.checkCancellation()
+                do {
+                    try DialogOperationDeadline.current?.check()
+                } catch let PeekabooError.timeout(message) {
+                    throw self.targetUnavailable(message)
+                }
                 leafOutcome = try await self.discoveryReaders.press(entry.button)
                 sequence.record(.reportedOutcome(leafOutcome, defaultDispatchedUnitCount: .one))
                 try Task.checkCancellation()
@@ -152,7 +158,7 @@ extension DialogService {
     }
 
     public func listDialogElements(target: DialogTargetSelector) async throws -> DialogElements {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .read) {
+        try await self.runDialogOperation(scope: .global, access: .read) {
             let dialogs = try await self.targetedDialogCandidates(
                 target: target,
                 membership: .readOnlyCompatible)
@@ -291,10 +297,10 @@ extension DialogService {
         }
         var structuralCandidates: [TargetedDialogCandidate] = []
         var legacyCandidates: [TargetedDialogCandidate] = []
-        let discoveryBudget = DialogHierarchyBudget()
+        let discoveryBudget = try DialogOperationDeadline.resolve(operationName: "dialog hierarchy discovery")
         for window in windows {
             try Task.checkCancellation()
-            try discoveryBudget.checkDeadline()
+            try discoveryBudget.check()
             guard let identity = window.mutationIdentity,
                   identity.processIdentity == processIdentity,
                   identity.windowID == window.windowID,
@@ -462,23 +468,19 @@ extension DialogService {
     func freshDialogElements(
         in window: Element,
         owner: ApplicationProcessIdentity,
-        budget: DialogHierarchyBudget = DialogHierarchyBudget()) async throws -> FreshDialogElements
+        budget suppliedBudget: DialogOperationDeadline? = nil) async throws -> FreshDialogElements
     {
+        let budget = try suppliedBudget ?? DialogOperationDeadline.resolve(operationName: "dialog hierarchy discovery")
         var structuralDialogs: [Element] = []
         var legacyDialogs: [Element] = []
         var visited: Set<Element> = []
-        var stack = [(window, 0)]
+        var stack = [window]
 
-        while let (element, depth) = stack.popLast() {
-            try Task.checkCancellation()
-            try budget.checkDeadline()
+        while let element = stack.popLast() {
+            try budget.check()
             guard visited.insert(element).inserted else { continue }
-            guard visited.count <= budget.maximumNodeCount, depth <= budget.maximumDepth else {
-                throw DialogHierarchyReadError.traversalLimit
-            }
-            let node = try await self.discoveryReaders.hierarchyNode(element, owner, budget.deadline)
-            try Task.checkCancellation()
-            try budget.checkDeadline()
+            let node = try await self.discoveryReaders.hierarchyNode(element, owner, budget)
+            try budget.check()
             let evidence = node.evidence
             if DialogElementClassifier.isStructuralDialog(evidence) {
                 structuralDialogs.append(element)
@@ -487,7 +489,7 @@ extension DialogService {
             {
                 legacyDialogs.append(element)
             }
-            stack.append(contentsOf: node.children.reversed().map { ($0, depth + 1) })
+            stack.append(contentsOf: node.children.reversed())
         }
         return FreshDialogElements(
             structural: DialogTraversal.preferredStructuralDialogs(
