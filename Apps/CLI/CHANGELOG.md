@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject paste restore delays above 10 seconds while preserving the 150ms default and cancellation-safe clipboard restoration. Thanks @SebTardif! #759.
 - Bound clipboard-backed paste admission to one 15-second monotonic deadline across in-process and file-lock waits; report retry-safe `TIMEOUT` before clipboard or input changes even after late acquisition, without timing out admitted settle and restoration. Thanks @SebTardif! #793.
 - Preserve typed desktop-action timeout, snapshot, and element error codes consistently across CLI JSON renderers without changing prior-effect or retry-safety metadata. #793.
+- Preserve implicit observations after canonical no-dispatch paste refusals when no focus or clipboard effect occurred, while retaining conservative invalidation for partial clipboard writes and uncertain input and preserving other operations' pending barriers.
 - Restore default MCP startup on capable explicitly selected GUI Bridge hosts without dropping the browser tool or borrowing shared connections. Thanks @smhanov! #744.
 - Limit ambiguous application suggestions to tied matching names and PIDs instead of exposing the entire running-app inventory, while keeping selector ambiguity fail-closed.
 - Bound desktop operation lane admission to a shared 15-second deadline across turnstiles and scoped locks; refuse late acquisition before dispatch while preserving earlier effects and admitted operation lifetimes. Thanks @SebTardif! #794.

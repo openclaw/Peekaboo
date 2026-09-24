@@ -567,7 +567,7 @@ extension PasteCommandTests {
 }
 
 @MainActor
-private struct ExactBackgroundTextPasteFixture {
+struct ExactBackgroundTextPasteFixture {
     static let processIdentifier: pid_t = 2468
     static let processStartIdentity: UInt64 = 71
     static let windowID = 901
@@ -575,8 +575,12 @@ private struct ExactBackgroundTextPasteFixture {
 
     let automation: OutcomeStubAutomationService
     let services: PeekabooServices
+    let windows: StubWindowService
 
-    init() {
+    init(
+        snapshots: any SnapshotManagerProtocol = StubSnapshotManager(),
+        clipboard: StubClipboardService = StubClipboardService()
+    ) {
         let application = ServiceApplicationInfo(
             processIdentifier: Self.processIdentifier,
             processStartIdentity: Self.processStartIdentity,
@@ -606,10 +610,14 @@ private struct ExactBackgroundTextPasteFixture {
             windowID: Self.windowID,
             identifier: "editor"
         )
+        let windows = StubWindowService(windowsByApp: ["TextEdit": [window]])
         self.automation = automation
+        self.windows = windows
         self.services = TestServicesFactory.makePeekabooServices(
             applications: StubApplicationService(applications: [application]),
-            windows: StubWindowService(windowsByApp: ["TextEdit": [window]]),
+            windows: windows,
+            snapshots: snapshots,
+            clipboard: clipboard,
             automation: automation
         )
     }
@@ -630,7 +638,7 @@ private struct ExactBackgroundTextPasteFixture {
 }
 
 @MainActor
-private final class PasteFocusWindowService: StubWindowService, WindowManagementPinnedFocusActionResultProviding {
+final class PasteFocusWindowService: StubWindowService, WindowManagementPinnedFocusActionResultProviding {
     static let windowID = 2_000_000_001
     static let processIdentifier: pid_t = 42
     static let processStartIdentity: UInt64 = 7

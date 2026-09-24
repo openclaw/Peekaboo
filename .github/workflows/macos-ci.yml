@@ -398,6 +398,21 @@ jobs:
           grep -Fq 'Suite PasteCommandTests passed after ' "$test_log"
           grep -Eq 'Test run with 1 test( in 1 suite)? passed after ' "$test_log"
 
+      - name: Run paste observation invalidation contracts (skip automation)
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/paste-observation-invalidation.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
+            --filter '^CLIAutomationTests\.PasteObservationInvalidationTests/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite PasteObservationInvalidationTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run taskless agent resume regression (skip automation)
         working-directory: Apps/CLI
         env:
