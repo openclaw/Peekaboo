@@ -309,8 +309,9 @@ public protocol ApplicationServiceProtocol: Sendable {
     func getFrontmostApplication() async throws -> ServiceApplicationInfo
 
     /// Check if an application is running
-    /// - Parameter identifier: Application name or bundle ID
-    /// - Returns: True if the application is running
+    /// - Parameter identifier: Application name, bundle ID, or `PID:<pid>` selector
+    /// - Returns: True for a unique running match; false when no application matches
+    /// - Throws: An ambiguity or other lookup error; failure is not evidence that an app stopped
     func isApplicationRunning(identifier: String) async throws -> Bool
 
     /// Launch an application

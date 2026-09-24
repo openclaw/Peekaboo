@@ -633,7 +633,7 @@ extension ApplicationService {
         if let relaunchRunningHandler = self.relaunchRunningHandler {
             return try await relaunchRunningHandler(identifier)
         }
-        return await self.isApplicationRunning(identifier: identifier)
+        return try await self.isApplicationRunning(identifier: identifier)
     }
 
     func resolveApplicationURL(_ identifier: String) throws -> URL {
