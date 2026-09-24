@@ -133,22 +133,6 @@ jobs:
           grep -Fq 'Suite SameProcessWindowCloseTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
-      - name: Run targeted dialog metadata and deadline contracts
-        working-directory: Core/PeekabooAutomationKit
-        env:
-          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
-          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
-        run: |
-          set -o pipefail
-          test_log="$RUNNER_TEMP/dialog-metadata-contracts.log"
-          swift test --no-parallel \
-            --filter 'DialogMetadataReaderTests|DialogMetadataContractTests|DialogHierarchyReaderTests|DialogHierarchyAttributeTests|DialogOperationDeadlineTests|ElementDetectionDetachedRunnerTests' \
-            2>&1 | tee "$test_log"
-          grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"
-          grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"
-          grep -Fq 'Suite DialogOperationDeadlineTests passed after ' "$test_log"
-          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
-
       - name: Run application running-state contracts
         working-directory: Core/PeekabooAutomationKit
         run: |
@@ -211,6 +195,22 @@ jobs:
           swift test --no-parallel --filter PeekabooAgentServiceTests
           swift test --no-parallel --filter PeekabooAgentSessionSafetyTests
           swift test --no-parallel --filter PeekabooAgentStreamTerminalIntegrityTests
+
+      - name: Run targeted dialog metadata and deadline contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+        run: |
+          set -o pipefail
+          test_log="$RUNNER_TEMP/dialog-metadata-contracts.log"
+          swift test --no-parallel \
+            --filter 'DialogMetadataReaderTests|DialogMetadataContractTests|DialogHierarchyReaderTests|DialogHierarchyAttributeTests|DialogOperationDeadlineTests|ElementDetectionDetachedRunnerTests' \
+            2>&1 | tee "$test_log"
+          grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"
+          grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"
+          grep -Fq 'Suite DialogOperationDeadlineTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run agent-surface contract tests
         working-directory: Core/PeekabooCore

@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-- Bound selected-dialog metadata extraction to the targeted list's remaining timeout without blocking the main actor or accepting late results; read native text values directly while preserving optional metadata defaults and exact dialog discovery.
 - Propagate ambiguous application running-state checks instead of reporting matching apps as stopped; direct Swift `ApplicationService` callers must now use `try await`. Thanks @SebTardif! #795.
 - Resolve background keyboard focus through the native owning-window link when web text fields do not expose a direct window ID, preserving exact process, window, and focus validation.
 - Accept structured MCP experimental capabilities during initialization, restoring Codex connections; pin the upstream decoder repair and document its Swift dictionary-type migration. Thanks @Wudib! #745.
@@ -16,6 +15,7 @@
 - Refuse ordinary CLI typing and MCP clicks, actions, value changes, snapshot-backed scrolling, typing, and key presses from consumed or pending snapshots before focus or input; centralize mutation-lease handling while preserving historical reads and existing modifier-click/pixel-focus ownership.
 - Avoid reading geometry for unrelated Accessibility roles during exact-window keyboard focus checks, preserving per-character receiver validation.
 - Bound targeted dialog hierarchy discovery off the main actor using the caller's timeout, preserving large/deep trees and exact receipts; reject late candidates and report timeout or incomplete Accessibility evidence with specific error codes.
+- Bound selected-dialog metadata extraction to the targeted list's remaining timeout without blocking the main actor or accepting late results; read native text values directly while preserving optional metadata defaults and exact dialog discovery.
 - Exclude twice-confirmed absent processes from read-only application inventory while keeping denied, unavailable, and changing identities partial. Thanks @SkidCentrel! #784.
 - Limit ambiguous application suggestions to tied matching names and PIDs instead of exposing the entire running-app inventory, while keeping selector ambiguity fail-closed.
 - Let Agent and MCP automatic observations use proven classic capture on an explicitly selected ready Bridge while another process owns ScreenCaptureKit; keep explicit modern and raw SCK-only requests refused before transport. #778.
