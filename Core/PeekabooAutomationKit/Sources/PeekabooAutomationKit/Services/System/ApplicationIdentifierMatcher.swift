@@ -13,6 +13,8 @@ public enum ApplicationIdentifierMatcher {
         public let candidateSetSHA256: String
         public let candidateCount: Int
         public let winningCandidateCount: Int
+        /// Only tied winners, with PIDs to distinguish instances sharing a name.
+        public let ambiguitySuggestions: [String]
 
         public var hasWinningTie: Bool {
             self.winningCandidateCount > 1
@@ -124,12 +126,19 @@ public enum ApplicationIdentifierMatcher {
         }
         let data = try encoder.encode(canonicalRows)
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let ambiguitySuggestions: [String] = selection.winningIndices.count > 1
+            ? selection.winningIndices.map { index in
+                let candidate = candidates[index]
+                return "\(candidate.name) (PID:\(candidate.processIdentifier))"
+            }
+            : []
         return Resolution(
             index: selection.index,
             matchKind: selection.kind,
             candidateSetSHA256: digest,
             candidateCount: candidates.count,
-            winningCandidateCount: selection.winningCandidateCount,
+            winningCandidateCount: selection.winningIndices.count,
+            ambiguitySuggestions: ambiguitySuggestions,
             normalizedSelector: self.normalized(identifier))
     }
 
@@ -162,7 +171,7 @@ public enum ApplicationIdentifierMatcher {
     private struct Selection {
         let index: Int
         let kind: MatchKind
-        let winningCandidateCount: Int
+        let winningIndices: [Int]
     }
 
     private static func selection(for rawIdentifier: String, in candidates: [Candidate]) -> Selection? {
@@ -213,7 +222,7 @@ public enum ApplicationIdentifierMatcher {
         return Selection(
             index: selected.index,
             kind: .fuzzyNameOrExecutable,
-            winningCandidateCount: scored.count(where: { $0.score == selected.score }))
+            winningIndices: scored.compactMap { $0.score == selected.score ? $0.index : nil })
     }
 
     private static func exactSelection(
@@ -223,7 +232,7 @@ public enum ApplicationIdentifierMatcher {
     {
         let indices = candidates.indices.filter { matches(candidates[$0]) }
         guard let index = indices.first else { return nil }
-        return Selection(index: index, kind: kind, winningCandidateCount: indices.count)
+        return Selection(index: index, kind: kind, winningIndices: indices)
     }
 
     private struct DigestCandidate: Codable {

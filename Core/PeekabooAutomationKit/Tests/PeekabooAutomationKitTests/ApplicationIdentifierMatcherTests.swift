@@ -115,6 +115,44 @@ struct ApplicationIdentifierMatcherTests {
     }
 
     @Test
+    func `Exact ambiguity suggestions exclude unrelated and lower precedence candidates`() throws {
+        let winners = [42, 43, 44].map { pid in
+            ApplicationIdentifierMatcher.Candidate(
+                processIdentifier: Int32(pid),
+                bundleIdentifier: "org.example.fixture",
+                name: "Fixture",
+                bundlePath: "/Applications/Fixture.app",
+                executablePath: "/Applications/Fixture.app/Contents/MacOS/fixture-runner")
+        }
+        let candidates = [
+            ApplicationIdentifierMatcher.Candidate(
+                processIdentifier: 90, bundleIdentifier: nil, name: "Unrelated App"),
+            winners[0],
+            ApplicationIdentifierMatcher.Candidate(
+                processIdentifier: 91, bundleIdentifier: "org.example.preview", name: "Fixture Preview"),
+            winners[1],
+            winners[2],
+        ]
+        let expected = ["Fixture (PID:42)", "Fixture (PID:43)", "Fixture (PID:44)"]
+        for selector in ["org.example.fixture", "/Applications/Fixture.app", "fIxTuRe", "fixture-runner"] {
+            let resolution = try #require(try ApplicationIdentifierMatcher.resolution(for: selector, in: candidates))
+            let reversed = try #require(try ApplicationIdentifierMatcher.resolution(
+                for: selector, in: Array(candidates.reversed())))
+            #expect(resolution.hasWinningTie)
+            #expect(resolution.winningCandidateCount == 3)
+            #expect(resolution.candidateCount == candidates.count)
+            #expect(resolution.ambiguitySuggestions == expected)
+            #expect(Set(reversed.ambiguitySuggestions) == Set(expected))
+            #expect(resolution.candidateSetSHA256 == reversed.candidateSetSHA256)
+        }
+
+        let exactPID = try #require(try ApplicationIdentifierMatcher.resolution(for: "PID:43", in: candidates))
+        #expect(!exactPID.hasWinningTie)
+        #expect(exactPID.ambiguitySuggestions.isEmpty)
+        #expect(candidates[exactPID.index].processIdentifier == 43)
+    }
+
+    @Test
     func `Tied fuzzy winners are explicit and fail closed`() throws {
         let candidates = [
             ApplicationIdentifierMatcher.Candidate(
@@ -127,6 +165,27 @@ struct ApplicationIdentifierMatcherTests {
                 bundleIdentifier: "org.example.bravo",
                 name: "Fixture Bravo",
                 isRegularApplication: true),
+            ApplicationIdentifierMatcher.Candidate(
+                processIdentifier: 44,
+                bundleIdentifier: nil,
+                name: "Fixture Longer Name",
+                isRegularApplication: true),
+            ApplicationIdentifierMatcher.Candidate(
+                processIdentifier: 45,
+                bundleIdentifier: nil,
+                name: "A Fixture App",
+                isRegularApplication: true),
+            ApplicationIdentifierMatcher.Candidate(
+                processIdentifier: 46,
+                bundleIdentifier: nil,
+                name: "Fixture Delta",
+                allowsFuzzyMatching: false,
+                isRegularApplication: true),
+            ApplicationIdentifierMatcher.Candidate(
+                processIdentifier: 47,
+                bundleIdentifier: nil,
+                name: "Unrelated App",
+                isRegularApplication: true),
         ]
         let optionalResolution = try ApplicationIdentifierMatcher.resolution(
             for: "Fixture",
@@ -135,6 +194,12 @@ struct ApplicationIdentifierMatcherTests {
         #expect(resolution.matchKind == .fuzzyNameOrExecutable)
         #expect(resolution.winningCandidateCount == 2)
         #expect(resolution.hasWinningTie)
+        #expect(resolution.candidateCount == candidates.count)
+        #expect(resolution.ambiguitySuggestions == ["Fixture Alpha (PID:42)", "Fixture Bravo (PID:43)"])
+        let winnersOnly = try #require(try ApplicationIdentifierMatcher.resolution(
+            for: "Fixture", in: Array(candidates.prefix(2))))
+        #expect(winnersOnly.ambiguitySuggestions == resolution.ambiguitySuggestions)
+        #expect(winnersOnly.candidateSetSHA256 != resolution.candidateSetSHA256)
         let selected = candidates[resolution.index]
         let identity = ApplicationProcessIdentity(
             processIdentifier: selected.processIdentifier,

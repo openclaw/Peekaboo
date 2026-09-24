@@ -454,7 +454,7 @@ extension ApplicationMutationPlannerTests {
             for: identifier, in: census.map(ApplicationIdentifierMatcher.Candidate.init))
         else { throw PeekabooError.appNotFound(identifier) }
         guard !resolution.hasWinningTie else {
-            throw PeekabooError.ambiguousAppIdentifier(identifier, suggestions: census.map(\.name))
+            throw PeekabooError.ambiguousAppIdentifier(identifier, suggestions: resolution.ambiguitySuggestions)
         }
         let application = census[resolution.index]
         guard let identity = application.processIdentity else { return application }

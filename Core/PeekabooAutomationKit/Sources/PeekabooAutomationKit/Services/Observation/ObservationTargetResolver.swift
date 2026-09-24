@@ -407,7 +407,7 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
         guard !resolution.hasWinningTie else {
             throw PeekabooError.ambiguousAppIdentifier(
                 identifier,
-                suggestions: candidates.map(\.name))
+                suggestions: resolution.ambiguitySuggestions)
         }
         let application = applications[resolution.index]
         let proof = application.processStartIdentity.map {

@@ -504,7 +504,7 @@ extension ApplicationService {
             guard !resolution.hasWinningTie else {
                 throw PeekabooError.ambiguousAppIdentifier(
                     identifier,
-                    suggestions: candidates.map(\.name))
+                    suggestions: resolution.ambiguitySuggestions)
             }
             let application = self.createApplicationInfo(from: runningApps[resolution.index])
             let proof = application.processIdentity.map {

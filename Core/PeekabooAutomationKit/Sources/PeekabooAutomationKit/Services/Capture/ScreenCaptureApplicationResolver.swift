@@ -25,7 +25,7 @@ struct PeekabooApplicationResolver: ApplicationResolving {
             guard !resolution.hasWinningTie else {
                 throw PeekabooError.ambiguousAppIdentifier(
                     identifier,
-                    suggestions: candidates.map(\.name))
+                    suggestions: resolution.ambiguitySuggestions)
             }
             let application = Self.applicationInfo(from: runningApps[resolution.index])
             let proof = application.processIdentity.map {

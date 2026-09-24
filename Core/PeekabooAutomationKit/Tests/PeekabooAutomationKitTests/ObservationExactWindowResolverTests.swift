@@ -1,4 +1,5 @@
 import CoreGraphics
+import PeekabooFoundation
 import XCTest
 @testable import PeekabooAutomationKit
 
@@ -96,6 +97,51 @@ final class ObservationExactWindowResolverTests: XCTestCase {
         XCTAssertEqual(proof.scope, .application)
         XCTAssertEqual(proof.normalizedSelector, "com.example.fixture")
         XCTAssertTrue(proof.selectedWindowIdentity?.hasSameStableReceipt(as: exactIdentity) == true)
+        XCTAssertEqual(service.listWindowsCalls, 0)
+    }
+
+    func testAmbiguousApplicationListsOnlyMatchingNamesAndPIDsBeforeAnyLookup() async throws {
+        let identities: [(Int32, String)] = [
+            (101, "Playground"),
+            (999, "Unrelated App"),
+            (202, "Playground"),
+            (303, "Playground"),
+            (404, "Playground Extra"),
+        ]
+        let applications = identities.map { pid, name in
+            ServiceApplicationInfo(
+                processIdentifier: pid,
+                processStartIdentity: 700,
+                bundleIdentifier: "org.example.fixture.\(pid)",
+                name: name,
+                windowCount: 1)
+        }
+        let service = ExactWindowApplicationService(app: applications[0], windows: [])
+        let resolver = ObservationTargetResolver(
+            applications: service,
+            exactWindowMetadataProvider: TestExactWindowMetadataProvider { _ in nil })
+        let expected = ["Playground (PID:101)", "Playground (PID:202)", "Playground (PID:303)"]
+
+        do {
+            _ = try await resolver.resolve(
+                .app(identifier: "Playground", window: .id(42)),
+                snapshot: DesktopStateSnapshot(runningApplications: applications.map(ApplicationIdentity.init)))
+            XCTFail("Expected duplicate exact app names to remain ambiguous")
+        } catch let error as PeekabooError {
+            guard case let .ambiguousAppIdentifier(identifier, suggestions) = error else {
+                return XCTFail("Expected app ambiguity, got \(error)")
+            }
+            XCTAssertEqual(identifier, "Playground")
+            XCTAssertEqual(suggestions, expected)
+            XCTAssertEqual(error.code.rawValue, "AMBIGUOUS_APP_IDENTIFIER")
+            XCTAssertEqual(
+                error.errorDescription,
+                "Multiple apps match 'Playground'. Did you mean: \(expected.joined(separator: ", "))")
+            XCTAssertEqual(error.context["suggestions"], expected.joined(separator: ", "))
+            XCTAssertEqual(error.suggestedAction, "Try one of: \(expected.joined(separator: ", "))")
+        }
+        XCTAssertEqual(service.listApplicationsCalls, 0)
+        XCTAssertEqual(service.findApplicationCalls, 0)
         XCTAssertEqual(service.listWindowsCalls, 0)
     }
 

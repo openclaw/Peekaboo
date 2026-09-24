@@ -75,7 +75,7 @@ public final class MutationAuthorityCatalogScript {
         guard !resolution.hasWinningTie else {
             throw PeekabooError.ambiguousAppIdentifier(
                 identifier,
-                suggestions: self.currentApplications.map(\.name))
+                suggestions: resolution.ambiguitySuggestions)
         }
         let application = self.currentApplications[resolution.index]
         guard let processIdentity = application.processIdentity else { return application }

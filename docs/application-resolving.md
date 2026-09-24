@@ -267,6 +267,10 @@ peekaboo space move-window --pid 12345 --to 2
 
 ### Multiple Matches
 
+Ambiguity errors list only the tied winning matches, with a PID beside each name. Other running applications and
+lower-priority fuzzy matches are not suggestions. Multiple processes can share an exact name or bundle ID; use a
+listed PID with `--pid <pid>` or `--app "PID:<pid>"` to select the intended instance.
+
 **Symptoms:**
 - Fuzzy matching finds wrong app
 - Multiple apps with similar names
