@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKitTestSupport
 import Testing
 @testable import PeekabooCLI
 @testable import PeekabooCore
@@ -1071,42 +1072,58 @@ extension PasteCommandTests {
     @MainActor
     func `Throwing paste dispatch settles before restore and unlock`() async throws {
         let context = self.makeTransactionGateContext()
-        context.automation.targetedHotkeyError = ExpectedPasteDispatchError.afterPosting
-        let command = Task { @MainActor in
-            try await InProcessCommandRunner.run(
-                [
-                    "paste",
-                    "--app", "TextEdit",
-                    "--data-base64", "cGF5bG9hZA==",
-                    "--uti", "public.data",
-                    "--restore-delay", "250ms",
-                    "--json",
-                    "--no-remote",
-                ],
-                services: context.services
-            )
-        }
-
-        for _ in 0..<100 where context.automation.targetedHotkeyCalls.isEmpty {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        let clock = ContinuousClock()
-        let dispatchedAt = clock.now
-        try await Task.sleep(for: .milliseconds(75))
-        #expect(context.clipboard.current?.utiIdentifier == "public.data")
-        #expect(context.clipboard.restoreCallCount == 0)
-
+        let dispatchCaughtAt = AutomationTestLockedValue<ContinuousClock.Instant?>(nil)
+        context.automation.targetedHotkeyError = ObservedPasteDispatchError(describedAt: dispatchCaughtAt)
         let contenderFD = try self.openPasteTransactionLock()
-        defer { close(contenderFD) }
-        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) != 0)
+        defer {
+            context.clipboard.beforeMutation = nil
+            close(contenderFD)
+        }
+        var restoreObservations: [PasteRestoreObservation] = []
+        context.clipboard.beforeMutation = {
+            guard context.clipboard.setCallCount > 0 else { return }
+            let restoreTime = ContinuousClock.now
+            let lockResult = flock(contenderFD, LOCK_EX | LOCK_NB)
+            let lockError = errno
+            if lockResult == 0 {
+                flock(contenderFD, LOCK_UN)
+            }
+            restoreObservations.append(PasteRestoreObservation(
+                time: restoreTime,
+                payloadUTI: context.clipboard.current?.utiIdentifier,
+                restoreCount: context.clipboard.restoreCallCount,
+                dispatchCount: context.automation.targetedHotkeyCalls.count,
+                lockResult: lockResult,
+                lockError: lockError
+            ))
+        }
 
-        let result = try await command.value
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "cGF5bG9hZA==",
+                "--uti", "public.data",
+                "--restore-delay", "250ms",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(context.automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(restoreObservations.count == 1)
+        let restore = try #require(restoreObservations.first)
+        let caughtAt = try #require(dispatchCaughtAt.value)
+        #expect(restore.time - caughtAt >= .milliseconds(250))
+        #expect(restore.payloadUTI == "public.data")
+        #expect(restore.restoreCount == 0)
+        #expect(restore.dispatchCount == 1)
+        #expect(restore.lockResult != 0)
+        #expect(restore.lockError == EWOULDBLOCK || restore.lockError == EAGAIN)
         #expect(result.exitStatus != 0)
         #expect(result.stdout.contains("Paste outcome is indeterminate"))
         #expect(result.stdout.contains("may have pasted; do not retry"))
-        #expect(result.stdout.contains("Paste outcome is indeterminate"))
-        #expect(result.stdout.contains("may have pasted; do not retry"))
-        #expect(clock.now - dispatchedAt >= .milliseconds(150))
         #expect(context.clipboard.current?.textPreview == "prior")
         #expect(context.clipboard.restoreCallCount == 1)
         #expect(flock(contenderFD, LOCK_EX | LOCK_NB) == 0)
@@ -1227,4 +1244,27 @@ extension PasteCommandTests {
 
 private enum ExpectedPasteDispatchError: Error {
     case afterPosting
+}
+
+private struct PasteRestoreObservation {
+    let time: ContinuousClock.Instant
+    let payloadUTI: String?
+    let restoreCount: Int
+    let dispatchCount: Int
+    let lockResult: Int32
+    let lockError: Int32
+}
+
+private struct ObservedPasteDispatchError: LocalizedError {
+    let describedAt: AutomationTestLockedValue<ContinuousClock.Instant?>
+
+    var errorDescription: String? {
+        // PasteCommand first describes this error after the awaited dispatch has thrown.
+        self.describedAt.withValue { firstRead in
+            if firstRead == nil {
+                firstRead = ContinuousClock.now
+            }
+        }
+        return "Expected dispatch failure after posting"
+    }
 }
