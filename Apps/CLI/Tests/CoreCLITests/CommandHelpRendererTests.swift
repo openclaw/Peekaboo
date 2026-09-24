@@ -174,6 +174,16 @@ struct CommandHelpRendererTests {
     }
 
     @Test
+    func `scroll help distinguishes native units from wheel ticks`() {
+        let help = ScrollCommand.helpMessage()
+
+        #expect(help.contains("Number of native scroll units or wheel ticks"))
+        #expect(help.contains("Numeric scrollbars use AXValueIncrement or one tenth of their range per unit"))
+        #expect(help.contains("Distance depends on the selected route"))
+        #expect(!help.contains("Each tick is equivalent to one notch on a physical mouse wheel"))
+    }
+
+    @Test
     func `interaction help distinguishes current and legacy targeting`() {
         let typeHelp = TypeCommand.helpMessage()
         let clickHelp = ClickCommand.helpMessage()

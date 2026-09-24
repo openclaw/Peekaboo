@@ -133,16 +133,18 @@ extension ActionInputDriverTests {
     }
 
     @MainActor
-    @Test(arguments: ["AXScrollDownByPage", "AXIncrement"])
-    func `first ambiguous native scroll unit stops without replay`(actionName: String) {
+    @Test(arguments: ["AXScrollDownByPage", "AXIncrement"], [false, true])
+    func `first ambiguous native scroll unit stops without replay`(actionName: String, rejectsValueWrite: Bool) {
         let isPageAction = actionName == "AXScrollDownByPage"
+        let initialValue: UIElementValue = rejectsValueWrite ? .double(0.2) : .string("unknown")
         let scrollBar = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXScrollBarRole,
             frame: CGRect(x: 300, y: 0, width: 16, height: 400),
-            value: "unknown",
+            value: initialValue.accessibilityValue,
             actionNames: [AXActionNames.kAXIncrementAction],
             isValueSettable: true,
-            actionErrors: isPageAction ? [:] : [actionName: AccessibilitySystemError(.cannotComplete)])
+            actionErrors: isPageAction ? [:] : [actionName: AccessibilitySystemError(.cannotComplete)],
+            valueSetterError: rejectsValueWrite ? AccessibilitySystemError(.attributeUnsupported) : nil)
         let scrollArea = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXScrollAreaRole,
             actionNames: isPageAction ? [actionName, "AXPageDown"] : [],
@@ -164,7 +166,7 @@ extension ActionInputDriverTests {
         #expect(scrollArea.attemptedActions + scrollBar.attemptedActions == [actionName])
         #expect(scrollArea.performedActions.isEmpty)
         #expect(scrollBar.performedActions.isEmpty)
-        #expect(scrollBar.setValues.isEmpty)
+        #expect(scrollBar.setValues == (rejectsValueWrite ? [.double(0.2 + 0.1 * 4)] : []))
     }
 
     @MainActor
@@ -663,7 +665,9 @@ extension ActionInputDriverTests {
         #expect(scrollBar.performedActions == [AXActionNames.kAXIncrementAction])
         #expect(scrollBar.setValues.isEmpty)
     }
+}
 
+extension ActionInputDriverTests {
     @MainActor
     @Test
     func `unchanged numeric AXValue readback is indeterminate without action fallback`() {
@@ -716,6 +720,7 @@ extension ActionInputDriverTests {
             Issue.record("Expected a typed indeterminate AXValue failure")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
             #expect(failure.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
             #expect(failure.outcome.dispatchState.unitCount == .one)
             #expect(failure.outcome.retrySafety == .unsafe)
@@ -724,6 +729,7 @@ extension ActionInputDriverTests {
         }
 
         #expect(scrollBar.setValues == [.double(0.2 + 0.1 * 4)])
+        #expect(scrollBar.value as? Double == 0.2)
         #expect(scrollArea.attemptedActions.isEmpty)
         #expect(scrollBar.attemptedActions.isEmpty)
     }
@@ -785,5 +791,155 @@ extension ActionInputDriverTests {
         }
 
         #expect(siblingBar.setValues.isEmpty)
+    }
+
+    @MainActor
+    @Test(arguments: [1, 4])
+    func `definitively rejected numeric value falls back to page actions without inflating dispatch count`(
+        pages: Int) throws
+    {
+        let scrollBar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            actionNames: [AXActionNames.kAXIncrementAction],
+            isValueSettable: true,
+            valueSetterError: AccessibilitySystemError(.attributeUnsupported))
+        let scrollArea = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            actionNames: ["AXScrollDownByPage"],
+            children: [scrollBar])
+
+        let result = try ActionInputDriver().tryScrollForTesting(element: scrollArea, direction: .down, pages: pages)
+
+        #expect(result.actionName == "AXScrollDownByPage")
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.evidence == .deliveryAccepted)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == pages)
+        #expect(scrollArea.attemptedActions == Array(repeating: "AXScrollDownByPage", count: pages))
+        #expect(scrollArea.performedActions == scrollArea.attemptedActions)
+        #expect(scrollBar.setValues == [.double(0.2 + 0.1 * Double(pages))])
+        #expect(scrollBar.value as? Double == 0.2)
+        #expect(scrollBar.attemptedActions.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `definitively rejected numeric value falls back to increment when page action is unavailable`() throws {
+        let scrollBar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            actionNames: [AXActionNames.kAXIncrementAction],
+            isValueSettable: true,
+            valueSetterError: AccessibilitySystemError(.attributeUnsupported))
+        let scrollArea = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            children: [scrollBar])
+
+        let result = try ActionInputDriver().tryScrollForTesting(element: scrollArea, direction: .down, pages: 3)
+
+        #expect(result.actionName == AXActionNames.kAXIncrementAction)
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(scrollArea.attemptedActions.isEmpty)
+        #expect(scrollBar.attemptedActions == Array(repeating: AXActionNames.kAXIncrementAction, count: 3))
+        #expect(scrollBar.performedActions == scrollBar.attemptedActions)
+        #expect(scrollBar.setValues == [.double(0.5)])
+        #expect(scrollBar.value as? Double == 0.2)
+    }
+
+    @MainActor
+    @Test
+    func `rejected numeric value then accepted page prefix stays partial without increment replay`() {
+        let scrollBar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            actionNames: [AXActionNames.kAXIncrementAction],
+            isValueSettable: true,
+            valueSetterError: AccessibilitySystemError(.attributeUnsupported))
+        let scrollArea = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            actionNames: ["AXScrollDownByPage"],
+            children: [scrollBar],
+            actionFailureAfterSuccesses: 1,
+            sequencedActionFailure: AccessibilitySystemError(.actionUnsupported))
+
+        do {
+            _ = try ActionInputDriver().tryScrollForTesting(element: scrollArea, direction: .down, pages: 3)
+            Issue.record("Expected the accepted page prefix to remain authoritative")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
+            #expect(failure.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(scrollBar.setValues == [.double(0.5)])
+        #expect(scrollBar.value as? Double == 0.2)
+        #expect(scrollArea.attemptedActions == ["AXScrollDownByPage", "AXScrollDownByPage"])
+        #expect(scrollArea.performedActions == ["AXScrollDownByPage"])
+        #expect(scrollBar.attemptedActions.isEmpty)
+    }
+
+    @MainActor
+    @Test(arguments: [AXError.invalidUIElement, AXError.apiDisabled])
+    func `stale or permission denied numeric value setter never falls back to actions`(axError: AXError) {
+        let scrollBar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            actionNames: [AXActionNames.kAXIncrementAction],
+            isValueSettable: true,
+            valueSetterError: AccessibilitySystemError(axError))
+        let scrollArea = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            actionNames: ["AXScrollDownByPage"],
+            children: [scrollBar])
+
+        do {
+            _ = try ActionInputDriver().tryScrollForTesting(element: scrollArea, direction: .down, pages: 3)
+            Issue.record("Expected the stale or permission error to stop scroll routing")
+        } catch let error as ActionInputError {
+            #expect(error == (axError == .apiDisabled ? .permissionDenied : .staleElement))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(scrollBar.setValues == [.double(0.5)])
+        #expect(scrollBar.value as? Double == 0.2)
+        #expect(scrollArea.attemptedActions.isEmpty)
+        #expect(scrollBar.attemptedActions.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `numeric route uses advertised increments even when mock page actions work`() throws {
+        let scrollBar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            actionNames: [AXActionNames.kAXIncrementAction],
+            isValueSettable: true,
+            doubleAttributes: [AXAttributeNames.kAXValueIncrementAttribute: 0.05])
+        let scrollArea = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            actionNames: ["AXScrollDownByPage"],
+            children: [scrollBar])
+
+        let result = try ActionInputDriver().tryScrollForTesting(element: scrollArea, direction: .down, pages: 3)
+
+        #expect(result.actionName == "AXSetValue")
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount == .one)
+        #expect(scrollBar.setValues == [.double(0.2 + 0.05 * 3)])
+        #expect(scrollArea.attemptedActions.isEmpty)
+        #expect(scrollBar.attemptedActions.isEmpty)
     }
 }

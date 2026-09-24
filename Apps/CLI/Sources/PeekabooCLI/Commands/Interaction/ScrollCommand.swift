@@ -13,7 +13,7 @@ RuntimeBackedCommand {
     @Option(help: "Scroll direction: up, down, left, or right")
     var direction: String
 
-    @Option(help: "Number of scroll ticks")
+    @Option(help: "Number of native scroll units or wheel ticks")
     var amount: Int = 3
 
     @Option(help: "Element ID to scroll on (from 'see' command)")
@@ -398,8 +398,10 @@ extension ScrollCommand: ParsableCommand {
                       right - Scroll content right
 
                     AMOUNT:
-                      The number of scroll "lines" or "ticks" to perform.
-                      Each tick is equivalent to one notch on a physical mouse wheel.
+                      The number of route-dependent scroll units to perform.
+                      Numeric scrollbars use AXValueIncrement or one tenth of their range per unit.
+                      Other native actions use page/increment units; wheel routes use wheel ticks.
+                      Distance depends on the selected route; observe the result after scrolling.
                 """,
 
                 showHelpOnEmptyInvocation: true

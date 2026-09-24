@@ -669,7 +669,11 @@ extension ActionInputDriver {
         {
             // Some native scroll areas advertise page actions that fail even though their bar is writable.
             // Choose the verifiable value route before dispatch; never retry an ambiguous action through it.
-            return try self.performScrollbarValueScroll(scrollBar, change: change)
+            do {
+                return try self.performScrollbarValueScroll(scrollBar, change: change)
+            } catch let error as ActionInputError where Self.shouldContinueTryingScrollAction(after: error) {
+                // A definitively rejected value write leaves the page and increment routes available.
+            }
         }
 
         do {

@@ -11,7 +11,7 @@ extension ScrollCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "amount",
-                    help: "Number of scroll ticks",
+                    help: "Number of native scroll units or wheel ticks",
                     long: "amount"
                 ),
                 .commandOption(
