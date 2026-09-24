@@ -75,11 +75,11 @@ extension WindowCommand {
 
                     if self.groupBySpace {
                         // Group windows by space
-                        var windowsBySpace: [UInt64?: [(window: ServiceWindowInfo, index: Int)]] = [:]
+                        var windowsBySpace: [UInt64?: [ServiceWindowInfo]] = [:]
 
                         for window in windows {
                             let spaceID = window.spaceID
-                            windowsBySpace[spaceID, default: []].append((window, window.index))
+                            windowsBySpace[spaceID, default: []].append(window)
                         }
 
                         // Sort spaces by ID (nil first for windows not on any space)
@@ -95,43 +95,19 @@ extension WindowCommand {
                         // Print grouped windows
                         for spaceID in sortedSpaces {
                             if let spaceID {
-                                let spaceName = windowsBySpace[spaceID]?.first?.window.spaceName ?? "Space \(spaceID)"
+                                let spaceName = windowsBySpace[spaceID]?.first?.spaceName ?? "Space \(spaceID)"
                                 print("\n  Space: \(spaceName) [ID: \(spaceID)]")
                             } else {
                                 print("\n  No Space:")
                             }
 
-                            for (window, index) in windowsBySpace[spaceID] ?? [] {
-                                let status = window.isMinimized ? " [minimized]" : ""
-                                print("    [\(index)] \"\(window.title)\"\(status)")
-                                let origin = window.bounds.origin
-                                print("         Position: (\(Int(origin.x)), \(Int(origin.y)))")
-                                print(
-                                    "         Size: \(Int(window.bounds.size.width))x\(Int(window.bounds.size.height))"
-                                )
-                                let observation = Self.observationDescription(
-                                    window.observationCapability,
-                                    windowID: window.windowID
-                                )
-                                print("         Observation: \(observation)")
+                            for window in windowsBySpace[spaceID] ?? [] {
+                                Self.printWindow(window, indentation: "    ")
                             }
                         }
                     } else {
-                        // Original flat list
-                        for window in data.windows {
-                            let index = window.window_index ?? 0
-                            let status = (window.is_on_screen == false) ? " [minimized]" : ""
-                            print("  [\(index)] \"\(window.window_title)\"\(status)")
-                            if let bounds = window.bounds {
-                                print("       Position: (\(bounds.x), \(bounds.y))")
-                                print("       Size: \(bounds.width)x\(bounds.height)")
-                            }
-                            let observation = Self.observationDescription(
-                                window.observation_capability,
-                                reason: window.observation_capability_reason,
-                                windowID: window.window_id.map(Int.init)
-                            )
-                            print("       Observation: \(observation)")
+                        for window in windows {
+                            Self.printWindow(window, indentation: "  ")
                         }
                     }
                 }
@@ -140,6 +116,16 @@ extension WindowCommand {
                 handleError(error)
                 throw ExitCode(1)
             }
+        }
+
+        private static func printWindow(_ window: ServiceWindowInfo, indentation: String) {
+            let status = window.isMinimized ? " [minimized]" : ""
+            print("\(indentation)[\(window.index)] \"\(window.title)\"\(status)")
+            let bounds = window.bounds
+            print("\(indentation)     Position: (\(Int(bounds.origin.x)), \(Int(bounds.origin.y)))")
+            print("\(indentation)     Size: \(Int(bounds.width))x\(Int(bounds.height))")
+            let observation = Self.observationDescription(window.observationCapability, windowID: window.windowID)
+            print("\(indentation)     Observation: \(observation)")
         }
 
         static func observationDescription(
