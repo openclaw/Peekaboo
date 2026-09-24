@@ -109,6 +109,94 @@ struct MCPExactWindowKeyboardToolTests {
     }
 
     @Test
+    func `Background-only snapshot Cmd A preserves an accessibility value dispatch receipt`() async throws {
+        let window = Self.keyboardWindow(id: 42, index: 0)
+        let snapshot = await Self.makeSnapshot(window: window)
+        let snapshots = try await InMemorySnapshotManager.containing(snapshot.detectionResult)
+        let fixture = await Self.makeFixture(
+            focusedWindowID: 42,
+            backgroundOnly: true,
+            snapshots: snapshots)
+        await MainActor.run {
+            fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one))
+        }
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": snapshot.id, "keys": ["cmd+a"]]))
+
+        #expect(response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("dispatched_unverified"))
+        #expect(metadata["delivery_mechanism"] == .string("accessibility_value"))
+        #expect(metadata["delivery_mode"] == .string("background"))
+        #expect(metadata["dispatched_unit_count"] == .int(1))
+        #expect(metadata["mutation_dispatched"] == .bool(true))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["requires_fresh_observation"] == .bool(true))
+        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.count } == 1)
+        let call = try #require(await MainActor.run { fixture.automation.exactHotkeyCalls.first })
+        let windowIdentity = try #require(window.mutationIdentity)
+        let focusedElement = try #require(FocusedElementIdentity(Self.focusInfo(windowID: 42)))
+        #expect(call.keys == "cmd,a")
+        #expect(call.target.windowIdentity == windowIdentity)
+        #expect(call.target.focusedElement == focusedElement)
+        #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { fixture.automation.targetedHotkeyCalls.isEmpty })
+        await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
+    }
+
+    @Test(arguments: [
+        ("cmd+l", DesktopActionOutcome.Delivery(mechanism: .accessibilityValue, mode: .background)),
+        ("cmd+a", DesktopActionOutcome.Delivery(mechanism: .accessibilityAction, mode: .background)),
+        ("cmd+a", DesktopActionOutcome.Delivery(mechanism: .composite, mode: .background)),
+        ("cmd+a", DesktopActionOutcome.Delivery(mechanism: .processTargetedEvents, mode: .background)),
+        ("cmd+a", DesktopActionOutcome.Delivery(mechanism: .accessibilityValue, mode: .foreground)),
+    ])
+    func `Background-only snapshot press rejects an unrelated route receipt without replay`(
+        keys: String,
+        delivery: DesktopActionOutcome.Delivery) async throws
+    {
+        let window = Self.keyboardWindow(id: 42, index: 0)
+        let snapshot = await Self.makeSnapshot(window: window)
+        let snapshots = try await InMemorySnapshotManager.containing(snapshot.detectionResult)
+        let fixture = await Self.makeFixture(
+            focusedWindowID: 42,
+            backgroundOnly: true,
+            snapshots: snapshots)
+        await MainActor.run {
+            fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.dispatchedUnverified(
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: .one))
+        }
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": snapshot.id, "keys": [keys]]))
+
+        #expect(response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("indeterminate"))
+        #expect(metadata["mutation_dispatched"] == .bool(true))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["requires_fresh_observation"] == .bool(true))
+        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.count } == 1)
+        let call = try #require(await MainActor.run { fixture.automation.exactHotkeyCalls.first })
+        let windowIdentity = try #require(window.mutationIdentity)
+        let focusedElement = try #require(FocusedElementIdentity(Self.focusInfo(windowID: 42)))
+        #expect(call.keys == (keys == "cmd+l" ? "cmd,l" : "cmd,a"))
+        #expect(call.target.windowIdentity == windowIdentity)
+        #expect(call.target.focusedElement == focusedElement)
+        #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { fixture.automation.targetedHotkeyCalls.isEmpty })
+        await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
+    }
+
+    @Test
     func `Type revalidates matching focused snapshot evidence before exact dispatch`() async throws {
         let window = Self.keyboardWindow(id: 42, index: 0)
         let snapshot = await Self.makeSnapshot(window: window)

@@ -342,27 +342,6 @@ enum BackgroundInputDriver {
         return true
     }
 
-    @discardableResult
-    static func performFocusedTextHotkey(
-        primaryKey: String,
-        modifierFlags: CGEventFlags,
-        targetProcessIdentifier: pid_t) throws -> Bool
-    {
-        try self.validateLiveTarget(targetProcessIdentifier)
-        guard modifierFlags == .maskCommand,
-              primaryKey == "a",
-              let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier),
-              let currentText = try self.textValue(from: element)
-        else {
-            return false
-        }
-
-        return try self.setSelectedTextRange(
-            CFRange(location: 0, length: currentText.utf16.count),
-            on: element,
-            operation: .hotkey)
-    }
-
     private static func post(_ event: CGEvent, to pid: pid_t) {
         if !SkyLightPerPidEventPost.post(event, to: pid) {
             event.postToPid(pid)
@@ -647,6 +626,16 @@ enum BackgroundInputDriver {
     }
 
     private static func focusedEditableTextElement(targetProcessIdentifier: pid_t) throws -> AXUIElement? {
+        guard let element = try self.focusedTextElement(targetProcessIdentifier: targetProcessIdentifier),
+              !self.isSecureTextElement(element),
+              self.isValueSettable(element)
+        else {
+            return nil
+        }
+        return element
+    }
+
+    private static func focusedTextElement(targetProcessIdentifier: pid_t) throws -> AXUIElement? {
         let application = AXUIElementCreateApplication(targetProcessIdentifier)
         var focusedValue: CFTypeRef?
         let focusedError = AXUIElementCopyAttributeValue(
@@ -664,13 +653,7 @@ enum BackgroundInputDriver {
             return nil
         }
 
-        let element = unsafeDowncast(focusedValue, to: AXUIElement.self)
-        guard !self.isSecureTextElement(element),
-              self.isValueSettable(element)
-        else {
-            return nil
-        }
-        return element
+        return unsafeDowncast(focusedValue, to: AXUIElement.self)
     }
 
     private static func isValueSettable(_ element: AXUIElement) -> Bool {
@@ -935,6 +918,95 @@ enum BackgroundInputDriver {
 }
 
 extension BackgroundInputDriver {
+    struct FocusedTextHotkeyAccess<Receiver> {
+        let focusedElement: () throws -> Receiver?
+        let textValue: (Receiver) throws -> String?
+        let focusSnapshot: (Receiver) -> ExactWindowFocusSnapshot?
+        let selectRange: (CFRange, Receiver) throws -> Bool
+    }
+
+    @discardableResult
+    static func performFocusedTextHotkey(
+        primaryKey: String,
+        modifierFlags: CGEventFlags,
+        targetProcessIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil) throws -> Bool
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        return try self.performFocusedTextHotkey(
+            primaryKey: primaryKey,
+            modifierFlags: modifierFlags,
+            exactWindow: exactWindow,
+            access: FocusedTextHotkeyAccess(
+                focusedElement: { try self.focusedTextElement(targetProcessIdentifier: targetProcessIdentifier) },
+                textValue: { element in
+                    guard !self.isSecureTextElement(element), self.isValueSettable(element) else { return nil }
+                    return try self.textValue(from: element)
+                },
+                focusSnapshot: {
+                    DetachedExactWindowFocusReader.read(element: $0, processIdentifier: targetProcessIdentifier)
+                },
+                selectRange: { try self.setSelectedTextRange($0, on: $1, operation: .hotkey) }))
+    }
+
+    static func performFocusedTextHotkey(
+        primaryKey: String,
+        modifierFlags: CGEventFlags,
+        exactWindow: UIAutomationTarget.ExactWindow?,
+        access: FocusedTextHotkeyAccess<some Any>) throws -> Bool
+    {
+        guard modifierFlags == .maskCommand, primaryKey == "a" else { return false }
+        guard let element = try access.focusedElement() else {
+            if let exactWindow {
+                try self.validateExactWindowTextReceiver(nil, exactWindow: exactWindow)
+            }
+            return false
+        }
+        if let exactWindow {
+            // Validate the retained object before AX eligibility can trigger an unsupported fallback.
+            try self.validateExactWindowTextReceiver(access.focusSnapshot(element), exactWindow: exactWindow)
+        }
+        guard let currentText = try access.textValue(element) else { return false }
+        return try access.selectRange(
+            CFRange(location: 0, length: currentText.utf16.count),
+            element)
+    }
+
+    static func validateExactWindowTextReceiver(
+        _ focused: ExactWindowFocusSnapshot?,
+        exactWindow: UIAutomationTarget.ExactWindow,
+        phase: KeyboardFocusValidationPhase = .initial) throws
+    {
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "The Accessibility text receiver no longer matches the exact target; observe it again.")
+        guard let focused,
+              focused.processIdentifier == exactWindow.identity.ownerProcessIdentifier,
+              focused.windowID == exactWindow.identity.windowID,
+              !focused.frame.isEmpty,
+              exactWindow.bounds.contains(CGPoint(x: focused.frame.midX, y: focused.frame.midY))
+        else {
+            throw refusal
+        }
+        if let expected = exactWindow.focusedElement {
+            guard let windowID = focused.windowID,
+                  let role = focused.role,
+                  FocusedElementReceiptResolver.matches(
+                      FocusedElementIdentity(
+                          processIdentifier: focused.processIdentifier,
+                          windowID: windowID,
+                          role: role,
+                          title: focused.title,
+                          identifier: focused.identifier,
+                          frame: focused.frame),
+                      expected: expected,
+                      phase: phase)
+            else {
+                throw refusal
+            }
+        }
+    }
+
     static func textMutationAccepted(
         _ error: AXError,
         operation: InputDeliveryIndeterminateError.Operation = .type) throws -> Bool

@@ -342,7 +342,7 @@ public struct PressTool: MCPTool {
                 throw PressToolValidationError(
                     message: "Exact-window background hotkeys require a focused-element receipt.")
             }
-            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+            return try await ExactWindowKeyboardRuntime.validateHotkeyRouteReceipt(
                 outcomeAutomation.hotkeyWithOutcome(
                     keys: chord.serviceKeys,
                     holdDuration: hold,
@@ -350,6 +350,7 @@ public struct PressTool: MCPTool {
                         windowIdentity: exactWindow.identity,
                         windowBounds: exactWindow.bounds,
                         focusedElement: focusedElement)),
+                keys: chord.serviceKeys,
                 operation: "Background hotkeys")
         }
         if let automation = self.context.automation as? any UIAutomationActionOutcomeProviding {

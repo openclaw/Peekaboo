@@ -321,6 +321,24 @@ public enum UIAutomationTarget: Sendable, Equatable {
 /// `DesktopActionSequenceAccumulator`; this gate only proves that the exact route survived dispatch.
 @MainActor
 public enum ExactWindowKeyboardRuntime {
+    private enum ReceiptPolicy {
+        case keyboardEvents
+        case compositeType
+        case focusedTextSelectAll
+
+        func permits(_ mechanism: DesktopActionOutcome.Delivery.Mechanism) -> Bool {
+            switch (self, mechanism) {
+            case (_, .windowTargetedEvents),
+                 (.compositeType, .accessibilityValue),
+                 (.compositeType, .composite),
+                 (.focusedTextSelectAll, .accessibilityValue):
+                true
+            default:
+                false
+            }
+        }
+    }
+
     public static func requireOutcomeProvider(
         automation: any UIAutomationServiceProtocol,
         operation: String) throws -> any UIAutomationActionOutcomeProviding
@@ -363,10 +381,35 @@ public enum ExactWindowKeyboardRuntime {
         }
     }
 
+    public static func validateHotkeyRouteReceipt<Payload>(
+        _ result: UIAutomationActionResult<Payload>,
+        keys: String,
+        operation: String) throws -> UIAutomationActionResult<Payload>
+    {
+        let chord = try? HotkeyService.HotkeyChord(keys: HotkeyService.parsedKeys(keys))
+        let isSelectAll = chord?.plan.primaryKey == "a" && chord?.plan.modifierFlags == .maskCommand
+        // The selection primitive validates its retained receiver; generic menu actions do not prove that route.
+        return try self.validateRouteReceipt(
+            result,
+            operation: operation,
+            policy: isSelectAll ? .focusedTextSelectAll : .keyboardEvents)
+    }
+
     public static func validateRouteReceipt<Payload>(
         _ result: UIAutomationActionResult<Payload>,
         operation: String,
         allowsCompositeTypeDelivery: Bool = false) throws -> UIAutomationActionResult<Payload>
+    {
+        try self.validateRouteReceipt(
+            result,
+            operation: operation,
+            policy: allowsCompositeTypeDelivery ? .compositeType : .keyboardEvents)
+    }
+
+    private static func validateRouteReceipt<Payload>(
+        _ result: UIAutomationActionResult<Payload>,
+        operation: String,
+        policy: ReceiptPolicy) throws -> UIAutomationActionResult<Payload>
     {
         guard let outcome = result.outcome else {
             throw DesktopActionFailure.indeterminate(
@@ -376,14 +419,7 @@ public enum ExactWindowKeyboardRuntime {
                 hint: "Observe the target before any retry and update the runtime host.")
         }
         let deliveryIsValid: Bool = if let delivery = outcome.delivery, delivery.mode == .background {
-            switch delivery.mechanism {
-            case .windowTargetedEvents:
-                true
-            case .accessibilityValue, .composite:
-                allowsCompositeTypeDelivery
-            default:
-                false
-            }
+            policy.permits(delivery.mechanism)
         } else {
             false
         }

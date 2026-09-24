@@ -119,46 +119,7 @@ struct PressCommandTests {
     @Test
     @MainActor
     func `Exact window press uses receipt-pinned background delivery`() async throws {
-        let pid: Int32 = 4201
-        let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
-        let applications = StubApplicationService(applications: [ServiceApplicationInfo(
-            processIdentifier: pid,
-            processStartIdentity: 71,
-            bundleIdentifier: "com.example.Editor",
-            name: "Editor"
-        )])
-        let windows = StubWindowService(windowsByApp: ["Editor": [ServiceWindowInfo(
-            windowID: 901,
-            title: "Document",
-            bounds: bounds,
-            mutationIdentity: WindowMutationIdentity(
-                windowID: 901,
-                ownerProcessIdentifier: pid,
-                ownerProcessStartIdentity: 71,
-                capturedBounds: bounds
-            )
-        )]])
-        let automation = OutcomeStubAutomationService()
-        automation.actionOutcome = .confirmedChange(delivery: .init(
-            mechanism: .windowTargetedEvents,
-            mode: .background
-        ))
-        automation.targetedFocusedElement = UIFocusInfo(
-            role: "AXTextArea",
-            title: nil,
-            value: nil,
-            frame: CGRect(x: 40, y: 60, width: 200, height: 100),
-            applicationName: "Editor",
-            bundleIdentifier: "com.example.Editor",
-            processId: Int(pid),
-            windowID: 901,
-            identifier: "editor"
-        )
-        let context = await self.makeContext(
-            automation: automation,
-            applications: applications,
-            windows: windows
-        )
+        let (context, automation) = await self.makeExactWindowContext()
 
         let result = try await self.runPress(
             arguments: ["return", "--window-id", "901", "--json"],
@@ -174,8 +135,96 @@ struct PressCommandTests {
             from: Data(result.stdout.utf8)
         )
         #expect(payload.data.deliveryMode == "background")
-        #expect(payload.data.targetPID == Int(pid))
+        #expect(payload.data.targetPID == 4201)
         #expect(payload.data.targetWindowID == 901)
+    }
+
+    @Test
+    @MainActor
+    func `Exact window Cmd A preserves background AX selection receipt`() async throws {
+        let (context, automation) = await self.makeExactWindowContext()
+        let selectionOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+        automation.actionOutcome = selectionOutcome
+
+        let result = try await self.runPress(
+            arguments: ["cmd+a", "--window-id", "901", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let payload = try JSONDecoder().decode(
+            CodableJSONResponse<PressResult>.self,
+            from: Data(result.stdout.utf8)
+        )
+        #expect(payload.success)
+        #expect(payload.effect == .unverifiable)
+        #expect(payload.outcome?.outcome == selectionOutcome)
+        #expect(payload.outcome?.state == .dispatchedUnverified)
+        #expect(payload.outcome?.deliveryMechanism == .accessibilityValue)
+        #expect(payload.outcome?.deliveryMode == .background)
+        #expect(payload.outcome?.mutationDispatched == true)
+        #expect(payload.outcome?.retrySafe == false)
+        #expect(payload.outcome?.requiresFreshObservation == true)
+        #expect(payload.data.deliveryMode == "background")
+        #expect(payload.data.targetPID == 4201)
+        #expect(payload.data.targetWindowID == 901)
+        #expect(automation.exactHotkeyCalls.count == 1)
+        let call = try #require(automation.exactHotkeyCalls.first)
+        #expect(call.keys == "cmd,a")
+        #expect(call.target.windowIdentity.windowID == 901)
+        #expect(call.target.windowIdentity.ownerProcessIdentifier == 4201)
+        #expect(call.target.windowIdentity.ownerProcessStartIdentity == 71)
+        #expect(call.target.focusedElement.identifier == "editor")
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test(arguments: [
+        ("l", DesktopActionOutcome.Delivery(mechanism: .accessibilityValue, mode: .background)),
+        ("a", .init(mechanism: .accessibilityAction, mode: .background)),
+        ("a", .init(mechanism: .composite, mode: .background)),
+        ("a", .init(mechanism: .processTargetedEvents, mode: .background)),
+        ("a", .init(mechanism: .accessibilityValue, mode: .foreground)),
+        ("a", .init(mechanism: .globalEvents, mode: .foreground)),
+    ])
+    @MainActor
+    func `Exact window press rejects unrelated route receipts without replay`(
+        key: String,
+        delivery: DesktopActionOutcome.Delivery
+    ) async throws {
+        let (context, automation) = await self.makeExactWindowContext()
+        automation.actionOutcome = .dispatchedUnverified(
+            delivery: delivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one
+        )
+
+        let result = try await self.runPress(
+            arguments: ["cmd+\(key)", "--window-id", "901", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+        #expect(!payload.success)
+        #expect(payload.outcome?.state == .indeterminate)
+        #expect(payload.outcome?.mutationDispatched == true)
+        #expect(payload.outcome?.retrySafe == false)
+        #expect(payload.outcome?.requiresFreshObservation == true)
+        #expect(payload.error?.retry_safe == false)
+        #expect(automation.exactHotkeyCalls.count == 1)
+        let call = try #require(automation.exactHotkeyCalls.first)
+        #expect(call.keys == "cmd,\(key)")
+        #expect(call.target.windowIdentity.windowID == 901)
+        #expect(call.target.windowIdentity.ownerProcessIdentifier == 4201)
+        #expect(call.target.windowIdentity.ownerProcessStartIdentity == 71)
+        #expect(call.target.focusedElement.identifier == "editor")
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
     }
 
     @Test
@@ -404,6 +453,54 @@ struct PressCommandTests {
     }
 
     // MARK: - Helpers
+
+    @MainActor
+    private func makeExactWindowContext() async -> (
+        context: TestServicesFactory.AutomationTestContext,
+        automation: OutcomeStubAutomationService
+    ) {
+        let pid: Int32 = 4201
+        let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
+        let applications = StubApplicationService(applications: [ServiceApplicationInfo(
+            processIdentifier: pid,
+            processStartIdentity: 71,
+            bundleIdentifier: "com.example.Editor",
+            name: "Editor"
+        )])
+        let windows = StubWindowService(windowsByApp: ["Editor": [ServiceWindowInfo(
+            windowID: 901,
+            title: "Document",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 901,
+                ownerProcessIdentifier: pid,
+                ownerProcessStartIdentity: 71,
+                capturedBounds: bounds
+            )
+        )]])
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(delivery: .init(
+            mechanism: .windowTargetedEvents,
+            mode: .background
+        ))
+        automation.targetedFocusedElement = UIFocusInfo(
+            role: "AXTextArea",
+            title: nil,
+            value: nil,
+            frame: CGRect(x: 40, y: 60, width: 200, height: 100),
+            applicationName: "Editor",
+            bundleIdentifier: "com.example.Editor",
+            processId: Int(pid),
+            windowID: 901,
+            identifier: "editor"
+        )
+        let context = await self.makeContext(
+            automation: automation,
+            applications: applications,
+            windows: windows
+        )
+        return (context, automation)
+    }
 
     private func runPress(
         arguments: [String],

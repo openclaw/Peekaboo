@@ -38,6 +38,8 @@ read_when:
 - Repetition multiplies the sequence client-side—e.g., `press tab return --count 3 --foreground` becomes six actions—so you get predictable ordering.
 - Results include the literal key list, total presses, repeat count, delivery mode, optional target PID, and elapsed time in both text and JSON modes.
 - The `--hold` flag is passed to the hotkey service for each key press.
+- Background Cmd+A retains the existing focused-field Accessibility selection shortcut. Before writing, exact-window delivery validates the actual retained AX receiver against the window and optional focused-element receipt; changed or unreadable receiver identity refuses without dispatch or keyboard replay. An accepted selection write reports `accessibility_value`, one dispatched unit, and `dispatched_unverified`; it does not claim that the effect was confirmed. Exact-window receipts admit that value route only for Cmd+A, not generic menu actions, composite delivery, process delivery, or foreground delivery. Ambiguous AX selection errors stop without keyboard replay.
+- **Known limitation:** that focused-field Cmd+A shortcut can still run under `synthFirst` or `synthOnly` and does not implement a held key. The receipt correction does not change strategy selection or `--hold` behavior. Older hosts that label the selection `accessibility_action` still return an indeterminate exact-window receipt; observe before retrying and update the host. MCP also retains its separate confirmed-effect requirement for unverified dispatch.
 
 ## Examples
 ```bash
