@@ -177,6 +177,8 @@ public struct ClickTool: MCPTool {
                     modifierResult: modifierResult))
         } catch is CancellationError {
             throw CancellationError()
+        } catch let refusal as ClickNestedCaptureRefusal {
+            return refusal.response
         } catch let error as ClickToolError {
             return try Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
@@ -232,7 +234,7 @@ public struct ClickTool: MCPTool {
                 snapshotId: snapshot.id)
         case let .query(text):
             let snapshot = try await self.requireSnapshot(id: request.snapshotId)
-            if let element = await self.matchingElement(query: text, snapshot: snapshot) {
+            if let element = try await self.matchingElement(query: text, snapshot: snapshot) {
                 return self.resolution(for: element, snapshot: snapshot)
             }
             guard request.waitForMilliseconds > 0 else {
@@ -247,9 +249,15 @@ public struct ClickTool: MCPTool {
         }
     }
 
-    private func matchingElement(query: String, snapshot: UISnapshot) async -> UIElement? {
+    private func matchingElement(query: String, snapshot: UISnapshot) async throws -> UIElement? {
         do {
             return try await self.findElement(matching: query, snapshot: snapshot)
+        } catch let error as ClickToolError
+            where error.message == OCRSemanticEvidencePolicy.interactionRefusalMessage
+        {
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return nil
         }
@@ -290,6 +298,10 @@ public struct ClickTool: MCPTool {
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutMilliseconds) / 1000)
         while Date() < deadline {
             try Task.checkCancellation()
+            if let refusal = self.context.nestedScreenCapturePreflightRefusal() {
+                throw ClickNestedCaptureRefusal(response: refusal)
+            }
+            try await self.requireCurrentWindowMatches(windowID: windowID, identity: identity)
             let observed = try await self.observeExactWindow(windowID: windowID)
             guard let observedIdentity = observed.windowMutationIdentity,
                   observedIdentity.windowID == identity.windowID,
@@ -302,7 +314,14 @@ public struct ClickTool: MCPTool {
                     "The selected click target changed while waiting. Run see again.",
                     refusalReason: .targetUnavailable)
             }
-            if let element = await self.matchingElement(query: query, snapshot: observed) {
+            let element: UIElement?
+            do {
+                element = try await self.matchingElement(query: query, snapshot: observed)
+            } catch {
+                await self.discardObservation(observed)
+                throw error
+            }
+            if let element {
                 return self.resolution(for: element, snapshot: observed)
             }
             await self.discardObservation(observed)
@@ -342,7 +361,26 @@ public struct ClickTool: MCPTool {
         return observed
     }
 
+    private func requireCurrentWindowMatches(
+        windowID: Int,
+        identity: WindowMutationIdentity) async throws
+    {
+        let matches = try await self.context.windows.listWindows(target: .windowId(windowID))
+        let exactMatches = matches.filter { $0.windowID == windowID }
+        guard !exactMatches.isEmpty,
+              exactMatches.allSatisfy({
+                  $0.bounds == identity.capturedBounds && $0.mutationIdentity == identity
+              })
+        else {
+            throw ClickToolError(
+                "The selected click target changed while waiting. Run see again.",
+                refusalReason: .targetUnavailable)
+        }
+    }
+
     private func discardObservation(_ snapshot: UISnapshot) async {
+        let screenshotPath = await snapshot.screenshotPath
+        ClickObservationFileCleanup.remove(screenshotPath: screenshotPath)
         try? await self.context.snapshots.cleanSnapshot(snapshotId: snapshot.id)
         await self.context.uiSnapshots.removeSnapshot(id: snapshot.id)
     }
@@ -1148,6 +1186,22 @@ private struct ClickIntent {
         } else {
             self.automationType = .single
             self.displayVerb = "Clicked"
+        }
+    }
+}
+
+private struct ClickNestedCaptureRefusal: Error {
+    let response: ToolResponse
+}
+
+enum ClickObservationFileCleanup {
+    static func remove(screenshotPath: String?) {
+        guard let screenshotPath, !screenshotPath.isEmpty else { return }
+        try? FileManager.default.removeItem(atPath: screenshotPath)
+        let annotated = ObservationOutputWriter.annotatedScreenshotPath(
+            forRawScreenshotPath: screenshotPath)
+        if annotated != screenshotPath {
+            try? FileManager.default.removeItem(atPath: annotated)
         }
     }
 }
