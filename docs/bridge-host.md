@@ -369,6 +369,13 @@ Mutating operations remain indeterminate and retry-unsafe because the unsigned r
 Window and frontmost capture receipts bind the exact process/window identity returned by capture metadata; a missing
 target or a window ID that contradicts the request is rejected. Screen and area captures remain targetless global reads.
 
+Browser batch results share one progress validator for signed and legacy receiptless responses. Counts describe
+mutation calls, not the total calls in a mixed read/mutation batch. Typed failures must agree with their projected
+outcomes; malformed or contradictory progress cannot become permission to retry. Signed validation additionally
+requires a canonical connection receipt even for a zero-dispatch refusal and `deliveryAccepted` evidence for success.
+Receiptless compatibility still permits successful `operationStillRunning` evidence and skips target attribution only
+for a proven pre-dispatch refusal. Connection and signature checks remain outside the shared progress validator.
+
 Protocol `1.37` adds `processGenerationBoundElementMutations`. Current clients require this capability, attested
 operation receipts, and the existing `setValueResultTargetBinding` contract before sending `setValue` or
 `performAction`. The host binds the snapshot receipt, final resolved AX element PID, canonical outcome, and returned

@@ -875,3 +875,27 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         return false
     }
 }
+
+extension PeekabooBridgeClientTransportOutcomeTests {
+    @Test(arguments: BrowserResponseProgressFixture.cases)
+    func `receiptless browser progress preserves legacy evidence and refusal contracts`(
+        fixture: BrowserResponseProgressFixture) async throws
+    {
+        let peer = try Self.projectedReceiptlessPeer(response: fixture.response)
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        do {
+            try await Self.negotiateReceiptless(client)
+            let reply = try await client.sendCarryingActionOutcome(
+                BrowserResponseProgressFixture.request, throwsActionFailures: false)
+            #expect(fixture.acceptsReceiptless)
+            #expect(reply.outcome == fixture.outcome.projection)
+        } catch let failure as DesktopActionFailure {
+            #expect(!fixture.acceptsReceiptless)
+            Self.expectResponseLostFailure(failure)
+        } catch {
+            await peer.stop()
+            throw error
+        }
+        await peer.waitUntilFinished()
+    }
+}

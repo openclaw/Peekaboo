@@ -1399,98 +1399,23 @@ extension PeekabooBridgeOperationReceiptSemantics {
         let request = plan.request
         guard case let .projectedAction(projected) = response else { return }
         if case let .browserToolResponse(browserResponse) = projected.response {
-            guard let browserRequest = request.browserExecutionRequest else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "browser response request binding")
-            }
-            let requestedCallCount = browserRequest.mutationCallCount
-            guard browserResponse.isError == (browserResponse.actionFailure != nil) else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "browser response typed failure marker")
-            }
             guard let connectionReceipt = browserResponse.connectionReceipt,
                   connectionReceipt.isCanonicalTarget,
-                  let outcome = projected.outcome?.outcome
+                  let projection = projected.outcome
             else {
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                     "browser response progress and outcome")
             }
-            if browserResponse.completedCallCount == nil || browserResponse.dispatchedCallCount == nil {
-                guard let failure = browserResponse.actionFailure,
-                      browserResponse.completedCallCount == nil,
-                      browserResponse.dispatchedCallCount == nil,
-                      failure.outcome.projection == projected.outcome,
-                      outcome.state == .indeterminate,
-                      outcome.route == .bridge,
-                      outcome.delivery == .init(mechanism: .browserProtocol, mode: .background),
-                      outcome.evidence == .completionUnknown,
-                      outcome.dispatchState.mutationDispatched,
-                      outcome.dispatchState.unitCount == nil,
-                      outcome.retrySafety == .unsafe,
-                      PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
-                          failure.outcome,
-                          plan: plan)
-                else {
-                    throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                        "browser response unknown progress")
-                }
-                return
+            if let mismatch = PeekabooBridgeOperationResultSemantics.browserResponseProgressMismatch(
+                browserResponse,
+                projection: projection,
+                plan: plan)
+            {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch(mismatch.rawValue)
             }
-            guard let completedCallCount = browserResponse.completedCallCount,
-                  completedCallCount >= 0,
-                  let dispatchedCallCount = browserResponse.dispatchedCallCount,
-                  dispatchedCallCount >= completedCallCount,
-                  dispatchedCallCount <= requestedCallCount
-            else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "browser response progress and outcome")
-            }
-            if dispatchedCallCount == 0 {
-                guard completedCallCount == 0,
-                      let failure = browserResponse.actionFailure,
-                      failure.outcome.projection == projected.outcome,
-                      outcome.state == .refused,
-                      outcome.route == .bridge,
-                      outcome.delivery == nil,
-                      outcome.evidence == .requestRefused,
-                      outcome.dispatchState == .none,
-                      outcome.retrySafety == .safe,
-                      outcome.refusalReason != nil,
-                      PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
-                          failure.outcome,
-                          plan: plan)
-                else {
-                    throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                        "browser response zero progress refusal")
-                }
-                return
-            }
-            guard let unitCount = DesktopActionOutcome.DispatchUnitCount(dispatchedCallCount),
-                  outcome.dispatchState.unitCount == unitCount
-            else {
-                throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                    "browser response positive progress")
-            }
-            if let failure = browserResponse.actionFailure {
-                guard failure.outcome.projection == projected.outcome,
-                      PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
-                          failure.outcome,
-                          plan: plan)
-                else {
-                    throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                        "browser response action failure")
-                }
-            } else {
-                guard completedCallCount == requestedCallCount,
-                      dispatchedCallCount == requestedCallCount,
-                      outcome.state == .dispatchedUnverified,
-                      outcome.route == .bridge,
-                      outcome.delivery == .init(mechanism: .browserProtocol, mode: .background),
-                      outcome.evidence == .deliveryAccepted
-                else {
-                    throw PeekabooBridgeOperationReceiptError.receiptMismatch(
-                        "successful browser response outcome")
-                }
+            // Signed completion is stronger than legacy receiptless acceptance of an operation still running.
+            if browserResponse.actionFailure == nil, projection.outcome.evidence != .deliveryAccepted {
+                throw PeekabooBridgeOperationReceiptError.receiptMismatch("successful browser response outcome")
             }
             return
         }

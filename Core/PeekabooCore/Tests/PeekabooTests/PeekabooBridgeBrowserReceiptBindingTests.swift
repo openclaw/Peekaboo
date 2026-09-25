@@ -6,6 +6,32 @@ import Testing
 
 @Suite(.serialized)
 struct PeekabooBridgeBrowserReceiptBindingTests {
+    @Test(arguments: BrowserResponseProgressFixture.cases)
+    func `signed browser progress preserves its stronger evidence contract`(
+        fixture: BrowserResponseProgressFixture) async throws
+    {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "peekaboo-browser-progress-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("bridge.sock").path)
+        let session = try await OperationReceiptSessionFixture.make(authority: authority)
+        let bundle = try await session.signedBundle(
+            authority: authority,
+            sequence: 0,
+            request: .projectedAction(.init(request: BrowserResponseProgressFixture.request)),
+            response: fixture.response,
+            target: fixture.outcome.state == .refused ? nil : .process(BrowserResponseProgressFixture.identity),
+            outcome: fixture.outcome.projection)
+        if fixture.acceptsSigned {
+            try bundle.validate()
+        } else {
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                try bundle.validate()
+            }
+        }
+    }
+
     @Test
     func `browser request read classification is shared across Bridge adapters`() {
         #expect(PeekabooBridgeBrowserExecuteRequest(

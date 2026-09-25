@@ -668,10 +668,10 @@ extension PeekabooBridgeClient {
                     outcome,
                     plan: plan)
         case let .browserToolResponse(browserResponse):
-            Self.receiptlessBrowserProjectionMatches(
+            PeekabooBridgeOperationResultSemantics.browserResponseProgressMismatch(
                 browserResponse,
                 projection: projection,
-                plan: plan)
+                plan: plan) == nil
         default:
             PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
                 outcome,
@@ -762,65 +762,6 @@ extension PeekabooBridgeClient {
         case .notApplicable, .requestDependent:
             throw DesktopTargetIdentityError.incompleteExactWindow
         }
-    }
-
-    private nonisolated static func receiptlessBrowserProjectionMatches(
-        _ response: PeekabooBridgeBrowserToolResponse,
-        projection: DesktopActionOutcome.Projection,
-        plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) -> Bool
-    {
-        let request = plan.request
-        guard let browserRequest = request.browserExecutionRequest,
-              response.isError == (response.actionFailure != nil)
-        else { return false }
-        let callCount = browserRequest.mutationCallCount
-        guard let completed = response.completedCallCount,
-              let dispatched = response.dispatchedCallCount
-        else {
-            guard response.completedCallCount == nil,
-                  response.dispatchedCallCount == nil,
-                  let failure = response.actionFailure,
-                  failure.outcome.projection == projection,
-                  projection.outcome.state == .indeterminate,
-                  projection.outcome.delivery == .init(
-                      mechanism: .browserProtocol,
-                      mode: .background),
-                  projection.outcome.evidence == .completionUnknown,
-                  projection.outcome.dispatchState.unitCount == nil
-            else { return false }
-            return PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
-                failure.outcome,
-                plan: plan)
-        }
-        guard completed >= 0,
-              dispatched >= completed,
-              dispatched <= callCount
-        else { return false }
-        if dispatched == 0 {
-            guard completed == 0,
-                  let failure = response.actionFailure,
-                  failure.outcome.projection == projection,
-                  projection.outcome.state == .refused
-            else { return false }
-            return PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
-                failure.outcome,
-                plan: plan)
-        }
-        guard let units = DesktopActionOutcome.DispatchUnitCount(dispatched),
-              projection.outcome.dispatchState.unitCount == units
-        else { return false }
-        if let failure = response.actionFailure {
-            return failure.outcome.projection == projection &&
-                PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
-                    failure.outcome,
-                    plan: plan)
-        }
-        return completed == callCount &&
-            dispatched == callCount &&
-            PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
-                projection.outcome,
-                response: .browserToolResponse(response),
-                plan: plan)
     }
 
     private nonisolated static func throwReceiptlessProjectionMismatch(
