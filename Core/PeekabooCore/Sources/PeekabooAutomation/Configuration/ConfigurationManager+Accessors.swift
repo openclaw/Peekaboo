@@ -403,11 +403,7 @@ extension ConfigurationManager {
     public func getUIInputPolicy(cliStrategy: UIInputStrategy? = nil) -> UIInputPolicy {
         let config = self.configuration?.input
         let globalEnvStrategy = self.uiInputStrategyFromEnvironment("PEEKABOO_INPUT_STRATEGY")
-        let defaultStrategy = self.resolveUIInputStrategy(
-            cliStrategy: cliStrategy,
-            envStrategy: globalEnvStrategy,
-            configStrategy: config?.defaultStrategy,
-            defaultStrategy: .synthFirst)
+        let defaultStrategy = cliStrategy ?? globalEnvStrategy ?? config?.defaultStrategy
 
         let clickStrategy = self.resolveUIInputStrategyOverride(
             cliStrategy: cliStrategy,
@@ -425,8 +421,7 @@ extension ConfigurationManager {
             cliStrategy: cliStrategy,
             envVar: "PEEKABOO_TYPE_INPUT_STRATEGY",
             globalEnvStrategy: globalEnvStrategy,
-            configStrategy: config?.type,
-            builtInStrategy: config?.defaultStrategy == nil ? UIInputPolicy.currentBehavior.type : nil)
+            configStrategy: config?.type)
         let hotkeyStrategy = self.resolveUIInputStrategyOverride(
             cliStrategy: cliStrategy,
             envVar: "PEEKABOO_HOTKEY_INPUT_STRATEGY",
@@ -449,14 +444,15 @@ extension ConfigurationManager {
             cliStrategy: cliStrategy,
             globalEnvStrategy: globalEnvStrategy)
 
-        return UIInputPolicy(
-            defaultStrategy: defaultStrategy,
-            click: clickStrategy,
-            scroll: scrollStrategy,
-            type: typeStrategy,
-            hotkey: hotkeyStrategy,
-            setValue: setValueStrategy,
-            performAction: performActionStrategy,
+        return UIInputPolicy.applicationDefaults(
+            resolving: AppUIInputPolicy(
+                defaultStrategy: defaultStrategy,
+                click: clickStrategy,
+                scroll: scrollStrategy,
+                type: typeStrategy,
+                hotkey: hotkeyStrategy,
+                setValue: setValueStrategy,
+                performAction: performActionStrategy),
             perApp: self.resolvedAppInputPolicies(from: config?.perApp, explicitOverrides: explicitOverrides))
     }
 

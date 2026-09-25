@@ -175,10 +175,11 @@ jobs:
           set -euo pipefail
           test_log="$RUNNER_TEMP/sdk-text-route-eligibility.log"
           swift test --disable-xctest --enable-swift-testing --no-parallel \
-            --filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests)/' \
+            --filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests|UIInputPolicyDefaultTests)/' \
             2>&1 | tee "$test_log"
           grep -Fq 'Suite TextInputRouteTests passed after ' "$test_log"
           grep -Fq 'Suite TypeServiceForegroundPolicyTests passed after ' "$test_log"
+          grep -Fq 'Suite UIInputPolicyDefaultTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Build PeekabooCore

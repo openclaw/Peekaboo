@@ -525,7 +525,7 @@ public final class TypeService {
         }
         var confirmationPreflightValue: String?
         var bundleIdentifier: String?
-        var strategy = self.inputPolicy.strategy(for: .type)
+        var strategy = self.actionArrayStrategy(for: automationTarget)
         let executePayload: @MainActor () async throws -> DesktopActionOutcome = {
             payloadSummary = try await self.performTypeActions(
                 actions,
@@ -560,7 +560,7 @@ public final class TypeService {
             strategy: strategy,
             prepare: {
                 bundleIdentifier = targetProcessIdentifier.flatMap(self.targetBundleIdentifier)
-                strategy = self.inputPolicy.strategy(for: .type, bundleIdentifier: bundleIdentifier)
+                strategy = self.actionArrayStrategy(for: automationTarget, bundleIdentifier: bundleIdentifier)
                 confirmationPreflightValue = await self.prepareEffectConfirmationBaseline(
                     effectConfirmation,
                     lanePreparation: lanePreparation)
@@ -601,6 +601,16 @@ public final class TypeService {
             throw PeekabooError.operationError(message: "Type action execution did not produce a result")
         }
         return summary
+    }
+
+    private func actionArrayStrategy(
+        for target: UIAutomationTarget,
+        bundleIdentifier: String? = nil) -> UIInputStrategy
+    {
+        if target.processIdentifier != nil {
+            return self.inputPolicy.backgroundTypingStrategy(bundleIdentifier: bundleIdentifier)
+        }
+        return self.inputPolicy.strategy(for: .type, bundleIdentifier: bundleIdentifier)
     }
 
     private func performTypeActions(
@@ -1247,8 +1257,7 @@ extension TypeService {
             },
             action: nil,
             synthesis: DesktopOperationPlan.SynthesisRoute {
-                let targetedStrategy = self.inputPolicy.strategy(
-                    for: .type,
+                let targetedStrategy = self.inputPolicy.backgroundTypingStrategy(
                     bundleIdentifier: self.targetBundleIdentifier(exactWindow.identity.ownerProcessIdentifier))
                 var sequence = DesktopActionSequenceAccumulator()
                 do {

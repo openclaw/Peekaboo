@@ -106,7 +106,7 @@ for (const name of [
   });
 }
 
-test("hosted SDK text route proof runs both isolated suites with nonempty guards", () => {
+test("hosted SDK text route proof runs isolated eligibility and default-policy suites with nonempty guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run SDK text route eligibility regressions\n")[1];
   assert.ok(body, "Missing SDK text route eligibility CI step");
@@ -115,10 +115,11 @@ test("hosted SDK text route proof runs both isolated suites with nonempty guards
   assert.ok(step.includes("PEEKABOO_INCLUDE_AUTOMATION_TESTS: \"false\""));
   assert.ok(step.includes("PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: \"false\""));
   assert.ok(step.includes("set -euo pipefail"));
-  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests)/'"));
+  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests|UIInputPolicyDefaultTests)/'"));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
   assert.ok(step.includes("Suite TextInputRouteTests passed after "));
   assert.ok(step.includes("Suite TypeServiceForegroundPolicyTests passed after "));
+  assert.ok(step.includes("Suite UIInputPolicyDefaultTests passed after "));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
 });

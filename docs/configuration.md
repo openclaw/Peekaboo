@@ -43,7 +43,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 | Auto daemon idle timeout | - | `PEEKABOO_DAEMON_IDLE_TIMEOUT_SECONDS` | Seconds before an auto-started daemon exits while idle (default 300). |
 | Tool allow-list | `tools.allow` | `PEEKABOO_ALLOW_TOOLS` | CSV or space list. If set, only these tools are exposed (env replaces config). |
 | Tool deny-list | `tools.deny` | `PEEKABOO_DISABLE_TOOLS` | CSV or space list. Always removed; env list is additive with config. |
-| UI input strategy | `input.*` | `PEEKABOO_INPUT_STRATEGY` and per-verb variants | Choose action invocation versus synthetic input. Built-in policy uses `actionFirst` for click/scroll/type and `synthFirst` for hotkey. |
+| UI input strategy | `input.*` | `PEEKABOO_INPUT_STRATEGY` and per-verb variants | Choose action invocation versus synthetic input. Built-in policy uses `actionFirst` for click/scroll/background typing and `synthFirst` for legacy SDK typing/hotkey. |
 | Element detection boxes | `visualizer.elementDetectionEnabled` | `PEEKABOO_VISUAL_ELEMENT_BOXES` | Draw a bounding box per accessibility element during `peekaboo see`. Default `false` (visually noisy); env var overrides config. The Peekaboo.app settings toggle writes the same config key. |
 
 ## GameBridge manifest budget
@@ -126,7 +126,8 @@ models.
 ## UI Input Strategy
 
 Input strategy controls whether UI interactions use accessibility action invocation or synthetic input. The built-in
-policy keeps the global default and hotkey at `synthFirst`, selects `actionFirst` for click, scroll, and type,
+policy keeps the global default, legacy SDK typing, and hotkey at `synthFirst`, selects `actionFirst` for click,
+scroll, and background typing,
 and exposes `setValue`/`performAction` as action-only operations. An explicit global strategy overrides the built-in
 click/scroll/type preferences unless a more specific configured override wins.
 
@@ -140,11 +141,14 @@ Valid values:
 - `synthOnly`: use synthetic input only.
 
 For background typing, `actionOnly` forbids keyboard events and both synthetic strategies skip AX value/selection
-edits. `actionFirst` falls back per unsupported unit, never after an accepted or uncertain write. Native text edits
-can therefore work with Accessibility alone; Event Synthesizing permission is checked only before needed events.
+edits. `actionFirst` falls back per unsupported unit, never after an accepted or uncertain write. Local native text
+edits can work with Accessibility alone; local Event Synthesizing permission is checked only before needed events.
+Bridge-hosted targeted typing still requires Post Event permission at admission, including native edits.
 
-The legacy SDK `type(text:target:clearExisting:typingDelay:snapshotId:)` preserves its named-target focus and
-per-character delay contract under the built-in `actionFirst` policy. Direct AX replacement requires
+The legacy SDK `type(text:target:clearExisting:typingDelay:snapshotId:)` keeps its shipped `synthFirst` default,
+including named-target focus and per-character keyboard delivery. Default calls do not probe AX replacement
+eligibility. Explicit global, type, and per-app strategies retain their existing precedence on both SDK and
+background paths. Direct AX replacement under an explicitly selected action strategy requires
 `clearExisting: true`, zero `typingDelay`, and a fresh check proving the named target is the current keyboard
 receiver; cached focus or a frontmost app/window alone is insufficient.
 A requested positive delay or a successfully read focus mismatch makes the action route unsupported:

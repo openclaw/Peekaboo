@@ -17,8 +17,9 @@ struct TypeServiceForegroundPolicyTests {
     func `already-focused zero-delay replacement uses fresh focus despite cached unfocused state`(
         strategy: UIInputStrategy) async throws
     {
-        let policy = strategy == .actionFirst ? UIInputPolicy.currentBehavior : UIInputPolicy(defaultStrategy: strategy)
-        let fixture = try await ForegroundTypePolicyFixture(policy: policy, cachedFocused: false)
+        let fixture = try await ForegroundTypePolicyFixture(
+            policy: UIInputPolicy(defaultStrategy: strategy),
+            cachedFocused: false)
         defer { fixture.cleanup() }
 
         let result = try await fixture.service.type(
@@ -41,11 +42,48 @@ struct TypeServiceForegroundPolicyTests {
         #expect(fixture.synthetic.pointer.events.isEmpty)
     }
 
-    @Test
-    func `positive legacy typing delay falls back before any AX replacement`() async throws {
+    @Test(arguments: [TextInputRoute.nativeAX, .webKeyboard, .unproven], [false, true])
+    func `built-in named legacy replacement remains synthetic without reading AX focus or ancestry`(
+        route: TextInputRoute,
+        focusReadFails: Bool) async throws
+    {
         let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior)
         defer { fixture.cleanup() }
+        fixture.route.result = route
+        if focusReadFails {
+            fixture.focus.failure = ActionInputError.permissionDenied
+        }
+
+        let result = try await fixture.service.type(
+            text: "ab",
+            target: "Input",
+            clearExisting: true,
+            typingDelay: 0,
+            snapshotId: fixture.snapshotID)
+
+        #expect(result.strategy == .synthFirst)
+        #expect(result.path == .synth)
+        #expect(result.fallbackReason == nil)
+        #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(fixture.focus.readCount == 0)
+        #expect(fixture.route.receivers.isEmpty)
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
+        #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
+        #expect(fixture.synthetic.pointer.events == [.click(
+            point: CGPoint(x: 120, y: 45), button: .left, count: 1)])
+    }
+
+    @Test(arguments: [false, true])
+    func `positive legacy typing delay stays synthetic without an AX replacement`(
+        usesBuiltInPolicy: Bool) async throws
+    {
+        let policy = usesBuiltInPolicy ? UIInputPolicy.currentBehavior : UIInputPolicy(defaultStrategy: .actionFirst)
+        let fixture = try await ForegroundTypePolicyFixture(policy: policy)
+        defer { fixture.cleanup() }
         fixture.focus.failure = ActionInputError.permissionDenied
+        fixture.route.result = .unproven
 
         let result = try await fixture.service.type(
             text: "ab",
@@ -54,9 +92,9 @@ struct TypeServiceForegroundPolicyTests {
             typingDelay: 1,
             snapshotId: fixture.snapshotID)
 
-        #expect(result.strategy == .actionFirst)
+        #expect(result.strategy == (usesBuiltInPolicy ? .synthFirst : .actionFirst))
         #expect(result.path == .synth)
-        #expect(result.fallbackReason == .actionUnsupported)
+        #expect(result.fallbackReason == (usesBuiltInPolicy ? nil : .actionUnsupported))
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
         #expect(fixture.focus.readCount == 0)
         #expect(fixture.route.receivers.isEmpty)
@@ -94,7 +132,9 @@ struct TypeServiceForegroundPolicyTests {
 
     @Test
     func `fresh mismatched focus ignores cached focused state and falls back before AX`() async throws {
-        let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior, cachedFocused: true)
+        let fixture = try await ForegroundTypePolicyFixture(
+            policy: UIInputPolicy(defaultStrategy: .actionFirst),
+            cachedFocused: true)
         defer { fixture.cleanup() }
         fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
         fixture.route.result = .unproven
@@ -236,8 +276,8 @@ struct TypeServiceForegroundPolicyTests {
     }
 
     @Test
-    func `built-in legacy replacement routes web receivers to keyboard before any AX attempt`() async throws {
-        let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior)
+    func `action-first legacy replacement routes web receivers to keyboard before any AX attempt`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: .actionFirst))
         defer { fixture.cleanup() }
         fixture.route.result = .webKeyboard
 
@@ -375,9 +415,9 @@ struct TypeServiceForegroundPolicyTests {
             typingDelay: 0,
             snapshotId: fixture.snapshotID)
 
-        #expect(result.strategy == .actionFirst)
+        #expect(result.strategy == .synthFirst)
         #expect(result.path == .synth)
-        #expect(result.fallbackReason == .missingElement)
+        #expect(result.fallbackReason == nil)
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
         #expect(fixture.focus.readCount == 0)
         #expect(fixture.route.receivers.isEmpty)

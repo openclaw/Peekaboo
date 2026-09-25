@@ -134,6 +134,45 @@ struct TypingFinalReceiverBindingTests {
         #expect(fixture.events.isEmpty)
     }
 
+    @Test(arguments: [false, true], Payload.allCases)
+    func `built in targeted typing uses AX without checking event permission`(
+        exactWindow: Bool,
+        payload: Payload) async throws
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.eventPermissionGranted = false
+        let result = try await fixture.run(
+            payload.actions, policy: .currentBehavior, exactWindow: exactWindow)
+        #expect(result.executionResult.strategy == .actionFirst)
+        #expect(result.executionResult.path == .action)
+        #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
+        #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 1)
+        #expect(result.result.keyPresses == 0)
+        #expect(fixture.nativeLookups == [.a])
+        #expect(fixture.events.isEmpty)
+        #expect(fixture.eventPermissionChecks == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func `explicit synthetic overrides still control targeted delivery`(perApp: Bool) async throws {
+        var policy = UIInputPolicy.currentBehavior
+        if perApp {
+            policy.perApp["example.typing-receiver-fixture"] = AppUIInputPolicy(type: .synthFirst)
+        } else {
+            // Assigning the same value still represents an explicit caller override.
+            #expect(policy.defaultStrategy == .synthFirst)
+            policy.defaultStrategy = .synthFirst
+        }
+        let fixture = TypingReceiverFixture()
+        let result = try await fixture.run([.text("x")], policy: policy)
+        #expect(result.executionResult.strategy == .synthFirst)
+        #expect(result.executionResult.path == .synth)
+        #expect(result.executionResult.outcome.delivery?.mechanism == .windowTargetedEvents)
+        #expect(fixture.nativeLookups.isEmpty)
+        #expect(fixture.events == ["text:x"])
+        #expect(fixture.eventPermissionChecks == 1)
+    }
+
     @Test
     func `a no change key does not advance the receiver validation phase`() async throws {
         let fixture = TypingReceiverFixture()
@@ -215,6 +254,8 @@ private final class TypingReceiverFixture {
     var textWrites: [Receiver] = []
     var selectionWrites: [Receiver] = []
     var events: [String] = []
+    var eventPermissionGranted = true
+    var eventPermissionChecks = 0
     var values: [Receiver: String] = [.a: "alpha", .b: "bravo"]
     var selections: [Receiver: CFRange] = [
         .a: CFRange(location: 5, length: 0),
@@ -263,6 +304,7 @@ private final class TypingReceiverFixture {
     func run(
         _ actions: [TypeAction],
         strategy: UIInputStrategy = .actionFirst,
+        policy: UIInputPolicy? = nil,
         exactWindow: Bool = true,
         focusedReceipt: Bool = true) async throws -> TypeService.TypeActionExecutionSummary
     {
@@ -300,11 +342,11 @@ private final class TypingReceiverFixture {
                     validatedReceiver: validatedReceiver,
                     access: self.access)
             },
-            typeCharacter: { character, _ in self.events.append("text:\(character)") },
-            tapKey: { code, flags, _ in self.events.append("key:\(code):\(flags.rawValue)") })
+            typeCharacter: { character, _ in try self.recordEvent("text:\(character)") },
+            tapKey: { code, flags, _ in try self.recordEvent("key:\(code):\(flags.rawValue)") })
         let service = TypeService(
             snapshotManager: InMemorySnapshotManager(),
-            inputPolicy: UIInputPolicy(defaultStrategy: strategy),
+            inputPolicy: policy ?? UIInputPolicy(defaultStrategy: strategy),
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
             focusedUIElementReader: {
@@ -344,6 +386,12 @@ private final class TypingReceiverFixture {
                 try self.validate(phase: .continuation, requiresReceipt: exactWindow && focusedReceipt)
             },
             validatedReceiverProvider: { self.validatedReceiver })
+    }
+
+    private func recordEvent(_ event: String) throws {
+        self.eventPermissionChecks += 1
+        guard self.eventPermissionGranted else { throw PeekabooError.permissionDeniedEventSynthesizing }
+        self.events.append(event)
     }
 
     private var expectedReceipt: FocusedElementIdentity {

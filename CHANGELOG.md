@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Keep zero-delay legacy SDK typing on its keyboard route for proven web controls; refuse unprovable ancestry before input while preserving native AX replacement, action-only refusal, and explicit set-value behavior.
+- Preserve the legacy SDK's `synthFirst` typing default while background typing remains AX-first; explicit strategies retain their precedence, and explicit SDK AX replacement rejects web or unprovable receivers before value mutation.
 - Bind receipt-pinned Accessibility typing, clear, and editing-key writes to the native receiver selected by focus validation; refuse last-moment receiver changes before mutation or keyboard fallback while preserving continuation reflow.
 - Avoid downloading CLI CI build caches that are immediately discarded; key reusable dependency state by toolchain, manifests, locks, and submodules instead of every commit.
 
@@ -12,7 +12,7 @@
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 - Stop reporting hidden windows as on screen when native visibility metadata is omitted or as minimized in text listings; align native and classic capture metadata while preserving exact-window targeting and partial-inventory diagnostics. #779.
 - Align internal and public SwiftPM consumers on AXorcist 0.1.11 to preserve native numeric values, improve geometry/range parsing, and reject invalid scroll amounts before input dispatch.
-- Honor background typing strategies for text, editing keys, and clear; make the native-AX-first default explicit as `actionFirst`, keep synthetic-only choices free of AX value/selection edits, and refuse ambiguous AX failures without duplicating input through keyboard fallback. Preserve legacy SDK focus and pacing by allowing direct AX replacement only at zero delay with a freshly verified already-focused named target; unreadable focus stops without input, while explicit synthetic strategies and foreground CLI keyboard behavior are preserved.
+- Honor background typing strategies for text, editing keys, and clear; make the native-AX-first default explicit as `actionFirst`, keep synthetic-only choices free of AX value/selection edits, and refuse ambiguous AX failures without duplicating input through keyboard fallback. Preserve legacy SDK keyboard delivery by default; explicitly selected AX replacement requires zero delay and a freshly verified already-focused named target, while foreground CLI keyboard behavior is unchanged.
 - Keep Agent text-task dry-run previews independent of UI hosts, capture ownership, and permissions while preserving input validation and foreground-authority reporting. #776.
 - Honor MCP query-click waits with fresh, receipt-pinned Accessibility reads without screenshots; refuse changed targets and late matches while preserving the original modifier-click authority. Thanks @SebTardif! #785.
 - Bound paste clipboard-restoration waits to 10 seconds so excessive delays cannot monopolize the shared paste lock; CLI and MCP callers using longer delays must reduce them. Thanks @SebTardif! #759.
