@@ -2,14 +2,13 @@
 
 ## Unreleased
 
-- Preserve native numeric rounding, integer, and Boolean verification in signed `set-value` results with negotiated typed readback evidence, while keeping literal text exact and older Bridge clients on their existing result contract.
-
 - Centralize browser batch-progress validation for signed and legacy receiptless Bridge results while preserving their separate connection and completion-evidence requirements.
 - Remove retired internal MCP process-only target resolution and obsolete window-target rejection; keep process-generation coverage on the active shared keyboard planner.
 - Keep fresh local `see` snapshots eligible for subsequent background input by excluding read-only observation timeouts from mutation barriers; preserve barriers for web-focus/menu-opening observations and caller-owned mutations.
 - Add `agent --no-desktop-context` to skip new automatic desktop-context collection for run, chat, and resume invocations while preserving saved history, tool access, and background authority.
 - Skip capture-owner startup probes for Agent invocations with an explicit tool allow-list that cannot reach native capture and no visual enhancements, reusing MCP catalog policy while preserving host routing and snapshot safety.
 - Preserve returned process and exact-window target identities and receipts in successful MCP typing metadata, including pixel-focus typing.
+- Preserve native numeric rounding, integer, and Boolean verification in signed `set-value` results with negotiated typed readback evidence, while keeping literal text exact and older Bridge clients on their existing result contract.
 - Preserve exact-window snapshot receipts for background CLI element/query clicks on capable hosts without requiring redundant window flags; retain the process-pinned contract on limited hosts, share target planning across click variants, and reject contradictory or incomplete exact-window receipts.
 - Resolve ambiguous background focus observations using a stable native application receiver matched to one captured element, while preserving exact-window ownership, live input validation, and ordinary traversal time when the optional initial focus read stalls; later menu-bar reads retain their normal remaining-deadline budget.
 - Explain missing or ambiguous observed focus in `see --verbose` using content-free capture diagnostics without extra Accessibility reads or changed input guards.
