@@ -44,10 +44,13 @@ that snapshot. Use `press` for standalone keys or chords.
 - Exact window selectors and fresh exact-window snapshots preserve PID generation, window ID/bounds, and focused-element identity through dispatch. Stale or ambiguous receipts fail before typing.
 - Focused web controls may expose their exact owner through the native `AXWindow` link instead of a direct window ID; both paths retain the same exact-window checks.
 - Ordinary snapshot-backed CLI and MCP typing reserve the snapshot before focus or input. A pending mutation or a prior outcome requiring fresh observation refuses further typing, including `--accept-dispatched`; read-only inspection of that snapshot remains available. Pixel-focus typing retains its single service-owned reservation.
-- A fresh exact-window `see` records focus only when exactly one element in that window explicitly reports
-  `AXFocused=true`. Cached trees, a first editable-field guess, and application-level focus from another window are
-  never accepted. To focus a known field without activating the app, use its fresh element ID with background
-  `click`, run `see` again, then type with the new snapshot.
+- A fresh exact-window `see` records focus from a uniquely focused captured element. When ancestor groups also
+  report `AXFocused=true`, a complete observation can disambiguate only if the application's native focused reference
+  stays stable across traversal, uniquely matches a genuinely focused captured node, and proves the same process/window.
+  Cached trees, a first editable-field guess, and application-level focus from another window are never accepted;
+  partial or truncated captures cannot use this additional corroboration. Input still revalidates the live receiver.
+  To focus a known field without activating the app, use its fresh element ID with background `click`, run `see`
+  again, then type with the new snapshot.
 - Exact background delivery strictly validates the initial focused-element frame. Subsequent units and text
   completion allow that same uniquely identified element to reflow: role and identifier (or title when no identifier
   exists) must still match, its center must remain inside the captured window, and `AXFocused` and the application's
