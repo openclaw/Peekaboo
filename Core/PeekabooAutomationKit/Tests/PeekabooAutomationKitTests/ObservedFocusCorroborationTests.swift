@@ -1,0 +1,458 @@
+import CoreGraphics
+import Foundation
+import PeekabooFoundation
+import Testing
+@testable @_spi(Testing) import PeekabooAutomationKit
+
+struct ObservedFocusCorroborationTests {
+    private static let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+    private static let fieldFrame = CGRect(x: 150, y: 180, width: 250, height: 30)
+    private static let orders = [
+        [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+    ]
+    private static let truncations = [
+        DetectionTruncationInfo(maxDepthReached: true),
+        DetectionTruncationInfo(maxElementCountReached: true),
+        DetectionTruncationInfo(maxChildrenPerNodeReached: true),
+        DetectionTruncationInfo(deadlineReached: true),
+        DetectionTruncationInfo(incompleteAccessibilityRead: true),
+    ]
+
+    @Test(arguments: Self.orders)
+    func `stable authority selects the emitted reference independent of insertion order`(order: [Int]) {
+        let entries = [("outer", 1), ("inner", 2), ("field", 3)]
+        var candidates: [String: Int] = [:]
+        for index in order {
+            candidates[entries[index].0] = entries[index].1
+        }
+        var currentReads = 0
+        var ownerReferences: [Int] = []
+
+        let result = DetachedAXObservationWorker.corroboratedFocusElementID(
+            observation: (initialReference: 3, candidates: candidates, isComplete: true),
+            canRead: { true },
+            readCurrentReference: {
+                currentReads += 1
+                return 3
+            },
+            referencesEqual: ==,
+            belongsToWindow: {
+                ownerReferences.append($0)
+                return true
+            })
+
+        #expect(result == "field")
+        #expect(currentReads == 1)
+        #expect(ownerReferences == [3])
+    }
+
+    @Test(arguments: EligibilityFailure.allCases)
+    func `ineligible observation performs no current or owner read`(failure: EligibilityFailure) {
+        let candidates = switch failure {
+        case .noCandidates: [String: Int]()
+        case .oneCandidate: ["field": 3]
+        default: ["outer": 1, "field": 3]
+        }
+        var currentReads = 0
+        var ownerReads = 0
+
+        let result = DetachedAXObservationWorker.corroboratedFocusElementID(
+            observation: (
+                initialReference: failure == .missingInitial ? nil : 3,
+                candidates: candidates,
+                isComplete: failure != .incomplete),
+            canRead: { failure != .expiredDeadline },
+            readCurrentReference: {
+                currentReads += 1
+                return 3
+            },
+            referencesEqual: ==,
+            belongsToWindow: { _ in
+                ownerReads += 1
+                return true
+            })
+
+        #expect(result == nil)
+        #expect(currentReads == 0)
+        #expect(ownerReads == 0)
+    }
+
+    @Test(arguments: [nil, 2] as [Int?])
+    func `missing or changed current authority refuses before owner validation`(current: Int?) {
+        var currentReads = 0
+        var ownerReads = 0
+
+        let result = DetachedAXObservationWorker.corroboratedFocusElementID(
+            observation: (
+                initialReference: 3,
+                candidates: ["outer": 1, "inner": 2, "field": 3],
+                isComplete: true),
+            canRead: { true },
+            readCurrentReference: {
+                currentReads += 1
+                return current
+            },
+            referencesEqual: ==,
+            belongsToWindow: { _ in
+                ownerReads += 1
+                return true
+            })
+
+        #expect(result == nil)
+        #expect(currentReads == 1)
+        #expect(ownerReads == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func `absent or duplicate native correspondence cannot choose an emitted id`(duplicate: Bool) {
+        var ownerReads = 0
+        let candidates = duplicate
+            ? ["outer": 1, "field": 3, "alias": 3]
+            : ["outer": 1, "inner": 2]
+
+        let result = DetachedAXObservationWorker.corroboratedFocusElementID(
+            observation: (initialReference: 3, candidates: candidates, isComplete: true),
+            canRead: { true },
+            readCurrentReference: { 3 },
+            referencesEqual: ==,
+            belongsToWindow: { _ in
+                ownerReads += 1
+                return true
+            })
+
+        #expect(result == nil)
+        #expect(ownerReads == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func `matching reference still requires both process and exact window ownership`(wrongProcess: Bool) {
+        let authority = Reference(
+            identity: 3,
+            processIdentifier: wrongProcess ? 701 : 700,
+            windowID: wrongProcess ? 42 : 43)
+        let group = Reference(identity: 1, processIdentifier: 700, windowID: 42)
+        var ownerReads = 0
+
+        let result = DetachedAXObservationWorker.corroboratedFocusElementID(
+            observation: (
+                initialReference: authority,
+                candidates: ["outer": group, "field": authority],
+                isComplete: true),
+            canRead: { true },
+            readCurrentReference: { authority },
+            referencesEqual: { $0.identity == $1.identity },
+            belongsToWindow: {
+                ownerReads += 1
+                return $0.processIdentifier == 700 && $0.windowID == 42
+            })
+
+        #expect(result == nil)
+        #expect(ownerReads == 1)
+    }
+
+    @Test(arguments: DeadlineStage.allCases)
+    func `deadline expiry during corroboration never publishes late evidence`(stage: DeadlineStage) {
+        var readable = true
+        var currentReads = 0
+        var comparisons = 0
+        var ownerReads = 0
+
+        let result = DetachedAXObservationWorker.corroboratedFocusElementID(
+            observation: (initialReference: 3, candidates: ["outer": 1, "field": 3], isComplete: true),
+            canRead: { readable },
+            readCurrentReference: {
+                currentReads += 1
+                if stage == .currentRead {
+                    readable = false
+                }
+                return 3
+            },
+            referencesEqual: {
+                comparisons += 1
+                if stage == .correspondence, comparisons > 1 {
+                    readable = false
+                }
+                return $0 == $1
+            },
+            belongsToWindow: { _ in
+                ownerReads += 1
+                if stage == .ownership {
+                    readable = false
+                }
+                return true
+            })
+
+        #expect(result == nil)
+        #expect(currentReads == 1)
+        #expect(ownerReads == (stage == .ownership ? 1 : 0))
+    }
+
+    @Test(arguments: Self.orders)
+    func `group group field ambiguity is corroborated without rewriting raw focus flags`(order: [Int]) throws {
+        let original = self.ambiguousElements()
+        let elements = order.map { original[$0] }
+
+        #expect(throws: FocusedElementReceiptError.multipleFocusedElements) {
+            _ = try FocusedElementReceiptResolver.uniqueReceipt(elements: elements, context: self.context())
+        }
+        #expect(FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: elements)?.focusedElement == nil)
+        let attached = FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: elements,
+            corroboratedElementID: "field")
+        let receipt = try #require(attached?.focusedElement)
+
+        #expect(receipt.processIdentifier == 700)
+        #expect(receipt.windowID == 42)
+        #expect(receipt.role == "AXTextField")
+        #expect(receipt.identifier == "native-field")
+        #expect(receipt.frame == Self.fieldFrame)
+        #expect(elements.map(\.isFocused) == [true, true, true])
+    }
+
+    @Test(arguments: [nil, "absent", "native-field"] as [String?])
+    func `missing unmatched or AX identifier hints cannot resolve ambiguity`(hint: String?) {
+        let attached = FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: self.ambiguousElements(),
+            corroboratedElementID: hint)
+
+        #expect(attached?.focusedElement == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `duplicate emitted id refuses even when only one duplicate reports focus`(duplicateFocused: Bool) {
+        let elements = self.ambiguousElements() + [self.element(id: "field", focused: duplicateFocused)]
+        let attached = FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: elements,
+            corroboratedElementID: "field")
+
+        #expect(attached?.focusedElement == nil)
+    }
+
+    @Test(arguments: [nil, "absent", "sibling"] as [String?])
+    func `ordinary unique receipt wins over missing or conflicting corroboration`(hint: String?) throws {
+        let elements = [self.element(id: "field"), self.element(id: "sibling", focused: false)]
+        let expected = try FocusedElementReceiptResolver.uniqueReceipt(elements: elements, context: self.context())
+        let attached = FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: elements,
+            corroboratedElementID: hint)
+
+        #expect(attached?.focusedElement == expected)
+        #expect(FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: elements)?.focusedElement == expected)
+    }
+
+    @Test(arguments: InvalidCandidate.allCases)
+    func `corroboration retains focus menu and geometry validation`(invalid: InvalidCandidate) {
+        let candidate = self.element(
+            id: "field",
+            focused: invalid == .unknownFocus ? nil : invalid != .unfocused,
+            frame: invalid == .emptyFrame ? .zero : invalid == .outsideWindow
+                ? CGRect(x: 1, y: 1, width: 20, height: 20) : Self.fieldFrame,
+            source: invalid == .menu ? DetectedElementRootPolicy.applicationMenuBarSource.uppercased() : nil)
+        let elements = Array(self.ambiguousElements().prefix(2)) + [candidate]
+        let attached = FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: elements,
+            corroboratedElementID: "field")
+
+        #expect(attached?.focusedElement == nil)
+    }
+
+    @Test(arguments: InvalidContext.allCases)
+    func `corroboration cannot manufacture missing process window or bounds`(invalid: InvalidContext) {
+        let context = WindowContext(
+            applicationProcessId: invalid == .missingProcess ? nil : invalid == .zeroProcess ? 0
+                : invalid == .negativeProcess ? -1 : 700,
+            windowID: invalid == .missingWindow ? nil : invalid == .zeroWindow ? 0
+                : invalid == .negativeWindow ? -1 : 42,
+            windowBounds: invalid == .missingBounds ? nil : invalid == .emptyBounds ? .zero : Self.bounds)
+        let attached = FocusedElementReceiptResolver.attachingObservedFocus(
+            to: context,
+            elements: self.ambiguousElements(),
+            corroboratedElementID: "field")
+
+        #expect(attached?.focusedElement == nil)
+    }
+
+    @Test
+    func `corroboration requires context and never invents explicit focus`() {
+        #expect(FocusedElementReceiptResolver.attachingObservedFocus(
+            to: nil,
+            elements: self.ambiguousElements(),
+            corroboratedElementID: "field") == nil)
+        #expect(FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: [self.element(id: "field", focused: false)],
+            corroboratedElementID: "field")?.focusedElement == nil)
+    }
+
+    @Test(arguments: [CGRect.zero, CGRect(x: 1, y: 1, width: 20, height: 20)])
+    func `invalid unique receipt does not fall back to a different hinted element`(frame: CGRect) {
+        let elements = [
+            self.element(id: "invalid", frame: frame),
+            self.element(id: "field", focused: false),
+        ]
+        let attached = FocusedElementReceiptResolver.attachingObservedFocus(
+            to: self.context(),
+            elements: elements,
+            corroboratedElementID: "field")
+
+        #expect(attached?.focusedElement == nil)
+    }
+
+    @Test(arguments: [nil, DetectionTruncationInfo()] as [DetectionTruncationInfo?])
+    func `fresh complete builder attaches corroboration and preserves emitted evidence`(
+        truncation: DetectionTruncationInfo?) throws
+    {
+        let elements = self.ambiguousElements()
+        let result = self.result(elements: elements, truncation: truncation)
+        let receipt = try #require(result.metadata.windowContext?.focusedElement)
+
+        #expect(receipt.identifier == "native-field")
+        #expect(result.metadata.truncationInfo == truncation)
+        #expect(result.metadata.elementCount == 3)
+        #expect(result.elements.groups.count == 2)
+        #expect(result.elements.textFields.count == 1)
+        for element in elements {
+            let emitted = try #require(result.elements.findById(element.id))
+            #expect(emitted.attributes == element.attributes)
+            #expect(emitted.bounds == element.bounds)
+        }
+    }
+
+    @Test(arguments: SuppressedObservation.allCases)
+    func `builder suppresses corroboration for cached partial and truncated observations`(
+        observation: SuppressedObservation)
+    {
+        let result = self.result(
+            elements: self.ambiguousElements(),
+            usedCache: observation == .cached,
+            truncation: observation.truncation,
+            applicationFallback: observation == .applicationPartial)
+
+        #expect(result.metadata.windowContext?.focusedElement == nil)
+        #expect(result.metadata.windowContext?.applicationProcessStartIdentity == 99)
+        #expect(result.elements.all.filter { $0.isFocused == true }.count == 3)
+    }
+
+    @Test(arguments: Self.truncations)
+    func `truncated builder preserves ordinary unique focus behavior`(truncation: DetectionTruncationInfo) {
+        let result = self.result(elements: [self.element(id: "field")], truncation: truncation)
+
+        #expect(result.metadata.windowContext?.focusedElement?.identifier == "native-field")
+        #expect(result.metadata.truncationInfo == truncation)
+    }
+
+    private func context() -> WindowContext {
+        WindowContext(
+            applicationName: "Synthetic Editor",
+            applicationProcessId: 700,
+            applicationProcessStartIdentity: 99,
+            windowTitle: "Synthetic Document",
+            windowID: 42,
+            windowBounds: Self.bounds,
+            windowMutationIdentity: self.windowIdentity(),
+            focusedElement: FocusedElementIdentity(
+                processIdentifier: 700,
+                windowID: 42,
+                role: "AXTextField",
+                identifier: "stale-field",
+                frame: Self.fieldFrame))
+    }
+
+    private func windowIdentity() -> WindowMutationIdentity {
+        WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 700,
+            ownerProcessStartIdentity: 99,
+            capturedBounds: Self.bounds)
+    }
+
+    private func ambiguousElements() -> [DetectedElement] {
+        [
+            self.element(id: "outer", type: .group, frame: CGRect(x: 120, y: 120, width: 700, height: 500)),
+            self.element(id: "inner", type: .group, frame: CGRect(x: 130, y: 130, width: 400, height: 200)),
+            self.element(id: "field"),
+        ]
+    }
+
+    private func element(
+        id: String,
+        type: ElementType = .textField,
+        focused: Bool? = true,
+        frame: CGRect = Self.fieldFrame,
+        source: String? = nil) -> DetectedElement
+    {
+        var attributes = ["role": type == .group ? "AXGroup" : "AXTextField", "identifier": "native-\(id)"]
+        if let focused {
+            attributes["isFocused"] = String(focused)
+        }
+        if let source {
+            attributes[DetectedElementRootPolicy.sourceAttribute] = source
+        }
+        return DetectedElement(id: id, type: type, label: id, bounds: frame, attributes: attributes)
+    }
+
+    private func result(
+        elements: [DetectedElement],
+        usedCache: Bool = false,
+        truncation: DetectionTruncationInfo? = nil,
+        applicationFallback: Bool = false) -> ElementDetectionResult
+    {
+        ElementDetectionResultBuilder.makeResult(
+            snapshotId: "synthetic-observed-focus",
+            elements: elements,
+            usedCache: usedCache,
+            windowContext: self.context(),
+            isDialog: false,
+            truncationInfo: truncation,
+            applicationScopedAccessibilityFallbackOrigin: applicationFallback
+                ? ApplicationScopedAccessibilityFallbackOrigin(windowIdentity: self.windowIdentity()) : nil,
+            corroboratedFocusedElementID: "field")
+    }
+
+    enum EligibilityFailure: CaseIterable, Sendable {
+        case incomplete, missingInitial, noCandidates, oneCandidate, expiredDeadline
+    }
+
+    enum DeadlineStage: CaseIterable, Sendable {
+        case currentRead, correspondence, ownership
+    }
+
+    enum InvalidCandidate: CaseIterable, Sendable {
+        case unfocused, unknownFocus, menu, emptyFrame, outsideWindow
+    }
+
+    enum InvalidContext: CaseIterable, Sendable {
+        case missingProcess, zeroProcess, negativeProcess, missingWindow, zeroWindow, negativeWindow
+        case missingBounds, emptyBounds
+    }
+
+    enum SuppressedObservation: CaseIterable, Sendable {
+        case cached, applicationPartial, depth, count, children, deadline, incompleteRead
+
+        var truncation: DetectionTruncationInfo? {
+            switch self {
+            case .cached, .applicationPartial: nil
+            case .depth: DetectionTruncationInfo(maxDepthReached: true)
+            case .count: DetectionTruncationInfo(maxElementCountReached: true)
+            case .children: DetectionTruncationInfo(maxChildrenPerNodeReached: true)
+            case .deadline: DetectionTruncationInfo(deadlineReached: true)
+            case .incompleteRead: DetectionTruncationInfo(incompleteAccessibilityRead: true)
+            }
+        }
+    }
+
+    private struct Reference {
+        let identity: Int
+        let processIdentifier: Int32
+        let windowID: Int
+    }
+}

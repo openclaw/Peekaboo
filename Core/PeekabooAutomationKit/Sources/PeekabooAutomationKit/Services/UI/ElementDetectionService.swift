@@ -22,6 +22,7 @@ struct DetachedAXObservationOutcome: Sendable {
     let usedCache: Bool
     var isApplicationScopedFallback = false
     var applicationScopedFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
+    var corroboratedFocusedElementID: String?
 }
 
 /**
@@ -316,7 +317,8 @@ public final class ElementDetectionService {
             truncationInfo: detachedResult.truncationInfo,
             usedCache: false,
             isApplicationScopedFallback: detachedResult.isApplicationScopedFallback,
-            applicationScopedFallbackOrigin: detachedResult.applicationScopedFallbackOrigin)
+            applicationScopedFallbackOrigin: detachedResult.applicationScopedFallbackOrigin,
+            corroboratedFocusedElementID: detachedResult.corroboratedFocusedElementID)
     }
 
     private func inspectReadOnlyElements(
@@ -451,6 +453,7 @@ public final class ElementDetectionService {
             isDialog: outcome.isDialog,
             truncationInfo: outcome.truncationInfo,
             applicationScopedAccessibilityFallbackOrigin: outcome.applicationScopedFallbackOrigin,
+            corroboratedFocusedElementID: outcome.corroboratedFocusedElementID,
             additionalWarnings: outcome.isApplicationScopedFallback
                 ? [DetectionMetadata.applicationScopedAccessibilityFallbackWarning]
                 : [])

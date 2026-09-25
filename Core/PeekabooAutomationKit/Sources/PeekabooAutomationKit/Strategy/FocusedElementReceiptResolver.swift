@@ -119,8 +119,27 @@ public enum FocusedElementReceiptResolver {
         to context: WindowContext?,
         elements: [DetectedElement]) -> WindowContext?
     {
+        self.attachingObservedFocus(to: context, elements: elements, corroboratedElementID: nil)
+    }
+
+    static func attachingObservedFocus(
+        to context: WindowContext?,
+        elements: [DetectedElement],
+        corroboratedElementID: String?) -> WindowContext?
+    {
         guard let context else { return nil }
-        let focusedElement = try? self.uniqueReceipt(elements: elements, context: context)
+        let focusedElement: FocusedElementIdentity?
+        do {
+            focusedElement = try self.uniqueReceipt(elements: elements, context: context)
+        } catch FocusedElementReceiptError.multipleFocusedElements {
+            // Native app-focus correspondence can disambiguate genuinely focused ancestors.
+            let matches = elements.filter { $0.id == corroboratedElementID }
+            focusedElement = matches.count == 1
+                ? try? self.uniqueReceipt(elements: matches, context: context)
+                : nil
+        } catch {
+            focusedElement = nil
+        }
         return context.replacingFocusedElement(focusedElement)
     }
 

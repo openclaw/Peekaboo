@@ -101,7 +101,7 @@ private final class FocusProofHotkeyRecorder: MockAutomationService, ScriptedUIA
 
 /// No native service graph: any unexpected service access stops the deterministic test.
 @MainActor
-private final class FocusProofPressServices: PeekabooServiceProviding {
+final class FocusProofPressServices: PeekabooServiceProviding {
     let executionHost: PeekabooServiceExecutionHost = .remote
     let windows: any WindowManagementServiceProtocol
     let automation: any UIAutomationServiceProtocol

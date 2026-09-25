@@ -64,10 +64,20 @@ generation, exact window ID, and captured bounds around that readback. Bridge va
 ordinary exact-ID window listings remain inexpensive geometry-only reads and do not imply focus. Existing/custom
 4.x providers without the additive focus-proof capability still undergo the existing fail-closed readback validation.
 
+For app-only foreground targets through a daemon or other Bridge host, Peekaboo chooses the best renderable window
+from the app's inventory before pinning its exact receipt, rather than taking the first helper window in inventory
+order. If no window is renderable, the first inventory row remains the fallback. Explicit IDs and titles are not
+reranked; an ambiguous title or inconsistent selected receipt still refuses instead of switching to another window.
+
 Receipt-bound focus makes one mutation attempt. If an accepted or possibly dispatched action loses exact focus proof,
 is cancelled, or times out, the result remains retry-unsafe with its actual dispatch count. Observe the window before
 trying again; the retry option does not authorize replay after an indeterminate result. Foreground `press` sends no
 chords when setup focus fails, and verified focus does not prove a later chord's semantic effect.
+
+A native `AXRaise` response of action-unsupported or attribute-unsupported adds no raise dispatch unit. Earlier
+accepted activation or set-main operations keep their real counts. Unsupported raise does not itself prove focus or
+authorize input: exact focus verification and strict ownership checks still apply. Other AX errors remain potentially
+dispatched and retry-unsafe, even when a later focus readback looks correct.
 
 ## Automatic Focus Management
 

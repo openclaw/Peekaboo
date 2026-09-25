@@ -13,6 +13,7 @@ import PeekabooFoundation
         detectionTime: TimeInterval = 0.0,
         truncationInfo: DetectionTruncationInfo? = nil,
         applicationScopedAccessibilityFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin? = nil,
+        corroboratedFocusedElementID: String? = nil,
         additionalWarnings: [String] = []) -> ElementDetectionResult
     {
         var warnings: [String] = []
@@ -41,7 +42,10 @@ import PeekabooFoundation
         } else {
             FocusedElementReceiptResolver.attachingObservedFocus(
                 to: windowContext,
-                elements: elements)
+                elements: elements,
+                corroboratedElementID: truncationInfo?.isTruncated == true ||
+                    warnings.contains(DetectionMetadata.applicationScopedAccessibilityFallbackWarning)
+                    ? nil : corroboratedFocusedElementID)
         }
         return ElementDetectionResult(
             snapshotId: snapshotId,

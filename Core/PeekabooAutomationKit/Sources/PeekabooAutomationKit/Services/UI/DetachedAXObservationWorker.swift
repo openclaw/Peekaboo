@@ -65,6 +65,7 @@ struct DetachedAXObservationResult: Sendable {
     let truncationInfo: DetectionTruncationInfo?
     var isApplicationScopedFallback = false
     var applicationScopedFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
+    var corroboratedFocusedElementID: String?
 }
 
 enum DetachedAXMultiAttributeReadDisposition: Equatable {
@@ -278,6 +279,15 @@ enum DetachedAXObservationWorker {
         let subrole = self.stringAttribute(kAXSubroleAttribute, of: window) ?? ""
         let identifier = self.stringAttribute(kAXIdentifierAttribute, of: window) ?? ""
         let isModal = self.boolAttribute(kAXModalAttribute, of: window)
+        let initialFocus: AXUIElement? = if !isApplicationScopedFallback,
+                                            request.windowID != nil,
+                                            request.windowMutationIdentity != nil,
+                                            request.expectedWindowBounds != nil
+        {
+            self.focusedReference(application: application, deadline: deadline)
+        } else {
+            nil
+        }
         var state = TraversalState()
         self.process(
             window,
@@ -301,6 +311,18 @@ enum DetachedAXObservationWorker {
                 state: &state)
         }
 
+        let corroboratedFocus = self.corroboratedFocusElementID(
+            observation: (
+                initialReference: initialFocus,
+                candidates: state.focusedReferences,
+                isComplete: !isApplicationScopedFallback && state.truncationInfo?.isTruncated != true),
+            canRead: { self.remainingMessagingTimeout(until: deadline) != nil },
+            readCurrentReference: { self.focusedReference(application: application, deadline: deadline) },
+            referencesEqual: { CFEqual($0, $1) },
+            belongsToWindow: {
+                self.focusedElement(
+                    $0, belongsTo: window, processIdentifier: request.processIdentifier, deadline: deadline)
+            })
         let partialFallback = isApplicationScopedFallback
             ? DetectionTruncationInfo(incompleteAccessibilityRead: true)
             : nil
@@ -331,7 +353,8 @@ enum DetachedAXObservationWorker {
                 isModal: isModal)),
             truncationInfo: DetectionTruncationInfo.merge(state.truncationInfo, partialFallback),
             isApplicationScopedFallback: isApplicationScopedFallback,
-            applicationScopedFallbackOrigin: applicationScopedFallbackOrigin)
+            applicationScopedFallbackOrigin: applicationScopedFallbackOrigin,
+            corroboratedFocusedElementID: corroboratedFocus)
         try validateIdentity(request)
         return result
     }
@@ -579,6 +602,10 @@ enum DetachedAXObservationWorker {
             isEnabled: descriptor.isEnabled ?? false,
             isSelected: descriptor.isSelected,
             attributes: attributes))
+
+        if descriptor.isFocused == true, request.source != DetectedElementRootPolicy.applicationMenuBarSource {
+            state.focusedReferences[elementID] = element
+        }
 
         self.processChildren(of: element, request: request, state: &state)
     }
@@ -910,6 +937,54 @@ enum DetachedAXObservationWorker {
     }
 }
 
+extension DetachedAXObservationWorker {
+    static func corroboratedFocusElementID<Reference>(
+        observation: (initialReference: Reference?, candidates: [String: Reference], isComplete: Bool),
+        canRead: () -> Bool,
+        readCurrentReference: () -> Reference?,
+        referencesEqual: (Reference, Reference) -> Bool,
+        belongsToWindow: (Reference) -> Bool) -> String?
+    {
+        guard observation.isComplete, observation.candidates.count > 1,
+              let initialReference = observation.initialReference,
+              canRead(), let current = readCurrentReference(), canRead(),
+              referencesEqual(initialReference, current)
+        else { return nil }
+
+        let matches = observation.candidates.filter { referencesEqual($0.value, current) }
+        guard matches.count == 1, let candidate = matches.first,
+              canRead(), belongsToWindow(candidate.value), canRead()
+        else { return nil }
+        return candidate.key
+    }
+
+    private static func focusedReference(
+        application: AXUIElement,
+        deadline: ContinuousClock.Instant) -> AXUIElement?
+    {
+        guard let timeout = self.remainingMessagingTimeout(until: deadline),
+              AXUIElementSetMessagingTimeout(application, timeout) == .success
+        else { return nil }
+        return DetachedExactWindowFocusReader.focusedElementReference(of: application)
+    }
+
+    private static func focusedElement(
+        _ element: AXUIElement,
+        belongsTo window: AXUIElement,
+        processIdentifier: pid_t,
+        deadline: ContinuousClock.Instant) -> Bool
+    {
+        guard self.remainingMessagingTimeout(until: deadline) != nil else { return false }
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success, owner == processIdentifier,
+              let timeout = self.remainingMessagingTimeout(until: deadline),
+              AXUIElementSetMessagingTimeout(element, timeout) == .success,
+              let owningWindow = self.elementAttribute(kAXWindowAttribute, of: element)
+        else { return false }
+        return CFEqual(owningWindow, window)
+    }
+}
+
 private struct TraversalRequest {
     let depth: Int
     let deadline: ContinuousClock.Instant
@@ -974,6 +1049,7 @@ private struct AXAttributeReadResult {
 private struct TraversalState {
     var elements: [DetectedElement] = []
     var visited: [AXUIElement] = []
+    var focusedReferences: [String: AXUIElement] = [:]
     var maxDepthReached = false
     var maxElementCountReached = false
     var maxChildrenPerNodeReached = false

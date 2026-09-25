@@ -40,6 +40,7 @@ that snapshot. Use `press` for standalone keys or chords.
 ## Implementation notes
 - Text may be omitted only when `--clear` is used. Chain a following `press` command for Return, Tab, Escape, or Delete.
 - Escape handling splits literal text and key presses: `"Hello\nWorld"` becomes `text("Hello"), key(.return), text("World")`, so newlines don’t require separate flags.
+- Foreground special-key events explicitly clear inherited modifier flags on both key-down and key-up. Their existing keycodes and unverified delivery semantics are unchanged.
 - Exact window selectors and fresh exact-window snapshots preserve PID generation, window ID/bounds, and focused-element identity through dispatch. Stale or ambiguous receipts fail before typing.
 - Focused web controls may expose their exact owner through the native `AXWindow` link instead of a direct window ID; both paths retain the same exact-window checks.
 - Ordinary snapshot-backed CLI and MCP typing reserve the snapshot before focus or input. A pending mutation or a prior outcome requiring fresh observation refuses further typing, including `--accept-dispatched`; read-only inspection of that snapshot remains available. Pixel-focus typing retains its single service-owned reservation.

@@ -19,7 +19,7 @@ struct SeeObservedFocusDiagnosticsTests {
         let summary = SeeCommand.observedFocusSummary(elements: elements, metadata: Self.metadata())
 
         #expect(summary == "rawTrue=3 rawFalse=1 rawUnknown=1 rawFocusedTypes=[group:2,textField:1] " +
-            "resolver=multipleFocusedElements cached=false partial=false truncated=false attached=false")
+            "rawResolver=multipleFocusedElements cached=false partial=false truncated=false attached=false")
         #expect(!summary.contains("PRIVATE"))
         #expect(FocusedElementReceiptResolver.attachingObservedFocus(
             to: Self.context, elements: elements
@@ -35,7 +35,7 @@ struct SeeObservedFocusDiagnosticsTests {
         )
 
         #expect(summary.contains("rawTrue=2 rawFalse=0 rawUnknown=0 rawFocusedTypes=[textField:2]"))
-        #expect(summary.contains("resolver=unique"))
+        #expect(summary.contains("rawResolver=unique"))
         #expect(summary.hasSuffix("attached=false"))
     }
 
@@ -46,7 +46,7 @@ struct SeeObservedFocusDiagnosticsTests {
         )
 
         #expect(summary.contains("rawTrue=0 rawFalse=0 rawUnknown=0 rawFocusedTypes=[]"))
-        #expect(summary.contains("resolver=\(hasContext ? "noFocusedElement" : "noWindowContext")"))
+        #expect(summary.contains("rawResolver=\(hasContext ? "noFocusedElement" : "noWindowContext")"))
     }
 
     @Test
@@ -60,7 +60,7 @@ struct SeeObservedFocusDiagnosticsTests {
         )
         let summary = SeeCommand.observedFocusSummary(elements: [element], metadata: metadata)
 
-        #expect(summary.contains("resolver=unique cached=true partial=true truncated=true attached=true"))
+        #expect(summary.contains("rawResolver=unique cached=true partial=true truncated=true attached=true"))
         #expect(metadata.windowContext?.focusedElement != nil)
         #expect(!summary.contains("PRIVATE"))
     }
@@ -90,7 +90,7 @@ struct SeeObservedFocusDiagnosticsTests {
         )
 
         #expect(original?.focusedElement == nil)
-        #expect(summary == "scope=roi_filtered resolver=not_evaluated")
+        #expect(summary == "scope=roi_filtered rawResolver=not_evaluated")
     }
 
     private static let context = WindowContext(

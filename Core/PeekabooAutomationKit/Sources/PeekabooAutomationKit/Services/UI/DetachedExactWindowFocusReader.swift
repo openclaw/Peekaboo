@@ -59,11 +59,15 @@ struct ExactKeyWindowSnapshot: Sendable, Equatable {
 enum DetachedExactWindowFocusReader {
     private static let messagingTimeout: Float = 0.05
 
+    static func focusedElementReference(of application: AXUIElement) -> AXUIElement? {
+        self.elementAttribute(kAXFocusedUIElementAttribute, of: application)
+    }
+
     static func read(processIdentifier: pid_t) -> ExactWindowFocusSnapshot? {
         guard processIdentifier > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
         AXUIElementSetMessagingTimeout(application, self.messagingTimeout)
-        guard let focusedElement = self.elementAttribute(kAXFocusedUIElementAttribute, of: application) else {
+        guard let focusedElement = self.focusedElementReference(of: application) else {
             return nil
         }
         return self.read(element: focusedElement, processIdentifier: processIdentifier)

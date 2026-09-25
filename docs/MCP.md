@@ -226,6 +226,15 @@ action is necessary, use explicit coordinates bound to the exact `snapshot`/`coo
 
 Observation and capture do not activate a target by default. `see` and `inspect_ui` only perform the focus-changing `AXWebArea` retry when `web_focus: true` is supplied. `image` and live `capture` use `capture_focus: "background"` by default; pass `capture_focus: "foreground"` when activating the target is intentional. The legacy `auto` value remains accepted for focus-if-needed compatibility.
 
+Successful `see` and `inspect_ui` responses include optional `_meta.focused_element` when the observation already
+proved one focused element. It preserves the existing identity fields (`processIdentifier`, `windowID`, `role`,
+optional `title`/`identifier`, and global-logical `frame`, also for ROI captures); it does not invent a snapshot-local
+element ID or expose a field value. Missing focus means unknown, including cached or ambiguous observations, not
+that the window has no focused element. This metadata adds no AX read, grants no input authority, and does not bypass
+normal snapshot or live receiver validation. Native Agent tools retain the same field under `meta.focused_element`.
+External MCP clients may not show `_meta` to their model; this addition alone does not guarantee model-visible focus
+in those clients, and the observation's text summary is unchanged.
+
 Successful `capture` results bind every retained frame and `contact.png` to capture-session-authored SHA-256 values.
 MCP exposes them in `artifact_sha256`; finalization revalidates those bytes, complete PNG decoding and dimensions, and
 the exact semantic `metadata.json` result before reporting success.

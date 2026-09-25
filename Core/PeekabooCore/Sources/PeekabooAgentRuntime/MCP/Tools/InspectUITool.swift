@@ -122,6 +122,9 @@ public struct InspectUITool: MCPTool {
                 "used_cache": .bool(snapshotResult.metadata.method.contains("cached")),
                 "truncated": .bool(snapshotResult.metadata.truncationInfo?.isTruncated == true),
             ]
+            if let focusedElement = snapshot.focusedElement {
+                metadataValues["focused_element"] = try Value(focusedElement)
+            }
             if let completedAt = snapshotResult.metadata.desktopMutationCompletedAt {
                 metadataValues["desktop_mutation_completed_at"] =
                     .double(completedAt.timeIntervalSinceReferenceDate)
