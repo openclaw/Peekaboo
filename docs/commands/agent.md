@@ -125,6 +125,14 @@ read_when:
 four dispositions: `executed/succeeded`, `executed/failed`, `skipped-before-dispatch`, or `missing-result`. This lets a
 validator distinguish a model's attempted calls from mutations Peekaboo actually dispatched.
 
+`result.content` is unchanged model-generated narrative, and `success: true` reports Agent-run completion, not
+confirmation of every action. When the bounded trace contains non-confirmed action outcomes or incomplete outcome
+coverage, `result.recordedOutcomeNotice` explains their recorded status. Later observations can verify effects without
+rewriting an earlier `dispatched_unverified` outcome. Notice counts cover only retained tool-trace entries, not nested
+authenticated receipt bundles; missing or truncated outcomes are never counted as confirmed. The same notice appears
+in non-quiet CLI/chat completion output and MCP Agent metadata. Non-quiet MCP output adds a separate text block;
+quiet CLI stdout and the MCP Agent's quiet text remain unchanged.
+
 Legacy `result.toolCalls[].arguments` remains a string for compatibility, but that string is now deterministic JSON
 derived from the same bounded, privacy-safe argument projection as the execution trace. It never contains Swift type
 descriptions or runtime addresses. Calls beyond the trace limit and any call/trace mismatch use

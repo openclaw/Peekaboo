@@ -128,6 +128,10 @@ extension AgentCommand {
         }
 
         delegate?.showFinalSummaryIfNeeded(result)
+        if !self.jsonOutput, self.outputMode != .quiet,
+           let notice = result.executionTrace().recordedOutcomeNotice {
+            print("\n\(notice)")
+        }
     }
 
     func makeAgentJSONResponse(_ result: AgentExecutionResult) -> [String: Any] {
@@ -161,7 +165,7 @@ extension AgentCommand {
                 "totalTokens": usage.totalTokens,
             ]
         } ?? NSNull()
-        let resultPayload: [String: Any] = [
+        var resultPayload: [String: Any] = [
             "content": result.content,
             "sessionId": result.sessionId.map { $0 as Any } ?? NSNull(),
             "toolCalls": legacyToolCalls,
@@ -173,6 +177,9 @@ extension AgentCommand {
             ],
             "usage": usage,
         ]
+        if let notice = trace.recordedOutcomeNotice {
+            resultPayload["recordedOutcomeNotice"] = notice
+        }
         return ["success": true, "result": resultPayload]
     }
 

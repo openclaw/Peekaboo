@@ -110,6 +110,14 @@ struct AgentSystemPromptTests {
     }
 
     @Test
+    func `generated prompt separates observed effects from recorded outcomes`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+        #expect(prompt.contains("effects verified by later observations"))
+        #expect(prompt.contains("does not change a `dispatched_unverified` receipt"))
+    }
+
+    @Test
     func `generated prompt requires structured predicates and receipt pinned background input`() {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
