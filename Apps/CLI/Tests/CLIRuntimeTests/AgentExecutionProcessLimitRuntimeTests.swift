@@ -156,7 +156,7 @@ struct AgentExecutionProcessLimitRuntimeTests {
         )
         #expect(errorMessage.contains(bridge.socketPath))
         if errorCode == "CAPTURE_FAILED" {
-            #expect(errorMessage.contains("owner socket is unavailable"))
+            #expect(errorMessage.contains("The process ownership receipt does not include a Bridge socket path."))
             #expect(errorMessage.contains("No capture was dispatched"))
         }
         #expect(result.standardError.isEmpty)

@@ -10,6 +10,7 @@
 - Resolve ambiguous background focus observations using a stable native application receiver matched to one captured element, while preserving exact-window ownership, live input validation, and ordinary traversal time when the optional initial focus read stalls; later menu-bar reads retain their normal remaining-deadline budget.
 - Explain missing or ambiguous observed focus in `see --verbose` using content-free capture diagnostics without extra Accessibility reads or changed input guards.
 - Distinguish Bridge handshake success, permissions, advertised capture support, and ScreenCaptureKit preparation in normal and verbose status output without changing capture admission or JSON reports. Thanks @ProActive2023! #748.
+- Clarify that ScreenCaptureKit process-owner receipts omit Bridge socket paths rather than proving a listener absent or unreachable; document capture-runtime participation by embedding apps without changing routing or ownership guards.
 - Expose already-observed focus identity in `see --json` and `see`/`inspect_ui` MCP metadata without extra Accessibility reads, preserving unknown focus and existing input guards.
 - Clear inherited modifier flags from targeted Unicode typing so held Command, Shift, or other modifiers cannot turn literal text into shortcuts.
 - Route background typing in web fields directly through targeted keyboard events, including clear and editing keys, instead of accepting ignored Accessibility writes; refuse unproven routes before input.

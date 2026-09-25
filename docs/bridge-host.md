@@ -234,8 +234,12 @@ enabled `desktopObservation` operation is absent; an older host cannot silently 
 and run its default backend. `auto` remains compatible, and request-scoped selection does not alter
 the long-lived daemon's fallback policy.
 
-ScreenCaptureKit coordination covers Peekaboo's own CLI/app processes and selected Bridge hosts. Running third-party
-capture apps, including Claude and OpenClaw, does not block capture or require those apps to publish Peekaboo receipts.
+ScreenCaptureKit coordination covers Peekaboo's CLI/app processes and applications that embed or explicitly register
+Peekaboo's capture runtime. Merely running a third-party application that uses ScreenCaptureKit does not make it a
+Peekaboo participant or require it to publish Peekaboo receipts. An application such as OpenClaw can participate when
+it embeds Peekaboo; its registered process may own Peekaboo's ScreenCaptureKit lane even when another Bridge socket is
+selected. Process ownership receipts identify the owner generation and build, not its Bridge socket path. A missing
+socket path in that receipt does not mean the owner has no reachable listener.
 
 Capture support and startup preparation are separate, additive handshake contracts at the existing protocol version.
 `screenCaptureKitOwnershipEnforcement` and `classicCaptureWithoutScreenCaptureKit` are derived from the host's concrete

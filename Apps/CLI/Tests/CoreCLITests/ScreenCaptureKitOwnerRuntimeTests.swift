@@ -485,6 +485,47 @@ struct ScreenCaptureKitOwnerRuntimeTests {
     }
 
     @Test
+    func `identity-only owner receipts do not claim socket absence or reachability`() {
+        let owner = Self.ownerReceipt()
+        let socket = "/tmp/selected-current.sock"
+        let refusals = [
+            (RuntimeHostResolver.ownerRefusal(owner: owner, callerLocal: true), "Selected route: caller-local"),
+            (
+                RuntimeHostResolver.ownerRefusal(owner: owner, callerLocal: false),
+                "Selected socket: automatic resolution"
+            ),
+            (RuntimeHostResolver.ownerRefusal(owner: owner, explicitSocket: socket), "Selected socket: \(socket)"),
+            (
+                RuntimeHostResolver.ownerExactBuildConflict(owner: owner, requiredSocket: socket),
+                "Selected socket: \(socket)"
+            ),
+        ]
+
+        for (error, selectedRoute) in refusals {
+            let message = error.localizedDescription
+            #expect(message.contains("The process ownership receipt does not include a Bridge socket path."))
+            #expect(message.contains("PID 4242, generation 9001"))
+            #expect(message.contains(selectedRoute))
+            #expect(message.contains("No capture was dispatched."))
+            #expect(!message.contains("owner socket is unavailable"))
+            #expect(!message.contains("owner socket: unavailable"))
+            #expect(!message.contains("does not serve selected socket"))
+            #expect(error.code == .CAPTURE_FAILED)
+            #expect(error.envelopeEffect == .refused)
+            #expect(error.envelopeRetrySafe == true)
+            #expect(error.envelopeMutationDispatched == false)
+            let diagnostic = error.failure.screenCaptureKitOwnershipDiagnostic
+            #expect(diagnostic?.kind == .ownedByAnotherProcess)
+            #expect(diagnostic?.stage == .admission)
+            #expect(diagnostic?.blockers.count == 1)
+            #expect(diagnostic?.blockers.first?.processIdentifier == owner.processIdentifier)
+            #expect(diagnostic?.blockers.first?.processStartIdentity == owner.processStartIdentity)
+            #expect(diagnostic?.blockers.first?.codeSignatureHash == owner.codeSignatureHash)
+            #expect(diagnostic?.blockers.first?.socketPath == nil)
+        }
+    }
+
+    @Test
     func `deferred legacy owner record retains build and safe socket diagnostics`() {
         let host = ScreenCaptureKitOwnerLease.UncoordinatedHost(
             socketPath: "/tmp/deferred-owner.sock",
@@ -674,6 +715,8 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         #expect(error?.envelopeRetrySafe == true)
         #expect(error?.envelopeMutationDispatched == false)
         #expect(error?.localizedDescription.contains(explicitSocket) == true)
+        #expect(error?.localizedDescription.contains("could not be established on this route") == true)
+        #expect(error?.localizedDescription.contains("does not include a Bridge socket path") == true)
         #expect(error?.hint?.contains("--capture-engine classic") == true)
         #expect(error?.hint?.contains("exact owner generation") == true)
         #expect(claimCalls == 0)
