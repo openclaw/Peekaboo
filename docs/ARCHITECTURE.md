@@ -96,6 +96,13 @@ or transport queues so they do not hold the main actor or Swift's cooperative ex
 stop an underlying native call: for example, the application-inventory worker keeps its slot until that call returns,
 refusing new work instead of growing a queue behind it.
 
+Desktop operation lane admission uses one monotonic 15-second budget across its turnstiles and global, process, and
+window lock claims. Acquiring a lock after expiry does not authorize the operation: Peekaboo releases the acquired
+claims and returns a retry-safe `TIMEOUT` refusal before the operation body starts. Cancellation can end the wait
+sooner. This is a lock-admission ceiling, not a whole-command timeout or a new Bridge wire deadline. Once admitted,
+the operation retains its claims until its body actually returns, including noncooperative native work. Callers
+composing an earlier focus or other effect must preserve that prefix when a later lane refuses admission.
+
 Checked dialog, focus, and window-identity probes use AXorcist's MainActor `Element.withMessagingTimeout` owner.
 Application and returned child references need separate scopes. Dialog scope failures propagate before fallback;
 optional focus/identity probes fail closed, while optional AX identifier failure can retain exact CG metadata.

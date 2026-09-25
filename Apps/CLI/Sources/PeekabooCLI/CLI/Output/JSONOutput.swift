@@ -111,7 +111,7 @@ private struct ActionResultEnvelopeFailure: LocalizedError, ResultEnvelopeError 
     }
 
     nonisolated var envelopeCode: ErrorCode? {
-        .INTERACTION_FAILED
+        desktopActionFailureErrorCode(self.failure)
     }
 
     nonisolated var envelopeEffect: ActionEffect? {
@@ -153,7 +153,7 @@ private struct PostDispatchActionResultEnvelopeFailure: LocalizedError, ResultEn
     }
 
     nonisolated var envelopeCode: ErrorCode? {
-        .INTERACTION_FAILED
+        self.failure.map(desktopActionFailureErrorCode) ?? .INTERACTION_FAILED
     }
 
     nonisolated var envelopeEffect: ActionEffect? {

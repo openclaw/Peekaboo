@@ -130,16 +130,7 @@ extension ErrorHandlingCommand {
         case is ApplicationLifecycleRefusalError:
             .INTERACTION_FAILED
         case let failure as DesktopActionFailure:
-            switch failure.standardErrorCode {
-            case .snapshotStale:
-                .SNAPSHOT_STALE
-            case .snapshotNotFound:
-                .SNAPSHOT_NOT_FOUND
-            case .elementNotFound:
-                .ELEMENT_NOT_FOUND
-            default:
-                .INTERACTION_FAILED
-            }
+            desktopActionFailureErrorCode(failure)
         case let failure as ApplicationLifecycleReadOnlyFailureError:
             self.mapPeekabooErrorToCode(failure.underlyingError)
         case let posixError as POSIXError:

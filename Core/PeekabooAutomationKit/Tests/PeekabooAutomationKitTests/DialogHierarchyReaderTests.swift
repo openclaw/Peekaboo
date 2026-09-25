@@ -44,7 +44,7 @@ final class DialogHierarchyReaderTests: XCTestCase {
         let node = Self.node(role: "AXSheet")
         var readers = DialogDiscoveryReaders()
         readers.hierarchyNode = { _, identity, budget in
-            try await DialogHierarchyReader.run(owner: identity, budget: budget) {
+            try await DialogAXReadRunner.run(owner: identity, budget: budget) {
                 started.fulfill()
                 _ = release.wait(timeout: .now() + 10)
                 return node
@@ -85,7 +85,7 @@ final class DialogHierarchyReaderTests: XCTestCase {
         XCTAssertFalse(published)
         XCTAssertEqual(mutationCount, 0)
         do {
-            _ = try await DialogHierarchyReader.run(
+            _ = try await DialogAXReadRunner.run(
                 owner: owner,
                 budget: DialogOperationDeadline.bounded(timeoutSeconds: 1, operationName: "dialog test"))
             {

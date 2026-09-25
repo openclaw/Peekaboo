@@ -84,7 +84,7 @@ func renderDesktopActionFailure(
     if jsonOutput {
         outputError(
             message: failure.message,
-            code: captureOwnershipErrorCode(for: failure) ?? .INTERACTION_FAILED,
+            code: desktopActionFailureErrorCode(failure),
             hint: failure.hint,
             details: failure.causeDescription,
             actionFailure: failure,
@@ -105,8 +105,8 @@ func genericErrorCode(for error: any Error) -> ErrorCode {
     if let captureCode = captureOwnershipErrorCode(for: error) {
         return captureCode
     }
-    if error is DesktopActionFailure {
-        return .INTERACTION_FAILED
+    if let failure = error as? DesktopActionFailure {
+        return desktopActionFailureErrorCode(failure)
     }
     if let envelopeError = error as? any ResultEnvelopeError {
         return envelopeError.envelopeCode ?? .INTERACTION_FAILED
@@ -115,6 +115,24 @@ func genericErrorCode(for error: any Error) -> ErrorCode {
         return .UNKNOWN_ERROR
     }
     return errorCode(for: bridgeError)
+}
+
+nonisolated func desktopActionFailureErrorCode(_ failure: DesktopActionFailure) -> ErrorCode {
+    if let captureCode = captureOwnershipErrorCode(for: failure) {
+        return captureCode
+    }
+    return switch failure.standardErrorCode {
+    case .snapshotStale:
+        .SNAPSHOT_STALE
+    case .snapshotNotFound:
+        .SNAPSHOT_NOT_FOUND
+    case .elementNotFound:
+        .ELEMENT_NOT_FOUND
+    case .timeout:
+        .TIMEOUT
+    default:
+        .INTERACTION_FAILED
+    }
 }
 
 nonisolated func screenCaptureKitOwnershipDiagnostic(

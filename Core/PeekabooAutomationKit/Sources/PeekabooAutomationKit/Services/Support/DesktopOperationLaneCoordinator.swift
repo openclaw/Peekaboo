@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooFoundation
 
 /// The stable identity scope guarded while Peekaboo reads or mutates desktop state.
 ///
@@ -34,6 +35,7 @@ public enum DesktopOperationLaneError: LocalizedError, Sendable {
     case systemCall(operation: String, path: String, code: Int32)
     case unsafeDirectory(path: String)
     case unsafeLockFile(path: String)
+    case lockTimeout(path: String)
     case nestedAcquisition(domain: String)
 
     public var errorDescription: String? {
@@ -47,6 +49,8 @@ public enum DesktopOperationLaneError: LocalizedError, Sendable {
             "Desktop operation coordination directory is unsafe: \(path)"
         case let .unsafeLockFile(path):
             "Desktop operation coordination lock is not a regular file owned by the current user: \(path)"
+        case let .lockTimeout(path):
+            "Timed out waiting for the desktop operation lane lock at \(path)."
         case let .nestedAcquisition(domain):
             "Desktop operation attempted a nested lane acquisition in \(domain); " +
                 "the execution owner must acquire once and call an owned-leaf helper"
@@ -72,17 +76,31 @@ public actor DesktopOperationLaneCoordinator {
         let descriptor: Int32
     }
 
+    static let maximumLockWait: Duration = .seconds(15)
+
     private nonisolated let coordinationRootURL: URL
     private nonisolated let coordinationDomain: String
+    private nonisolated let lockWait: Duration
+    private nonisolated let now: @Sendable () -> ContinuousClock.Instant
+    private let retrySleep: @Sendable () async throws -> Void
 
     public init() {
-        self.coordinationRootURL = DesktopCoordinationRuntimeRoot.defaultURL
-        self.coordinationDomain = DesktopCoordinationRuntimeRoot.defaultURL.path
+        self.init(coordinationRootURL: DesktopCoordinationRuntimeRoot.defaultURL)
     }
 
-    init(coordinationRootURL: URL) {
+    init(
+        coordinationRootURL: URL,
+        lockWait: Duration = DesktopOperationLaneCoordinator.maximumLockWait,
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now },
+        retrySleep: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .milliseconds(10))
+        })
+    {
         self.coordinationRootURL = coordinationRootURL.standardizedFileURL
         self.coordinationDomain = coordinationRootURL.standardizedFileURL.path
+        self.lockWait = lockWait
+        self.now = now
+        self.retrySleep = retrySleep
     }
 
     public nonisolated func run<T: Sendable>(
@@ -104,10 +122,14 @@ public actor DesktopOperationLaneCoordinator {
         access: DesktopOperationAccess,
         operation: () async throws -> T) async throws -> T
     {
+        let deadline = self.now().advanced(by: self.lockWait)
         let claims = await self.claims(scope: scope, access: access)
-        let heldClaims = try await self.acquire(claims)
+        let deadlinePath = self.coordinationRootURL
+            .appendingPathComponent(claims[claims.count - 1].fileName).path
+        try self.checkLockDeadline(deadline, path: deadlinePath)
+        let heldClaims = try await self.acquire(claims, deadline: deadline)
         do {
-            try Task.checkCancellation()
+            try self.checkLockDeadline(deadline, path: deadlinePath)
             let result = try await operation()
             await self.release(heldClaims)
             return result
@@ -141,7 +163,7 @@ public actor DesktopOperationLaneCoordinator {
         }
     }
 
-    private func acquire(_ claims: [Claim]) async throws -> [HeldClaim] {
+    private func acquire(_ claims: [Claim], deadline: ContinuousClock.Instant) async throws -> [HeldClaim] {
         try self.prepareCoordinationRoot()
         var heldClaims: [HeldClaim] = []
         do {
@@ -155,7 +177,8 @@ public actor DesktopOperationLaneCoordinator {
                     try await self.acquireFileLock(
                         descriptor: turnstileDescriptor,
                         path: turnstileURL.path,
-                        access: .write)
+                        access: .write,
+                        deadline: deadline)
                 } catch {
                     close(turnstileDescriptor)
                     throw error
@@ -172,7 +195,8 @@ public actor DesktopOperationLaneCoordinator {
                     try await self.acquireFileLock(
                         descriptor: descriptor,
                         path: url.path,
-                        access: claim.access)
+                        access: claim.access,
+                        deadline: deadline)
                     heldClaims.append(HeldClaim(descriptor: descriptor))
                     self.releaseDescriptor(turnstileDescriptor)
                 } catch {
@@ -192,7 +216,8 @@ public actor DesktopOperationLaneCoordinator {
     private func acquireFileLock(
         descriptor: Int32,
         path: String,
-        access: DesktopOperationAccess) async throws
+        access: DesktopOperationAccess,
+        deadline: ContinuousClock.Instant) async throws
     {
         let operation = (access == .read ? LOCK_SH : LOCK_EX) | LOCK_NB
         while flock(descriptor, operation) != 0 {
@@ -200,8 +225,19 @@ public actor DesktopOperationLaneCoordinator {
             guard code == EWOULDBLOCK || code == EAGAIN || code == EINTR else {
                 throw DesktopOperationLaneError.systemCall(operation: "flock", path: path, code: code)
             }
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(10))
+            try self.checkLockDeadline(deadline, path: path)
+            try await self.retrySleep()
+        }
+        try self.checkLockDeadline(deadline, path: path)
+    }
+
+    private nonisolated func checkLockDeadline(_ deadline: ContinuousClock.Instant, path: String) throws {
+        try Task.checkCancellation()
+        guard self.now() < deadline else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: DesktopOperationLaneError.lockTimeout(path: path).localizedDescription,
+                standardErrorCode: .timeout)
         }
     }
 

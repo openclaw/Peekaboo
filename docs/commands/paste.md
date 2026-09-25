@@ -30,8 +30,9 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 - Exact window selectors stay exact through text or Cmd+V dispatch; focus, owner, generation, or bounds drift fails before clipboard access whenever no event has begun. Exact-window remote delivery requires Bridge protocol 1.24.
 - Process-targeted text and Cmd+V delivery retain the resolved app's process-generation receipt. Plain text revalidates before every emitted character, while clipboard-backed paste uses generation-pinned hotkey delivery. A target exit or relaunch never silently retargets the reusable PID. Remote background paste requires Bridge protocol 1.22 or newer.
 - Clipboard-backed transactions are serialized across CLI, daemon, and GUI processes with a private per-user lock under `~/Library/Application Support/Peekaboo`, independent of each process's temporary directory.
+- Admission shares one 15-second monotonic deadline across the in-process queue and file-lock acquisition. If either wait ends at or after that deadline, even with successful acquisition, Peekaboo refuses before running the transaction body. The canonical `TIMEOUT` is a retry-safe pre-dispatch refusal: this transaction has not changed the clipboard or dispatched paste input, and the timeout alone does not require a fresh observation.
 - Target capability checks, cancellation checks, and the prior-clipboard snapshot must all succeed before Peekaboo writes a temporary payload. A read failure is never treated as an empty clipboard; if a write fails after partially changing the pasteboard, Peekaboo restores the exact saved state before returning the error.
-- Background binary/rich paste still mutates the system clipboard briefly; `paste` completes the noncancellable `--restore-delay` settle and restores the previous contents before releasing the transaction lock, even when delivery throws or the caller cancels.
+- Background binary/rich paste still mutates the system clipboard briefly; `paste` completes the noncancellable `--restore-delay` settle and restores the previous contents before releasing the transaction lock, even when delivery throws or the caller cancels. The admission deadline does not time out this already-admitted settle/restore phase or bound the whole command.
 
 ## Examples
 ```bash
@@ -55,6 +56,7 @@ peekaboo paste "Hello" --app TextEdit --foreground
 - Restore delays must be between `0` and `10000ms`, inclusive. Existing CLI scripts or MCP callers using longer delays must reduce them; invalid values fail before clipboard access or input delivery. Direct calls to the shared consumption-wait helper are capped at 10 seconds as a backstop.
 - File paths for `--file-path` accept `~/...`.
 - Successful background text JSON reports delivery mode and target PID. Clipboard-backed background delivery returns `INTERACTION_FAILED` with the explicit retry-unsafe message instead of a success payload.
+- JSON preserves a typed `TIMEOUT` even if a later input-lane wait expires after foreground focus has already changed the desktop. Check the canonical outcome and retry metadata: an earlier dispatched phase still makes the overall request indeterminate and unsafe to retry.
 - After Cmd+V dispatch begins, cancellation or a delivery error is indeterminate. A clipboard restoration failure is always reported with a canonical partial or indeterminate retry-unsafe outcome, including for receiptless providers. Inspect fresh UI state rather than replaying the paste.
 
 ## Troubleshooting

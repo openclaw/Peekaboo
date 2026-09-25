@@ -186,6 +186,26 @@ enum InProcessCommandRunner {
         try await self.gate.run(operation)
     }
 
+    static func captureCommandOutput(
+        _ operation: @Sendable () async throws -> Void
+    ) async throws -> CommandRunResult {
+        try await self.gate.run {
+            let result = try await self.redirectOutput {
+                do {
+                    try await operation()
+                    return EXIT_SUCCESS
+                } catch let exit as ExitCode {
+                    return exit.rawValue
+                }
+            }
+            return CommandRunResult(
+                stdout: String(data: result.1, encoding: .utf8) ?? "",
+                stderr: String(data: result.2, encoding: .utf8) ?? "",
+                exitStatus: result.0
+            )
+        }
+    }
+
     private static func execute(arguments: [String], standardInput: String? = nil) async throws -> CommandRunResult {
         try await self.captureOutput {
             var exitStatus: Int32 = 0

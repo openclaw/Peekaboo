@@ -120,6 +120,20 @@ jobs:
       - name: Show Swift toolchain version
         run: swift --version
 
+      - name: Run clipboard paste admission gate contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/clipboard-paste-admission-gate.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^PeekabooAutomationKitTests\.ClipboardPasteTransactionGateTests/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite ClipboardPasteTransactionGateTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run mutation inventory, selector, and host window contracts
         working-directory: Core/PeekabooAutomationKit
         env:
@@ -140,6 +154,16 @@ jobs:
           test_log="$RUNNER_TEMP/application-running-state.log"
           swift test --no-parallel --filter ApplicationRunningStateTests 2>&1 | tee "$test_log"
           grep -Fq 'Suite ApplicationRunningStateTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
+      - name: Run desktop operation lane lock contracts
+        working-directory: Core/PeekabooAutomationKit
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/desktop-operation-lane-lock-contracts.log"
+          swift test --no-parallel --filter 'DesktopOperationLaneCoordinatorTests' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite DesktopOperationLaneCoordinatorTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Build PeekabooCore
@@ -172,6 +196,22 @@ jobs:
           grep -Fq 'Suite TypeServiceAXFailureReceiptTests passed after ' "$test_log"
           grep -Fq 'Suite TypingFinalReceiverBindingTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
+      - name: Run MCP paste admission timeout regressions
+        working-directory: Core/PeekabooCore
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/mcp-paste-admission-timeout.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^PeekabooTests\.PasteToolTransactionGateTests/`(paste admission timeout preserves observations and releases the MCP reservation|admitted paste retains prior focus when its input lane times out)`\(explicitPayload:\)(/|$)' \
+            2>&1 | tee "$test_log"
+          grep -Eq 'Test "paste admission timeout preserves observations and releases the MCP reservation"( with 2 test cases)? passed after ' "$test_log"
+          grep -Eq 'Test "admitted paste retains prior focus when its input lane times out"( with 2 test cases)? passed after ' "$test_log"
+          grep -Fq 'Suite PasteToolTransactionGateTests passed after ' "$test_log"
+          grep -Eq 'Test run with 2 tests( in 1 suite)? passed after ' "$test_log"
 
       - name: Run Bridge negotiation and cancellation contracts
         working-directory: Core/PeekabooCore
@@ -209,6 +249,22 @@ jobs:
           swift test --no-parallel --filter PeekabooAgentServiceTests
           swift test --no-parallel --filter PeekabooAgentSessionSafetyTests
           swift test --no-parallel --filter PeekabooAgentStreamTerminalIntegrityTests
+
+      - name: Run targeted dialog metadata and deadline contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+        run: |
+          set -o pipefail
+          test_log="$RUNNER_TEMP/dialog-metadata-contracts.log"
+          swift test --no-parallel \
+            --filter 'DialogMetadataReaderTests|DialogMetadataContractTests|DialogHierarchyReaderTests|DialogHierarchyAttributeTests|DialogOperationDeadlineTests|ElementDetectionDetachedRunnerTests' \
+            2>&1 | tee "$test_log"
+          grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"
+          grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"
+          grep -Fq 'Suite DialogOperationDeadlineTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run agent-surface contract tests
         working-directory: Core/PeekabooCore
@@ -250,16 +306,14 @@ jobs:
       - name: Compute SwiftPM cache key (CLI)
         id: cache-key-cli
         env:
-          CACHE_PREFIX: ${{ runner.os }}-spm-cli-
+          CACHE_PREFIX: ${{ runner.os }}-spm-cli-dependencies-v2-
         run: |
           set -euo pipefail
-          if [ -f Apps/CLI/Package.resolved ]; then
-            HASH=$(shasum Apps/CLI/Package.resolved | awk '{print $1}')
-          else
-            echo "Package.resolved missing, falling back to commit SHA"
-            HASH=${GITHUB_SHA}
-          fi
-          echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
+          TOOLCHAIN_HASH=$({ swift --version && xcodebuild -version; } | shasum -a 256 | awk '{print $1}')
+          SOURCE_HASH=$(git ls-files --stage -- Package.swift '**/Package.swift' '**/Package.resolved' \
+            .gitmodules AXorcist Commander Swiftdansi Tachikoma TauTUI | shasum -a 256 | awk '{print $1}')
+          echo "key=${CACHE_PREFIX}${TOOLCHAIN_HASH}-${SOURCE_HASH}" >> "$GITHUB_OUTPUT"
+          echo "restore-prefix=${CACHE_PREFIX}${TOOLCHAIN_HASH}-" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (CLI)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -267,10 +321,9 @@ jobs:
           path: |
             ~/.swiftpm
             ~/.cache/org.swift.swiftpm
-            Apps/CLI/.build
           key: ${{ steps.cache-key-cli.outputs.key }}
           restore-keys: |
-            ${{ runner.os }}-spm-cli-
+            ${{ steps.cache-key-cli.outputs.restore-prefix }}
 
       - name: Clean SwiftPM trait state (CLI)
         run: |
@@ -292,9 +345,6 @@ jobs:
           fi
           if [ -d Apps/CLI/.swiftpm ]; then
             find Apps/CLI/.swiftpm -type f -name traits.json -print -delete || true
-          fi
-          if [ -d Apps/CLI/.build/checkouts ]; then
-            find Apps/CLI/.build/checkouts -type d -name .swiftpm -prune -print -exec rm -rf {} + || true
           fi
           # Avoid caching any package-local state that might remember old trait selections.
           rm -rf Apps/CLI/.build || true
@@ -355,6 +405,22 @@ jobs:
         working-directory: Apps/CLI
         run: |
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION
+
+      - name: Run CLI paste admission timeout regression (skip automation)
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/cli-paste-admission-timeout.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
+            --filter '^CLIAutomationTests\.PasteCommandTests/`Admission timeout preserves observations and a later clipboard paste recovers`\(binaryPayload:\)(/|$)' \
+            2>&1 | tee "$test_log"
+          grep -Eq 'Test "Admission timeout preserves observations and a later clipboard paste recovers"( with 2 test cases)? passed after ' "$test_log"
+          grep -Fq 'Suite PasteCommandTests passed after ' "$test_log"
+          grep -Eq 'Test run with 1 test( in 1 suite)? passed after ' "$test_log"
 
       - name: Run taskless agent resume regression (skip automation)
         working-directory: Apps/CLI

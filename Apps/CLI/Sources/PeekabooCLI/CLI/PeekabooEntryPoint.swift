@@ -4,6 +4,7 @@ import Darwin
 import Foundation
 import PeekabooAutomationKit
 import PeekabooCore
+import PeekabooFoundation
 
 /// Shared entry point used by the executable target.
 @MainActor
@@ -97,7 +98,9 @@ func printGenericError(_ error: any Error, jsonOutput: Bool) {
     } else {
         .UNKNOWN_ERROR
     }
-    let code = captureOwnershipErrorCode(for: error) ?? envelopeError?.envelopeCode ?? fallbackCode
+    let failureCode = ((error as? DesktopActionFailure) ?? envelopeError?.envelopeActionFailure)
+        .map(desktopActionFailureErrorCode)
+    let code = captureOwnershipErrorCode(for: error) ?? envelopeError?.envelopeCode ?? failureCode ?? fallbackCode
     let actionMetadata = actionErrorEnvelopeMetadata(
         for: error,
         isActionCommand: ResultEnvelopeContext.isActionCommand

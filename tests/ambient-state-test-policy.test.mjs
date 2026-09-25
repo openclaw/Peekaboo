@@ -24,6 +24,33 @@ const runtimeTests = readFileSync(
   "utf8",
 );
 
+test("hosted dialog metadata proof runs owner and output contracts without live automation", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const marker = "      - name: Run targeted dialog metadata and deadline contracts\n";
+  assert.ok(workflow.includes(marker), "Missing hosted dialog metadata proof");
+  const step = workflow.split(marker)[1].split("\n      - name:")[0];
+  const suites = [
+    "DialogMetadataReaderTests", "DialogMetadataContractTests", "DialogHierarchyReaderTests",
+    "DialogHierarchyAttributeTests", "DialogOperationDeadlineTests", "ElementDetectionDetachedRunnerTests",
+  ];
+  assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
+  assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"/);
+  assert.match(step, /PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"/);
+  assert.doesNotMatch(step, /(?:RUN_AUTOMATION_ACTIONS|RUN_AUTOMATION_TESTS): "true"/);
+  assert.match(step, /swift test --no-parallel/);
+  assert.equal(step.match(/--filter '([^']+)'/)?.[1], suites.join("|"));
+  for (const suite of suites) {
+    const source = readFileSync(
+      `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/${suite}.swift`, "utf8",
+    );
+    assert.match(source, new RegExp(`(?:class|struct) ${suite}\\b`), `${suite} must exist in this checkout`);
+  }
+  assert.match(step, /set -o pipefail/);
+  assert.ok(step.includes(`grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"`));
+  assert.ok(step.includes(`grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"`));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+});
+
 test("safe suite forces ambient-state tests off", () => {
   assert.match(
     packageJSON.scripts["test:safe"],
@@ -249,6 +276,21 @@ test("hosted See proof fails closed on absent or incomplete evidence", () => {
   assert.match(local.stderr, /restricted to the secretless GitHub-hosted CI runner/);
 });
 
+test("desktop lane lock CI executes the safe named suite and rejects empty proof", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const marker = "      - name: Run desktop operation lane lock contracts\n";
+  assert.equal(workflow.split(marker).length, 2, "Expected exactly one desktop lane proof step");
+  const step = workflow.split(marker)[1].split("\n      - name: ")[0];
+  assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
+  assert.match(step, /set -euo pipefail/);
+  assert.ok(step.includes("swift test --no-parallel --filter 'DesktopOperationLaneCoordinatorTests'"));
+  assert.ok(step.includes('2>&1 | tee "$test_log"'));
+  assert.ok(step.includes("grep -Fq 'Suite DesktopOperationLaneCoordinatorTests passed after '"));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+  assert.doesNotMatch(step, /--skip-build/);
+  assert.doesNotMatch(step, /(?:RUN_AUTOMATION_ACTIONS|RUN_AUTOMATION_TESTS|RUN_LOCAL_TESTS|PEEKABOO_INCLUDE_AUTOMATION_TESTS|PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS)\s*(?::|=)\s*["']?(?:true|1)\b/i);
+});
+
 test("See proof arguments agree with installed Swift help and parse without running discovery", {
   skip: process.platform !== "darwin",
 }, () => {
@@ -283,3 +325,101 @@ test("See proof arguments agree with installed Swift help and parse without runn
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+const pasteAdmissionProofs = [
+  {
+    name: "Run clipboard paste admission gate contracts",
+    next: "Run mutation inventory, selector, and host window contracts",
+    directory: "Core/PeekabooAutomationKit",
+    suite: "ClipboardPasteTransactionGateTests",
+    automation: "false",
+    filter: "^PeekabooAutomationKitTests\\.ClipboardPasteTransactionGateTests/",
+    selected: ["PeekabooAutomationKitTests.ClipboardPasteTransactionGateTests/`Late file-lock admission refuses and releases both gates`(lateness:)"],
+    rejected: ["PeekabooAutomationKitTests.ClipboardPasteTransactionGateTestsExtra/unsafe()"],
+    declarations: [],
+    countGuard: "Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ",
+  },
+  {
+    name: "Run MCP paste admission timeout regressions",
+    next: "Run Bridge negotiation and cancellation contracts",
+    directory: "Core/PeekabooCore",
+    suite: "PasteToolTransactionGateTests",
+    automation: "false",
+    filter: "^PeekabooTests\\.PasteToolTransactionGateTests/`(paste admission timeout preserves observations and releases the MCP reservation|admitted paste retains prior focus when its input lane times out)`\\(explicitPayload:\\)(/|$)",
+    selected: [
+      "PeekabooTests.PasteToolTransactionGateTests/`paste admission timeout preserves observations and releases the MCP reservation`(explicitPayload:)",
+      "PeekabooTests.PasteToolTransactionGateTests/`admitted paste retains prior focus when its input lane times out`(explicitPayload:)",
+    ],
+    rejected: [
+      "PeekabooTests.PasteToolTransactionGateTests/`MCP paste re-resolves its process after shared-lock contention`()",
+      "PeekabooTests.PasteToolTransactionGateTests/`Current clipboard foreground paste can report successful dispatch`()",
+    ],
+    source: "Core/PeekabooCore/Tests/PeekabooTests/MCP/PasteToolTransactionGateTests.swift",
+    declarations: [
+      "paste admission timeout preserves observations and releases the MCP reservation",
+      "admitted paste retains prior focus when its input lane times out",
+    ],
+    countGuard: "Test run with 2 tests( in 1 suite)? passed after ",
+  },
+  {
+    name: "Run CLI paste admission timeout regression (skip automation)",
+    next: "Run taskless agent resume regression (skip automation)",
+    directory: "Apps/CLI",
+    suite: "PasteCommandTests",
+    automation: "true",
+    filter: "^CLIAutomationTests\\.PasteCommandTests/`Admission timeout preserves observations and a later clipboard paste recovers`\\(binaryPayload:\\)(/|$)",
+    selected: ["CLIAutomationTests.PasteCommandTests/`Admission timeout preserves observations and a later clipboard paste recovers`(binaryPayload:)"],
+    rejected: [
+      "CLIAutomationTests.PasteCommandTests/`Current clipboard paste waits for an active transaction`()",
+      "CLIAutomationTests.PasteCommandTests/`Clipboard-backed paste re-resolves its process after lock contention`()",
+    ],
+    source: "Apps/CLI/Tests/CLIAutomationTests/PasteCommandTransactionGateTests.swift",
+    declarations: ["Admission timeout preserves observations and a later clipboard paste recovers"],
+    countGuard: "Test run with 1 test( in 1 suite)? passed after ",
+  },
+];
+
+for (const proof of pasteAdmissionProofs) {
+  test(`paste admission CI selects only safe proof with complete pass evidence: ${proof.suite}`, () => {
+    const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+    const marker = `      - name: ${proof.name}\n`;
+    const sections = workflow.split(marker);
+    assert.equal(sections.length, 2, `Expected exactly one step: ${proof.name}`);
+    const nextStep = sections[1].match(/\n      - (?:name: ([^\n]+)|uses: [^\n]+)/);
+    assert.ok(nextStep, `Missing next step after ${proof.name}`);
+    assert.equal(nextStep[1], proof.next, "Keep the safe proof before the named existing step");
+    const step = sections[1].slice(0, nextStep.index);
+    assert.ok(step.includes(`working-directory: ${proof.directory}\n`));
+    assert.ok(step.includes(`PEEKABOO_INCLUDE_AUTOMATION_TESTS: "${proof.automation}"`));
+    assert.match(step, /PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"/);
+    assert.doesNotMatch(step, /\b(?:RUN_AUTOMATION_ACTIONS|RUN_AUTOMATION_TESTS|RUN_LOCAL_TESTS)\s*[:=]/);
+    assert.match(step, /set -euo pipefail/);
+    assert.equal((step.match(/swift test /g) ?? []).length, 1);
+    assert.match(step, /swift test --disable-xctest --enable-swift-testing --no-parallel/);
+    assert.ok(step.includes('2>&1 | tee "$test_log"'), "Retain the complete test log");
+    const filters = [...step.matchAll(/--filter '([^']+)'/g)];
+    assert.equal(filters.length, 1);
+    assert.equal(filters[0][1], proof.filter);
+    const selection = new RegExp(filters[0][1]);
+    for (const id of proof.selected) assert.ok(selection.test(id), id);
+    for (const id of proof.rejected) assert.ok(!selection.test(id), id);
+    if (proof.source) {
+      const source = readFileSync(`${repositoryRoot}/${proof.source}`, "utf8");
+      for (const declaration of proof.declarations) {
+        assert.ok(source.includes("func `" + declaration + "`"), declaration);
+        assert.ok(step.includes(`grep -Eq 'Test "${declaration}"( with 2 test cases)? passed after ' "$test_log"`));
+      }
+      for (const id of proof.selected) {
+        assert.ok(selection.test(`${id}/Fixture.swift:1:1`), "Swift Testing may append a source location");
+        assert.ok(!selection.test(id.replaceAll("`", "")), "Display names are not declaration IDs");
+        assert.ok(!selection.test(`${id}Extra`), "Do not admit extra declarations");
+      }
+    }
+    assert.ok(step.includes(`grep -Fq 'Suite ${proof.suite} passed after ' "$test_log"`));
+    assert.ok(step.includes(`grep -Eq '${proof.countGuard}' "$test_log"`));
+    if (proof.directory === "Apps/CLI") {
+      assert.match(step, /-Xswiftc -DPEEKABOO_SKIP_AUTOMATION/);
+      assert.match(step, /PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"/);
+    }
+  });
+}

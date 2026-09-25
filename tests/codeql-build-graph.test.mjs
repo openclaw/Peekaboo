@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const workflow = readFileSync(new URL('../.github/workflows/codeql.yml', import.meta.url), 'utf8');
@@ -9,6 +12,71 @@ const codeQLScheme = readFileSync(
   new URL('../Apps/Peekaboo.xcworkspace/xcshareddata/xcschemes/CodeQL.xcscheme', import.meta.url),
   'utf8');
 const cliPackage = readFileSync(new URL('../Apps/CLI/Package.swift', import.meta.url), 'utf8');
+
+function cliCacheSteps() {
+  const start = macOSCI.indexOf('      - name: Compute SwiftPM cache key (CLI)');
+  const cache = macOSCI.indexOf('      - name: Cache SwiftPM (CLI)', start);
+  const cleanup = macOSCI.indexOf('      - name: Clean SwiftPM trait state (CLI)', cache);
+  const next = macOSCI.indexOf('      - name: Show Swift toolchain version', cleanup);
+  assert.ok(start > 0 && cache > start && cleanup > cache && next > cleanup);
+  return { key: macOSCI.slice(start, cache), cache: macOSCI.slice(cache, cleanup),
+    cleanup: macOSCI.slice(cleanup, next) };
+}
+
+test('CLI cache retains dependency state without restoring its discarded build tree', () => {
+  const { key, cache, cleanup } = cliCacheSteps();
+  assert.match(cache, /~\/\.swiftpm/);
+  assert.match(cache, /~\/\.cache\/org\.swift\.swiftpm/);
+  assert.doesNotMatch(cache, /Apps\/CLI\/\.build/);
+  assert.doesNotMatch(key, /GITHUB_SHA|Apps\/CLI\/Package\.resolved/);
+  assert.match(key, /git ls-files --stage/);
+  for (const input of ['Package.swift', '**/Package.swift', '**/Package.resolved', '.gitmodules',
+    'AXorcist', 'Commander', 'Swiftdansi', 'Tachikoma', 'TauTUI']) assert.ok(key.includes(input), input);
+  assert.match(cache, /restore-keys:\s*\|\s*\$\{\{ steps\.cache-key-cli\.outputs\.restore-prefix \}\}/);
+  assert.match(cleanup, /manifest\.db/);
+  assert.match(cleanup, /traits\.json/);
+  assert.match(cleanup, /rm -rf Apps\/CLI\/\.build/);
+});
+
+test('CLI cache fingerprint tracks toolchain and graph inputs, not unrelated commit SHAs', () => {
+  const step = cliCacheSteps().key;
+  const script = step.split('        run: |\n')[1]?.replace(/^          /gm, '');
+  assert.ok(script);
+  const root = mkdtempSync(join(tmpdir(), 'peekaboo-cli-cache-key-'));
+  try {
+    for (const [name, variable] of [['swift', 'SWIFT_ID'], ['xcodebuild', 'XCODE_ID'], ['git', 'GRAPH_RECORDS']]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nif [ "\${FAIL_TOOL:-}" = "${name}" ]; then exit 12; fi\nprintf '%s\\n' "$${variable}"\n`, { mode: 0o700 });
+    }
+    let invocation = 0;
+    const run = (overrides = {}) => {
+      const output = join(root, `output-${invocation++}`);
+      const result = spawnSync('/bin/bash', ['-c', script], { cwd: root, encoding: 'utf8', timeout: 5000,
+        env: { PATH: `${root}:/usr/bin:/bin`, CACHE_PREFIX: 'macOS-spm-cli-dependencies-v2-', GITHUB_OUTPUT: output,
+          SWIFT_ID: 'Swift fixture 6.2', XCODE_ID: 'Xcode fixture 26.6', GRAPH_RECORDS: 'manifest-a\ngitlink-a',
+          GITHUB_SHA: 'unrelated-commit-a', ...overrides } });
+      return { result, values: result.status === 0
+        ? Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('='))) : null };
+    };
+    const baseline = run();
+    assert.equal(baseline.result.status, 0, baseline.result.stderr);
+    assert.deepEqual(run({ GITHUB_SHA: 'unrelated-commit-b' }).values, baseline.values);
+    for (const GRAPH_RECORDS of ['manifest-b\ngitlink-a', 'manifest-a\ngitlink-b']) {
+      const changed = run({ GRAPH_RECORDS });
+      assert.equal(changed.result.status, 0, changed.result.stderr);
+      assert.notEqual(changed.values.key, baseline.values.key);
+      assert.equal(changed.values['restore-prefix'], baseline.values['restore-prefix']);
+    }
+    for (const changedToolchain of [{ SWIFT_ID: 'Swift fixture 6.3' }, { XCODE_ID: 'Xcode fixture 27.0' }]) {
+      const changed = run(changedToolchain);
+      assert.equal(changed.result.status, 0, changed.result.stderr);
+      assert.notEqual(changed.values.key, baseline.values.key);
+      assert.notEqual(changed.values['restore-prefix'], baseline.values['restore-prefix']);
+    }
+    for (const FAIL_TOOL of ['swift', 'xcodebuild', 'git']) assert.notEqual(run({ FAIL_TOOL }).result.status, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function buildEntries() {
   return [...codeQLScheme.matchAll(/<BuildActionEntry(?<entry>[\s\S]*?)<\/BuildActionEntry>/g)]

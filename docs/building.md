@@ -148,6 +148,11 @@ Normal macOS CI schedules package tests, app builds, and lint independently. The
 this same workspace, canonical package lock, and derived-data directory so Inspector can reuse matching dependency
 builds. Each package's tests retain serial execution within their job.
 
+The CLI job caches reusable SwiftPM dependency state, not its deliberately fresh `.build` tree. Cache identities
+include the selected Swift/Xcode toolchain, tracked Swift manifests and lockfiles, and submodule revisions; unrelated
+commits can reuse the same cache. Manifest/trait cleanup and the cold CLI build remain intentional safeguards against
+stale trait selections. This cache policy does not change the separate CodeQL or full-safe build graphs.
+
 Run `pnpm run test:codeql-build-graph` to check product coverage, internal ownership, and the CLI's exact
 `PeekabooMain.swift` entrypoint. These structural checks do not replace a successful hosted CodeQL build.
 
