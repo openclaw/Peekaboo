@@ -6,6 +6,29 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (path) => readFileSync(`${root}/${path}`, 'utf8');
 
+test('every Agent execution entry forwards the invocation desktop-context options', () => {
+  const expectedCalls = [
+    ['AgentCommand+Execution.swift', 1],
+    ['AgentCommand+Sessions.swift', 1],
+    ['AgentCommand+Chat.swift', 3],
+  ];
+  for (const [file, count] of expectedCalls) {
+    const source = read(`Apps/CLI/Sources/PeekabooCLI/Commands/AI/${file}`);
+    const calls = [...source.matchAll(/agentService\.(?:executeTask|continueSession)\([\s\S]*?\n\s*\)/g)];
+    assert.equal(calls.length, count, `${file}: update the complete entry-point inventory when calls change`);
+    for (const [call] of calls) {
+      assert.match(call, /enhancementOptions: self\.enhancementOptions/, `${file}: options must reach the runtime`);
+    }
+  }
+});
+
+test('desktop-context opt out describes collection separately from history and tool authority', () => {
+  const agent = read('docs/commands/agent.md');
+  assert.match(agent, /--no-desktop-context/);
+  assert.match(agent, /saved (?:conversation )?history/);
+  assert.match(agent, /not an\s+app(?:lication)?(?:\/PID)? sandbox/);
+});
+
 test('cold-launch Agent examples carry explicit foreground authority', () => {
   for (const path of ['README.md', 'docs/index.md', 'docs/quickstart.md']) {
     const source = read(path);

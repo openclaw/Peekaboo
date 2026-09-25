@@ -295,6 +295,7 @@ extension AgentCommand {
                 dryRun: self.dryRun,
                 queueMode: request.queueMode,
                 eventDelegate: streamingDelegate,
+                enhancementOptions: self.enhancementOptions,
                 requestedToolExecutionPolicy: request.requestedToolExecutionPolicy
             )
             self.displayResult(result, delegate: outputDelegate)

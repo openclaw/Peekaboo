@@ -16,10 +16,11 @@ read_when:
 | `resume [session-id]` | Resume the most recent session, or the exact full session ID, in chat mode. |
 | `sessions` | Print cached sessions with full IDs, tasks, lifecycle status, and stored policy maximum; accepts only the global `--json` output switch. |
 | `chat [initial-prompt]` | Start the interactive chat loop. |
-| `--dry-run` | Emit a deterministic preview of a required text task without calling a model, invoking tools, transcribing audio, or creating a session. Human output names the requested foreground choice and effective UI authority. JSON also includes `uiAuthority.requestedForeground`, `uiAuthority.effectivePolicy`, and `uiAuthority.backgroundOnly`. |
+| `--dry-run` | Emit a deterministic preview of a required text task without calling a model, invoking tools, transcribing audio, or creating a session. Human output names the requested foreground choice, effective UI authority, and automatic desktop-context setting. JSON also includes `automaticDesktopContext`, `uiAuthority.requestedForeground`, `uiAuthority.effectivePolicy`, and `uiAuthority.backgroundOnly` under `result`. |
 | `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
 | `--model gpt-5.6|gpt-5-mini|claude-opus-5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the configured model. Concrete OpenAI and Anthropic selections are preserved; generic `gpt`/`openai` select GPT-5.6 Sol. Input is validated against supported hosted providers and local model providers. |
 | `--no-cache` | Run ephemerally without saving a resumable session. Cannot be combined with resume/list flags. |
+| `--no-desktop-context` | Skip new automatic desktop-context collection for this run, chat, or resume invocation. Saved conversation history, tool access, and UI authority are unchanged. |
 | `--allow-foreground` | Human opt-in for this invocation to use foreground/global UI routes. New sessions persist it as an immutable maximum; each later resume must opt in again. It never exposes the Shell tool. |
 | `--quiet` / `--simple` / `--no-color` / `--debug-terminal` | Control output mode; the command auto-detects terminal capabilities when you don’t override it. |
 | `--audio` / `--audio-file <path>` | Use microphone input or pipe audio from disk. |
@@ -27,6 +28,13 @@ read_when:
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
 - Session metadata lives inside `agentService` (PeekabooCore). `agent resume` grabs the most recent session, `agent sessions` prints the cached list, and `--no-cache` keeps a run in memory.
+- Automatic desktop context is enabled by default. Before model turns it reads the frontmost application/window,
+  cursor position, and running-application names; it also reads a clipboard preview when the clipboard tool is available.
+  `--no-desktop-context` skips this new collection and injection for every turn of the current invocation, including
+  chat and resume. It does not remove desktop information already present in saved conversation history, disable
+  model-requested tool observations, restrict tools to one application, or change foreground authority. It is not an
+  application sandbox. `--no-cache` remains a separate session-persistence choice; neither flag disables ordinary
+  runtime initialization or snapshot/coordination storage.
 - Copy the full ID printed by `agent sessions`; shortened prefixes are display hints, not valid resume identifiers. A status
   of `active` means the saved session is resumable, not that a process is currently executing or that the session is
   free for concurrent use. Use one process per session; if another run is using it, wait and retry the same full ID.
@@ -155,6 +163,9 @@ peekaboo agent "Check the current window" --model claude-sonnet-5
 
 # Keep the agent loop local through Ollama
 peekaboo agent "Check the current window" --model ollama/llama3.3
+
+# Run ephemerally without automatically collecting unrelated desktop context
+peekaboo agent run "Inspect the Playground window" --no-cache --no-desktop-context --no-remote
 
 # Use an OpenRouter-hosted model
 peekaboo agent "Check the current window" --model openrouter/xiaomi/mimo-v2.5-pro

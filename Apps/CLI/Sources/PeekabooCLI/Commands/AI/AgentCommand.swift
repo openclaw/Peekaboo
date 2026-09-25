@@ -103,6 +103,12 @@ struct AgentCommand: RuntimeBackedCommand {
     var noCache = false
 
     @Flag(
+        name: .customLong("no-desktop-context"),
+        help: "Disable new automatic desktop-context collection; saved history and tool access are unchanged"
+    )
+    var noDesktopContext = false
+
+    @Flag(
         name: .customLong("allow-foreground"),
         help: "Authorize foreground/global UI for this run (new sessions persist it as an immutable maximum)"
     )
@@ -168,6 +174,14 @@ struct AgentCommand: RuntimeBackedCommand {
 
     var requestedResumeToolExecutionPolicy: MCPToolExecutionPolicy {
         self.allowForeground ? .foregroundAllowed : .backgroundOnly
+    }
+
+    var enhancementOptions: AgentEnhancementOptions {
+        var options = AgentEnhancementOptions.default
+        if self.noDesktopContext {
+            options.contextAware = false
+        }
+        return options
     }
 }
 

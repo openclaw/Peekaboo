@@ -31,6 +31,12 @@ struct AgentExecutionOptions: CommanderParsable {
     var noCache = false
 
     @Flag(
+        name: .customLong("no-desktop-context"),
+        help: "Disable new automatic desktop-context collection; saved history and tool access are unchanged"
+    )
+    var noDesktopContext = false
+
+    @Flag(
         name: .customLong("allow-foreground"),
         help: "Authorize foreground/global UI for this run (new sessions persist it as an immutable maximum)"
     )
@@ -58,6 +64,7 @@ struct AgentExecutionOptions: CommanderParsable {
         self.queueMode = values.singleOption("queueMode")
         self.model = values.singleOption("model")
         self.noCache = values.flag("noCache")
+        self.noDesktopContext = values.flag("noDesktopContext")
         self.allowForeground = values.flag("allowForeground")
         self.audio = values.flag("audio")
         self.audioFile = values.singleOption("audioFile")
@@ -73,6 +80,7 @@ struct AgentExecutionOptions: CommanderParsable {
         command.queueMode = self.queueMode
         command.model = self.model
         command.noCache = self.noCache
+        command.noDesktopContext = self.noDesktopContext
         command.allowForeground = self.allowForeground
         command.audio = self.audio
         command.audioFile = self.audioFile
@@ -90,6 +98,7 @@ struct AgentRootCommand: ParsableCommand {
         Run a one-shot task, resume a saved session, list sessions, or start interactive chat.
         `peekaboo agent \"task\"` is shorthand for `peekaboo agent run \"task\"`.
         Agent UI authority is background-only unless the human passes `--allow-foreground` for that invocation.
+        `--no-desktop-context` skips new automatic context collection without changing saved history or tool access.
         """,
         subcommands: [
             AgentRunSubcommand.self,

@@ -17,7 +17,7 @@ struct AgentDryRunRuntimeTests {
                     try await CommanderRuntimeExecutor.resolveAndRun(
                         arguments: ["peekaboo"] + command + [
                             "  Inspect the synthetic Playground window  ", "--dry-run", "--no-cache",
-                            "--max-steps", "1",
+                            "--max-steps", "1", "--no-desktop-context",
                         ] + transport + (foreground ? ["--allow-foreground"] : []) + (json ? ["--json"] : []),
                         runtimeFactory: probe.factory
                     )
@@ -31,12 +31,14 @@ struct AgentDryRunRuntimeTests {
                     #expect(response["success"] as? Bool == true)
                     #expect(result["instruction"] as? String == "Inspect the synthetic Playground window")
                     #expect(result["modelExecution"] as? String == "skipped")
+                    #expect(result["automaticDesktopContext"] as? Bool == false)
                     #expect(result["sessionId"] is NSNull)
                     #expect((result["toolCalls"] as? [Any])?.isEmpty == true)
                     #expect(authority["requestedForeground"] as? Bool == foreground)
                     #expect(authority["backgroundOnly"] as? Bool == !foreground)
                 } else {
                     #expect(output.contains("Requested foreground UI: \(foreground ? "yes" : "no")"))
+                    #expect(output.contains("Automatic desktop context: no"))
                     #expect(output.contains("Tool calls: 0\nSession saved: no"))
                 }
             }

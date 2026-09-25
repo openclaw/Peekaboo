@@ -8,8 +8,10 @@ import Testing
 @Suite(.tags(.safe))
 @MainActor
 struct AgentDryRunTests {
-    @Test
-    func `preview normalizes instruction and exposes background authority with zero execution`() throws {
+    @Test(arguments: [false, true])
+    func `preview normalizes instruction and exposes background authority with zero execution`(
+        noDesktopContext: Bool
+    ) throws {
         for testCase in [
             (arguments: ["  Inspect TextEdit  ", "--dry-run"], requestedForeground: false, policy: "background_only"),
             (
@@ -18,7 +20,9 @@ struct AgentDryRunTests {
                 policy: "foreground_allowed"
             ),
         ] {
-            let command = try AgentCommand.parse(testCase.arguments)
+            let command = try AgentCommand.parse(
+                testCase.arguments + (noDesktopContext ? ["--no-desktop-context"] : [])
+            )
             let instruction = try #require(command.newTaskDryRunInstruction)
 
             #expect(instruction == "Inspect TextEdit")
@@ -27,6 +31,7 @@ struct AgentDryRunTests {
                 "Instruction: Inspect TextEdit",
                 "Requested foreground UI: \(testCase.requestedForeground ? "yes" : "no")",
                 "Effective UI authority: \(testCase.policy)",
+                "Automatic desktop context: \(noDesktopContext ? "no" : "yes")",
                 "Model execution: skipped",
                 "Tool calls: 0",
                 "Session saved: no",
@@ -41,6 +46,7 @@ struct AgentDryRunTests {
             #expect(result["dryRun"] as? Bool == true)
             #expect(result["instruction"] as? String == instruction)
             #expect(result["modelExecution"] as? String == "skipped")
+            #expect(result["automaticDesktopContext"] as? Bool == !noDesktopContext)
             #expect(result["sessionId"] is NSNull)
             #expect((result["toolCalls"] as? [Any])?.isEmpty == true)
             #expect(result["usage"] is NSNull)

@@ -315,6 +315,7 @@ extension AgentCommand {
                 queueMode: queueMode,
                 eventDelegate: delegate,
                 verbose: self.verbose,
+                enhancementOptions: self.enhancementOptions,
                 requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
             )
         }
@@ -328,6 +329,7 @@ extension AgentCommand {
             queueMode: queueMode,
             eventDelegate: delegate,
             verbose: self.verbose,
+            enhancementOptions: self.enhancementOptions,
             persistSession: !self.noCache,
             toolExecutionPolicy: self.newSessionToolExecutionPolicy
         )
@@ -406,6 +408,7 @@ extension AgentCommand {
                         queueMode: queueMode,
                         eventDelegate: streamingDelegate,
                         verbose: self.verbose,
+                        enhancementOptions: self.enhancementOptions,
                         requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
                     )
                     self.displayResult(result, delegate: outputDelegate)

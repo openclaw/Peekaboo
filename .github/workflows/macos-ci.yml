@@ -307,7 +307,7 @@ jobs:
           swift test --no-parallel --filter ConfigurationManagerConcurrencyTests
           swift test --no-parallel --filter ConfigurationAccessorsOAuthTests
           swift test --no-parallel --filter ScreenCaptureServiceFlowTests
-          swift test --no-parallel --filter AgentRuntimeBoundaryRegressionTests
+          swift test --no-parallel --filter 'AgentRuntimeBoundaryRegressionTests|AgentDesktopContextPolicyTests'
           swift test --no-parallel --filter AgentSessionManagerStorageTests
           swift test --no-parallel --filter PeekabooAgentServiceTests
           swift test --no-parallel --filter PeekabooAgentSessionSafetyTests

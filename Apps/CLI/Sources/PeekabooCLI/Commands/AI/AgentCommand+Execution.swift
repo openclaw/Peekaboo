@@ -53,6 +53,7 @@ extension AgentCommand {
             "Instruction: \(instruction)",
             "Requested foreground UI: \(self.allowForeground ? "yes" : "no")",
             "Effective UI authority: \(policy.rawValue)",
+            "Automatic desktop context: \(self.enhancementOptions.contextAware ? "yes" : "no")",
             "Model execution: skipped",
             "Tool calls: 0",
             "Session saved: no",
@@ -79,6 +80,7 @@ extension AgentCommand {
         payload["dryRun"] = true
         payload["instruction"] = instruction
         payload["modelExecution"] = "skipped"
+        payload["automaticDesktopContext"] = self.enhancementOptions.contextAware
         let policy = self.newSessionToolExecutionPolicy
         payload["uiAuthority"] = [
             "requestedForeground": self.allowForeground,
@@ -275,6 +277,7 @@ extension AgentCommand {
                 queueMode: queueMode,
                 eventDelegate: streamingDelegate,
                 verbose: self.verbose,
+                enhancementOptions: self.enhancementOptions,
                 persistSession: !self.noCache,
                 toolExecutionPolicy: self.newSessionToolExecutionPolicy
             )
