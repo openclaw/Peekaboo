@@ -13,14 +13,14 @@ import UniformTypeIdentifiers
 struct MCPInteractionTargetTests {
     @MainActor
     @Test
-    func `background app target retains its discovered process generation`() async throws {
+    func `background keyboard app target retains its discovered process generation`() async throws {
         let expected = ApplicationProcessIdentity(processIdentifier: 4242, processStartIdentity: 71)
-        let applications = MockApplicationService(applications: [ServiceApplicationInfo(
-            processIdentifier: expected.processIdentifier,
-            processStartIdentity: expected.processStartIdentity,
+        let graph = try AutomationTestFixtures.linkedApplicationInventoryGraph(
+            processIdentity: expected,
             bundleIdentifier: "com.example.editor",
-            name: "Editor")])
-        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+            applicationName: "Editor")
+        let applications = ScriptedApplicationInventoryService(graph: graph)
+        let windows = ScriptedWindowInventoryService(graph: graph)
         let target = try Self.makeTarget(Selectors(
             app: "Editor",
             pid: nil,
@@ -28,21 +28,25 @@ struct MCPInteractionTargetTests {
             windowIndex: nil,
             windowID: nil))
 
-        let identity = try await target.requireBackgroundProcessIdentity(
-            applications: context.applications,
-            windows: context.windows)
+        let resolved = try await target.requireBackgroundKeyboardTarget(
+            applications: applications,
+            windows: windows)
 
-        #expect(identity == expected)
+        #expect(resolved.processIdentity == expected)
+        #expect(resolved.exactWindow?.identity.processIdentity == expected)
     }
 
     @MainActor
     @Test
-    func `background app target refuses missing process generation`() async throws {
-        let applications = MockApplicationService(applications: [ServiceApplicationInfo(
+    func `background keyboard app target refuses missing process generation`() async throws {
+        let application = ServiceApplicationInfo(
             processIdentifier: 4242,
+            processStartIdentity: nil,
             bundleIdentifier: "com.example.editor",
-            name: "Editor")])
-        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+            name: "Editor")
+        #expect(application.processIdentity == nil)
+        let applications = ScriptedApplicationInventoryService(applications: [application])
+        let windows = ScriptedWindowInventoryService()
         let target = try Self.makeTarget(Selectors(
             app: "Editor",
             pid: nil,
@@ -51,10 +55,11 @@ struct MCPInteractionTargetTests {
             windowID: nil))
 
         await #expect(throws: MCPInteractionTargetError.targetProcessIdentityUnavailable) {
-            _ = try await target.requireBackgroundProcessIdentity(
-                applications: context.applications,
-                windows: context.windows)
+            _ = try await target.requireBackgroundKeyboardTarget(
+                applications: applications,
+                windows: windows)
         }
+        #expect(windows.windowMutationInventoryRequests.isEmpty)
     }
 
     @MainActor
