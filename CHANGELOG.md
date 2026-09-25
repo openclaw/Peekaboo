@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clear inherited modifier flags from targeted Unicode typing so held Command, Shift, or other modifiers cannot turn literal text into shortcuts.
+- Route background typing in web fields directly through targeted keyboard events, including clear and editing keys, instead of accepting ignored Accessibility writes; refuse unproven routes before input.
 - Keep zero-delay legacy SDK typing on its keyboard route for proven web controls; refuse unprovable ancestry before input while preserving native AX replacement, action-only refusal, and explicit set-value behavior.
 - Bind receipt-pinned Accessibility typing, clear, and editing-key writes to the native receiver selected by focus validation; refuse last-moment receiver changes before mutation or keyboard fallback while preserving continuation reflow.
 - Avoid downloading CLI CI build caches that are immediately discarded; key reusable dependency state by toolchain, manifests, locks, and submodules instead of every commit.

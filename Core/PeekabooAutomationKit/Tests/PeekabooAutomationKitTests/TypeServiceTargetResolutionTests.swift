@@ -35,6 +35,38 @@ struct TypeServiceTargetResolutionTests {
         }
     }
 
+    @Test(arguments: [
+        CGEventFlags.maskCommand,
+        [.maskShift, .maskAlphaShift],
+        [.maskControl, .maskAlternate, .maskSecondaryFn],
+        CGEventFlags(rawValue: 0x2010_0000),
+    ])
+    func `literal Unicode events discard inherited modifiers without changing text or destination`(
+        inheritedFlags: CGEventFlags) throws
+    {
+        let targetPID: pid_t = 4242
+        let characters: [Character] = ["a", "A", "ä", "😀"]
+        for character in characters {
+            let events = try BackgroundInputDriver.unicodeKeyboardEvents(
+                for: character,
+                targetProcessIdentifier: targetPID,
+                makeEvent: { source, keyDown in
+                    let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: keyDown)
+                    event?.flags = inheritedFlags
+                    return event
+                })
+
+            for event in [events.keyDown, events.keyUp] {
+                #expect(event.flags.isEmpty)
+                #expect(Self.unicodeString(from: event) == String(character))
+                #expect(event.getIntegerValueField(.keyboardEventKeycode) == 0)
+                #expect(event.getIntegerValueField(.eventTargetUnixProcessID) == Int64(targetPID))
+            }
+            #expect(events.keyDown.type == .keyDown)
+            #expect(events.keyUp.type == .keyUp)
+        }
+    }
+
     @Test
     @MainActor
     func `receiver moves to different window stops remaining text`() async throws {
