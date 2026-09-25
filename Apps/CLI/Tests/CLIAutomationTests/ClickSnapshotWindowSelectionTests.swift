@@ -6,6 +6,166 @@ import Testing
 
 @Suite(.tags(.automation), .enabled(if: CLITestEnvironment.runAutomationRead))
 struct ClickSnapshotWindowSelectionTests {
+    @Test(arguments: [["--on", "B1"], ["Save"]], [[], ["--right"], ["--double"], ["--middle"], ["--triple"]])
+    @MainActor
+    func `Snapshot-only clicks retain exact dispatch and JSON target receipts`(
+        targetArguments: [String],
+        clickArguments: [String]
+    ) async throws {
+        let application = Self.makeApplication()
+        let window = Self.makeWindow()
+        let windows = SnapshotReceiptOnlyWindowService(windowsByApp: [application.name: [window]])
+        let fixture = Self.makeFixture(application: application, window: window, windows: windows)
+        let units = switch clickArguments.first {
+        case "--double": 5
+        case "--triple": 7
+        case "--right", "--middle": 3
+        default: 1
+        }
+        let automation = try #require(fixture.automation as? OutcomeStubAutomationService)
+        automation.actionOutcome = .dispatchedUnverified(
+            delivery: .init(
+                mechanism: clickArguments.isEmpty ? .accessibilityAction : .windowTargetedEvents,
+                mode: .background
+            ),
+            evidence: .deliveryAccepted,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(units)
+        )
+        let snapshotID = try await Self.storeSnapshot(window: window, in: fixture.snapshots)
+        let result = try await InProcessCommandRunner.run(
+            ["click"] + targetArguments + clickArguments + ["--snapshot", snapshotID, "--json"],
+            services: fixture.services
+        )
+
+        #expect(result.exitStatus == 0, "\(result.combinedOutput)")
+        #expect(windows.windowLookupCount == 0)
+        #expect(fixture.automation.targetedClickCalls.count == 1)
+        let call = try #require(fixture.automation.targetedClickCalls.first)
+        #expect(call.snapshotId == snapshotID)
+        #expect(call.targetWindowID == window.windowID)
+        #expect(call.expectedWindowIdentity == window.mutationIdentity)
+        #expect(call.expectedWindowBounds == window.bounds)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let identity = try #require(object["target_identity"] as? [String: Any])
+        let receipt = try #require(object["target_receipt"] as? [String: Any])
+        #expect(identity["kind"] as? String == "window")
+        #expect(identity["window_id"] as? Int == window.windowID)
+        #expect(receipt["window_id"] as? Int == window.windowID)
+        #expect(receipt["pid"] as? Int == Int(application.processIdentifier))
+        #expect(receipt["process_start_identity_decimal"] as? String == "7")
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        #expect(outcome["delivery_mode"] as? String == "background")
+        #expect(outcome["dispatched_unit_count"] as? Int == units)
+        #expect(outcome["state"] as? String == "dispatched_unverified")
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Process-scoped evidence never promotes descriptive window hints`(windowHints: Bool) async throws {
+        let application = Self.makeApplication()
+        let window = Self.makeWindow()
+        let windows = SnapshotReceiptOnlyWindowService(windowsByApp: [application.name: [window]])
+        let fixture = Self.makeFixture(application: application, window: window, windows: windows)
+        let snapshotID = try await Self.storeSnapshot(
+            window: window,
+            in: fixture.snapshots,
+            context: WindowContext(
+                applicationName: application.name,
+                applicationProcessId: application.processIdentifier,
+                applicationProcessStartIdentity: 7,
+                windowID: windowHints ? window.windowID : nil,
+                windowBounds: windowHints ? window.bounds : nil
+            )
+        )
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--on", "B1", "--snapshot", snapshotID, "--json"],
+            services: fixture.services
+        )
+
+        #expect(result.exitStatus == 0, "\(result.combinedOutput)")
+        #expect(windows.windowLookupCount == 0)
+        #expect(fixture.automation.targetedClickCalls.count == 1)
+        #expect(fixture.automation.targetedClickCalls.first?.targetWindowID == nil)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let identity = try #require(object["target_identity"] as? [String: Any])
+        let receipt = try #require(object["target_receipt"] as? [String: Any])
+        #expect(identity["kind"] as? String == "process")
+        #expect(receipt["window_id"] == nil)
+        #expect(receipt["pid"] as? Int == Int(application.processIdentifier))
+        #expect(receipt["process_start_identity_decimal"] as? String == "7")
+    }
+
+    @Test
+    @MainActor
+    func `Window identity supplies captured bounds when the context omits its duplicate`() async throws {
+        // This verifies CLI forwarding; native admission still requires its complete snapshot context.
+        let application = Self.makeApplication()
+        let window = Self.makeWindow()
+        let windows = SnapshotReceiptOnlyWindowService(windowsByApp: [application.name: [window]])
+        let fixture = Self.makeFixture(application: application, window: window, windows: windows)
+        let snapshotID = try await Self.storeSnapshot(
+            window: window,
+            in: fixture.snapshots,
+            context: WindowContext(
+                applicationName: application.name,
+                applicationProcessId: application.processIdentifier,
+                windowID: window.windowID,
+                windowMutationIdentity: window.mutationIdentity
+            )
+        )
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--on", "B1", "--snapshot", snapshotID, "--json"],
+            services: fixture.services
+        )
+
+        #expect(result.exitStatus == 0, "\(result.combinedOutput)")
+        #expect(fixture.automation.targetedClickCalls.count == 1)
+        #expect(fixture.automation.targetedClickCalls.first?.expectedWindowBounds == window.bounds)
+        #expect(fixture.automation.targetedClickCalls.first?.expectedWindowIdentity == window.mutationIdentity)
+        #expect(windows.windowLookupCount == 0)
+    }
+
+    @Test(arguments: [
+        "missing-generation",
+        "missing-bounds",
+        "missing-captured-bounds",
+        "wrong-window",
+        "wrong-bounds"
+    ])
+    @MainActor
+    func `Incomplete or inconsistent capture receipts refuse before click dispatch`(variant: String) async throws {
+        let application = Self.makeApplication()
+        let window = Self.makeWindow()
+        let windows = SnapshotReceiptOnlyWindowService(windowsByApp: [application.name: [window]])
+        let fixture = Self.makeFixture(application: application, window: window, windows: windows)
+        let snapshotID = try await Self.storeSnapshot(
+            window: window,
+            in: fixture.snapshots,
+            context: WindowContext(
+                applicationName: application.name,
+                applicationProcessId: application.processIdentifier,
+                applicationProcessStartIdentity: variant == "missing-generation" ? nil : 7,
+                windowID: variant == "wrong-window" ? 43 : window.windowID,
+                windowBounds: variant == "missing-bounds" ? nil :
+                    (variant == "wrong-bounds" ? window.bounds.offsetBy(dx: 1, dy: 0) : window.bounds),
+                windowMutationIdentity: variant == "missing-generation" ? nil :
+                    (["missing-bounds", "missing-captured-bounds"].contains(variant) ? WindowMutationIdentity(
+                        windowID: window.windowID,
+                        ownerProcessIdentifier: application.processIdentifier,
+                        ownerProcessStartIdentity: 7
+                    ) : window.mutationIdentity)
+            )
+        )
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--on", "B1", "--snapshot", snapshotID, "--json"],
+            services: fixture.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(fixture.automation.targetedClickCalls.isEmpty)
+        #expect(windows.windowLookupCount == 0)
+    }
+
     @Test
     @MainActor
     func `Explicit exact-window snapshot does not depend on a second broad window lookup`() async throws {
@@ -74,7 +234,8 @@ struct ClickSnapshotWindowSelectionTests {
     @MainActor
     private static func storeSnapshot(
         window: ServiceWindowInfo,
-        in snapshots: StubSnapshotManager
+        in snapshots: StubSnapshotManager,
+        context: WindowContext? = nil
     ) async throws -> String {
         let snapshotID = try await snapshots.createSnapshot()
         let identity = try #require(window.mutationIdentity)
@@ -93,7 +254,7 @@ struct ClickSnapshotWindowSelectionTests {
                     detectionTime: 0,
                     elementCount: 1,
                     method: "stub",
-                    windowContext: WindowContext(
+                    windowContext: context ?? WindowContext(
                         applicationName: "TestApp",
                         applicationBundleId: "com.example.test",
                         applicationProcessId: 12345,
@@ -142,8 +303,10 @@ struct ClickSnapshotWindowSelectionTests {
 @MainActor
 private final class SnapshotReceiptOnlyWindowService: StubWindowService {
     private(set) var exactWindowLookupCount = 0
+    private(set) var windowLookupCount = 0
 
     override func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
+        self.windowLookupCount += 1
         if case .windowId = target {
             self.exactWindowLookupCount += 1
             throw PeekabooError.windowNotFound(criteria: "fixture rejects redundant exact-window enumeration")

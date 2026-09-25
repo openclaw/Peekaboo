@@ -62,6 +62,8 @@ extension StubAutomationService {
                 processIdentifier: windowEvidence.identity.ownerProcessIdentifier,
                 processStartIdentity: windowEvidence.identity.ownerProcessStartIdentity
             ),
+            expectedWindowIdentity: windowEvidence.identity,
+            expectedWindowBounds: windowEvidence.bounds,
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery
         ))
         if let clickError {

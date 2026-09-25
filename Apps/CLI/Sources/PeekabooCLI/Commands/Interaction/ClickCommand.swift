@@ -457,8 +457,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let resolvedElement: DetectedElement?
         let coordinateResolution: InteractionCoordinateResolution?
         let explicitWindowResolution: InteractionWindowResolution?
-        let backgroundProcessIdentity: ApplicationProcessIdentity?
-        let statelessWindowTarget: UIAutomationTarget.ExactWindow?
+        let backgroundTarget: DesktopTargetIdentity?
     }
 
     private struct ClickDispatchResult {
@@ -480,8 +479,8 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 resolvedElement: resolvedElement
             )
         }
-        let backgroundProcessIdentity: ApplicationProcessIdentity? = if self.usesBackgroundDelivery {
-            try await self.resolveBackgroundClickProcessIdentity(
+        let backgroundTarget: DesktopTargetIdentity? = if self.usesBackgroundDelivery {
+            try await self.resolveBackgroundClickTarget(
                 snapshotId: snapshotId.isEmpty ? nil : snapshotId,
                 coordinateResolution: coordinateResolution,
                 explicitWindowResolution: explicitWindowResolution
@@ -491,15 +490,12 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
 
         let clickType = self.requestedClickType
-        let statelessWindowTarget: UIAutomationTarget.ExactWindow? = if self.usesBackgroundDelivery,
-                                                                        clickType
-                                                                            .requiresStatelessVariantSupport {
-            try await self.resolveStatelessClickWindowTarget(
-                snapshotId: snapshotId,
-                expectedProcessIdentity: backgroundProcessIdentity
+        if self.usesBackgroundDelivery,
+           clickType.requiresStatelessVariantSupport,
+           backgroundTarget?.exactWindow == nil {
+            throw ValidationError(
+                "Background middle- and triple-clicks require a capture-time window identity and bounds."
             )
-        } else {
-            nil
         }
         if self.usesBackgroundDelivery, case .coordinates = clickTarget {
             try await self.validateBackgroundCoordinateResolution(
@@ -520,8 +516,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                         resolvedElement: resolvedElement,
                         coordinateResolution: coordinateResolution,
                         explicitWindowResolution: explicitWindowResolution,
-                        backgroundProcessIdentity: backgroundProcessIdentity,
-                        statelessWindowTarget: statelessWindowTarget
+                        backgroundTarget: backgroundTarget
                     )
                 )
             },
@@ -646,14 +641,14 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
 
         if self.usesBackgroundDelivery {
-            guard let backgroundProcessIdentity = context.backgroundProcessIdentity else {
-                preconditionFailure("Background process identity must be resolved before click delivery")
+            guard let backgroundTarget = context.backgroundTarget else {
+                preconditionFailure("Background target identity must be resolved before click delivery")
             }
             let exactWindowInfo = context.explicitWindowResolution?.windowInfo ??
                 context.coordinateResolution?.windowInfo
-            let targetWindowID = exactWindowInfo?.windowID ?? context.statelessWindowTarget?.identity.windowID
-            let expectedWindowIdentity = exactWindowInfo?.mutationIdentity ?? context.statelessWindowTarget?.identity
-            let expectedWindowBounds = exactWindowInfo?.bounds ?? context.statelessWindowTarget?.bounds
+            let targetWindowID = exactWindowInfo?.windowID ?? backgroundTarget.exactWindow?.identity.windowID
+            let expectedWindowIdentity = exactWindowInfo?.mutationIdentity ?? backgroundTarget.exactWindow?.identity
+            let expectedWindowBounds = exactWindowInfo?.bounds ?? backgroundTarget.exactWindow?.bounds
             if targetWindowID != nil, expectedWindowIdentity == nil {
                 throw PeekabooError.snapshotStale(
                     "Exact-window click snapshot has no capture-time process-generation receipt; " +
@@ -665,7 +660,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 target: target,
                 clickType: clickType,
                 snapshotId: effectiveSnapshotId,
-                expectedProcessIdentity: backgroundProcessIdentity,
+                expectedProcessIdentity: backgroundTarget.processIdentity,
                 targetWindowID: targetWindowID,
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds
@@ -1123,23 +1118,20 @@ extension ClickCommand {
         "Background coordinate clicks require --snapshot from a fresh see capture of the exact target window. " +
         "PID-only/app-only coordinates and empty snapshots are refused."
 
-    private func resolveBackgroundClickProcessIdentity(
+    private func resolveBackgroundClickTarget(
         snapshotId: String?,
         coordinateResolution: InteractionCoordinateResolution?,
         explicitWindowResolution: InteractionWindowResolution?
-    ) async throws -> ApplicationProcessIdentity {
+    ) async throws -> DesktopTargetIdentity {
         if self.target.pid != nil, self.target.app != nil {
             throw ValidationError("Background click accepts one process target: use --app or --pid")
         }
 
-        if let identity = explicitWindowResolution?.windowInfo.mutationIdentity {
-            return ApplicationProcessIdentity(
-                processIdentifier: identity.ownerProcessIdentifier,
-                processStartIdentity: identity.ownerProcessStartIdentity
-            )
+        if let window = explicitWindowResolution?.windowInfo, let identity = window.mutationIdentity {
+            return try DesktopTargetIdentity(exactWindow: .init(identity: identity, bounds: window.bounds))
         }
 
-        let snapshotIdentity = try await self.backgroundClickSnapshotProcessIdentity(snapshotId: snapshotId)
+        let snapshotTarget = try await self.backgroundClickSnapshotTarget(snapshotId: snapshotId)
         let selectedIdentity: ApplicationProcessIdentity?
         if let pid = target.pid {
             guard pid > 0 else {
@@ -1160,13 +1152,16 @@ extension ClickCommand {
             selectedIdentity = nil
         }
 
-        if let snapshotIdentity, let selectedIdentity, snapshotIdentity != selectedIdentity {
+        if let snapshotTarget, let selectedIdentity, snapshotTarget.processIdentity != selectedIdentity {
             throw ValidationError(
                 "Background click snapshot belongs to a different process generation; run see again before clicking."
             )
         }
-        if let identity = snapshotIdentity ?? selectedIdentity {
-            return identity
+        if let snapshotTarget {
+            return snapshotTarget
+        }
+        if let selectedIdentity {
+            return try DesktopTargetIdentity(processIdentity: selectedIdentity)
         }
 
         throw ValidationError(
@@ -1175,33 +1170,36 @@ extension ClickCommand {
         )
     }
 
-    private func backgroundClickSnapshotProcessIdentity(snapshotId: String?) async throws
-    -> ApplicationProcessIdentity? {
+    private func backgroundClickSnapshotTarget(snapshotId: String?) async throws -> DesktopTargetIdentity? {
         guard let snapshotId else { return nil }
         do {
             let plan = try await SnapshotTargetReceiptPlanner(
                 snapshots: self.services.snapshots,
                 sourceFailurePolicy: .omitUnavailableSources
             )
-            .planProcessIdentity(snapshotID: snapshotId)
+            .plan(snapshotID: snapshotId)
             guard plan.hasProcessIdentifierEvidence else {
                 throw ValidationError(
                     "Snapshot '\(snapshotId)' does not identify a target process. Run see again before clicking."
                 )
             }
-            return try plan.receipt.requireIdentity().processIdentity
+            return try plan.receipt.requireIdentity()
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as Commander.ValidationError {
             throw error
-        } catch DesktopTargetIdentityError.missingProcessGeneration,
-            DesktopTargetIdentityError.incompleteExactWindow {
+        } catch DesktopTargetIdentityError.missingProcessGeneration {
             throw ValidationError(
                 "Snapshot '\(snapshotId)' has no capture-time process-generation receipt. " +
                     "Run see again before clicking."
             )
+        } catch DesktopTargetIdentityError.incompleteExactWindow {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' has no complete capture-time window identity and bounds. " +
+                    "Run see again before clicking."
+            )
         } catch {
-            throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+            throw ValidationError("Snapshot '\(snapshotId)' has inconsistent target metadata.")
         }
     }
 

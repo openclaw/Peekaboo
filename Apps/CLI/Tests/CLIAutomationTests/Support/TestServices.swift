@@ -196,6 +196,8 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
         let targetProcessIdentifier: pid_t
         let targetWindowID: Int?
         let expectedProcessIdentity: ApplicationProcessIdentity?
+        let expectedWindowIdentity: WindowMutationIdentity?
+        let expectedWindowBounds: CGRect?
         let allowsAccessibilityValueDelivery: Bool?
 
         init(
@@ -205,6 +207,8 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             targetProcessIdentifier: pid_t,
             targetWindowID: Int?,
             expectedProcessIdentity: ApplicationProcessIdentity?,
+            expectedWindowIdentity: WindowMutationIdentity? = nil,
+            expectedWindowBounds: CGRect? = nil,
             allowsAccessibilityValueDelivery: Bool? = nil
         ) {
             self.target = target
@@ -213,6 +217,8 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             self.targetProcessIdentifier = targetProcessIdentifier
             self.targetWindowID = targetWindowID
             self.expectedProcessIdentity = expectedProcessIdentity
+            self.expectedWindowIdentity = expectedWindowIdentity
+            self.expectedWindowBounds = expectedWindowBounds
             self.allowsAccessibilityValueDelivery = allowsAccessibilityValueDelivery
         }
     }
@@ -368,7 +374,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
         clickType: ClickType,
         snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
-        expectedWindowBounds _: CGRect
+        expectedWindowBounds: CGRect
     ) async throws {
         self.targetedClickCalls.append(TargetedClickCall(
             target: target,
@@ -379,7 +385,9 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             expectedProcessIdentity: ApplicationProcessIdentity(
                 processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
                 processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity
-            )
+            ),
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds
         ))
         if let clickError {
             throw clickError

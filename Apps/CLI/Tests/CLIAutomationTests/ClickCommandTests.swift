@@ -354,6 +354,8 @@ struct ClickCommandTests {
         let call = try #require(calls.first)
         #expect(call.snapshotId == snapshotId)
         #expect(call.targetProcessIdentifier == 12345)
+        #expect(call.targetWindowID == 42)
+        #expect(call.expectedWindowIdentity?.windowID == 42)
         #expect(call.expectedProcessIdentity == ApplicationProcessIdentity(
             processIdentifier: 12345,
             processStartIdentity: 7
