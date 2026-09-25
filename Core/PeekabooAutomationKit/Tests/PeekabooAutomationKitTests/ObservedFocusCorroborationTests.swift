@@ -92,6 +92,93 @@ struct ObservedFocusCorroborationTests {
         #expect(readTimeouts == [0.05])
     }
 
+    @Test(arguments: [0.1, 0.5])
+    func `menu read replaces initial focus timeout with current remaining budget`(remaining: TimeInterval) {
+        let started = ContinuousClock.now
+        let deadline = started.advanced(by: .seconds(1))
+        var applicationTimeout: Float = 0.2
+        var now = started
+        let initial = DetachedAXObservationWorker.initialFocusedReference(deadline: deadline, now: now) {
+            applicationTimeout = $0
+            now = now.advanced(by: .seconds(Double($0)))
+            return 3
+        }
+        #expect(initial == 3)
+        #expect(applicationTimeout == 0.05)
+
+        now = deadline.advanced(by: .seconds(-remaining))
+        var appliedTimeouts: [Float] = []
+        var menuReads = 0
+        let menu: String? = DetachedAXObservationWorker.readApplicationReference(
+            deadline: deadline,
+            now: now,
+            applyTimeout: {
+                applicationTimeout = $0
+                appliedTimeouts.append($0)
+                return true
+            },
+            read: {
+                menuReads += 1
+                guard applicationTimeout >= 0.075 else { return nil }
+                now = now.advanced(by: .milliseconds(75))
+                return "menu"
+            })
+
+        #expect(menu == "menu")
+        #expect(menuReads == 1)
+        #expect(appliedTimeouts == [Float(min(0.2, remaining))])
+        #expect(now < deadline)
+    }
+
+    @Test(arguments: [0.0, -0.01])
+    func `menu read skips expired deadline without reusing initial focus timeout`(remaining: TimeInterval) {
+        let started = ContinuousClock.now
+        let deadline = started.advanced(by: .seconds(1))
+        var applicationTimeout: Float = 0.2
+        let initial = DetachedAXObservationWorker.initialFocusedReference(deadline: deadline, now: started) {
+            applicationTimeout = $0
+            return 3
+        }
+        var timeoutApplications = 0
+        var menuReads = 0
+
+        let menu: String? = DetachedAXObservationWorker.readApplicationReference(
+            deadline: deadline,
+            now: deadline.advanced(by: .seconds(-remaining)),
+            applyTimeout: {
+                applicationTimeout = $0
+                timeoutApplications += 1
+                return true
+            },
+            read: {
+                menuReads += 1
+                return "menu"
+            })
+
+        #expect(initial == 3)
+        #expect(applicationTimeout == 0.05)
+        #expect(menu == nil)
+        #expect(timeoutApplications == 0)
+        #expect(menuReads == 0)
+    }
+
+    @Test
+    func `application reference read requires successful timeout installation`() {
+        let now = ContinuousClock.now
+        var reads = 0
+        let reference: Int? = DetachedAXObservationWorker.readApplicationReference(
+            deadline: now.advanced(by: .seconds(1)),
+            now: now,
+            applyTimeout: { _ in false },
+            read: {
+                reads += 1
+                return 3
+            })
+
+        #expect(reference == nil)
+        #expect(reads == 0)
+    }
+
     @Test(arguments: Self.orders)
     func `stable authority selects the emitted reference independent of insertion order`(order: [Int]) {
         let entries = [("outer", 1), ("inner", 2), ("field", 3)]

@@ -238,12 +238,16 @@ test("initial observed focus probe reserves the existing traversal deadline thro
   assert.doesNotMatch(initialProbe, /advanced\(by:|\.now|focusedReference\(application: application, deadline:/);
   assert.match(worker, /var state = TraversalState\(\)\s*self\.process\(\s*window,\s*request: TraversalRequest\(\s*depth: 0,\s*deadline: deadline,/);
   assert.match(worker, /readCurrentReference: \{ self\.focusedReference\(application: application, deadline: deadline\) \}/);
+  assert.match(worker, /if request\.includeMenuBarElements, request\.appIsActive,\s*let menuBar = self\.readApplicationReference\(\s*deadline: deadline,\s*applyTimeout: \{ AXUIElementSetMessagingTimeout\(application, \$0\) == \.success \},\s*read: \{ self\.elementAttribute\(kAXMenuBarAttribute, of: application\) \}\)/);
+  assert.match(worker, /private static func focusedReference\(\s*application: AXUIElement,\s*deadline: ContinuousClock\.Instant\) -> AXUIElement\?\s*\{\s*self\.readApplicationReference\(/);
   const proof = readFileSync(
     `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ObservedFocusCorroborationTests.swift`, "utf8",
   );
   assert.match(proof, /stalled optional focus read leaves short deadline available for ordinary traversal/);
   assert.match(proof, /hardTimeoutSeconds: 0\.05/);
   assert.match(proof, /initialFocusedReference\(deadline: deadline, now: now\)/);
+  assert.match(proof, /menu read replaces initial focus timeout with current remaining budget/);
+  assert.match(proof, /menu read skips expired deadline without reusing initial focus timeout/);
   assert.doesNotMatch(proof, /DetachedAXObservationWorker\.inspect\(|AXUIElement|Task\.sleep|Thread\.sleep|NSWorkspace|NSApplication|executePeekabooCLI/);
 });
 

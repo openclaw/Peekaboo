@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Preserve returned process and exact-window target identities and receipts in successful MCP typing metadata, including pixel-focus typing.
-- Resolve ambiguous background focus observations using a stable native application receiver matched to one captured element, while preserving exact-window ownership, live input validation, and ordinary traversal time when the optional initial focus read stalls.
+- Resolve ambiguous background focus observations using a stable native application receiver matched to one captured element, while preserving exact-window ownership, live input validation, and ordinary traversal time when the optional initial focus read stalls; later menu-bar reads retain their normal remaining-deadline budget.
 - Explain missing or ambiguous observed focus in `see --verbose` using content-free capture diagnostics without extra Accessibility reads or changed input guards.
 - Expose already-observed focus identity in `see --json` and `see`/`inspect_ui` MCP metadata without extra Accessibility reads, preserving unknown focus and existing input guards.
 - Clear inherited modifier flags from targeted Unicode typing so held Command, Shift, or other modifiers cannot turn literal text into shortcuts.

@@ -300,8 +300,11 @@ enum DetachedAXObservationWorker {
                 source: nil),
             state: &state)
 
-        if request.includeMenuBarElements, request.appIsActive, ContinuousClock.now < deadline,
-           let menuBar = self.elementAttribute(kAXMenuBarAttribute, of: application)
+        if request.includeMenuBarElements, request.appIsActive,
+           let menuBar = self.readApplicationReference(
+               deadline: deadline,
+               applyTimeout: { AXUIElementSetMessagingTimeout(application, $0) == .success },
+               read: { self.elementAttribute(kAXMenuBarAttribute, of: application) })
         {
             self.process(
                 menuBar,
@@ -943,6 +946,19 @@ enum DetachedAXObservationWorker {
 }
 
 extension DetachedAXObservationWorker {
+    static func readApplicationReference<Reference>(
+        deadline: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now,
+        applyTimeout: (Float) -> Bool,
+        read: () -> Reference?) -> Reference?
+    {
+        // The shared application reference may retain the initial focus probe's shorter timeout.
+        guard let timeout = self.remainingMessagingTimeout(until: deadline, now: now),
+              applyTimeout(timeout)
+        else { return nil }
+        return read()
+    }
+
     static func initialFocusedReference<Reference>(
         deadline: ContinuousClock.Instant,
         now: ContinuousClock.Instant = .now,
@@ -979,8 +995,10 @@ extension DetachedAXObservationWorker {
         application: AXUIElement,
         deadline: ContinuousClock.Instant) -> AXUIElement?
     {
-        guard let timeout = self.remainingMessagingTimeout(until: deadline) else { return nil }
-        return self.focusedReference(application: application, timeout: timeout)
+        self.readApplicationReference(
+            deadline: deadline,
+            applyTimeout: { AXUIElementSetMessagingTimeout(application, $0) == .success },
+            read: { DetachedExactWindowFocusReader.focusedElementReference(of: application) })
     }
 
     private static func focusedReference(application: AXUIElement, timeout: Float) -> AXUIElement? {
