@@ -220,7 +220,9 @@ struct CommandRuntime {
     @MainActor let logger: Logger
 
     @MainActor
-    var observationTimeoutMutationTracker: InteractionMutationTracker? {
+    func observationTimeoutMutationTracker(mayMutateDesktop: Bool) -> InteractionMutationTracker? {
+        // Read-only work neither owns nor extends a caller's desktop mutation lease.
+        guard mayMutateDesktop else { return nil }
         if self.selectedRemoteSocketPath == nil || self.interactionMutationTracker.hasPendingDurableMutation {
             return self.interactionMutationTracker
         }

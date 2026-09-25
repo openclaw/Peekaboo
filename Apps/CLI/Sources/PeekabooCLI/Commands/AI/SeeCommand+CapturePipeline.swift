@@ -25,7 +25,9 @@ extension SeeCommand {
                 windowContext: windowContext,
                 timeoutSeconds: timeoutSeconds,
                 snapshotID: snapshotID,
-                interactionMutationTracker: self.resolvedRuntime.observationTimeoutMutationTracker
+                interactionMutationTracker: self.resolvedRuntime.observationTimeoutMutationTracker(
+                    mayMutateDesktop: self.mayMutateDuringObservation
+                )
             )
         } catch is TimeoutError where windowContext?.shouldFocusWebContent == true {
             throw DesktopActionFailure.indeterminate(

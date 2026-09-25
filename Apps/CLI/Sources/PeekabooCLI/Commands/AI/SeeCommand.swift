@@ -142,6 +142,10 @@ RuntimeBackedCommand {
         self.pid != nil || self.windowId != nil
     }
 
+    var mayMutateDuringObservation: Bool {
+        self.webFocus || self.menubar
+    }
+
     func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
         try await self.resolvedRuntime.withCaptureFocusMutation(operation)
     }
@@ -173,7 +177,7 @@ RuntimeBackedCommand {
         }
 
         let commandCopy = self
-        let mayMutateDuringObservation = commandCopy.webFocus || commandCopy.menubar
+        let mayMutateDuringObservation = commandCopy.mayMutateDuringObservation
         let actionProgress = mayMutateDuringObservation ? DesktopObservationActionProgress() : nil
 
         do {
@@ -219,7 +223,9 @@ RuntimeBackedCommand {
                 let context = try await Self.withWallClockTimeout(
                     seconds: preparationTimeout,
                     timeoutErrorSeconds: overallTimeout,
-                    interactionMutationTracker: runtime.observationTimeoutMutationTracker
+                    interactionMutationTracker: runtime.observationTimeoutMutationTracker(
+                        mayMutateDesktop: mayMutateDuringObservation
+                    )
                 ) {
                     try await DesktopObservationActionProgressContext.$current.withValue(actionProgress) {
                         try await commandCopy.prepareResult(

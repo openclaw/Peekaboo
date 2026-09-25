@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep fresh local `see` snapshots eligible for subsequent background input by excluding read-only observation timeouts from mutation barriers; preserve barriers for web-focus/menu-opening observations and caller-owned mutations.
 - Add `agent --no-desktop-context` to skip new automatic desktop-context collection for run, chat, and resume invocations while preserving saved history, tool access, and background authority.
 - Preserve returned process and exact-window target identities and receipts in successful MCP typing metadata, including pixel-focus typing.
 - Resolve ambiguous background focus observations using a stable native application receiver matched to one captured element, while preserving exact-window ownership, live input validation, and ordinary traversal time when the optional initial focus read stalls; later menu-bar reads retain their normal remaining-deadline budget.

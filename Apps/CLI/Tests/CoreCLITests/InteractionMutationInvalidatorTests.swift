@@ -431,7 +431,7 @@ struct InteractionMutationInvalidatorTests {
     }
 
     @Test
-    func `Observation timeouts borrow only local or existing caller barriers`() async throws {
+    func `Only mutation-capable observation timeouts borrow local or existing caller barriers`() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-cli-timeout-barrier-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -446,10 +446,19 @@ struct InteractionMutationInvalidatorTests {
                 captureEnginePreference: nil,
                 inputStrategy: nil
             ),
-            services: PeekabooServices(snapshotManager: InMemorySnapshotManager()),
+            services: FocusProofPressServices(
+                windows: MockWindowService(result: []),
+                automation: MockAutomationService()
+            ),
             interactionMutationTracker: localTracker
         )
-        #expect(localRuntime.observationTimeoutMutationTracker === localTracker)
+        #expect(localRuntime.observationTimeoutMutationTracker(mayMutateDesktop: false) == nil)
+        #expect(localRuntime.observationTimeoutMutationTracker(mayMutateDesktop: true) === localTracker)
+
+        #expect(try await localTracker.beginDurableMutation())
+        #expect(localRuntime.observationTimeoutMutationTracker(mayMutateDesktop: false) == nil)
+        #expect(localRuntime.observationTimeoutMutationTracker(mayMutateDesktop: true) === localTracker)
+        try localTracker.cancelDurableMutation()
 
         let remoteTracker = InteractionMutationTracker(
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore(directoryURL: root)
@@ -462,14 +471,19 @@ struct InteractionMutationInvalidatorTests {
                 captureEnginePreference: nil,
                 inputStrategy: nil
             ),
-            services: PeekabooServices(snapshotManager: InMemorySnapshotManager()),
+            services: FocusProofPressServices(
+                windows: MockWindowService(result: []),
+                automation: MockAutomationService()
+            ),
             selectedRemoteSocketPath: "/tmp/selected.sock",
             interactionMutationTracker: remoteTracker
         )
-        #expect(remoteRuntime.observationTimeoutMutationTracker == nil)
+        #expect(remoteRuntime.observationTimeoutMutationTracker(mayMutateDesktop: false) == nil)
+        #expect(remoteRuntime.observationTimeoutMutationTracker(mayMutateDesktop: true) == nil)
 
         #expect(try await remoteTracker.beginDurableMutation())
-        #expect(remoteRuntime.observationTimeoutMutationTracker === remoteTracker)
+        #expect(remoteRuntime.observationTimeoutMutationTracker(mayMutateDesktop: false) == nil)
+        #expect(remoteRuntime.observationTimeoutMutationTracker(mayMutateDesktop: true) === remoteTracker)
         try remoteTracker.cancelDurableMutation()
     }
 

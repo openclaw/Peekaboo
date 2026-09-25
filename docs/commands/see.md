@@ -10,6 +10,12 @@ read_when:
 `peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find fresh element IDs, bounds, labels, and snapshot IDs.
 
 Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows.
+
+Timeout handling for plain observations, including AX-tree-only reads, does not advance the desktop mutation
+watermark or borrow an enclosing mutation's barrier. Completing a successful read does not by itself invalidate its
+fresh implicit snapshot. Other desktop mutations can still invalidate it. Explicit `--web-focus` and menu-opening
+observations retain their mutation barriers, including until timed-out or cancelled native work finishes.
+
 With implicit host discovery and the standard daemon path, `see` prefers the current CLI build's deterministic
 build-scoped daemon and may auto-start it before considering a healthy Peekaboo.app host. This applies to pixel and
 AX-tree-only forms because their snapshots and capability decisions are host-memory state. An explicit
