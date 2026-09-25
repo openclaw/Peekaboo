@@ -309,6 +309,27 @@ enum FocusDispatchRecord: Equatable, Sendable {
 }
 
 enum FocusDispatchAccounting {
+    static func submittingRaise(
+        onDispatch: ((FocusDispatchRecord) -> Void)?,
+        checkCancellation: () throws -> Void = { try Task.checkCancellation() },
+        operation: () throws -> Void) throws
+    {
+        try checkCancellation()
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .accessibilityAction, mode: .foreground)
+        do {
+            try operation()
+            onDispatch?(.accepted(delivery))
+        } catch let error as AccessibilitySystemError
+            where error.axError == .actionUnsupported || error.axError == .attributeUnsupported
+        {
+            // Advertised AXRaise can still refuse; keep the error for settlement and strict ownership checks.
+            throw error
+        } catch {
+            onDispatch?(.mayHaveDispatched(delivery))
+            throw error
+        }
+    }
+
     @discardableResult
     static func acceptingBool(
         delivery: DesktopActionOutcome.Delivery,
@@ -1060,8 +1081,7 @@ public final class FocusManagementService {
                             windowID: windowID,
                             element: windowElement)
                         try context.dispatchGuard?.validate(.raiseWindow)
-                        _ = try FocusDispatchAccounting.submittingThrowing(
-                            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                        try FocusDispatchAccounting.submittingRaise(
                             onDispatch: context.onDispatch,
                             operation: { try windowElement.performAction(.raise) })
                     },

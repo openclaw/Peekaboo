@@ -164,7 +164,12 @@ private func prepareFocusSelection(
             hint: "Use a more specific title or select the window by ID after refreshing the window inventory."
         )
     }
-    guard let selected = matches.first,
+    let preferredWindow = if case .application = target {
+        ObservationTargetResolver.bestWindow(from: matches) ?? matches.first
+    } else {
+        matches.first
+    }
+    guard let selected = preferredWindow,
           let identity = selected.mutationIdentity,
           identity.windowID == selected.windowID,
           let bounds = identity.capturedBounds,
@@ -245,8 +250,6 @@ func ensureFocused(
         return UIAutomationActionResult(payload: (), outcome: nil)
     }
 
-    let focusService = FocusManagementActor.shared
-
     let snapshot = if let snapshotId {
         try await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId)
     } else {
@@ -305,6 +308,7 @@ func ensureFocused(
         )
     }
 
+    let focusService = FocusManagementActor.shared
     let targetWindow: CGWindowID? = if let retainedSelection {
         CGWindowID(exactly: retainedSelection.identity.windowID)
     } else {

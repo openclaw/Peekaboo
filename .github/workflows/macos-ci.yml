@@ -120,6 +120,27 @@ jobs:
       - name: Show Swift toolchain version
         run: swift --version
 
+      - name: Run foreground hotkey release contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_READ: "false"
+          RUN_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_ACTIONS: "false"
+          RUN_LOCAL_TESTS: "false"
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/foreground-hotkey-release.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel --jobs 4 \
+            --filter '^PeekabooAutomationKitTests[.](HotkeyServiceForegroundReleaseTests|ForegroundKeyboardEventPairTests)/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite HotkeyServiceForegroundReleaseTests passed after ' "$test_log"
+          grep -Fq 'Suite ForegroundKeyboardEventPairTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run clipboard paste admission gate contracts
         working-directory: Core/PeekabooAutomationKit
         env:
@@ -154,6 +175,23 @@ jobs:
           test_log="$RUNNER_TEMP/application-running-state.log"
           swift test --no-parallel --filter ApplicationRunningStateTests 2>&1 | tee "$test_log"
           grep -Fq 'Suite ApplicationRunningStateTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
+      - name: Run focus raise accounting contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_ACTIONS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/focus-raise-accounting.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests)/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite FocusDispatchAccountingTests passed after ' "$test_log"
+          grep -Fq 'Suite FocusRaiseDispatchAccountingTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run desktop operation lane lock contracts

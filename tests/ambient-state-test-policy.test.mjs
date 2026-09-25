@@ -146,6 +146,83 @@ test("hosted CI runs exact hotkey receipt Core guards", () => {
   assert.doesNotMatch(step, /RUN_(?:AUTOMATION_TESTS|AUTOMATION_ACTIONS|LOCAL_TESTS): "true"/);
 });
 
+test("hosted foreground keyboard release CI selects only its isolated suites", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const marker = "      - name: Run foreground hotkey release contracts\n";
+  assert.equal(workflow.split(marker).length, 2, "Expected exactly one foreground hotkey release step");
+  const step = workflow.split(marker)[1].split("\n      - name:")[0];
+  const suites = ["HotkeyServiceForegroundReleaseTests", "ForegroundKeyboardEventPairTests"];
+  assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
+  for (const name of [
+    "PEEKABOO_INCLUDE_AUTOMATION_TESTS", "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS",
+    "PEEKABOO_RUN_INPUT_AUTOMATION_TESTS", "RUN_AUTOMATION_READ", "RUN_AUTOMATION_TESTS",
+    "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS",
+  ]) {
+    assert.ok(step.includes(`${name}: "false"`), `${name} must be disabled`);
+  }
+  assert.match(step, /PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"/);
+  assert.match(step, /set -euo pipefail/);
+  assert.ok(step.includes("swift test --disable-xctest --enable-swift-testing --no-parallel --jobs 4"));
+  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+  const filter = step.match(/--filter '([^']+)'/)?.[1];
+  assert.equal(filter, `^PeekabooAutomationKitTests[.](${suites.join("|")})/`);
+  const selection = new RegExp(filter);
+  for (const suite of suites) {
+    assert.ok(selection.test(`PeekabooAutomationKitTests.${suite}/normalRelease()`));
+    assert.ok(!selection.test(`PeekabooAutomationKitTests.${suite}Extra/unsafe()`));
+    assert.ok(!selection.test(`OtherTests.${suite}/normalRelease()`));
+    assert.ok(step.includes(`grep -Fq 'Suite ${suite} passed after ' "$test_log"`));
+    const source = readFileSync(
+      `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/${suite}.swift`, "utf8",
+    );
+    assert.doesNotMatch(source, /\.post\(|\.postToPid\(|Task\.sleep|NSWorkspace|NSApplication|executePeekabooCLI/);
+  }
+  for (const id of [
+    "PeekabooAutomationKitTests.HotkeyServiceTargetingTests/targetedInput()",
+    "PeekabooAutomationKitTests.TypeServiceTargetResolutionTests/foregroundInput()",
+  ]) {
+    assert.ok(!selection.test(id), id);
+  }
+  assert.ok(step.includes('2>&1 | tee "$test_log"'));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' \"$test_log\""));
+  assert.doesNotMatch(step, /continue-on-error|--skip-build/);
+  const source = readFileSync(
+    `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/HotkeyServiceForegroundReleaseTests.swift`, "utf8",
+  );
+  assert.match(source, /foregroundEventPoster: \{ event in/);
+  assert.match(source, /frontmostApplicationResolver: \{ nil \}/);
+  assert.match(source, /coordinationRootURL: self\.coordinationRoot/);
+  const pairTests = readFileSync(
+    `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ForegroundKeyboardEventPairTests.swift`, "utf8",
+  );
+  assert.match(pairTests, /TypeServiceSpecialKeyMapping\.postKey\(/);
+  assert.match(pairTests, /makeEvent: \{/);
+  assert.match(pairTests, /eventPoster: \{/);
+  assert.match(pairTests, /interEventDelay: \{/);
+});
+
+test("hosted focus raise accounting uses exact non-native suites with nonempty guards", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const body = workflow.split("      - name: Run focus raise accounting contracts\n")[1];
+  assert.ok(body, "Missing focus raise accounting CI step");
+  const step = body.split("\n      - name:")[0];
+  assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
+  for (const name of [
+    "PEEKABOO_INCLUDE_AUTOMATION_TESTS", "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS",
+    "PEEKABOO_RUN_INPUT_AUTOMATION_TESTS", "RUN_AUTOMATION_ACTIONS",
+  ]) {
+    assert.ok(step.includes(`${name}: "false"`));
+  }
+  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests)/'"));
+  assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
+  for (const suite of ["FocusDispatchAccountingTests", "FocusRaiseDispatchAccountingTests"]) {
+    assert.ok(step.includes(`Suite ${suite} passed after `));
+  }
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+  assert.doesNotMatch(step, /--skip-build|: "true"/);
+});
+
 test("hosted mocked Press CI enables only its exact injected-service suite", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run mocked Press receipt regressions\n")[1];

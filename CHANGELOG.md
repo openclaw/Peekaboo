@@ -6,6 +6,9 @@
 - Route background typing in web fields directly through targeted keyboard events, including clear and editing keys, instead of accepting ignored Accessibility writes; refuse unproven routes before input.
 - Preserve the legacy SDK's `synthFirst` typing default while background typing remains AX-first; explicit strategies retain their precedence, and explicit SDK AX replacement rejects web or unprovable receivers before value mutation.
 - Bind receipt-pinned Accessibility typing, clear, and editing-key writes to the native receiver selected by focus validation; refuse last-moment receiver changes before mutation or keyboard fallback while preserving continuation reflow.
+- Clear inherited modifier flags from unmodified foreground typing special keys without changing their keycodes or unverified delivery outcomes.
+- Clear foreground chord modifier flags on key-up, including cancellation cleanup, and preserve retry-unsafe dispatch receipts for interrupted holds. Thanks @jandubois! #797.
+- Prefer the best renderable window for daemon-backed app-only foreground focus while preserving exact selectors, receipt validation, and the fallback when every window is non-renderable. Thanks @jandubois! #802.
 - Avoid downloading CLI CI build caches that are immediately discarded; key reusable dependency state by toolchain, manifests, locks, and submodules instead of every commit.
 
 - Propagate ambiguous application running-state checks instead of reporting matching apps as stopped; direct Swift `ApplicationService` callers must now use `try await`. Thanks @SebTardif! #795.
@@ -34,6 +37,7 @@
 - Preserve existing background Cmd+A selection receipts as one unverified Accessibility value mutation through exact-window CLI/MCP checks; stop on ambiguous AX errors without replay. Input-strategy and hold behavior are unchanged.
 - Bind background Cmd+A selection to its retained exact-window receiver, refusing changed or unreadable receiver identities before writing or replaying input.
 - Preserve known typing prefixes and zero-input refusal receipts when shared Accessibility setters fail, without replaying input or changing typing strategy.
+- Allow verified foreground focus after native AXRaise reports an unsupported action or attribute, without inventing a raise dispatch; preserve earlier accepted mutations and stop on ambiguous AX errors. Thanks @jandubois! #801.
 
 ## 4.5.0 - 2026-09-22
 
