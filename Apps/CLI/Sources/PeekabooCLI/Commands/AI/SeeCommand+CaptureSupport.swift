@@ -4,6 +4,44 @@ import PeekabooFoundation
 
 @MainActor
 extension SeeCommand {
+    static func observedFocusSummary(elements: [DetectedElement], metadata: DetectionMetadata) -> String {
+        // ROI retains the original focus metadata while filtering the candidate population.
+        guard metadata.captureCoordinateContext?.viewport == nil else {
+            return "scope=roi_filtered resolver=not_evaluated"
+        }
+        var focusedTypes: [String: Int] = [:]
+        var falseCount = 0
+        var unknownCount = 0
+        for element in elements {
+            switch element.isFocused {
+            case true?: focusedTypes[element.type.rawValue, default: 0] += 1
+            case false?: falseCount += 1
+            case nil: unknownCount += 1
+            }
+        }
+        let resolution: String
+        if let context = metadata.windowContext {
+            do {
+                _ = try FocusedElementReceiptResolver.uniqueReceipt(elements: elements, context: context)
+                resolution = "unique"
+            } catch let error as FocusedElementReceiptError {
+                resolution = String(describing: error)
+            } catch {
+                resolution = "unavailable"
+            }
+        } else {
+            resolution = "noWindowContext"
+        }
+        let types = focusedTypes.sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }.joined(separator: ",")
+        return "rawTrue=\(focusedTypes.values.reduce(0, +)) rawFalse=\(falseCount) rawUnknown=\(unknownCount) " +
+            "rawFocusedTypes=[\(types)] resolver=\(resolution) " +
+            "cached=\(metadata.method.contains("cached")) " +
+            "partial=\(metadata.isApplicationScopedAccessibilityFallback) " +
+            "truncated=\(metadata.truncationInfo?.isTruncated == true) " +
+            "attached=\(metadata.windowContext?.focusedElement != nil)"
+    }
+
     var usesTemporaryScreenshotOutput: Bool {
         self.jsonOutput && self.path == nil
     }

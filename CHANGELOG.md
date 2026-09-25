@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Explain missing or ambiguous observed focus in `see --verbose` using content-free capture diagnostics without extra Accessibility reads or changed input guards.
 - Clear inherited modifier flags from targeted Unicode typing so held Command, Shift, or other modifiers cannot turn literal text into shortcuts.
 - Route background typing in web fields directly through targeted keyboard events, including clear and editing keys, instead of accepting ignored Accessibility writes; refuse unproven routes before input.
 - Preserve the legacy SDK's `synthFirst` typing default while background typing remains AX-first; explicit strategies retain their precedence, and explicit SDK AX replacement rejects web or unprovable receivers before value mutation.

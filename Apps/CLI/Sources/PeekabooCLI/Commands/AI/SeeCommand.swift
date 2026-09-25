@@ -584,14 +584,21 @@ RuntimeBackedCommand {
             requiresOutcome: self.webFocus || self.menubar
         )
         SeeCommandPreparationContext.didCapture?()
+        var captureMetadata: [String: Any] = [
+            "snapshotId": captureResult.snapshotId,
+            "elementCount": captureResult.elements.all.count,
+            "screenshotSize": captureResult.screenshotData?.count ?? 0,
+        ]
+        if logger.isVerbose {
+            captureMetadata["observedFocus"] = Self.observedFocusSummary(
+                elements: captureResult.elements.all,
+                metadata: captureResult.metadata
+            )
+        }
         logger.verbose(
             "Capture completed successfully",
             category: "Capture",
-            metadata: [
-                "snapshotId": captureResult.snapshotId,
-                "elementCount": captureResult.elements.all.count,
-                "screenshotSize": captureResult.screenshotData?.count ?? 0,
-            ]
+            metadata: captureMetadata
         )
 
         do {
