@@ -46,7 +46,7 @@ jobs:
         run: |
           node scripts/docs-lint.mjs
           node --test tests/docs-site-toc.test.mjs
-          node --test tests/background-capability-guidance.test.mjs
+          pnpm run test:guidance
           node --test tests/ambient-state-test-policy.test.mjs
 
       - name: Verify Homebrew release handoff

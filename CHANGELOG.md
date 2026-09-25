@@ -53,6 +53,8 @@
 - Avoid reading geometry for unrelated Accessibility roles during exact-window keyboard focus checks, preserving per-character receiver validation.
 - Remove retired internal MCP process-only target resolution and obsolete window-target rejection; keep process-generation coverage on the active shared keyboard planner.
 
+- Update subprocess integration guidance for background-first host routing, producer-bound snapshots, shell-free Node.js calls, and structured failures without automatic input replay.
+
 ### Compatibility
 
 - Propagate ambiguous application running-state checks instead of reporting matching apps as stopped; direct Swift `ApplicationService` callers must now use `try await`. Thanks @SebTardif! #795.

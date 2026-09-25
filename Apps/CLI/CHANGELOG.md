@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update AXorcist to 0.1.11 for native numeric fidelity, geometry/range parsing improvements, and invalid-scroll refusal before input dispatch.
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 
+- Update subprocess integration guidance for background-first host routing, producer-bound snapshots, shell-free Node.js calls, and structured failures without automatic input replay.
+
 ## 4.5.0 - 2026-09-22
 
 **Highlights:** Prevent snapshot data loss, crashes, and stuck desktop mutations; restore reliable Chrome connections; and ship smaller architecture-specific CLI downloads with automatic Homebrew selection.
