@@ -33,6 +33,7 @@ struct TypeServiceForegroundPolicyTests {
         #expect(result.fallbackReason == nil)
         #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
         #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers == [ObjectIdentifier(fixture.focus.element)])
         #expect(fixture.action.replacementFlags == [true])
         #expect(fixture.action.field.setValues == [.string("after")])
         #expect(fixture.action.field.stringValue == "after")
@@ -58,6 +59,7 @@ struct TypeServiceForegroundPolicyTests {
         #expect(result.fallbackReason == .actionUnsupported)
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
         #expect(fixture.focus.readCount == 0)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.action.field.stringValue == "before")
@@ -82,6 +84,7 @@ struct TypeServiceForegroundPolicyTests {
         }
 
         #expect(fixture.focus.readCount == 0)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.action.field.stringValue == "before")
@@ -94,6 +97,7 @@ struct TypeServiceForegroundPolicyTests {
         let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior, cachedFocused: true)
         defer { fixture.cleanup() }
         fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
+        fixture.route.result = .unproven
 
         let result = try await fixture.service.type(
             text: "ab",
@@ -107,6 +111,7 @@ struct TypeServiceForegroundPolicyTests {
         #expect(result.fallbackReason == .actionUnsupported)
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
         #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.action.field.stringValue == "before")
@@ -122,6 +127,7 @@ struct TypeServiceForegroundPolicyTests {
             cachedFocused: true)
         defer { fixture.cleanup() }
         fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
+        fixture.route.result = .unproven
 
         await #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
             try await fixture.service.type(
@@ -133,6 +139,7 @@ struct TypeServiceForegroundPolicyTests {
         }
 
         #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.action.field.stringValue == "before")
@@ -164,6 +171,7 @@ struct TypeServiceForegroundPolicyTests {
         }
 
         #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events.isEmpty)
@@ -196,6 +204,7 @@ struct TypeServiceForegroundPolicyTests {
 
         #expect(failure?.axError == axError)
         #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events.isEmpty)
@@ -219,8 +228,91 @@ struct TypeServiceForegroundPolicyTests {
         }
 
         #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test
+    func `built-in legacy replacement routes web receivers to keyboard before any AX attempt`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: .currentBehavior)
+        defer { fixture.cleanup() }
+        fixture.route.result = .webKeyboard
+
+        let result = try await fixture.service.type(
+            text: "ab",
+            target: "Input",
+            clearExisting: true,
+            typingDelay: 0,
+            snapshotId: fixture.snapshotID)
+
+        #expect(result.strategy == .actionFirst)
+        #expect(result.path == .synth)
+        #expect(result.fallbackReason == .actionUnsupported)
+        #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers == [ObjectIdentifier(fixture.focus.element)])
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
+        #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
+        #expect(fixture.synthetic.pointer.events == [.click(
+            point: CGPoint(x: 120, y: 45), button: .left, count: 1)])
+    }
+
+    @Test
+    func `action-only refuses legacy web receivers without AX or keyboard dispatch`() async throws {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: .actionOnly))
+        defer { fixture.cleanup() }
+        fixture.route.result = .webKeyboard
+
+        await #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
+            try await fixture.service.type(
+                text: "ab",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: fixture.snapshotID)
+        }
+
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers == [ObjectIdentifier(fixture.focus.element)])
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
+        #expect(fixture.synthetic.events.isEmpty)
+        #expect(fixture.synthetic.pointer.events.isEmpty)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly])
+    func `unproven legacy text input route refuses without AX or keyboard fallback`(
+        strategy: UIInputStrategy) async throws
+    {
+        let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: strategy))
+        defer { fixture.cleanup() }
+        fixture.route.result = .unproven
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            try await fixture.service.type(
+                text: "ab",
+                target: "Input",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: fixture.snapshotID)
+        }
+
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.refusalReason == .targetUnavailable)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.projection.retrySafe == true)
+        #expect(failure?.outcome.projection.mutationDispatched == false)
+        #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers == [ObjectIdentifier(fixture.focus.element)])
+        #expect(fixture.action.replacementFlags.isEmpty)
+        #expect(fixture.action.field.setValues.isEmpty)
+        #expect(fixture.action.field.stringValue == "before")
         #expect(fixture.synthetic.events.isEmpty)
         #expect(fixture.synthetic.pointer.events.isEmpty)
     }
@@ -238,6 +330,7 @@ struct TypeServiceForegroundPolicyTests {
             snapshotId: fixture.snapshotID)
         #expect(first.path == .action)
         #expect(fixture.focus.readCount == 1)
+        #expect(fixture.route.receivers.count == 1)
 
         fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
         await #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
@@ -249,6 +342,7 @@ struct TypeServiceForegroundPolicyTests {
                 snapshotId: fixture.snapshotID)
         }
         #expect(fixture.focus.readCount == 2)
+        #expect(fixture.route.receivers.count == 1)
         #expect(fixture.action.field.stringValue == "first")
 
         fixture.focus.element = AXUIElementCreateApplication(getpid())
@@ -261,6 +355,7 @@ struct TypeServiceForegroundPolicyTests {
 
         #expect(last.path == .action)
         #expect(fixture.focus.readCount == 3)
+        #expect(fixture.route.receivers.count == 2)
         #expect(fixture.action.replacementFlags == [true, true])
         #expect(fixture.action.field.setValues == [.string("first"), .string("last")])
         #expect(fixture.action.field.stringValue == "last")
@@ -285,6 +380,7 @@ struct TypeServiceForegroundPolicyTests {
         #expect(result.fallbackReason == .missingElement)
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
         #expect(fixture.focus.readCount == 0)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
@@ -308,6 +404,7 @@ struct TypeServiceForegroundPolicyTests {
         #expect(summary.result.keyPresses == 4)
         #expect(summary.result.specialKeyPresses == 2)
         #expect(fixture.focus.readCount == 0)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
@@ -321,6 +418,7 @@ struct TypeServiceForegroundPolicyTests {
     {
         let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: strategy))
         defer { fixture.cleanup() }
+        fixture.route.result = .unproven
 
         let result = try await fixture.service.type(
             text: "ab",
@@ -334,6 +432,7 @@ struct TypeServiceForegroundPolicyTests {
         #expect(result.fallbackReason == nil)
         #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
         #expect(fixture.focus.readCount == 0)
+        #expect(fixture.route.receivers.isEmpty)
         #expect(fixture.action.replacementFlags.isEmpty)
         #expect(fixture.action.field.setValues.isEmpty)
         #expect(fixture.synthetic.events == Self.clearAndTypeEvents)
@@ -355,6 +454,7 @@ private final class ForegroundTypePolicyFixture {
     let action = ForegroundTypeActionDriver()
     let synthetic = ForegroundTypeSyntheticDriver()
     let focus: ForegroundTypeFocusProbe
+    let route: ForegroundTypeRouteProbe
     let service: TypeService
     private let coordinationRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("foreground-type-policy-\(UUID().uuidString)", isDirectory: true)
@@ -362,6 +462,8 @@ private final class ForegroundTypePolicyFixture {
     init(policy: UIInputPolicy, cachedFocused: Bool = false) async throws {
         let focus = ForegroundTypeFocusProbe(element: AXUIElementCreateApplication(getpid()))
         self.focus = focus
+        let route = ForegroundTypeRouteProbe()
+        self.route = route
         let detected = DetectedElement(
             id: "T1",
             type: .textField,
@@ -386,6 +488,7 @@ private final class ForegroundTypePolicyFixture {
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
             focusedUIElementReader: { try focus.read() },
+            legacyTextInputRouteResolver: { route.resolve($0) },
             desktopOperationExecutor: DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
                 coordinationRootURL: self.coordinationRoot)))
     }
@@ -426,6 +529,17 @@ private struct ForegroundTypeElementResolver: AutomationElementResolving {
         requireTextInput _: Bool) -> AutomationElement?
     {
         self.element
+    }
+}
+
+@MainActor
+private final class ForegroundTypeRouteProbe {
+    var result = TextInputRoute.nativeAX
+    private(set) var receivers: [ObjectIdentifier] = []
+
+    func resolve(_ element: AXUIElement) -> TextInputRoute {
+        self.receivers.append(ObjectIdentifier(element))
+        return self.result
     }
 }
 

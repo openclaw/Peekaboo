@@ -57,6 +57,7 @@ peekaboo paste "Hello" --app TextEdit --foreground
 - File paths for `--file-path` accept `~/...`.
 - Successful background text JSON reports delivery mode and target PID. Clipboard-backed background delivery returns `INTERACTION_FAILED` with the explicit retry-unsafe message instead of a success payload.
 - JSON preserves a typed `TIMEOUT` even if a later input-lane wait expires after foreground focus has already changed the desktop. Check the canonical outcome and retry metadata: an earlier dispatched phase still makes the overall request indeterminate and unsafe to retry.
+- A canonical no-dispatch refusal with no prior focus effect or attempted clipboard write preserves implicit observations, including wrapped target-resolution refusals and background text. Stronger aggregate or retry-unsafe metadata, partial clipboard writes, and unclassified input failures still invalidate conservatively, and another operation's pending mutation barrier is never canceled by this refusal.
 - After Cmd+V dispatch begins, cancellation or a delivery error is indeterminate. A clipboard restoration failure is always reported with a canonical partial or indeterminate retry-unsafe outcome, including for receiptless providers. Inspect fresh UI state rather than replaying the paste.
 
 ## Troubleshooting

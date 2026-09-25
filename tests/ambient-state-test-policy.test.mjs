@@ -106,6 +106,23 @@ for (const name of [
   });
 }
 
+test("hosted SDK text route proof runs both isolated suites with nonempty guards", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const body = workflow.split("      - name: Run SDK text route eligibility regressions\n")[1];
+  assert.ok(body, "Missing SDK text route eligibility CI step");
+  const step = body.split("\n      - name:")[0];
+  assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
+  assert.ok(step.includes("PEEKABOO_INCLUDE_AUTOMATION_TESTS: \"false\""));
+  assert.ok(step.includes("PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: \"false\""));
+  assert.ok(step.includes("set -euo pipefail"));
+  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests)/'"));
+  assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
+  assert.ok(step.includes("Suite TextInputRouteTests passed after "));
+  assert.ok(step.includes("Suite TypeServiceForegroundPolicyTests passed after "));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+});
+
 test("hosted CI runs exact hotkey receipt Core guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run exact hotkey receipt regressions\n")[1];
@@ -326,7 +343,7 @@ test("See proof arguments agree with installed Swift help and parse without runn
   }
 });
 
-const pasteAdmissionProofs = [
+const pasteSafetyProofs = [
   {
     name: "Run clipboard paste admission gate contracts",
     next: "Run mutation inventory, selector, and host window contracts",
@@ -363,7 +380,7 @@ const pasteAdmissionProofs = [
   },
   {
     name: "Run CLI paste admission timeout regression (skip automation)",
-    next: "Run taskless agent resume regression (skip automation)",
+    next: "Run paste observation invalidation contracts (skip automation)",
     directory: "Apps/CLI",
     suite: "PasteCommandTests",
     automation: "true",
@@ -377,10 +394,27 @@ const pasteAdmissionProofs = [
     declarations: ["Admission timeout preserves observations and a later clipboard paste recovers"],
     countGuard: "Test run with 1 test( in 1 suite)? passed after ",
   },
+  {
+    name: "Run paste observation invalidation contracts (skip automation)",
+    next: "Run taskless agent resume regression (skip automation)",
+    directory: "Apps/CLI",
+    suite: "PasteObservationInvalidationTests",
+    automation: "true",
+    filter: "^CLIAutomationTests\\.PasteObservationInvalidationTests/",
+    selected: [
+      "CLIAutomationTests.PasteObservationInvalidationTests/`Admitted paste refusal preserves implicit latest only without earlier effects`(prefix:)",
+      "CLIAutomationTests.PasteObservationInvalidationTests/`Background text predispatch refusal preserves observations without clipboard admission`()",
+    ],
+    rejected: [
+      "CLIAutomationTests.PasteCommandTests/`Current clipboard paste waits for an active transaction`()",
+      "CLIAutomationTests.PasteObservationInvalidationTestsExtra/`Unexpected declaration`()",
+    ],
+    countGuard: "Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ",
+  },
 ];
 
-for (const proof of pasteAdmissionProofs) {
-  test(`paste admission CI selects only safe proof with complete pass evidence: ${proof.suite}`, () => {
+for (const proof of pasteSafetyProofs) {
+  test(`paste safety CI selects only safe proof with complete pass evidence: ${proof.suite}`, () => {
     const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
     const marker = `      - name: ${proof.name}\n`;
     const sections = workflow.split(marker);
@@ -396,6 +430,7 @@ for (const proof of pasteAdmissionProofs) {
     assert.match(step, /set -euo pipefail/);
     assert.equal((step.match(/swift test /g) ?? []).length, 1);
     assert.match(step, /swift test --disable-xctest --enable-swift-testing --no-parallel/);
+    assert.doesNotMatch(step, /--skip-build/);
     assert.ok(step.includes('2>&1 | tee "$test_log"'), "Retain the complete test log");
     const filters = [...step.matchAll(/--filter '([^']+)'/g)];
     assert.equal(filters.length, 1);

@@ -166,6 +166,21 @@ jobs:
           grep -Fq 'Suite DesktopOperationLaneCoordinatorTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
+      - name: Run SDK text route eligibility regressions
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/sdk-text-route-eligibility.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests)/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite TextInputRouteTests passed after ' "$test_log"
+          grep -Fq 'Suite TypeServiceForegroundPolicyTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Build PeekabooCore
         working-directory: Core/PeekabooCore
         run: |
@@ -421,6 +436,21 @@ jobs:
           grep -Eq 'Test "Admission timeout preserves observations and a later clipboard paste recovers"( with 2 test cases)? passed after ' "$test_log"
           grep -Fq 'Suite PasteCommandTests passed after ' "$test_log"
           grep -Eq 'Test run with 1 test( in 1 suite)? passed after ' "$test_log"
+
+      - name: Run paste observation invalidation contracts (skip automation)
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/paste-observation-invalidation.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
+            --filter '^CLIAutomationTests\.PasteObservationInvalidationTests/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite PasteObservationInvalidationTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run taskless agent resume regression (skip automation)
         working-directory: Apps/CLI

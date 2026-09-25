@@ -155,6 +155,12 @@ that the target is unfocused. Explicit `synthFirst` and `synthOnly` retain their
 These SDK eligibility checks do not change the global/per-app strategy precedence or the CLI foreground
 action-array path.
 
+Zero-delay SDK replacement also requires bounded, same-process ancestry proving a native rather than web
+receiver. Known `AXWebArea` descendants take the existing keyboard route under `actionFirst` and refuse under
+`actionOnly`, before any AX value write; unprovable ancestry instead stops without input or fallback.
+This avoids treating AX value readback as proof of page input-event behavior and leaves explicit `set-value`
+semantics unchanged.
+
 Config example:
 
 ```json

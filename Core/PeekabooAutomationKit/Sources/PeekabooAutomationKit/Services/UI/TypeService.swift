@@ -99,6 +99,7 @@ public final class TypeService {
     private let automationElementResolver: any AutomationElementResolving
     private let focusedElementSecurityProbe: @MainActor (pid_t?) -> Bool
     private let focusedUIElementReader: @MainActor () throws -> AXUIElement
+    private let legacyTextInputRouteResolver: @MainActor (AXUIElement) -> TextInputRoute
     private let targetedCharacterTyper: (@MainActor (
         Character,
         pid_t,
@@ -175,6 +176,9 @@ public final class TypeService {
         randomSource: any TypingCadenceRandomSource,
         focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField,
         focusedUIElementReader: @escaping @MainActor () throws -> AXUIElement = TypeService.readCurrentFocusedElement,
+        legacyTextInputRouteResolver: @escaping @MainActor (AXUIElement) -> TextInputRoute = {
+            TextInputRoute.resolve(focusedElement: $0)
+        },
         targetedCharacterTyper: (@MainActor (
             Character,
             pid_t,
@@ -223,6 +227,7 @@ public final class TypeService {
         self.cadenceRandom = randomSource
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
         self.focusedUIElementReader = focusedUIElementReader
+        self.legacyTextInputRouteResolver = legacyTextInputRouteResolver
         self.targetedCharacterTyper = targetedCharacterTyper
         self.targetedSpecialKeyTyper = targetedSpecialKeyTyper
         var targetedInputDriver = targetedInputDriver
@@ -345,6 +350,9 @@ public final class TypeService {
         // Read the live global receiver; AXorcist's stored AXFocused attribute may be stale.
         let focusedElement = try self.focusedUIElementReader()
         guard CFEqual(focusedElement, element.element.underlyingElement) else {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
+        guard try self.legacyTextInputRouteResolver(focusedElement).permitsAccessibilityEditing() else {
             throw ActionInputError.unsupported(.actionUnsupported)
         }
         return try self.actionInputDriver.trySetText(
