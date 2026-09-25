@@ -508,7 +508,7 @@ jobs:
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
             --filter 'AgentCommandBasicTests|AgentCommandValidationIntegrationTests'
 
-      - name: Run mocked Press receipt regressions
+      - name: Run mocked interaction receipt regressions
         working-directory: Apps/CLI
         env:
           PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
@@ -519,10 +519,13 @@ jobs:
           RUN_LOCAL_TESTS: "false"
         run: |
           set -o pipefail
-          test_log="$RUNNER_TEMP/press-receipt-contracts.log"
+          test_log="$RUNNER_TEMP/interaction-receipt-contracts.log"
           swift test --disable-xctest --enable-swift-testing --no-parallel \
-            --filter '^CLIAutomationTests[.]PressCommandTests/' 2>&1 | tee "$test_log"
+            --filter '^CLIAutomationTests[.](PressCommandTests|ClickCommandTests|ClickCommandActionResultTests|ClickSnapshotWindowSelectionTests)/' 2>&1 | tee "$test_log"
           grep -Fq 'Suite PressCommandTests passed after ' "$test_log"
+          grep -Fq 'Suite ClickCommandTests passed after ' "$test_log"
+          grep -Fq 'Suite ClickCommandActionResultTests passed after ' "$test_log"
+          grep -Fq 'Suite ClickSnapshotWindowSelectionTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run See configuration environment regressions

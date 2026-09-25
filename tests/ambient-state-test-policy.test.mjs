@@ -251,10 +251,10 @@ test("initial observed focus probe reserves the existing traversal deadline thro
   assert.doesNotMatch(proof, /DetachedAXObservationWorker\.inspect\(|AXUIElement|Task\.sleep|Thread\.sleep|NSWorkspace|NSApplication|executePeekabooCLI/);
 });
 
-test("hosted mocked Press CI enables only its exact injected-service suite", () => {
+test("hosted mocked interaction CI enables only its exact injected-service suites", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
-  const body = workflow.split("      - name: Run mocked Press receipt regressions\n")[1];
-  assert.ok(body, "Missing mocked Press receipt CI step");
+  const body = workflow.split("      - name: Run mocked interaction receipt regressions\n")[1];
+  assert.ok(body, "Missing mocked interaction receipt CI step");
   const step = body.split("\n      - name:")[0];
   assert.match(step, /working-directory: Apps\/CLI/);
   assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"/);
@@ -263,9 +263,19 @@ test("hosted mocked Press CI enables only its exact injected-service suite", () 
   for (const name of ["RUN_AUTOMATION_TESTS", "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS"]) {
     assert.ok(step.includes(`${name}: "false"`));
   }
-  assert.ok(step.includes("--filter '^CLIAutomationTests[.]PressCommandTests/'"));
+  const suites = ["PressCommandTests", "ClickCommandTests", "ClickCommandActionResultTests", "ClickSnapshotWindowSelectionTests"];
+  const filter = `^CLIAutomationTests[.](${suites.join("|")})/`;
+  assert.ok(step.includes(`--filter '${filter}'`));
+  assert.equal(step.match(/--filter/g)?.length, 1);
+  const selection = new RegExp(filter);
+  for (const suite of suites) {
+    assert.ok(selection.test(`CLIAutomationTests.${suite}/Fixture`));
+    assert.ok(!selection.test(`CLIAutomationTests.${suite}Extra/Fixture`));
+    assert.ok(step.includes(`Suite ${suite} passed after `));
+  }
+  assert.ok(!selection.test("CLIAutomationTests.AppCommandTests/Fixture"));
+  assert.ok(!selection.test("OtherTests.ClickCommandTests/Fixture"));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
-  assert.ok(step.includes("Suite PressCommandTests passed after "));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
   assert.doesNotMatch(step, /-DPEEKABOO_SKIP_AUTOMATION/);
