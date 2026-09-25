@@ -608,7 +608,9 @@ struct PeekabooBridgeCancellationTests {
         await #expect(throws: CancellationError.self) { _ = try await requestTask.value }
         let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(2))
         while ContinuousClock.now < cancellationDeadline {
-            if dialogs.observedCancellation, await host.activeRequestCountForTesting() == 0 { break }
+            if dialogs.observedCancellation, await host.activeRequestCountForTesting() == 0 {
+                break
+            }
             try await Task.sleep(for: .milliseconds(5))
         }
         #expect(dialogs.observedCancellation)
@@ -751,15 +753,41 @@ private final class CancellationTestDialogServices: PeekabooBridgeServiceProvidi
         self.dialogs = dialogs
     }
 
-    var permissions: PermissionsService { self.base.permissions }
-    var screenCapture: any ScreenCaptureServiceProtocol { self.base.screenCapture }
-    var automation: any UIAutomationServiceProtocol { self.base.automation }
-    var windows: any WindowManagementServiceProtocol { self.base.windows }
-    var applications: any ApplicationServiceProtocol { self.base.applications }
-    var menu: any MenuServiceProtocol { self.base.menu }
-    var dock: any DockServiceProtocol { self.base.dock }
-    var snapshots: any SnapshotManagerProtocol { self.base.snapshots }
-    var desktopObservation: any DesktopObservationServiceProtocol { self.base.desktopObservation }
+    var permissions: PermissionsService {
+        self.base.permissions
+    }
+
+    var screenCapture: any ScreenCaptureServiceProtocol {
+        self.base.screenCapture
+    }
+
+    var automation: any UIAutomationServiceProtocol {
+        self.base.automation
+    }
+
+    var windows: any WindowManagementServiceProtocol {
+        self.base.windows
+    }
+
+    var applications: any ApplicationServiceProtocol {
+        self.base.applications
+    }
+
+    var menu: any MenuServiceProtocol {
+        self.base.menu
+    }
+
+    var dock: any DockServiceProtocol {
+        self.base.dock
+    }
+
+    var snapshots: any SnapshotManagerProtocol {
+        self.base.snapshots
+    }
+
+    var desktopObservation: any DesktopObservationServiceProtocol {
+        self.base.desktopObservation
+    }
 }
 
 private enum CancellationTestDialogReadStage: Sendable, Equatable {
@@ -800,8 +828,13 @@ private final class CancellationTestDialogService: DialogServiceProtocol {
         self.service = DialogService(syntheticInputDriver: SyntheticInputDriver(), discoveryReaders: readers)
     }
 
-    var workerStarted: Bool { self.workerStages.values.contains(.started) }
-    var workerFinished: Bool { self.workerStages.values.contains(.finished) }
+    var workerStarted: Bool {
+        self.workerStages.values.contains(.started)
+    }
+
+    var workerFinished: Bool {
+        self.workerStages.values.contains(.finished)
+    }
 
     func releaseWorker() {
         self.workerRelease.signal()
