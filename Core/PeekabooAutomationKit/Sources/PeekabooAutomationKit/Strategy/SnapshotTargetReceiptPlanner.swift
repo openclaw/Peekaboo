@@ -60,6 +60,16 @@ public struct SnapshotTargetReceiptPlanner: Sendable {
         try await self.plan(snapshotID: snapshotID, evidenceScope: .completeTarget)
     }
 
+    /// Preserves the native mutation refusal for incomplete exact-window receipts during early planning.
+    /// Other identity and source errors retain their caller-owned validation semantics.
+    public func planForMutation(snapshotID: String) async throws -> SnapshotTargetReceiptPlan {
+        do {
+            return try await self.plan(snapshotID: snapshotID)
+        } catch DesktopTargetIdentityError.incompleteExactWindow {
+            throw SnapshotTargetReceiptPreDispatchError(.incompleteExactWindow).actionFailure
+        }
+    }
+
     /// Resolves only stable process identity while leaving exact-window completeness to the mutation planner.
     public func planProcessIdentity(snapshotID: String) async throws -> SnapshotTargetReceiptPlan {
         try await self.plan(snapshotID: snapshotID, evidenceScope: .processIdentity)

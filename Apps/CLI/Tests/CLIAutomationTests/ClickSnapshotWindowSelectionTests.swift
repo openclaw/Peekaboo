@@ -223,6 +223,17 @@ struct ClickSnapshotWindowSelectionTests {
         #expect(result.exitStatus == 1)
         #expect(fixture.automation.targetedClickCalls.isEmpty)
         #expect(windows.windowLookupCount == 0)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let incompleteWindow = ["missing-bounds", "missing-captured-bounds"].contains(variant)
+        #expect(error["code"] as? String == (incompleteWindow ? "SNAPSHOT_STALE" : "VALIDATION_ERROR"))
+        #expect(error["retry_safe"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == false)
+        #expect(outcome["requires_fresh_observation"] as? Bool == false)
+        if incompleteWindow {
+            #expect((error["message"] as? String)?.contains("immutable captured bounds") == true)
+        }
     }
 
     @Test

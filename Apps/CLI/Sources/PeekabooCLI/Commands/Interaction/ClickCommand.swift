@@ -1183,7 +1183,7 @@ extension ClickCommand {
                 snapshots: self.services.snapshots,
                 sourceFailurePolicy: .omitUnavailableSources
             )
-            .plan(snapshotID: snapshotId)
+            .planForMutation(snapshotID: snapshotId)
             guard plan.hasProcessIdentifierEvidence else {
                 throw ValidationError(
                     "Snapshot '\(snapshotId)' does not identify a target process. Run see again before clicking."
@@ -1192,16 +1192,13 @@ extension ClickCommand {
             return try plan.receipt.requireIdentity()
         } catch is CancellationError {
             throw CancellationError()
+        } catch let failure as DesktopActionFailure {
+            throw failure
         } catch let error as Commander.ValidationError {
             throw error
         } catch DesktopTargetIdentityError.missingProcessGeneration {
             throw ValidationError(
                 "Snapshot '\(snapshotId)' has no capture-time process-generation receipt. " +
-                    "Run see again before clicking."
-            )
-        } catch DesktopTargetIdentityError.incompleteExactWindow {
-            throw ValidationError(
-                "Snapshot '\(snapshotId)' has no complete capture-time window identity and bounds. " +
                     "Run see again before clicking."
             )
         } catch {

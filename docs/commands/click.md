@@ -66,6 +66,7 @@ without it, the client does not request that fallback, while ordinary `AXPress` 
 
 ## Implementation notes
 - A missing snapshot is stale; a snapshot lookup timeout or other service failure retains its original error instead of being reported as a stale snapshot. No click is dispatched when lookup fails.
+- An incomplete exact-window receipt retains the native `SNAPSHOT_STALE` refusal even when CLI planning catches it before dispatch. This refusal neither consumes the snapshot nor sends input; capture a fresh complete receipt before trying again.
 - Result application labels reuse the application/window and snapshot metadata already bound for dispatch. Point diagnostics are prepared before dispatch and retained for output; formatting does not refetch snapshots, enumerate, or re-resolve applications after clicking. Missing names use the bound PID, window ID, or `Unknown`, and never borrow an unrelated frontmost app. Presentation does not change the canonical action outcome or target receipt.
 - Validation requires exactly one targeting strategy (`[query]`, `--on`, or `--at`) and parses coordinate strings into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
 - When no `--snapshot` is provided, element/query clicks may use the most recent snapshot. Foreground global coordinates remain snapshot-free. Background coordinates never infer ownership at dispatch time: they resolve through the explicit capture snapshot and pass its exact receipt through the automation/Bridge boundary.

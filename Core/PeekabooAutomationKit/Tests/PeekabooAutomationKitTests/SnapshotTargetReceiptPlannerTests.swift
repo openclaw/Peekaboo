@@ -184,10 +184,42 @@ struct SnapshotTargetReceiptPlannerTests {
         await #expect(throws: DesktopTargetIdentityError.incompleteExactWindow) {
             _ = try await planner.plan(snapshotID: fixture.snapshotID)
         }
+        await #expect(throws: SnapshotTargetReceiptPreDispatchError(.incompleteExactWindow).actionFailure) {
+            _ = try await planner.planForMutation(snapshotID: fixture.snapshotID)
+        }
         let processPlan = try await planner.planProcessIdentity(snapshotID: fixture.snapshotID)
         let identity = try processPlan.receipt.requireIdentity()
         #expect(identity.processIdentity == fixture.desktopTarget.processIdentity)
         #expect(identity.exactWindow == nil)
+    }
+
+    @Test
+    func `mutation planning preserves complete receipts and other validation errors`() async throws {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget()
+        let planner = SnapshotTargetReceiptPlanner(
+            automationSnapshotProvider: { _ in fixture.automationSnapshot },
+            detectionResultProvider: { _ in fixture.detectionResult })
+        #expect(try await planner.planForMutation(snapshotID: fixture.snapshotID) == fixture.receiptPlan)
+        await #expect(throws: DesktopTargetIdentityError.snapshotSourceMismatch) {
+            _ = try await planner.planForMutation(snapshotID: "another-snapshot")
+        }
+
+        let missingGeneration = SnapshotTargetReceiptPlanner(
+            automationSnapshotProvider: { _ in nil },
+            detectionResultProvider: { _ in
+                AutomationTestFixtures.detectionResult(
+                    snapshotID: fixture.snapshotID,
+                    windowContext: WindowContext(applicationProcessId: 42))
+            })
+        await #expect(throws: DesktopTargetIdentityError.missingProcessGeneration) {
+            _ = try await missingGeneration.planForMutation(snapshotID: fixture.snapshotID)
+        }
+        let unavailableSource = SnapshotTargetReceiptPlanner(
+            automationSnapshotProvider: { _ in throw SnapshotPlannerTestError.unavailable },
+            detectionResultProvider: { _ in nil })
+        await #expect(throws: SnapshotPlannerTestError.unavailable) {
+            _ = try await unavailableSource.planForMutation(snapshotID: fixture.snapshotID)
+        }
     }
 
     @Test
@@ -206,6 +238,12 @@ struct SnapshotTargetReceiptPlannerTests {
         }
         await #expect(throws: CancellationError.self) {
             _ = try await detectionCancellation.plan(snapshotID: "snapshot-1")
+        }
+        await #expect(throws: CancellationError.self) {
+            _ = try await snapshotCancellation.planForMutation(snapshotID: "snapshot-1")
+        }
+        await #expect(throws: CancellationError.self) {
+            _ = try await detectionCancellation.planForMutation(snapshotID: "snapshot-1")
         }
     }
 
