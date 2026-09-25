@@ -201,10 +201,10 @@ test("hosted foreground keyboard release CI selects only its isolated suites", (
   assert.match(pairTests, /interEventDelay: \{/);
 });
 
-test("hosted focus raise accounting uses exact non-native suites with nonempty guards", () => {
+test("hosted focus observation and accounting use exact non-native suites with nonempty guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
-  const body = workflow.split("      - name: Run focus raise accounting contracts\n")[1];
-  assert.ok(body, "Missing focus raise accounting CI step");
+  const body = workflow.split("      - name: Run focus observation and accounting contracts\n")[1];
+  assert.ok(body, "Missing focus observation and accounting CI step");
   const step = body.split("\n      - name:")[0];
   assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
   for (const name of [
@@ -213,9 +213,12 @@ test("hosted focus raise accounting uses exact non-native suites with nonempty g
   ]) {
     assert.ok(step.includes(`${name}: "false"`));
   }
-  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests)/'"));
+  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests|FocusedElementReceiptResolverTests|ObservedFocusCorroborationTests)/'"));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
-  for (const suite of ["FocusDispatchAccountingTests", "FocusRaiseDispatchAccountingTests"]) {
+  for (const suite of [
+    "FocusDispatchAccountingTests", "FocusRaiseDispatchAccountingTests",
+    "FocusedElementReceiptResolverTests", "ObservedFocusCorroborationTests",
+  ]) {
     assert.ok(step.includes(`Suite ${suite} passed after `));
   }
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
