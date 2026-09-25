@@ -323,6 +323,11 @@ foreground-capable runtimes retain their documented process-targeted typing rout
 
 `type.coords` adds atomic pixel-focus typing for exact screenshot snapshots. Supply `snapshot`, optional matching `coordinate_reference`, and `coordinate_space` (`global_display_points`, `image_pixels`, or `normalized`). It cannot be combined with `on`, app/PID/window selectors, or foreground delivery. Bridge protocol 1.33 retains the focus-only Accessibility write and every keyboard unit under one process lane and exact target receipt; successful dispatch units equal keyboard units plus the focus write, and any completed prefix is reported retry-unsafe. The focus prelude never presses a button or selects a row, and its confirmation cannot confirm the separate typing leaf. Only deterministic clear-plus-literal typing can promote through an exact private value readback.
 
+Successful `type` responses preserve the typing result's `target_identity` and `target_receipt` in public `_meta`,
+including ordinary and pixel-focus typing. Process identities retain the generation as a lossless decimal string;
+exact-window identities also retain the window ID. Missing result identity, including untargeted foreground typing,
+adds neither field: request selectors are not substituted for a returned target receipt.
+
 Process, exact-window, and pixel-focus type requests containing non-empty text, clear, or editable focused-text keys require Bridge protocol 1.36 and `compositeTypeDelivery`. Direct AX text, selection/deletion keys, and clear each count as one dispatch and zero key presses; event fallback counts only its posted keys, and requests using both mechanisms report composite delivery. Event-only special keys keep their earlier protocol compatibility, while older or capability-missing sessions refuse AX-capable input before focus or text dispatch.
 
 Background-only raw `press` likewise requires an explicit fresh exact non-dialog snapshot. App/PID-only,

@@ -624,7 +624,9 @@ extension TypeTool {
         let mergedMeta = try ToolEventSummary.merge(
             summary: summary,
             into: MCPToolResponseMetadataProjector.metadata(
-                merging: baseMetaDict,
+                merging: MCPDesktopTargetMetadataProjector.fields(
+                    input.actionResult.targetIdentity,
+                    merging: baseMetaDict),
                 outcome: responseOutcome))
 
         return ToolResponse(
