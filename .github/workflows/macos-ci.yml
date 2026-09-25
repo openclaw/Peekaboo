@@ -251,12 +251,13 @@ jobs:
           set -o pipefail
           test_log="$RUNNER_TEMP/hotkey-receipt-contracts.log"
           swift test --disable-xctest --enable-swift-testing --no-parallel \
-            --filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests|TypeServiceAXFailureReceiptTests|TypingFinalReceiverBindingTests)/' \
+            --filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests|TypeServiceAXFailureReceiptTests|TypingFinalReceiverBindingTests|MCPTypeTargetMetadataTests)/' \
             2>&1 | tee "$test_log"
           grep -Fq 'Suite HotkeySelectAllReceiptTests passed after ' "$test_log"
           grep -Fq 'Suite MCPExactWindowKeyboardToolTests passed after ' "$test_log"
           grep -Fq 'Suite TypeServiceAXFailureReceiptTests passed after ' "$test_log"
           grep -Fq 'Suite TypingFinalReceiverBindingTests passed after ' "$test_log"
+          grep -Fq 'Suite MCPTypeTargetMetadataTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run MCP paste admission timeout regressions
