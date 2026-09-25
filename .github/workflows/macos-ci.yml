@@ -166,20 +166,26 @@ jobs:
           grep -Fq 'Suite DesktopOperationLaneCoordinatorTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
-      - name: Run SDK text route eligibility regressions
+      - name: Run SDK and background text route regressions
         working-directory: Core/PeekabooAutomationKit
         env:
           PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
           PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
         run: |
           set -euo pipefail
-          test_log="$RUNNER_TEMP/sdk-text-route-eligibility.log"
+          test_log="$RUNNER_TEMP/text-route-eligibility.log"
+          filter='^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests|UIInputPolicyDefaultTests|BackgroundTextInputDeliveryTests|BackgroundTextRouteRefusalTests|BackgroundTextInputReceiverTests)/'
+          filter+='|^PeekabooAutomationKitTests[.]TypeServiceTargetResolutionTests/`(targeted printable characters preserve their exact Unicode payload|literal Unicode events discard inherited modifiers without changing text or destination)`\('
           swift test --disable-xctest --enable-swift-testing --no-parallel \
-            --filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests|UIInputPolicyDefaultTests)/' \
+            --filter "$filter" \
             2>&1 | tee "$test_log"
           grep -Fq 'Suite TextInputRouteTests passed after ' "$test_log"
           grep -Fq 'Suite TypeServiceForegroundPolicyTests passed after ' "$test_log"
           grep -Fq 'Suite UIInputPolicyDefaultTests passed after ' "$test_log"
+          grep -Fq 'Suite BackgroundTextInputDeliveryTests passed after ' "$test_log"
+          grep -Fq 'Suite BackgroundTextRouteRefusalTests passed after ' "$test_log"
+          grep -Fq 'Suite BackgroundTextInputReceiverTests passed after ' "$test_log"
+          grep -Fq 'Suite TypeServiceTargetResolutionTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Build PeekabooCore

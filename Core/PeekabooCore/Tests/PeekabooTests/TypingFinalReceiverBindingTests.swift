@@ -66,9 +66,13 @@ struct TypingFinalReceiverBindingTests {
         let fixture = TypingReceiverFixture()
         fixture.providesNativeProof = !missingValidatedProof
         fixture.snapshotIncludesNativeProof = missingValidatedProof
+        fixture.routes[.a] = .web
         await self.expectRefusal { _ = try await fixture.run(payload.actions) }
         #expect(fixture.nativeLookups == [.a])
         #expect(fixture.editabilityReads.isEmpty)
+        #expect(fixture.routeChecks.isEmpty)
+        #expect(fixture.textValueReads.isEmpty)
+        #expect(fixture.selectedRangeReads.isEmpty)
         #expect(fixture.textWrites.isEmpty)
         #expect(fixture.selectionWrites.isEmpty)
         #expect(fixture.events.isEmpty)
@@ -214,13 +218,113 @@ struct TypingFinalReceiverBindingTests {
         #expect(result.executionResult.outcome.delivery?.mechanism == .windowTargetedEvents)
     }
 
-    private func expectRefusal(_ operation: () async throws -> Void) async {
+    @Test(arguments: [false, true], Payload.allCases)
+    func `a changed or missing receiver refuses before considering a web route`(
+        missingReceiver: Bool,
+        payload: Payload) async
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.routes = [.a: .web, .b: .web]
+        fixture.nativeReceiverAvailable = !missingReceiver
+        fixture.switchAfterValidation = missingReceiver ? nil : 1
+        await self.expectRefusal { _ = try await fixture.run(payload.actions) }
+        #expect(fixture.validatedReceivers == [.a])
+        #expect(fixture.nativeLookups.count == 1)
+        #expect(fixture.editabilityReads.isEmpty)
+        #expect(fixture.routeChecks.isEmpty)
+        #expect(fixture.textValueReads.isEmpty)
+        #expect(fixture.selectedRangeReads.isEmpty)
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
+    func `a retained web receiver permits only policy allowed event delivery`(
+        strategy: UIInputStrategy,
+        payload: Payload) async throws
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.routes[.a] = .web
+        if strategy == .actionOnly {
+            await self.expectRefusal(reason: .operationUnsupported) {
+                _ = try await fixture.run(payload.actions, strategy: strategy)
+            }
+            #expect(fixture.events.isEmpty)
+        } else {
+            let result = try await fixture.run(payload.actions, strategy: strategy)
+            let units = payload == .clear ? 2 : 1
+            #expect(fixture.events.count == units)
+            #expect(result.result.keyPresses == units)
+            #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == units)
+            #expect(result.executionResult.outcome.delivery?.mechanism == .windowTargetedEvents)
+            #expect(result.executionResult.fallbackReason == .attributeUnsupported)
+        }
+        #expect(fixture.nativeLookups == [.a])
+        #expect(fixture.editabilityReads == [.a])
+        #expect(fixture.routeChecks == [.a])
+        #expect(fixture.textValueReads.isEmpty)
+        #expect(fixture.selectedRangeReads.isEmpty)
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
+    func `an unproven retained route refuses without value reads or fallback`(
+        strategy: UIInputStrategy,
+        payload: Payload) async
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.routes[.a] = .unproven
+        await self.expectRefusal { _ = try await fixture.run(payload.actions, strategy: strategy) }
+        #expect(fixture.routeChecks == [.a])
+        #expect(fixture.textValueReads.isEmpty)
+        #expect(fixture.selectedRangeReads.isEmpty)
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test(arguments: [false, true], Payload.allCases)
+    func `route refusal after native or web delivery keeps the accepted prefix retry unsafe`(
+        webPrefix: Bool,
+        payload: Payload) async
+    {
+        let fixture = TypingReceiverFixture()
+        fixture.routes[.a] = webPrefix ? .web : .native
+        fixture.routeAfterFirstDispatch = .unproven
+        do {
+            _ = try await fixture.run([.text("p")] + payload.actions)
+            Issue.record("Expected the unproven continuation route to stop dispatch")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 1)
+            #expect(error.retrySafe == false)
+            #expect(error.delivery?.mechanism == (webPrefix ? .windowTargetedEvents : .accessibilityValue))
+            let failure = error.desktopActionFailure(delivery: nil)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
+        } catch {
+            Issue.record("Expected accepted-prefix evidence, got \(error)")
+        }
+        #expect(fixture.routeChecks == [.a, .a])
+        #expect(fixture.nativePhases.map { $0 == .initial } == [true, false])
+        #expect(fixture.textValueReads == (webPrefix ? [] : [.a]))
+        #expect(fixture.selectedRangeReads == (webPrefix ? [] : [.a]))
+        #expect(fixture.textWrites == (webPrefix ? [] : [.a]))
+        #expect(fixture.selectionWrites == (webPrefix ? [] : [.a]))
+        #expect(fixture.events == (webPrefix ? ["text:p"] : []))
+    }
+
+    private func expectRefusal(
+        reason: DesktopActionOutcome.RefusalReason = .targetUnavailable,
+        _ operation: () async throws -> Void) async
+    {
         do {
             try await operation()
             Issue.record("Expected a final receiver refusal before dispatch")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .refused)
-            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.outcome.refusalReason == reason)
             #expect(failure.outcome.dispatchState == .none)
         } catch {
             Issue.record("Expected a pre-dispatch receiver refusal, got \(error)")
@@ -234,6 +338,10 @@ private final class TypingReceiverFixture {
         case a, b
     }
 
+    enum Route {
+        case native, web, unproven
+    }
+
     static let processIdentifier: pid_t = 4242
     static let processStartIdentity: UInt64 = 91
     static let windowID = 42
@@ -242,6 +350,7 @@ private final class TypingReceiverFixture {
     static let reflowedFrame = CGRect(x: 40, y: 60, width: 200, height: 24)
 
     var focusedReceiver = Receiver.a
+    var nativeReceiverAvailable = true
     var switchAfterValidation: Int?
     var reflowAfterTextWrite: Int?
     var providesNativeProof = true
@@ -251,6 +360,9 @@ private final class TypingReceiverFixture {
     var nativeLookups: [Receiver] = []
     var nativePhases: [KeyboardFocusValidationPhase] = []
     var editabilityReads: [Receiver] = []
+    var routeChecks: [Receiver] = []
+    var textValueReads: [Receiver] = []
+    var selectedRangeReads: [Receiver] = []
     var textWrites: [Receiver] = []
     var selectionWrites: [Receiver] = []
     var events: [String] = []
@@ -266,6 +378,8 @@ private final class TypingReceiverFixture {
         .b: TypingReceiverFixture.initialFrame,
     ]
     var editable: [Receiver: Bool] = [.a: true, .b: true]
+    var routes: [Receiver: Route] = [.a: .native, .b: .native]
+    var routeAfterFirstDispatch: Route?
     var identifiers: [Receiver: String] = [.a: "a", .b: "b"]
     /// These are equality tokens only; no Accessibility attributes or actions are queried.
     private let nativeElements: [Receiver: Element] = [
@@ -277,18 +391,34 @@ private final class TypingReceiverFixture {
         BackgroundInputDriver.FocusedTextEditAccess(
             focusedElement: {
                 self.nativeLookups.append(self.focusedReceiver)
-                return self.focusedReceiver
+                return self.nativeReceiverAvailable ? self.focusedReceiver : nil
             },
             isEditable: {
                 self.editabilityReads.append($0)
-                return self.editable[$0] == true
+                guard self.editable[$0] == true else { return false }
+                self.routeChecks.append($0)
+                switch self.routes[$0] ?? .unproven {
+                case .native: return true
+                case .web: return false
+                case .unproven:
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "The fixture could not prove the retained text route")
+                }
             },
-            textValue: { self.values[$0] },
-            selectedRange: { self.selections[$0] },
+            textValue: {
+                self.textValueReads.append($0)
+                return self.values[$0]
+            },
+            selectedRange: {
+                self.selectedRangeReads.append($0)
+                return self.selections[$0]
+            },
             focusSnapshot: { self.snapshot(for: $0) },
             setText: { text, receiver in
                 self.textWrites.append(receiver)
                 self.values[receiver] = text
+                self.applyRouteTransition(afterDispatchTo: receiver)
                 if self.textWrites.count == self.reflowAfterTextWrite {
                     self.frames[.a] = Self.reflowedFrame
                 }
@@ -392,6 +522,13 @@ private final class TypingReceiverFixture {
         self.eventPermissionChecks += 1
         guard self.eventPermissionGranted else { throw PeekabooError.permissionDeniedEventSynthesizing }
         self.events.append(event)
+        self.applyRouteTransition(afterDispatchTo: self.focusedReceiver)
+    }
+
+    private func applyRouteTransition(afterDispatchTo receiver: Receiver) {
+        if self.textWrites.count + self.events.count == 1, let routeAfterFirstDispatch {
+            self.routes[receiver] = routeAfterFirstDispatch
+        }
     }
 
     private var expectedReceipt: FocusedElementIdentity {
