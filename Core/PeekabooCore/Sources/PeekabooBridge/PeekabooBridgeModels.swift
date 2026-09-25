@@ -416,6 +416,7 @@ public enum PeekabooBridgeHostCapability {
 /// from being advertised to already-shipped 1.34 clients.
 public enum PeekabooBridgeClientCapability {
     public static let screenCaptureKitOwnershipDiagnostics = "screenCaptureKitOwnershipDiagnostics"
+    public static let setValueVerification = "setValueVerification"
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
     public static let targetedClickAccessibilityValueDelivery = "targetedClickAccessibilityValueDelivery"
     public static let browserConnectionHandoff = "browserConnectionHandoff"

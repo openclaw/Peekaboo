@@ -281,6 +281,29 @@ jobs:
         run: |
           swift test --no-parallel --filter 'PeekabooBridgeClientHostTrustTests|CaptureDiagnosticWireCompatibilityTests|PeekabooBridgeCancellationTests'
 
+      - name: Run typed set-value verification contracts
+        working-directory: Core/PeekabooCore
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_ACTIONS: "false"
+        run: |
+          set -euo pipefail
+          native_log="$RUNNER_TEMP/native-set-value-verification.log"
+          swift test --package-path ../PeekabooAutomationKit --disable-xctest --enable-swift-testing --no-parallel --jobs 2 \
+            --filter '^PeekabooAutomationKitTests[.]SetValueVerificationTests/' \
+            2>&1 | tee "$native_log"
+          grep -Fq 'Suite SetValueVerificationTests passed after ' "$native_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$native_log"
+          bridge_log="$RUNNER_TEMP/bridge-set-value-verification.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel --jobs 2 \
+            --filter '^PeekabooBridgeTests[.](PeekabooBridgeSetValueVerificationTests|PeekabooBridgeSetValueVerificationWireTests)/' \
+            2>&1 | tee "$bridge_log"
+          grep -Fq 'Suite PeekabooBridgeSetValueVerificationTests passed after ' "$bridge_log"
+          grep -Fq 'Suite PeekabooBridgeSetValueVerificationWireTests passed after ' "$bridge_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$bridge_log"
+
       - name: Run Bridge application running-state contracts
         working-directory: Core/PeekabooCore
         run: |

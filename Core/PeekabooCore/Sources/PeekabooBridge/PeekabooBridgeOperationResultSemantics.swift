@@ -456,7 +456,7 @@ extension PeekabooBridgeOperationResultSemantics {
         case let .setValue(payload):
             .setValue(
                 target: payload.target,
-                value: self.canonicalSetValueDisplayString(payload.value))
+                value: self.canonicalSetValue(payload.value))
         case let .performAction(payload):
             .performAction(target: payload.target, actionName: payload.actionName)
         case .attestedOperation,
@@ -577,8 +577,8 @@ extension PeekabooBridgeOperationResultSemantics {
 
     /// Set-value response semantics must follow the signed wire value, not a caller's in-memory
     /// representation. JSON canonicalization intentionally collapses equivalent numbers such as
-    /// `-0.0` and `0`; strings that merely look numeric remain exact strings.
-    private static func canonicalSetValueDisplayString(_ value: UIElementValue) -> String {
+    /// `-0.0` and `0`; only a native verification witness can justify coercing a string request.
+    private static func canonicalSetValue(_ value: UIElementValue) -> UIElementValue {
         guard let data = try? PeekabooBridgeOperationReceiptCoding.canonicalData(value),
               let canonicalValue = try? JSONDecoder.peekabooBridgeDecoder().decode(
                   UIElementValue.self,
@@ -586,9 +586,9 @@ extension PeekabooBridgeOperationResultSemantics {
         else {
             // Non-encodable values cannot enter an attested request, but retaining the original
             // representation keeps legacy planning deterministic until request encoding rejects it.
-            return value.displayString
+            return value
         }
-        return canonicalValue.displayString
+        return canonicalValue
     }
 
     private static func allowedSuccessStates(

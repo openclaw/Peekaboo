@@ -496,7 +496,8 @@ public final class PeekabooBridgeServer {
             return try self.encoder.encode(PeekabooBridgeResponse.projectedActionForCurrentRequestVocabulary(
                 response: handled.response,
                 outcome: handled.outcome?.routed(to: .bridge).projection)
-                .projectingScreenCaptureKitDiagnostics(offered: false))
+                .projectingScreenCaptureKitDiagnostics(offered: false)
+                .projectingSetValueVerification(offered: false))
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error(
                 "projected bridge request failed code=\(envelope.code.rawValue, privacy: .public)")
@@ -520,6 +521,7 @@ public final class PeekabooBridgeServer {
             response: .error(envelope),
             outcome: envelope.actionOutcome)
             .projectingScreenCaptureKitDiagnostics(offered: false)
+            .projectingSetValueVerification(offered: false)
         guard let data = try? self.encoder.encode(response), !data.isEmpty else {
             return PeekabooBridgeResponse.encodeError(
                 envelope.removingScreenCaptureKitDiagnostic(), using: self.encoder)

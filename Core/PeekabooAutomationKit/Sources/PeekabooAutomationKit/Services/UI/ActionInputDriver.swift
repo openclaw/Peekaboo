@@ -407,18 +407,20 @@ struct ActionInputDriver: ActionInputDriving {
 
         do {
             if !element.isValueSettable, element.isSelectedSettable {
-                let requested = try Self.booleanValue(value, role: element.role)
+                let requested = try ElementValueMutationSemantics.booleanValue(value, role: element.role)
                 let selectedBefore = element.selectedValue
-                let alreadyMatched = selectedBefore == requested
-                if alreadyMatched {
+                if let selectedBefore, selectedBefore == requested {
                     return UIInputExecutionResult.Action(
                         outcome: .confirmedNoChange(),
                         actionName: kAXSelectedAttribute as String,
                         anchorPoint: element.anchorPoint,
-                        elementRole: element.role)
+                        elementRole: element.role,
+                        valueVerification: .init(
+                            attribute: .selected, resolvedKind: .bool, readback: .bool(selectedBefore)))
                 }
                 try element.setAutomationSelected(requested)
-                guard element.selectedValue == requested else {
+                let selectedAfter = element.selectedValue
+                guard selectedAfter == requested, let selectedAfter else {
                     throw Self.unverifiedValueMutationFailure(attribute: kAXSelectedAttribute as String)
                 }
                 let outcome = Self.dispatchedValueMutationOutcome(preStateKnown: selectedBefore != nil)
@@ -426,21 +428,35 @@ struct ActionInputDriver: ActionInputDriving {
                     outcome: outcome,
                     actionName: kAXSelectedAttribute as String,
                     anchorPoint: element.anchorPoint,
-                    elementRole: element.role)
+                    elementRole: element.role,
+                    valueVerification: .init(
+                        attribute: .selected, resolvedKind: .bool, readback: .bool(selectedAfter)))
             }
 
             let valueBefore = element.value
+            let readbackBefore = ElementValueReadback(nativeValue: valueBefore)
+            guard !(valueBefore is NSNumber) || readbackBefore != nil else {
+                throw ActionInputError.failed("Native accessibility integer is outside the supported Int range")
+            }
             let requested = try Self.coerceValue(value, currentValue: valueBefore, role: element.role)
-            let alreadyMatched = Self.value(valueBefore, matches: requested)
+            let alreadyMatched = ElementValueMutationSemantics.matches(readbackBefore, expected: requested)
             if alreadyMatched {
+                guard let readbackBefore, readbackBefore.isFinite else {
+                    throw ActionInputError.failed("Expected a finite native readback")
+                }
                 return UIInputExecutionResult.Action(
                     outcome: .confirmedNoChange(),
                     actionName: AXActionNames.kAXSetValueAction,
                     anchorPoint: element.anchorPoint,
-                    elementRole: element.role)
+                    elementRole: element.role,
+                    valueVerification: .init(
+                        attribute: .value, resolvedKind: requested.comparisonKind, readback: readbackBefore))
             }
             try element.setAutomationValue(requested)
-            guard Self.value(element.value, matches: requested) else {
+            let readbackAfter = ElementValueReadback(nativeValue: element.value)
+            guard let readbackAfter, readbackAfter.isFinite,
+                  ElementValueMutationSemantics.matches(readbackAfter, expected: requested)
+            else {
                 throw Self.unverifiedValueMutationFailure(attribute: AXActionNames.kAXSetValueAction)
             }
             let outcome = Self.dispatchedValueMutationOutcome(preStateKnown: valueBefore != nil)
@@ -448,7 +464,9 @@ struct ActionInputDriver: ActionInputDriving {
                 outcome: outcome,
                 actionName: AXActionNames.kAXSetValueAction,
                 anchorPoint: element.anchorPoint,
-                elementRole: element.role)
+                elementRole: element.role,
+                valueVerification: .init(
+                    attribute: .value, resolvedKind: requested.comparisonKind, readback: readbackAfter))
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch {
@@ -480,144 +498,27 @@ struct ActionInputDriver: ActionInputDriving {
         currentValue: Any?,
         role: String?) throws -> UIElementValue
     {
+        let currentKind = ElementValueReadback(nativeValue: currentValue)?.kind
         if self.isTextRole(role) || currentValue is String {
-            return .string(requested.displayString)
+            return try ElementValueMutationSemantics.coerce(requested, to: .string)
         }
-        if self.isBooleanRole(role) || self.valueKind(currentValue) == .bool {
-            return try .bool(self.booleanValue(requested, role: role))
+        if self.isBooleanRole(role) || currentKind == .bool {
+            return try ElementValueMutationSemantics.coerce(requested, to: .bool, role: role)
         }
         if self.isNumericRole(role) {
-            return try .double(self.doubleValue(requested))
+            return try ElementValueMutationSemantics.coerce(requested, to: .double)
         }
 
-        switch self.valueKind(currentValue) {
+        switch currentKind {
         case .int:
-            return try .int(self.integerValue(requested))
+            return try ElementValueMutationSemantics.coerce(requested, to: .int)
         case .double:
-            return try .double(self.doubleValue(requested))
+            return try ElementValueMutationSemantics.coerce(requested, to: .double)
         case .bool, .string:
             // Handled above.
             return requested
-        case .unknown:
+        case nil:
             return requested
-        }
-    }
-
-    private nonisolated static func booleanValue(_ value: UIElementValue, role: String?) throws -> Bool {
-        switch value {
-        case let .bool(value):
-            return value
-        case let .int(value) where value == 0 || value == 1:
-            return value == 1
-        case let .double(value) where value == 0 || value == 1:
-            return value == 1
-        case let .string(value):
-            switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-            case "true", "1", "yes", "on":
-                return true
-            case "false", "0", "no", "off":
-                return false
-            default:
-                break
-            }
-        default:
-            break
-        }
-        let target = role.map { " for \($0)" } ?? ""
-        throw ActionInputError.failed("Expected a boolean value\(target)")
-    }
-
-    private nonisolated static func integerValue(_ value: UIElementValue) throws -> Int {
-        switch value {
-        case let .int(value):
-            return value
-        case let .double(value) where value.isFinite:
-            if let integer = Int(exactly: value) {
-                return integer
-            }
-        case let .string(value):
-            let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let integer = Int(value) {
-                return integer
-            }
-            if let double = Double(value), double.isFinite, let integer = Int(exactly: double) {
-                return integer
-            }
-        case let .bool(value):
-            return value ? 1 : 0
-        default:
-            break
-        }
-        throw ActionInputError.failed("Expected an integer value")
-    }
-
-    private nonisolated static func doubleValue(_ value: UIElementValue) throws -> Double {
-        let result: Double? = switch value {
-        case let .double(value):
-            value
-        case let .int(value):
-            Double(value)
-        case let .string(value):
-            Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
-        case let .bool(value):
-            value ? 1 : 0
-        }
-        guard let result, result.isFinite else {
-            throw ActionInputError.failed("Expected a finite numeric value")
-        }
-        return result
-    }
-
-    private nonisolated static func value(_ actual: Any?, matches expected: UIElementValue) -> Bool {
-        guard let actual else { return false }
-        switch expected {
-        case let .bool(expected):
-            if self.valueKind(actual) == .bool, let actual = actual as? Bool {
-                return actual == expected
-            }
-            if let number = actual as? NSNumber {
-                return number.intValue == (expected ? 1 : 0)
-            }
-            return false
-        case let .int(expected):
-            guard let number = actual as? NSNumber else { return false }
-            return !self.numberIsFloatingPoint(number) && number.intValue == expected
-        case let .double(expected):
-            guard let number = actual as? NSNumber else { return false }
-            let actual = number.doubleValue
-            let tolerance = max(1e-9, abs(expected) * 1e-9)
-            return actual.isFinite && abs(actual - expected) <= tolerance
-        case let .string(expected):
-            return (actual as? String) == expected
-        }
-    }
-
-    private enum ValueKind: Equatable {
-        case bool
-        case int
-        case double
-        case string
-        case unknown
-    }
-
-    private nonisolated static func valueKind(_ value: Any?) -> ValueKind {
-        guard let value else { return .unknown }
-        if value is String {
-            return .string
-        }
-        guard let number = value as? NSNumber else { return .unknown }
-        if CFGetTypeID(number) == CFBooleanGetTypeID() {
-            return .bool
-        }
-        return self.numberIsFloatingPoint(number) ? .double : .int
-    }
-
-    private nonisolated static func numberIsFloatingPoint(_ number: NSNumber) -> Bool {
-        switch String(cString: number.objCType) {
-        case "f", "d", "D":
-            true
-        default:
-            false
         }
     }
 

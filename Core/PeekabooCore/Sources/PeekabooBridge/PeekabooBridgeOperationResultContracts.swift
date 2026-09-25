@@ -420,7 +420,7 @@ enum PeekabooBridgeOperationResultSemantics {
         case processGenerationObservation(PeekabooBridgeProcessGenerationObservationRequest)
         case certificationProducerAttestation(PeekabooBridgeCertificationProducerAttestationRequest)
         case typeActions(TypeActionResultRule)
-        case setValue(target: String, value: String)
+        case setValue(target: String, value: UIElementValue)
         case performAction(target: String, actionName: String)
 
         var typeActionDispatchUnits: UnitPolicy? {
@@ -758,10 +758,12 @@ enum PeekabooBridgeOperationResultSemantics {
                         "type response key and dispatch units")
                 }
             case let (.setValue(expectedTarget, expectedValue), .elementActionResult(result)):
+                let valueMatches = result.valueVerification.map {
+                    $0.matches(requested: expectedValue, newValue: result.newValue, actionName: result.actionName)
+                } ?? (result.actionName == "AXSetValue" && result.newValue == expectedValue.displayString)
                 guard result.target == expectedTarget,
-                      result.actionName == "AXSetValue",
                       result.anchorPoint == nil,
-                      result.newValue == expectedValue
+                      valueMatches
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "set-value response request semantics")
@@ -770,7 +772,8 @@ enum PeekabooBridgeOperationResultSemantics {
                 guard result.target == expectedTarget,
                       result.actionName == expectedAction,
                       result.oldValue == nil,
-                      result.newValue == nil
+                      result.newValue == nil,
+                      result.valueVerification == nil
                 else {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "perform-action response request semantics")

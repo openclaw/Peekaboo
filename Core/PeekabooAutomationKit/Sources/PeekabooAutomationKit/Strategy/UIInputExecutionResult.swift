@@ -14,19 +14,22 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         public let anchorPoint: CGPoint?
         public let elementRole: String?
         public let focusedElement: FocusedElementIdentity?
+        public let valueVerification: ElementValueVerification?
 
         public init(
             outcome: DesktopActionOutcome,
             actionName: String? = nil,
             anchorPoint: CGPoint? = nil,
             elementRole: String? = nil,
-            focusedElement: FocusedElementIdentity? = nil)
+            focusedElement: FocusedElementIdentity? = nil,
+            valueVerification: ElementValueVerification? = nil)
         {
             self.outcome = outcome
             self.actionName = actionName
             self.anchorPoint = anchorPoint
             self.elementRole = elementRole
             self.focusedElement = focusedElement
+            self.valueVerification = valueVerification
         }
     }
 

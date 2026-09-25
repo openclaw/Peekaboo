@@ -319,6 +319,8 @@ extension PeekabooBridgeServer {
                             PeekabooBridgeHostCapability.compositeTypeDelivery),
                         processGenerationBoundElementMutations: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.processGenerationBoundElementMutations),
+                        setValueVerification: PeekabooBridgeNegotiatedSessionCapabilities.offersSetValueVerification(
+                            clientCapabilities, negotiatedVersion: negotiated),
                         screenCaptureKitOwnershipDiagnostics: clientCapabilities.contains(
                             PeekabooBridgeClientCapability.screenCaptureKitOwnershipDiagnostics)),
                     replacing: payload.replacingOperationSessionID)

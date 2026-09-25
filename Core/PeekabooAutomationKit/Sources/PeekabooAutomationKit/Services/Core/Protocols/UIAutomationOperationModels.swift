@@ -549,19 +549,22 @@ public struct ElementActionResult: Sendable, Codable, Equatable {
     public let anchorPoint: CGPoint?
     public let oldValue: String?
     public let newValue: String?
+    public let valueVerification: ElementValueVerification?
 
     public init(
         target: String,
         actionName: String?,
         anchorPoint: CGPoint?,
         oldValue: String? = nil,
-        newValue: String? = nil)
+        newValue: String? = nil,
+        valueVerification: ElementValueVerification? = nil)
     {
         self.target = target
         self.actionName = actionName
         self.anchorPoint = anchorPoint
         self.oldValue = oldValue
         self.newValue = newValue
+        self.valueVerification = valueVerification
     }
 }
 

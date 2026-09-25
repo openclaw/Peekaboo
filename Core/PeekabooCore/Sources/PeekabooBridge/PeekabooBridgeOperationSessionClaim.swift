@@ -12,6 +12,15 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let requestPinnedExactWindowScrollReceipt: Bool
     let compositeTypeDelivery: Bool
     let processGenerationBoundElementMutations: Bool
+    let setValueVerification: Bool
+
+    static func offersSetValueVerification(
+        _ capabilities: Set<String>,
+        negotiatedVersion: PeekabooBridgeProtocolVersion) -> Bool
+    {
+        negotiatedVersion >= PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion &&
+            capabilities.contains(PeekabooBridgeClientCapability.setValueVerification)
+    }
 
     static let current = Self(
         protocolVersion: PeekabooBridgeConstants.protocolVersion,
@@ -24,6 +33,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         requestPinnedExactWindowScrollReceipt: true,
         compositeTypeDelivery: true,
         processGenerationBoundElementMutations: true,
+        setValueVerification: true,
         screenCaptureKitOwnershipDiagnostics: true)
 
     init(
@@ -37,6 +47,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         requestPinnedExactWindowScrollReceipt: Bool = false,
         compositeTypeDelivery: Bool = false,
         processGenerationBoundElementMutations: Bool = false,
+        setValueVerification: Bool = false,
         screenCaptureKitOwnershipDiagnostics: Bool = false)
     {
         self.protocolVersion = protocolVersion
@@ -50,6 +61,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.requestPinnedExactWindowScrollReceipt = requestPinnedExactWindowScrollReceipt
         self.compositeTypeDelivery = compositeTypeDelivery
         self.processGenerationBoundElementMutations = processGenerationBoundElementMutations
+        self.setValueVerification = setValueVerification
     }
 }
 

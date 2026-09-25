@@ -37,6 +37,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         var resolved: ResolvedElementMutationTarget?
         var oldValue: String?
         var newValue: String?
+        var valueVerification: ElementValueVerification?
         let plan = try DesktopOperationPlan(
             verb: .setValue,
             selector: .element(target),
@@ -65,7 +66,9 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 }
                 try self.validateElementMutationTarget(resolved, receipt: captureReceipt)
                 do {
-                    return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
+                    let action = try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
+                    valueVerification = action.valueVerification
+                    return action
                 } catch let error as ActionInputError where error.isUnsupportedValueMutation {
                     throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
                         target: resolved.description,
@@ -81,7 +84,21 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 guard let resolved else {
                     throw PeekabooError.operationError(message: "Element mutation target was not prepared")
                 }
-                newValue = self.elementMutationValueReader(resolved.element)
+                if let valueVerification {
+                    newValue = valueVerification.displayString
+                    guard valueVerification.matches(
+                        requested: value, newValue: newValue, actionName: result.actionName)
+                    else {
+                        throw DesktopActionFailure.indeterminate(
+                            delivery: result.outcome.delivery,
+                            evidence: .completionUnknown,
+                            unitCount: result.outcome.dispatchState.unitCount,
+                            message: "Accessibility value verification did not match its native result",
+                            hint: "Observe the target before retrying this value mutation.")
+                    }
+                } else {
+                    newValue = self.elementMutationValueReader(resolved.element)
+                }
                 guard newValue != nil else {
                     throw DesktopActionFailure.indeterminate(
                         delivery: result.outcome.delivery,
@@ -107,7 +124,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 actionName: result.actionName,
                 anchorPoint: nil,
                 oldValue: oldValue,
-                newValue: newValue),
+                newValue: newValue,
+                valueVerification: valueVerification),
             outcome: result.outcome,
             targetIdentity: execution.targetIdentity)
     }

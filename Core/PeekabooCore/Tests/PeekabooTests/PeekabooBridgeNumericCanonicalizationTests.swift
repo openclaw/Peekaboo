@@ -58,10 +58,10 @@ struct PeekabooBridgeNumericCanonicalizationTests {
             value: .string("-0.0"),
             snapshotId: "snapshot")))
 
-        #expect(negativeZero.typedResponseRule == .setValue(target: "T1", value: "0"))
+        #expect(negativeZero.typedResponseRule == .setValue(target: "T1", value: .int(0)))
         #expect(positiveZero.typedResponseRule == negativeZero.typedResponseRule)
         #expect(integerZero.typedResponseRule == negativeZero.typedResponseRule)
-        #expect(numericString.typedResponseRule == .setValue(target: "T1", value: "-0.0"))
+        #expect(numericString.typedResponseRule == .setValue(target: "T1", value: .string("-0.0")))
     }
 
     @Test

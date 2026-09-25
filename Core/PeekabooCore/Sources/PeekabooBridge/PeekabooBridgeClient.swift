@@ -720,6 +720,9 @@ public actor PeekabooBridgeClient {
             capabilities.append(PeekabooBridgeClientCapability.producerBoundSnapshotReferences)
             capabilities.append(PeekabooBridgeClientCapability.targetedClickAccessibilityValueDelivery)
         }
+        if protocolVersion >= PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion {
+            capabilities.append(PeekabooBridgeClientCapability.setValueVerification)
+        }
         if protocolVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion {
             capabilities.append(PeekabooBridgeClientCapability.browserConnectionHandoff)
         }
