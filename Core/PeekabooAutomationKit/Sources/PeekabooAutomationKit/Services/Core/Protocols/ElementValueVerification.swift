@@ -210,7 +210,7 @@ extension UIElementValue {
     }
 }
 
-/// Shared by native verification and signed result binding. Keep the existing AX coercion policy in one place.
+/// Shared scalar policy for native verification and signed result binding.
 enum ElementValueMutationSemantics {
     static func coerce(
         _ value: UIElementValue,
@@ -254,13 +254,58 @@ enum ElementValueMutationSemantics {
             if let integer = Int(value) {
                 return integer
             }
-            if let double = Double(value), double.isFinite, let integer = Int(exactly: double) {
+            if let integer = self.exactDecimalInteger(value) {
                 return integer
             }
         case let .bool(value): return value ? 1 : 0
         default: break
         }
         throw ActionInputError.failed("Expected an integer value")
+    }
+
+    private static func exactDecimalInteger(_ value: String) -> Int? {
+        let exponentParts = value.split(maxSplits: 2, omittingEmptySubsequences: false) { $0 == "e" || $0 == "E" }
+        guard exponentParts.count <= 2, var mantissa = exponentParts.first else { return nil }
+        let negative = mantissa.first == "-"
+        if negative || mantissa.first == "+" {
+            mantissa.removeFirst()
+        }
+        let exponent = exponentParts.count == 2 ? exponentParts[1] : Substring("0")
+        var exponentDigits = exponent
+        if exponentDigits.first == "-" || exponentDigits.first == "+" {
+            exponentDigits.removeFirst()
+        }
+        guard self.isASCIIDigits(exponentDigits) else { return nil }
+        let parts = mantissa.split(separator: ".", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count <= 2 else { return nil }
+        let rawDigits = parts.joined()
+        guard self.isASCIIDigits(rawDigits) else { return nil }
+        var digits = rawDigits.drop(while: { $0 == "0" })
+        if digits.isEmpty {
+            return 0
+        }
+        guard let parsedExponent = Int(exponent) else { return nil }
+        let fractionalCount = parts.count == 2 ? parts[1].count : 0
+        let adjusted = parsedExponent.subtractingReportingOverflow(fractionalCount)
+        guard !adjusted.overflow else { return nil }
+        let scale = adjusted.partialValue
+        let maximumDigits = String(Int.max).count
+        var zeroSuffix = ""
+        if scale < 0 {
+            guard scale >= -digits.count else { return nil }
+            let removedCount = -scale
+            guard digits.suffix(removedCount).allSatisfy({ $0 == "0" }) else { return nil }
+            digits = digits.dropLast(removedCount)
+        } else {
+            guard digits.count <= maximumDigits, scale <= maximumDigits - digits.count else { return nil }
+            zeroSuffix = String(repeating: "0", count: scale)
+        }
+        guard digits.count <= maximumDigits else { return nil }
+        return Int((negative ? "-" : "") + String(digits) + zeroSuffix)
+    }
+
+    private static func isASCIIDigits(_ value: some StringProtocol) -> Bool {
+        !value.isEmpty && value.utf8.allSatisfy { (48...57).contains($0) }
     }
 
     private static func doubleValue(_ value: UIElementValue) throws -> Double {
@@ -281,7 +326,7 @@ enum ElementValueMutationSemantics {
             if case let .bool(value) = actual {
                 return value == expected
             }
-            return actual.number?.intValue == (expected ? 1 : 0)
+            return actual.number?.doubleValue == (expected ? 1.0 : 0.0)
         case let .int(expected):
             guard actual.kind != .double, let number = actual.number else { return false }
             return number.intValue == expected

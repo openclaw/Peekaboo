@@ -7,6 +7,53 @@ import Testing
 struct SetValueVerificationTests {
     @MainActor
     @Test
+    func `decimal integer strings preserve all digits and ordinary exponent forms`() throws {
+        let cases: [(String, Int)] = [
+            ("9007199254740993.0", 9_007_199_254_740_993),
+            ("9007199254740993e0", 9_007_199_254_740_993),
+            ("\(Int.max).0", Int.max),
+            ("\(Int.min).0", Int.min),
+            ("001.0", 1), ("10e-1", 1), (".0", 0), ("1.", 1), ("1.e3", 1000), ("-1e+3", -1000),
+            ("1." + String(repeating: "0", count: 80), 1),
+            ("1" + String(repeating: "0", count: 80) + "e-80", 1),
+            ("0e99999999999999999999999999", 0),
+            ("-0.0e-99999999999999999999999", 0),
+        ]
+        for (text, expected) in cases {
+            let element = ActionInputMockAutomationElement(value: 3, isValueSettable: true)
+            let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+            #expect(element.setValues == [.int(expected)])
+            #expect(result.valueVerification?.readback == .int(expected))
+        }
+    }
+
+    @MainActor
+    @Test(arguments: [
+        "1.0000000000000001", "1e-400", "9007199254740993.5",
+        "1.0000000000000000000000000000000000000000000000000000001",
+        "1e9999999999999999999999", "1e-9999999999999999999999",
+        "9223372036854775808.0", "-9223372036854775809.0", "0x1p2", "0x1.8p1",
+        "", "+", "-", ".", "+.", "1e", "1e+", "e1", "1e1e1", "1..0", "   ",
+    ])
+    func `inexact out of range and hexadecimal integer strings fail before dispatch`(text: String) {
+        let element = ActionInputMockAutomationElement(value: 3, isValueSettable: true)
+        #expect(throws: ActionInputError.self) {
+            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+        }
+        #expect(element.setValues.isEmpty)
+    }
+
+    @MainActor
+    @Test(arguments: ["1.0000000000000001", "1e-400", "0x1p2"])
+    func `integer string restrictions never apply to literal text controls`(text: String) throws {
+        let element = ActionInputMockAutomationElement(role: "AXTextField", value: "before", isValueSettable: true)
+        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+        #expect(element.setValues == [.string(text)])
+        #expect(result.valueVerification?.readback == .string(text))
+    }
+
+    @MainActor
+    @Test
     func `legacy presentation is captured from the same raw native observation`() throws {
         let cases: [(Any, UIElementValue, String)] = [
             (58.0, .double(58), "58.0"),
@@ -257,28 +304,59 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test
-    func `witnesses retain existing NSNumber comparison edge behavior`() throws {
-        let booleanElement = ActionInputMockAutomationElement(
-            value: false,
-            isValueSettable: true,
-            valueSetterReadbackOverride: .double(1.5))
+    func `integer Boolean readback preserves exact zero and one`() throws {
         let integerElement = ActionInputMockAutomationElement(
             value: 0,
             isValueSettable: true,
             valueSetterReadbackOverride: .bool(true))
         let driver = ActionInputDriver()
 
-        let booleanResult = try driver.trySetValueForTesting(element: booleanElement, value: .bool(true))
-        let booleanVerification = try #require(booleanResult.valueVerification)
         let integerResult = try driver.trySetValueForTesting(element: integerElement, value: .int(1))
         let integerVerification = try #require(integerResult.valueVerification)
 
-        #expect(booleanVerification.resolvedKind == .bool)
-        #expect(booleanVerification.readback == .double(1.5))
-        #expect(booleanVerification.matches(requested: .bool(true), newValue: "1.5", actionName: "AXSetValue"))
         #expect(integerVerification.resolvedKind == .int)
         #expect(integerVerification.readback == .bool(true))
         #expect(integerVerification.matches(requested: .int(1), newValue: "true", actionName: "AXSetValue"))
+    }
+
+    @MainActor
+    @Test(arguments: [0.5, -0.5, 1.5, Double.leastNonzeroMagnitude, Double(1).nextUp])
+    func `fractional numeric Boolean readback is retry unsafe after dispatch`(readback: Double) {
+        let requested = readback >= 1
+        let element = ActionInputMockAutomationElement(
+            role: "AXCheckBox",
+            value: !requested,
+            isValueSettable: true,
+            valueSetterReadbackOverride: .double(readback))
+
+        self.expectUnverifiedMutation(element: element, requested: .bool(requested))
+        #expect(element.setValues == [.bool(requested)])
+    }
+
+    @MainActor
+    @Test(arguments: [0.5, -0.5, 1.5])
+    func `fractional Boolean prestate is not an idempotent match`(readback: Double) throws {
+        let requested = readback >= 1
+        let element = ActionInputMockAutomationElement(
+            role: "AXCheckBox", value: NSNumber(value: readback), isValueSettable: true)
+        let driver = ActionInputDriver()
+        let changed = try driver.trySetValueForTesting(element: element, value: .bool(requested))
+        #expect(changed.outcome.state == .confirmedChange)
+        #expect(element.setValues == [.bool(requested)])
+        let repeated = try driver.trySetValueForTesting(element: element, value: .bool(requested))
+        #expect(repeated.outcome.state == .confirmedNoChange)
+        #expect(element.setValues == [.bool(requested)])
+    }
+
+    @MainActor
+    @Test(arguments: [false, true])
+    func `exact numeric Boolean prestate remains idempotent`(requested: Bool) throws {
+        for raw in [NSNumber(value: requested ? 1 : 0), NSNumber(value: requested ? 1.0 : 0.0)] {
+            let element = ActionInputMockAutomationElement(role: "AXCheckBox", value: raw, isValueSettable: true)
+            let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .bool(requested))
+            #expect(result.outcome.state == .confirmedNoChange)
+            #expect(element.setValues.isEmpty)
+        }
     }
 
     @MainActor

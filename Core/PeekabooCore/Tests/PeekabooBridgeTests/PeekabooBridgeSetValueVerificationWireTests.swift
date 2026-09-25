@@ -6,6 +6,33 @@ import Testing
 
 struct PeekabooBridgeSetValueVerificationWireTests {
     @Test
+    func `signed integer coercion rejects rounded fractional and underflowed text`() throws {
+        let cases: [(String, Int)] = [
+            ("9007199254740993.0", 9_007_199_254_740_992),
+            ("1.0000000000000001", 1), ("1e-400", 0), ("0x1p2", 4),
+        ]
+        for (text, rounded) in cases {
+            let witness = ElementValueVerification(attribute: .value, resolvedKind: .int, readback: .int(rounded))
+            let bundle = try SetValueVerificationReceiptFixture.bundle(
+                requested: Self.request(.string(text)), response: Self.response(witness: witness))
+            try bundle.receipt.validateSignature(publicKey: bundle.operationAttestation.publicKey)
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) { try bundle.validateIntegrity() }
+        }
+    }
+
+    @Test
+    func `signed fractional numeric readbacks cannot attest Boolean success`() throws {
+        for readback in [0.5, -0.5, 1.5] {
+            let witness = ElementValueVerification(
+                attribute: .value, resolvedKind: .bool, readback: .double(readback))
+            let bundle = try SetValueVerificationReceiptFixture.bundle(
+                requested: Self.request(.bool(readback >= 1)), response: Self.response(witness: witness))
+            try bundle.receipt.validateSignature(publicKey: bundle.operationAttestation.publicKey)
+            #expect(throws: PeekabooBridgeOperationReceiptError.self) { try bundle.validateIntegrity() }
+        }
+    }
+
+    @Test
     func `legacy numeric boolean readbacks retain valid signed old decoder bytes`() throws {
         for requested in [false, true] {
             let witness = ElementValueVerification(
@@ -33,6 +60,10 @@ struct PeekabooBridgeSetValueVerificationWireTests {
             (.string("-0.0"), .init(attribute: .value, resolvedKind: .string, readback: .string("-0.0"))),
             (.int(9_007_199_254_740_993), .init(
                 attribute: .value, resolvedKind: .int, readback: .int(9_007_199_254_740_993))),
+            (.string("9007199254740993.0"), .init(
+                attribute: .value, resolvedKind: .int, readback: .int(9_007_199_254_740_993))),
+            (.string("\(Int.max).0"), .init(attribute: .value, resolvedKind: .int, readback: .int(Int.max))),
+            (.string("10e-1"), .init(attribute: .value, resolvedKind: .int, readback: .int(1))),
             (.bool(true), .init(attribute: .selected, resolvedKind: .bool, readback: .bool(true))),
             (.string("58.00"), .init(attribute: .value, resolvedKind: .double, readback: .double(58))),
         ]

@@ -298,10 +298,11 @@ jobs:
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$native_log"
           bridge_log="$RUNNER_TEMP/bridge-set-value-verification.log"
           swift test --disable-xctest --enable-swift-testing --no-parallel --jobs 2 \
-            --filter '^PeekabooBridgeTests[.](PeekabooBridgeSetValueVerificationTests|PeekabooBridgeSetValueVerificationWireTests)/' \
+            --filter '^PeekabooBridgeTests[.](PeekabooBridgeSetValueVerificationTests|PeekabooBridgeSetValueVerificationWireTests)/|^PeekabooTests[.]PeekabooBridgeSetValueHostClientTests/' \
             2>&1 | tee "$bridge_log"
           grep -Fq 'Suite PeekabooBridgeSetValueVerificationTests passed after ' "$bridge_log"
           grep -Fq 'Suite PeekabooBridgeSetValueVerificationWireTests passed after ' "$bridge_log"
+          grep -Fq 'Suite PeekabooBridgeSetValueHostClientTests passed after ' "$bridge_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$bridge_log"
 
       - name: Run Bridge application running-state contracts
