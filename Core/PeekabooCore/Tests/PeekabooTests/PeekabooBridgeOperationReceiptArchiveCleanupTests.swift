@@ -129,54 +129,34 @@ struct PeekabooBridgeOperationReceiptArchiveCleanupTests {
     }
 
     @Test
-    func `later quarantine failure refuses rollover while cleanup still blocks capacity`() async throws {
+    func `later quarantine failure blocks maintenance despite earlier registry progress`() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "peekaboo-operation-receipt-progress-\(UUID().uuidString)",
             isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let archiveGate = FirstArchiveMoveGateThenFailure()
-        defer { archiveGate.release() }
-        let authority = try PeekabooBridgeOperationReceiptAuthority(
-            socketPath: root.appendingPathComponent("bridge.sock").path,
-            maximumClaimCount: 2,
-            maximumSessionCount: 8,
-            retainedRetiredSessionCount: 1,
-            archiveFileSystem: archiveGate.fileSystem)
-        var retiredSessions: [OperationReceiptSessionFixture] = []
-        for _ in 0..<4 {
-            try await retiredSessions.append(OperationReceiptSessionFixture.make(authority: authority))
-        }
-        for session in retiredSessions.prefix(2) {
-            try authority.retireSession(
-                session.attestation.sessionID,
-                clientInstanceID: session.clientInstanceID,
-                peer: session.peer)
-        }
-        #expect(await archiveGate.waitUntilMoveStarts())
-        for session in retiredSessions.dropFirst(2) {
-            try authority.retireSession(
-                session.attestation.sessionID,
-                clientInstanceID: session.clientInstanceID,
-                peer: session.peer)
+        let archiveFailure = ProgressThenArchiveMoveFailure()
+        let maintenance = PeekabooBridgeOperationReceiptArchiveMaintenance(
+            fileSystem: archiveFailure.fileSystem,
+            capacityBacklogLimit: 8)
+        for index in 0..<2 {
+            let source = root.appendingPathComponent("session-\(index)")
+            try Data().write(to: source)
+            #expect(maintenance.enqueue(
+                owner: .retiredSession(UUID()),
+                source: source,
+                quarantine: root.appendingPathComponent("session-\(index).quarantine")) != nil)
         }
 
-        var activeSessions: [OperationReceiptSessionFixture] = []
-        for _ in 0..<4 {
-            try await activeSessions.append(OperationReceiptSessionFixture.make(authority: authority))
-        }
-        let saturatedSession = try #require(activeSessions.first)
-        let rolloverTask = Task {
-            try await saturatedSession.rolloverRefusal(
-                authority: authority,
-                sequence: 2,
-                request: .permissionsStatus)
-        }
+        // Own the maintenance run; a separately scheduled rollover can legitimately enter after capacity frees.
+        let maintained = await maintenance.performRequired { _ in archiveFailure.recordRegistryCommit() }
 
-        archiveGate.release()
-        let rollover = try await rolloverTask.value
-        #expect(rollover.refusal.payload.disposition == .sessionRolloverUnavailable)
-        #expect(rollover.refusal.payload.successorSessionAttestation == nil)
-        #expect(archiveGate.moveAttemptCount >= 2)
+        #expect(!maintained)
+        #expect(archiveFailure.moveAttemptCount == 2)
+        #expect(archiveFailure.registryCommitCount == 1)
+        #expect(maintenance.hasUncommittedRetiredSession)
+        #expect(maintenance.requiresCapacityMaintenance)
+        #expect(!maintenance.backlogIsSaturated)
     }
 
     @Test
@@ -219,12 +199,10 @@ private enum ArchiveRemovalFailure: Error {
     case injected
 }
 
-private final class FirstArchiveMoveGateThenFailure: @unchecked Sendable {
+private final class ProgressThenArchiveMoveFailure: @unchecked Sendable {
     private let lock = NSLock()
-    private let moveStarted = DispatchSemaphore(value: 0)
-    private let allowFirstMove = DispatchSemaphore(value: 0)
-    private var didRelease = false
     private var moveAttempts = 0
+    private var registryCommits = 0
 
     var fileSystem: PeekabooBridgeOperationReceiptArchiveFileSystem {
         PeekabooBridgeOperationReceiptArchiveFileSystem(
@@ -235,10 +213,6 @@ private final class FirstArchiveMoveGateThenFailure: @unchecked Sendable {
                     return self.moveAttempts
                 }
                 guard attempt == 1 else { throw ArchiveRemovalFailure.injected }
-                self.moveStarted.signal()
-                guard self.allowFirstMove.wait(timeout: .now() + 5) == .success else {
-                    throw ArchiveRemovalFailure.injected
-                }
                 try FileManager.default.moveItem(at: source, to: destination)
             },
             removeItem: { try FileManager.default.removeItem(at: $0) })
@@ -248,23 +222,13 @@ private final class FirstArchiveMoveGateThenFailure: @unchecked Sendable {
         self.lock.withLock { self.moveAttempts }
     }
 
-    func waitUntilMoveStarts() async -> Bool {
-        await withCheckedContinuation { continuation in
-            Thread.detachNewThread { [self] in
-                continuation.resume(returning: self.moveStarted.wait(timeout: .now() + 2) == .success)
-            }
-        }
+    var registryCommitCount: Int {
+        self.lock.withLock { self.registryCommits }
     }
 
-    func release() {
-        let shouldSignal = self.lock.withLock {
-            guard !self.didRelease else { return false }
-            self.didRelease = true
-            return true
-        }
-        if shouldSignal {
-            self.allowFirstMove.signal()
-        }
+    func recordRegistryCommit() -> Bool {
+        self.lock.withLock { self.registryCommits += 1 }
+        return true
     }
 }
 
