@@ -148,6 +148,8 @@ evidence. On resume the trace includes retained session history, as it does for 
 Tool results blocked by pending snapshot cleanup retain `snapshot_invalidation.tool_executed: false` and
 `snapshot_invalidation.retry_tool: true` in Agent metadata. These describe the blocked tool, not permission to replay
 an earlier mutation; inspect current state and distinguish cleanup retries from newly dispatched input.
+Browser-provider metadata is filtered and namespaced before projection, including results from legacy read-only
+clients, so provider-authored cleanup or action claims cannot become Peekaboo-owned receipts.
 
 Mutating trace entries expose `mutationDispatch` as `dispatched`, `not_dispatched`, or `possibly_dispatched`.
 `mutation_dispatched` is retained in the bounded result summary only when the tool explicitly reported the legacy

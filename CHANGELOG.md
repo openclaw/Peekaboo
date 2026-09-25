@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Preserve sanitized partial Agent execution traces when the step limit is exhausted, keep no-cache runs non-resumable, and replace blind-retry guidance with current-state inspection; retain blocked-tool snapshot-cleanup metadata in Agent results.
+- Preserve sanitized partial Agent execution traces when the step limit is exhausted, keep no-cache runs non-resumable, and replace blind-retry guidance with current-state inspection; retain Peekaboo-owned snapshot-cleanup metadata while isolating legacy browser-provider claims.
 - Centralize browser batch-progress validation for signed and legacy receiptless Bridge results while preserving their separate connection and completion-evidence requirements.
 - Remove retired internal MCP process-only target resolution and obsolete window-target rejection; keep process-generation coverage on the active shared keyboard planner.
 - Keep fresh local `see` snapshots eligible for subsequent background input by excluding read-only observation timeouts from mutation barriers; preserve barriers for web-focus/menu-opening observations and caller-owned mutations.

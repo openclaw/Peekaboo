@@ -513,7 +513,14 @@ public struct BrowserTool: MCPTool {
             }
             try Self.checkCancellationBeforeProviderEntry()
             do {
-                return try await self.client.executeSequence(calls, channel: channel)
+                let response = try await self.client.executeSequence(calls, channel: channel)
+                return try ToolResponse(
+                    content: response.content,
+                    isError: response.isError,
+                    meta: MCPToolResponseMetadataProjector.metadata(
+                        merging: MCPToolResponseMetadataProjector.providerFields(from: response.meta),
+                        outcome: nil),
+                    structuredContent: response.structuredContent)
             } catch is CancellationError where semantics == .readOnly {
                 return ToolResponse.error("Browser read was cancelled after provider entry.")
             }
