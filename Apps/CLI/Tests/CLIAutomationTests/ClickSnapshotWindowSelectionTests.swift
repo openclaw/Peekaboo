@@ -6,6 +6,65 @@ import Testing
 
 @Suite(.tags(.automation), .enabled(if: CLITestEnvironment.runAutomationRead))
 struct ClickSnapshotWindowSelectionTests {
+    @Test(arguments: [["--on", "B1"], ["Save"]], [[], ["--right"], ["--double"]])
+    @MainActor
+    func `Implicit snapshot window preserves process-capable legacy hosts`(
+        targetArguments: [String],
+        clickArguments: [String]
+    ) async throws {
+        let application = Self.makeApplication()
+        let window = Self.makeWindow()
+        let windows = SnapshotReceiptOnlyWindowService(windowsByApp: [application.name: [window]])
+        let fixture = Self.makeFixture(application: application, window: window, windows: windows)
+        fixture.automation.supportsExactWindowTargetedClicks = false
+        if let variant = clickArguments.first {
+            let automation = try #require(fixture.automation as? OutcomeStubAutomationService)
+            automation.actionOutcome = .dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: DesktopActionOutcome.DispatchUnitCount(variant == "--double" ? 5 : 3)
+            )
+        }
+        let snapshotID = try await Self.storeSnapshot(window: window, in: fixture.snapshots)
+        let result = try await InProcessCommandRunner.run(
+            ["click"] + targetArguments + clickArguments + ["--snapshot", snapshotID, "--json"],
+            services: fixture.services
+        )
+
+        #expect(result.exitStatus == 0, "\(result.combinedOutput)")
+        #expect(fixture.automation.targetedClickCalls.count == 1)
+        let call = try #require(fixture.automation.targetedClickCalls.first)
+        #expect(call.targetWindowID == nil)
+        #expect(call.expectedWindowIdentity == nil)
+        #expect(call.expectedProcessIdentity == window.mutationIdentity?.processIdentity)
+        #expect(windows.windowLookupCount == 0)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let identity = try #require(object["target_identity"] as? [String: Any])
+        let receipt = try #require(object["target_receipt"] as? [String: Any])
+        #expect(identity["kind"] as? String == "process")
+        #expect(receipt["window_id"] == nil)
+        #expect(receipt["process_start_identity_decimal"] as? String == "7")
+    }
+
+    @Test(arguments: [["--window-id", "42"], ["--middle"], ["--triple"]])
+    @MainActor
+    func `Required exact-window clicks never downgrade on legacy hosts`(extraArguments: [String]) async throws {
+        let application = Self.makeApplication()
+        let window = Self.makeWindow()
+        let windows = SnapshotReceiptOnlyWindowService(windowsByApp: [application.name: [window]])
+        let fixture = Self.makeFixture(application: application, window: window, windows: windows)
+        fixture.automation.supportsExactWindowTargetedClicks = false
+        let snapshotID = try await Self.storeSnapshot(window: window, in: fixture.snapshots)
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--on", "B1", "--snapshot", snapshotID, "--json"] + extraArguments,
+            services: fixture.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(fixture.automation.targetedClickCalls.isEmpty)
+        #expect(windows.windowLookupCount == 0)
+    }
+
     @Test(arguments: [["--on", "B1"], ["Save"]], [[], ["--right"], ["--double"], ["--middle"], ["--triple"]])
     @MainActor
     func `Snapshot-only clicks retain exact dispatch and JSON target receipts`(
@@ -189,9 +248,9 @@ struct ClickSnapshotWindowSelectionTests {
         #expect(fixture.automation.targetedClickCalls.first?.targetWindowID == 42)
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `Stale exact-window receipt refuses once without selector fallback`() async throws {
+    func `Stale exact-window receipt refuses once without selector fallback`(explicitSelector: Bool) async throws {
         let application = Self.makeApplication()
         let window = Self.makeWindow()
         let windows = StubWindowService(windowsByApp: [application.name: [window]])
@@ -200,13 +259,15 @@ struct ClickSnapshotWindowSelectionTests {
         let snapshotID = try await Self.storeSnapshot(window: window, in: fixture.snapshots)
 
         let result = try await InProcessCommandRunner.run(
-            ["click", "--on", "B1", "--snapshot", snapshotID, "--window-id", "42", "--json"],
+            ["click", "--on", "B1", "--snapshot", snapshotID, "--json"] +
+                (explicitSelector ? ["--window-id", "42"] : []),
             services: fixture.services
         )
 
         #expect(result.exitStatus == 1)
         #expect(result.combinedOutput.contains("window identity changed"))
         #expect(fixture.automation.targetedClickCalls.count == 1)
+        #expect(fixture.automation.targetedClickCalls.first?.targetWindowID == window.windowID)
     }
 
     @MainActor

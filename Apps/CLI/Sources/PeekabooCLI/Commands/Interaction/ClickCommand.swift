@@ -646,9 +646,15 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             }
             let exactWindowInfo = context.explicitWindowResolution?.windowInfo ??
                 context.coordinateResolution?.windowInfo
-            let targetWindowID = exactWindowInfo?.windowID ?? backgroundTarget.exactWindow?.identity.windowID
-            let expectedWindowIdentity = exactWindowInfo?.mutationIdentity ?? backgroundTarget.exactWindow?.identity
-            let expectedWindowBounds = exactWindowInfo?.bounds ?? backgroundTarget.exactWindow?.bounds
+            // Implicit snapshot clicks retain the published process-pinned contract on limited hosts.
+            // Explicit windows, coordinates, and stateless variants still require exact-window delivery.
+            let usesSnapshotWindow = clickType.requiresStatelessVariantSupport ||
+                (self.services.automation as? any ExactWindowTargetedClickServiceProtocol)?
+                .supportsExactWindowTargetedClicks == true
+            let snapshotWindow = usesSnapshotWindow ? backgroundTarget.exactWindow : nil
+            let targetWindowID = exactWindowInfo?.windowID ?? snapshotWindow?.identity.windowID
+            let expectedWindowIdentity = exactWindowInfo?.mutationIdentity ?? snapshotWindow?.identity
+            let expectedWindowBounds = exactWindowInfo?.bounds ?? snapshotWindow?.bounds
             if targetWindowID != nil, expectedWindowIdentity == nil {
                 throw PeekabooError.snapshotStale(
                     "Exact-window click snapshot has no capture-time process-generation receipt; " +
