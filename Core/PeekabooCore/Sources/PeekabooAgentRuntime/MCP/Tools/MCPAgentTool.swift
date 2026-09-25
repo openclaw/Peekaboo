@@ -132,7 +132,7 @@ public struct MCPAgentTool: MCPTool {
 
         do {
             let result = try await self.runAgentTask(task: task, input: input)
-            return self.formatResult(result: result, input: input)
+            return Self.formatResult(result: result, input: input)
         } catch let error as AgentToolError {
             return ToolResponse.error(error.message)
         } catch {
@@ -271,47 +271,40 @@ public struct MCPAgentTool: MCPTool {
         return model
     }
 
-    private func formatResult(result: AgentExecutionResult, input: AgentInput) -> ToolResponse {
-        let summary = self.summary(for: result)
-
-        if input.quiet {
-            return ToolResponse.text(
-                result.content,
-                meta: ToolEventSummary.merge(summary: summary, into: Self.executionTraceMetadata(for: result)))
-        }
-
-        if input.verbose {
-            let verboseMeta = self.verboseMetadata(for: result)
-            return ToolResponse.text(
-                result.content,
-                meta: ToolEventSummary.merge(summary: summary, into: verboseMeta))
-        }
-
+    static func formatResult(result: AgentExecutionResult, input: AgentInput) -> ToolResponse {
+        let trace = result.executionTrace()
+        let summary = Self.summary(for: result)
         var output = result.content
-        if let sessionId = result.sessionId {
-            output += "\n🆔 Session: \(sessionId)"
+        var metadata = Self.executionTraceMetadataObject(for: trace)
+        if !input.quiet, input.verbose {
+            metadata = Self.verboseMetadata(for: result, base: metadata)
+        } else if !input.quiet {
+            if let sessionId = result.sessionId {
+                output += "\n🆔 Session: \(sessionId)"
+                metadata["sessionId"] = .string(sessionId)
+            }
+            if !result.metadata.modelName.isEmpty {
+                output += "\n⚙️  Model: \(result.metadata.modelName)"
+            }
+            if result.metadata.toolCallCount > 0 {
+                output += "\n🛠️  Tool Calls: \(result.metadata.toolCallCount)"
+            }
+            if let usage = result.usage {
+                let tokensLine = "\n📊 Tokens — Input: \(usage.inputTokens), " +
+                    "Output: \(usage.outputTokens), Total: \(usage.totalTokens)"
+                output += tokensLine
+            }
         }
-        if !result.metadata.modelName.isEmpty {
-            output += "\n⚙️  Model: \(result.metadata.modelName)"
+        var content: [MCP.Tool.Content] = [.text(text: output, annotations: nil, _meta: nil)]
+        if !input.quiet, let notice = trace.recordedOutcomeNotice {
+            content.append(.text(text: notice, annotations: nil, _meta: nil))
         }
-        if result.metadata.toolCallCount > 0 {
-            output += "\n🛠️  Tool Calls: \(result.metadata.toolCallCount)"
-        }
-        if let usage = result.usage {
-            let tokensLine = "\n📊 Tokens — Input: \(usage.inputTokens), " +
-                "Output: \(usage.outputTokens), Total: \(usage.totalTokens)"
-            output += tokensLine
-        }
-
-        var baseMetadata = Self.executionTraceMetadataObject(for: result)
-        if let sessionId = result.sessionId {
-            baseMetadata["sessionId"] = .string(sessionId)
-        }
-        let baseMeta = Value.object(baseMetadata)
-        return ToolResponse.text(output, meta: ToolEventSummary.merge(summary: summary, into: baseMeta))
+        return ToolResponse(
+            content: content,
+            meta: ToolEventSummary.merge(summary: summary, into: .object(metadata)))
     }
 
-    private func summary(for result: AgentExecutionResult) -> ToolEventSummary {
+    private static func summary(for result: AgentExecutionResult) -> ToolEventSummary {
         var details: [String] = []
         if !result.metadata.modelName.isEmpty {
             details.append("Model \(result.metadata.modelName)")
@@ -328,8 +321,11 @@ public struct MCPAgentTool: MCPTool {
             notes: details.isEmpty ? nil : details.joined(separator: " · "))
     }
 
-    private func verboseMetadata(for result: AgentExecutionResult) -> Value {
-        var metadata = Self.executionTraceMetadataObject(for: result)
+    private static func verboseMetadata(
+        for result: AgentExecutionResult,
+        base: [String: Value]) -> [String: Value]
+    {
+        var metadata = base
         metadata.merge([
             "toolCallCount": .int(result.metadata.toolCallCount),
             "modelName": .string(result.metadata.modelName),
@@ -347,22 +343,25 @@ public struct MCPAgentTool: MCPTool {
             ])
         }
 
-        return .object(metadata)
+        return metadata
     }
 
     static func executionTraceMetadata(for result: AgentExecutionResult) -> Value {
-        .object(self.executionTraceMetadataObject(for: result))
+        .object(self.executionTraceMetadataObject(for: result.executionTrace()))
     }
 
-    private static func executionTraceMetadataObject(for result: AgentExecutionResult) -> [String: Value] {
-        let trace = result.executionTrace()
-        return [
+    private static func executionTraceMetadataObject(for trace: AgentExecutionTrace) -> [String: Value] {
+        var metadata: [String: Value] = [
             "executionTrace": (try? Value(trace)) ?? .object([
                 "entries": .array([]),
                 "totalCallCount": .int(trace.totalCallCount),
                 "truncated": .bool(true),
             ]),
         ]
+        if let notice = trace.recordedOutcomeNotice {
+            metadata["recordedOutcomeNotice"] = .string(notice)
+        }
+        return metadata
     }
 }
 

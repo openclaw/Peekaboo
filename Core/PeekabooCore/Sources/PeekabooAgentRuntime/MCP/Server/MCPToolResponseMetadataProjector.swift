@@ -96,6 +96,9 @@ enum MCPToolResponseMetadataProjector {
         if toolName == "see" || toolName == "inspect_ui" {
             allowed.insert("focused_element")
         }
+        if toolName == "agent" {
+            allowed.insert("recordedOutcomeNotice")
+        }
         return fields.filter { allowed.contains($0.key) }
     }
 

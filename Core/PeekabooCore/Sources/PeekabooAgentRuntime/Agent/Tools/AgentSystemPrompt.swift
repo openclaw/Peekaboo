@@ -188,6 +188,8 @@ public struct AgentSystemPrompt {
         - Prefer `set_value` for form fields when replacing the whole value; use `type` when observable keystrokes,
           autocomplete, IME behavior, or key actions matter.
         - Verify each action succeeds before moving on.
+        - Distinguish effects verified by later observations from the original recorded action outcomes. A later
+          observation does not change a `dispatched_unverified` receipt; never claim all outcomes became confirmed.
         - If an action fails, try a semantic menu, window, app, dialog, or alternate element action using the JSON
           contracts for each tool. \(rawKeyboardGuidance)
         - Avoid shell scripting or osascript pipelines during UI automation. Prefer first-class automation tools.

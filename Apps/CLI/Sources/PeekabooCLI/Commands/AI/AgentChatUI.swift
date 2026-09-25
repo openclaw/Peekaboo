@@ -125,6 +125,9 @@ final class AgentChatUI {
         let summary = self.summaryLine(for: result)
         let summaryComponent = Text(text: summary, paddingX: 1, paddingY: 0)
         self.messages.addChild(summaryComponent)
+        if let notice = result.executionTrace().recordedOutcomeNotice {
+            self.messages.addChild(Text(text: notice, paddingX: 1, paddingY: 0))
+        }
         self.setRunning(false)
         self.processNextQueuedPromptIfNeeded()
         self.requestRender()
