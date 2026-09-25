@@ -18,6 +18,80 @@ struct ObservedFocusCorroborationTests {
         DetectionTruncationInfo(incompleteAccessibilityRead: true),
     ]
 
+    @Test(arguments: [true, nil] as [Bool?])
+    func `stalled optional focus read leaves short deadline available for ordinary traversal`(focused: Bool?) throws {
+        let timing = DetachedAXObservationTiming(hardTimeoutSeconds: 0.05)
+        let started = ContinuousClock.now
+        let deadline = started.advanced(by: .seconds(timing.cooperativeDeadlineSeconds))
+        var now = started.advanced(by: .milliseconds(4))
+        var readTimeouts: [Float] = []
+        let initial: Int? = DetachedAXObservationWorker.initialFocusedReference(deadline: deadline, now: now) {
+            readTimeouts.append($0)
+            now = now.advanced(by: .seconds(Double($0)))
+            return nil
+        }
+
+        #expect(initial == nil)
+        #expect(readTimeouts.count == 1)
+        let readTimeout = try #require(readTimeouts.first)
+        #expect(abs(readTimeout - 0.009) < 0.000_001)
+
+        let traverse = { () -> [DetectedElement] in
+            let completed = now.advanced(by: .milliseconds(20))
+            guard completed < deadline else { return [] }
+            now = completed
+            return [self.element(id: "field", focused: focused)]
+        }
+        let elements = traverse()
+        let result = self.result(elements: elements, corroboratedElementID: nil)
+
+        #expect(elements.count == 1)
+        #expect(now < deadline)
+        #expect(now.duration(to: deadline) < .milliseconds(12))
+        #expect(readTimeouts.count == 1)
+        if focused == true {
+            #expect(result.metadata.windowContext?.focusedElement?.identifier == "native-field")
+        } else {
+            #expect(result.metadata.windowContext?.focusedElement == nil)
+            #expect(result.elements.textFields.first?.isFocused == nil)
+        }
+    }
+
+    @Test(arguments: [0.037, 0.039, 0.04, 0.05])
+    func `initial focus read skips insufficient or expired deadline without restarting`(elapsed: TimeInterval) {
+        let started = ContinuousClock.now
+        let timing = DetachedAXObservationTiming(hardTimeoutSeconds: 0.05)
+        let deadline = started.advanced(by: .seconds(timing.cooperativeDeadlineSeconds))
+        var reads = 0
+
+        let initial: Int? = DetachedAXObservationWorker.initialFocusedReference(
+            deadline: deadline,
+            now: started.advanced(by: .seconds(elapsed)))
+        { _ in
+            reads += 1
+            return 3
+        }
+
+        #expect(initial == nil)
+        #expect(reads == 0)
+    }
+
+    @Test
+    func `initial focus read stays capped when ordinary traversal has a long deadline`() {
+        let now = ContinuousClock.now
+        var readTimeouts: [Float] = []
+        let initial = DetachedAXObservationWorker.initialFocusedReference(
+            deadline: now.advanced(by: .seconds(20)),
+            now: now)
+        {
+            readTimeouts.append($0)
+            return 3
+        }
+
+        #expect(initial == 3)
+        #expect(readTimeouts == [0.05])
+    }
+
     @Test(arguments: Self.orders)
     func `stable authority selects the emitted reference independent of insertion order`(order: [Int]) {
         let entries = [("outer", 1), ("inner", 2), ("field", 3)]
@@ -404,7 +478,8 @@ struct ObservedFocusCorroborationTests {
         elements: [DetectedElement],
         usedCache: Bool = false,
         truncation: DetectionTruncationInfo? = nil,
-        applicationFallback: Bool = false) -> ElementDetectionResult
+        applicationFallback: Bool = false,
+        corroboratedElementID: String? = "field") -> ElementDetectionResult
     {
         ElementDetectionResultBuilder.makeResult(
             snapshotId: "synthetic-observed-focus",
@@ -415,7 +490,7 @@ struct ObservedFocusCorroborationTests {
             truncationInfo: truncation,
             applicationScopedAccessibilityFallbackOrigin: applicationFallback
                 ? ApplicationScopedAccessibilityFallbackOrigin(windowIdentity: self.windowIdentity()) : nil,
-            corroboratedFocusedElementID: "field")
+            corroboratedFocusedElementID: corroboratedElementID)
     }
 
     enum EligibilityFailure: CaseIterable, Sendable {

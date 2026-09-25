@@ -284,7 +284,9 @@ enum DetachedAXObservationWorker {
                                             request.windowMutationIdentity != nil,
                                             request.expectedWindowBounds != nil
         {
-            self.focusedReference(application: application, deadline: deadline)
+            self.initialFocusedReference(deadline: deadline) {
+                self.focusedReference(application: application, timeout: $0)
+            }
         } else {
             nil
         }
@@ -794,8 +796,11 @@ enum DetachedAXObservationWorker {
         AXUIElementSetMessagingTimeout(element, timeout)
     }
 
-    private static func remainingMessagingTimeout(until deadline: ContinuousClock.Instant) -> Float? {
-        let duration = ContinuousClock.now.duration(to: deadline)
+    private static func remainingMessagingTimeout(
+        until deadline: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now) -> Float?
+    {
+        let duration = now.duration(to: deadline)
         let components = duration.components
         let remaining = Double(components.seconds) +
             Double(components.attoseconds) / 1_000_000_000_000_000_000
@@ -938,6 +943,18 @@ enum DetachedAXObservationWorker {
 }
 
 extension DetachedAXObservationWorker {
+    static func initialFocusedReference<Reference>(
+        deadline: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now,
+        read: (Float) -> Reference?) -> Reference?
+    {
+        guard let remaining = self.remainingMessagingTimeout(until: deadline, now: now) else { return nil }
+        // Optional corroboration must leave the ordinary traversal its original deadline.
+        let timeout = min(0.05, remaining / 4)
+        guard timeout >= 0.001 else { return nil }
+        return read(timeout)
+    }
+
     static func corroboratedFocusElementID<Reference>(
         observation: (initialReference: Reference?, candidates: [String: Reference], isComplete: Bool),
         canRead: () -> Bool,
@@ -962,9 +979,12 @@ extension DetachedAXObservationWorker {
         application: AXUIElement,
         deadline: ContinuousClock.Instant) -> AXUIElement?
     {
-        guard let timeout = self.remainingMessagingTimeout(until: deadline),
-              AXUIElementSetMessagingTimeout(application, timeout) == .success
-        else { return nil }
+        guard let timeout = self.remainingMessagingTimeout(until: deadline) else { return nil }
+        return self.focusedReference(application: application, timeout: timeout)
+    }
+
+    private static func focusedReference(application: AXUIElement, timeout: Float) -> AXUIElement? {
+        guard AXUIElementSetMessagingTimeout(application, timeout) == .success else { return nil }
         return DetachedExactWindowFocusReader.focusedElementReference(of: application)
     }
 

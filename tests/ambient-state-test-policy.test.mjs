@@ -226,6 +226,26 @@ test("hosted focus observation and accounting use exact non-native suites with n
   assert.doesNotMatch(step, /--skip-build|: "true"/);
 });
 
+test("initial observed focus probe reserves the existing traversal deadline through its pure read seam", () => {
+  const worker = readFileSync(
+    `${repositoryRoot}/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift`, "utf8",
+  );
+  const initialProbe = worker.split("        let initialFocus: AXUIElement? = ")[1]?.split("        var state = TraversalState()")[0];
+  assert.ok(initialProbe, "Missing initial observed focus probe");
+  assert.match(initialProbe, /self\.initialFocusedReference\(deadline: deadline\) \{\s*self\.focusedReference\(application: application, timeout: \$0\)/);
+  assert.equal(initialProbe.match(/self\.initialFocusedReference\(/g)?.length, 1);
+  assert.doesNotMatch(initialProbe, /advanced\(by:|\.now|focusedReference\(application: application, deadline:/);
+  assert.match(worker, /var state = TraversalState\(\)\s*self\.process\(\s*window,\s*request: TraversalRequest\(\s*depth: 0,\s*deadline: deadline,/);
+  assert.match(worker, /readCurrentReference: \{ self\.focusedReference\(application: application, deadline: deadline\) \}/);
+  const proof = readFileSync(
+    `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ObservedFocusCorroborationTests.swift`, "utf8",
+  );
+  assert.match(proof, /stalled optional focus read leaves short deadline available for ordinary traversal/);
+  assert.match(proof, /hardTimeoutSeconds: 0\.05/);
+  assert.match(proof, /initialFocusedReference\(deadline: deadline, now: now\)/);
+  assert.doesNotMatch(proof, /DetachedAXObservationWorker\.inspect\(|AXUIElement|Task\.sleep|Thread\.sleep|NSWorkspace|NSApplication|executePeekabooCLI/);
+});
+
 test("hosted mocked Press CI enables only its exact injected-service suite", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run mocked Press receipt regressions\n")[1];
