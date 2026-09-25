@@ -107,9 +107,11 @@ read_when:
 - Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone and `--audio-file` loads a WAV/CAF file.
 - Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.
   Token requests are capped to model capability; unsupported temperature controls are omitted automatically.
-- Unless `--no-cache` is set, a run saves its session and fails when its final permitted turn still requests tools and therefore needs another
-  model turn to interpret their results. This avoids reporting an empty success when the step budget expires with
-  pending work; resume the reported session to continue.
+- A run fails when its final permitted turn still requests tools and therefore needs another model turn to interpret
+  their results. Already-dispatched actions are not rolled back. Inspect current app state before continuing, and do
+  not blindly repeat the task. Unless `--no-cache` is set, the run saves a resumable session; after inspection, resume
+  that session rather than starting its actions again. Ephemeral runs cannot be resumed. A larger `--max-steps` budget
+  can be selected for a future run or saved-session continuation, but does not make replay safe.
 - Native `ollama/<model>` runs replay each assistant tool call and named tool result on the next model turn. Ollama
   support is model-dependent, and native text arrives incrementally with a model-dependent chunk cadence. See the
   [Ollama guide](../providers/ollama.md).
@@ -137,6 +139,15 @@ provider-authored names become deterministic `__peekaboo_trace_unknown_field_<n>
 `result` is a bounded status summary, not the raw tool payload; screenshot bytes and arbitrary output
 text are intentionally omitted. The trace is capped at 512 entries and reports `totalCallCount` plus `truncated` when
 calls were omitted.
+
+When the step limit is exhausted, `--json` still exits nonzero with `success: false` and `error.code: AGENT_ERROR`.
+Its failure `data` includes `maxSteps`, the same sanitized `executionTrace`, and a `sessionId` only when the session
+was saved. It does not emit raw conversation messages or tool payloads, and a partial trace is not task-completion
+evidence. On resume the trace includes retained session history, as it does for a successful result.
+
+Tool results blocked by pending snapshot cleanup retain `snapshot_invalidation.tool_executed: false` and
+`snapshot_invalidation.retry_tool: true` in Agent metadata. These describe the blocked tool, not permission to replay
+an earlier mutation; inspect current state and distinguish cleanup retries from newly dispatched input.
 
 Mutating trace entries expose `mutationDispatch` as `dispatched`, `not_dispatched`, or `possibly_dispatched`.
 `mutation_dispatched` is retained in the bounded result summary only when the tool explicitly reported the legacy

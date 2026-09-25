@@ -1,8 +1,3 @@
-//
-//  PeekabooAgentService+Streaming.swift
-//  PeekabooCore
-//
-
 import Foundation
 import PeekabooAutomation
 import Tachikoma
@@ -22,25 +17,30 @@ extension PeekabooAgentService {
         public let maxSteps: Int
         public let sessionId: String
         public let sessionWasPersisted: Bool
+        public let executionTrace: AgentExecutionTrace?
 
-        public init(maxSteps: Int, sessionId: String, sessionWasPersisted: Bool = true) {
+        public init(
+            maxSteps: Int,
+            sessionId: String,
+            sessionWasPersisted: Bool = true,
+            executionTrace: AgentExecutionTrace? = nil)
+        {
             self.maxSteps = maxSteps
             self.sessionId = sessionId
             self.sessionWasPersisted = sessionWasPersisted
+            self.executionTrace = executionTrace
         }
 
         public var errorDescription: String? {
-            let resumeGuidance = if self.sessionWasPersisted {
-                "Session \(self.sessionId) was saved and can be resumed to continue."
-            } else {
-                "Session caching was disabled, so this run cannot be resumed."
-            }
-            guard self.maxSteps < AgentStepBudget.supportedRange.upperBound else {
-                return "Agent reached the \(self.maxSteps)-step limit after executing tools whose results still " +
-                    "require model review. \(resumeGuidance)"
-            }
-            return "Agent reached the \(self.maxSteps)-step limit after executing tools whose results still " +
-                "require model review. \(resumeGuidance) You can also retry with a larger --max-steps value " +
+            let resumeGuidance = self.sessionWasPersisted
+                ? "Session \(self.sessionId) was saved and can be resumed to continue."
+                : "Session caching was disabled, so this run cannot be resumed."
+            let message = "Agent reached the \(self.maxSteps)-step limit after executing tools whose results still " +
+                "require model review. Inspect current app state before continuing; do not blindly repeat actions. " +
+                resumeGuidance
+            guard self.maxSteps < AgentStepBudget.supportedRange.upperBound else { return message }
+            let nextRun = self.sessionWasPersisted ? "future runs or a saved-session resume" : "future runs"
+            return message + " For \(nextRun), --max-steps can be increased " +
                 "(maximum \(AgentStepBudget.supportedRange.upperBound))."
         }
     }

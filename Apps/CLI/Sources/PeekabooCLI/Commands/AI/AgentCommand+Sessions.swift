@@ -307,12 +307,12 @@ extension AgentCommand {
                 )
             }
             if outputDelegate?.hasReceivedError != true {
-                self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)")
+                self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)", error: error)
             }
             throw ExitCode.failure
         } catch {
             if outputDelegate?.hasReceivedError != true {
-                self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)")
+                self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)", error: error)
             }
             throw ExitCode.failure
         }

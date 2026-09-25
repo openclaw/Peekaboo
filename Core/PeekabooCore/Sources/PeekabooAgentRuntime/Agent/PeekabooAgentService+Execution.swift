@@ -418,7 +418,8 @@ extension PeekabooAgentService {
             throw AgentStepLimitExceededError(
                 maxSteps: maxSteps,
                 sessionId: context.id,
-                sessionWasPersisted: context.isPersistent)
+                sessionWasPersisted: context.isPersistent,
+                executionTrace: AgentExecutionTrace(messages: outcome.messages))
         }
 
         let result = AgentExecutionResult(
@@ -518,7 +519,8 @@ extension PeekabooAgentService {
             throw AgentStepLimitExceededError(
                 maxSteps: maxSteps,
                 sessionId: context.id,
-                sessionWasPersisted: context.isPersistent)
+                sessionWasPersisted: context.isPersistent,
+                executionTrace: AgentExecutionTrace(messages: outcome.messages))
         }
 
         let result = AgentExecutionResult(

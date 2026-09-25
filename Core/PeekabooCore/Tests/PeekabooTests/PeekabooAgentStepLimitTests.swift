@@ -22,9 +22,12 @@ final class IsolatedAgentSessionStore {
 
 @Suite(.serialized)
 struct PeekabooAgentStepLimitTests {
-    @Test
+    @Test(arguments: [false, true], [false, true])
     @MainActor
-    func `Nonstreaming step exhaustion saves resumable tool history and throws`() async throws {
+    func `Step exhaustion preserves sanitized progress and session policy`(
+        streaming: Bool,
+        persistSession: Bool) async throws
+    {
         let provider = PerpetualToolProvider()
         let configuration = TachikomaConfiguration(loadFromEnvironment: false)
         configuration.setProviderFactoryOverride { _, _ in provider }
@@ -35,55 +38,32 @@ struct PeekabooAgentStepLimitTests {
 
         let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
         defer { sessionStore.cleanup() }
+        let delegate = StepLimitEventDelegate()
 
         let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
             _ = try await agentService.executeTask(
                 "Keep using tools.",
                 maxSteps: 1,
                 model: .openai(.gpt55),
-                enhancementOptions: nil)
+                eventDelegate: streaming ? delegate : nil,
+                enhancementOptions: nil,
+                persistSession: persistSession)
         }
         let error = try #require(thrownError)
 
         #expect(provider.requestCount == 1)
         #expect(error.maxSteps == 1)
-        #expect(error.localizedDescription.contains("can be resumed"))
-
-        let loadedSession = try await agentService.getSessionInfo(sessionId: error.sessionId)
-        let session = try #require(loadedSession)
-        #expect(session.metadata.customData["status"] == "max_steps_exhausted")
-        #expect(session.messages.containsToolCall(id: "tool-call-1"))
-        #expect(session.messages.containsToolResult(id: "tool-call-1"))
-
-        try await agentService.deleteSession(id: error.sessionId)
-    }
-
-    @Test
-    @MainActor
-    func `Streaming step exhaustion saves resumable tool history without completion event`() async throws {
-        let provider = PerpetualToolProvider()
-        let configuration = TachikomaConfiguration(loadFromEnvironment: false)
-        configuration.setProviderFactoryOverride { _, _ in provider }
-
-        let previousConfiguration = TachikomaConfiguration.default
-        TachikomaConfiguration.default = configuration
-        defer { TachikomaConfiguration.default = previousConfiguration }
-
-        let delegate = StepLimitEventDelegate()
-        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
-        defer { sessionStore.cleanup() }
-
-        let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
-            _ = try await agentService.executeTask(
-                "Keep using tools.",
-                maxSteps: 1,
-                model: .openai(.gpt55),
-                eventDelegate: delegate,
-                enhancementOptions: nil)
-        }
-        let error = try #require(thrownError)
-
-        #expect(provider.requestCount == 1)
+        #expect(error.sessionWasPersisted == persistSession)
+        #expect(error.localizedDescription.contains("can be resumed") == persistSession)
+        #expect(error.localizedDescription.contains(error.sessionId) == persistSession)
+        let trace = try #require(error.executionTrace)
+        #expect(trace.entries.map(\.id) == ["tool-call-1"])
+        #expect(trace.entries.map(\.disposition) == [.executedFailed])
+        #expect(trace.totalCallCount == 1)
+        #expect(!trace.truncated)
+        #expect(trace.entries.first?.arguments["text"]?.objectValue?["redacted"]?.boolValue == true)
+        let traceJSON = try #require(String(data: JSONEncoder().encode(trace), encoding: .utf8))
+        #expect(!traceJSON.contains("synthetic private text"))
         #expect(!delegate.events.contains { event in
             if case .completed = event {
                 true
@@ -92,13 +72,16 @@ struct PeekabooAgentStepLimitTests {
             }
         })
 
-        let loadedSession = try await agentService.getSessionInfo(sessionId: error.sessionId)
-        let session = try #require(loadedSession)
-        #expect(session.metadata.customData["status"] == "max_steps_exhausted")
-        #expect(session.messages.containsToolCall(id: "tool-call-1"))
-        #expect(session.messages.containsToolResult(id: "tool-call-1"))
-
-        try await agentService.deleteSession(id: error.sessionId)
+        if persistSession {
+            let loadedSession = try await agentService.getSessionInfo(sessionId: error.sessionId)
+            let session = try #require(loadedSession)
+            #expect(session.metadata.customData["status"] == "max_steps_exhausted")
+            #expect(session.messages.containsToolCall(id: "tool-call-1"))
+            #expect(session.messages.containsToolResult(id: "tool-call-1"))
+            try await agentService.deleteSession(id: error.sessionId)
+        } else {
+            #expect(sessionStore.manager.listSessions().isEmpty)
+        }
     }
 
     @Test(arguments: [TerminalTool.done, .needInfo])
@@ -1095,7 +1078,7 @@ private final class PerpetualToolProvider: ModelProvider, @unchecked Sendable {
         AgentToolCall(
             id: "tool-call-\(requestNumber)",
             name: "missing_test_tool",
-            arguments: [:])
+            arguments: ["text": AnyAgentToolValue(string: "synthetic private text")])
     }
 }
 

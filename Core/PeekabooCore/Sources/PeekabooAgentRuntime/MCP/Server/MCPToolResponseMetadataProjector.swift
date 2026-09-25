@@ -38,6 +38,7 @@ enum MCPToolResponseMetadataProjector {
         "browser_execution",
         "error_code",
         "execution_policy",
+        "snapshot_invalidation",
         "target_identity",
         "target_receipt",
     ])

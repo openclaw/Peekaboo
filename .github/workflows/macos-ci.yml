@@ -313,6 +313,21 @@ jobs:
           swift test --no-parallel --filter PeekabooAgentSessionSafetyTests
           swift test --no-parallel --filter PeekabooAgentStreamTerminalIntegrityTests
 
+      - name: Run Agent partial-failure diagnostics contracts
+        working-directory: Core/PeekabooCore
+        env:
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/agent-partial-failure-diagnostics.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter 'PeekabooAgentStepLimitTests|AgentExecutionTraceTests|SnapshotInvalidationMetadataTests' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite PeekabooAgentStepLimitTests passed after ' "$test_log"
+          grep -Fq 'Suite AgentExecutionTraceTests passed after ' "$test_log"
+          grep -Fq 'Suite SnapshotInvalidationMetadataTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run targeted dialog metadata and deadline contracts
         working-directory: Core/PeekabooAutomationKit
         env:
@@ -468,6 +483,18 @@ jobs:
         working-directory: Apps/CLI
         run: |
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION
+
+      - name: Run Agent JSON failure contracts (skip automation)
+        working-directory: Apps/CLI
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/agent-json-failure-contracts.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
+            --filter '^CoreCLITests[.](AgentCommandStepLimitTests|AgentCommandJSONOutputTests)/' \
+            2>&1 | tee "$test_log"
+          grep -Fq 'Suite AgentCommandStepLimitTests passed after ' "$test_log"
+          grep -Fq 'Suite AgentCommandJSONOutputTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run CLI paste admission timeout regression (skip automation)
         working-directory: Apps/CLI

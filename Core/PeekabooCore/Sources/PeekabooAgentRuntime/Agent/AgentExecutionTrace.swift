@@ -100,11 +100,17 @@ extension AgentExecutionResult {
     public func executionTrace(maxEntries requestedLimit: Int = AgentExecutionTrace
         .maximumEntries) -> AgentExecutionTrace
     {
+        AgentExecutionTrace(messages: self.messages, maxEntries: requestedLimit)
+    }
+}
+
+extension AgentExecutionTrace {
+    init(messages: [ModelMessage], maxEntries requestedLimit: Int = AgentExecutionTrace.maximumEntries) {
         let limit = min(max(requestedLimit, 0), AgentExecutionTrace.maximumEntries)
         var calls: [AgentToolCall] = []
         var totalCallCount = 0
 
-        for message in self.messages {
+        for message in messages {
             for part in message.content {
                 guard case let .toolCall(call) = part else { continue }
                 totalCallCount += 1
@@ -119,7 +125,7 @@ extension AgentExecutionResult {
             requiredResultsByID[call.id, default: 0] += 1
         }
         var resultsByID: [String: [AgentToolResult]] = [:]
-        for message in self.messages {
+        for message in messages {
             for part in message.content {
                 guard case let .toolResult(result) = part,
                       let requiredCount = requiredResultsByID[result.toolCallId],
@@ -141,7 +147,7 @@ extension AgentExecutionResult {
             return AgentExecutionTraceBuilder.entry(for: call, result: result)
         }
 
-        return AgentExecutionTrace(
+        self.init(
             entries: entries,
             totalCallCount: totalCallCount,
             truncated: totalCallCount > entries.count)
