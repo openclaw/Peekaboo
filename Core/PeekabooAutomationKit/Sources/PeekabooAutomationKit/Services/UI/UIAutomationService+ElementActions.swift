@@ -412,22 +412,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
     }
 
     static func safeValueDescription(_ value: Any?) -> String? {
-        switch value {
-        case let value as String:
-            value
-        case let value as Bool:
-            String(value)
-        case let value as Int:
-            String(value)
-        case let value as Double:
-            String(value)
-        case let value as Float:
-            String(value)
-        case let value?:
-            String(describing: value)
-        case nil:
-            nil
-        }
+        NativeElementValuePresentation.describe(value)
     }
 }
 

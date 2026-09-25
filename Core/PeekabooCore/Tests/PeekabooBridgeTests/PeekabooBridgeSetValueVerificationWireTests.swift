@@ -6,6 +6,24 @@ import Testing
 
 struct PeekabooBridgeSetValueVerificationWireTests {
     @Test
+    func `legacy numeric boolean readbacks retain valid signed old decoder bytes`() throws {
+        for requested in [false, true] {
+            let witness = ElementValueVerification(
+                attribute: .value,
+                resolvedKind: .double,
+                readback: .double(requested ? 1 : 0),
+                legacyPresentation: String(requested))
+            let request = Self.request(.bool(requested))
+            let projected = try Self.response(witness: witness).projectingSetValueVerification(
+                offered: false, request: request)
+            let bundle = try SetValueVerificationReceiptFixture.bundle(requested: request, response: projected)
+            try bundle.validateIntegrity()
+            let old = try JSONDecoder.peekabooBridgeDecoder().decode(OldResponse.self, from: bundle.canonicalResponse)
+            #expect(try PeekabooBridgeOperationReceiptCoding.sha256(old) == bundle.receipt.payload.responseSHA256)
+        }
+    }
+
+    @Test
     func `signed native readbacks round trip without losing their primitive kind`() throws {
         let cases: [(UIElementValue, ElementValueVerification)] = [
             (.int(58), .init(attribute: .value, resolvedKind: .double, readback: .double(57.99999999999999))),
@@ -123,6 +141,18 @@ struct PeekabooBridgeSetValueVerificationWireTests {
         #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch("the exported verification bundle")) {
             try alteredBundle.validateIntegrity()
         }
+        let changedLegacy = Self.response(witness: .init(
+            attribute: .value, resolvedKind: .double, readback: .double(58), legacyPresentation: "58"))
+        let legacyTampered = try PeekabooBridgeOperationReceiptBundle(
+            operationAttestation: bundle.operationAttestation,
+            operationSessionAttestation: bundle.operationSessionAttestation,
+            receipt: bundle.receipt,
+            canonicalListenerAttestationPayload: bundle.canonicalListenerAttestationPayload,
+            canonicalSessionAttestationPayload: bundle.canonicalSessionAttestationPayload,
+            canonicalReceiptPayload: bundle.canonicalReceiptPayload,
+            canonicalRequest: bundle.canonicalRequest,
+            canonicalResponse: PeekabooBridgeOperationReceiptCoding.canonicalData(changedLegacy))
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) { try legacyTampered.validateIntegrity() }
     }
 
     @Test
@@ -134,8 +164,8 @@ struct PeekabooBridgeSetValueVerificationWireTests {
             return
         }
         for response in [wrapper.response, projected] {
-            let offered = response.projectingSetValueVerification(offered: true)
-            let unoffered = response.projectingSetValueVerification(offered: false)
+            let offered = try response.projectingSetValueVerification(offered: true, request: Self.request(.int(58)))
+            let unoffered = try response.projectingSetValueVerification(offered: false, request: Self.request(.int(58)))
             let offeredBytes = try PeekabooBridgeOperationReceiptCoding.canonicalData(offered)
             let oldOffered = try JSONDecoder.peekabooBridgeDecoder().decode(OldResponse.self, from: offeredBytes)
             #expect(try PeekabooBridgeOperationReceiptCoding.canonicalData(oldOffered) != offeredBytes)
@@ -149,7 +179,7 @@ struct PeekabooBridgeSetValueVerificationWireTests {
         }
         let bundle = try SetValueVerificationReceiptFixture.bundle(
             requested: Self.request(.int(58)),
-            response: projected.projectingSetValueVerification(offered: false))
+            response: projected.projectingSetValueVerification(offered: false, request: Self.request(.int(58))))
         try bundle.validateIntegrity()
         let oldResponse = try JSONDecoder.peekabooBridgeDecoder().decode(
             OldResponse.self, from: bundle.canonicalResponse)

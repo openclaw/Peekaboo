@@ -6,6 +6,70 @@ import Testing
 
 struct SetValueVerificationTests {
     @MainActor
+    @Test
+    func `legacy presentation is captured from the same raw native observation`() throws {
+        let cases: [(Any, UIElementValue, String)] = [
+            (58.0, .double(58), "58.0"),
+            (Float(58), .double(58), "58.0"),
+            (NSNumber(value: 58.0), .double(58), "58"),
+            (NSNumber(value: Float(58)), .double(58), "58"),
+            (0, .int(0), "0"),
+            (1, .int(1), "1"),
+            (NSNumber(value: 0), .bool(false), "false"),
+            (NSNumber(value: 1), .bool(true), "true"),
+            (NSNumber(value: 0.0), .bool(false), "false"),
+            (NSNumber(value: 1.0), .bool(true), "true"),
+            (-0.0, .double(0), "-0.0"),
+            (Float(-0.0), .double(0), "-0.0"),
+            (NSNumber(value: -0.0), .bool(false), "false"),
+            (Float(0.1), .double(Double(Float(0.1))), "0.1"),
+            (NSNumber(value: Float(0.1)), .double(Double(Float(0.1))), "0.10000000149011612"),
+        ]
+        for (raw, requested, expectedPresentation) in cases {
+            let element = ActionInputMockAutomationElement(role: "AXSlider", value: raw, isValueSettable: true)
+            let result = try ActionInputDriver().trySetValueForTesting(element: element, value: requested)
+            let witness = try #require(result.valueVerification)
+            #expect(witness.legacyPresentation == expectedPresentation)
+            #expect(witness.readback == ElementValueReadback(nativeValue: raw))
+            #expect(witness.matches(requested: requested, newValue: witness.displayString, actionName: "AXSetValue"))
+            #expect(element.setValues.isEmpty)
+        }
+    }
+
+    @MainActor
+    @Test
+    func `post dispatch legacy presentation describes the readback not the request`() throws {
+        let observed = 57.99999999999999
+        let element = ActionInputMockAutomationElement(
+            role: "AXSlider", value: 47.0, isValueSettable: true, valueSetterReadbackOverride: .double(observed))
+        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("58"))
+        let witness = try #require(result.valueVerification)
+        #expect(witness.legacyPresentation == String(observed))
+        #expect(witness.legacyPresentation != "58")
+        #expect(witness.displayString == String(observed))
+    }
+
+    @Test
+    func `legacy rendering validation accepts only exact finite native spellings`() {
+        let invalid: [(ElementValueReadback, String)] = [
+            (.double(57.99999999999999), "58"),
+            (.double(57.99999999999999), "58.0"),
+            (.double(Double(Float(0.1))), "0.100000001"),
+            (.double(.infinity), "inf"),
+            (.int(58), "58.0"),
+            (.bool(true), "1"),
+            (.string("58"), "58.0"),
+        ]
+        for (readback, presentation) in invalid {
+            #expect(!NativeElementValuePresentation.accepts(presentation, for: readback))
+        }
+        #expect(NativeElementValuePresentation.accepts("-0.0", for: .double(0)))
+        #expect(NativeElementValuePresentation.accepts("false", for: .double(0)))
+        #expect(NativeElementValuePresentation.accepts("true", for: .int(1)))
+        #expect(NativeElementValuePresentation.accepts("0.1", for: .double(Double(Float(0.1)))))
+    }
+
+    @MainActor
     @Test(arguments: [UIElementValue.string("58"), .int(58), .double(58)])
     func `rounded slider readback is witnessed and repeated requests do not dispatch`(
         requested: UIElementValue) throws

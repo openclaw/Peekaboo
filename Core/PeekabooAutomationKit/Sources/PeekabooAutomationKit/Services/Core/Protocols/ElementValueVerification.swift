@@ -35,6 +35,13 @@ public enum ElementValueReadback: Equatable, Sendable, Codable {
         }
     }
 
+    var swiftScalarPresentation: String {
+        if case let .double(value) = self {
+            return String(value)
+        }
+        return self.displayString
+    }
+
     var isFinite: Bool {
         if case let .double(value) = self {
             return value.isFinite
@@ -121,11 +128,18 @@ public struct ElementValueVerification: Codable, Equatable, Sendable {
     public let attribute: Attribute
     public let resolvedKind: ElementValueKind
     public let readback: ElementValueReadback
+    public let legacyPresentation: String
 
-    public init(attribute: Attribute, resolvedKind: ElementValueKind, readback: ElementValueReadback) {
+    public init(
+        attribute: Attribute,
+        resolvedKind: ElementValueKind,
+        readback: ElementValueReadback,
+        legacyPresentation: String? = nil)
+    {
         self.attribute = attribute
         self.resolvedKind = resolvedKind
         self.readback = readback
+        self.legacyPresentation = legacyPresentation ?? readback.swiftScalarPresentation
     }
 
     public var displayString: String {
@@ -135,7 +149,8 @@ public struct ElementValueVerification: Codable, Equatable, Sendable {
     public func matches(requested: UIElementValue, newValue: String?, actionName: String?) -> Bool {
         guard actionName == self.attribute.actionName,
               newValue == self.displayString,
-              self.readback.isFinite
+              self.readback.isFinite,
+              NativeElementValuePresentation.accepts(self.legacyPresentation, for: self.readback)
         else { return false }
         if self.attribute == .selected {
             guard self.resolvedKind == .bool, case .bool = self.readback else { return false }
@@ -144,6 +159,43 @@ public struct ElementValueVerification: Codable, Equatable, Sendable {
             return false
         }
         return ElementValueMutationSemantics.matches(self.readback, expected: expected)
+    }
+}
+
+/// Preserve the historical presentation of the raw observation before numeric bridging erases its source shape.
+enum NativeElementValuePresentation {
+    static func accepts(_ presentation: String, for readback: ElementValueReadback) -> Bool {
+        guard readback.isFinite else { return false }
+        if presentation == readback.swiftScalarPresentation {
+            return true
+        }
+        switch readback {
+        case .bool, .string:
+            return false
+        case .int, .double:
+            if let number = readback.number, presentation == self.describe(number) {
+                return true
+            }
+            guard case let .double(value) = readback else { return false }
+            // JSON loses numeric negative zero, while the separately signed historical spelling must survive.
+            if value == 0, presentation == "-0.0" || presentation == "0.0" {
+                return true
+            }
+            let float = Float(value)
+            return Double(float) == value && presentation == String(float)
+        }
+    }
+
+    static func describe(_ value: Any?) -> String? {
+        switch value {
+        case let value as String: value
+        case let value as Bool: String(value)
+        case let value as Int: String(value)
+        case let value as Double: String(value)
+        case let value as Float: String(value)
+        case let value?: String(describing: value)
+        case nil: nil
+        }
     }
 }
 

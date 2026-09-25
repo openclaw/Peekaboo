@@ -450,10 +450,14 @@ struct ActionInputDriver: ActionInputDriving {
                     anchorPoint: element.anchorPoint,
                     elementRole: element.role,
                     valueVerification: .init(
-                        attribute: .value, resolvedKind: requested.comparisonKind, readback: readbackBefore))
+                        attribute: .value,
+                        resolvedKind: requested.comparisonKind,
+                        readback: readbackBefore,
+                        legacyPresentation: NativeElementValuePresentation.describe(valueBefore)))
             }
             try element.setAutomationValue(requested)
-            let readbackAfter = ElementValueReadback(nativeValue: element.value)
+            let valueAfter = element.value
+            let readbackAfter = ElementValueReadback(nativeValue: valueAfter)
             guard let readbackAfter, readbackAfter.isFinite,
                   ElementValueMutationSemantics.matches(readbackAfter, expected: requested)
             else {
@@ -466,7 +470,10 @@ struct ActionInputDriver: ActionInputDriving {
                 anchorPoint: element.anchorPoint,
                 elementRole: element.role,
                 valueVerification: .init(
-                    attribute: .value, resolvedKind: requested.comparisonKind, readback: readbackAfter))
+                    attribute: .value,
+                    resolvedKind: requested.comparisonKind,
+                    readback: readbackAfter,
+                    legacyPresentation: NativeElementValuePresentation.describe(valueAfter)))
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch {

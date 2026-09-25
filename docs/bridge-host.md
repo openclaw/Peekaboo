@@ -394,7 +394,9 @@ The optional raw client offer `setValueVerification` carries native-produced val
 Signed result binding reuses native coercion and numeric tolerance without interpreting literal text as a number.
 The offer is bound to one authenticated operation session at protocol 1.37 or later. Hosts remove the optional
 evidence before hashing or encoding responses for non-offering or receiptless clients, so old decoders reconstruct
-the same signed bytes. Absent evidence retains exact-string result binding; malformed evidence is rejected.
+the same signed bytes. The witness also captures the baseline presentation from that same raw observation; after
+validating its exact native rendering and original typed request binding, legacy projection restores that presentation.
+Absent evidence retains exact-string result binding; malformed evidence is rejected before it can be projected away.
 
 Protocol `1.34` introduced three independent capabilities:
 

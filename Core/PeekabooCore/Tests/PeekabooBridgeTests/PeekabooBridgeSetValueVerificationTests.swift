@@ -1,9 +1,130 @@
 import Foundation
-import PeekabooAutomationKit
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooBridge
 
 struct PeekabooBridgeSetValueVerificationTests {
+    @Test
+    func `legacy projection rejects forged presentation and typed coercion bypass`() {
+        let cases: [(UIElementValue, ElementValueVerification)] = [
+            (.string("58"), .init(
+                attribute: .value,
+                resolvedKind: .double,
+                readback: .double(57.99999999999999),
+                legacyPresentation: "58")),
+            (.string("false"), .init(
+                attribute: .value, resolvedKind: .double, readback: .double(0), legacyPresentation: "false")),
+            (.bool(false), .init(
+                attribute: .value, resolvedKind: .double, readback: .double(0), legacyPresentation: "true")),
+        ]
+        for (requested, witness) in cases {
+            let request = PeekabooBridgeRequest.setValue(.init(
+                target: "slider", value: requested, snapshotId: "synthetic-snapshot"))
+            let response = PeekabooBridgeResponse.elementActionResult(.init(
+                target: "slider",
+                actionName: "AXSetValue",
+                anchorPoint: nil,
+                newValue: witness.displayString,
+                valueVerification: witness))
+            for offered in [false, true] {
+                #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                    try response.projectingSetValueVerification(offered: offered, request: request)
+                }
+            }
+        }
+    }
+
+    @Test
+    func `native NSNumber integral presentation retains the old literal rejection`() throws {
+        let raw = NSNumber(value: 58.0)
+        let legacy = try #require(NativeElementValuePresentation.describe(raw))
+        #expect(legacy == "58")
+        let witness = ElementValueVerification(
+            attribute: .value, resolvedKind: .double, readback: .double(58), legacyPresentation: legacy)
+        let response = PeekabooBridgeResponse.elementActionResult(.init(
+            target: "slider",
+            actionName: "AXSetValue",
+            anchorPoint: nil,
+            newValue: witness.displayString,
+            valueVerification: witness))
+        let request = PeekabooBridgeRequest.setValue(.init(
+            target: "slider", value: .string("58.0"), snapshotId: "synthetic-snapshot"))
+        let plan = PeekabooBridgeOperationResultSemantics.requestPlan(for: request, vocabulary: .current)
+        let legacyResponse = try response.projectingSetValueVerification(offered: false, request: request)
+        #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+            try plan.validateBoundTypedResponse(legacyResponse, outcome: nil)
+        }
+        try plan.validateBoundTypedResponse(
+            response.projectingSetValueVerification(offered: true, request: request), outcome: nil)
+    }
+
+    @Test
+    func `raw Swift scalar legacy spellings preserve exact acceptance`() throws {
+        let cases: [(Any, UIElementValue, String, Bool)] = [
+            (58.0, .string("58.0"), "58.0", true),
+            (Float(58), .string("58.0"), "58.0", true),
+            (-0.0, .string("-0.0"), "-0.0", true),
+            (Float(-0.0), .string("-0.0"), "-0.0", true),
+            (Float(0.1), .double(Double(Float(0.1))), "0.1", false),
+            (0, .int(0), "0", true),
+        ]
+        for (raw, requested, legacy, accepted) in cases {
+            let readback = try #require(ElementValueReadback(nativeValue: raw))
+            #expect(NativeElementValuePresentation.describe(raw) == legacy)
+            let witness = ElementValueVerification(
+                attribute: .value, resolvedKind: readback.kind, readback: readback, legacyPresentation: legacy)
+            let request = PeekabooBridgeRequest.setValue(.init(
+                target: "slider", value: requested, snapshotId: "synthetic-snapshot"))
+            let response = PeekabooBridgeResponse.elementActionResult(.init(
+                target: "slider",
+                actionName: "AXSetValue",
+                anchorPoint: nil,
+                newValue: witness.displayString,
+                valueVerification: witness))
+            let projected = try response.projectingSetValueVerification(offered: false, request: request)
+            guard case let .elementActionResult(result) = projected else {
+                Issue.record("Expected an element result")
+                continue
+            }
+            #expect(result.newValue == legacy)
+            #expect(result.valueVerification == nil)
+            let plan = PeekabooBridgeOperationResultSemantics.requestPlan(for: request, vocabulary: .current)
+            if accepted {
+                try plan.validateBoundTypedResponse(projected, outcome: nil)
+            } else {
+                #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                    try plan.validateBoundTypedResponse(projected, outcome: nil)
+                }
+            }
+        }
+    }
+
+    @Test
+    func `legacy NS number boolean binding survives witness projection`() throws {
+        for requested in [false, true] {
+            let rawObservation = NSNumber(value: requested ? 1.0 : 0.0)
+            let legacyPresentation = try #require(NativeElementValuePresentation.describe(rawObservation))
+            #expect(legacyPresentation == String(requested))
+            let witness = try ElementValueVerification(
+                attribute: .value,
+                resolvedKind: .double,
+                readback: #require(ElementValueReadback(nativeValue: rawObservation)),
+                legacyPresentation: legacyPresentation)
+            let response = PeekabooBridgeResponse.elementActionResult(.init(
+                target: "slider",
+                actionName: "AXSetValue",
+                anchorPoint: nil,
+                newValue: witness.displayString,
+                valueVerification: witness))
+            let request = PeekabooBridgeRequest.setValue(.init(
+                target: "slider", value: .bool(requested), snapshotId: "synthetic-snapshot"))
+            let projected = try response.projectingSetValueVerification(offered: false, request: request)
+            let plan = PeekabooBridgeOperationResultSemantics.requestPlan(for: request, vocabulary: .current)
+
+            try plan.validateBoundTypedResponse(projected, outcome: nil)
+        }
+    }
+
     @Test
     func `numeric readback preserves native tolerance`() throws {
         let request = PeekabooBridgeRequest.setValue(.init(
