@@ -92,6 +92,9 @@ enum MCPToolResponseMetadataProjector {
         if toolName == "permissions" {
             allowed.formUnion(Self.permissionKeys)
         }
+        if toolName == "see" || toolName == "inspect_ui" {
+            allowed.insert("focused_element")
+        }
         return fields.filter { allowed.contains($0.key) }
     }
 

@@ -153,6 +153,7 @@ When `--json` is supplied, the CLI prints:
 - `semantic_scope`, `snapshot_reusable`, and `mutation_targeting_available` – authority for the returned semantics. `application_partial` always carries `snapshot_id: null`, an empty `ui_map`, both authority booleans `false`, `interactable_count: 0`, and no actionable/value-settable element claims; its elements are read-only context from the exact window's attested process, not evidence for the requested exact window.
 - `ui_map` – path to the persisted snapshot file (`~/.peekaboo/snapshots/<id>/snapshot.json`).
 - `ui_elements` – flattened AX nodes with honest `is_actionable` and optional `is_value_settable` capability metadata.
+- `focused_element` – optional existing observed focus identity (`processIdentifier`, `windowID`, `role`, optional `title`/`identifier`, and `frame`). Its frame uses global logical coordinates even for ROI captures; `identifier` is an AX identifier, not a snapshot-local element ID. Missing focus means unknown, including absent, ambiguous, cached, or application-partial observations—not that no element is focused. This readback does not grant input authority or guarantee that focus remains unchanged; typing still requires its normal snapshot and live receiver checks.
 - `coordinate_context` – capture-owned raster mapping. ROI results include the full-window and cropped viewport rectangles described above.
 - `interactable_count`, `element_count`, `capture_mode`, and performance metadata for debugging.
 - Each `ui_elements[n]` entry mirrors the raw AX metadata we capture—semantic `role`, raw `ax_role`, `title`, `label`, scalar `value`, **`description`**, `role_description`, `help`, `identifier`, known enabled/selected state, value-settable capability, and the keyboard shortcut if one exists. The persisted `ui_map` keeps the same fields for follow-up tools. That makes controls whose name lives only in `AXDescription`, including Chrome toolbar icons and unlabeled sliders, searchable without relying on coordinates.
@@ -167,6 +168,10 @@ peekaboo see --app "Safari" --json --path /tmp/safari-see.png \
 # Toolbar buttons that only expose AXDescription:
 peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
   | jq '.data.ui_elements[] | select((.description // "") | test("Wingman"; "i"))'
+
+# Inspect already-proven focus without opening the snapshot file:
+peekaboo see --window-id 12345 --tree --no-screenshot --json \
+  | jq '.data.focused_element // null'
 ```
 
 ## Troubleshooting tips

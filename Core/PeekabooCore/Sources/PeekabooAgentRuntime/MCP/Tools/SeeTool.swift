@@ -391,7 +391,7 @@ public struct SeeTool: MCPTool {
         return ToolResponse(content: content, meta: mergedMeta)
     }
 
-    private func makeMetadata(
+    func makeMetadata(
         snapshot: UISnapshot,
         elements: [UIElement],
         observation: DesktopObservationResult,
@@ -407,12 +407,15 @@ public struct SeeTool: MCPTool {
                 "element_count": .double(Double(elements.count)),
                 "actionable_count": .double(Double(elements.count(where: { $0.isActionable }))),
             ]))
-        let fields: [String: Value] =
+        var fields: [String: Value] =
             if case let .object(fields) = diagnostics {
                 fields
             } else {
                 [:]
             }
+        if let focusedElement = snapshot.focusedElement {
+            fields["focused_element"] = try Value(focusedElement)
+        }
         return try ObservationActionResultSupport.metadata(
             merging: fields,
             result: actionResult) ?? diagnostics

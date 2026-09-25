@@ -391,6 +391,7 @@ struct SeeResult: Codable {
     let ui_map: String
     let application_name: String?
     let window_title: String?
+    let focused_element: FocusedElementIdentity?
     let is_dialog: Bool
     let element_count: Int
     let interactable_count: Int
@@ -413,6 +414,7 @@ struct SeeResult: Codable {
         case ui_map
         case application_name
         case window_title
+        case focused_element
         case is_dialog
         case element_count
         case interactable_count
@@ -436,6 +438,7 @@ struct SeeResult: Codable {
         ui_map: String,
         application_name: String?,
         window_title: String?,
+        focused_element: FocusedElementIdentity? = nil,
         is_dialog: Bool,
         element_count: Int,
         interactable_count: Int,
@@ -457,6 +460,7 @@ struct SeeResult: Codable {
         self.ui_map = ui_map
         self.application_name = application_name
         self.window_title = window_title
+        self.focused_element = focused_element
         self.is_dialog = is_dialog
         self.element_count = element_count
         self.interactable_count = interactable_count
@@ -485,6 +489,7 @@ struct SeeResult: Codable {
         try container.encode(self.ui_map, forKey: .ui_map)
         try container.encodeIfPresent(self.application_name, forKey: .application_name)
         try container.encodeIfPresent(self.window_title, forKey: .window_title)
+        try container.encodeIfPresent(self.focused_element, forKey: .focused_element)
         try container.encode(self.is_dialog, forKey: .is_dialog)
         try container.encode(self.element_count, forKey: .element_count)
         try container.encode(self.interactable_count, forKey: .interactable_count)
