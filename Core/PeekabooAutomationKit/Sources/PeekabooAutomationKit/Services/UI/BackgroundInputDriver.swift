@@ -483,13 +483,16 @@ enum BackgroundInputDriver {
 
     static func unicodeKeyboardEvents(
         for character: Character,
-        targetProcessIdentifier: pid_t) throws -> (keyDown: CGEvent, keyUp: CGEvent)
+        targetProcessIdentifier: pid_t,
+        makeEvent: (CGEventSource?, Bool) -> CGEvent? = {
+            CGEvent(keyboardEventSource: $0, virtualKey: 0, keyDown: $1)
+        }) throws -> (keyDown: CGEvent, keyUp: CGEvent)
     {
         let string = String(character)
         let source = CGEventSource(stateID: .hidSystemState)
 
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+        guard let keyDown = makeEvent(source, true),
+              let keyUp = makeEvent(source, false)
         else {
             throw PeekabooError.operationError(message: "Failed to create background unicode keyboard events")
         }
@@ -499,6 +502,10 @@ enum BackgroundInputDriver {
             keyDown.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: buffer.baseAddress!)
             keyUp.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: buffer.baseAddress!)
         }
+
+        // Literal text must not inherit held user modifiers and become a shortcut.
+        keyDown.flags = []
+        keyUp.flags = []
 
         self.stampKeyboardRoutingFields(on: keyDown, targetProcessIdentifier: targetProcessIdentifier)
         self.stampKeyboardRoutingFields(on: keyUp, targetProcessIdentifier: targetProcessIdentifier)
@@ -920,7 +927,12 @@ extension BackgroundInputDriver {
     private static func focusedTextEditAccess(targetProcessIdentifier: pid_t) -> FocusedTextEditAccess<AXUIElement> {
         FocusedTextEditAccess(
             focusedElement: { try self.focusedTextElement(targetProcessIdentifier: targetProcessIdentifier) },
-            isEditable: { !self.isSecureTextElement($0) && self.isValueSettable($0) },
+            isEditable: { element in
+                guard !self.isSecureTextElement(element), self.isValueSettable(element) else { return false }
+                return try self.permitsAccessibilityTextEditing(
+                    element,
+                    targetProcessIdentifier: targetProcessIdentifier)
+            },
             textValue: { try self.textValue(from: $0) },
             selectedRange: { self.selectedTextRange(from: $0) },
             focusSnapshot: {
@@ -928,6 +940,17 @@ extension BackgroundInputDriver {
             },
             setText: { try self.setText($0, on: $1) },
             selectRange: { try self.setSelectedTextRange($0, on: $1) })
+    }
+
+    private static func permitsAccessibilityTextEditing(
+        _ element: AXUIElement,
+        targetProcessIdentifier: pid_t) throws -> Bool
+    {
+        // Ownership validation precedes this route gate; never retry accepted web AX writes as events.
+        try TextInputRoute.resolve(
+            focusedElement: element,
+            application: AXUIElementCreateApplication(targetProcessIdentifier),
+            targetProcessIdentifier: targetProcessIdentifier).permitsAccessibilityEditing()
     }
 
     @MainActor
@@ -1014,6 +1037,9 @@ extension BackgroundInputDriver {
                 focusedElement: { try self.focusedTextElement(targetProcessIdentifier: targetProcessIdentifier) },
                 textValue: { element in
                     guard !self.isSecureTextElement(element), self.isValueSettable(element) else { return nil }
+                    guard try self.permitsAccessibilityTextEditing(
+                        element, targetProcessIdentifier: targetProcessIdentifier)
+                    else { return nil }
                     return try self.textValue(from: element)
                 },
                 focusSnapshot: {
@@ -1114,6 +1140,7 @@ extension BackgroundInputDriver {
         phase: KeyboardFocusValidationPhase = .initial,
         validatedReceiver: Element? = nil) throws -> FocusedTextKeyDispatch
     {
+        guard key.mayUseAccessibilityValueDelivery else { return .unsupported }
         try self.validateLiveTarget(targetProcessIdentifier)
         return try self.performFocusedTextKey(
             key,

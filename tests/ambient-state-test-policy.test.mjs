@@ -106,20 +106,26 @@ for (const name of [
   });
 }
 
-test("hosted SDK text route proof runs isolated eligibility and default-policy suites with nonempty guards", () => {
+test("hosted text route proof runs isolated SDK and background contracts with nonempty guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
-  const body = workflow.split("      - name: Run SDK text route eligibility regressions\n")[1];
-  assert.ok(body, "Missing SDK text route eligibility CI step");
+  const body = workflow.split("      - name: Run SDK and background text route regressions\n")[1];
+  assert.ok(body, "Missing SDK and background text route CI step");
   const step = body.split("\n      - name:")[0];
   assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
   assert.ok(step.includes("PEEKABOO_INCLUDE_AUTOMATION_TESTS: \"false\""));
   assert.ok(step.includes("PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: \"false\""));
   assert.ok(step.includes("set -euo pipefail"));
-  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests|UIInputPolicyDefaultTests)/'"));
+  assert.ok(step.includes("filter='^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests|UIInputPolicyDefaultTests|BackgroundTextInputDeliveryTests|BackgroundTextRouteRefusalTests|BackgroundTextInputReceiverTests)/'"));
+  assert.ok(step.includes("filter+='|^PeekabooAutomationKitTests[.]TypeServiceTargetResolutionTests/`(targeted printable characters preserve their exact Unicode payload|literal Unicode events discard inherited modifiers without changing text or destination)`\\('"));
+  assert.ok(step.includes('--filter "$filter"'));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
   assert.ok(step.includes("Suite TextInputRouteTests passed after "));
   assert.ok(step.includes("Suite TypeServiceForegroundPolicyTests passed after "));
   assert.ok(step.includes("Suite UIInputPolicyDefaultTests passed after "));
+  assert.ok(step.includes("Suite BackgroundTextInputDeliveryTests passed after "));
+  assert.ok(step.includes("Suite BackgroundTextRouteRefusalTests passed after "));
+  assert.ok(step.includes("Suite BackgroundTextInputReceiverTests passed after "));
+  assert.ok(step.includes("Suite TypeServiceTargetResolutionTests passed after "));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
 });
