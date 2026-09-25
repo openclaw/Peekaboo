@@ -68,6 +68,11 @@ read_when:
   operate terminal or scripting apps through their UI, so grant `--allow-foreground` only to trusted prompts. Use
   Peekaboo's native app/window/Accessibility/browser tools for UI automation.
 - Agent execution stays in the caller process by default. Pass the global `--bridge-socket <path>` option to route its tools through one specific Bridge host; `--no-remote` keeps the run strictly caller-local.
+- An explicit nonempty `PEEKABOO_ALLOW_TOOLS` containing only known non-capturing tools (after
+  `PEEKABOO_DISABLE_TOOLS`) skips capture-owner startup checks when automatic visual enhancements are disabled.
+  For example, `inspect_ui,click,type,set_value,press` needs no capture-owner probe. Unknown tools, nested `agent`,
+  pixel-producing tools, and absent or blank allow-lists remain conservative. `--no-desktop-context` alone does not
+  disable capture safety. Ordinary host routing, initialization, and snapshot invalidation remain unchanged.
 - A Bridge-routed Agent never borrows the host's shared browser root. A browser-filtered Agent run opens no browser
   scope. Each browser-enabled Agent session opens one distinct end-capable remote child and capability namespace; within
   one running Agent service, continuations of the same persistent session reuse that child while different sessions

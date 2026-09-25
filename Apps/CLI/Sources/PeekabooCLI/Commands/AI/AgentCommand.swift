@@ -177,8 +177,12 @@ struct AgentCommand: RuntimeBackedCommand {
     }
 
     var enhancementOptions: AgentEnhancementOptions {
+        Self.resolveEnhancements(noDesktopContext: self.noDesktopContext)
+    }
+
+    static func resolveEnhancements(noDesktopContext: Bool) -> AgentEnhancementOptions {
         var options = AgentEnhancementOptions.default
-        if self.noDesktopContext {
+        if noDesktopContext {
             options.contextAware = false
         }
         return options

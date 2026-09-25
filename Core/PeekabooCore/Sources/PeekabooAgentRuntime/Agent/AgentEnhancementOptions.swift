@@ -45,6 +45,11 @@ public struct AgentEnhancementOptions: Sendable {
     /// Default radius for region capture (in pixels).
     public var regionCaptureRadius: CGFloat
 
+    /// Conservative capture capability beyond the exposed tool catalog; desktop context alone reads no pixels.
+    public var mayCaptureScreen: Bool {
+        self.verifyActions || self.smartCapture || self.regionFocusAfterAction
+    }
+
     // MARK: - Initialization
 
     public init(

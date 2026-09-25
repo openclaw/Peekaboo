@@ -152,10 +152,10 @@ enum CommanderCLIBinder {
             parsedValues: parsedValues
         )
         options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
-        options.usesPerToolSnapshotInvalidation = Self.isAgentExecutionCommand(commandType) ||
-            commandType == MCPCommand.Serve.self ||
-            commandType == VerifyCommand.self
-        if commandType == MCPCommand.Serve.self,
+        options.usesPerToolSnapshotInvalidation = servesDynamicTools || commandType == VerifyCommand.self
+        let enhancements = AgentCommand.resolveEnhancements(noDesktopContext: commandValues.flag("noDesktopContext"))
+        let enhancementCaptureReachable = Self.isAgentExecutionCommand(commandType) && enhancements.mayCaptureScreen
+        if servesDynamicTools, !enhancementCaptureReachable,
            MCPToolCatalog.explicitEnvironmentAllowListProvesNoScreenCaptureKitUse(environment: environment) {
             options.dynamicToolScreenCaptureReachable = false
             options.requiresSilentCapture = false
