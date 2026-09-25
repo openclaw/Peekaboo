@@ -128,27 +128,11 @@ struct BridgeCandidateReport: Codable {
     var humanSummary: String {
         switch self.result {
         case .skipped:
-            return "\(self.socketPath) — skipped"
+            "\(self.socketPath) — skipped"
         case let .success(handshake):
-            let enabled = handshake.enabledOperations?.count
-            let supported = handshake.supportedOperations.count
-            let opsSummary = if let enabled {
-                "ops: \(enabled)/\(supported) enabled"
-            } else {
-                "ops: \(supported)"
-            }
-            let permissionsSummary = handshake.permissions.map { status in
-                let sr = status.screenRecording ? "Y" : "N"
-                let ax = status.accessibility ? "Y" : "N"
-                let eventSynthesizing = status.postEvent ? "Y" : "N"
-                return "perm: SR=\(sr) AX=\(ax) ES=\(eventSynthesizing)"
-            }
-            if let permissionsSummary {
-                return "\(self.socketPath) — OK (\(handshake.hostKind.rawValue), \(opsSummary), \(permissionsSummary))"
-            }
-            return "\(self.socketPath) — OK (\(handshake.hostKind.rawValue), \(opsSummary))"
+            "\(self.socketPath) — \(handshake.humanSummary)"
         case let .failure(error):
-            return "\(self.socketPath) — \(error.humanSummary)"
+            "\(self.socketPath) — \(error.humanSummary)"
         }
     }
 }
@@ -182,6 +166,60 @@ struct BridgeHandshakeReport: Codable {
         self.hostIdentity = handshake.hostIdentity
         self.hostCapabilities = handshake.hostCapabilities
         self.screenCaptureKitReadiness = handshake.screenCaptureKitReadiness
+    }
+
+    var humanSummary: String {
+        let opsSummary = self.enabledOperations.map {
+            "ops: \($0.count)/\(self.supportedOperations.count) enabled"
+        } ?? "ops: \(self.supportedOperations.count)"
+        let permissionsSummary = self.permissions.map { status in
+            let sr = status.screenRecording ? "Y" : "N"
+            let ax = status.accessibility ? "Y" : "N"
+            let eventSynthesizing = status.postEvent ? "Y" : "N"
+            return "perm: SR=\(sr) AX=\(ax) ES=\(eventSynthesizing)"
+        } ?? "perm: unknown"
+        return "handshake succeeded (\(self.hostKind.rawValue), \(opsSummary), \(permissionsSummary), " +
+            "\(self.captureSupportSummary), SCK preparation: \(self.capturePreparationSummary))"
+    }
+
+    private var captureSupportSummary: String {
+        let handshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: self.negotiatedVersion,
+            hostKind: self.hostKind,
+            build: self.build,
+            supportedOperations: self.supportedOperations,
+            permissions: self.permissions,
+            enabledOperations: self.enabledOperations,
+            permissionTags: self.permissionTags,
+            hostIdentity: self.hostIdentity,
+            hostCapabilities: self.hostCapabilities,
+            screenCaptureKitReadiness: self.screenCaptureKitReadiness
+        )
+        let ownership = BridgeCapabilityPolicy.supportsScreenCaptureKitProcessOwnership(for: handshake)
+            ? "advertised" : "unproven"
+        let classic = BridgeCapabilityPolicy.supportsClassicCaptureWithoutScreenCaptureKit(for: handshake)
+            ? "advertised" : "unproven"
+        let observation: String = if !self.supportedOperations.contains(.desktopObservation) {
+            "unsupported"
+        } else if let enabledOperations = self.enabledOperations {
+            enabledOperations.contains(.desktopObservation) ? "enabled" : "disabled"
+        } else {
+            "unreported"
+        }
+        return "capture support: SCK ownership=\(ownership), classic=\(classic), desktop observation=\(observation)"
+    }
+
+    private var capturePreparationSummary: String {
+        guard let readiness = self.screenCaptureKitReadiness else { return "unknown (not reported)" }
+        if readiness.permitsAttempt {
+            return "ready to attempt"
+        }
+        switch readiness.state {
+        case .ready:
+            return "unknown (incomplete readiness)"
+        case .blocked, .unavailable, .unknown:
+            return readiness.state.rawValue
+        }
     }
 }
 
@@ -329,10 +367,9 @@ struct BridgeSelectionReport: Codable {
             let kind = self.handshake?.hostKind.rawValue ?? "remote"
             let buildSuffix = self.handshake?.build.map { " (build \($0))" } ?? ""
             let processSuffix = self.handshake?.hostIdentity.map { " pid=\($0.processIdentifier)" } ?? ""
-            if let socketPath {
-                return "remote \(kind) via \(socketPath)\(buildSuffix)\(processSuffix)"
-            }
-            return "remote \(kind)\(buildSuffix)\(processSuffix)"
+            let socketSuffix = self.socketPath.map { " via \($0)" } ?? ""
+            let statusSuffix = self.handshake.map { "\n  \($0.humanSummary)" } ?? ""
+            return "remote \(kind)\(socketSuffix)\(buildSuffix)\(processSuffix)\(statusSuffix)"
         }
     }
 }

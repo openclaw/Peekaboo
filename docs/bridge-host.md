@@ -492,6 +492,18 @@ response bytes. Protocol 1.5 desktop observation provides the raster metadata, w
 - Use `PEEKABOO_DAEMON_SOCKET` only to change the auto-start daemon socket without treating it as an explicit Bridge override.
 - Use `peekaboo bridge status` to verify which host would be selected and why (probe results, handshake errors, etc.).
 
+Bridge status separates `handshake succeeded` from permissions, advertised capture support, desktop-observation
+enablement, and ScreenCaptureKit preparation. The selected remote host shows these diagnostics without `--verbose`;
+verbose candidate lines use the same summary. Granted permissions and a successful handshake do not establish the
+capture-ownership contract. `unproven` support means the advertised operation and capabilities do not establish that
+contract; it is not an instruction to bypass the ownership check.
+
+`SCK preparation: ready to attempt` reports a ready preparation observation with a timestamp and no recorded failure.
+It does not mean capture succeeded or that this host currently owns ScreenCaptureKit. Blocked, unavailable, missing,
+or incomplete preparation remains explicit, including unknown readiness on legacy hosts. Status performs no capture
+to verify these fields and does not change routing or admission. `--json` retains the existing handshake fields,
+including `hostCapabilities` and `screenCaptureKitReadiness`, without adding human presentation text.
+
 ## Screen Recording troubleshooting
 
 TCC permissions belong to the process that performs the capture. When the CLI routes through Bridge, Screen
