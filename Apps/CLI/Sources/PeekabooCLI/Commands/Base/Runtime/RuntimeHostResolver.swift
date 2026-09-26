@@ -160,6 +160,20 @@ enum RuntimeHostResolver {
                configurationInput: configurationInput,
                knownSnapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths
            ) {
+            if let explicitSocket,
+               !options.permitsExplicitSocketDiagnosticFallback,
+               self.inputPolicyRequiresLocal(
+                   options: options,
+                   environment: environment,
+                   configurationInput: configurationInput
+               ) {
+                throw BridgeExplicitSocketUnavailableError(
+                    socketPath: NSString(string: explicitSocket).standardizingPath,
+                    failureMessage: "the requested input strategy policy requires the caller-local runtime",
+                    failureHint: "Remove --input-strategy and caller input-policy environment/config overrides " +
+                        "to use the selected host, or pass --no-remote to explicitly use the local runtime."
+                )
+            }
             return self.localResolution(
                 services: dependencies.makeLocalServices(options),
                 hostDescription: "local (in-process)",

@@ -31,6 +31,9 @@ read_when:
 - `--bridge-socket <path>` (or `PEEKABOO_BRIDGE_SOCKET`) overrides host discovery and probes only that socket.
   The override is strict: an unavailable or incompatible host fails non-zero instead of silently using the local
   runtime. Pass `--no-remote` explicitly when caller-local execution is intended.
+- For commands without a concrete snapshot, caller-local input-policy overrides conflict with an explicit socket
+  and fail before local service construction. Remove the input-policy overrides to use the selected host, or use
+  `--no-remote` deliberately. Concrete snapshot producer affinity and read-only Bridge diagnostics are unchanged.
 - Status probes run concurrently and give each candidate one second to complete its read-only diagnostic handshake. A `timeout` entry means that host missed the diagnostic deadline; other candidates are still reported and normal runtime selection order is unchanged.
 - Hosts validate callers by code signature TeamID. If the host rejects the client (`unauthorizedClient`), install a signed Peekaboo CLI build or enable the debug-only escape hatch on the host.
 - If every selection-eligible implicit host is rejected, normal human output warns before the CLI reports local fallback. Structured output keeps the established full status-report schema for compatibility.
