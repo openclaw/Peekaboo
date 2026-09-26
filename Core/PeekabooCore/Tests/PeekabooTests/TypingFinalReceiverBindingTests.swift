@@ -422,12 +422,12 @@ private final class TypingReceiverFixture {
                 if self.textWrites.count == self.reflowAfterTextWrite {
                     self.frames[.a] = Self.reflowedFrame
                 }
-                return true
+                return .accessibilityValue
             },
             selectRange: { range, receiver in
                 self.selectionWrites.append(receiver)
                 self.selections[receiver] = range
-                return true
+                return .accessibilityValue
             })
     }
 
@@ -445,7 +445,7 @@ private final class TypingReceiverFixture {
             insertText: { text, pid, window, phase, validatedReceiver in
                 #expect(pid == Self.processIdentifier)
                 self.nativePhases.append(phase)
-                return try BackgroundInputDriver.insertTextIntoFocusedText(
+                return try await BackgroundInputDriver.insertTextIntoFocusedText(
                     text,
                     exactWindow: window,
                     phase: phase,
@@ -455,7 +455,7 @@ private final class TypingReceiverFixture {
             performTextKey: { key, pid, window, phase, validatedReceiver in
                 #expect(pid == Self.processIdentifier)
                 self.nativePhases.append(phase)
-                return try BackgroundInputDriver.performFocusedTextKey(
+                return try await BackgroundInputDriver.performFocusedTextKey(
                     key,
                     exactWindow: window,
                     phase: phase,
@@ -465,7 +465,7 @@ private final class TypingReceiverFixture {
             replaceText: { text, pid, window, phase, validatedReceiver in
                 #expect(pid == Self.processIdentifier)
                 self.nativePhases.append(phase)
-                return try BackgroundInputDriver.replaceFocusedText(
+                return try await BackgroundInputDriver.replaceFocusedText(
                     with: text,
                     exactWindow: window,
                     phase: phase,
@@ -485,7 +485,7 @@ private final class TypingReceiverFixture {
             },
             targetedInputDriver: driver,
             targetBundleIdentifier: { _ in "example.typing-receiver-fixture" },
-            exactFocusedElementValueReader: { _ in .failure(.focusNotConfirmed) },
+            exactFocusedElementValueReader: { _, _ in .failure(.focusNotConfirmed) },
             exactFocusedValueRunner: { _, _, _, _ in nil },
             processStartIdentityProvider: { _ in 91 },
             desktopOperationExecutor: DesktopOperationExecutor(

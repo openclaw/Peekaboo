@@ -193,9 +193,25 @@ public final class ClickService {
         switch clickType {
         case .single:
             let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
-            let result = try self.actionInputDriver.tryClick(
+            let originalIdentity = element.focusedElementIdentity
+            let originalRole = element.role
+            let result = try await self.actionInputDriver.tryClick(
                 element: element,
-                allowAccessibilityValueFallback: allowsAccessibilityValueDelivery)
+                allowAccessibilityValueFallback: allowsAccessibilityValueDelivery,
+                beforeMutation: {
+                    try self.requireCurrentTarget(
+                        captureReceipt,
+                        afterDispatch: false,
+                        validateProcessIdentity: validatesProcessIdentity)
+                    if let originalIdentity {
+                        guard let current = element.focusedElementIdentity else {
+                            throw ActionInputError.staleElement
+                        }
+                        try FocusedElementReceiptResolver.validate(current, matches: originalIdentity)
+                    } else if element.focusedElementIdentity != nil || element.role != originalRole {
+                        throw ActionInputError.staleElement
+                    }
+                })
             if let focusedElement = result.focusedElement,
                let exactWindow = captureReceipt.exactWindow
             {
@@ -1049,7 +1065,17 @@ extension ClickService {
                 else {
                     throw PeekabooError.operationError(message: "Exact focus target was not prepared")
                 }
-                let result = try self.actionInputDriver.tryFocus(element: element)
+                let result = try await self.actionInputDriver.tryFocus(element: element, beforeMutation: {
+                    try self.requireCurrentTarget(
+                        captureReceipt,
+                        afterDispatch: false,
+                        validateProcessIdentity: true)
+                    guard let current = element.focusedElementIdentity else {
+                        throw FocusedElementReceiptError.missingWindowIdentifier
+                    }
+                    try Self.validateFocusedElement(current, exactWindow: exactWindow)
+                    try FocusedElementReceiptResolver.validate(current, matches: expectedElementIdentity)
+                })
                 guard let focusedElement = result.focusedElement else {
                     throw FocusedElementReceiptError.focusNotConfirmed
                 }

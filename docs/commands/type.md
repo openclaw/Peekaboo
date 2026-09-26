@@ -12,6 +12,10 @@ explicit app, PID, exact window, or snapshot whose metadata identifies a process
 calls are stricter: they require an explicit fresh exact non-dialog snapshot, and an optional element ID must come from
 that snapshot. Use `press` for standalone keys or chords.
 
+Background Accessibility typing waits for each value write and supported cursor update to settle on the same
+native field before computing the next edit. A write that was accepted but cannot be verified stops typing
+with an indeterminate outcome; Peekaboo does not replay it as another write or keyboard events.
+
 ## Key options
 | Flag | Description |
 | --- | --- |
@@ -81,7 +85,8 @@ that snapshot. Use `press` for standalone keys or chords.
   only when the typing effect is a confirmed change. `confirmed_no_change` and missing outcomes are also non-success.
   Exact-window `--clear` followed only by printable literal text can confirm when a generation-bound, readable,
   non-secure AX value changes from its private pre-dispatch value to the exact requested value during a short bounded
-  settlement window; field contents never enter the result. Pixel-focus typing applies the same private readback after
+  settlement window. Readback retains the pre-dispatch native receiver and permits that same field to reflow without
+  selecting a replacement by label or position; field contents never enter the result. Pixel-focus typing applies the same private readback after
   its focus write; confirmed focus alone never confirms the typing leaf. Parent windows with attached sheets are refused;
   a sheet with its own exact window receipt remains eligible. An already-equal value remains unverifiable. Requested
   actions remain available for diagnosis.

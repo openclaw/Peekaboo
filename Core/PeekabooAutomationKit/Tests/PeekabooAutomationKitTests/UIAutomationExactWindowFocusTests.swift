@@ -66,7 +66,7 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         let service = TypeService(
             snapshotManager: InMemorySnapshotManager(),
             randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { _ in
+            exactFocusedElementValueReader: { _, _ in
                 XCTFail("An exhausted observation must not fall back to a value read")
                 return .failure(.processMismatch)
             },
@@ -79,12 +79,12 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
             },
             processStartIdentityProvider: { _ in 33 })
 
-        let value = await service.exactFocusedValue(for: confirmation, timeout: .milliseconds(40))
+        let value = await service.exactFocusedValueSnapshot(for: confirmation, timeout: .milliseconds(40))
         XCTAssertNil(value)
         XCTAssertEqual(runnerCalls.value, 1)
 
         for exhaustedBudget in [Duration.zero, .milliseconds(-1)] {
-            let exhaustedValue = await service.exactFocusedValue(for: confirmation, timeout: exhaustedBudget)
+            let exhaustedValue = await service.exactFocusedValueSnapshot(for: confirmation, timeout: exhaustedBudget)
             XCTAssertNil(exhaustedValue)
         }
         XCTAssertEqual(runnerCalls.value, 1, "Exhausted budgets must not enqueue new observations")
@@ -101,7 +101,7 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         let service = TypeService(
             snapshotManager: InMemorySnapshotManager(),
             randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { _ in
+            exactFocusedElementValueReader: { _, _ in
                 entered.fulfill()
                 release.wait()
                 defer { drained.fulfill() }
@@ -120,7 +120,7 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
                 callerDrained.fulfill()
             }
             // Cancellation owns completion here; the observation deadline is deliberately not the watchdog.
-            let value = await service.exactFocusedValue(for: confirmation, timeout: .seconds(60))
+            let value = await service.exactFocusedValueSnapshot(for: confirmation, timeout: .seconds(60))
             XCTAssertNil(value)
             XCTAssertFalse(released.value, "Caller must not join the noncooperative value reader")
         }
@@ -146,14 +146,14 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         let service = TypeService(
             snapshotManager: InMemorySnapshotManager(),
             randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { _ in
+            exactFocusedElementValueReader: { _, _ in
                 release.wait()
                 return .failure(.processMismatch)
             },
             processStartIdentityProvider: { _ in 33 })
         let observation = Task { @MainActor in
             defer { completed.fulfill() }
-            let value = await service.exactFocusedValue(for: confirmation, timeout: .milliseconds(40))
+            let value = await service.exactFocusedValueSnapshot(for: confirmation, timeout: .milliseconds(40))
             XCTAssertNil(value)
             XCTAssertFalse(released.value, "Timeout must not join held work")
         }
@@ -170,18 +170,20 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         let cleanup = TypeService(
             snapshotManager: InMemorySnapshotManager(),
             randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { _ in
+            exactFocusedElementValueReader: { _, _ in
                 .success(ExactWindowFocusSnapshot(
                     processIdentifier: confirmation.focusedElement.processIdentifier,
                     windowID: 42,
                     frame: confirmation.focusedElement.frame,
                     role: confirmation.focusedElement.role,
                     identifier: confirmation.focusedElement.identifier,
-                    value: "drained"))
+                    value: "drained",
+                    nativeElement: RetainedFocusElement(element: AXUIElementCreateApplication(confirmation
+                            .focusedElement.processIdentifier))))
             },
             processStartIdentityProvider: { _ in 33 })
-        let drained = await cleanup.exactFocusedValue(for: confirmation, timeout: .seconds(5))
-        XCTAssertEqual(drained, "drained")
+        let drained = await cleanup.exactFocusedValueSnapshot(for: confirmation, timeout: .seconds(5))
+        XCTAssertEqual(drained?.value, "drained")
     }
 
     private func exactValueConfirmation() throws -> ExactLiteralTypingEffectConfirmation {

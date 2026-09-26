@@ -33,8 +33,11 @@ struct TypeServiceForegroundPolicyTests {
         #expect(result.path == .action)
         #expect(result.fallbackReason == nil)
         #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
-        #expect(fixture.focus.readCount == 1)
-        #expect(fixture.route.receivers == [ObjectIdentifier(fixture.focus.element)])
+        #expect(fixture.focus.readCount == 2)
+        #expect(fixture.route.receivers == [
+            ObjectIdentifier(fixture.focus.element),
+            ObjectIdentifier(fixture.focus.element),
+        ])
         #expect(fixture.action.replacementFlags == [true])
         #expect(fixture.action.field.setValues == [.string("after")])
         #expect(fixture.action.field.stringValue == "after")
@@ -358,7 +361,7 @@ struct TypeServiceForegroundPolicyTests {
     }
 
     @Test
-    func `legacy action route reads focus again for every call`() async throws {
+    func `legacy action route rereads focus before each native write`() async throws {
         let fixture = try await ForegroundTypePolicyFixture(policy: UIInputPolicy(defaultStrategy: .actionOnly))
         defer { fixture.cleanup() }
 
@@ -369,8 +372,8 @@ struct TypeServiceForegroundPolicyTests {
             typingDelay: 0,
             snapshotId: fixture.snapshotID)
         #expect(first.path == .action)
-        #expect(fixture.focus.readCount == 1)
-        #expect(fixture.route.receivers.count == 1)
+        #expect(fixture.focus.readCount == 2)
+        #expect(fixture.route.receivers.count == 2)
 
         fixture.focus.element = AXUIElementCreateApplication(getpid() + 1)
         await #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
@@ -381,8 +384,8 @@ struct TypeServiceForegroundPolicyTests {
                 typingDelay: 0,
                 snapshotId: fixture.snapshotID)
         }
-        #expect(fixture.focus.readCount == 2)
-        #expect(fixture.route.receivers.count == 1)
+        #expect(fixture.focus.readCount == 3)
+        #expect(fixture.route.receivers.count == 2)
         #expect(fixture.action.field.stringValue == "first")
 
         fixture.focus.element = AXUIElementCreateApplication(getpid())
@@ -394,8 +397,8 @@ struct TypeServiceForegroundPolicyTests {
             snapshotId: fixture.snapshotID)
 
         #expect(last.path == .action)
-        #expect(fixture.focus.readCount == 3)
-        #expect(fixture.route.receivers.count == 2)
+        #expect(fixture.focus.readCount == 5)
+        #expect(fixture.route.receivers.count == 4)
         #expect(fixture.action.replacementFlags == [true, true])
         #expect(fixture.action.field.setValues == [.string("first"), .string("last")])
         #expect(fixture.action.field.stringValue == "last")
@@ -608,7 +611,13 @@ private final class ForegroundTypeActionDriver: ActionInputDriving {
     private let unexpected = RecordingActionInputDriver()
     private(set) var replacementFlags: [Bool] = []
 
-    func trySetText(element _: AutomationElement, text: String, replace: Bool) throws -> UIInputExecutionResult.Action {
+    func trySetText(
+        element _: AutomationElement,
+        text: String,
+        replace: Bool,
+        beforeMutation: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
+        try beforeMutation()
         self.replacementFlags.append(replace)
         try self.field.setAutomationValue(.string(text))
         return UIInputExecutionResult.Action(
@@ -617,8 +626,11 @@ private final class ForegroundTypeActionDriver: ActionInputDriving {
             elementRole: "AXTextField")
     }
 
-    func tryClick(element: AutomationElement) throws -> UIInputExecutionResult.Action {
-        try self.unexpected.tryClick(element: element)
+    func tryClick(
+        element: AutomationElement,
+        beforeMutation: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
+        try self.unexpected.tryClick(element: element, beforeMutation: beforeMutation)
     }
 
     func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionResult.Action {
@@ -635,8 +647,12 @@ private final class ForegroundTypeActionDriver: ActionInputDriving {
         try self.unexpected.tryHotkey(application: application, keys: keys)
     }
 
-    func trySetValue(element: AutomationElement, value: UIElementValue) throws -> UIInputExecutionResult.Action {
-        try self.unexpected.trySetValue(element: element, value: value)
+    func trySetValue(
+        element: AutomationElement,
+        value: UIElementValue,
+        beforeMutation: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
+        try self.unexpected.trySetValue(element: element, value: value, beforeMutation: beforeMutation)
     }
 
     func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionResult.Action {

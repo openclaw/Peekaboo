@@ -347,7 +347,6 @@ private final class Fixture {
             insertText: { text, pid, window, phase, receiver in
                 try self.action(
                     "insert:\(text)", processIdentifier: pid, exactWindow: window, phase: phase, receiver: receiver)
-                    == .accessibilityValue
             },
             performTextKey: { key, pid, window, phase, receiver in
                 try self.action(
@@ -360,7 +359,6 @@ private final class Fixture {
             replaceText: { _, pid, window, phase, receiver in
                 try self.action(
                     "clear", processIdentifier: pid, exactWindow: window, phase: phase, receiver: receiver)
-                    == .accessibilityValue
             },
             typeCharacter: { character, _ in try self.event("text:\(character)") },
             tapKey: { code, flags, _ in try self.event("key:\(code):\(flags.rawValue)") })

@@ -668,7 +668,10 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
         self.error = error
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
+    func tryClick(
+        element _: AutomationElement,
+        beforeMutation _: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
@@ -686,7 +689,11 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
-    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
+    func trySetText(
+        element _: AutomationElement,
+        text _: String,
+        replace _: Bool,
+        beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.attributeUnsupported)
@@ -702,7 +709,10 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
         return self.result ?? AutomationTestFixtures.uiActionReceipt(actionName: "AXPress")
     }
 
-    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
+    func trySetValue(
+        element _: AutomationElement,
+        value _: UIElementValue,
+        beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.valueNotSettable)

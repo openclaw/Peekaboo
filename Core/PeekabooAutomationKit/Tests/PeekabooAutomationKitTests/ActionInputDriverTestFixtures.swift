@@ -65,7 +65,10 @@ final class RecordingActionInputDriver: ActionInputDriving {
         self.allowsElementActions = allowsElementActions
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
+    func tryClick(
+        element _: AutomationElement,
+        beforeMutation _: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
         self.clickCallCount += 1
         Issue.record("Action driver should not be called")
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
@@ -85,7 +88,11 @@ final class RecordingActionInputDriver: ActionInputDriving {
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
-    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
+    func trySetText(
+        element _: AutomationElement,
+        text _: String,
+        replace _: Bool,
+        beforeMutation _: @MainActor () throws -> Void) throws
     -> UIInputExecutionResult.Action {
         Issue.record("Action driver should not be called")
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
@@ -97,7 +104,10 @@ final class RecordingActionInputDriver: ActionInputDriving {
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
-    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
+    func trySetValue(
+        element _: AutomationElement,
+        value _: UIElementValue,
+        beforeMutation _: @MainActor () throws -> Void) throws
     -> UIInputExecutionResult.Action {
         self.setValueCallCount += 1
         if let elementActionError {
@@ -255,6 +265,7 @@ actor ActionLaneLatch {
 
 @MainActor
 final class ActionInputMockAutomationElement: AutomationElementRepresenting, @unchecked Sendable {
+    let underlyingAXElement: AXUIElement?
     let name: String?
     let label: String?
     let roleDescription: String?
@@ -274,7 +285,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
     var selectedValue: Bool?
     let isEnabled: Bool
     var isFocused: Bool
-    let focusedElementIdentity: FocusedElementIdentity?
+    var focusedElementIdentity: FocusedElementIdentity?
     let isOffscreen: Bool
     var anchorPoint: CGPoint? {
         self.frame.map { CGPoint(x: $0.midX, y: $0.midY) }
@@ -302,6 +313,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
     }
 
     init(
+        underlyingAXElement: AXUIElement? = nil,
         name: String? = nil,
         label: String? = nil,
         roleDescription: String? = nil,
@@ -331,6 +343,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
         valueSetterReadbackOverride: UIElementValue? = nil,
         focusSetterDoesNotChange: Bool = false)
     {
+        self.underlyingAXElement = underlyingAXElement
         self.name = name
         self.label = label
         self.roleDescription = roleDescription

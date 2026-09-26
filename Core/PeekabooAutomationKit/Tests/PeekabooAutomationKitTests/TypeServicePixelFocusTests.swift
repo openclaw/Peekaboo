@@ -157,9 +157,9 @@ struct TypeServicePixelFocusTests {
                 #expect(validatedReceiver.map { ObjectIdentifier($0.underlyingElement) } ==
                     ObjectIdentifier(receiver.underlyingElement))
                 value.set(text)
-                return true
+                return .accessibilityValue
             },
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             processStartIdentityProvider: { _ in 42 },
@@ -216,9 +216,9 @@ struct TypeServicePixelFocusTests {
                 targetedKeyTapper: { _, _, _ in Issue.record("AX clear must not emit keyboard events") },
                 targetedTextReplacer: { text, _, _, _, _ in
                     value.set(text)
-                    return true
+                    return .accessibilityValue
                 },
-                exactFocusedElementValueReader: { focusedElement in
+                exactFocusedElementValueReader: { focusedElement, _ in
                     readbackAvailable
                         ? .success(Self.focusSnapshot(focusedElement, value: value.get()))
                         : .failure(.focusedAttributeUnreadable)
@@ -398,7 +398,7 @@ struct TypeServicePixelFocusTests {
                     #expect(validatedReceiver.map { ObjectIdentifier($0.underlyingElement) } ==
                         ObjectIdentifier(receiver.underlyingElement))
                     typingAttempts += 1
-                    return false
+                    return .unsupported
                 },
                 performTextKey: { _, _, _, _, _ in
                     Issue.record("No editing key requested")
@@ -406,7 +406,7 @@ struct TypeServicePixelFocusTests {
                 },
                 replaceText: { _, _, _, _, _ in
                     Issue.record("No replacement requested")
-                    return false
+                    return .unsupported
                 },
                 typeCharacter: { _, _ in eventCount += 1 },
                 tapKey: { _, _, _ in eventCount += 1 }),
@@ -991,7 +991,9 @@ struct TypeServicePixelFocusTests {
             frame: focusedElement.frame,
             role: focusedElement.role,
             identifier: focusedElement.identifier,
-            value: value)
+            value: value,
+            nativeElement: RetainedFocusElement(element: AXUIElementCreateApplication(focusedElement
+                    .processIdentifier)))
     }
 
     private static func focusedElement(

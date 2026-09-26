@@ -419,7 +419,7 @@ struct TypeServiceTargetResolutionTests {
             targetedTextReplacer: { _, _, _, _, validatedReceiver in
                 #expect(validatedReceiver.map { ObjectIdentifier($0.underlyingElement) } ==
                     ObjectIdentifier(receiver.underlyingElement))
-                return false
+                return .unsupported
             })
 
         let summary = try await service.typeActionsTrackingSecureInput(

@@ -65,14 +65,49 @@ struct PeekabooBridgeSetValueFailureTests {
         await host.stop()
     }
 
-    @Test
-    func `signed client preserves post-dispatch readback failure and target receipt`() async throws {
+    enum FailureTarget: CaseIterable {
+        case process, exactWindow, wrongWindow, wrongGeneration
+
+        var contradictsSnapshot: Bool {
+            self == .wrongWindow || self == .wrongGeneration
+        }
+    }
+
+    @Test(arguments: FailureTarget.allCases)
+    @MainActor
+    func `signed client preserves post-dispatch readback failure and target receipt`(
+        target: FailureTarget) async throws
+    {
         let socketPath = "/tmp/peekaboo-bridge-set-value-failure-\(UUID().uuidString).sock"
-        let services = await MainActor.run { StubServices() }
         let processGeneration = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 91,
+            ownerProcessIdentifier: getpid(),
+            ownerProcessStartIdentity: processGeneration,
+            capturedBounds: bounds)
+        let snapshotID = SnapshotReference.generate().rawValue
+        let detection = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: .init(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "fixture",
+                windowContext: WindowContext(
+                    applicationName: "Fixture",
+                    applicationProcessId: getpid(),
+                    applicationProcessStartIdentity: processGeneration,
+                    windowID: target == .process ? nil : windowIdentity.windowID,
+                    windowBounds: target == .process ? nil : bounds,
+                    windowMutationIdentity: target == .process ? nil : windowIdentity)))
+        let snapshots = try await InMemorySnapshotManager.containing(detection)
+        let services = StubServices(snapshots: snapshots)
         let targetReceipt = DesktopActionTargetReceipt(
             processIdentifier: getpid(),
-            processStartIdentity: processGeneration)
+            processStartIdentity: target == .wrongGeneration ? processGeneration + 1 : processGeneration,
+            windowID: target == .process ? nil : (target == .wrongWindow ? 92 : 91))
         await MainActor.run {
             services.automationStub.actionOutcome = .dispatchedUnverified(
                 delivery: .init(mechanism: .accessibilityValue, mode: .background),
@@ -116,18 +151,25 @@ struct PeekabooBridgeSetValueFailureTests {
             _ = try await remote.setValueWithOutcome(
                 target: "T1",
                 value: .string("hello"),
-                snapshotId: "S1")
+                snapshotId: snapshotID)
             Issue.record("Expected typed set-value failure")
         } catch let failure as DesktopActionFailure {
-            #expect(failure.message == "The submitted value could not be read back.")
+            if target.contradictsSnapshot {
+                #expect(failure.message == "Bridge operation completed without a trustworthy exact target receipt.")
+                #expect(failure.targetReceipt == nil)
+                let mismatch = target == .wrongWindow ? "different windows" : "different process generations"
+                #expect(failure.causeDescription?.contains(mismatch) == true)
+            } else {
+                #expect(failure.message == "The submitted value could not be read back.")
+                #expect(failure.targetReceipt == targetReceipt)
+                #expect(failure.hint?.contains("Observe the exact target") == true)
+            }
             #expect(failure.outcome.route == .bridge)
             #expect(failure.outcome.state == .indeterminate)
             #expect(failure.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
             #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
             #expect(failure.outcome.retrySafety == .unsafe)
             #expect(failure.outcome.projection.requiresFreshObservation)
-            #expect(failure.targetReceipt == targetReceipt)
-            #expect(failure.hint?.contains("Observe the exact target") == true)
         }
     }
 }

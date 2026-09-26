@@ -792,7 +792,10 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
         self.scrollError = scrollError
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
+    func tryClick(
+        element _: AutomationElement,
+        beforeMutation _: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
         AutomationTestFixtures.uiActionReceipt()
     }
 
@@ -815,7 +818,11 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
         return AutomationTestFixtures.uiActionReceipt(actionName: "AXScroll", elementRole: "AXScrollArea")
     }
 
-    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
+    func trySetText(
+        element _: AutomationElement,
+        text _: String,
+        replace _: Bool,
+        beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
         AutomationTestFixtures.uiActionReceipt()
@@ -827,7 +834,10 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
         AutomationTestFixtures.uiActionReceipt()
     }
 
-    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
+    func trySetValue(
+        element _: AutomationElement,
+        value _: UIElementValue,
+        beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
         AutomationTestFixtures.uiActionReceipt()

@@ -1,11 +1,14 @@
 import Foundation
 import PeekabooFoundation
 
-private typealias ResolvedElementMutationTarget = (
-    element: AutomationElement,
-    description: String,
-    bundleIdentifier: String?,
-    windowContext: WindowContext?)
+private struct ResolvedElementMutationTarget {
+    let element: AutomationElement
+    let description: String
+    let bundleIdentifier: String?
+    let windowContext: WindowContext?
+    let elementIdentity: FocusedElementIdentity?
+    let role: String?
+}
 
 extension UIAutomationService: ElementActionAutomationServiceProtocol {
     public var supportsSetValueResultTargetBinding: Bool {
@@ -66,7 +69,12 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 }
                 try self.validateElementMutationTarget(resolved, receipt: captureReceipt)
                 do {
-                    let action = try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
+                    let action = try await self.actionInputDriver.trySetValue(
+                        element: resolved.element,
+                        value: value,
+                        beforeMutation: {
+                            try self.validateElementMutationTarget(resolved, receipt: captureReceipt)
+                        })
                     valueVerification = action.valueVerification
                     return action
                 } catch let error as ActionInputError where error.isUnsupportedValueMutation {
@@ -261,11 +269,13 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     "Resolved element belongs to a different process than the snapshot receipt.",
                     standardErrorCode: .snapshotStale)
             }
-            return (
-                element,
-                Self.describe(detected),
-                detectionResult.metadata.windowContext?.applicationBundleId,
-                detectionResult.metadata.windowContext)
+            return ResolvedElementMutationTarget(
+                element: element,
+                description: Self.describe(detected),
+                bundleIdentifier: detectionResult.metadata.windowContext?.applicationBundleId,
+                windowContext: detectionResult.metadata.windowContext,
+                elementIdentity: element.focusedElementIdentity,
+                role: element.role)
         }
 
         throw Self.elementMutationRefusal(
@@ -348,6 +358,19 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         else {
             throw Self.elementMutationRefusal(
                 "Resolved element belongs to a different process than the snapshot receipt.",
+                standardErrorCode: .snapshotStale)
+        }
+        if let expected = target.elementIdentity {
+            guard let current = target.element.focusedElementIdentity,
+                  FocusedElementReceiptResolver.matches(current, expected: expected)
+            else {
+                throw Self.elementMutationRefusal(
+                    "The resolved element changed before mutation; capture a fresh target snapshot.",
+                    standardErrorCode: .snapshotStale)
+            }
+        } else if target.element.focusedElementIdentity != nil || target.element.role != target.role {
+            throw Self.elementMutationRefusal(
+                "The resolved element changed before mutation; capture a fresh target snapshot.",
                 standardErrorCode: .snapshotStale)
         }
     }

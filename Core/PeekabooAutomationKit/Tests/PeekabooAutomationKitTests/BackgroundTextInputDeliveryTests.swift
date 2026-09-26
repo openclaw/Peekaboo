@@ -114,7 +114,7 @@ struct BackgroundTextInputDeliveryTests {
             defer { try? FileManager.default.removeItem(at: root) }
             let driver = TargetedTypeInputDriver(
                 insertText: { _, _, _, _, _ in try self.tryAXWrite() },
-                performTextKey: { _, _, _, _, _ in try self.tryAXWrite() ? .accessibilityValue : .unsupported },
+                performTextKey: { _, _, _, _, _ in try self.tryAXWrite() },
                 replaceText: { _, _, _, _, _ in try self.tryAXWrite() },
                 typeCharacter: { _, _ in try self.postEvent("character") },
                 tapKey: { code, flags, _ in
@@ -135,11 +135,11 @@ struct BackgroundTextInputDeliveryTests {
                 [payload.action], cadence: .fixed(milliseconds: 0), snapshotId: nil, targetProcessIdentifier: 42)
         }
 
-        private func tryAXWrite() throws -> Bool {
+        private func tryAXWrite() throws -> FocusedTextKeyDispatch {
             self.routeChecks += 1
-            guard try self.route.permitsAccessibilityEditing() else { return false }
+            guard try self.route.permitsAccessibilityEditing() else { return .unsupported }
             self.axWrites += 1
-            return true
+            return .accessibilityValue
         }
 
         private func postEvent(_ event: String) throws {

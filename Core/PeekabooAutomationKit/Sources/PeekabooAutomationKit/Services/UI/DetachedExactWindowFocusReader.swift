@@ -112,9 +112,50 @@ enum DetachedExactWindowFocusReader {
     }
 
     static func readValue(
-        expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+        expected: FocusedElementIdentity,
+        retainedElement: RetainedFocusElement? = nil) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
-        self.read(expected: expected, includesValue: true)
+        guard let retainedElement else {
+            return self.read(expected: expected, includesValue: true)
+        }
+        let element = retainedElement.element
+        guard let snapshot = self.read(element: element, processIdentifier: expected.processIdentifier)
+        else { return .failure(.processMismatch) }
+        guard let windowID = snapshot.windowID else { return .failure(.missingWindowIdentifier) }
+        guard let role = snapshot.role else { return .failure(.roleMismatch) }
+        guard !snapshot.frame.isEmpty else { return .failure(.missingElementFrame) }
+        let actual = FocusedElementIdentity(
+            processIdentifier: snapshot.processIdentifier,
+            windowID: windowID,
+            role: role,
+            title: snapshot.title,
+            identifier: snapshot.identifier,
+            frame: snapshot.frame)
+        do {
+            try FocusedElementReceiptResolver.validateContinuation(actual, matches: expected)
+        } catch let error as FocusedElementReceiptError {
+            return .failure(error)
+        } catch {
+            return .failure(.focusNotConfirmed)
+        }
+        AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
+        defer { AXUIElementSetMessagingTimeout(element, 0) }
+        guard let focused = self.boolAttribute(kAXFocusedAttribute, of: element) else {
+            return .failure(.focusedAttributeUnreadable)
+        }
+        guard focused else { return .failure(.focusNotConfirmed) }
+        return .success(ExactWindowFocusSnapshot(
+            processIdentifier: snapshot.processIdentifier,
+            windowID: windowID,
+            frame: snapshot.frame,
+            role: role,
+            subrole: snapshot.subrole,
+            title: snapshot.title,
+            identifier: snapshot.identifier,
+            value: self.allowsValueRead(role: role, subrole: snapshot.subrole)
+                ? self.stringAttribute(kAXValueAttribute as String, of: element)
+                : nil,
+            nativeElement: retainedElement))
     }
 
     private static func read(

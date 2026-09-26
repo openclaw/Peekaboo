@@ -106,14 +106,14 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `set value predispatch refusal never acquires dispatch semantics`() {
+    func `set value predispatch refusal never acquires dispatch semantics`() async {
         let element = ActionInputMockAutomationElement(
             role: "AXSecureTextField",
             value: "secret",
             isValueSettable: true)
 
         do {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("replacement"))
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("replacement"))
             Issue.record("Expected secure value mutation to be refused")
         } catch let error as ActionInputError {
             #expect(error == .unsupported(.secureValueNotAllowed))
@@ -609,13 +609,13 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `mock element can exercise action click without live AX`() throws {
+    func `mock element can exercise action click without live AX`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXButtonRole,
             frame: CGRect(x: 10, y: 20, width: 30, height: 40),
             actionNames: [AXActionNames.kAXPressAction])
 
-        let result = try ActionInputDriver().tryClickForTesting(element: element)
+        let result = try await ActionInputDriver().tryClickForTesting(element: element)
 
         #expect(element.performedActions == [AXActionNames.kAXPressAction])
         #expect(result.outcome.state == .dispatchedUnverified)
@@ -658,14 +658,14 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `text field action click focuses when press is unavailable`() throws {
+    func `text field action click focuses when press is unavailable`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXTextFieldRole,
             frame: CGRect(x: 10, y: 20, width: 30, height: 40),
             isValueSettable: true,
             isFocusedSettable: true)
 
-        let result = try ActionInputDriver().tryClickForTesting(element: element)
+        let result = try await ActionInputDriver().tryClickForTesting(element: element)
 
         #expect(element.performedActions.isEmpty)
         #expect(element.setFocusedValues == [true])
@@ -678,15 +678,15 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `text field click without negotiated value delivery refuses before focus write`() throws {
+    func `text field click without negotiated value delivery refuses before focus write`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXTextFieldRole,
             frame: CGRect(x: 10, y: 20, width: 30, height: 40),
             isValueSettable: true,
             isFocusedSettable: true)
 
-        #expect(throws: ActionInputError.self) {
-            _ = try ActionInputDriver().tryClickForTesting(
+        await #expect(throws: ActionInputError.self) {
+            _ = try await ActionInputDriver().tryClickForTesting(
                 element: element,
                 allowAccessibilityValueFallback: false)
         }
@@ -696,19 +696,20 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `legacy action driver opt out refuses before invoking an unknown click implementation`() throws {
+    func `legacy action driver opt out refuses before invoking an unknown click implementation`() async throws {
         let driver = RecordingActionInputDriver()
         let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
 
-        #expect(throws: ActionInputError.self) {
-            _ = try driver.tryClick(element: element, allowAccessibilityValueFallback: false)
+        await #expect(throws: ActionInputError.self) {
+            _ = try await driver.tryClick(
+                element: element, allowAccessibilityValueFallback: false, beforeMutation: {})
         }
         #expect(driver.clickCallCount == 0)
     }
 
     @MainActor
     @Test
-    func `exact semantic focus returns confirmed receipt without redispatch when already focused`() throws {
+    func `exact semantic focus returns confirmed receipt without redispatch when already focused`() async throws {
         let frame = CGRect(x: 10, y: 20, width: 30, height: 40)
         let element = ActionInputMockAutomationElement(
             identifier: "editor",
@@ -717,7 +718,7 @@ extension ActionInputDriverTests {
             isFocusedSettable: true,
             isFocused: true)
 
-        let result = try ActionInputDriver().tryFocus(element: element)
+        let result = try await ActionInputDriver().tryFocus(element: element)
 
         #expect(element.setFocusedValues.isEmpty)
         #expect(result.outcome.state == .confirmedNoChange)
@@ -731,20 +732,20 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `exact semantic focus refuses an unsettable field before mutation`() {
+    func `exact semantic focus refuses an unsettable field before mutation`() async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXTextFieldRole,
             frame: CGRect(x: 10, y: 20, width: 30, height: 40))
 
-        #expect(throws: FocusedElementReceiptError.focusedAttributeNotSettable) {
-            _ = try ActionInputDriver().tryFocus(element: element)
+        await #expect(throws: FocusedElementReceiptError.focusedAttributeNotSettable) {
+            _ = try await ActionInputDriver().tryFocus(element: element)
         }
         #expect(element.setFocusedValues.isEmpty)
     }
 
     @MainActor
     @Test
-    func `exact semantic focus reports retry unsafe when accepted setter cannot be confirmed`() {
+    func `exact semantic focus reports retry unsafe when accepted setter cannot be confirmed`() async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXTextFieldRole,
             frame: CGRect(x: 10, y: 20, width: 30, height: 40),
@@ -752,7 +753,7 @@ extension ActionInputDriverTests {
             focusSetterDoesNotChange: true)
 
         do {
-            _ = try ActionInputDriver().tryFocus(element: element)
+            _ = try await ActionInputDriver().tryFocus(element: element)
             Issue.record("Expected unconfirmed native focus to fail")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -783,13 +784,13 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `numeric slider coerces CLI text to a floating point AX value`() throws {
+    func `numeric slider coerces CLI text to a floating point AX value`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             value: 50.0,
             isValueSettable: true)
 
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
 
         #expect(element.setValues == [.double(0.75)])
         #expect((element.value as? Double) == 0.75)
@@ -800,13 +801,13 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `boolean selected attribute is set and verified`() throws {
+    func `boolean selected attribute is set and verified`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXRowRole,
             isSelectedSettable: true,
             selectedValue: false)
 
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("true"))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("true"))
 
         #expect(element.setSelectedValues == [true])
         #expect(element.selectedValue == true)
@@ -816,13 +817,13 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `numeric-looking text field value remains a string`() throws {
+    func `numeric-looking text field value remains a string`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXTextFieldRole,
             value: "123",
             isValueSettable: true)
 
-        _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("456"))
+        _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("456"))
 
         #expect(element.setValues == [.string("456")])
         #expect((element.value as? String) == "456")
@@ -830,13 +831,13 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `idempotent set succeeds without writing the attribute`() throws {
+    func `idempotent set succeeds without writing the attribute`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             value: 0.75,
             isValueSettable: true)
 
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
 
         #expect(element.setValues.isEmpty)
         #expect(result.outcome.state == .confirmedNoChange)
@@ -846,7 +847,7 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `accepted value setter with unconfirmed readback is retry unsafe`() {
+    func `accepted value setter with unconfirmed readback is retry unsafe`() async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             value: 50.0,
@@ -854,7 +855,7 @@ extension ActionInputDriverTests {
             valueSetterDoesNotChange: true)
 
         do {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
             Issue.record("Expected unchanged value to fail verification")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -872,14 +873,14 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `unreadable post-dispatch value is indeterminate instead of a raw driver error`() {
+    func `unreadable post-dispatch value is indeterminate instead of a raw driver error`() async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             isValueSettable: true,
             valueSetterDoesNotChange: true)
 
         do {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .double(0.75))
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .double(0.75))
             Issue.record("Expected unverifiable value to fail")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)
@@ -914,11 +915,11 @@ extension ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `mock element unsupported action classifies as fallback eligible`() {
+    func `mock element unsupported action classifies as fallback eligible`() async {
         let element = ActionInputMockAutomationElement(role: AXRoleNames.kAXButtonRole)
 
         do {
-            _ = try ActionInputDriver().tryClickForTesting(element: element)
+            _ = try await ActionInputDriver().tryClickForTesting(element: element)
             Issue.record("Expected unsupported mock action to throw")
         } catch let error as ActionInputError {
             #expect(error == .unsupported(.actionUnsupported))
@@ -997,11 +998,11 @@ extension ActionInputDriverTests {
 struct ActionInputDriverOutcomeTests {
     @MainActor
     @Test
-    func `unknown pre-action value remains dispatched but unverified`() throws {
+    func `unknown pre-action value remains dispatched but unverified`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXTextFieldRole,
             isValueSettable: true)
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("hello"))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("hello"))
 
         #expect(element.setValues == [.string("hello")])
         #expect(result.outcome.state == .dispatchedUnverified)
@@ -1013,11 +1014,11 @@ struct ActionInputDriverOutcomeTests {
 
     @MainActor
     @Test
-    func `unknown pre-action selected state remains dispatched but unverified`() throws {
+    func `unknown pre-action selected state remains dispatched but unverified`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXRowRole,
             isSelectedSettable: true)
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("true"))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("true"))
 
         #expect(element.setSelectedValues == [true])
         #expect(element.selectedValue == true)

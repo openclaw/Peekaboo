@@ -38,6 +38,8 @@ read_when:
 - A result with `requires_fresh_observation: true`, or no canonical outcome, makes that snapshot mutation-ineligible.
   The old evidence stays readable, but another mutation must use a new `peekaboo see` snapshot and otherwise fails
   before dispatch.
+- Accepted writes are observed for up to 250 ms to allow apps to publish asynchronous Accessibility updates. Each
+  sample revalidates the original field and process generation; the write is never repeated.
 - If the Accessibility write is accepted but its readback cannot be verified, Peekaboo reports an indeterminate,
   retry-unsafe result with the exact target receipt. Observe the target again before deciding whether to retry; never
   replay the write against the old snapshot.
