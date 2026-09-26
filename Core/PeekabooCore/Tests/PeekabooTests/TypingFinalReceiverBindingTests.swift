@@ -432,7 +432,9 @@ private final class TypingReceiverFixture {
                 return .accessibilityValue
             },
             selectRange: { range, receiver, beforeMutation in
-                try beforeMutation()
+                if try beforeMutation() {
+                    return .noChange
+                }
                 self.selectionWrites.append(receiver)
                 self.selections[receiver] = range
                 return .accessibilityValue

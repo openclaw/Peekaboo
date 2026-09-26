@@ -222,6 +222,84 @@ struct AsyncAXTypingTests {
         }
     }
 
+    @Test(arguments: [SourceStateMutation.left, .home], [false, true])
+    func `cursor key reaching its desired range during preflight remains a no-op`(
+        mutation: SourceStateMutation,
+        hasPrefix: Bool) async throws
+    {
+        let fixture = Fixture(settlement: .completes, preflightToSuspend: hasPrefix ? 3 : 1)
+        fixture.selection = CFRange(location: 1, length: 0)
+        let nativeReceiver = try RetainedFocusElement(element: #require(fixture.element.underlyingAXElement))
+        let actions: [TypeAction] = hasPrefix ? [.text("a"), mutation.action] : [mutation.action]
+        let operation = Task { @MainActor in try await fixture.run(actions: actions) }
+        guard await fixture.entered.opensWithin(.seconds(2)) else {
+            operation.cancel()
+            await fixture.release.open()
+            _ = try? await operation.value
+            Issue.record("The cursor key did not reach its selection preflight gate")
+            return
+        }
+        let desiredLocation = mutation == .left && hasPrefix ? 1 : 0
+        fixture.selection = CFRange(location: desiredLocation, length: 0)
+        await fixture.release.open()
+
+        let result = try await operation.value
+
+        if hasPrefix {
+            #expect(result.executionResult.outcome.state == .dispatchedUnverified)
+            #expect(result.executionResult.outcome.dispatchState.unitCount == .one)
+            #expect(result.executionResult.outcome.retrySafety == .unsafe)
+            #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
+        } else {
+            #expect(result.executionResult.outcome.state == .confirmedNoChange)
+            #expect(result.executionResult.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        }
+        #expect(fixture.textWrites == (hasPrefix ? ["oald"] : []))
+        #expect(fixture.selectionWrites.map(\.location) == (hasPrefix ? [2] : []))
+        #expect(fixture.selectionWrites.allSatisfy { $0.length == 0 })
+        #expect(fixture.element.stringValue == (hasPrefix ? "oald" : "old"))
+        #expect(fixture.selection.location == desiredLocation && fixture.selection.length == 0)
+        #expect(fixture.focusedReceiver === fixture.element)
+        let currentNativeReceiver = try #require(fixture.focusedReceiver?.underlyingAXElement)
+        #expect(RetainedFocusElement(element: currentNativeReceiver) == nativeReceiver)
+        #expect(fixture.element.isFocused && fixture.windowIsCurrent)
+        #expect(fixture.events.isEmpty)
+        #expect(fixture.observedSuspension)
+    }
+
+    @Test
+    func `desired selection reached during preflight continues typing without another write`() async throws {
+        let fixture = Fixture(settlement: .completes, preflightToSuspend: 2)
+        fixture.selection = CFRange(location: 1, length: 0)
+        let operation = Task { @MainActor in try await fixture.run(actions: [.text("xy")]) }
+        guard await fixture.entered.opensWithin(.seconds(2)) else {
+            operation.cancel()
+            await fixture.release.open()
+            _ = try? await operation.value
+            Issue.record("The native reader did not reach selection preflight after the first character")
+            return
+        }
+        #expect(fixture.textWrites == ["oxld"])
+        #expect(fixture.element.stringValue == "oxld")
+        #expect(fixture.selectionWrites.isEmpty)
+        fixture.selection = CFRange(location: 2, length: 0)
+        await fixture.release.open()
+
+        let result = try await operation.value
+
+        #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 2)
+        #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
+        #expect(fixture.textWrites == ["oxld", "oxyld"])
+        #expect(fixture.selectionWrites.map(\.location) == [3])
+        #expect(fixture.selectionWrites.allSatisfy { $0.length == 0 })
+        #expect(fixture.selection.location == 3 && fixture.selection.length == 0)
+        #expect(fixture.element.stringValue == "oxyld")
+        #expect(fixture.focusedReceiver === fixture.element)
+        #expect(fixture.element.isFocused && fixture.windowIsCurrent)
+        #expect(fixture.events.isEmpty)
+        #expect(fixture.observedSuspension)
+    }
+
     @Test(arguments: SourceStateInterference.allCases)
     func `selection preflight preserves source edits after an accepted text value`(
         interference: SourceStateInterference) async throws
@@ -436,7 +514,7 @@ struct AsyncAXTypingTests {
             case .text:
                 self.element.value = "user-edit-preserved"
             case .selection:
-                self.selection = CFRange(location: 0, length: 0)
+                self.selection = CFRange(location: 0, length: 1)
             }
         }
 
@@ -447,7 +525,7 @@ struct AsyncAXTypingTests {
         {
             #expect(self.element.stringValue == (interference == .text ? "user-edit-preserved" : textBefore))
             #expect(self.selection.location == (interference == .selection ? 0 : selectionBefore))
-            #expect(self.selection.length == 0)
+            #expect(self.selection.length == (interference == .selection ? 1 : 0))
             #expect(self.focusedReceiver === self.element)
             #expect(self.element.isFocused)
             #expect(self.windowIsCurrent)
@@ -583,10 +661,9 @@ struct AsyncAXTypingTests {
                         mutation: {
                             self.textWrites.append(text)
                             self.pendingText = text
-                            return true
+                            return .accessibilityValue
                         },
                         matches: { _ in BackgroundInputDriver.exactTextMatches(element.stringValue, text) })
-                        ? .accessibilityValue : .unsupported
                 },
                 selectRange: { range, element, beforeMutation in
                     if self.settlement == .selectionUnsupported || self.settlement == .emptyUnsupported {
@@ -595,20 +672,21 @@ struct AsyncAXTypingTests {
                     return try await self.observer.performObservedMutation(
                         on: element,
                         attribute: .selectedTextRange,
-                        beforeMutation: beforeMutation,
                         mutation: {
+                            if try beforeMutation() {
+                                return .noChange
+                            }
                             self.selectionWrites.append(range)
                             self.pendingSelection = range
                             if let (getter, error) = self.failGetterAfterSelection {
                                 self.fail(getter, with: error)
                                 self.failGetterAfterSelection = nil
                             }
-                            return true
+                            return .accessibilityValue
                         },
                         matches: { _ in
                             self.selection.location == range.location && self.selection.length == range.length
                         })
-                        ? .accessibilityValue : .unsupported
                 })
         }
 

@@ -359,7 +359,7 @@ struct AsyncAXMutationTests {
     }
 
     @Test
-    func `queued value write is verified on the same field after layout reflow`() async throws {
+    func `queued value write is verified on the same field after delayed settlement`() async throws {
         let element = ActionInputMockAutomationElement(
             role: "AXTextField",
             frame: CGRect(x: 1, y: 2, width: 100, height: 20),
@@ -509,7 +509,7 @@ struct AsyncAXMutationTests {
                 beforeMutation: beforeMutation,
                 mutation: {
                     try element.setAutomationValue(.string("after"))
-                    return true
+                    return .accessibilityValue
                 }, matches: { $0?.value == .string("after") })
         }
     }

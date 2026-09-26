@@ -701,7 +701,7 @@ enum BackgroundInputDriver {
                 try self.textMutationAccepted(AXUIElementSetAttributeValue(
                     element,
                     kAXValueAttribute as CFString,
-                    text as CFTypeRef))
+                    text as CFTypeRef)) ? .accessibilityValue : .unsupported
             },
             matches: { sample in
                 if let sample {
@@ -709,7 +709,7 @@ enum BackgroundInputDriver {
                     return self.exactTextMatches(value, text)
                 }
                 return self.exactTextMatches(try? self.textValue(from: element), text)
-            }) ? .accessibilityValue : .unsupported
+            })
     }
 
     private static func selectedTextRange(from element: AXUIElement) -> CFRange? {
@@ -940,7 +940,7 @@ extension BackgroundInputDriver {
     private static func setSelectedTextRangeAndObserve(
         _ range: CFRange,
         on element: AXUIElement,
-        beforeMutation: @MainActor () throws -> Void) async throws -> FocusedTextKeyDispatch
+        beforeMutation: @MainActor () throws -> Bool) async throws -> FocusedTextKeyDispatch
     {
         let matches = {
             guard let actual = self.selectedTextRange(from: element) else { return false }
@@ -949,9 +949,11 @@ extension BackgroundInputDriver {
         return try await ActionInputDriver().performObservedMutation(
             on: AutomationElement(Element(element)),
             attribute: .selectedTextRange,
-            beforeMutation: beforeMutation,
             mutation: {
-                try self.setSelectedTextRange(range, on: element)
+                if try beforeMutation() {
+                    return .noChange
+                }
+                return try self.setSelectedTextRange(range, on: element) ? .accessibilityValue : .unsupported
             },
             matches: { sample in
                 if let sample {
@@ -960,7 +962,7 @@ extension BackgroundInputDriver {
                         length: range.length)
                 }
                 return matches()
-            }) ? .accessibilityValue : .unsupported
+            })
     }
 
     static func exactTextMatches(_ left: String?, _ right: String?) -> Bool {
@@ -1024,7 +1026,7 @@ extension BackgroundInputDriver {
             focusSnapshot: @escaping (Receiver) -> ExactWindowFocusSnapshot?,
             validateReceiver: @escaping (Receiver) throws -> Void,
             setText: @escaping (String, Receiver, @MainActor () throws -> Void) async throws -> FocusedTextKeyDispatch,
-            selectRange: @escaping (CFRange, Receiver, @MainActor () throws -> Void) async throws
+            selectRange: @escaping (CFRange, Receiver, @MainActor () throws -> Bool) async throws
                 -> FocusedTextKeyDispatch)
         {
             let readFocusedElement = { try Self.readBeforeMutation(focusedElement) }
@@ -1067,7 +1069,8 @@ extension BackgroundInputDriver {
                 if try beforeMutation(receiver, expectedState, range) {
                     return .noChange
                 }
-                return try await selectRange(range, receiver) { _ = try beforeMutation(receiver, expectedState, nil) }
+                // A range reached during preflight permits a no-op, never a rebased selection write.
+                return try await selectRange(range, receiver) { try beforeMutation(receiver, expectedState, range) }
             }
         }
     }

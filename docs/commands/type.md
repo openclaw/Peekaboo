@@ -24,7 +24,8 @@ Text edits and cursor changes also recheck their source text and selection immed
 changes during asynchronous preflight, the unit stops without recomputing or replaying it. These checks do not make
 macOS Accessibility reads and writes an atomic transaction.
 The original selection stays bound while a value write settles. A changed selection stops the follow-up cursor
-write unless the requested range is already present, in which case no selection write is sent.
+write unless the requested range is already present, including when it settles during selection preflight;
+in that case no selection write is sent, and subsequent input continues from the verified range.
 Focused-text edits preserve exact Unicode storage; canonically equivalent text is not an automatic no-op.
 Cancellation prevents starting keyboard fallback or another stroke; an already-started stroke still finishes its
 key-up cleanup, and any accepted prefix remains unsafe to replay.

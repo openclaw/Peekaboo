@@ -605,16 +605,17 @@ struct ActionInputDriver: ActionInputDriving {
         on element: any AutomationElementRepresenting,
         attribute: AXMutationObservationAttribute,
         beforeMutation: @MainActor () throws -> Void = {},
-        mutation: () throws -> Bool,
-        matches: (AXMutationObservationSnapshot?) -> Bool) async throws -> Bool
+        mutation: () throws -> FocusedTextKeyDispatch,
+        matches: (AXMutationObservationSnapshot?) -> Bool) async throws -> FocusedTextKeyDispatch
     {
         let target = try await self.observationTarget(element)
         try Self.validateBeforeMutation(beforeMutation)
-        guard try mutation() else { return false }
+        let dispatch = try mutation()
+        guard dispatch == .accessibilityValue else { return dispatch }
         guard await self.observeMutation(on: element, target: target, attribute: attribute, matches: matches) else {
             throw Self.unverifiedValueMutationFailure(attribute: String(describing: attribute))
         }
-        return true
+        return dispatch
     }
 
     private static func validateBeforeMutation(_ beforeMutation: @MainActor () throws -> Void) throws {
