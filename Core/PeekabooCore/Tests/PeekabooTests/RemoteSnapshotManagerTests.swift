@@ -7,6 +7,16 @@ import PeekabooFoundationTestSupport
 import Testing
 
 struct RemoteSnapshotManagerTests {
+    @Test(arguments: [false, true])
+    @MainActor
+    func `remote map paths remain absent without contacting the host`(producerBound: Bool) {
+        let manager: any SnapshotManagerProtocol = RemoteSnapshotManager(
+            client: PeekabooBridgeClient(socketPath: "/tmp/unused.sock", requestTimeoutSec: 1),
+            supportsProducerBoundSnapshotReferences: producerBound)
+
+        #expect(manager.getPersistedSnapshotMapPath(snapshotId: SnapshotReferenceFixtures.first.rawValue) == nil)
+    }
+
     @Test
     @MainActor
     func `remote snapshot storage owns copied screenshot artifacts`() {
@@ -139,10 +149,12 @@ struct RemoteSnapshotManagerTests {
             supportsProducerBoundSnapshotReferences: true)
 
         #expect(try await remote.ownsSnapshot(snapshotId: owned))
+        #expect(remote.getPersistedSnapshotMapPath(snapshotId: owned) == nil)
         #expect(try await !remote.ownsSnapshot(snapshotId: SnapshotReferenceFixtures.id(99)))
         let created = try await remote.createSnapshot()
         #expect(SnapshotReference(rawValue: created) != nil)
         #expect(try await snapshots.ownsSnapshot(snapshotId: created))
+        #expect(remote.getPersistedSnapshotMapPath(snapshotId: created) == nil)
         await host.stop()
     }
 

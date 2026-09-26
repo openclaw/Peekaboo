@@ -164,6 +164,10 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
         self.wrapped.getSnapshotStoragePath()
     }
 
+    public func getPersistedSnapshotMapPath(snapshotId: String) -> String? {
+        self.wrapped.getPersistedSnapshotMapPath(snapshotId: snapshotId)
+    }
+
     public func storeScreenshot(_ request: SnapshotScreenshotRequest) async throws {
         try await self.wrapped.storeScreenshot(request)
     }
