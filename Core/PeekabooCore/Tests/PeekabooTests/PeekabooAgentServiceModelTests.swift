@@ -105,6 +105,36 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `GPT-6 compatible routes preserve output limits and omit temperature`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [:],
+            configurationJSON: """
+            {"agent": {"maxTokens": 128000, "temperature": 0.2}}
+            """) {
+                let agentService = try PeekabooAgentService(services: self.makeServices())
+                for id in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+                    for routedID in [id, "openai/\(id)", "openai/\(id):nitro"] {
+                        for model in [
+                            LanguageModel.openRouter(modelId: routedID),
+                            .together(modelId: routedID),
+                            .openaiCompatible(modelId: routedID, baseURL: "https://example.test/v1"),
+                        ] {
+                            let settings = agentService.generationSettings(for: model)
+                            #expect(settings.maxTokens == 128_000)
+                            #expect(settings.temperature == nil)
+                        }
+                    }
+                }
+                for id in ["gpt-60", "gpt-6-astra-distill", "openai/gpt-6-luna:"] {
+                    let settings = agentService.generationSettings(for: .openRouter(modelId: id))
+                    #expect(settings.maxTokens == 4096)
+                    #expect(settings.temperature == 0.2)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
     func `Generation settings clamp max tokens to provider capabilities`() throws {
         try self.withIsolatedAgentEnvironment(
             [:],
