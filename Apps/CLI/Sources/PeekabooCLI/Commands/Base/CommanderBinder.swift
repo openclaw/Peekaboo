@@ -197,6 +197,26 @@ enum CommanderCLIBinder {
         return options
     }
 
+    private static func validateCaptureEngineHostSelection(
+        _ options: CommandRuntimeOptions,
+        environment: [String: String]
+    ) throws {
+        guard options.requiresScreenCapturePermission,
+              !options.transportsCaptureEnginePreference,
+              !RuntimeHostResolver.remoteIsolationRequested(options: options, environment: environment),
+              BridgeSocketResolver.explicitBridgeSocket(options: options, environment: environment) != nil,
+              let captureEngine = options.captureEnginePreference ??
+              CommandRuntimeOptions.captureEnginePreference(environment: environment)
+        else { return }
+
+        try ObservationCommandSupport.validateCaptureEngineValue(captureEngine)
+        throw ValidationError(
+            "capture live and capture action cannot send a capture-engine override to an explicit Bridge socket. " +
+                "Omit --capture-engine and unset PEEKABOO_CAPTURE_ENGINE to use the selected host's backend policy, " +
+                "or pass --no-remote to intentionally capture in the caller process."
+        )
+    }
+
     private static func applyRuntimeTransportOptions(
         _ options: inout CommandRuntimeOptions,
         commandType: (any ParsableCommand.Type)?,
@@ -254,6 +274,7 @@ enum CommanderCLIBinder {
         if let socketPath = explicitBridgeSocket, !socketPath.isEmpty {
             options.bridgeSocketPath = socketPath
         }
+        try Self.validateCaptureEngineHostSelection(options, environment: environment)
     }
 
     private static func applySeeRuntimeOptions(

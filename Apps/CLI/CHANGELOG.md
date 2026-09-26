@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Refuse live/action capture-engine and explicit-host conflicts before runtime setup; explain how to retain the selected host or explicitly opt into caller-local capture.
 - Update subprocess integration guidance for background-first host routing, producer-bound snapshots, shell-free Node.js calls, and structured failures without automatic input replay.
 - Expose already-observed focus identity in `see --json` and `see`/`inspect_ui` MCP metadata without extra Accessibility reads, preserving unknown focus and existing input guards.
 - Distinguish Agent narrative from recorded action outcomes with bounded runtime notices in JSON, non-quiet completion output, and MCP; preserve quiet text, original outcomes, and successful workflow semantics when later observations verify effects.

@@ -28,8 +28,8 @@ extension CaptureLiveCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "captureEngine",
-                    help: "Capture engine: auto (default)|classic|cg|modern|sckit; modern, or auto fallback, " +
-                        "owns in-process SCK for this process lifetime",
+                    help: "Capture engine: auto (default)|classic|cg|modern|sckit; caller-local override, " +
+                        "incompatible with an explicit Bridge socket unless --no-remote is set",
                     long: "capture-engine"
                 ),
                 .commandOption(

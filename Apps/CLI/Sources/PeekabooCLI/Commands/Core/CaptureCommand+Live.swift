@@ -29,6 +29,7 @@ InjectedRuntimeBackedCommand {
         Capture engine: auto|modern|sckit|classic|cg (default: auto).
         modern/sckit force ScreenCaptureKit; classic/cg force CGWindowList;
         auto tries CGWindowList then falls back when allowed.
+        Overrides are caller-local; an explicit Bridge socket also requires --no-remote.
         """
     ) var captureEngine: String?
 

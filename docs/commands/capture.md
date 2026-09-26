@@ -51,10 +51,18 @@ decode failures, and diff-filtered frames. New consumers should use the specific
 ## `capture live` flags
 - Targeting: `--mode screen|window|frontmost|area`, `--screen-index`, `--app`, `--pid`, `--window-title`, `--window-index`, `--region x,y,width,height` (global coords). Window capture accepts either title or index, never both; one exact title wins over partial matches, and an ambiguous exact or partial title fails before capture starts. The selected window is frozen to its exact ID for the session.
 - Focus: `--capture-focus background|foreground|auto`; background is the default, foreground explicitly activates the target, and auto is the legacy focus-if-needed mode.
+- Engine: `--capture-engine auto|modern|sckit|classic|cg` (or `PEEKABOO_CAPTURE_ENGINE`) selects caller-local capture; it cannot be combined with an explicit Bridge socket unless `--no-remote` intentionally selects local execution.
 - Cadence: `--duration` (<=`180s`; bare values are milliseconds), `--idle-fps`, `--active-fps`, `--threshold`, `--heartbeat`, `--quiet`
 - Caps: `--max-frames` (default 800), `--max-mb`
 - Diff/output: `--highlight-changes`, `--resolution-cap` (default 1440), `--diff-strategy fast|quality`, `--diff-budget`, `--video-out <path>`
 - Paths: `--path <dir>` (default temp `capture-sessions/capture-<uuid>`), `--autoclean <duration>` (default `7200s`)
+
+Without a capture-engine override, live/action capture retains normal Bridge routing and the selected host's backend
+policy. With an override, `--bridge-socket` or nonempty `PEEKABOO_BRIDGE_SOCKET` fails before runtime construction,
+focus, output creation, or child execution because these commands cannot yet transport the engine choice. This also
+applies to explicit `auto` and engine aliases. Omit `--capture-engine` and unset `PEEKABOO_CAPTURE_ENGINE` to use the
+selected host, or pass `--no-remote` when caller-local capture is intentional. Empty engine environment values are
+ignored. See [capture engine selection](../engine.md) for ownership and backend details.
 
 `--threshold` is a whole-frame percentage against the immediately preceding sample, not OCR or text sensitivity. It
 controls immediate motion-frame retention and the switch to active FPS. A small localized text edit can stay below the

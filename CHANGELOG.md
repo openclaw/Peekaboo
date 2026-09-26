@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Refuse unsupported live/action capture-engine overrides combined with an explicit Bridge socket before capture or child execution, instead of silently moving capture into the caller process; preserve explicit local opt-in and normal host-policy capture.
 - Update subprocess integration guidance for background-first host routing, producer-bound snapshots, shell-free Node.js calls, and structured failures without automatic input replay.
 - Preserve sanitized partial Agent execution traces when the step limit is exhausted, keep no-cache runs non-resumable, and replace blind-retry guidance with current-state inspection; retain Peekaboo-owned snapshot-cleanup metadata while isolating legacy browser-provider claims.
 - Distinguish Agent narrative from recorded action outcomes with bounded runtime notices in CLI JSON, non-quiet completion output, and MCP; preserve quiet text, original outcomes, and successful workflow semantics when later observations verify effects.
