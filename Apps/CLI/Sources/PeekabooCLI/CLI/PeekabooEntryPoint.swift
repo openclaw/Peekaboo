@@ -27,10 +27,6 @@ func executePeekabooCLI(arguments: [String]) async -> Int32 {
     // Initialize CoreGraphics silently to prevent CGS_REQUIRE_INIT error
     _ = CGMainDisplayID()
 
-    // Load configuration at startup. The singleton initializer already performs
-    // the initial load, so avoid a second credentials/config read on every CLI invocation.
-    _ = ConfigurationManager.shared.getConfiguration()
-
     let shouldEmitJSONErrors = containsJSONOutputFlag(arguments)
     let isActionCommand = shouldEmitJSONErrors && CommanderRuntimeRouter.isActionInvocation(argv: arguments)
 

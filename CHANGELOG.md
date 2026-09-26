@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep help, version, shell completions, and Agent dry-run output independent of configuration parsing, avoiding unnecessary startup reads and malformed-config warnings that corrupt JSON previews.
 - Wait for native Accessibility text, value, and selection writes before dependent input; revalidate the exact receiver and edit state at dispatch, preserve accepted prefixes, and report cancelled pre-service Bridge operations without inventing input.
 - Refuse conflicting explicit Bridge sockets and caller-local input-policy overrides before constructing local services or sending input; preserve explicit local opt-in, implicit policy-local routing, and concrete snapshot producer affinity.
 - Honor live/action capture-engine overrides on explicitly selected capable Bridge hosts using verified inline pixels, preserving implicit caller-local overrides, default routing, and background focus; avoid redundant frontmost app inventories during observation.

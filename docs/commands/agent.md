@@ -102,7 +102,8 @@ read_when:
 - New configurations select GPT-5.6 and Opus 5. Credential-only Anthropic discovery uses Opus 4.8 for zero-retention compatibility, while saved configuration and session model pins remain unchanged.
 - `--dry-run` is a zero-provider text-task preview: it echoes the normalized instruction with explicit zero
   model/tool/session effects. It neither selects nor probes a UI host, so unavailable Bridge sockets, capture owners,
-  or UI permissions cannot block a valid preview. A missing task or audio input is invalid instead of entering
+  or UI permissions cannot block a valid preview. It skips configuration and credential loading, so malformed local
+  configuration cannot contaminate the preview's JSON output. A missing task or audio input is invalid instead of entering
   chat/help or transcription; step limits and the Agent-disable switch are still validated.
 - Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone and `--audio-file` loads a WAV/CAF file.
 - Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.
