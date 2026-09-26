@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 4.6.0 - 2026-09-25
 
 **Highlights:** Safer typing and bounded clipboard/desktop waits, restored Codex MCP and GUI Bridge connections, explicit background typing strategies, and optional Agent desktop context.
