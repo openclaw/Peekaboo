@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Refuse conflicting explicit Bridge sockets and caller-local input-policy overrides before constructing local services or sending input; preserve explicit local opt-in, implicit policy-local routing, and concrete snapshot producer affinity.
-- Honor explicit live/action capture engines on capable Bridge hosts using verified inline pixels, preserving default routing and background focus; avoid redundant frontmost app inventories during observation.
+- Honor live/action capture-engine overrides on explicitly selected capable Bridge hosts using verified inline pixels, preserving implicit caller-local overrides, default routing, and background focus; avoid redundant frontmost app inventories during observation.
 
 ## 4.6.0 - 2026-09-25
 

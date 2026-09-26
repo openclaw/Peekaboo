@@ -19,6 +19,85 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
     ]
 
+    @Test(arguments: ["live", "action"], ["omitted", "cli-classic", "environment-classic"])
+    func `older hosts neither redirect implicit classic capture nor force unselected capture local`(
+        command: String,
+        selector: String
+    ) async throws {
+        let environment = selector == "environment-classic" ? ["PEEKABOO_CAPTURE_ENGINE": "cg"] : [:]
+        let arguments = selector == "cli-classic" ? ["captureEngine": ["cg"]] : [:]
+        var options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: arguments, flags: []),
+            commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self,
+            environment: environment
+        ).applyingEnvironmentOverrides(environment: environment)
+        options.autoStartDaemon = false
+        let socket = "/synthetic/older-capture-host.sock"
+        let legacy = Self.handshake(
+            operations: [.captureScreen, .invalidateImplicitLatestSnapshot],
+            capabilities: nil
+        )
+        var localFactories = 0
+        var remoteFactories = 0
+        var ownerClaims = 0
+        var handshakes = 0
+        let cache = RuntimeHostResolver.RemoteHandshakeCache(
+            identity: .init(bundleIdentifier: "synthetic.client", teamIdentifier: nil, processIdentifier: 123),
+            handshakeProvider: { _, _ in
+                handshakes += 1
+                return legacy
+            }
+        )
+        let resolution = try await RuntimeHostResolver.resolveServices(
+            options: options,
+            environment: environment,
+            configurationInput: nil,
+            dependencies: .init(
+                makeLocalServices: { _ in
+                    localFactories += 1
+                    return OwnerPolicyFixtureServices(ownerAware: true)
+                },
+                claimScreenCaptureKitOwner: {
+                    ownerClaims += 1
+                    return ScreenCaptureKitOwnerRuntimeTests.ownerReceipt()
+                },
+                inspectScreenCaptureKitOwner: { nil },
+                remoteCandidatePlan: { _, _ in
+                    .init(
+                        explicitSocket: nil,
+                        daemonSocketPath: socket,
+                        runtimeBuildIdentity: "fixture",
+                        buildScopedDaemonSocketPath: nil,
+                        historicalBuildScopedDaemonSocketPaths: [],
+                        candidates: [.init(
+                            socketPath: socket,
+                            requireReusableDaemon: false,
+                            requiredHostKind: nil,
+                            requiresValidatedHistoricalDaemon: false
+                        )]
+                    )
+                },
+                makeRemoteHandshakeCache: { cache },
+                makeRemoteServices: { client, _, _ in
+                    remoteFactories += 1
+                    return OwnerPolicyFixtureServices(ownerAware: true, remoteClient: client)
+                }
+            )
+        )
+
+        let capturesRemotely = selector == "omitted"
+        #expect(resolution.selectedRemoteSocketPath == (capturesRemotely ? socket : nil))
+        #expect(localFactories == (capturesRemotely ? 0 : 1))
+        #expect(remoteFactories == (capturesRemotely ? 1 : 0))
+        #expect(handshakes == (capturesRemotely ? 1 : 0))
+        #expect(ownerClaims == 0)
+        #expect(!options.remoteIsolationRequested)
+        #expect(!options.requiresDesktopObservationInlinePixels)
+        if command == "action" {
+            #expect(resolution.snapshotInvalidationRemoteSocketPaths.contains(socket))
+        }
+    }
+
     @Test(arguments: ["live", "action"], ["", " \n "])
     func `empty engine choices retain the legacy capture capability contract`(
         command: String,
@@ -38,6 +117,8 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         #expect(!options.requiresDesktopObservation)
         #expect(!options.requiresDesktopObservationInlinePixels)
         #expect(!options.transportsCaptureEnginePreference)
+        #expect(options.preferRemote)
+        #expect(!RuntimeHostResolver.requiresCallerLocalModernOwnerClaim(options: options, environment: [:]))
         #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: options))
     }
 
@@ -334,10 +415,14 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         engine: String,
         commandType: any ParsableCommand.Type = SeeCommand.self
     ) throws -> CommandRuntimeOptions {
-        try CommanderCLIBinder.makeRuntimeOptions(
+        var arguments = ["captureEngine": [engine]]
+        if commandType == CaptureLiveCommand.self || commandType == CaptureActionCommand.self {
+            arguments["bridge-socket"] = ["/synthetic/capture-host.sock"]
+        }
+        return try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["captureEngine": [engine]],
+                options: arguments,
                 flags: []
             ),
             commandType: commandType,

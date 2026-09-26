@@ -230,10 +230,13 @@ enum CommanderCLIBinder {
             options.remoteIsolationRequested = true
         }
         let explicitBridgeSocket = values.singleOption("bridge-socket")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let environmentBridgeSocket = environment["PEEKABOO_BRIDGE_SOCKET"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasExplicitBridgeSocket = explicitBridgeSocket?.isEmpty == false ||
-            environmentBridgeSocket?.isEmpty == false
+        if let socketPath = explicitBridgeSocket, !socketPath.isEmpty {
+            options.bridgeSocketPath = socketPath
+        }
+        let hasExplicitBridgeSocket = BridgeSocketResolver.hasNonblankExplicitBridgeSocket(
+            options: options,
+            environment: environment
+        )
         if commandType == AppCommand.QuitSubcommand.self, hasExplicitBridgeSocket {
             // Implicit quit routing needs a reusable daemon so the selected host cannot be one
             // of the applications being quit. An explicit socket is the caller's selected host;
@@ -260,10 +263,10 @@ enum CommanderCLIBinder {
                   explicitBridgeSocket?.isEmpty ?? true {
             options.preferRemote = false
         }
-        if let socketPath = explicitBridgeSocket, !socketPath.isEmpty {
-            options.bridgeSocketPath = socketPath
-        }
         try Self.validateLiveCaptureEnginePreference(options, environment: environment)
+        if let captureEngine = options.captureEnginePreference {
+            options.selectCaptureEnginePreference(captureEngine, environment: environment)
+        }
     }
 
     private static func applyObservationRuntimeOptions(
@@ -310,7 +313,7 @@ enum CommanderCLIBinder {
                 reason: "cannot be used with --no-screenshot because no capture backend runs"
             )
         }
-        options.selectCaptureEnginePreference(captureEngine)
+        options.captureEnginePreference = captureEngine
     }
 
     private static func requiresApplicationLaunchOptions(_ commandType: (any ParsableCommand.Type)?) -> Bool {

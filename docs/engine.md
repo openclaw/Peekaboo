@@ -26,15 +26,20 @@ silently move capture or TCC ownership into the CLI process. If no compatible Br
 fails before caller-local capture. Add `--no-remote` only when caller-local execution is intentional and that process
 is known to own Screen Recording in the active Aqua session.
 
-`capture live` and `capture action` transport explicit `--capture-engine` and nonempty `PEEKABOO_CAPTURE_ENGINE`
-choices through pixel-only desktop observation on the selected Bridge host. Frames travel inline under the existing
-content-digest verification and response-size bound, without intermediate observation files, snapshots, AX traversal,
-or OCR. The live sampler still owns its session-wide target-identity/bounds checks, cadence, scaling, and output files.
+`capture live` and `capture action` preserve their caller-local behavior for `--capture-engine` and nonempty
+`PEEKABOO_CAPTURE_ENGINE` overrides when no explicit socket is selected. This includes `auto` and aliases; the caller
+still needs capture permissions and obeys the existing ScreenCaptureKit ownership checks. Adding `--bridge-socket`
+or a nonempty `PEEKABOO_BRIDGE_SOCKET` opts that choice into pixel-only desktop observation on the exact selected host.
+Frames travel inline under the existing content-digest verification and response-size bound, without intermediate
+observation files, snapshots, AX traversal, or OCR. The live sampler still owns its session-wide target-identity/bounds
+checks, cadence, scaling, and output files.
 
 The host must advertise `desktopObservationInlinePixels`; non-auto values additionally require
 `desktopObservationCaptureEngine`. Incompatible hosts are refused before focus, output creation, or action-child
-execution. An explicit socket is never silently replaced by another host or caller-local capture. Use `--no-remote`
-only for intentional local execution. Without an engine override, the existing raw route and host backend policy are
+execution. An explicit socket is never silently replaced by another host or caller-local capture. `--no-remote`
+always selects caller-local execution, even with a socket present. An explicit socket combined with a caller-local
+input-policy override instead fails with `BRIDGE_UNAVAILABLE`; remove that policy to use the host, or add `--no-remote`
+to intentionally choose the caller. Without an engine override, the existing raw route and host backend policy are
 unchanged, including compatibility with older hosts. Explicit remote `auto` follows desktop-observation policy: a
 background full-screen capture may try modern first when that exact host proves ScreenCaptureKit ownership. Local
 live-region auto keeps its existing classic preference. Empty CLI values allow a nonempty environment choice to apply.

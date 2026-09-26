@@ -17,7 +17,7 @@ struct CaptureEngineRoutingTests {
     }
 
     @Test(arguments: ["see", "live", "action"])
-    func `capture engine selection preserves Bridge routing`(command: String) throws {
+    func `implicit engine selection preserves see remote and live action caller local routing`(command: String) throws {
         let cliOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -37,18 +37,23 @@ struct CaptureEngineRoutingTests {
         ])
 
         for options in [cliOptions, ambientOptions] {
-            #expect(options.requiresDesktopObservationInlinePixels == (command != "see"))
+            #expect(!options.requiresDesktopObservationInlinePixels)
+            #expect(options.transportsCaptureEnginePreference == (command == "see"))
+            #expect(options.requiresCaptureEnginePreferenceHost == (command == "see"))
+            #expect(!options.remoteIsolationRequested)
+            #expect(CommanderRuntimeExecutor.shouldExportCaptureEnginePreference(options) == (command != "see"))
             #expect(RuntimeHostResolver.initialRoutingDecision(
                 options: options,
                 environment: [:],
                 configurationInput: nil,
                 knownSnapshotInvalidationRemoteSocketPaths: []
-            ) == .remote)
+            ) == (command == "see" ? .remote : .local(snapshotInvalidationRemoteSocketPaths: [])))
             #expect(RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
                 options: options,
                 environment: [:],
                 configurationInput: nil
-            ))
+            ) == (command != "live"))
+            #expect(!RuntimeHostResolver.requiresCallerLocalModernOwnerClaim(options: options, environment: [:]))
         }
     }
 
@@ -81,9 +86,13 @@ struct CaptureEngineRoutingTests {
     }
 
     @Test(arguments: ["see", "live", "action"])
-    func `Capture engine selection refuses silent local fallback`(command: String) throws {
+    func `Explicit remote capture engine selection refuses silent local fallback`(command: String) throws {
         let options = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: ["captureEngine": ["cg"]], flags: []),
+            from: ParsedValues(
+                positional: [],
+                options: ["captureEngine": ["cg"], "bridge-socket": ["/synthetic/capture-host.sock"]],
+                flags: []
+            ),
             commandType: Self.commandType(command),
             environment: [:]
         )

@@ -29,7 +29,8 @@ InjectedRuntimeBackedCommand {
         Capture engine: auto|modern|sckit|classic|cg (default: auto).
         modern/sckit force ScreenCaptureKit; classic/cg force CGWindowList;
         auto follows the selected host's capture policy.
-        Overrides run on a compatible selected Bridge host; --no-remote explicitly selects the caller.
+        Overrides stay caller-local unless --bridge-socket or PEEKABOO_BRIDGE_SOCKET selects a compatible host.
+        --no-remote always selects the caller.
         """
     ) var captureEngine: String?
 
