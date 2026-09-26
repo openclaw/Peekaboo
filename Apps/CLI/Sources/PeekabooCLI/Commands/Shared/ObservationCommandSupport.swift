@@ -27,9 +27,7 @@ enum ObservationCommandSupport {
     }
 
     static func captureEnginePreference(cliValue: String?, configuredValue: String?) -> CaptureEnginePreference {
-        let value = (cliValue ?? configuredValue)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+        let value = self.resolvedCaptureEngineValue(cliValue: cliValue, configuredValue: configuredValue)
 
         switch value {
         case "modern", "modern-only", "sckit", "sc", "screen-capture-kit", "sck":
@@ -39,6 +37,16 @@ enum ObservationCommandSupport {
         default:
             return .auto
         }
+    }
+
+    static func resolvedCaptureEngineValue(cliValue: String?, configuredValue: String?) -> String? {
+        for candidate in [cliValue, configuredValue] {
+            if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+               !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 
     static func outputPath(

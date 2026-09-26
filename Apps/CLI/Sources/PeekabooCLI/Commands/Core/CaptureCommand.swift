@@ -7,6 +7,33 @@ typealias LiveCaptureFocus = PeekabooCore.CaptureFocus
 typealias LiveCaptureSessionResult = PeekabooCore.CaptureSessionResult
 
 enum CaptureCommandOptionParser {
+    @MainActor
+    static func enginePreference(
+        cliValue: String?,
+        configuredValue: String?,
+        kind: CaptureScope.Kind,
+        gateOwner: CaptureTransactionGateOwner,
+        supportsEngineScope: Bool
+    ) throws -> CaptureEnginePreference? {
+        let value = ObservationCommandSupport.resolvedCaptureEngineValue(
+            cliValue: cliValue,
+            configuredValue: configuredValue
+        )
+        if value == nil, gateOwner == .service || !supportsEngineScope {
+            return nil
+        }
+        try ObservationCommandSupport.validateCaptureEngineValue(value)
+        guard supportsEngineScope else {
+            throw ValidationError("The selected capture service cannot honor a capture-engine override.")
+        }
+        let preference = ObservationCommandSupport.captureEnginePreference(cliValue: value, configuredValue: nil)
+        // Only caller-owned capture uses the local auto-region optimization. A remote host owns its backend policy.
+        if gateOwner == .caller, kind == .region, preference == .auto {
+            return .legacy
+        }
+        return preference
+    }
+
     static func diffStrategy(_ value: String?) throws -> CaptureOptions.DiffStrategy {
         let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "fast"
         guard let strategy = CaptureOptions.DiffStrategy(rawValue: normalized) else {

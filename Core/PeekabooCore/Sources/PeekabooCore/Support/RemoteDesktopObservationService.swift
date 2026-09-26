@@ -33,6 +33,15 @@ enum RemoteDesktopObservationCapabilityPolicy {
             that host, or use --no-remote to explicitly run the selected capture engine in the caller process.
             """)
     }
+
+    static func inlinePixelsUnavailableError() -> PeekabooBridgeErrorEnvelope {
+        PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: """
+            Remote Bridge host does not advertise desktopObservationInlinePixels. Update and relaunch Peekaboo on \
+            that host, or use --no-remote to explicitly capture in the caller process.
+            """)
+    }
 }
 
 @MainActor
@@ -41,6 +50,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
     private let capturePolicy: RemoteCapturePolicy
     private let supportsDesktopObservationOCR: Bool
     private let supportsDesktopObservationCaptureEngine: Bool
+    private let supportsDesktopObservationInlinePixels: Bool
     private let supportsExactWindowROIObservation: Bool
     private let artifactInstallationPreflight: @MainActor @Sendable () throws -> Void
 
@@ -49,6 +59,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         capturePolicy: RemoteCapturePolicy = .unrestricted,
         supportsDesktopObservationOCR: Bool = false,
         supportsDesktopObservationCaptureEngine: Bool = false,
+        supportsDesktopObservationInlinePixels: Bool = false,
         supportsExactWindowROIObservation: Bool = false)
     {
         self.init(
@@ -56,6 +67,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
             capturePolicy: capturePolicy,
             supportsDesktopObservationOCR: supportsDesktopObservationOCR,
             supportsDesktopObservationCaptureEngine: supportsDesktopObservationCaptureEngine,
+            supportsDesktopObservationInlinePixels: supportsDesktopObservationInlinePixels,
             supportsExactWindowROIObservation: supportsExactWindowROIObservation,
             artifactInstallationPreflight: {})
     }
@@ -65,6 +77,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         capturePolicy: RemoteCapturePolicy = .unrestricted,
         supportsDesktopObservationOCR: Bool = false,
         supportsDesktopObservationCaptureEngine: Bool = false,
+        supportsDesktopObservationInlinePixels: Bool = false,
         supportsExactWindowROIObservation: Bool,
         artifactInstallationPreflight: @escaping @MainActor @Sendable () throws -> Void)
     {
@@ -72,6 +85,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         self.capturePolicy = capturePolicy
         self.supportsDesktopObservationOCR = supportsDesktopObservationOCR
         self.supportsDesktopObservationCaptureEngine = supportsDesktopObservationCaptureEngine
+        self.supportsDesktopObservationInlinePixels = supportsDesktopObservationInlinePixels
         self.supportsExactWindowROIObservation = supportsExactWindowROIObservation
         self.artifactInstallationPreflight = artifactInstallationPreflight
     }
@@ -84,18 +98,7 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
         _ request: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
     {
         let request = try self.capturePolicy.applying(to: request)
-        guard
-            !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request)
-            || self.supportsDesktopObservationOCR
-        else {
-            throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
-        }
-        guard
-            !RemoteDesktopObservationCapabilityPolicy.requiresCaptureEnginePreferenceCapability(request)
-            || self.supportsDesktopObservationCaptureEngine
-        else {
-            throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
-        }
+        try self.requireCapabilities(for: request)
         let isROI = request.capture.roi != nil
         let writesArtifacts = request.output.saveRawScreenshot || request.output.saveAnnotatedScreenshot ||
             request.output.saveSnapshot
@@ -239,6 +242,24 @@ public final class RemoteDesktopObservationService: DesktopObservationActionResu
                     from: remoteResult)
             }
             throw Self.failurePreservingOutcome(error, from: remoteResult)
+        }
+    }
+
+    private func requireCapabilities(for request: DesktopObservationRequest) throws {
+        guard !request.output.includeImageData || self.supportsDesktopObservationInlinePixels else {
+            throw RemoteDesktopObservationCapabilityPolicy.inlinePixelsUnavailableError()
+        }
+        guard
+            !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request)
+            || self.supportsDesktopObservationOCR
+        else {
+            throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
+        }
+        guard
+            !RemoteDesktopObservationCapabilityPolicy.requiresCaptureEnginePreferenceCapability(request)
+            || self.supportsDesktopObservationCaptureEngine
+        else {
+            throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
         }
     }
 

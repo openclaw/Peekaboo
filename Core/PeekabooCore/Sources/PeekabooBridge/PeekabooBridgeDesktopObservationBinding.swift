@@ -386,6 +386,9 @@ enum PeekabooBridgeDesktopObservationBinding {
         requireContentDigest: Bool) -> String?
     {
         let files = result.files
+        if request.includeImageData, result.capture.imageData.isEmpty {
+            return "requested inline capture pixels"
+        }
         let requiresRawArtifact =
             request.saveRawScreenshot || request.saveAnnotatedScreenshot || request.saveSnapshot
 
@@ -445,7 +448,18 @@ enum PeekabooBridgeDesktopObservationBinding {
             return "unexpected snapshot publication"
         }
 
-        return requireContentDigest ? self.validateCaptureContentDigest(result) : nil
+        guard requireContentDigest else { return nil }
+        if let mismatch = self.validateCaptureContentDigest(result) {
+            return mismatch
+        }
+        if request.includeImageData {
+            do {
+                _ = try result.verifiedCaptureImageData(requirement: .requireDigest)
+            } catch {
+                return "inline capture content digest"
+            }
+        }
+        return nil
     }
 
     private static func validateCaptureContentDigest(_ result: DesktopObservationResult) -> String? {

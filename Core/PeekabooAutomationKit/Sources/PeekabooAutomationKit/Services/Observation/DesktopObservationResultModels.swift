@@ -52,9 +52,8 @@ public struct DesktopObservationOutputWriteResult: Sendable, Codable, Equatable 
 
 /// Digests of the exact raster bytes produced by a desktop observation.
 ///
-/// Bridge responses omit the in-memory capture bytes, but retain this manifest inside the
-/// listener-signed response. Callers can therefore authenticate a file immediately before they
-/// read or publish its pixels instead of trusting its path, size, or earlier validation.
+/// Bridge responses retain this manifest even when inline pixels are omitted. Callers authenticate
+/// inline bytes or a file immediately before using its pixels, rather than trusting a path or earlier validation.
 public struct DesktopObservationContentDigest: Sendable, Codable, Equatable {
     public static let algorithm = "sha256"
 
@@ -256,7 +255,7 @@ public struct DesktopObservationResult: Sendable, Codable {
 extension DesktopObservationResult {
     /// Computes a fresh digest manifest from the in-memory capture and the exact files currently
     /// reported by the result. A Bridge host calls this immediately before stripping image data
-    /// and signing the response.
+    /// when inline pixels are not requested, and signing the response.
     public func attestingCaptureContent() throws -> DesktopObservationResult {
         try self.withCaptureContentDigest(
             rawScreenshotData: Self.readArtifactIfPresent(

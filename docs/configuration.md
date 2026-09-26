@@ -202,6 +202,13 @@ CLI override:
 peekaboo click --on "$ELEMENT_ID" --input-strategy actionFirst
 ```
 
+When an input-policy override selects caller-local execution, combining that policy with `--bridge-socket`
+or `PEEKABOO_BRIDGE_SOCKET` fails with `BRIDGE_UNAVAILABLE`
+before constructing local services or sending input; Peekaboo does not silently ignore the selected host.
+Remove the CLI, environment, and config input-policy overrides to use that host, or pass `--no-remote`
+to deliberately run locally. Without an explicit socket, policy-local routing remains available. Concrete
+snapshot references still resolve their unique producer first; `--no-remote` restricts that check to the caller.
+
 ## Logging & Troubleshooting
 
 - `PEEKABOO_LOG_LEVEL=debug` (or `trace`) surfaces verbose input-path logs.

@@ -62,6 +62,13 @@ extension PeekabooBridgeServer {
     {
         switch request {
         case let .desktopObservation(payload):
+            guard !payload.output.includeImageData || self.hostCapabilities.contains(
+                PeekabooBridgeHostCapability.desktopObservationInlinePixels)
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Bridge host does not support desktopObservationInlinePixels")
+            }
             try Self.validateAttestedWebFocusTarget(payload)
             let hostRegisteredScreenCaptureKitOwnership = self.hostCapabilities.contains(
                 PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
@@ -92,7 +99,8 @@ extension PeekabooBridgeServer {
                     requireContentDigest: false)
                 let attested = try result.payload.attestingCaptureContent()
                 try Self.validateAttestedObservationBinding(payload, result: attested)
-                let response = PeekabooBridgeResponse.desktopObservation(attested.withoutImageData())
+                let response = PeekabooBridgeResponse.desktopObservation(
+                    payload.output.includeImageData ? attested : attested.withoutImageData())
                 guard request.mayMutateDesktop else {
                     if let failure = Self.readOnlyObservationFailure(result) {
                         let target = try PeekabooBridgeOperationTargetAttribution.resolve(
@@ -144,7 +152,8 @@ extension PeekabooBridgeServer {
                 requireContentDigest: false)
             let attested = try observation.attestingCaptureContent()
             try Self.validateAttestedObservationBinding(payload, result: attested)
-            let response = PeekabooBridgeResponse.desktopObservation(attested.withoutImageData())
+            let response = PeekabooBridgeResponse.desktopObservation(
+                payload.output.includeImageData ? attested : attested.withoutImageData())
             guard request.mayMutateDesktop else {
                 return .init(response: response)
             }

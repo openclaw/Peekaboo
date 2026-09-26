@@ -49,7 +49,9 @@ extension ScreenCaptureKitOwnerRuntimeTests {
             .ScreenCaptureKitSafetyInspector = { _, _, _, _ in nil },
         recordScreenCaptureKitSafetyBlocker: @escaping RuntimeHostResolver.ScreenCaptureKitSafetyRecorder = { _ in },
         remoteCandidatePlan: RuntimeHostResolver.RemoteCandidatePlanner? = nil,
-        makeRemoteHandshakeCache: RuntimeHostResolver.RemoteHandshakeCacheFactory? = nil
+        makeRemoteHandshakeCache: RuntimeHostResolver.RemoteHandshakeCacheFactory? = nil,
+        snapshotAffinityProbe: @escaping RuntimeHostResolver.SnapshotAffinityProbe = RuntimeHostResolver
+            .liveSnapshotAffinityProbe
     ) -> RuntimeHostResolver.Dependencies {
         .init(
             makeLocalServices: makeLocalServices,
@@ -75,6 +77,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
                         []
                 )
             },
+            snapshotAffinityProbe: snapshotAffinityProbe,
             makeRemoteHandshakeCache: makeRemoteHandshakeCache ?? { self.inertHandshakeCache() },
             makeRemoteServices: self.makeInertRemoteServices
         )

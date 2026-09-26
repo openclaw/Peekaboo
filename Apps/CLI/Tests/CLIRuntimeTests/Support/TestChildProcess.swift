@@ -30,7 +30,7 @@ enum TestChildProcess {
             if isolateFromRemoteHosts, extraEnvironment["PEEKABOO_NO_REMOTE"] == nil {
                 environmentOverrides[envKey] = "1"
             } else if !isolateFromRemoteHosts {
-                environmentOverrides[envKey] = nil
+                environmentOverrides.updateValue(nil, forKey: envKey)
             }
         }
 

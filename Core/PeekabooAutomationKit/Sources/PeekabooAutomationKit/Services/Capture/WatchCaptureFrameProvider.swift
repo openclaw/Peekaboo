@@ -80,11 +80,12 @@ struct WatchCaptureFrameProvider {
                     visualizerMode: visualizerMode,
                     scale: .logical1x)
             }
-            if Self.shouldPreferLegacyAreaCapture,
+            if self.screenCapture.captureTransactionGateOwner == .caller,
+               Self.shouldPreferLegacyAreaCapture,
                let engineAware = self.screenCapture as? any EngineAwareScreenCaptureServiceProtocol
             {
                 // Live area capture samples repeatedly; prefer the CoreGraphics path in auto mode
-                // to avoid ScreenCaptureKit setup races while overlapping observation commands run.
+                // only for caller-owned capture. Remote services own their request's engine policy.
                 result = try await engineAware.withCaptureEngine(.legacy, operation: captureArea)
             } else {
                 result = try await captureArea()

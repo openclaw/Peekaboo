@@ -351,6 +351,7 @@ public struct DesktopObservationOutputOptions: Sendable, Codable, Equatable {
     public var saveAnnotatedScreenshot: Bool
     public var saveSnapshot: Bool
     public var snapshotID: String?
+    public var includeImageData: Bool
 
     public init(
         path: String? = nil,
@@ -358,7 +359,8 @@ public struct DesktopObservationOutputOptions: Sendable, Codable, Equatable {
         saveRawScreenshot: Bool = false,
         saveAnnotatedScreenshot: Bool = false,
         saveSnapshot: Bool = false,
-        snapshotID: String? = nil)
+        snapshotID: String? = nil,
+        includeImageData: Bool = false)
     {
         self.path = path
         self.format = format
@@ -366,6 +368,36 @@ public struct DesktopObservationOutputOptions: Sendable, Codable, Equatable {
         self.saveAnnotatedScreenshot = saveAnnotatedScreenshot
         self.saveSnapshot = saveSnapshot
         self.snapshotID = snapshotID
+        self.includeImageData = includeImageData
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path, format, saveRawScreenshot, saveAnnotatedScreenshot, saveSnapshot, snapshotID, includeImageData
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.path = try container.decodeIfPresent(String.self, forKey: .path)
+        self.format = try container.decode(ImageFormat.self, forKey: .format)
+        self.saveRawScreenshot = try container.decode(Bool.self, forKey: .saveRawScreenshot)
+        self.saveAnnotatedScreenshot = try container.decode(Bool.self, forKey: .saveAnnotatedScreenshot)
+        self.saveSnapshot = try container.decode(Bool.self, forKey: .saveSnapshot)
+        self.snapshotID = try container.decodeIfPresent(String.self, forKey: .snapshotID)
+        self.includeImageData = try container.decodeIfPresent(Bool.self, forKey: .includeImageData) ?? false
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.path, forKey: .path)
+        try container.encode(self.format, forKey: .format)
+        try container.encode(self.saveRawScreenshot, forKey: .saveRawScreenshot)
+        try container.encode(self.saveAnnotatedScreenshot, forKey: .saveAnnotatedScreenshot)
+        try container.encode(self.saveSnapshot, forKey: .saveSnapshot)
+        try container.encodeIfPresent(self.snapshotID, forKey: .snapshotID)
+        // Omission preserves canonical operation digests for already-shipped clients and hosts.
+        if self.includeImageData {
+            try container.encode(true, forKey: .includeImageData)
+        }
     }
 }
 

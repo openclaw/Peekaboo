@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 struct BridgeExplicitSocketUnavailableError: LocalizedError, ResultEnvelopeError {
     let socketPath: String
@@ -21,7 +22,23 @@ struct BridgeExplicitSocketUnavailableError: LocalizedError, ResultEnvelopeError
     }
 
     var envelopeEffect: ActionEffect? {
-        nil
+        self.envelopeActionOutcome?.effect
+    }
+
+    var envelopeRetrySafe: Bool? {
+        self.envelopeActionOutcome.map { $0.retrySafety == .safe }
+    }
+
+    var envelopeMutationDispatched: Bool? {
+        self.envelopeActionOutcome?.dispatchState.mutationDispatched
+    }
+
+    var envelopeActionFailure: DesktopActionFailure? {
+        .preDispatchRefusal(
+            reason: .runtimeIncompatible,
+            message: self.localizedDescription,
+            hint: self.envelopeHint
+        )
     }
 
     var envelopeHint: String? {

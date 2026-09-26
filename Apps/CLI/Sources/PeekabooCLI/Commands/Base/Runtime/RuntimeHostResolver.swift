@@ -160,6 +160,20 @@ enum RuntimeHostResolver {
                configurationInput: configurationInput,
                knownSnapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths
            ) {
+            if let explicitSocket,
+               !options.permitsExplicitSocketDiagnosticFallback,
+               self.inputPolicyRequiresLocal(
+                   options: options,
+                   environment: environment,
+                   configurationInput: configurationInput
+               ) {
+                throw BridgeExplicitSocketUnavailableError(
+                    socketPath: NSString(string: explicitSocket).standardizingPath,
+                    failureMessage: "the requested input strategy policy requires the caller-local runtime",
+                    failureHint: "Remove --input-strategy and caller input-policy environment/config overrides " +
+                        "to use the selected host, or pass --no-remote to explicitly use the local runtime."
+                )
+            }
             return self.localResolution(
                 services: dependencies.makeLocalServices(options),
                 hostDescription: "local (in-process)",
@@ -495,6 +509,11 @@ extension RuntimeHostResolver {
         if options.requiresDesktopObservationOCR {
             return "No compatible Bridge host advertises desktopObservationOCR. Update and relaunch Peekaboo " +
                 "on the selected host, or pass --no-remote to explicitly run Vision OCR in the caller process."
+        }
+        if options.requiresDesktopObservationInlinePixels {
+            return "Capture engine '\(options.captureEnginePreference ?? "requested")' requires a Bridge host " +
+                "with desktopObservationInlinePixels support. Update and relaunch the selected host, " +
+                "or pass --no-remote to intentionally capture in the caller process."
         }
         if explicitSocket != nil, options.requiresExactWindowROIObservation {
             return "The explicitly selected Bridge host does not support exact-window ROI observation; " +
@@ -957,6 +976,7 @@ extension RuntimeHostResolver {
             supportsDesktopObservation: observationCapabilities.desktopObservation,
             supportsDesktopObservationOCR: observationCapabilities.desktopObservationOCR,
             supportsDesktopObservationCaptureEngine: observationCapabilities.desktopObservationCaptureEngine,
+            supportsDesktopObservationInlinePixels: observationCapabilities.desktopObservationInlinePixels,
             supportsExactWindowROIObservation: observationCapabilities.exactWindowROIObservation,
             supportsImplicitLatestSnapshotInvalidation: BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(
                 for: handshake

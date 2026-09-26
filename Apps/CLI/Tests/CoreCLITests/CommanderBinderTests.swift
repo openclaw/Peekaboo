@@ -87,15 +87,21 @@ struct CommanderBinderTests {
         #expect(options.requiresDesktopObservation)
     }
 
-    @Test
-    func `Capture engine option stays local when a command cannot transport it`() throws {
+    @Test(arguments: ["live", "action"])
+    func `Live capture engine option without a socket remains caller local`(command: String) throws {
         let parsed = ParsedValues(positional: [], options: ["captureEngine": ["cg"]], flags: [])
-        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: CaptureLiveCommand.self)
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self,
+            environment: [:]
+        )
 
         #expect(options.captureEnginePreference == "cg")
         #expect(!options.preferRemote)
         #expect(!options.transportsCaptureEnginePreference)
         #expect(!options.requiresCaptureEnginePreferenceHost)
+        #expect(!options.requiresDesktopObservationInlinePixels)
+        #expect(!options.remoteIsolationRequested)
     }
 
     @Test

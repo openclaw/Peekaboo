@@ -313,12 +313,7 @@ RuntimeBackedCommand {
 
     private func validateObservationRuntime(_ runtime: CommandRuntime) throws {
         try self.validateBeforeRuntime()
-        if let requiredHostFailure = runtime.requiredHostFailure {
-            throw PeekabooBridgeErrorEnvelope(
-                code: .operationNotSupported,
-                message: requiredHostFailure
-            )
-        }
+        try runtime.requireCompatibleHost()
     }
 
     private func logSeeStart() {
