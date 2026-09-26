@@ -71,7 +71,7 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
-    func `Sonnet 5 and GPT-5_6 preserve current generation capabilities`() throws {
+    func `Sonnet 5 and GPT reasoning models preserve current generation capabilities`() throws {
         try self.withIsolatedAgentEnvironment(
             [:],
             configurationJSON: """
@@ -90,12 +90,45 @@ extension PeekabooAgentServiceTests {
 
                 for model in [
                     LanguageModel.openai(.gpt56Sol),
+                    .openai(.gpt6Astra),
+                    .openai(.gpt6Sol),
+                    .openai(.gpt6Luna),
                     .openai(.gpt56Terra),
                     .openai(.gpt56Luna),
                 ] {
                     let settings = agentService.generationSettings(for: model)
                     #expect(settings.maxTokens == 128_000)
                     #expect(settings.providerOptions.openai?.verbosity == .medium)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
+    func `GPT-6 compatible routes preserve output limits and omit temperature`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [:],
+            configurationJSON: """
+            {"agent": {"maxTokens": 128000, "temperature": 0.2}}
+            """) {
+                let agentService = try PeekabooAgentService(services: self.makeServices())
+                for id in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+                    for routedID in [id, "openai/\(id)", "openai/\(id):nitro"] {
+                        for model in [
+                            LanguageModel.openRouter(modelId: routedID),
+                            .together(modelId: routedID),
+                            .openaiCompatible(modelId: routedID, baseURL: "https://example.test/v1"),
+                        ] {
+                            let settings = agentService.generationSettings(for: model)
+                            #expect(settings.maxTokens == 128_000)
+                            #expect(settings.temperature == nil)
+                        }
+                    }
+                }
+                for id in ["gpt-60", "gpt-6-astra-distill", "openai/gpt-6-luna:"] {
+                    let settings = agentService.generationSettings(for: .openRouter(modelId: id))
+                    #expect(settings.maxTokens == 4096)
+                    #expect(settings.temperature == 0.2)
                 }
             }
     }

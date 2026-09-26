@@ -141,7 +141,7 @@ replace system libraries. Successful execution on the build host alone does not 
 
 ## Tachikoma integration
 
-The internal CLI and Mac app consume the Tachikoma submodule at its published 0.5.1 revision. The tracked consumer
+The internal CLI and Mac app consume the committed Tachikoma submodule revision. The tracked consumer
 locks retain their existing compatible versions, including Swift Crypto 4.5.2 and Peekaboo's pinned MCP SDK revision;
 Tachikoma's standalone `Package.resolved` does not replace those consumer locks.
 
