@@ -114,7 +114,7 @@ struct WindowRoutedPointerDriver {
         stampWindowLocation: @escaping WindowLocationStamper = WindowRoutedPointerSPI.setWindowLocation,
         postSkyLight: @escaping SkyLightEventPoster = WindowRoutedPointerSPI.postToPid,
         postPublic: @escaping EventPoster = { event, pid in event.postToPid(pid) },
-        resolveTransport: @escaping TransportResolver = Self.resolveLiveTransport,
+        resolveTransport: @escaping TransportResolver = WindowRoutedApplicationClassifier.pointerTransport,
         applicationIsVisible: @escaping ApplicationVisibilityValidator =
             WindowRoutedApplicationClassifier.applicationIsVisible,
         windowIsVisible: @escaping WindowVisibilityValidator = Self.validateLiveWindowVisibility,
@@ -811,15 +811,6 @@ struct WindowRoutedPointerDriver {
             return false
         }
         return true
-    }
-
-    private static func resolveLiveTransport(_ processIdentifier: pid_t) -> WindowRoutedPointerTransport {
-        switch WindowRoutedApplicationClassifier.kind(processIdentifier: processIdentifier) {
-        case .catalyst, .chromium, .electron:
-            .skyLight
-        case .appKit, .webKit:
-            .publicCGEvent
-        }
     }
 }
 

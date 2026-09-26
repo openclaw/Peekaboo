@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Update Tachikoma to 0.5.1 for cancellable provider streams, correct LM Studio tool-call history, and preserved numeric tool values, retaining Peekaboo's existing tool schemas and compatible dependency pins.
+- Avoid executable-file probes when selecting background pointer delivery; inspect WebKit imports only for eligible native wheel targets, preserving exact-window safety checks.
 - Keep help, version, shell completions, and Agent dry-run output independent of configuration parsing, avoiding unnecessary startup reads and malformed-config warnings that corrupt JSON previews.
 - Preserve Bridge request deadlines while socket work waits in its execution queue, refusing expired work before connecting without changing cancellation or dispatched-result semantics.
 - Wait for native Accessibility text, value, and selection writes before dependent input; revalidate the exact receiver and edit state at dispatch, preserve accepted prefixes, and report cancelled pre-service Bridge operations without inventing input.
