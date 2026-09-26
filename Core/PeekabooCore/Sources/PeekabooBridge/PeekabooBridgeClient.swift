@@ -35,6 +35,8 @@ struct PeekabooBridgeConnectedHostIdentity: Equatable, Sendable {
 
 // swiftlint:disable:next type_body_length
 public actor PeekabooBridgeClient {
+    typealias TransportEnqueue = @Sendable (Date, @escaping @Sendable () -> Void) -> Void
+
     let socketPath: String
     let maxResponseBytes: Int
     let requestTimeoutSec: TimeInterval
@@ -43,6 +45,7 @@ public actor PeekabooBridgeClient {
     let operationReceiptExportDirectory: URL?
     let trustedHostTeamIDs: Set<String>?
     let hostAuthentication: PeekabooBridgeClientHostAuthentication
+    let enqueueTransport: TransportEnqueue
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "client")
     let operationClientInstanceID: UUID
     var actionProjectionEnabled = false
@@ -109,6 +112,7 @@ public actor PeekabooBridgeClient {
             explicit: trustedHostTeamIDs,
             socketPath: socketPath)
         self.hostAuthentication = .live
+        self.enqueueTransport = { _, operation in PeekabooBridgeBlockingIO.enqueue(operation) }
         let environmentDirectory = ProcessInfo.processInfo.environment["PEEKABOO_OPERATION_RECEIPT_DIRECTORY"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         self.operationReceiptExportDirectory = operationReceiptExportDirectory ?? environmentDirectory
@@ -152,7 +156,10 @@ public actor PeekabooBridgeClient {
         operationReceiptExportDirectory: URL? = nil,
         operationClientInstanceID: UUID = UUID(),
         trustedHostTeamIDs: Set<String>?,
-        hostAuthentication: PeekabooBridgeClientHostAuthentication)
+        hostAuthentication: PeekabooBridgeClientHostAuthentication,
+        enqueueTransport: @escaping TransportEnqueue = { _, operation in
+            PeekabooBridgeBlockingIO.enqueue(operation)
+        })
     {
         self.socketPath = socketPath
         self.maxResponseBytes = maxResponseBytes
@@ -164,6 +171,7 @@ public actor PeekabooBridgeClient {
             explicit: trustedHostTeamIDs,
             socketPath: socketPath)
         self.hostAuthentication = hostAuthentication
+        self.enqueueTransport = enqueueTransport
         let environmentDirectory = ProcessInfo.processInfo.environment["PEEKABOO_OPERATION_RECEIPT_DIRECTORY"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         self.operationReceiptExportDirectory = operationReceiptExportDirectory ?? environmentDirectory

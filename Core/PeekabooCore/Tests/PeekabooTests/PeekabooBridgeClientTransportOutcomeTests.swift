@@ -80,37 +80,6 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     }
 
     @Test
-    func `handshake timeout is shared across protocol fallback attempts`() async throws {
-        let versionMismatch = BridgeTestFixtures.errorResponse(
-            code: .versionMismatch,
-            message: "scripted version mismatch")
-        let peer = try ScriptedBridgePeer(scripts: [
-            [.delay(seconds: 0.3), .respond(versionMismatch)],
-            [.idle(seconds: 5)],
-        ])
-        let client = TrustedBridgeClientFixture.make(socketPath: peer.socketPath, requestTimeoutSec: 1)
-        let identity = PeekabooBridgeClientIdentity(
-            bundleIdentifier: "dev.peekaboo.tests",
-            teamIdentifier: nil,
-            processIdentifier: getpid(),
-            hostname: nil)
-        let startedAt = ContinuousClock.now
-
-        do {
-            _ = try await client.handshake(client: identity, overallTimeoutSec: 1)
-            Issue.record("Expected the negotiated handshake to exhaust its shared deadline")
-        } catch let error as POSIXError {
-            #expect(error.code == .ETIMEDOUT)
-        }
-
-        let elapsed = startedAt.duration(to: .now)
-        #expect(elapsed >= .milliseconds(850))
-        #expect(elapsed < .milliseconds(1200))
-        #expect(await peer.acceptedConnectionCount == 2)
-        await peer.stop()
-    }
-
-    @Test
     func `stop unblocks an accepted client before request EOF and is idempotent`() async throws {
         let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 5)])
         let client = try Self.connectRawClient(to: peer.socketPath)

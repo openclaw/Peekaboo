@@ -154,6 +154,7 @@ those app-only services are injected separately; moving them into the embedded r
 - Shutdown removes the socket only when its filesystem identity still matches the listener that created it.
 - Socket descriptors are nonblocking and deadline-bound. Client, host, and certification transport waits run off
   Swift's cooperative executor; their owners await actual I/O completion before closing descriptors or releasing permits.
+  Client transport queue waits consume the existing request budget; expired queued requests stop before opening a socket.
 - Accepted connections are bounded before liveness/task allocation. Authenticated connections acquire a separate bounded
   body-read permit before reading or decoding a request. Decoded requests then acquire request admission, whose default
   limit is 32 concurrent requests (`maximumConcurrentRequests`). Saturated decoded requests use a separately bounded
