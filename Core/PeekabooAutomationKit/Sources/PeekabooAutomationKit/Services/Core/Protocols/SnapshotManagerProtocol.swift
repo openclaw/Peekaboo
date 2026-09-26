@@ -168,6 +168,10 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// - Returns: Path to snapshot storage directory
     func getSnapshotStoragePath() -> String
 
+    /// Return an existing regular, producer-owned snapshot map accessible in this process's filesystem.
+    /// A reusable snapshot need not have a persisted map; memory and remote managers return `nil`.
+    func getPersistedSnapshotMapPath(snapshotId: String) -> String?
+
     /// Store raw screenshot and build UI map
     /// - Parameter request: Screenshot metadata and storage location for the snapshot.
     func storeScreenshot(_ request: SnapshotScreenshotRequest) async throws
@@ -244,6 +248,10 @@ extension SnapshotManagerProtocol {
     }
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
+        nil
+    }
+
+    public func getPersistedSnapshotMapPath(snapshotId: String) -> String? {
         nil
     }
 

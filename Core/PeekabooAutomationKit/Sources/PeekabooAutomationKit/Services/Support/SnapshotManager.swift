@@ -344,4 +344,11 @@ public final class SnapshotManager: SnapshotManagerProtocol {
     public func getSnapshotStoragePath() -> String {
         self.getSnapshotStorageURL().path
     }
+
+    public func getPersistedSnapshotMapPath(snapshotId: String) -> String? {
+        SnapshotPathValidator.producerOwnedSnapshotPayloadURL(
+            for: snapshotId,
+            in: self.getSnapshotStorageURL(),
+            allowMissing: false)?.path
+    }
 }

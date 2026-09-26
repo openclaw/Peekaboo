@@ -93,7 +93,10 @@ extension SeeCommand {
     }
 
     private func outputJSONResults(context: SeeCommandRenderContext) throws {
-        let output = self.makeJSONResult(context: context, snapshotPaths: self.snapshotPaths(for: context))
+        let output = self.makeJSONResult(
+            context: context,
+            snapshotPaths: self.snapshotPaths(for: context, snapshots: self.services.snapshots)
+        )
         try self.outputSeeSuccessJSON(data: output, receipt: context.receipt)
     }
 
@@ -268,13 +271,16 @@ extension SeeCommand {
         }
     }
 
-    private func snapshotPaths(for context: SeeCommandRenderContext) -> SnapshotPaths {
+    func snapshotPaths(
+        for context: SeeCommandRenderContext,
+        snapshots: any SnapshotManagerProtocol
+    ) -> SnapshotPaths {
         let publishesScreenshotPaths = !self.usesTemporaryScreenshotOutput
         return SnapshotPaths(
             raw: publishesScreenshotPaths ? context.screenshotPath : "",
             annotated: publishesScreenshotPaths ? context.annotatedPath ?? "" : "",
             map: context.snapshotReusable
-                ? self.services.snapshots.getSnapshotStoragePath() + "/\(context.snapshotId)/snapshot.json"
+                ? snapshots.getPersistedSnapshotMapPath(snapshotId: context.snapshotId) ?? ""
                 : ""
         )
     }
