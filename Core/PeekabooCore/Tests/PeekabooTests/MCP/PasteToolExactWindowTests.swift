@@ -577,52 +577,5 @@ private actor PasteSiblingWindowService: WindowManagementServiceProtocol, Window
     }
 }
 
-private final class ExactPasteClipboardService: ClipboardServiceProtocol, @unchecked Sendable {
-    private var current: ClipboardReadResult?
-    private var slots: [String: ClipboardReadResult] = [:]
-    private(set) var saveCallCount = 0
-    private(set) var setCallCount = 0
-    private(set) var restoreCallCount = 0
-
-    init(current: ClipboardReadResult?) {
-        self.current = current
-    }
-
-    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
-        self.current
-    }
-
-    func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
-        self.setCallCount += 1
-        guard let representation = request.representations.first else {
-            throw ClipboardServiceError.writeFailed("No representations provided")
-        }
-        let result = ClipboardReadResult(
-            utiIdentifier: representation.utiIdentifier,
-            data: representation.data,
-            textPreview: request.alsoText)
-        self.current = result
-        return result
-    }
-
-    func clear() {
-        self.current = nil
-    }
-
-    func save(slot: String) throws {
-        self.saveCallCount += 1
-        guard let current else { throw ClipboardServiceError.empty }
-        self.slots[slot] = current
-    }
-
-    func restore(slot: String) throws -> ClipboardReadResult {
-        self.restoreCallCount += 1
-        guard let saved = self.slots[slot] else { throw ClipboardServiceError.slotNotFound(slot) }
-        self.current = saved
-        return saved
-    }
-
-    func listSlots() -> [String] {
-        Array(self.slots.keys)
-    }
-}
+@MainActor
+private final class ExactPasteClipboardService: ScriptedClipboardService {}

@@ -15,19 +15,34 @@ public struct ClipboardPasteOutcomeError: LocalizedError, Sendable {
     public let clipboardRestoreAttempted: Bool
     public let clipboardRestoreErrorDescription: String?
     public let targetProcessIdentifier: pid_t?
+    public let clipboardCleanupStatus: ClipboardTemporaryCleanupStatus?
 
     public init(
         kind: Kind,
         causeDescription: String? = nil,
         clipboardRestoreAttempted: Bool,
         clipboardRestoreErrorDescription: String? = nil,
-        targetProcessIdentifier: pid_t? = nil)
+        targetProcessIdentifier: pid_t? = nil,
+        clipboardCleanupStatus: ClipboardTemporaryCleanupStatus? = nil)
     {
         self.kind = kind
         self.causeDescription = causeDescription
         self.clipboardRestoreAttempted = clipboardRestoreAttempted
         self.clipboardRestoreErrorDescription = clipboardRestoreErrorDescription
         self.targetProcessIdentifier = targetProcessIdentifier
+        self.clipboardCleanupStatus = clipboardCleanupStatus
+    }
+
+    public var clipboardRestoreSucceeded: Bool? {
+        if self.clipboardRestoreErrorDescription != nil {
+            return false
+        }
+        switch self.clipboardCleanupStatus {
+        case .restored: return true
+        case .preservedNewerContents: return false
+        case .notNeeded: return nil
+        case nil: return self.clipboardRestoreAttempted ? true : nil
+        }
     }
 
     public var errorDescription: String? {
@@ -40,6 +55,10 @@ public struct ClipboardPasteOutcomeError: LocalizedError, Sendable {
         let cause = self.causeDescription.map { " Delivery detail: \($0)" } ?? ""
         let restoration = if let clipboardRestoreErrorDescription {
             " Clipboard restoration failed: \(clipboardRestoreErrorDescription)"
+        } else if self.clipboardCleanupStatus == .preservedNewerContents {
+            " A newer clipboard update was preserved; the prior contents were not restored."
+        } else if self.clipboardCleanupStatus == .notNeeded {
+            " The clipboard was not changed by this transaction."
         } else if self.clipboardRestoreAttempted {
             " The prior clipboard state was restored before the transaction lock was released."
         } else {

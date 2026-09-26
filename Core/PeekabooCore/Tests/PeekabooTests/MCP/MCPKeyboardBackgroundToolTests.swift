@@ -976,53 +976,5 @@ struct PressToolParsingValidationTests {
     }
 }
 
-private final class MockClipboardService: ClipboardServiceProtocol, @unchecked Sendable {
-    private var current: ClipboardReadResult?
-    private var slots: [String: ClipboardReadResult] = [:]
-    private let restoreError: ClipboardServiceError?
-    private(set) var restoreCallCount = 0
-
-    init(current: ClipboardReadResult? = nil, restoreError: ClipboardServiceError? = nil) {
-        self.current = current
-        self.restoreError = restoreError
-    }
-
-    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
-        self.current
-    }
-
-    func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
-        guard let representation = request.representations.first else {
-            throw ClipboardServiceError.writeFailed("No representations provided")
-        }
-        let result = ClipboardReadResult(
-            utiIdentifier: representation.utiIdentifier,
-            data: representation.data,
-            textPreview: request.alsoText)
-        self.current = result
-        return result
-    }
-
-    func clear() {
-        self.current = nil
-    }
-
-    func save(slot: String) throws {
-        guard let current else {
-            throw ClipboardServiceError.empty
-        }
-        self.slots[slot] = current
-    }
-
-    func restore(slot: String) throws -> ClipboardReadResult {
-        self.restoreCallCount += 1
-        if let restoreError {
-            throw restoreError
-        }
-        guard let saved = self.slots[slot] else {
-            throw ClipboardServiceError.slotNotFound(slot)
-        }
-        self.current = saved
-        return saved
-    }
-}
+@MainActor
+private final class MockClipboardService: ScriptedClipboardService {}

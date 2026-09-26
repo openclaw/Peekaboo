@@ -32,7 +32,11 @@ extension ErrorHandlingCommand {
     }
 
     /// Handle errors with appropriate output format
-    func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
+    func handleError(
+        _ error: any Error,
+        customCode: ErrorCode? = nil,
+        clipboardCleanupStatus: String? = nil
+    ) {
         if jsonOutput {
             let envelopeError = error as? any ResultEnvelopeError
             let isActionCommand = (self as? any ActionOutputFormattable)?.defaultEffect != nil
@@ -73,6 +77,7 @@ extension ErrorHandlingCommand {
                     targetReceipt: actionMetadata.targetReceipt,
                     targetIdentity: actionMetadata.targetIdentity,
                     screenCaptureKitOwnershipDiagnostic: screenCaptureKitOwnershipDiagnostic(for: error),
+                    clipboardCleanupStatus: clipboardCleanupStatus,
                     logger: logger
                 )
             }

@@ -69,6 +69,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
+        let clipboardMutation = PasteClipboardMutation()
 
         do {
             try self.validate()
@@ -94,9 +95,9 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 }
             }
 
+            _ = try self.temporaryClipboardProvider()
             let expectedPIDIdentity = try self.explicitPIDIdentity()
             let actionSequence = CommandActionSequenceAccumulator()
-            let clipboardMutation = PasteClipboardMutation()
             let actionRoute = commandActionRoute(for: self.services)
             let outcome = try await self.preservingPasteSequence(actionSequence, route: actionRoute) {
                 try await self.transactionGate.withExclusiveTransaction {
@@ -128,7 +129,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                     kind: .indeterminate,
                     causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
                     clipboardRestoreAttempted: true,
-                    clipboardRestoreErrorDescription: outcome.restoreErrorDescription
+                    clipboardRestoreErrorDescription: outcome.restoreErrorDescription,
+                    clipboardCleanupStatus: outcome.cleanupStatus
                 )
                 throw self.preservedPasteFailure(error, sequence: actionSequence, route: actionRoute)
             }
@@ -140,13 +142,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 previousClipboardPresent: outcome.previousClipboardPresent,
                 restoredUti: outcome.restoreResult?.utiIdentifier,
                 restoredSize: outcome.restoreResult?.data.count,
-                restoreSucceeded: outcome.restoreErrorDescription == nil,
+                restoreSucceeded: outcome.cleanupStatus == .restored && outcome.restoreErrorDescription == nil,
                 restoreError: outcome.restoreErrorDescription,
                 restoreDelayMs: self.resolvedRestoreDelayMs,
                 deliveryMode: outcome.targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
                     KeyboardDeliveryMode.background.rawValue,
                 targetPID: outcome.targetPID.map(Int.init),
-                targetWindowID: outcome.targetWindowID
+                targetWindowID: outcome.targetWindowID,
+                clipboardCleanupStatus: outcome.cleanupStatus?.rawValue
             )
             let actionResult = actionSequence.result(payload: result)
             let outputOutcome = Self.outputOutcome(
@@ -166,6 +169,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 if outcome.restoreErrorDescription != nil {
                     print("⚠️  Pasted, but clipboard restoration failed. Do not retry the paste; " +
                         "the previous clipboard contents may be unavailable.")
+                } else if outcome.cleanupStatus == .preservedNewerContents {
+                    print(
+                        "Paste input sent; a newer clipboard update was preserved instead of restoring prior contents."
+                    )
                 } else if let outputOutcome {
                     print(ActionOutcomeHumanRenderer.statusLine(for: outputOutcome, operation: "Paste"))
                 } else {
@@ -174,6 +181,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 print("📋 Pasted: \(outcome.setResult.utiIdentifier) (\(outcome.setResult.data.count) bytes)")
                 if let restoreErrorDescription = outcome.restoreErrorDescription {
                     print("♻️  Restore error: \(restoreErrorDescription)")
+                } else if outcome.cleanupStatus == .preservedNewerContents {
+                    print("♻️  Restore skipped: newer clipboard contents preserved")
                 } else if outcome.previousClipboardPresent {
                     print("♻️  Restored: \(outcome.restoreResult?.utiIdentifier ?? "unknown")")
                 } else {
@@ -187,21 +196,29 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 }
             }
         } catch let error as ClipboardPasteOutcomeError {
-            self.handleError(error, customCode: .INTERACTION_FAILED)
+            self.handleError(
+                error,
+                customCode: .INTERACTION_FAILED,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus?.rawValue
+            )
             throw ExitCode.failure
         } catch {
-            self.handleError(error)
+            self.handleError(error, clipboardCleanupStatus: clipboardMutation.cleanupStatus?.rawValue)
             throw ExitCode.failure
         }
     }
 
-    private func performClipboardPasteTransaction(
-        request: ClipboardWriteRequest,
-        target: UIAutomationTarget,
-        actionSequence: CommandActionSequenceAccumulator?,
-        actionRoute: DesktopActionOutcome.Route,
-        clipboardMutation: PasteClipboardMutation
-    ) async throws -> ClipboardPasteTransactionOutcome {
+    private func temporaryClipboardProvider() throws -> any ClipboardTemporaryWriteProviding {
+        guard let provider = self.services.clipboard as? any ClipboardTemporaryWriteProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "This clipboard provider does not support ownership-aware temporary writes."
+            )
+        }
+        return provider
+    }
+
+    private func requireClipboardPasteRoute(for target: UIAutomationTarget) throws {
         if target.exactWindow != nil {
             _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
                 automation: self.services.automation,
@@ -215,41 +232,49 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 throw ValidationError("This automation host does not support background paste delivery.")
             }
         }
+    }
 
+    private func performClipboardPasteTransaction(
+        request: ClipboardWriteRequest,
+        target: UIAutomationTarget,
+        actionSequence: CommandActionSequenceAccumulator?,
+        actionRoute: DesktopActionOutcome.Route,
+        clipboardMutation: PasteClipboardMutation
+    ) async throws -> ClipboardPasteTransactionOutcome {
+        try self.requireClipboardPasteRoute(for: target)
         try Task.checkCancellation()
-        let priorClipboard = try self.services.clipboard.get(prefer: nil)
-        let restoreSlot = "paste-\(UUID().uuidString)"
-        try Task.checkCancellation()
-        if priorClipboard != nil {
-            try self.services.clipboard.save(slot: restoreSlot)
+        let transaction: any ClipboardTemporaryWriteTransaction
+        do {
+            transaction = try self.temporaryClipboardProvider().prepareTemporaryWrite()
+        } catch {
+            throw self.preDispatchActionError(for: error)
         }
         try Task.checkCancellation()
 
         var restorePending = false
         func restoreBeforeDispatchFailure(_ primaryError: any Error) throws -> Never {
+            var cleanupErrorDescription: String?
             do {
-                _ = try self.restoreClipboard(
-                    priorClipboardPresent: priorClipboard != nil,
-                    slot: restoreSlot
-                )
-                restorePending = false
+                clipboardMutation.cleanupStatus = try transaction.cleanup().status
             } catch {
-                restorePending = false
-                throw ClipboardServiceError.writeFailed(
-                    "Paste payload setup failed (\(primaryError.localizedDescription)); " +
-                        "restoring the prior clipboard also failed: \(error.localizedDescription). " +
-                        "The clipboard may have changed; do not retry until its state is inspected."
-                )
+                cleanupErrorDescription = error.localizedDescription
             }
-            throw primaryError
+            restorePending = false
+            throw ClipboardTemporaryWriteFailure.make(
+                primaryError,
+                didMutate: transaction.didMutate,
+                cleanupStatus: clipboardMutation.cleanupStatus,
+                cleanupErrorDescription: cleanupErrorDescription,
+                reportedFailure: actionErrorEnvelopeMetadata(for: primaryError, isActionCommand: true).failure,
+                standardErrorCode: StandardErrorCode(rawValue:
+                    ((primaryError as? any ResultEnvelopeError)?.envelopeCode ?? self.mapErrorToCode(primaryError))
+                        .rawValue)
+            )
         }
         defer {
             if restorePending {
                 do {
-                    _ = try self.restoreClipboard(
-                        priorClipboardPresent: priorClipboard != nil,
-                        slot: restoreSlot
-                    )
+                    clipboardMutation.cleanupStatus = try transaction.cleanup().status
                 } catch {
                     self.logger.error(
                         "Failed to restore clipboard after paste error: \(error.localizedDescription)"
@@ -261,11 +286,11 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         restorePending = true
         let setResult: ClipboardReadResult
         do {
-            // A throwing clipboard write can still have changed the pasteboard.
-            clipboardMutation.wasAttempted = true
-            setResult = try self.services.clipboard.set(request)
+            setResult = try transaction.write(request)
+            clipboardMutation.wasAttempted = transaction.didMutate
             try Task.checkCancellation()
         } catch {
+            clipboardMutation.wasAttempted = transaction.didMutate
             try restoreBeforeDispatchFailure(error)
         }
 
@@ -290,10 +315,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let restoreResult: ClipboardReadResult?
         let restoreErrorDescription: String?
         do {
-            restoreResult = try await self.restoreClipboardAfterConsumption(
-                priorClipboardPresent: priorClipboard != nil,
-                slot: restoreSlot
-            )
+            await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: self.resolvedRestoreDelayMs)
+            let cleanup = try transaction.cleanup()
+            clipboardMutation.cleanupStatus = cleanup.status
+            if case let .restored(value) = cleanup {
+                restoreResult = value
+            } else {
+                restoreResult = nil
+            }
             restoreErrorDescription = nil
         } catch {
             restoreResult = nil
@@ -303,6 +332,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         restorePending = false
 
         if let dispatchFailure {
+            if let clipboardFailure = ClipboardTemporaryWriteFailure.refusedInput(
+                dispatchFailure,
+                didMutate: transaction.didMutate,
+                cleanupStatus: clipboardMutation.cleanupStatus,
+                cleanupErrorDescription: restoreErrorDescription
+            ) {
+                throw clipboardFailure
+            }
             guard let restoreErrorDescription else { throw dispatchFailure }
             let error = ClipboardPasteOutcomeError(
                 kind: .indeterminate,
@@ -310,7 +347,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                     restoreErrorDescription,
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: target.processIdentifier
+                targetProcessIdentifier: target.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus
             )
             throw self.postDispatchPasteFailure(error, target: target, route: actionRoute)
         }
@@ -320,7 +358,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: target.processIdentifier
+                targetProcessIdentifier: target.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus
             )
             if dispatchErrorDescription != nil || actionSequence?.mutationDisposition.mutationDispatched != true {
                 throw self.postDispatchPasteFailure(error, target: target, route: actionRoute)
@@ -333,16 +372,18 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 causeDescription: "The targeted event API does not acknowledge receiver consumption.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: target.processIdentifier
+                targetProcessIdentifier: target.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus
             )
             throw self.postDispatchPasteFailure(error, target: target, route: actionRoute)
         }
 
         return ClipboardPasteTransactionOutcome(
             setResult: setResult,
-            previousClipboardPresent: priorClipboard != nil,
+            previousClipboardPresent: transaction.priorClipboardPresent,
             restoreResult: restoreResult,
             restoreErrorDescription: restoreErrorDescription,
+            cleanupStatus: clipboardMutation.cleanupStatus,
             targetPID: target.processIdentifier,
             targetWindowID: target.exactWindow?.identity.windowID
         )
@@ -400,27 +441,6 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 print("🪟 Window: \(windowID)")
             }
         }
-    }
-
-    private func restoreClipboard(
-        priorClipboardPresent: Bool,
-        slot: String
-    ) throws -> ClipboardReadResult? {
-        guard priorClipboardPresent else {
-            self.services.clipboard.clear()
-            return nil
-        }
-        return try self.services.clipboard.restore(slot: slot)
-    }
-
-    private func restoreClipboardAfterConsumption(
-        priorClipboardPresent: Bool,
-        slot: String
-    ) async throws -> ClipboardReadResult? {
-        await ClipboardPasteTransactionGate.waitForPasteConsumption(
-            milliseconds: self.resolvedRestoreDelayMs
-        )
-        return try self.restoreClipboard(priorClipboardPresent: priorClipboardPresent, slot: slot)
     }
 
     private func makeWriteRequest() throws -> ClipboardWriteRequest {
@@ -906,6 +926,7 @@ extension PasteCommand {
 @MainActor
 private final class PasteClipboardMutation {
     var wasAttempted = false
+    var cleanupStatus: ClipboardTemporaryCleanupStatus?
 }
 
 private struct ClipboardPasteTransactionOutcome: Sendable {
@@ -913,6 +934,7 @@ private struct ClipboardPasteTransactionOutcome: Sendable {
     let previousClipboardPresent: Bool
     let restoreResult: ClipboardReadResult?
     let restoreErrorDescription: String?
+    let cleanupStatus: ClipboardTemporaryCleanupStatus?
     let targetPID: pid_t?
     let targetWindowID: Int?
 }
@@ -936,6 +958,7 @@ struct PasteResult: Codable {
     let deliveryMode: String
     let targetPID: Int?
     let targetWindowID: Int?
+    var clipboardCleanupStatus: String?
 }
 
 @MainActor

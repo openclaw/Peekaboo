@@ -8,7 +8,7 @@ import TachikomaMCP
 import UniformTypeIdentifiers
 
 // swiftlint:disable type_body_length
-/// MCP tool for atomic clipboard+paste+restore.
+/// MCP tool for serialized temporary clipboard payloads and ownership-aware cleanup.
 public struct PasteTool: MCPTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PasteTool")
     private let context: MCPToolContext
@@ -29,7 +29,8 @@ public struct PasteTool: MCPTool {
         }
 
         return """
-        Paste the current clipboard, or atomically set the clipboard, paste (Cmd+V), then restore it.
+        Paste the current clipboard, or temporarily set the clipboard, paste (Cmd+V), then restore it while still owned.
+        If another app copies newer contents, preserve that update instead of restoring the prior clipboard.
 
         Use this when you want fewer steps than:
         - clipboard set
@@ -52,7 +53,7 @@ public struct PasteTool: MCPTool {
           cancelled after it begins, a prefix may already be present; Peekaboo returns an indeterminate, retry-unsafe
           error and requires a fresh observation.
         - Targeted Cmd+V delivery has no receiver acknowledgement, so binary/current-clipboard calls return an
-          explicit may-have-pasted error after restoring and unlocking. Observe the target; do not retry blindly.
+          explicit may-have-pasted error after cleanup and unlocking. Observe the target; do not retry blindly.
         """
     }
 
@@ -126,6 +127,7 @@ public struct PasteTool: MCPTool {
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         let startTime = Date()
         var setupFocusResult: MCPInteractionFocusResult?
+        let clipboardMutation = PasteClipboardMutation()
 
         do {
             let target = try MCPInteractionTarget(
@@ -192,6 +194,11 @@ public struct PasteTool: MCPTool {
             guard case let .explicit(request, _) = payload else {
                 throw PasteToolError("Invalid paste payload.", refusalReason: .invalidRequest)
             }
+            guard let clipboardProvider = self.context.clipboard as? any ClipboardTemporaryWriteProviding else {
+                throw PasteToolError(
+                    "This clipboard provider does not support ownership-aware temporary writes.",
+                    refusalReason: .runtimeIncompatible)
+            }
             let outcome = try await self.transactionGate.withExclusiveTransaction {
                 let destination = try await self.resolveDeliveryDestination(
                     target: target,
@@ -202,6 +209,8 @@ public struct PasteTool: MCPTool {
                 }
                 return try await self.performClipboardPasteTransaction(
                     request: request,
+                    clipboardProvider: clipboardProvider,
+                    clipboardMutation: clipboardMutation,
                     destination: destination,
                     restoreDelayMs: restoreDelayMs)
             }
@@ -216,86 +225,125 @@ public struct PasteTool: MCPTool {
                 throw error
             }
 
-            let executionTime = Date().timeIntervalSince(startTime)
-            let message = if outcome.restoreErrorDescription != nil {
-                "\(AgentDisplayTokens.Status.warning) Pasted (Cmd+V), but clipboard restoration failed " +
-                    "in \(String(format: "%.2f", executionTime))s. Do not retry the paste; " +
-                    "the previous clipboard contents may be unavailable."
-            } else {
-                "\(AgentDisplayTokens.Status.success) Pasted (Cmd+V) and restored clipboard " +
-                    "in \(String(format: "%.2f", executionTime))s"
-            }
-
-            let pastedObject: [String: Value] = [
-                "uti": .string(outcome.setResult.utiIdentifier),
-                "size": .int(outcome.setResult.data.count),
-                "textPreview": outcome.setResult.textPreview.map(Value.string) ?? .null,
-            ]
-
-            let restoredUti: Value = outcome.restoreResult.map { .string($0.utiIdentifier) } ?? .null
-            let restoredSize: Value = outcome.restoreResult.map { .int($0.data.count) } ?? .null
-            let restoredObject: [String: Value] = [
-                "uti": restoredUti,
-                "size": restoredSize,
-            ]
-
-            var metaFields: [String: Value] = [
-                "pasted": .object(pastedObject),
-                "previous_clipboard_present": .bool(outcome.previousClipboardPresent),
-                "restored": .object(restoredObject),
-                "restore_succeeded": .bool(outcome.restoreErrorDescription == nil),
-                "restore_error": outcome.restoreErrorDescription.map(Value.string) ?? .null,
-                "restore_delay_ms": .int(restoreDelayMs),
-                "execution_time": .double(executionTime),
-                "delivery_mode": .string(outcome.targetPID == nil ? "foreground" : "background"),
-                "target_pid": outcome.targetPID.map { .int(Int($0)) } ?? .null,
-                "target_window_id": outcome.targetWindowID.map(Value.int) ?? .null,
-            ]
-            try metaFields.merge(Self.targetMetadataFields(actionResult.targetIdentity)) { _, target in target }
-            let meta = try MCPToolResponseMetadataProjector.metadata(
-                merging: metaFields,
-                outcome: actionResult.outcome)
-
-            let resolvedWindowTitle = try? await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
-            if Task.isCancelled {
-                throw ClipboardPasteOutcomeError(
-                    kind: .indeterminate,
-                    causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
-                    clipboardRestoreAttempted: true,
-                    clipboardRestoreErrorDescription: outcome.restoreErrorDescription,
-                    targetProcessIdentifier: outcome.targetPID)
-            }
-            let summary = ToolEventSummary(
-                targetApp: target.appIdentifier,
-                windowTitle: resolvedWindowTitle,
-                actionDescription: "Paste",
-                notes: outcome.setResult.utiIdentifier)
-
-            return ToolResponse(
-                content: [.text(text: message, annotations: nil, _meta: nil)],
-                meta: ToolEventSummary.merge(summary: summary, into: meta))
+            return try await self.explicitClipboardResponse(
+                outcome: outcome,
+                actionResult: actionResult,
+                target: target,
+                restoreDelayMs: restoreDelayMs,
+                startedAt: startTime)
         } catch let error as MCPInteractionTargetError {
             return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
                 message: error.localizedDescription,
                 reason: error.refusalReason)
         } catch let failure as DesktopActionFailure {
-            return try await self.failureResponse(failure, focusResult: setupFocusResult)
+            return try await self.failureResponse(
+                failure,
+                focusResult: setupFocusResult,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
         } catch let error as ClipboardPasteOutcomeError {
             return try await self.pasteOutcomeResponse(error, focusResult: setupFocusResult)
         } catch let error as PasteToolError {
             return try await self.pasteToolErrorResponse(error, focusResult: setupFocusResult)
         } catch {
-            return try await self.unexpectedErrorResponse(error, focusResult: setupFocusResult)
+            return try await self.unexpectedErrorResponse(
+                error,
+                focusResult: setupFocusResult,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
         }
+    }
+
+    @MainActor
+    private func explicitClipboardResponse(
+        outcome: ClipboardPasteTransactionOutcome,
+        actionResult: UIAutomationActionResult<Void>,
+        target: MCPInteractionTarget,
+        restoreDelayMs: Int,
+        startedAt: Date) async throws -> ToolResponse
+    {
+        let executionTime = Date().timeIntervalSince(startedAt)
+        let message = if outcome.restoreErrorDescription != nil {
+            "\(AgentDisplayTokens.Status.warning) Pasted (Cmd+V), but clipboard restoration failed " +
+                "in \(String(format: "%.2f", executionTime))s. Do not retry the paste; " +
+                "the previous clipboard contents may be unavailable."
+        } else if outcome.cleanupStatus == .preservedNewerContents {
+            "Paste input sent; a newer clipboard update was preserved instead of restoring prior contents " +
+                "in \(String(format: "%.2f", executionTime))s."
+        } else {
+            "\(AgentDisplayTokens.Status.success) Pasted (Cmd+V) and restored clipboard " +
+                "in \(String(format: "%.2f", executionTime))s"
+        }
+
+        let pastedObject: [String: Value] = [
+            "uti": .string(outcome.setResult.utiIdentifier),
+            "size": .int(outcome.setResult.data.count),
+            "textPreview": outcome.setResult.textPreview.map(Value.string) ?? .null,
+        ]
+
+        let restoredUti: Value = outcome.restoreResult.map { .string($0.utiIdentifier) } ?? .null
+        let restoredSize: Value = outcome.restoreResult.map { .int($0.data.count) } ?? .null
+        let restoredObject: [String: Value] = [
+            "uti": restoredUti,
+            "size": restoredSize,
+        ]
+
+        var metaFields: [String: Value] = [
+            "pasted": .object(pastedObject),
+            "previous_clipboard_present": .bool(outcome.previousClipboardPresent),
+            "restored": .object(restoredObject),
+            "restore_succeeded": .bool(outcome.cleanupStatus == .restored && outcome
+                .restoreErrorDescription == nil),
+            "clipboard_cleanup_status": outcome.cleanupStatus.map { .string($0.rawValue) } ?? .null,
+            "restore_error": outcome.restoreErrorDescription.map(Value.string) ?? .null,
+            "restore_delay_ms": .int(restoreDelayMs),
+            "execution_time": .double(executionTime),
+            "delivery_mode": .string(outcome.targetPID == nil ? "foreground" : "background"),
+            "target_pid": outcome.targetPID.map { .int(Int($0)) } ?? .null,
+            "target_window_id": outcome.targetWindowID.map(Value.int) ?? .null,
+        ]
+        try metaFields.merge(Self.targetMetadataFields(actionResult.targetIdentity)) { _, target in target }
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: metaFields,
+            outcome: actionResult.outcome)
+
+        let resolvedWindowTitle = try? await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
+        if Task.isCancelled {
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: outcome.restoreErrorDescription,
+                targetProcessIdentifier: outcome.targetPID,
+                clipboardCleanupStatus: outcome.cleanupStatus)
+        }
+        let summary = ToolEventSummary(
+            targetApp: target.appIdentifier,
+            windowTitle: resolvedWindowTitle,
+            actionDescription: "Paste",
+            notes: outcome.setResult.utiIdentifier)
+
+        return ToolResponse(
+            content: [.text(text: message, annotations: nil, _meta: nil)],
+            meta: ToolEventSummary.merge(summary: summary, into: meta))
     }
 
     @MainActor
     private func failureResponse(
         _ failure: DesktopActionFailure,
-        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
+        focusResult: MCPInteractionFocusResult?,
+        clipboardCleanupStatus: ClipboardTemporaryCleanupStatus? = nil) async throws -> ToolResponse
     {
-        let standardErrorFields = ObservationActionResultSupport.standardErrorFields(failure)
-        let failure = focusResult?.preservingFailure(failure, operation: "Paste") ?? failure
+        var standardErrorFields = ObservationActionResultSupport.standardErrorFields(failure)
+        if let clipboardCleanupStatus {
+            standardErrorFields["clipboard_cleanup_status"] = .string(clipboardCleanupStatus.rawValue)
+        }
+        let failure = if let focusResult,
+                         failure.outcome.delivery == ClipboardMutationResultSemantics.delivery,
+                         failure.targetReceipt == nil
+        {
+            focusResult.preservingGlobalFailure(failure, operation: "Paste")
+        } else {
+            focusResult?.preservingFailure(failure, operation: "Paste") ?? failure
+        }
         return try await MCPDesktopActionFailureHandler.response(
             for: failure,
             uiSnapshots: self.context.uiSnapshots,
@@ -317,7 +365,8 @@ public struct PasteTool: MCPTool {
                 causeDescription: error.causeDescription)
             return try await self.failureResponse(
                 focusResult.preservingFailure(leaf, operation: "Paste"),
-                focusResult: nil)
+                focusResult: nil,
+                clipboardCleanupStatus: error.clipboardCleanupStatus)
         }
         self.logger.error("Paste outcome was \(error.kind.rawValue, privacy: .public)")
         return ToolResponse.error(
@@ -327,9 +376,8 @@ public struct PasteTool: MCPTool {
                 "may_have_pasted": .bool(true),
                 "retry_safe": .bool(false),
                 "clipboard_restore_attempted": .bool(error.clipboardRestoreAttempted),
-                "clipboard_restore_succeeded": error.clipboardRestoreAttempted
-                    ? .bool(error.clipboardRestoreErrorDescription == nil)
-                    : .null,
+                "clipboard_restore_succeeded": error.clipboardRestoreSucceeded.map(Value.bool) ?? .null,
+                "clipboard_cleanup_status": error.clipboardCleanupStatus.map { .string($0.rawValue) } ?? .null,
                 "clipboard_restore_error": error.clipboardRestoreErrorDescription.map(Value.string) ?? .null,
                 "target_pid": error.targetProcessIdentifier.map { .int(Int($0)) } ?? .null,
                 "requires_fresh_observation": .bool(true),
@@ -357,15 +405,19 @@ public struct PasteTool: MCPTool {
     @MainActor
     private func unexpectedErrorResponse(
         _ error: any Error,
-        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
+        focusResult: MCPInteractionFocusResult?,
+        clipboardCleanupStatus: ClipboardTemporaryCleanupStatus? = nil) async throws -> ToolResponse
     {
         if let focusResult {
             return try await self.failureResponse(
                 focusResult.preservingFailure(error, operation: "Paste"),
-                focusResult: nil)
+                focusResult: nil,
+                clipboardCleanupStatus: clipboardCleanupStatus)
         }
         self.logger.error("Paste failed: \(error.localizedDescription)")
-        return ToolResponse.error("Paste failed: \(error.localizedDescription)")
+        return ToolResponse.error(
+            "Paste failed: \(error.localizedDescription)",
+            meta: clipboardCleanupStatus.map { .object(["clipboard_cleanup_status": .string($0.rawValue)]) })
     }
 
     @MainActor
@@ -490,51 +542,43 @@ public struct PasteTool: MCPTool {
     @MainActor
     private func performClipboardPasteTransaction(
         request: ClipboardWriteRequest,
+        clipboardProvider: any ClipboardTemporaryWriteProviding,
+        clipboardMutation: PasteClipboardMutation,
         destination: UIAutomationTarget,
         restoreDelayMs: Int) async throws -> ClipboardPasteTransactionOutcome
     {
         let hotkeyRoute = try self.pasteHotkeyRoute(for: destination)
 
         try Task.checkCancellation()
-        let priorClipboard = try self.context.clipboard.get(prefer: nil)
-        let restoreSlot = "paste-\(UUID().uuidString)"
-        try Task.checkCancellation()
-        if priorClipboard != nil {
-            try self.context.clipboard.save(slot: restoreSlot)
+        let transaction: any ClipboardTemporaryWriteTransaction
+        do {
+            transaction = try clipboardProvider.prepareTemporaryWrite()
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: error.localizedDescription)
         }
         try Task.checkCancellation()
-
-        func restoreClipboard() throws -> ClipboardReadResult? {
-            guard priorClipboard != nil else {
-                self.context.clipboard.clear()
-                return nil
-            }
-            return try self.context.clipboard.restore(slot: restoreSlot)
-        }
-
-        func restoreAfterConsumption() async throws -> ClipboardReadResult? {
-            await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: restoreDelayMs)
-            return try restoreClipboard()
-        }
 
         var restorePending = false
         func restoreBeforeDispatchFailure(_ primaryError: any Error) throws -> Never {
+            var cleanupErrorDescription: String?
             do {
-                _ = try restoreClipboard()
-                restorePending = false
+                clipboardMutation.cleanupStatus = try transaction.cleanup().status
             } catch {
-                restorePending = false
-                throw ClipboardServiceError.writeFailed(
-                    "Paste payload setup failed (\(primaryError.localizedDescription)); " +
-                        "restoring the prior clipboard also failed: \(error.localizedDescription). " +
-                        "The clipboard may have changed; do not retry until its state is inspected.")
+                cleanupErrorDescription = error.localizedDescription
             }
-            throw primaryError
+            restorePending = false
+            throw ClipboardTemporaryWriteFailure.make(
+                primaryError,
+                didMutate: transaction.didMutate,
+                cleanupStatus: clipboardMutation.cleanupStatus,
+                cleanupErrorDescription: cleanupErrorDescription)
         }
         defer {
             if restorePending {
                 do {
-                    _ = try restoreClipboard()
+                    clipboardMutation.cleanupStatus = try transaction.cleanup().status
                 } catch {
                     self.logger.error(
                         "Failed to restore clipboard after paste error: \(error.localizedDescription)")
@@ -545,7 +589,7 @@ public struct PasteTool: MCPTool {
         restorePending = true
         let setResult: ClipboardReadResult
         do {
-            setResult = try self.context.clipboard.set(request)
+            setResult = try transaction.write(request)
             try Task.checkCancellation()
         } catch {
             try restoreBeforeDispatchFailure(error)
@@ -571,7 +615,14 @@ public struct PasteTool: MCPTool {
         let restoreResult: ClipboardReadResult?
         let restoreErrorDescription: String?
         do {
-            restoreResult = try await restoreAfterConsumption()
+            await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: restoreDelayMs)
+            let cleanup = try transaction.cleanup()
+            clipboardMutation.cleanupStatus = cleanup.status
+            if case let .restored(value) = cleanup {
+                restoreResult = value
+            } else {
+                restoreResult = nil
+            }
             restoreErrorDescription = nil
         } catch {
             restoreResult = nil
@@ -581,6 +632,14 @@ public struct PasteTool: MCPTool {
         restorePending = false
 
         if let dispatchFailure {
+            if let clipboardFailure = ClipboardTemporaryWriteFailure.refusedInput(
+                dispatchFailure,
+                didMutate: transaction.didMutate,
+                cleanupStatus: clipboardMutation.cleanupStatus,
+                cleanupErrorDescription: restoreErrorDescription)
+            {
+                throw clipboardFailure
+            }
             guard let restoreErrorDescription else { throw dispatchFailure }
             throw ClipboardPasteOutcomeError(
                 kind: .indeterminate,
@@ -588,7 +647,8 @@ public struct PasteTool: MCPTool {
                     restoreErrorDescription,
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: destination.processIdentifier)
+                targetProcessIdentifier: destination.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
         }
         if dispatchErrorDescription != nil || Task.isCancelled {
             throw ClipboardPasteOutcomeError(
@@ -596,7 +656,8 @@ public struct PasteTool: MCPTool {
                 causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: destination.processIdentifier)
+                targetProcessIdentifier: destination.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
         }
         if destination.processIdentifier != nil {
             throw ClipboardPasteOutcomeError(
@@ -604,7 +665,8 @@ public struct PasteTool: MCPTool {
                 causeDescription: "The targeted event API does not acknowledge receiver consumption.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: destination.processIdentifier)
+                targetProcessIdentifier: destination.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
         }
         guard let actionResult else {
             preconditionFailure("A successful paste dispatch must retain its action result")
@@ -612,9 +674,10 @@ public struct PasteTool: MCPTool {
 
         return ClipboardPasteTransactionOutcome(
             setResult: setResult,
-            previousClipboardPresent: priorClipboard != nil,
+            previousClipboardPresent: transaction.priorClipboardPresent,
             restoreResult: restoreResult,
             restoreErrorDescription: restoreErrorDescription,
+            cleanupStatus: clipboardMutation.cleanupStatus,
             targetPID: destination.processIdentifier,
             targetWindowID: destination.exactWindow?.identity.windowID,
             actionResult: actionResult)
@@ -1170,9 +1233,15 @@ private struct ClipboardPasteTransactionOutcome: Sendable {
     let previousClipboardPresent: Bool
     let restoreResult: ClipboardReadResult?
     let restoreErrorDescription: String?
+    let cleanupStatus: ClipboardTemporaryCleanupStatus?
     let targetPID: pid_t?
     let targetWindowID: Int?
     let actionResult: UIAutomationActionResult<Void>
+}
+
+@MainActor
+private final class PasteClipboardMutation {
+    var cleanupStatus: ClipboardTemporaryCleanupStatus?
 }
 
 private struct CurrentClipboardPasteOutcome: Sendable {

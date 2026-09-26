@@ -768,7 +768,7 @@ extension PasteCommandTests {
 
     @Test(arguments: [false, true])
     @MainActor
-    func `Set failure restores exact prior clipboard before dispatch`(mutatesBeforeThrow: Bool) async throws {
+    func `Set failure restores only after claiming the clipboard`(mutatesBeforeThrow: Bool) async throws {
         let context = self.makeTransactionGateContext()
         context.clipboard.setError = ClipboardServiceError.writeFailed("simulated set failure")
         context.clipboard.setMutatesBeforeThrow = mutatesBeforeThrow
@@ -790,7 +790,7 @@ extension PasteCommandTests {
         #expect(context.clipboard.saveCallCount == 1)
         #expect(context.clipboard.setCallCount == 1)
         #expect(context.clipboard.clearCallCount == 0)
-        #expect(context.clipboard.restoreCallCount == 1)
+        #expect(context.clipboard.restoreCallCount == (mutatesBeforeThrow ? 1 : 0))
         #expect(context.clipboard.current?.textPreview == "prior")
         #expect(context.automation.targetedHotkeyCalls.isEmpty)
     }

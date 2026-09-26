@@ -724,20 +724,10 @@ struct MCPInteractionTargetTests {
 }
 
 @MainActor
-private final class AmbiguousFocusClipboardService: ClipboardServiceProtocol {
-    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
-        nil
-    }
-
-    func set(_: ClipboardWriteRequest) throws -> ClipboardReadResult {
-        throw ClipboardServiceError.writeFailed("Ambiguous focus must fail before clipboard mutation")
-    }
-
-    func clear() {}
-    func save(slot _: String) throws {}
-
-    func restore(slot: String) throws -> ClipboardReadResult {
-        throw ClipboardServiceError.slotNotFound(slot)
+private final class AmbiguousFocusClipboardService: ScriptedClipboardService {
+    init() {
+        super.init()
+        self.setError = ClipboardServiceError.writeFailed("Ambiguous focus must fail before clipboard mutation")
     }
 }
 

@@ -57,7 +57,7 @@ struct PasteToolTransactionGateTests {
         #expect(windows.focusCalls.isEmpty)
         #expect(automation.lastHotkeyKeys == nil)
         #expect(automation.targetedHotkeyCalls.isEmpty)
-        #expect(clipboard.current.textPreview == "prior")
+        #expect(clipboard.current?.textPreview == "prior")
         #expect(await context.uiSnapshots.getSnapshot(id: nil)?.id == snapshotID)
         #expect(await snapshots.getMostRecentSnapshot() == snapshotID)
         #expect(coordinator.prepareCount == 1)
@@ -73,7 +73,7 @@ struct PasteToolTransactionGateTests {
         #expect(automation.lastHotkeyKeys == "cmd,v")
         #expect(automation.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
         #expect(windows.focusCalls.isEmpty)
-        #expect(clipboard.current.textPreview == "prior")
+        #expect(clipboard.current?.textPreview == "prior")
         #expect(clipboard.setCallCount == (explicitPayload ? 1 : 0))
         #expect(clipboard.restoreCallCount == (explicitPayload ? 1 : 0))
         #expect(coordinator.prepareCount == 2)
@@ -117,18 +117,65 @@ struct PasteToolTransactionGateTests {
         #expect(metadata["mutation_dispatched"] == .bool(true))
         #expect(metadata["retry_safe"] == .bool(false))
         #expect(metadata["requires_fresh_observation"] == .bool(true))
-        #expect(metadata["dispatched_unit_count"] == .int(1))
-        #expect(metadata["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        if explicitPayload {
+            #expect(metadata["dispatched_unit_count"] == nil)
+            #expect(metadata["target_receipt"] == nil)
+            #expect(metadata["clipboard_cleanup_status"] == .string("restored"))
+        } else {
+            #expect(metadata["dispatched_unit_count"] == .int(1))
+            #expect(metadata["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        }
         #expect(gate.admissionCalls == 1)
         #expect(gate.bodyCalls == 1)
         #expect(windows.focusCalls.count == 1)
+        #expect(windows.pinnedFocusWindowIDs == [700])
         #expect(automation.lastHotkeyKeys == nil)
-        #expect(clipboard.current.textPreview == "prior")
+        #expect(clipboard.current?.textPreview == "prior")
         #expect(clipboard.restoreCallCount == (explicitPayload ? 1 : 0))
         #expect(coordinator.cancelCount == 0)
         #expect(coordinator.completeCount == 1)
         #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
         #expect(await context.uiSnapshots.getSnapshot(id: snapshotID) != nil)
+    }
+
+    @Test
+    @MainActor
+    func `Newer clipboard status survives prior focus and a partial hotkey receipt`() async throws {
+        let automation = OutcomePasteAutomationService(hotkeyResponse: .outcome(.confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: .one)))
+        let windows = RecordingWindowService()
+        let clipboard = TransactionGateClipboardService()
+        let newer = ClipboardReadResult(utiIdentifier: "public.data", data: Data("newer".utf8), textPreview: nil)
+        automation.afterHotkey = {
+            clipboard.current = newer
+            throw DesktopActionFailure.partial(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                unitCount: DesktopActionOutcome.DispatchUnitCount(2),
+                message: "Synthetic partial hotkey dispatch")
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard,
+            executionPolicy: .unrestricted)
+        let response = try await PasteTool(context: context, transactionGate: PasteAdmissionTestGate())
+            .execute(arguments: ToolArguments(raw: [
+                "app": "Editor", "foreground": true, "dataBase64": "aGVsbG8=",
+                "uti": "public.data", "restore_delay_ms": 0,
+            ]))
+        let metadata = try #require(response.meta?.objectValue)
+
+        #expect(response.isError)
+        #expect(metadata["clipboard_cleanup_status"] == .string("preserved_newer_contents"))
+        #expect(metadata["state"] == .string("partial"))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["dispatched_unit_count"] == .int(3))
+        #expect(windows.focusCalls.count == 1)
+        #expect(automation.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
+        #expect(clipboard.current?.data == newer.data)
+        #expect(clipboard.restoreCallCount == 0)
+        #expect(clipboard.clearCallCount == 0)
     }
 
     @Test
@@ -164,7 +211,7 @@ struct PasteToolTransactionGateTests {
 
         try await Task.sleep(for: .milliseconds(75))
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         await MainActor.run {
             applications.replaceApplicationsForTesting([
                 Self.editorApplication(processIdentifier: 444, processStartIdentity: 44),
@@ -181,7 +228,7 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
             AutomationTestFixtures.processIdentity(processIdentifier: 444, processStartIdentity: 44))
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
         guard case let .object(meta) = response.meta else {
             Issue.record("Expected paste metadata")
@@ -221,7 +268,7 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { clipboard.setCallCount } == 0)
         #expect(await MainActor.run { clipboard.clearCallCount } == 0)
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
     }
 
@@ -306,7 +353,7 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { clipboard.setCallCount } == 0)
         #expect(await MainActor.run { clipboard.clearCallCount } == 0)
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
     }
 
@@ -371,7 +418,7 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { clipboard.setCallCount } == 0)
         #expect(await MainActor.run { clipboard.clearCallCount } == 0)
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
     }
 
@@ -407,12 +454,12 @@ struct PasteToolTransactionGateTests {
         #expect(response.isError)
         #expect(await MainActor.run { clipboard.setCallCount } == 1)
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
     }
 
     @Test(arguments: [false, true])
-    func `MCP set failure restores prior clipboard before dispatch`(mutatesBeforeThrow: Bool) async throws {
+    func `MCP set failure restores only after claiming the clipboard`(mutatesBeforeThrow: Bool) async throws {
         let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
@@ -439,8 +486,8 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { clipboard.saveCallCount } == 1)
         #expect(await MainActor.run { clipboard.setCallCount } == 1)
         #expect(await MainActor.run { clipboard.clearCallCount } == 0)
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == (mutatesBeforeThrow ? 1 : 0))
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
     }
 
@@ -506,7 +553,7 @@ struct PasteToolTransactionGateTests {
         command.cancel()
 
         try await Task.sleep(for: .milliseconds(75))
-        #expect(await MainActor.run { clipboard.current.utiIdentifier } == "public.data")
+        #expect(await MainActor.run { clipboard.current?.utiIdentifier } == "public.data")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
 
         let response = try await command.value
@@ -518,7 +565,7 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         #expect(clock.now - canceledAt >= .milliseconds(150))
         #expect(clock.now - canceledAt < .seconds(1))
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
     }
 
@@ -553,7 +600,7 @@ struct PasteToolTransactionGateTests {
 
         try await Task.sleep(for: .milliseconds(75))
         #expect(windows.focusCalls.isEmpty)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         windows.focusError = ExpectedFocusError.targetDisappeared
 
         #expect(flock(heldFD, LOCK_UN) == 0)
@@ -567,7 +614,7 @@ struct PasteToolTransactionGateTests {
             Issue.record("Expected the queued foreground target to be resolved and revalidated exactly")
         }
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
     }
 
@@ -629,7 +676,7 @@ struct PasteToolTransactionGateTests {
         #expect(response.isError)
         #expect(windows.focusCalls.isEmpty)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
     }
 
@@ -663,7 +710,7 @@ struct PasteToolTransactionGateTests {
         let clock = ContinuousClock()
         let dispatchedAt = clock.now
         try await Task.sleep(for: .milliseconds(75))
-        #expect(await MainActor.run { clipboard.current.utiIdentifier } == "public.data")
+        #expect(await MainActor.run { clipboard.current?.utiIdentifier } == "public.data")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
 
         let contenderFD = try self.openPasteTransactionLock()
@@ -678,7 +725,7 @@ struct PasteToolTransactionGateTests {
             AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         #expect(clock.now - dispatchedAt >= .milliseconds(150))
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
         #expect(flock(contenderFD, LOCK_EX | LOCK_NB) == 0)
         #expect(flock(contenderFD, LOCK_UN) == 0)
@@ -708,7 +755,7 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
             AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
         guard case let .object(meta) = response.meta else {
             Issue.record("Expected paste metadata")
@@ -734,7 +781,7 @@ struct PasteToolTransactionGateTests {
 
         #expect(response.isError == false)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
         guard case let .object(meta) = response.meta else {
             Issue.record("Expected paste metadata")
@@ -783,7 +830,7 @@ extension PasteToolTransactionGateTests {
         #expect(meta["target_receipt"]?.objectValue?["window_id"] == .int(700))
         #expect(windows.focusCalls.count == 1)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
     }
 
@@ -826,7 +873,7 @@ extension PasteToolTransactionGateTests {
         #expect(meta["target_receipt"] == nil)
         #expect(windows.focusCalls.count == 1)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
     }
 }
@@ -867,7 +914,7 @@ extension PasteToolTransactionGateTests {
         #expect(meta["target_receipt"]?.objectValue?["window_id"] == .int(700))
         #expect(windows.focusCalls.count == 1)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
     }
 
@@ -899,13 +946,15 @@ extension PasteToolTransactionGateTests {
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["state"] == .string("indeterminate"))
         #expect(meta["dispatch_state"] == .string("may_have_dispatched"))
-        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["dispatched_unit_count"] == nil)
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["requires_fresh_observation"] == .bool(true))
-        #expect(meta["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        #expect(meta["target_receipt"] == nil)
+        #expect(meta["clipboard_cleanup_status"] == .string("restored"))
         #expect(windows.focusCalls.count == 1)
+        #expect(windows.pinnedFocusWindowIDs == [700])
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
     }
 
@@ -934,7 +983,7 @@ extension PasteToolTransactionGateTests {
         #expect(response.isError)
         #expect(self.responseText(response).contains("indeterminate"))
         #expect(self.responseText(response).contains("may have pasted; do not retry"))
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
     }
 
@@ -990,7 +1039,7 @@ extension PasteToolTransactionGateTests {
         #expect(response.isError)
         #expect(self.responseText(response).contains("indeterminate"))
         #expect(self.responseText(response).contains("may have pasted; do not retry"))
-        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
     }
 
@@ -1082,6 +1131,7 @@ private final class OutcomePasteAutomationService: MockAutomationService,
 {
     let uiAutomationOutcomeScript: UIAutomationOutcomeScript
     let uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
+    var afterHotkey: (() throws -> Void)?
 
     init(
         hotkeyResponse: UIAutomationOutcomeScript.Response,
@@ -1093,6 +1143,11 @@ private final class OutcomePasteAutomationService: MockAutomationService,
         self.uiAutomationOutcomeTargetIdentity = targetIdentity
         super.init(accessibilityGranted: true)
     }
+
+    override func hotkey(keys: String, holdDuration: Int) async throws {
+        try await super.hotkey(keys: keys, holdDuration: holdDuration)
+        try self.afterHotkey?()
+    }
 }
 
 private final class RecordingWindowService: WindowManagementPinnedFocusActionResultProviding, @unchecked Sendable {
@@ -1103,10 +1158,15 @@ private final class RecordingWindowService: WindowManagementPinnedFocusActionRes
         ownerProcessStartIdentity: 890,
         capturedBounds: CGRect(x: 20, y: 30, width: 640, height: 480))
     private var storedFocusCalls: [WindowTarget] = []
+    private var storedPinnedFocusWindowIDs: [Int] = []
     private var storedFocusError: (any Error)?
 
     var focusCalls: [WindowTarget] {
         self.lock.withLock { self.storedFocusCalls }
+    }
+
+    var pinnedFocusWindowIDs: [Int] {
+        self.lock.withLock { self.storedPinnedFocusWindowIDs }
     }
 
     var focusError: (any Error)? {
@@ -1145,6 +1205,7 @@ private final class RecordingWindowService: WindowManagementPinnedFocusActionRes
         target: WindowTarget,
         expectedIdentity: WindowMutationIdentity) async throws -> UIAutomationActionResult<Void>
     {
+        self.lock.withLock { self.storedPinnedFocusWindowIDs.append(expectedIdentity.windowID) }
         try await self.focusWindow(target: target)
         guard expectedIdentity.hasSameStableReceipt(as: Self.identity),
               let bounds = Self.identity.capturedBounds
@@ -1224,75 +1285,11 @@ private final class SignalingAutomationService: MockAutomationService {
 }
 
 @MainActor
-private final class TransactionGateClipboardService: ClipboardServiceProtocol {
-    private(set) var current = ClipboardReadResult(
-        utiIdentifier: UTType.plainText.identifier,
-        data: Data("prior".utf8),
-        textPreview: "prior")
-    private var slots: [String: ClipboardReadResult] = [:]
-    var afterSave: (() -> Void)?
-    var afterSet: (() -> Void)?
-    var getError: (any Error)?
-    var setError: (any Error)?
-    var setMutatesBeforeThrow = false
-    var restoreError: (any Error)?
-    private(set) var getCallCount = 0
-    private(set) var setCallCount = 0
-    private(set) var clearCallCount = 0
-    private(set) var saveCallCount = 0
-    private(set) var restoreCallCount = 0
-
-    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
-        self.getCallCount += 1
-        if let getError {
-            throw getError
-        }
-        return self.current
-    }
-
-    func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
-        self.setCallCount += 1
-        guard let representation = request.representations.first else {
-            throw ClipboardServiceError.writeFailed("No representations provided")
-        }
-        let result = ClipboardReadResult(
-            utiIdentifier: representation.utiIdentifier,
-            data: representation.data,
-            textPreview: request.alsoText)
-        if let setError {
-            if self.setMutatesBeforeThrow {
-                self.current = result
-            }
-            throw setError
-        }
-        self.current = result
-        self.afterSet?()
-        return result
-    }
-
-    func clear() {
-        self.clearCallCount += 1
-        self.current = ClipboardReadResult(
-            utiIdentifier: UTType.data.identifier,
-            data: Data(),
-            textPreview: nil)
-    }
-
-    func save(slot: String) {
-        self.saveCallCount += 1
-        self.slots[slot] = self.current
-        self.afterSave?()
-    }
-
-    func restore(slot: String) throws -> ClipboardReadResult {
-        self.restoreCallCount += 1
-        if let restoreError {
-            throw restoreError
-        }
-        guard let saved = slots[slot] else {
-            throw ClipboardServiceError.slotNotFound(slot)
-        }
-        self.current = saved
-        return saved
+private final class TransactionGateClipboardService: ScriptedClipboardService {
+    init() {
+        super.init(current: ClipboardReadResult(
+            utiIdentifier: UTType.plainText.identifier,
+            data: Data("prior".utf8),
+            textPreview: "prior"))
     }
 }

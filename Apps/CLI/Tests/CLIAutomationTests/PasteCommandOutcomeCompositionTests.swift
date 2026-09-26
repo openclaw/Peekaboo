@@ -547,22 +547,24 @@ extension PasteCommandTests {
         )
         let outcome = try #require(object["outcome"] as? [String: Any])
         let error = try #require(object["error"] as? [String: Any])
-        let targetReceipt = try #require(object["target_receipt"] as? [String: Any])
-
         #expect(result.exitStatus == 1)
         #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(windows.pinnedFocusCalls.first?.identity.windowID == PasteFocusWindowService.windowID)
         #expect(automation.outcomeHotkeyCallCount == 1)
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(clipboard.current?.textPreview == "prior")
         #expect(clipboard.restoreCallCount == 1)
         #expect(object["effect"] as? String == "unverifiable")
         #expect(outcome["state"] as? String == "indeterminate")
-        #expect(outcome["dispatched_unit_count"] as? Int == 1)
+        #expect(outcome["dispatched_unit_count"] == nil)
         #expect(outcome["mutation_dispatched"] as? Bool == true)
         #expect(outcome["retry_safe"] as? Bool == false)
         #expect(error["mutation_dispatched"] as? Bool == true)
         #expect(error["retry_safe"] as? Bool == false)
-        #expect(targetReceipt["window_id"] as? Int == PasteFocusWindowService.windowID)
+        #expect(outcome["requires_fresh_observation"] as? Bool == true)
+        #expect(error["clipboard_cleanup_status"] as? String == "restored")
+        #expect(object["target_receipt"] == nil)
+        #expect(object["target_identity"] == nil)
     }
 }
 

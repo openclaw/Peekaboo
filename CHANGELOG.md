@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve newer user or application clipboard updates during CLI and MCP paste cleanup, including cancellation and partial-write failures; restore complete prior clipboard items only while the temporary generation is still owned, report skipped restoration, and retain clipboard effects when hotkey delivery is refused without inventing receiver attribution.
 - Preserve native scalar tool arguments in Agent provider schemas and preflight validation so `set_value` accepts Boolean and numeric values without string coercion; retain existing structured-schema compatibility and native safety checks.
 - Keep CLI builds on Swift Collections 1.6.0 and reject unsupported strong borrowing-runtime imports in release artifacts, preventing the 4.6.0 startup failure on supported Macs without the macOS 27 runtime. Thanks @changexbc and @jandubois! #831.
 - Update Tachikoma to 0.5.1 for cancellable provider streams, correct LM Studio tool-call history, and preserved numeric tool values, retaining Peekaboo's existing tool schemas and compatible dependency pins.

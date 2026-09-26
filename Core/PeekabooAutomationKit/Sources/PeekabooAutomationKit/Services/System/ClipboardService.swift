@@ -238,7 +238,7 @@ private enum ClipboardMutationResultOwner {
 
 /// Default implementation backed by NSPasteboard.
 @MainActor
-public final class ClipboardService: ClipboardServiceActionResultProviding {
+public final class ClipboardService: ClipboardServiceActionResultProviding, ClipboardTemporaryWriteProviding {
     private let pasteboard: NSPasteboard
     private let sizeLimit: Int
     private var slots: [String: [ClipboardRepresentation]] = [:]
@@ -246,6 +246,89 @@ public final class ClipboardService: ClipboardServiceActionResultProviding {
     public init(pasteboard: NSPasteboard = .general, sizeLimit: Int = ClipboardPayloadBuilder.defaultSizeLimit) {
         self.pasteboard = pasteboard
         self.sizeLimit = sizeLimit
+    }
+
+    public func prepareTemporaryWrite() throws -> any ClipboardTemporaryWriteTransaction {
+        let originalChangeCount = self.pasteboard.changeCount
+        let items = try self.temporarySnapshotItems()
+        guard self.pasteboard.changeCount == originalChangeCount else {
+            throw ClipboardTemporaryWriteError.snapshotChanged
+        }
+        return OwnedClipboardTemporaryWriteTransaction(
+            priorClipboardPresent: !items.isEmpty,
+            originalChangeCount: originalChangeCount,
+            access: ClipboardTemporaryWriteAccess(
+                changeCount: { self.pasteboard.changeCount },
+                write: { request, expectedChangeCount, didClaim in
+                    var didDispatch = false
+                    return try self.set(
+                        request,
+                        didDispatch: &didDispatch,
+                        expectedChangeCount: expectedChangeCount,
+                        didClaim: didClaim)
+                },
+                restore: { expectedChangeCount in
+                    try self.restoreTemporaryItems(
+                        items,
+                        expectedChangeCount: expectedChangeCount)
+                }))
+    }
+
+    private func temporarySnapshotItems() throws -> [[ClipboardRepresentation]] {
+        guard let items = self.pasteboard.pasteboardItems else {
+            throw ClipboardTemporaryWriteError.snapshotUnavailable
+        }
+        guard !items.isEmpty else {
+            guard let types = self.pasteboard.types, types.isEmpty else {
+                throw ClipboardTemporaryWriteError.snapshotUnavailable
+            }
+            return []
+        }
+        return try items.map { item in
+            guard !item.types.isEmpty else {
+                throw ClipboardTemporaryWriteError.snapshotUnavailable
+            }
+            return try item.types.map { type in
+                guard let data = item.data(forType: type) else {
+                    throw ClipboardTemporaryWriteError.snapshotUnavailable
+                }
+                return ClipboardRepresentation(utiIdentifier: type.rawValue, data: data)
+            }
+        }
+    }
+
+    private func restoreTemporaryItems(
+        _ snapshot: [[ClipboardRepresentation]],
+        expectedChangeCount: Int) throws -> ClipboardReadResult?
+    {
+        let items = try snapshot.map { representations in
+            let item = NSPasteboardItem()
+            for representation in representations {
+                guard item.setData(
+                    representation.data,
+                    forType: NSPasteboard.PasteboardType(representation.utiIdentifier))
+                else {
+                    throw ClipboardServiceError.writeFailed("Unable to prepare a prior clipboard representation")
+                }
+            }
+            return item
+        }
+        try self.requireTemporaryOwnership(expectedChangeCount)
+        let restoredChangeCount = self.pasteboard.clearContents()
+        try self.requireTemporaryOwnership(restoredChangeCount)
+        guard !items.isEmpty else { return nil }
+        guard self.pasteboard.writeObjects(items) else {
+            try self.requireTemporaryOwnership(restoredChangeCount)
+            throw ClipboardServiceError.writeFailed("Unable to restore the prior clipboard items")
+        }
+        try self.requireTemporaryOwnership(restoredChangeCount)
+        return Self.writeResult(for: ClipboardWriteRequest(representations: snapshot[0]))
+    }
+
+    private func requireTemporaryOwnership(_ expectedChangeCount: Int?) throws {
+        if let expectedChangeCount, self.pasteboard.changeCount != expectedChangeCount {
+            throw ClipboardTemporaryWriteError.ownershipChanged
+        }
     }
 
     // MARK: - Slot storage (cross-process)
@@ -319,7 +402,9 @@ public final class ClipboardService: ClipboardServiceActionResultProviding {
 
     private func set(
         _ request: ClipboardWriteRequest,
-        didDispatch: inout Bool) throws -> ClipboardReadResult
+        didDispatch: inout Bool,
+        expectedChangeCount: Int? = nil,
+        didClaim: (Int) -> Void = { _ in }) throws -> ClipboardReadResult
     {
         guard !request.representations.isEmpty else {
             throw ClipboardServiceError.writeFailed("No representations provided.")
@@ -338,24 +423,43 @@ public final class ClipboardService: ClipboardServiceActionResultProviding {
                 types.append(.string)
             }
         }
-        self.pasteboard.declareTypes(types, owner: nil)
+        try self.requireTemporaryOwnership(expectedChangeCount)
+        let declaredChangeCount = self.pasteboard.declareTypes(types, owner: nil)
         didDispatch = true
+        didClaim(declaredChangeCount)
+        let ownedChangeCount = expectedChangeCount == nil ? nil : declaredChangeCount
 
         for representation in request.representations {
+            try self.requireTemporaryOwnership(ownedChangeCount)
             let pbType = NSPasteboard.PasteboardType(representation.utiIdentifier)
             guard self.pasteboard.setData(representation.data, forType: pbType) else {
+                try self.requireTemporaryOwnership(ownedChangeCount)
                 throw ClipboardServiceError.writeFailed("Unable to set type \(representation.utiIdentifier)")
             }
         }
 
+        try self.requireTemporaryOwnership(ownedChangeCount)
         if let alsoText = request.alsoText {
-            self.pasteboard.setString(alsoText, forType: .string)
+            let written = self.pasteboard.setString(alsoText, forType: .string)
+            if ownedChangeCount != nil, !written {
+                try self.requireTemporaryOwnership(ownedChangeCount)
+                throw ClipboardServiceError.writeFailed("Unable to set the text companion")
+            }
         } else if let representation = request.representations.first(where: Self.isPlainTextRepresentation),
                   let fallbackText = String(data: representation.data, encoding: .utf8)
         {
-            self.pasteboard.setString(fallbackText, forType: .string)
+            let written = self.pasteboard.setString(fallbackText, forType: .string)
+            if ownedChangeCount != nil, !written {
+                try self.requireTemporaryOwnership(ownedChangeCount)
+                throw ClipboardServiceError.writeFailed("Unable to set the plain-text companion")
+            }
         }
+        try self.requireTemporaryOwnership(ownedChangeCount)
 
+        return Self.writeResult(for: request)
+    }
+
+    private static func writeResult(for request: ClipboardWriteRequest) -> ClipboardReadResult {
         let primary = request.representations.first!
         let preview: String? = if let text = request.alsoText {
             Self.makePreview(text)
