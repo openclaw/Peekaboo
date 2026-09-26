@@ -5,11 +5,6 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
-
-- Stop inventing local `see --json` UI-map paths for in-memory and Bridge-hosted snapshots; keep reusable snapshot references and inline elements available without a disk artifact.
-- Refuse live/action capture-engine and explicit-host conflicts before runtime setup; explain how to retain the selected host or explicitly opt into caller-local capture.
-
 ## 4.6.0 - 2026-09-25
 
 **Highlights:** Safer typing and bounded clipboard/desktop waits, restored Codex MCP and GUI Bridge connections, explicit background typing strategies, and optional Agent desktop context.
@@ -27,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve implicit observations after canonical no-dispatch paste refusals when no focus or clipboard effect occurred, while retaining conservative invalidation for partial clipboard writes and uncertain input and preserving other operations' pending barriers.
 - Limit ambiguous application suggestions to tied matching names and PIDs instead of exposing the entire running-app inventory, while keeping selector ambiguity fail-closed.
 - Update AXorcist to 0.1.11 for native numeric fidelity, geometry/range parsing improvements, and invalid-scroll refusal before input dispatch.
+- Refuse live/action capture-engine and explicit-host conflicts before runtime setup; explain how to retain the selected host or explicitly opt into caller-local capture.
+- Stop inventing local `see --json` UI-map paths for in-memory and Bridge-hosted snapshots; keep reusable snapshot references and inline elements available without a disk artifact.
 - Avoid duplicating native tool observations in Agent context while preserving action safety metadata, verification receipts, and image attachments.
 
 - Update subprocess integration guidance for background-first host routing, producer-bound snapshots, shell-free Node.js calls, and structured failures without automatic input replay.

@@ -5,6 +5,60 @@ import XCTest
 
 @MainActor
 final class ObservationExactWindowResolverTests: XCTestCase {
+    func testFrontmostSkipsRunningApplicationEnumerationWithoutChangingResolvedReceipt() async throws {
+        let app = Self.app(pid: 123)
+        let window = Self.serviceWindow(id: 42)
+        let service = ExactWindowApplicationService(app: app, windows: [window])
+        let snapshotProvider = DesktopStateSnapshotProvider(applications: service)
+        let resolver = ObservationTargetResolver(
+            applications: service,
+            exactWindowMetadataProvider: TestExactWindowMetadataProvider { _ in nil })
+
+        let snapshot = try await snapshotProvider.snapshot(for: .frontmost)
+        let resolved = try await resolver.resolve(.frontmost, snapshot: snapshot)
+        let inventorySnapshot = DesktopStateSnapshot(
+            runningApplications: [ApplicationIdentity(app)],
+            frontmostApplication: ApplicationIdentity(app))
+        let resolvedWithInventory = try await resolver.resolve(.frontmost, snapshot: inventorySnapshot)
+        let summary = DesktopStateSnapshotSummary(snapshot)
+
+        XCTAssertTrue(snapshot.runningApplications.isEmpty)
+        XCTAssertEqual(summary.runningApplicationCount, 0)
+        XCTAssertEqual(summary.frontmostApplication, ApplicationIdentity(app))
+        XCTAssertEqual(service.getFrontmostApplicationCalls, 1)
+        XCTAssertEqual(service.listApplicationsCalls, 0)
+        XCTAssertEqual(service.findApplicationCalls, 0)
+        XCTAssertEqual(service.listWindowsCalls, 2)
+        XCTAssertEqual(resolved, resolvedWithInventory)
+        XCTAssertEqual(resolved.kind, .windowID(42))
+        XCTAssertEqual(resolved.app?.processIdentifier, 123)
+        XCTAssertEqual(resolved.app?.processStartIdentity, 700)
+        XCTAssertEqual(resolved.window?.bounds, window.bounds)
+        XCTAssertEqual(resolved.detectionContext?.windowMutationIdentity, window.mutationIdentity)
+        XCTAssertEqual(
+            resolved.detectionContext?.windowMutationIdentity,
+            resolvedWithInventory.detectionContext?.windowMutationIdentity)
+    }
+
+    func testNonExactAppAndPIDStillCollectRunningApplicationInventory() async throws {
+        let app = Self.app(pid: 123)
+        let service = ExactWindowApplicationService(app: app, windows: [])
+        let snapshotProvider = DesktopStateSnapshotProvider(applications: service)
+        let targets: [DesktopObservationTargetRequest] = [
+            .app(identifier: "com.example.fixture", window: .automatic),
+            .pid(123, window: .title("Editor")),
+        ]
+
+        for target in targets {
+            let snapshot = try await snapshotProvider.snapshot(for: target)
+            XCTAssertEqual(snapshot.runningApplications, [ApplicationIdentity(app)])
+            XCTAssertEqual(DesktopStateSnapshotSummary(snapshot).runningApplicationCount, 1)
+            XCTAssertNil(snapshot.frontmostApplication)
+        }
+        XCTAssertEqual(service.listApplicationsCalls, targets.count)
+        XCTAssertEqual(service.getFrontmostApplicationCalls, 0)
+    }
+
     func testExactPIDSkipsRunningApplicationEnumeration() async throws {
         let app = Self.app(pid: 123)
         let service = ExactWindowApplicationService(app: app, windows: [])
@@ -393,6 +447,7 @@ private final class ExactWindowApplicationService: ApplicationServiceProtocol {
     var listApplicationsCalls = 0
     var findApplicationCalls = 0
     var listWindowsCalls = 0
+    var getFrontmostApplicationCalls = 0
 
     init(app: ServiceApplicationInfo, windows: [ServiceWindowInfo]) {
         self.app = app
@@ -421,7 +476,8 @@ private final class ExactWindowApplicationService: ApplicationServiceProtocol {
     }
 
     func getFrontmostApplication() async throws -> ServiceApplicationInfo {
-        self.app
+        self.getFrontmostApplicationCalls += 1
+        return self.app
     }
 
     func isApplicationRunning(identifier _: String) async -> Bool {

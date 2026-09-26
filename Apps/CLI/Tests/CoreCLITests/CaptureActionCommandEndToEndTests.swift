@@ -589,6 +589,7 @@ struct CaptureActionCommandEndToEndTests {
         #expect(manifestDigest == manifestReceipt.sha256)
         let manifest = try JSONDecoder().decode(CaptureActionManifest.self, from: manifestData)
         #expect(manifest.schemaVersion == 1)
+        #expect(manifest.request.requestedCaptureEngine == .auto)
         #expect(manifest.request.commandArgumentCount == command.count)
         let commandSHA256 = try CaptureActionManifestWriter.commandSHA256(command)
         #expect(manifest.request.commandSHA256 == commandSHA256)

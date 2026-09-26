@@ -67,6 +67,7 @@ public actor PeekabooBridgeClient {
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
     var compositeTypeDeliveryEnabled = false
+    var desktopObservationInlinePixelsEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -472,6 +473,7 @@ public actor PeekabooBridgeClient {
         self.targetedClickAccessibilityValueDeliveryEnabled = false
         self.requestPinnedExactWindowScrollReceiptEnabled = false
         self.compositeTypeDeliveryEnabled = false
+        self.desktopObservationInlinePixelsEnabled = false
     }
 
     /// Creates or joins one successor-session handshake using the most recent successful public inputs.
@@ -871,6 +873,9 @@ public actor PeekabooBridgeClient {
             requestPinnedExactWindowScrollReceiptEnabled:
             Self.supportsRequestPinnedExactWindowScrollReceipt(handshake),
             compositeTypeDeliveryEnabled: Self.supportsCompositeTypeDelivery(handshake),
+            desktopObservationInlinePixelsEnabled: handshake.supportedOperations.contains(.desktopObservation) &&
+                handshake.hostCapabilities?
+                .contains(PeekabooBridgeHostCapability.desktopObservationInlinePixels) == true,
             listenerAttestation: authentication.listenerAttestation,
             listenerLiveIdentity: authentication.listenerLiveIdentity,
             sessionAttestation: authentication.sessionAttestation,
@@ -1188,6 +1193,7 @@ public actor PeekabooBridgeClient {
         self.requestPinnedExactWindowScrollReceiptEnabled =
             candidate.requestPinnedExactWindowScrollReceiptEnabled
         self.compositeTypeDeliveryEnabled = candidate.compositeTypeDeliveryEnabled
+        self.desktopObservationInlinePixelsEnabled = candidate.desktopObservationInlinePixelsEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
         if let listenerAttestation = candidate.listenerAttestation,
@@ -1493,6 +1499,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let targetedClickAccessibilityValueDeliveryEnabled: Bool
     let requestPinnedExactWindowScrollReceiptEnabled: Bool
     let compositeTypeDeliveryEnabled: Bool
+    let desktopObservationInlinePixelsEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?
     let sessionAttestation: PeekabooBridgeOperationSessionAttestation?

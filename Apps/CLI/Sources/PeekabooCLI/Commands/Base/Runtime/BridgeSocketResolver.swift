@@ -1,3 +1,5 @@
+import Foundation
+
 enum BridgeSocketResolver {
     static func explicitBridgeSocket(
         options: CommandRuntimeOptions,
@@ -10,5 +12,13 @@ enum BridgeSocketResolver {
             return socket
         }
         return nil
+    }
+
+    static func hasNonblankExplicitBridgeSocket(
+        options: CommandRuntimeOptions,
+        environment: [String: String]
+    ) -> Bool {
+        guard let socket = self.explicitBridgeSocket(options: options, environment: environment) else { return false }
+        return !socket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

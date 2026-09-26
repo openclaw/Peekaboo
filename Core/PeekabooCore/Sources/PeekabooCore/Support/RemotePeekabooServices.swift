@@ -72,6 +72,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsDesktopObservation: Bool = false,
         supportsDesktopObservationOCR: Bool = false,
         supportsDesktopObservationCaptureEngine: Bool = false,
+        supportsDesktopObservationInlinePixels: Bool = false,
         supportsExactWindowROIObservation: Bool = false,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsSnapshotMutationLeases: Bool = false,
@@ -94,9 +95,21 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         let supportsRemoteDesktopObservationOCR = supportsDesktopObservation && supportsDesktopObservationOCR
         let supportsRemoteCaptureEnginePreference = supportsDesktopObservation &&
             supportsDesktopObservationCaptureEngine
+        let remoteDesktopObservation = RemoteDesktopObservationService(
+            client: client,
+            capturePolicy: capturePolicy,
+            supportsDesktopObservationOCR: supportsRemoteDesktopObservationOCR,
+            supportsDesktopObservationCaptureEngine: supportsRemoteCaptureEnginePreference,
+            supportsDesktopObservationInlinePixels: supportsDesktopObservation &&
+                supportsDesktopObservationInlinePixels,
+            supportsExactWindowROIObservation: supportsExactWindowROIObservation)
 
         self.logging = LoggingService()
-        self.screenCapture = RemoteScreenCaptureService(client: client, capturePolicy: capturePolicy)
+        let remoteScreenCapture = RemoteScreenCaptureService(
+            client: client,
+            capturePolicy: capturePolicy,
+            desktopObservation: remoteDesktopObservation)
+        self.screenCapture = remoteScreenCapture
         self.applications = RemoteApplicationService(
             client: client,
             localFallback: allowLocalApplicationFallback ? ApplicationService() : nil,
@@ -192,15 +205,10 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         let screenService = ScreenService()
 
         self.desktopObservation = if supportsDesktopObservation {
-            RemoteDesktopObservationService(
-                client: client,
-                capturePolicy: capturePolicy,
-                supportsDesktopObservationOCR: supportsRemoteDesktopObservationOCR,
-                supportsDesktopObservationCaptureEngine: supportsRemoteCaptureEnginePreference,
-                supportsExactWindowROIObservation: supportsExactWindowROIObservation)
+            remoteDesktopObservation
         } else {
             LegacyRemoteDesktopObservationService(delegate: DesktopObservationService(
-                screenCapture: self.screenCapture,
+                screenCapture: remoteScreenCapture.unscopedCapture,
                 automation: self.automation,
                 applications: self.applications,
                 menu: menuService,
@@ -265,6 +273,9 @@ private final class LegacyRemoteDesktopObservationService: DesktopObservationSer
     }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        guard !request.output.includeImageData else {
+            throw RemoteDesktopObservationCapabilityPolicy.inlinePixelsUnavailableError()
+        }
         guard !RemoteDesktopObservationCapabilityPolicy.requiresCaptureEnginePreferenceCapability(request) else {
             throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
         }

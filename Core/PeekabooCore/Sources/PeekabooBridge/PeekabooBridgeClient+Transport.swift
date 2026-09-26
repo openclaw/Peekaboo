@@ -189,6 +189,14 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if case let .desktopObservation(observation) = request.unwrappedOperationRequest,
+           observation.output.includeImageData, !self.desktopObservationInlinePixelsEnabled
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host does not advertise desktopObservationInlinePixels. " +
+                    "Update and relaunch Peekaboo on the selected host before requesting inline capture pixels.")
+        }
         if request.requiresBrowserConnectionHandoff, !self.browserConnectionHandoffEnabled {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,

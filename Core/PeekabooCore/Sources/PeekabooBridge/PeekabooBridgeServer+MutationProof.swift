@@ -67,7 +67,7 @@ extension PeekabooBridgeServer {
         result: DesktopObservationResult,
         requireContentDigest: Bool = true) throws
     {
-        guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+        guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics || request.output.includeImageData,
               let mismatch = PeekabooBridgeDesktopObservationBinding.mismatch(
                   request: request,
                   result: result,

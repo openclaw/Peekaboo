@@ -8,6 +8,7 @@ enum BridgeCapabilityPolicy {
         let desktopObservation: Bool
         let desktopObservationOCR: Bool
         let desktopObservationCaptureEngine: Bool
+        let desktopObservationInlinePixels: Bool
         let exactWindowROIObservation: Bool
     }
 
@@ -16,9 +17,11 @@ enum BridgeCapabilityPolicy {
         options: CommandRuntimeOptions
     ) -> Bool {
         let defersScreenRecording = self.defersRemoteScreenRecordingPermission(options: options)
+        let captureOperation: PeekabooBridgeOperation = options.requiresDesktopObservationInlinePixels
+            ? .desktopObservation : .captureScreen
         let supportsCapture = defersScreenRecording
-            ? self.supportsPermissionDeferredOperation(.captureScreen, for: handshake, options: options)
-            : self.supportsOperation(.captureScreen, for: handshake)
+            ? self.supportsPermissionDeferredOperation(captureOperation, for: handshake, options: options)
+            : self.supportsOperation(captureOperation, for: handshake)
         if options.requiresScreenCapturePermission || options.requiresSilentCapture,
            !supportsCapture {
             return false
@@ -34,7 +37,7 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresSilentCapture, !self.supportsSilentCapture(for: handshake) {
+        if options.requiresSilentCapture, !self.supportsSilentCapture(for: handshake, operation: captureOperation) {
             return false
         }
 
@@ -155,6 +158,9 @@ enum BridgeCapabilityPolicy {
            !capabilities.desktopObservationCaptureEngine {
             return false
         }
+        if options.requiresDesktopObservationInlinePixels, !capabilities.desktopObservationInlinePixels {
+            return false
+        }
         if options.requiresScreenCaptureKitOwnerCapability,
            !(self.defersClassicScreenRecordingPermission(options: options)
                ? self.supportsClassicCaptureWithoutScreenCaptureKit(for: handshake)
@@ -187,6 +193,7 @@ enum BridgeCapabilityPolicy {
                 desktopObservation: self.supportsDesktopObservation(for: handshake),
                 desktopObservationOCR: self.supportsDesktopObservationOCR(for: handshake),
                 desktopObservationCaptureEngine: self.supportsDesktopObservationCaptureEngine(for: handshake),
+                desktopObservationInlinePixels: self.supportsDesktopObservationInlinePixels(for: handshake),
                 exactWindowROIObservation: self.supportsExactWindowROIObservation(for: handshake)
             )
         }
@@ -201,6 +208,10 @@ enum BridgeCapabilityPolicy {
             desktopObservationCaptureEngine: supportsObservation &&
                 handshake.hostCapabilities?.contains(
                     PeekabooBridgeHostCapability.desktopObservationCaptureEngine
+                ) == true,
+            desktopObservationInlinePixels: supportsObservation &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.desktopObservationInlinePixels
                 ) == true,
             exactWindowROIObservation: supportsObservation &&
                 handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowROIObservationVersion &&
@@ -568,6 +579,11 @@ enum BridgeCapabilityPolicy {
             ) == true
     }
 
+    static func supportsDesktopObservationInlinePixels(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        self.supportsDesktopObservation(for: handshake) &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.desktopObservationInlinePixels) == true
+    }
+
     private static func defersClassicScreenRecordingPermission(options: CommandRuntimeOptions) -> Bool {
         options.requiresScreenCaptureKitOwnerCapability &&
             ObservationCommandSupport.captureEnginePreference(
@@ -604,9 +620,12 @@ enum BridgeCapabilityPolicy {
         ].allSatisfy { self.supportsOperation($0, for: handshake) }
     }
 
-    static func supportsSilentCapture(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+    static func supportsSilentCapture(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        operation: PeekabooBridgeOperation = .captureScreen
+    ) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 12) &&
-            handshake.supportedOperations.contains(.captureScreen)
+            handshake.supportedOperations.contains(operation)
     }
 
     static func supportsTargetedFocusedElement(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

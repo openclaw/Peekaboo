@@ -28,8 +28,9 @@ InjectedRuntimeBackedCommand {
         help: """
         Capture engine: auto|modern|sckit|classic|cg (default: auto).
         modern/sckit force ScreenCaptureKit; classic/cg force CGWindowList;
-        auto tries CGWindowList then falls back when allowed.
-        Overrides are caller-local; an explicit Bridge socket also requires --no-remote.
+        auto follows the selected host's capture policy.
+        Overrides stay caller-local unless --bridge-socket or PEEKABOO_BRIDGE_SOCKET selects a compatible host.
+        --no-remote always selects the caller.
         """
     ) var captureEngine: String?
 
@@ -78,11 +79,19 @@ InjectedRuntimeBackedCommand {
         self.logger.operationStart("capture_live", metadata: ["mode": self.mode ?? "auto"])
 
         do {
+            try runtime.requireCompatibleHost()
             // The capture service performs the authoritative permission check inside
             // the serialized capture transaction; an extra CLI-side SCK probe can race
             // with concurrent screenshot commands and report transient TCC denial.
             let scope = try await resolveScope()
             let options = try buildOptions()
+            let enginePreference = try CaptureCommandOptionParser.enginePreference(
+                cliValue: self.captureEngine,
+                configuredValue: self.resolvedRuntime.configuration.captureEnginePreference,
+                kind: scope.kind,
+                gateOwner: self.services.screenCapture.captureTransactionGateOwner,
+                supportsEngineScope: self.services.screenCapture is any EngineAwareScreenCaptureServiceProtocol
+            )
             if scope.kind == .window, let identifier = scope.applicationIdentifier {
                 _ = try await focusIfNeeded(
                     appIdentifier: identifier,
@@ -113,9 +122,9 @@ InjectedRuntimeBackedCommand {
             let runSession: @MainActor @Sendable () async throws -> CaptureSessionResult = {
                 try await session.run()
             }
-            let enginePreference = liveCaptureEnginePreference(for: scope)
-            let result: CaptureSessionResult = if let engineAware = services.screenCapture
-                as? any EngineAwareScreenCaptureServiceProtocol {
+            let result: CaptureSessionResult = if let enginePreference,
+                                                  let engineAware = services.screenCapture
+                                                  as? any EngineAwareScreenCaptureServiceProtocol {
                 try await engineAware.withCaptureEngine(enginePreference, operation: runSession)
             } else {
                 try await runSession()
@@ -134,25 +143,6 @@ InjectedRuntimeBackedCommand {
                 metadata: ["error": error.localizedDescription]
             )
             throw ExitCode(1)
-        }
-    }
-}
-
-extension CaptureLiveCommand {
-    private func liveCaptureEnginePreference(for scope: CaptureScope) -> CaptureEnginePreference {
-        let value = (captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        switch value {
-        case "modern", "modern-only", "sckit", "sc", "screen-capture-kit", "sck":
-            return .modern
-        case "classic", "cg", "legacy", "legacy-only", "false", "0", "no":
-            return .legacy
-        default:
-            // Live region capture samples repeatedly; CoreGraphics area capture is faster
-            // and avoids SCK continuation leaks when observation commands overlap.
-            return scope.kind == .region ? .legacy : .auto
         }
     }
 }

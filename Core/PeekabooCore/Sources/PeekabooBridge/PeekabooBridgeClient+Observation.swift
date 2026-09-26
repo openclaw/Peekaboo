@@ -25,6 +25,15 @@ extension PeekabooBridgeClient {
             }
         let result: UIAutomationActionResult<DesktopObservationResult> = delivered.result
         do {
+            if request.output.includeImageData {
+                guard !result.payload.capture.imageData.isEmpty else {
+                    throw PeekabooBridgeOperationReceiptError.receiptMismatch("requested inline capture pixels")
+                }
+                // Receipt validation already checked these exact response bytes and their content digest.
+                if !delivered.hasVerifiedOperationReceipt {
+                    _ = try result.payload.verifiedCaptureImageData(requirement: .requireDigest)
+                }
+            }
             let contentRequirement: DesktopObservationContentVerificationRequirement =
                 delivered.hasVerifiedOperationReceipt ? .requireDigest : .allowUnsignedLegacy
             if contentRequirement == .requireDigest, result.payload.captureContentDigest == nil {
