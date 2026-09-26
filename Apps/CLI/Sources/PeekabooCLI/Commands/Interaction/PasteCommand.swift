@@ -991,6 +991,8 @@ extension PasteCommand: ParsableCommand {
                       2) paste delivery
                       3) clipboard restore
                     into one operation when you provide text, a file, an image, or base64 data.
+                    Cleanup restores the prior clipboard only while the temporary contents are still
+                    owned by this operation; a newer copy from you or another app is preserved.
                     Background text delivery is used by default when a target process is known;
                     binary/current-clipboard payloads use targeted Cmd+V. Because macOS does not
                     acknowledge receiver consumption, those background calls return a may-have-pasted,

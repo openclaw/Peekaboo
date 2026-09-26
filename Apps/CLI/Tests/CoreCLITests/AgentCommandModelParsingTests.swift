@@ -85,6 +85,16 @@ struct AgentCommandTests {
     }
 
     @Test
+    func `GPT-6 aliases preserve the selected tier`() throws {
+        let command = try AgentCommand.parse([])
+        #expect(command.parseModelString("gpt-6") == .openai(.gpt6Astra))
+        #expect(command.parseModelString("gpt-6-astra") == .openai(.gpt6Astra))
+        #expect(command.parseModelString("openai/gpt-6-sol") == .openai(.gpt6Sol))
+        #expect(command.parseModelString("gpt6luna") == .openai(.gpt6Luna))
+        #expect(command.parseModelString("gpt-6-terra") == nil)
+    }
+
+    @Test
     func `Supported Anthropic aliases parse current models`() throws {
         let command = try AgentCommand.parse([])
 

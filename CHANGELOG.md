@@ -5,6 +5,8 @@
 - Preserve newer user or application clipboard updates during CLI and MCP paste cleanup, including cancellation and partial-write failures; restore complete prior clipboard items only while the temporary generation is still owned, report skipped restoration, and retain clipboard effects when hotkey delivery is refused without inventing receiver attribution.
 - Preserve native scalar tool arguments in Agent provider schemas and preflight validation so `set_value` accepts Boolean and numeric values without string coercion; retain existing structured-schema compatibility and native safety checks.
 - Keep CLI builds on Swift Collections 1.6.0 and reject unsupported strong borrowing-runtime imports in release artifacts, preventing the 4.6.0 startup failure on supported Macs without the macOS 27 runtime. Thanks @changexbc and @jandubois! #831.
+- Add GPT-6 Astra, Sol, and Luna selection through Tachikoma, preserving the chosen tier and 128K output allowance for native and compatible agent routes, and omitting unsupported temperature controls on reasoning routes.
+
 - Update Tachikoma to 0.5.1 for cancellable provider streams, correct LM Studio tool-call history, and preserved numeric tool values, retaining Peekaboo's existing tool schemas and compatible dependency pins.
 - Avoid executable-file probes when selecting background pointer delivery; inspect WebKit imports only for eligible native wheel targets, preserving exact-window safety checks.
 - Keep help, version, shell completions, and Agent dry-run output independent of configuration parsing, avoiding unnecessary startup reads and malformed-config warnings that corrupt JSON previews.
