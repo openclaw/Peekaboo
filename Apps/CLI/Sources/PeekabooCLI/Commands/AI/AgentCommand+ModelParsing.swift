@@ -234,6 +234,9 @@ extension AgentCommand {
     }
 
     private static let supportedOpenAIInputs: Set<LanguageModel.OpenAI> = [
+        .gpt6Astra,
+        .gpt6Sol,
+        .gpt6Luna,
         .gpt56Sol,
         .gpt56Terra,
         .gpt56Luna,

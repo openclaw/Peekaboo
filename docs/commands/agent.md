@@ -183,6 +183,11 @@ For automation flows that cannot attach to a TTY, use `agent chat` with standard
 # Let the agent sign into Slack using GPT-5.6 with verbose tracing
 peekaboo agent "Check Slack mentions" --model gpt-5.6 --verbose
 
+# Use GPT-6 Astra, Sol, or Luna (the gpt-6 shortcut selects Astra)
+peekaboo agent "Check the current window" --model gpt-6-astra
+peekaboo agent "Check the current window" --model gpt-6-sol
+peekaboo agent "Check the current window" --model gpt-6-luna
+
 # Use GPT-5.6 Sol (the gpt-5.6 shortcut selects Sol)
 peekaboo agent "Check the current window" --model gpt-5.6
 

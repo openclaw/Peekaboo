@@ -22,7 +22,8 @@ extension PeekabooAgentService {
         let temperature = self.shouldOmitTemperature(for: model) ? nil : self.configuredTemperature(for: model)
 
         return switch model {
-        case .openai(.gpt56Sol), .openai(.gpt56Terra), .openai(.gpt56Luna),
+        case .openai(.gpt6Astra), .openai(.gpt6Sol), .openai(.gpt6Luna),
+             .openai(.gpt56Sol), .openai(.gpt56Terra), .openai(.gpt56Luna),
              .openai(.gpt55), .openai(.gpt54), .openai(.gpt54Mini), .openai(.gpt54Nano), .openai(.gpt5):
             GenerationSettings(
                 maxTokens: maxTokens,
@@ -134,6 +135,9 @@ extension PeekabooAgentService {
         case let .openai(openAIModel):
             switch openAIModel {
             case .chatLatest,
+                 .gpt6Astra,
+                 .gpt6Sol,
+                 .gpt6Luna,
                  .gpt56Sol,
                  .gpt56Terra,
                  .gpt56Luna,

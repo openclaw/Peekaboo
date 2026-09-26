@@ -71,7 +71,7 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
-    func `Sonnet 5 and GPT-5_6 preserve current generation capabilities`() throws {
+    func `Sonnet 5 and GPT reasoning models preserve current generation capabilities`() throws {
         try self.withIsolatedAgentEnvironment(
             [:],
             configurationJSON: """
@@ -90,6 +90,9 @@ extension PeekabooAgentServiceTests {
 
                 for model in [
                     LanguageModel.openai(.gpt56Sol),
+                    .openai(.gpt6Astra),
+                    .openai(.gpt6Sol),
+                    .openai(.gpt6Luna),
                     .openai(.gpt56Terra),
                     .openai(.gpt56Luna),
                 ] {
