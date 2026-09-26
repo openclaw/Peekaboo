@@ -12,13 +12,99 @@ struct ApplicationInventoryTimeoutTests {
         phase: NativeInventoryPhase,
         cancel: Bool) async throws
     {
-        let gate = ApplicationInventoryBlockingGate()
-        defer { gate.release() }
-        let nativeReads = AutomationTestLockedValue(0)
+        try await Self.withAdmittedInventoryFixture(phase: phase, cancel: cancel) { gate, nativeReads, task in
+            try await Self.assertBlockedInventory(
+                phase: phase,
+                cancel: cancel,
+                gate: gate,
+                reads: nativeReads,
+                task: task)
+        }
+    }
+
+    @Test
+    func `inventory fixture retries pre-entry expiry before exercising native confirmation`() async throws {
+        let attempts = AutomationTestLockedValue(0)
+        try await Self.withAdmittedInventoryFixture(
+            phase: .listingAbsenceConfirmation,
+            cancel: false,
+            nowProviderForAttempt: { attempt in
+                attempts.value = attempt
+                if attempt == 1 {
+                    return Self.expiringInventoryClock()
+                }
+                return { ContinuousClock.now }
+            },
+            operation: { gate, nativeReads, task in
+                #expect((2...3).contains(attempts.value))
+                try await Self.assertBlockedInventory(
+                    phase: .listingAbsenceConfirmation, cancel: false, gate: gate, reads: nativeReads, task: task)
+            })
+    }
+
+    @Test(arguments: [false, true])
+    func `inventory fixture rejects exhausted or cancellation pre-entry attempts`(cancel: Bool) async throws {
+        let attempts = AutomationTestLockedValue(0)
+        let admitted = AutomationTestLockedValue(false)
+        let expectedError: ApplicationInventoryFixtureError = cancel
+            ? .cancellationAdmissionFailed : .admissionExhausted
+        await #expect(throws: expectedError) {
+            try await Self.withAdmittedInventoryFixture(
+                phase: .listingAbsenceConfirmation,
+                cancel: cancel,
+                nowProviderForAttempt: { attempt in
+                    attempts.value = attempt
+                    return Self.expiringInventoryClock()
+                },
+                operation: { _, _, _ in admitted.value = true })
+        }
+        #expect(attempts.value == (cancel ? 1 : 3))
+        #expect(!admitted.value)
+    }
+
+    @Test
+    func `inventory fixture never retries a timeout failure after native admission`() async throws {
+        let attempts = AutomationTestLockedValue(0)
+        let admittedAttempt = AutomationTestLockedValue(0)
+        let behaviorCalls = AutomationTestLockedValue(0)
+        let failure = PeekabooError.timeout("Admitted inventory assertion failed")
+        do {
+            try await Self.withAdmittedInventoryFixture(
+                phase: .listingAbsenceConfirmation,
+                cancel: false,
+                nowProviderForAttempt: { attempt in
+                    attempts.value = attempt
+                    return { ContinuousClock.now }
+                },
+                operation: { gate, nativeReads, task in
+                    admittedAttempt.value = attempts.value
+                    behaviorCalls.withValue { $0 += 1 }
+                    await #expect(throws: PeekabooError.self) { _ = try await task.value }
+                    #expect(nativeReads.value == 1)
+                    #expect(!gate.wasReleased)
+                    let newerReads = AutomationTestLockedValue(0)
+                    let newerService = await Self.emptyInventoryService(reads: newerReads)
+                    await #expect(throws: PeekabooError.self) { _ = try await newerService.listApplications() }
+                    #expect(newerReads.value == 0)
+                    throw failure
+                })
+            Issue.record("An admitted behavioral failure must escape the fixture")
+        } catch let error as PeekabooError {
+            guard case let .timeout(message) = error else { throw error }
+            #expect(message == "Admitted inventory assertion failed")
+        }
+        #expect(behaviorCalls.value == 1)
+        #expect(attempts.value == admittedAttempt.value)
+    }
+
+    private static func assertBlockedInventory(
+        phase: NativeInventoryPhase,
+        cancel: Bool,
+        gate: ApplicationInventoryBlockingGate,
+        reads nativeReads: AutomationTestLockedValue<Int>,
+        task: Task<[ServiceApplicationInfo], any Error>) async throws
+    {
         let heartbeat = AutomationTestLockedValue(false)
-        let service = await Self.blockedInventoryService(phase: phase, cancel: cancel, gate: gate, reads: nativeReads)
-        let task = Task { try await phase.observe(service) }
-        #expect(await gate.startedAsynchronously())
         let beat = Task { @MainActor in heartbeat.value = !gate.wasReleased }
         if cancel {
             task.cancel()
@@ -38,16 +124,7 @@ struct ApplicationInventoryTimeoutTests {
 
         if !gate.wasReleased {
             let newerReads = AutomationTestLockedValue(0)
-            let newerService = await MainActor.run {
-                ApplicationService(
-                    applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
-                    frontmostProcessIdentifierProvider: { nil },
-                    runningApplicationProcessIdentifiersProvider: {
-                        newerReads.withValue { $0 += 1 }
-                        return []
-                    },
-                    applicationWindowCatalogProvider: { [] })
-            }
+            let newerService = await Self.emptyInventoryService(reads: newerReads)
             for _ in 0..<3 {
                 await #expect(throws: PeekabooError.self) { _ = try await newerService.listApplications() }
                 await #expect(throws: PeekabooError.self) { _ = try await newerService.applicationMutationInventory() }
@@ -67,18 +144,7 @@ struct ApplicationInventoryTimeoutTests {
             await #expect(throws: PeekabooError.self) { _ = try await newerRequest.value }
             #expect(newerReads.value == 0)
             // The provider's finished signal precedes native-slot release; observe recovery before the next case.
-            let recoveryDeadline = ContinuousClock.now.advanced(by: .seconds(1))
-            while true {
-                do {
-                    let recovered = try await newerService.listApplications()
-                    #expect(recovered.data.applications.isEmpty)
-                    #expect(recovered.metadata.warnings.isEmpty)
-                    break
-                } catch let error as PeekabooError {
-                    guard case .timeout = error, ContinuousClock.now < recoveryDeadline else { throw error }
-                    await Task.yield()
-                }
-            }
+            try await Self.waitForInventoryRecovery(using: newerService)
             return
         }
         gate.release()
@@ -565,7 +631,9 @@ struct ApplicationInventoryTimeoutTests {
         }
         gate.release()
     }
+}
 
+extension ApplicationInventoryTimeoutTests {
     enum NativeInventoryPhase: String, CaseIterable, Sendable {
         case listingPID, listingCatalog, listingFinalGeneration
         case listingAbsenceObservation, listingAbsenceConfirmation
@@ -599,12 +667,106 @@ struct ApplicationInventoryTimeoutTests {
         }
     }
 
+    private static func withAdmittedInventoryFixture(
+        phase: NativeInventoryPhase,
+        cancel: Bool,
+        nowProviderForAttempt: @MainActor (Int) -> ApplicationService.ApplicationInventoryNowProvider = { _ in
+            { ContinuousClock.now }
+        },
+        operation: (
+            ApplicationInventoryBlockingGate,
+            AutomationTestLockedValue<Int>,
+            Task<[ServiceApplicationInfo], any Error>) async throws -> Void) async throws
+    {
+        let recoveryService = await Self.emptyInventoryService()
+        for attempt in 1...(cancel ? 1 : 3) {
+            let gate = ApplicationInventoryBlockingGate()
+            defer { gate.release() }
+            let reads = AutomationTestLockedValue(0)
+            let nowProvider = await nowProviderForAttempt(attempt)
+            let service = await Self.blockedInventoryService(
+                phase: phase, cancel: cancel, gate: gate, reads: reads, nowProvider: nowProvider)
+            let task = Task { try await phase.observe(service) }
+            if await gate.startedAsynchronously() {
+                let result: Result<Void, any Error>
+                do {
+                    try await operation(gate, reads, task)
+                    result = .success(())
+                } catch {
+                    result = .failure(error)
+                }
+                task.cancel()
+                gate.release()
+                _ = await task.result
+                try await Self.waitForInventoryRecovery(using: recoveryService)
+                return try result.get()
+            }
+
+            if cancel {
+                task.cancel()
+            }
+            let result = await task.result
+            gate.release()
+            try await Self.waitForInventoryRecovery(using: recoveryService)
+            // A caller timeout does not join native work; classify entry only after the lane drains.
+            guard reads.value == 0 else { throw ApplicationInventoryFixtureError.unobservedAdmission }
+            guard !cancel else { throw ApplicationInventoryFixtureError.cancellationAdmissionFailed }
+            switch result {
+            case let .failure(error as PeekabooError):
+                guard case .timeout = error else { throw error }
+            case let .failure(error):
+                throw error
+            case .success:
+                throw ApplicationInventoryFixtureError.unexpectedSetupSuccess
+            }
+        }
+        throw ApplicationInventoryFixtureError.admissionExhausted
+    }
+
+    private static func expiringInventoryClock() -> ApplicationService.ApplicationInventoryNowProvider {
+        let now = ContinuousClock.now
+        let reads = AutomationTestLockedValue(0)
+        return {
+            reads.withValue { $0 += 1; return $0 } == 1 ? now : now.advanced(by: .seconds(60))
+        }
+    }
+
+    @MainActor
+    private static func emptyInventoryService(
+        reads: AutomationTestLockedValue<Int> = AutomationTestLockedValue(0)) -> ApplicationService
+    {
+        ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            frontmostProcessIdentifierProvider: { nil },
+            runningApplicationProcessIdentifiersProvider: {
+                reads.withValue { $0 += 1 }
+                return []
+            },
+            applicationWindowCatalogProvider: { [] })
+    }
+
+    private static func waitForInventoryRecovery(using service: ApplicationService) async throws {
+        let recoveryDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while true {
+            do {
+                let recovered = try await service.listApplications()
+                #expect(recovered.data.applications.isEmpty)
+                #expect(recovered.metadata.warnings.isEmpty)
+                return
+            } catch let error as PeekabooError {
+                guard case .timeout = error, ContinuousClock.now < recoveryDeadline else { throw error }
+                await Task.yield()
+            }
+        }
+    }
+
     @MainActor
     private static func blockedInventoryService(
         phase: NativeInventoryPhase,
         cancel: Bool,
         gate: ApplicationInventoryBlockingGate,
-        reads: AutomationTestLockedValue<Int>) -> ApplicationService
+        reads: AutomationTestLockedValue<Int>,
+        nowProvider: @escaping ApplicationService.ApplicationInventoryNowProvider) -> ApplicationService
     {
         let pid: pid_t = 42003
         let generationReads = AutomationTestLockedValue(0)
@@ -686,6 +848,7 @@ struct ApplicationInventoryTimeoutTests {
                 block(.listingCatalog)
                 return []
             },
+            applicationInventoryNowProvider: nowProvider,
             applicationMetadataProvider: { identifier, generation, _ in
                 #expect(identifier == pid)
                 #expect(generation == 7)
@@ -1045,8 +1208,12 @@ extension ApplicationInventoryTimeoutTests {
     }
 }
 
-private enum ApplicationInventoryFixtureError: Error {
+private enum ApplicationInventoryFixtureError: Error, Equatable {
     case unused
+    case admissionExhausted
+    case unobservedAdmission
+    case cancellationAdmissionFailed
+    case unexpectedSetupSuccess
 }
 
 private actor ApplicationInventoryGate {

@@ -139,6 +139,16 @@ macOS runtime baseline. Release runtime verification rejects that strong import 
 reused binaries and extracted archives. Weak imports remain distinct; this does not weak-link the Swift runtime or
 replace system libraries. Successful execution on the build host alone does not prove older-macOS compatibility.
 
+## Tachikoma integration
+
+The internal CLI and Mac app consume the Tachikoma submodule at its published 0.5.1 revision. The tracked consumer
+locks retain their existing compatible versions, including Swift Crypto 4.5.2 and Peekaboo's pinned MCP SDK revision;
+Tachikoma's standalone `Package.resolved` does not replace those consumer locks.
+
+Keep Peekaboo's Agent schema conversion in the integration layer: its recursive union projection preserves structured
+`verify_state` predicate-array items that Tachikoma's legacy parameter projection still treats as strings. Updating the
+dependency does not replace that consumer contract or weaken Agent argument validation.
+
 ## Shared CodeQL build graph
 
 The workspace's `CodeQL` scheme builds the CLI, certification controller, Mac app, Playground, and Inspector
