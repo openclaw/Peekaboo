@@ -1203,18 +1203,20 @@ extension VerifyStateToolTests {
         #expect(Self.stringMeta("reason", response)?.contains("deadline") == true)
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func `Cancellation returns while noncooperative enumeration remains pending`() async throws {
         let fixture = VerifyStateFixture()
+        let gate = NoncooperativeWorkGate()
         let slowApplications = VerifyStateApplicationService(
             applications: [fixture.application],
             windows: [fixture.window],
-            delay: .seconds(1))
+            onListWindows: {
+                await gate.wait()
+                await gate.finish()
+            })
         let context = await MCPToolTestHelpers.makeContext(
             automation: fixture.automation,
             applications: slowApplications)
-        let clock = ContinuousClock()
-        let start = clock.now
         let task = Task { @MainActor in
             try await fixture.tool(context: context).execute(arguments: ToolArguments(raw: [
                 "pid": Int(fixture.application.processIdentifier),
@@ -1223,13 +1225,26 @@ extension VerifyStateToolTests {
                 "stable_samples": 1,
             ]))
         }
-
-        try await Task.sleep(for: .milliseconds(30))
+        let watchdog = Task {
+            do {
+                try await Task.sleep(for: .seconds(10))
+                await gate.release()
+            } catch {}
+        }
+        await gate.waitUntilBlocked()
+        #expect(await gate.hasEntered, "Enumeration must start before cancellation")
         task.cancel()
         await #expect(throws: CancellationError.self) {
             try await task.value
         }
-        #expect(start.duration(to: clock.now) < .milliseconds(500))
+        #expect(await !gate.isReleased, "Cancellation must return without joining enumeration")
+        #expect(await !gate.hasFinished)
+        watchdog.cancel()
+        await gate.release()
+        if await gate.hasEntered {
+            await gate.waitUntilFinished()
+        }
+        await watchdog.value
     }
 
     @Test

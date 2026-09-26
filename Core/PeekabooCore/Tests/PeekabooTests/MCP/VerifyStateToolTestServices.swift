@@ -15,6 +15,7 @@ final class VerifyStateApplicationService: ApplicationServiceProtocol {
     let windowStatus: UnifiedToolOutput<ServiceWindowListData>.Summary.Status
     let warnings: [String]
     let delay: Duration?
+    let onListWindows: (@MainActor () async -> Void)?
     private(set) var listApplicationsCallCount = 0
     private(set) var listWindowsCallCount = 0
 
@@ -27,7 +28,8 @@ final class VerifyStateApplicationService: ApplicationServiceProtocol {
         onListApplications: (@MainActor (Int) -> Void)? = nil,
         windowStatus: UnifiedToolOutput<ServiceWindowListData>.Summary.Status = .success,
         warnings: [String] = [],
-        delay: Duration? = nil)
+        delay: Duration? = nil,
+        onListWindows: (@MainActor () async -> Void)? = nil)
     {
         self.applications = applications
         self.windows = windows
@@ -38,6 +40,7 @@ final class VerifyStateApplicationService: ApplicationServiceProtocol {
         self.windowStatus = windowStatus
         self.warnings = warnings
         self.delay = delay
+        self.onListWindows = onListWindows
     }
 
     func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
@@ -67,6 +70,7 @@ final class VerifyStateApplicationService: ApplicationServiceProtocol {
         -> UnifiedToolOutput<ServiceWindowListData>
     {
         self.listWindowsCallCount += 1
+        await self.onListWindows?()
         if let delay {
             await verifyStateNonCooperativeDelay(delay)
         }
