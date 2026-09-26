@@ -1,4 +1,6 @@
 import Foundation
+import Tachikoma
+import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomation
@@ -182,7 +184,7 @@ struct AgentToolDescriptionTests {
 
     @Test
     @MainActor
-    func `MCP union parameters remain visible to agent providers`() throws {
+    func `MCP scalar unions survive provider schema serialization`() throws {
         let service = try PeekabooAgentService(services: PeekabooServices())
         let tool = service.createSetValueTool()
         let properties = tool.parameters.properties
@@ -191,6 +193,15 @@ struct AgentToolDescriptionTests {
         #expect(properties["value"]?.type == .string)
         #expect(tool.parameters.required.contains("value"))
         #expect(tool.parameters.required.allSatisfy { properties[$0] != nil })
+
+        let schema = try tool.parameters.schemaValue()
+        let value = try #require(schema.objectValue?["properties"]?.objectValue?["value"]?.objectValue)
+        #expect(value["type"] == nil)
+        #expect(value["anyOf"]?.arrayValue?.compactMap { $0.objectValue?["type"]?.stringValue } ==
+            ["string", "boolean", "integer", "number"])
+        #expect(schema == tool.parameters.sourceSchema)
+        #expect(schema.objectValue?["required"]?.arrayValue?.compactMap(\.stringValue) == ["on", "value"])
+        #expect(try tool.parameters.typedSchema().keywords?.properties?["value"]?.keywords?.anyOf?.count == 4)
     }
 
     @Test
@@ -206,6 +217,37 @@ struct AgentToolDescriptionTests {
         #expect(items.description?.contains(#"{"kind":"window_exists","expected":true}"#) == true)
         #expect(items.description?.contains(#"{"kind":"element_value""#) == true)
         #expect(tool.description.contains("never prose strings or AX expressions"))
+
+        let compatibility = AgentToolParameters(
+            properties: tool.parameters.properties,
+            required: tool.parameters.required)
+        #expect(tool.parameters.sourceSchema == nil)
+        #expect(try tool.parameters.schemaValue() == compatibility.schemaValue())
+    }
+
+    @Test
+    @MainActor
+    func `Preserving a scalar union does not widen neighboring structured provider schemas`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let scalar = SchemaBuilder.anyOf([SchemaBuilder.string(), SchemaBuilder.boolean()])
+        let structured = SchemaBuilder.array(items: SchemaBuilder.oneOf([
+            SchemaBuilder.object(properties: ["name": SchemaBuilder.string()]),
+            SchemaBuilder.object(properties: ["enabled": SchemaBuilder.boolean()]),
+        ]))
+        let parameters = service.convertMCPSchemaToAgentSchema(SchemaBuilder.object(
+            properties: ["choice": scalar, "records": structured],
+            required: ["choice", "records"]))
+        let compatibility = AgentToolParameters(properties: parameters.properties, required: parameters.required)
+        let serialized = try #require(parameters.schemaValue().objectValue)
+        let original = try #require(compatibility.schemaValue().objectValue)
+        let properties = try #require(serialized["properties"]?.objectValue)
+
+        #expect(parameters.sourceSchema != nil)
+        #expect(properties["choice"] == scalar.toAnyAgentToolValue())
+        #expect(properties["records"] == original["properties"]?.objectValue?["records"])
+        #expect(properties["records"]?.objectValue?["items"]?.objectValue?["type"]?.stringValue == "object")
+        #expect(properties["records"]?.objectValue?["items"]?.objectValue?["oneOf"] == nil)
+        #expect(serialized.filter { $0.key != "properties" } == original.filter { $0.key != "properties" })
     }
 
     @Test

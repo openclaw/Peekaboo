@@ -16,6 +16,18 @@ EXPECTED_TEAM_ID="${MAC_RELEASE_CODESIGN_TEAM_ID:-}"
     exit 1
 }
 
+# An availability-qualified Swift Ref can still emit this strong runtime import.
+# The Span back-deployment library does not provide it; dyld fails before main on macOS 26 and earlier.
+undefined_symbols=$(nm -arch all -m -u "$EXECUTABLE_PATH") || {
+    echo "Unable to inspect Swift runtime imports: $EXECUTABLE_PATH" >&2
+    exit 1
+}
+if awk '/\(undefined\)/ && !/ weak / && / _swift_initBorrow([[:space:]]|$)/ { found = 1 }
+    END { exit !found }' <<< "$undefined_symbols"; then
+    echo "Unsupported strong macOS 27 Swift runtime import: _swift_initBorrow ($EXECUTABLE_PATH)" >&2
+    exit 1
+fi
+
 compatibility_dependencies=$(otool -L "$EXECUTABLE_PATH" | awk '
     $1 ~ /^@rpath\/libswiftCompatibility.*\.dylib$/ { print $1 }
 ')

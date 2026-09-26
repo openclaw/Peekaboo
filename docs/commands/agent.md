@@ -48,6 +48,10 @@ read_when:
   routes and reports them as foreground browser-protocol delivery even when the page is not visibly raised.
   Refusals report `effect: refused`,
   `mutation_dispatched: false`, and `retry_safe: true`.
+- Native scalar unions retain their provider-facing alternatives. In particular, `set_value` accepts JSON strings,
+  booleans, integers, and finite numbers without converting them to strings. Arrays, objects, null, missing required
+  fields, and unknown arguments are rejected before dispatch. Other schemas retain their compatibility projection;
+  richer semantic validation and native target and receipt checks still apply at the native tool boundary.
 - Background-only Agent raw `press` requires a fresh exact non-dialog snapshot receipt. Targetless, app/PID-only,
   window-selector-only, and `foreground: true` forms are refused. Its semantic effect is unverifiable, so observe the
   exact target before another mutation.

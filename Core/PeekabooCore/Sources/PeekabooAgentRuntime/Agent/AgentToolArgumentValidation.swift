@@ -52,8 +52,52 @@ enum AgentToolArgumentValidator {
         }
         for key in arguments.keys.sorted() {
             guard let property = properties[key], let value = arguments[key] else { continue }
-            try self.validate(value: value.toJSON(), property: property, path: "$.\(key)")
+            let json = try value.toJSON()
+            let source = tool.parameters.sourceSchema?.objectValue?["properties"]?.objectValue?[key]
+            if let alternatives = self.scalarAlternatives(from: source) {
+                try self.validate(value: json, alternatives: alternatives, path: "$.\(key)")
+            } else {
+                try self.validate(value: json, property: property, path: "$.\(key)")
+            }
         }
+    }
+
+    static func scalarAlternatives(
+        from source: AnyAgentToolValue?) -> [AgentToolParameterProperty.ParameterType]?
+    {
+        // Only widen the compatibility projection for unconstrained primitive anyOf leaves.
+        // Composed, constrained, and structured schemas still use the existing validation path.
+        guard let schema = source?.objectValue,
+              schema.keys.allSatisfy({ ["anyOf", "description"].contains($0) }),
+              let variants = schema["anyOf"]?.arrayValue,
+              !variants.isEmpty
+        else { return nil }
+
+        var types: [AgentToolParameterProperty.ParameterType] = []
+        for variant in variants {
+            guard let leaf = variant.objectValue,
+                  leaf.keys.allSatisfy({ ["type", "description"].contains($0) }),
+                  let rawType = leaf["type"]?.stringValue,
+                  let type = AgentToolParameterProperty.ParameterType(rawValue: rawType),
+                  [.string, .boolean, .integer, .number].contains(type)
+            else { return nil }
+            types.append(type)
+        }
+        return types
+    }
+
+    private static func validate(
+        value: Any,
+        alternatives: [AgentToolParameterProperty.ParameterType],
+        path: String) throws
+    {
+        for type in alternatives {
+            let property = AgentToolParameterProperty(name: path, type: type, description: "")
+            if (try? self.validate(value: value, property: property, path: path)) != nil {
+                return
+            }
+        }
+        try self.throwType(path: path, expected: alternatives.map(\.rawValue).joined(separator: " or "))
     }
 
     private static func validate(

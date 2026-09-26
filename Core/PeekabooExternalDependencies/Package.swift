@@ -28,7 +28,8 @@ let package = Package(
         .package(path: "../../Commander"),
         .package(url: "https://github.com/apple/swift-log", from: "1.6.4"),
         .package(url: "https://github.com/apple/swift-system", from: "1.6.3"),
-        .package(url: "https://github.com/apple/swift-collections", from: "1.6.0"),
+        // 1.7.0 emits a strong macOS 27 borrowing-runtime import, breaking our macOS 15+ CLI. See #831.
+        .package(url: "https://github.com/apple/swift-collections", exact: "1.6.0"),
     ],
     targets: [
         .target(

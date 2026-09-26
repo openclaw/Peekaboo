@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import Tachikoma
+import TachikomaMCP
 
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
@@ -20,9 +21,25 @@ extension PeekabooAgentService {
             agentProperties[key] = property
         }
 
-        return AgentToolParameters(
+        let parameters = AgentToolParameters(
             properties: agentProperties,
             required: self.requiredFields(from: schemaDict, properties: agentProperties))
+        let scalarUnions = properties.compactMapValues { value -> AnyAgentToolValue? in
+            let source = value.toAnyAgentToolValue()
+            return AgentToolArgumentValidator.scalarAlternatives(from: source) == nil ? nil : source
+        }
+        guard !scalarUnions.isEmpty,
+              var schema = try? parameters.schemaValue().objectValue,
+              var serializedProperties = schema["properties"]?.objectValue
+        else { return parameters }
+
+        // Preserve scalar unions without changing the provider dialect for unrelated structured schemas.
+        serializedProperties.merge(scalarUnions) { _, source in source }
+        schema["properties"] = AnyAgentToolValue(object: serializedProperties)
+        return AgentToolParameters(
+            properties: agentProperties,
+            required: parameters.required,
+            sourceSchema: AnyAgentToolValue(object: schema))
     }
 
     private func requiredFields(
