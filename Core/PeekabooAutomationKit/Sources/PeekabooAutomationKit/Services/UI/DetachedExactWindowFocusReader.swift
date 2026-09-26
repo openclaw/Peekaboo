@@ -102,28 +102,96 @@ enum DetachedExactWindowFocusReader {
     }
 
     static func read(expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> {
-        self.read(expected: expected, includesValue: false)
+        self.read(expected: expected, phase: .initial)
     }
 
     static func readContinuation(
         expected: FocusedElementIdentity) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
-        self.read(expected: expected, includesValue: false, phase: .continuation)
+        self.read(expected: expected, phase: .continuation)
     }
 
     static func readValue(
         expected: FocusedElementIdentity,
         retainedElement: RetainedFocusElement? = nil) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
-        guard let retainedElement else {
-            return self.read(expected: expected, includesValue: true)
+        let initialSnapshot: ExactWindowFocusSnapshot
+        if let retainedElement {
+            guard let snapshot = self.read(
+                element: retainedElement.element, processIdentifier: expected.processIdentifier)
+            else { return .failure(.processMismatch) }
+            initialSnapshot = snapshot
+        } else {
+            switch self.read(expected: expected) {
+            case let .success(snapshot): initialSnapshot = snapshot
+            case let .failure(error): return .failure(error)
+            }
         }
-        let element = retainedElement.element
-        guard let snapshot = self.read(element: element, processIdentifier: expected.processIdentifier)
-        else { return .failure(.processMismatch) }
-        guard let windowID = snapshot.windowID else { return .failure(.missingWindowIdentifier) }
-        guard let role = snapshot.role else { return .failure(.roleMismatch) }
-        guard !snapshot.frame.isEmpty else { return .failure(.missingElementFrame) }
+        guard let receiver = initialSnapshot.nativeElement else { return .failure(.focusNotConfirmed) }
+        let element = receiver.element
+        return self.readValue(
+            expected: expected,
+            initialSnapshot: initialSnapshot,
+            phase: retainedElement == nil ? .initial : .continuation,
+            readSnapshot: { self.read(element: element, processIdentifier: expected.processIdentifier) },
+            readFocusedState: {
+                AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
+                defer { AXUIElementSetMessagingTimeout(element, 0) }
+                return self.boolAttribute(kAXFocusedAttribute, of: element)
+            },
+            readValue: {
+                AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
+                defer { AXUIElementSetMessagingTimeout(element, 0) }
+                return self.stringAttribute(kAXValueAttribute as String, of: element)
+            })
+    }
+
+    static func readValue(
+        expected: FocusedElementIdentity,
+        initialSnapshot: ExactWindowFocusSnapshot,
+        phase: KeyboardFocusValidationPhase,
+        readSnapshot: () -> ExactWindowFocusSnapshot?,
+        readFocusedState: () -> Bool?,
+        readValue: () -> String?) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+    {
+        do {
+            try self.validateValueSnapshot(initialSnapshot, expected: expected, phase: phase)
+            guard let focused = readFocusedState() else { return .failure(.focusedAttributeUnreadable) }
+            guard focused else { return .failure(.focusNotConfirmed) }
+            let value = self.allowsValueRead(role: initialSnapshot.role, subrole: initialSnapshot.subrole)
+                ? readValue() : nil
+            // AXValue is a separate RPC; never attach its result to pre-read receiver authority.
+            guard let current = readSnapshot() else { return .failure(.processMismatch) }
+            try self.validateValueSnapshot(current, expected: expected, phase: phase)
+            guard current.nativeElement == initialSnapshot.nativeElement else { return .failure(.focusNotConfirmed) }
+            guard let focused = readFocusedState() else { return .failure(.focusedAttributeUnreadable) }
+            guard focused else { return .failure(.focusNotConfirmed) }
+            return .success(ExactWindowFocusSnapshot(
+                processIdentifier: current.processIdentifier,
+                windowID: current.windowID,
+                frame: current.frame,
+                role: current.role,
+                subrole: current.subrole,
+                title: current.title,
+                identifier: current.identifier,
+                value: self.allowsValueRead(role: current.role, subrole: current.subrole) ? value : nil,
+                nativeElement: current.nativeElement))
+        } catch let error as FocusedElementReceiptError {
+            return .failure(error)
+        } catch {
+            return .failure(.focusNotConfirmed)
+        }
+    }
+
+    private static func validateValueSnapshot(
+        _ snapshot: ExactWindowFocusSnapshot,
+        expected: FocusedElementIdentity,
+        phase: KeyboardFocusValidationPhase) throws
+    {
+        guard let windowID = snapshot.windowID else { throw FocusedElementReceiptError.missingWindowIdentifier }
+        guard let role = snapshot.role else { throw FocusedElementReceiptError.roleMismatch }
+        guard !snapshot.frame.isEmpty else { throw FocusedElementReceiptError.missingElementFrame }
+        guard snapshot.nativeElement != nil else { throw FocusedElementReceiptError.focusNotConfirmed }
         let actual = FocusedElementIdentity(
             processIdentifier: snapshot.processIdentifier,
             windowID: windowID,
@@ -131,37 +199,15 @@ enum DetachedExactWindowFocusReader {
             title: snapshot.title,
             identifier: snapshot.identifier,
             frame: snapshot.frame)
-        do {
-            try FocusedElementReceiptResolver.validateContinuation(actual, matches: expected)
-        } catch let error as FocusedElementReceiptError {
-            return .failure(error)
-        } catch {
-            return .failure(.focusNotConfirmed)
+        switch phase {
+        case .initial: try FocusedElementReceiptResolver.validate(actual, matches: expected)
+        case .continuation: try FocusedElementReceiptResolver.validateContinuation(actual, matches: expected)
         }
-        AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
-        defer { AXUIElementSetMessagingTimeout(element, 0) }
-        guard let focused = self.boolAttribute(kAXFocusedAttribute, of: element) else {
-            return .failure(.focusedAttributeUnreadable)
-        }
-        guard focused else { return .failure(.focusNotConfirmed) }
-        return .success(ExactWindowFocusSnapshot(
-            processIdentifier: snapshot.processIdentifier,
-            windowID: windowID,
-            frame: snapshot.frame,
-            role: role,
-            subrole: snapshot.subrole,
-            title: snapshot.title,
-            identifier: snapshot.identifier,
-            value: self.allowsValueRead(role: role, subrole: snapshot.subrole)
-                ? self.stringAttribute(kAXValueAttribute as String, of: element)
-                : nil,
-            nativeElement: retainedElement))
     }
 
     private static func read(
         expected: FocusedElementIdentity,
-        includesValue: Bool,
-        phase: KeyboardFocusValidationPhase = .initial) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
+        phase: KeyboardFocusValidationPhase) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
         guard expected.processIdentifier > 0 else { return .failure(.missingProcessIdentifier) }
         guard expected.windowID > 0 else { return .failure(.missingWindowIdentifier) }
@@ -256,9 +302,6 @@ enum DetachedExactWindowFocusReader {
             subrole: subrole,
             title: self.stringAttribute(kAXTitleAttribute as String, of: element),
             identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
-            value: includesValue && self.allowsValueRead(role: expected.role, subrole: subrole)
-                ? self.stringAttribute(kAXValueAttribute as String, of: element)
-                : nil,
             nativeElement: RetainedFocusElement(element: element)))
     }
 

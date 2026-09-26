@@ -146,6 +146,8 @@ struct TargetedTypeInputDriver {
     }
 
     private static func performEvent(_ operation: () throws -> Void) throws {
+        // Admit the complete stroke once; cancellation must not interrupt its key-up cleanup.
+        try Task.checkCancellation()
         do {
             try operation()
         } catch PeekabooError.permissionDeniedEventSynthesizing {

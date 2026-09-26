@@ -14,6 +14,253 @@ struct AsyncAXMutationTests {
         case timeout, transientMissing, authorityRevoked
     }
 
+    enum CancellationMutation: CaseIterable {
+        case value, focus, selected, observedValue
+    }
+
+    enum PressCancellationBoundary: CaseIterable {
+        case beforeCall, beforeMutation
+    }
+
+    enum NativeReadCompletion: CaseIterable, Sendable {
+        case sample, missing, failure, cancellation
+
+        func result(identity: FocusedElementIdentity) throws -> AXMutationObservationSnapshot? {
+            switch self {
+            case .sample:
+                AXMutationObservationSnapshot(
+                    identity: identity,
+                    focused: true,
+                    value: .string("after"),
+                    legacyPresentation: "after",
+                    selected: true)
+            case .missing:
+                nil
+            case .failure:
+                throw CaptureError.detectionTimedOut(0.25)
+            case .cancellation:
+                throw CancellationError()
+            }
+        }
+    }
+
+    @Test(arguments: PressCancellationBoundary.allCases)
+    func `cancelled press never dispatches an action or fallback mutation`(boundary: PressCancellationBoundary) async {
+        let element = ActionInputMockAutomationElement(
+            role: "AXTextField",
+            actionNames: ["AXPress"],
+            isValueSettable: true,
+            isFocusedSettable: true,
+            isSelectedSettable: true)
+        var authorityChecks = 0
+        let task = Task {
+            if boundary == .beforeCall {
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+            _ = try await ActionInputDriver().tryClickForTesting(element: element) {
+                authorityChecks += 1
+                if boundary == .beforeMutation {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                }
+            }
+        }
+
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(authorityChecks == (boundary == .beforeCall ? 0 : 1))
+        #expect(element.attemptedActions.isEmpty)
+        #expect(element.performedActions.isEmpty)
+        #expect(element.setValues.isEmpty)
+        #expect(element.setFocusedValues.isEmpty)
+        #expect(element.setSelectedValues.isEmpty)
+    }
+
+    @Test
+    func `uncancelled press dispatches exactly one action after authority validation`() async throws {
+        let element = ActionInputMockAutomationElement(
+            role: "AXButton",
+            actionNames: ["AXPress"])
+        var authorityChecks = 0
+
+        let result = try await ActionInputDriver().tryClickForTesting(element: element) {
+            authorityChecks += 1
+            #expect(element.attemptedActions.isEmpty)
+        }
+
+        #expect(authorityChecks == 1)
+        #expect(element.attemptedActions == ["AXPress"])
+        #expect(element.performedActions == ["AXPress"])
+        #expect(element.setValues.isEmpty)
+        #expect(element.setFocusedValues.isEmpty)
+        #expect(element.setSelectedValues.isEmpty)
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.evidence == .deliveryAccepted)
+        #expect(result.outcome.dispatchState.unitCount == .one)
+    }
+
+    @Test
+    func `non-press actions retain direct dispatch`() throws {
+        let element = ActionInputMockAutomationElement(actionNames: ["AXIncrement"])
+
+        let result = try ActionInputDriver().tryPerformActionForTesting(element: element, actionName: "AXIncrement")
+
+        #expect(element.attemptedActions == ["AXIncrement"])
+        #expect(element.performedActions == ["AXIncrement"])
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.dispatchState.unitCount == .one)
+    }
+
+    @Test(arguments: CancellationMutation.allCases, NativeReadCompletion.allCases)
+    func `cancelled initial native observation never dispatches its late result`(
+        mutation: CancellationMutation,
+        completion: NativeReadCompletion) async throws
+    {
+        let element = Self.nativeElement(for: mutation)
+        let identity = try #require(element.focusedElementIdentity)
+        let entered = ActionLaneLatch()
+        let release = ActionLaneLatch()
+        var authorityChecks = 0
+        let driver = ActionInputDriver(processStartIdentity: { _ in 1 }, nativeReader: { _, target, _, _ in
+            #expect(target.expectedIdentity == nil)
+            await entered.open()
+            await release.wait()
+            return try completion.result(identity: identity)
+        })
+        let task = Task {
+            try await Self.performNativeMutation(mutation, element: element, driver: driver) {
+                authorityChecks += 1
+            }
+        }
+
+        await entered.wait()
+        task.cancel()
+        await release.open()
+
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(authorityChecks == 0)
+        #expect(element.setValues.isEmpty)
+        #expect(element.setFocusedValues.isEmpty)
+        #expect(element.setSelectedValues.isEmpty)
+    }
+
+    @Test(arguments: CancellationMutation.allCases)
+    func `native reader cancellation propagates without a cancelled task`(mutation: CancellationMutation) async {
+        let element = Self.nativeElement(for: mutation)
+        var authorityChecks = 0
+        let driver = ActionInputDriver(processStartIdentity: { _ in 1 }, nativeReader: { _, _, _, _ in
+            #expect(!Task.isCancelled)
+            throw CancellationError()
+        })
+
+        #expect(!Task.isCancelled)
+        await #expect(throws: CancellationError.self) {
+            try await Self.performNativeMutation(mutation, element: element, driver: driver) {
+                authorityChecks += 1
+            }
+        }
+
+        #expect(!Task.isCancelled)
+        #expect(authorityChecks == 0)
+        #expect(element.setValues.isEmpty)
+        #expect(element.setFocusedValues.isEmpty)
+        #expect(element.setSelectedValues.isEmpty)
+    }
+
+    @Test(arguments: CancellationMutation.allCases, [false, true])
+    func `final authority callback cancellation prevents native mutation`(
+        mutation: CancellationMutation,
+        cancelBeforeMutation: Bool) async throws
+    {
+        let element = Self.nativeElement(for: mutation)
+        let identity = try #require(element.focusedElementIdentity)
+        var authorityChecks = 0
+        let driver = ActionInputDriver(processStartIdentity: { _ in 1 }, nativeReader: { _, target, _, _ in
+            if target.expectedIdentity == nil {
+                return AXMutationObservationSnapshot(identity: identity)
+            }
+            return try NativeReadCompletion.sample.result(identity: identity)
+        })
+        let task = Task {
+            try await Self.performNativeMutation(mutation, element: element, driver: driver) {
+                authorityChecks += 1
+                #expect(element.setValues.isEmpty)
+                #expect(element.setFocusedValues.isEmpty)
+                #expect(element.setSelectedValues.isEmpty)
+                if cancelBeforeMutation {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                }
+            }
+        }
+
+        if cancelBeforeMutation {
+            await #expect(throws: CancellationError.self) { try await task.value }
+            #expect(element.setValues.isEmpty)
+            #expect(element.setFocusedValues.isEmpty)
+            #expect(element.setSelectedValues.isEmpty)
+        } else {
+            try await task.value
+            Self.expectSingleWrite(mutation, element: element)
+        }
+        #expect(authorityChecks == 1)
+        #expect(element.attemptedActions.isEmpty)
+        #expect(element.performedActions.isEmpty)
+    }
+
+    @Test(arguments: CancellationMutation.allCases, NativeReadCompletion.allCases)
+    func `cancelled native readback retains exactly one accepted write`(
+        mutation: CancellationMutation,
+        completion: NativeReadCompletion) async throws
+    {
+        let element = Self.nativeElement(for: mutation)
+        let identity = try #require(element.focusedElementIdentity)
+        let entered = ActionLaneLatch()
+        let release = ActionLaneLatch()
+        let driver = ActionInputDriver(processStartIdentity: { _ in 1 }, nativeReader: { _, target, _, _ in
+            guard target.expectedIdentity != nil else {
+                return AXMutationObservationSnapshot(identity: identity)
+            }
+            await entered.open()
+            await release.wait()
+            return try completion.result(identity: identity)
+        })
+        let task = Task {
+            try await Self.performNativeMutation(mutation, element: element, driver: driver)
+        }
+
+        await entered.wait()
+        task.cancel()
+        await release.open()
+
+        let failure = await #expect(throws: DesktopActionFailure.self) { try await task.value }
+        #expect(failure?.outcome.state == .indeterminate)
+        #expect(failure?.outcome.retrySafety == .unsafe)
+        #expect(failure?.outcome.dispatchState.unitCount == .one)
+        Self.expectSingleWrite(mutation, element: element)
+    }
+
+    @Test(arguments: CancellationMutation.allCases)
+    func `uncancelled suspended native observation still dispatches once`(mutation: CancellationMutation) async throws {
+        let element = Self.nativeElement(for: mutation)
+        let identity = try #require(element.focusedElementIdentity)
+        let entered = ActionLaneLatch()
+        let release = ActionLaneLatch()
+        let driver = ActionInputDriver(processStartIdentity: { _ in 1 }, nativeReader: { _, target, _, _ in
+            if target.expectedIdentity == nil {
+                await entered.open()
+                await release.wait()
+            }
+            return try NativeReadCompletion.sample.result(identity: identity)
+        })
+        let task = Task {
+            try await Self.performNativeMutation(mutation, element: element, driver: driver)
+        }
+
+        await entered.wait()
+        await release.open()
+        try await task.value
+
+        Self.expectSingleWrite(mutation, element: element)
+    }
+
     @Test(arguments: NativeMutation.allCases, NativeObservation.allCases)
     func `native mutation preserves authority and bounded observation outcomes`(
         mutation: NativeMutation,
@@ -218,5 +465,61 @@ struct AsyncAXMutationTests {
         #expect(failure?.outcome.state == .indeterminate)
         #expect(failure?.outcome.retrySafety == .unsafe)
         #expect(element.setValues == [.string("after")])
+    }
+
+    private static func nativeElement(for mutation: CancellationMutation) -> ActionInputMockAutomationElement {
+        let identity = FocusedElementIdentity(
+            processIdentifier: getpid(),
+            windowID: 42,
+            role: "AXTextField",
+            identifier: "editor",
+            frame: CGRect(x: 1, y: 2, width: 100, height: 20))
+        return ActionInputMockAutomationElement(
+            underlyingAXElement: AXUIElementCreateApplication(getpid()),
+            identifier: "editor",
+            role: identity.role,
+            frame: identity.frame,
+            value: "before",
+            isValueSettable: mutation != .selected,
+            isFocusedSettable: true,
+            isSelectedSettable: mutation == .selected,
+            selectedValue: false,
+            focusedElementIdentity: identity)
+    }
+
+    private static func performNativeMutation(
+        _ mutation: CancellationMutation,
+        element: ActionInputMockAutomationElement,
+        driver: ActionInputDriver,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws
+    {
+        switch mutation {
+        case .value:
+            _ = try await driver.trySetValueForTesting(
+                element: element, value: .string("after"), beforeMutation: beforeMutation)
+        case .focus:
+            _ = try await driver.tryFocus(element: element, beforeMutation: beforeMutation)
+        case .selected:
+            _ = try await driver.trySetValueForTesting(
+                element: element, value: .bool(true), beforeMutation: beforeMutation)
+        case .observedValue:
+            _ = try await driver.performObservedMutation(
+                on: element,
+                attribute: .value,
+                beforeMutation: beforeMutation,
+                mutation: {
+                    try element.setAutomationValue(.string("after"))
+                    return true
+                }, matches: { $0?.value == .string("after") })
+        }
+    }
+
+    private static func expectSingleWrite(
+        _ mutation: CancellationMutation,
+        element: ActionInputMockAutomationElement)
+    {
+        #expect(element.setValues == (mutation == .value || mutation == .observedValue ? [.string("after")] : []))
+        #expect(element.setFocusedValues == (mutation == .focus ? [true] : []))
+        #expect(element.setSelectedValues == (mutation == .selected ? [true] : []))
     }
 }

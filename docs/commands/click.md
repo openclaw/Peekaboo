@@ -11,6 +11,7 @@ read_when:
 
 Background text-field focus allows up to 250 ms for the same field to publish an asynchronous focus update.
 Accepted but unverified focus remains indeterminate; observe the target before retrying.
+Cancellation observed before an Accessibility press stops that press before dispatch.
 
 ## Key options
 | Flag | Description |

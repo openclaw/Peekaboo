@@ -402,21 +402,40 @@ extension PeekabooBridgeServer {
         failureSnapshotID: String? = nil,
         response: (Payload) -> PeekabooBridgeResponse) async throws -> PeekabooBridgeHandledResponse
     {
-        guard let service = try self.automationOutcomeService() else {
+        let service: (any UIAutomationActionOutcomeProviding)?
+        var capturedTarget: DesktopTargetIdentity?
+        do {
+            try PeekabooBridgeRequestContext.checkRequestIsActive()
+            service = try self.automationOutcomeService()
+            if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics, let failureSnapshotID {
+                let detection: ElementDetectionResult?
+                do {
+                    detection = try await self.services.snapshots.getDetectionResult(snapshotId: failureSnapshotID)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    detection = nil
+                }
+                if let context = detection?.metadata.windowContext {
+                    capturedTarget = try? DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                        DesktopTargetEvidenceAdapter.evidence(context: context),
+                    ])
+                }
+            }
+            try PeekabooBridgeRequestContext.checkRequestIsActive()
+        } catch is CancellationError {
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
+                throw CancellationError()
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .requestCancelled,
+                message: "Bridge request was cancelled before dispatch.",
+                hint: "Submit a new request only if the operation is still wanted.")
+        }
+        guard let service else {
             let payload = try await legacy()
             return .init(response: response(payload))
-        }
-        let capturedTarget: DesktopTargetIdentity? = if PeekabooBridgeRequestContext
-            .usesAttestedOperationResultSemantics,
-            let failureSnapshotID,
-            let detection = try? await self.services.snapshots.getDetectionResult(snapshotId: failureSnapshotID),
-            let context = detection.metadata.windowContext
-        {
-            try? DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
-                DesktopTargetEvidenceAdapter.evidence(context: context),
-            ])
-        } else {
-            nil
         }
         do {
             let result = try await withOutcome(service)

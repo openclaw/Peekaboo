@@ -378,10 +378,16 @@ struct ActionInputDriver: ActionInputDriving {
         on element: any AutomationElementRepresenting,
         beforeMutation: @MainActor () throws -> Void = {}) throws -> UIInputExecutionResult.Action
     {
+        if actionName == AXActionNames.kAXPressAction {
+            try Task.checkCancellation()
+        }
         guard element.supportsAction(actionName) else {
             throw ActionInputError.unsupported(.actionUnsupported)
         }
         try beforeMutation()
+        if actionName == AXActionNames.kAXPressAction {
+            try Task.checkCancellation()
+        }
 
         do {
             try element.performAutomationAction(actionName)
@@ -418,7 +424,7 @@ struct ActionInputDriver: ActionInputDriving {
                 focusedElement: focusedElement)
         }
         let observationTarget = try await self.observationTarget(element)
-        try beforeMutation()
+        try Self.validateBeforeMutation(beforeMutation)
         do {
             try element.setAutomationFocused(true)
         } catch {
@@ -492,7 +498,7 @@ struct ActionInputDriver: ActionInputDriving {
                             attribute: .selected, resolvedKind: .bool, readback: .bool(selectedBefore)))
                 }
                 let observationTarget = try await self.observationTarget(element)
-                try beforeMutation()
+                try Self.validateBeforeMutation(beforeMutation)
                 try element.setAutomationSelected(requested)
                 var selectedAfter: Bool?
                 var observedIdentity: FocusedElementIdentity?
@@ -546,7 +552,7 @@ struct ActionInputDriver: ActionInputDriving {
                         legacyPresentation: NativeElementValuePresentation.describe(valueBefore)))
             }
             let observationTarget = try await self.observationTarget(element)
-            try beforeMutation()
+            try Self.validateBeforeMutation(beforeMutation)
             try element.setAutomationValue(requested)
             var presentationAfter: String?
             var readbackAfter: ElementValueReadback?
@@ -586,6 +592,8 @@ struct ActionInputDriver: ActionInputDriving {
                     resolvedKind: requested.comparisonKind,
                     readback: readbackAfter,
                     legacyPresentation: presentationAfter))
+        } catch let cancellation as CancellationError {
+            throw cancellation
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch {
@@ -596,15 +604,22 @@ struct ActionInputDriver: ActionInputDriving {
     func performObservedMutation(
         on element: any AutomationElementRepresenting,
         attribute: AXMutationObservationAttribute,
+        beforeMutation: @MainActor () throws -> Void = {},
         mutation: () throws -> Bool,
         matches: (AXMutationObservationSnapshot?) -> Bool) async throws -> Bool
     {
         let target = try await self.observationTarget(element)
+        try Self.validateBeforeMutation(beforeMutation)
         guard try mutation() else { return false }
         guard await self.observeMutation(on: element, target: target, attribute: attribute, matches: matches) else {
             throw Self.unverifiedValueMutationFailure(attribute: String(describing: attribute))
         }
         return true
+    }
+
+    private static func validateBeforeMutation(_ beforeMutation: @MainActor () throws -> Void) throws {
+        try beforeMutation()
+        try Task.checkCancellation()
     }
 
     private struct ObservationTarget {
@@ -613,23 +628,30 @@ struct ActionInputDriver: ActionInputDriving {
     }
 
     private func observationTarget(_ element: any AutomationElementRepresenting) async throws -> ObservationTarget? {
+        try Task.checkCancellation()
         if let native = element.underlyingAXElement {
-            var pid: pid_t = 0
-            guard AXUIElementGetPid(native, &pid) == .success,
-                  let generation = self.processStartIdentity(pid),
-                  let sample = try? await self.nativeReader(
-                      RetainedFocusElement(element: native),
-                      AXMutationObservationTarget(processIdentifier: pid, processStartIdentity: generation),
-                      .identity,
-                      .milliseconds(250)),
-                  !Task.isCancelled,
-                  self.processStartIdentity(pid) == generation
-            else {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .targetUnavailable,
-                    message: "The native Accessibility target could not be revalidated before mutation.")
+            let unavailable = DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The native Accessibility target could not be revalidated before mutation.")
+            do {
+                var pid: pid_t = 0
+                guard AXUIElementGetPid(native, &pid) == .success,
+                      let generation = self.processStartIdentity(pid)
+                else { throw unavailable }
+                let sample = try await self.nativeReader(
+                    RetainedFocusElement(element: native),
+                    AXMutationObservationTarget(processIdentifier: pid, processStartIdentity: generation),
+                    .identity,
+                    .milliseconds(250))
+                try Task.checkCancellation()
+                guard let sample, self.processStartIdentity(pid) == generation else { throw unavailable }
+                return ObservationTarget(element: sample.identity, processGeneration: generation)
+            } catch let cancellation as CancellationError {
+                throw cancellation
+            } catch {
+                try Task.checkCancellation()
+                throw unavailable
             }
-            return ObservationTarget(element: sample.identity, processGeneration: generation)
         }
         guard let identity = element.focusedElementIdentity,
               let generation = self.processStartIdentity(identity.processIdentifier)

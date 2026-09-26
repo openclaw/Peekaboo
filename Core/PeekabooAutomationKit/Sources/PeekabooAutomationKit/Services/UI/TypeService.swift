@@ -677,6 +677,8 @@ public final class TypeService {
                             deliverySummary.record(dispatch)
                             keyPresses += dispatch.keyPressCount
                             emittedUnitCount += dispatch.dispatchedUnitCount
+                        } catch let cancellation as CancellationError {
+                            throw cancellation
                         } catch let error as InputDeliveryIndeterminateError {
                             throw error
                         } catch {
@@ -710,6 +712,8 @@ public final class TypeService {
                         specialKeyPresses += dispatch.keyPressCount
                         emittedUnitCount += dispatch.dispatchedUnitCount
                         lastDeliveredActionWasKey = dispatch.dispatchedUnitCount > 0 || lastDeliveredActionWasKey
+                    } catch let cancellation as CancellationError {
+                        throw cancellation
                     } catch let error as InputDeliveryIndeterminateError {
                         throw error
                     } catch {
@@ -935,6 +939,9 @@ extension TypeService {
                         delivery: .init(mechanism: .accessibilityValue, mode: .background),
                         keyPressCount: 0)
                 }
+            } catch let cancellation as CancellationError {
+                // Accepted AX writes report typed uncertainty; raw cancellation means this clear did not dispatch.
+                throw cancellation
             } catch let error as InputDeliveryIndeterminateError {
                 throw error
             } catch {
@@ -948,6 +955,8 @@ extension TypeService {
                     0x00,
                     flags: .maskCommand,
                     processIdentifier: targetProcessIdentifier)
+            } catch let cancellation as CancellationError {
+                throw cancellation
             } catch {
                 throw Self.indeterminateDeliveryError(
                     from: error,
@@ -1324,6 +1333,7 @@ extension TypeService {
                         deliveryValidator: validateFocusedElement,
                         continuationValidator: { try await deliveryValidator(focusedElement, .continuation) },
                         validatedReceiverProvider: validatedReceiverProvider)
+                    // A focus change cannot satisfy a no-op typing leaf; retain it as a retry-unsafe prefix.
                     guard let typingDelivery = typed.delivery,
                           let typingUnits = DesktopActionOutcome.DispatchUnitCount(typed.dispatchedUnitCount)
                     else {

@@ -1,5 +1,5 @@
 ---
-summary: 'Inject keystrokes via peekaboo type'
+summary: 'Enter text through targeted Accessibility or keyboard delivery'
 read_when:
   - 'sending text or key chords into a targeted app or element'
   - 'needing predictable background typing cadence during UI automation'
@@ -15,6 +15,19 @@ that snapshot. Use `press` for standalone keys or chords.
 Background Accessibility typing waits for each value write and supported cursor update to settle on the same
 native field before computing the next edit. A write that was accepted but cannot be verified stops typing
 with an indeterminate outcome; Peekaboo does not replay it as another write or keyboard events.
+After every asynchronous preflight, the final write rechecks the application's current focused native receiver
+and exact keyboard window. Losing focus before the first write refuses safely; losing it after an accepted
+text edit stops before selection or further input, retaining the retry-unsafe accepted prefix.
+Value confirmation checks the same receiver again after fetching its value; focus or window drift cannot be
+confirmed using the earlier receiver metadata.
+Text edits and cursor changes also recheck their source text and selection immediately before mutation. If either
+changes during asynchronous preflight, the unit stops without recomputing or replaying it. These checks do not make
+macOS Accessibility reads and writes an atomic transaction.
+The original selection stays bound while a value write settles. A changed selection stops the follow-up cursor
+write unless the requested range is already present, in which case no selection write is sent.
+Focused-text edits preserve exact Unicode storage; canonically equivalent text is not an automatic no-op.
+Cancellation prevents starting keyboard fallback or another stroke; an already-started stroke still finishes its
+key-up cleanup, and any accepted prefix remains unsafe to replay.
 
 ## Key options
 | Flag | Description |
