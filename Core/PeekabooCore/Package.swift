@@ -82,6 +82,7 @@ let package = Package(
             dependencies: [
                 "PeekabooAutomation",
                 "PeekabooCore",
+                "PeekabooBridgeTestSupport",
                 .product(name: "PeekabooAutomationKit", package: "PeekabooAutomationKit"),
                 .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
             ],

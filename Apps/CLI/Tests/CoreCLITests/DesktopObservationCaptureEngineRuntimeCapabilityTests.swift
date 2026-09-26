@@ -12,6 +12,147 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         .captureScreen,
         .desktopObservation,
     ]
+    private static let inlineOperations = Self.operations + [.invalidateImplicitLatestSnapshot]
+    private static let inlineCapabilities = [
+        PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
+        PeekabooBridgeHostCapability.desktopObservationInlinePixels,
+        PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+    ]
+
+    @Test(arguments: ["live", "action"], ["", " \n "])
+    func `empty engine choices retain the legacy capture capability contract`(
+        command: String,
+        empty: String
+    ) throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: ["captureEngine": [empty]], flags: []),
+            commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self,
+            environment: ["PEEKABOO_CAPTURE_ENGINE": empty]
+        ).applyingEnvironmentOverrides(environment: ["PEEKABOO_CAPTURE_ENGINE": empty])
+        let legacy = Self.handshake(
+            operations: [.captureScreen, .invalidateImplicitLatestSnapshot],
+            capabilities: nil
+        )
+
+        #expect(options.captureEnginePreference == nil)
+        #expect(!options.requiresDesktopObservation)
+        #expect(!options.requiresDesktopObservationInlinePixels)
+        #expect(!options.transportsCaptureEnginePreference)
+        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: options))
+    }
+
+    @Test(arguments: ["live", "action"], ["auto", "modern", "cg"])
+    func `selected live engines require inline pixels in addition to engine and ownership capabilities`(
+        command: String,
+        engine: String
+    ) throws {
+        let options = try Self.options(
+            engine: engine,
+            commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self
+        )
+        let capable = Self.handshake(operations: Self.inlineOperations, capabilities: Self.inlineCapabilities)
+        let noInline = Self.handshake(
+            operations: Self.inlineOperations,
+            capabilities: Self.inlineCapabilities
+                .filter { $0 != PeekabooBridgeHostCapability.desktopObservationInlinePixels }
+        )
+        let noEngine = Self.handshake(
+            operations: Self.inlineOperations,
+            capabilities: Self.inlineCapabilities
+                .filter { $0 != PeekabooBridgeHostCapability.desktopObservationCaptureEngine }
+        )
+        let noOwnership = Self.handshake(
+            operations: Self.inlineOperations,
+            capabilities: Self.inlineCapabilities
+                .filter { $0 != PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership }
+        )
+        let legacy = Self.handshake(operations: Self.inlineOperations, capabilities: nil)
+
+        #expect(options.requiresDesktopObservation)
+        #expect(options.requiresDesktopObservationInlinePixels)
+        #expect(options.requiresCaptureEnginePreferenceCapability == (engine != "auto"))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: noInline, options: options))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: noEngine, options: options) == (engine == "auto"))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: noOwnership, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: options))
+        #expect(BridgeCapabilityPolicy.observationCapabilities(
+            for: capable,
+            options: options
+        ).desktopObservationInlinePixels)
+        #expect(!BridgeCapabilityPolicy.observationCapabilities(
+            for: noInline,
+            options: options
+        ).desktopObservationInlinePixels)
+    }
+
+    @Test(arguments: ["live", "action"])
+    func `inline capability cannot replace a missing or disabled observation operation`(command: String) throws {
+        let options = try Self.options(
+            engine: "modern",
+            commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self
+        )
+        let withoutObservation = Self.inlineOperations.filter { $0 != .desktopObservation }
+        let missing = Self.handshake(operations: withoutObservation, capabilities: Self.inlineCapabilities)
+        let disabled = Self.handshake(
+            operations: Self.inlineOperations,
+            enabledOperations: withoutObservation,
+            capabilities: Self.inlineCapabilities
+        )
+
+        for handshake in [missing, disabled] {
+            #expect(!BridgeCapabilityPolicy.observationCapabilities(
+                for: handshake,
+                options: options
+            ).desktopObservationInlinePixels)
+            #expect(!CommandRuntime.supportsRemoteRequirements(for: handshake, options: options))
+        }
+    }
+
+    @Test(arguments: ["live", "action"])
+    func `inline capture uses observation when legacy capture is disabled`(command: String) throws {
+        let options = try Self.options(
+            engine: "modern",
+            commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self
+        )
+        let handshake = Self.handshake(
+            operations: Self.inlineOperations,
+            enabledOperations: [.desktopObservation, .invalidateImplicitLatestSnapshot],
+            capabilities: Self.inlineCapabilities
+        )
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: handshake, options: options))
+    }
+
+    @Test(arguments: ["live", "action"])
+    func `classic permission deferral retains inline capability gating`(command: String) throws {
+        let options = try Self.options(
+            engine: "classic",
+            commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self
+        )
+        let permissions = PermissionsStatus(
+            screenRecording: false,
+            accessibility: true,
+            appleScript: false,
+            postEvent: true
+        )
+        let capable = Self.handshake(
+            operations: Self.inlineOperations,
+            enabledOperations: [.invalidateImplicitLatestSnapshot],
+            capabilities: Self.inlineCapabilities,
+            permissions: permissions
+        )
+        let noInline = Self.handshake(
+            operations: Self.inlineOperations,
+            enabledOperations: [.invalidateImplicitLatestSnapshot],
+            capabilities: Self.inlineCapabilities
+                .filter { $0 != PeekabooBridgeHostCapability.desktopObservationInlinePixels },
+            permissions: permissions
+        )
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: noInline, options: options))
+    }
 
     @Test
     func `non auto engine selection requires the additive host capability`() {
@@ -62,6 +203,7 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         let legacy = Self.handshake(capabilities: nil)
 
         #expect(options.requiresCaptureEnginePreferenceHost)
+        #expect(!options.requiresDesktopObservationInlinePixels)
         #expect(options.requiresCaptureEnginePreferenceCapability)
         #expect(options.requiresScreenCaptureKitOwnerCapability)
         #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
@@ -153,6 +295,7 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         let legacy = Self.handshake(capabilities: nil)
 
         #expect(auto.requiresCaptureEnginePreferenceHost)
+        #expect(!auto.requiresDesktopObservationInlinePixels)
         #expect(!auto.requiresCaptureEnginePreferenceCapability)
         #expect(auto.requiresScreenCaptureKitOwnerCapability)
         #expect(CommandRuntime.supportsRemoteRequirements(for: ownerAware, options: auto))
@@ -187,14 +330,18 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         #expect(launchEnvironment["PEEKABOO_LOG_LEVEL"] == "debug")
     }
 
-    private static func options(engine: String) throws -> CommandRuntimeOptions {
+    private static func options(
+        engine: String,
+        commandType: any ParsableCommand.Type = SeeCommand.self
+    ) throws -> CommandRuntimeOptions {
         try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
                 options: ["captureEngine": [engine]],
                 flags: []
             ),
-            commandType: SeeCommand.self
+            commandType: commandType,
+            environment: [:]
         )
     }
 

@@ -26,14 +26,19 @@ silently move capture or TCC ownership into the CLI process. If no compatible Br
 fails before caller-local capture. Add `--no-remote` only when caller-local execution is intentional and that process
 is known to own Screen Recording in the active Aqua session.
 
-`capture live` and `capture action` do not yet transport capture-engine overrides. Without an override they retain
-normal Bridge routing and use the selected host's backend policy. An explicit `--capture-engine` or nonempty
-`PEEKABOO_CAPTURE_ENGINE` still selects caller-local capture when no explicit Bridge socket is requested. Combining
-either override with `--bridge-socket` or a nonempty `PEEKABOO_BRIDGE_SOCKET` is refused before runtime construction,
-focus, output creation, or child execution; the requested host is never silently ignored. This includes `auto` and
-all engine aliases. Omit the flag and unset the engine environment variable to use the selected host's backend policy,
-or explicitly pass `--no-remote` to choose caller-local capture instead. Explicit remote isolation retains precedence
-over a socket selector. `capture video` remains local media ingestion and is unaffected.
+`capture live` and `capture action` transport explicit `--capture-engine` and nonempty `PEEKABOO_CAPTURE_ENGINE`
+choices through pixel-only desktop observation on the selected Bridge host. Frames travel inline under the existing
+content-digest verification and response-size bound, without intermediate observation files, snapshots, AX traversal,
+or OCR. The live sampler still owns its session-wide target-identity/bounds checks, cadence, scaling, and output files.
+
+The host must advertise `desktopObservationInlinePixels`; non-auto values additionally require
+`desktopObservationCaptureEngine`. Incompatible hosts are refused before focus, output creation, or action-child
+execution. An explicit socket is never silently replaced by another host or caller-local capture. Use `--no-remote`
+only for intentional local execution. Without an engine override, the existing raw route and host backend policy are
+unchanged, including compatibility with older hosts. Explicit remote `auto` follows desktop-observation policy: a
+background full-screen capture may try modern first when that exact host proves ScreenCaptureKit ownership. Local
+live-region auto keeps its existing classic preference. Empty CLI values allow a nonempty environment choice to apply.
+`capture video` remains local media ingestion and is unaffected.
 
 Remote `modern` and `classic` selections require a host that advertises
 `desktopObservationCaptureEngine`; older hosts are refused before the observation request is sent rather than silently

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Honor explicit live/action capture engines on capable Bridge hosts using verified inline pixels, preserving default routing and background focus; avoid redundant frontmost app inventories during observation.
 - Stop inventing local `see --json` UI-map paths for in-memory and Bridge-hosted snapshots; report an empty map path when no persisted artifact is available while preserving snapshot reuse and inline elements.
 - Refuse unsupported live/action capture-engine overrides combined with an explicit Bridge socket before capture or child execution, instead of silently moving capture into the caller process; preserve explicit local opt-in and normal host-policy capture.
 

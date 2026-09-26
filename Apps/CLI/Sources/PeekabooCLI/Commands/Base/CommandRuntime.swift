@@ -23,6 +23,12 @@ struct CommandRuntimeOptions {
     /// This command carries the capture-engine choice in its remote request instead of
     /// requiring the caller process to own capture/TCC.
     var transportsCaptureEnginePreference = false
+    /// Live/action engine overrides use inline observations; an unscoped command keeps raw capture routing.
+    var usesInlineCaptureEngineTransport = false
+    var requiresDesktopObservationInlinePixels: Bool {
+        self.usesInlineCaptureEngineTransport && self.requiresCaptureEnginePreferenceHost
+    }
+
     /// AX-only command forms do not run a capture backend; ambient engine configuration must
     /// not alter their runtime host.
     var ignoresCaptureEnginePreference = false
@@ -154,18 +160,7 @@ struct CommandRuntimeOptions {
         if !options.ignoresCaptureEnginePreference,
            options.captureEnginePreference == nil,
            let captureEngine = Self.captureEnginePreference(environment: environment) {
-            options.captureEnginePreference = captureEngine
-            if options.transportsCaptureEnginePreference {
-                options.requiresCaptureEnginePreferenceHost = true
-                let preference = ObservationCommandSupport.captureEnginePreference(
-                    cliValue: captureEngine,
-                    configuredValue: nil
-                )
-                options.requiresCaptureEnginePreferenceCapability = preference != .auto
-                options.requiresScreenCaptureKitOwnerCapability = true
-            } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
-                options.preferRemote = false
-            }
+            options.selectCaptureEnginePreference(captureEngine)
         }
         if options.requiresBrowserHandoffBridge {
             options.preferRemote = true
@@ -173,6 +168,22 @@ struct CommandRuntimeOptions {
             options.autoStartDaemon = false
         }
         return options
+    }
+
+    mutating func selectCaptureEnginePreference(_ value: String) {
+        self.captureEnginePreference = value
+        if self.usesInlineCaptureEngineTransport {
+            self.transportsCaptureEnginePreference = true
+            self.requiresDesktopObservation = true
+        }
+        if self.transportsCaptureEnginePreference {
+            self.requiresCaptureEnginePreferenceHost = true
+            let preference = ObservationCommandSupport.captureEnginePreference(cliValue: value, configuredValue: nil)
+            self.requiresCaptureEnginePreferenceCapability = preference != .auto
+            self.requiresScreenCaptureKitOwnerCapability = true
+        } else if !self.requiresApplicationLaunchOptions, !self.requiresHostApplicationInventory {
+            self.preferRemote = false
+        }
     }
 
     static func captureEnginePreference(environment: [String: String]) -> String? {
@@ -218,6 +229,15 @@ struct CommandRuntime {
     let interactionMutationTracker: InteractionMutationTracker
     @MainActor let services: any PeekabooServiceProviding
     @MainActor let logger: Logger
+
+    func requireCompatibleHost() throws {
+        if let requiredHostFailure {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: requiredHostFailure
+            )
+        }
+    }
 
     @MainActor
     func observationTimeoutMutationTracker(mayMutateDesktop: Bool) -> InteractionMutationTracker? {

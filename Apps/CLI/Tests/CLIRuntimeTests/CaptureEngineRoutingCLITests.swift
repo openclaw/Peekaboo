@@ -3,7 +3,7 @@ import Testing
 
 struct CaptureEngineRoutingCLITests {
     @Test(arguments: ["live", "action"], ["cli-cli", "cli-env", "env-cli", "env-env"])
-    func `Live capture engine and explicit host conflicts refuse before setup`(
+    func `Live capture engine refuses missing explicit host before setup`(
         command: String,
         sources: String
     ) async throws {
@@ -13,7 +13,7 @@ struct CaptureEngineRoutingCLITests {
         }
 
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-engine-host-conflict-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("peekaboo-engine-missing-host-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let output = root.appendingPathComponent("must-not-create", isDirectory: true)
@@ -52,10 +52,9 @@ struct CaptureEngineRoutingCLITests {
         let error = try #require(json["error"] as? [String: Any])
         #expect(json["success"] as? Bool == false)
         #expect(error["code"] as? String == "VALIDATION_ERROR")
-        #expect((error["message"] as? String)?.contains("explicit Bridge socket") == true)
+        #expect((error["message"] as? String)?.contains("desktopObservationInlinePixels") == true)
         #expect((error["message"] as? String)?.contains("--no-remote") == true)
-        let debugLogs = try #require(json["debug_logs"] as? [String])
-        #expect(debugLogs.isEmpty)
+        _ = try #require(json["debug_logs"] as? [String])
         if command == "action" {
             #expect(json["effect"] as? String == "refused")
             #expect(error["mutation_dispatched"] as? Bool == false)

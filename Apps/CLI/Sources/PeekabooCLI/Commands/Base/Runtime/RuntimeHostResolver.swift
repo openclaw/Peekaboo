@@ -496,6 +496,11 @@ extension RuntimeHostResolver {
             return "No compatible Bridge host advertises desktopObservationOCR. Update and relaunch Peekaboo " +
                 "on the selected host, or pass --no-remote to explicitly run Vision OCR in the caller process."
         }
+        if options.requiresDesktopObservationInlinePixels {
+            return "Capture engine '\(options.captureEnginePreference ?? "requested")' requires a Bridge host " +
+                "with desktopObservationInlinePixels support. Update and relaunch the selected host, " +
+                "or pass --no-remote to intentionally capture in the caller process."
+        }
         if explicitSocket != nil, options.requiresExactWindowROIObservation {
             return "The explicitly selected Bridge host does not support exact-window ROI observation; " +
                 "protocol 1.21 with enabled observation and atomic snapshot publication is required."
@@ -957,6 +962,7 @@ extension RuntimeHostResolver {
             supportsDesktopObservation: observationCapabilities.desktopObservation,
             supportsDesktopObservationOCR: observationCapabilities.desktopObservationOCR,
             supportsDesktopObservationCaptureEngine: observationCapabilities.desktopObservationCaptureEngine,
+            supportsDesktopObservationInlinePixels: observationCapabilities.desktopObservationInlinePixels,
             supportsExactWindowROIObservation: observationCapabilities.exactWindowROIObservation,
             supportsImplicitLatestSnapshotInvalidation: BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(
                 for: handshake

@@ -393,11 +393,13 @@ public final class PeekabooBridgeServer {
         registeredOwnership: Bool)
     {
         capabilities.subtract([
+            PeekabooBridgeHostCapability.desktopObservationInlinePixels,
             PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
             PeekabooBridgeHostCapability.screenCaptureKitOwnershipEnforcement,
             PeekabooBridgeHostCapability.classicCaptureWithoutScreenCaptureKit,
         ])
         if allowedOperations.contains(.desktopObservation) {
+            capabilities.insert(PeekabooBridgeHostCapability.desktopObservationInlinePixels)
             if services.supportsScreenCaptureKitProcessOwnership {
                 capabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitOwnershipEnforcement)
             }

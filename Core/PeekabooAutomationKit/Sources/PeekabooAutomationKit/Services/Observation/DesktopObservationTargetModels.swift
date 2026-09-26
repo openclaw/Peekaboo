@@ -171,6 +171,7 @@ public struct DesktopStateSnapshot: Sendable, Codable, Equatable {
 public struct DesktopStateSnapshotSummary: Sendable, Codable, Equatable {
     public let capturedAt: Date
     public let displayCount: Int
+    /// Applications enumerated for target resolution, not a system-wide census. Zero when inventory was not needed.
     public let runningApplicationCount: Int
     public let windowCount: Int
     public let frontmostApplication: ApplicationIdentity?

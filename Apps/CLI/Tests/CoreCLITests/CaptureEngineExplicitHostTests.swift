@@ -12,7 +12,10 @@ struct CaptureEngineExplicitHostTests {
         "auto", "modern", "modern-only", "sckit", "sc", "screen-capture-kit", "sck",
         "classic", "cg", "legacy", "legacy-only", "false", "0", "no", " CG ",
     ])
-    func `live capture refuses engine and explicit host from either source`(command: String, engine: String) {
+    func `live capture transports engine and explicit host from either source`(
+        command: String,
+        engine: String
+    ) throws {
         for engineInEnvironment in [false, true] {
             for socketInEnvironment in [false, true] {
                 var options: [String: [String]] = [:]
@@ -28,13 +31,26 @@ struct CaptureEngineExplicitHostTests {
                     options["bridge-socket"] = [Self.socket]
                 }
 
-                let error = #expect(throws: ValidationError.self) {
-                    try Self.bind(command: command, options: options, environment: environment)
-                }
-                #expect(error?.localizedDescription.contains("explicit Bridge socket") == true)
-                #expect(error?.localizedDescription.contains("Omit --capture-engine") == true)
-                #expect(error?.localizedDescription.contains("unset PEEKABOO_CAPTURE_ENGINE") == true)
-                #expect(error?.localizedDescription.contains("--no-remote") == true)
+                let runtimeOptions = try Self.bind(command: command, options: options, environment: environment)
+                #expect(runtimeOptions.captureEnginePreference == engine
+                    .trimmingCharacters(in: .whitespacesAndNewlines))
+                #expect(runtimeOptions.preferRemote)
+                #expect(runtimeOptions.requiresDesktopObservation)
+                #expect(runtimeOptions.transportsCaptureEnginePreference)
+                #expect(runtimeOptions.requiresCaptureEnginePreferenceHost)
+                #expect(runtimeOptions.requiresDesktopObservationInlinePixels)
+                #expect(runtimeOptions.requiresCaptureEnginePreferenceCapability == (engine != "auto"))
+                #expect(runtimeOptions.requiresScreenCaptureKitOwnerCapability)
+                #expect(BridgeSocketResolver.explicitBridgeSocket(
+                    options: runtimeOptions,
+                    environment: environment
+                ) == Self.socket)
+                #expect(RuntimeHostResolver.initialRoutingDecision(
+                    options: runtimeOptions,
+                    environment: environment,
+                    configurationInput: nil,
+                    knownSnapshotInvalidationRemoteSocketPaths: []
+                ) == .remote)
             }
         }
     }
@@ -51,7 +67,7 @@ struct CaptureEngineExplicitHostTests {
                 options: ["captureEngine": ["cg"], "bridge-socket": [Self.socket]],
                 flags: isolation == "flag" ? ["no-remote"] : [],
                 environment: environment
-            ).applyingEnvironmentOverrides(environment: environment)
+            )
 
             #expect(options.captureEnginePreference == "cg")
             #expect(RuntimeHostResolver.initialRoutingDecision(
@@ -70,10 +86,13 @@ struct CaptureEngineExplicitHostTests {
             command: command,
             options: ["captureEngine": [empty]],
             environment: environment
-        ).applyingEnvironmentOverrides(environment: environment)
+        )
 
         #expect(options.captureEnginePreference == nil)
         #expect(options.preferRemote)
+        #expect(!options.requiresDesktopObservationInlinePixels)
+        #expect(!options.requiresCaptureEnginePreferenceHost)
+        #expect(!options.requiresCaptureEnginePreferenceCapability)
         #expect(RuntimeHostResolver.initialRoutingDecision(
             options: options,
             environment: environment,
@@ -82,31 +101,41 @@ struct CaptureEngineExplicitHostTests {
         ) == .remote)
     }
 
-    @Test(arguments: ["live", "action"])
-    func `empty CLI values do not hide ambient engine or socket`(command: String) {
-        #expect(throws: ValidationError.self) {
-            try Self.bind(
-                command: command,
-                options: ["captureEngine": [""], "bridge-socket": [""]],
-                environment: ["PEEKABOO_CAPTURE_ENGINE": "auto", "PEEKABOO_BRIDGE_SOCKET": Self.socket]
-            )
-        }
+    @Test(arguments: ["live", "action"], ["", " \n "])
+    func `empty CLI values do not hide ambient engine or socket`(command: String, empty: String) throws {
+        let environment = ["PEEKABOO_CAPTURE_ENGINE": "auto", "PEEKABOO_BRIDGE_SOCKET": Self.socket]
+        let options = try Self.bind(
+            command: command,
+            options: ["captureEngine": [empty], "bridge-socket": [empty]],
+            environment: environment
+        )
+
+        #expect(options.captureEnginePreference == "auto")
+        #expect(options.preferRemote)
+        #expect(options.requiresDesktopObservation)
+        #expect(options.transportsCaptureEnginePreference)
+        #expect(options.requiresCaptureEnginePreferenceHost)
+        #expect(options.requiresDesktopObservationInlinePixels)
+        #expect(!options.requiresCaptureEnginePreferenceCapability)
+        #expect(BridgeSocketResolver.explicitBridgeSocket(options: options, environment: environment) == Self.socket)
     }
 
     @Test(arguments: ["live", "action"])
-    func `a CLI engine still takes precedence over an invalid ambient value`(command: String) {
-        let error = #expect(throws: ValidationError.self) {
-            try Self.bind(
-                command: command,
-                options: ["captureEngine": ["auto"], "bridge-socket": [Self.socket]],
-                environment: ["PEEKABOO_CAPTURE_ENGINE": "invalid-ambient-engine"]
-            )
-        }
-        #expect(error?.localizedDescription.contains("explicit Bridge socket") == true)
+    func `a CLI engine still takes precedence over an invalid ambient value`(command: String) throws {
+        let options = try Self.bind(
+            command: command,
+            options: ["captureEngine": ["auto"], "bridge-socket": [Self.socket]],
+            environment: ["PEEKABOO_CAPTURE_ENGINE": "invalid-ambient-engine"]
+        )
+
+        #expect(options.captureEnginePreference == "auto")
+        #expect(options.preferRemote)
+        #expect(options.requiresDesktopObservationInlinePixels)
+        #expect(!options.requiresCaptureEnginePreferenceCapability)
     }
 
     @Test(arguments: ["live", "action"])
-    func `an engine without a selected socket keeps caller local capture`(command: String) throws {
+    func `an engine without a selected socket requires a compatible remote host`(command: String) throws {
         for engineInEnvironment in [false, true] {
             let environment = [
                 "PEEKABOO_CAPTURE_ENGINE": engineInEnvironment ? "modern" : "",
@@ -116,11 +145,16 @@ struct CaptureEngineExplicitHostTests {
                 command: command,
                 options: ["captureEngine": [engineInEnvironment ? "" : "modern"], "bridge-socket": [""]],
                 environment: environment
-            ).applyingEnvironmentOverrides(environment: environment)
+            )
 
             #expect(options.captureEnginePreference == "modern")
-            #expect(!options.preferRemote)
+            #expect(options.preferRemote)
+            #expect(options.requiresDesktopObservation)
+            #expect(options.transportsCaptureEnginePreference)
+            #expect(options.requiresCaptureEnginePreferenceHost)
+            #expect(options.requiresDesktopObservationInlinePixels)
             #expect(!options.remoteIsolationRequested)
+            #expect(RuntimeHostResolver.requiredHostFailure(explicitSocket: nil, options: options) != nil)
         }
     }
 
@@ -137,6 +171,7 @@ struct CaptureEngineExplicitHostTests {
             #expect(options.preferRemote == (commandType == SeeCommand.self))
             #expect(options.transportsCaptureEnginePreference == (commandType == SeeCommand.self))
             #expect(options.requiresScreenCapturePermission == (commandType == SeeCommand.self))
+            #expect(!options.requiresDesktopObservationInlinePixels)
         }
     }
 
@@ -144,7 +179,7 @@ struct CaptureEngineExplicitHostTests {
         .enabled(if: ProcessInfo.processInfo.environment["PEEKABOO_NO_REMOTE"] == nil),
         arguments: ["live", "action"]
     )
-    func `conflicting selectors refuse before runtime construction or command execution`(command: String) async throws {
+    func `selected engine and explicit host reach runtime capability preflight`(command: String) async throws {
         var arguments = [
             "peekaboo", "capture", command,
             "--capture-engine", "cg", "--bridge-socket", Self.socket,
@@ -154,18 +189,23 @@ struct CaptureEngineExplicitHostTests {
             arguments += ["--", "/synthetic/must-not-execute"]
         }
         var runtimeConstructions = 0
-        let error = await #expect(throws: ValidationError.self) {
+        let error = await #expect(throws: RuntimeProbe.self) {
             try await CommanderRuntimeExecutor.resolveAndRun(
                 arguments: arguments,
-                runtimeFactory: .init { _ in
+                runtimeFactory: .init { options in
                     runtimeConstructions += 1
+                    #expect(options.captureEnginePreference == "cg")
+                    #expect(options.preferRemote)
+                    #expect(options.requiresDesktopObservation)
+                    #expect(options.requiresCaptureEnginePreferenceHost)
+                    #expect(options.requiresDesktopObservationInlinePixels)
                     throw RuntimeProbe.reached
                 }
             )
         }
 
-        #expect(error?.localizedDescription.contains("explicit Bridge socket") == true)
-        #expect(runtimeConstructions == 0)
+        #expect(error == .reached)
+        #expect(runtimeConstructions == 1)
     }
 
     private static func bind(
@@ -178,10 +218,10 @@ struct CaptureEngineExplicitHostTests {
             from: ParsedValues(positional: [], options: options, flags: flags),
             commandType: command == "live" ? CaptureLiveCommand.self : CaptureActionCommand.self,
             environment: environment
-        )
+        ).applyingEnvironmentOverrides(environment: environment)
     }
 
-    private enum RuntimeProbe: Error {
+    private enum RuntimeProbe: Error, Equatable {
         case reached
     }
 }

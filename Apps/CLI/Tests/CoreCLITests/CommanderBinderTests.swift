@@ -88,14 +88,15 @@ struct CommanderBinderTests {
     }
 
     @Test
-    func `Capture engine option stays local when a command cannot transport it`() throws {
+    func `Live capture engine option requires inline transport on the selected host`() throws {
         let parsed = ParsedValues(positional: [], options: ["captureEngine": ["cg"]], flags: [])
         let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: CaptureLiveCommand.self)
 
         #expect(options.captureEnginePreference == "cg")
-        #expect(!options.preferRemote)
-        #expect(!options.transportsCaptureEnginePreference)
-        #expect(!options.requiresCaptureEnginePreferenceHost)
+        #expect(options.preferRemote)
+        #expect(options.transportsCaptureEnginePreference)
+        #expect(options.requiresCaptureEnginePreferenceHost)
+        #expect(options.requiresDesktopObservationInlinePixels)
     }
 
     @Test

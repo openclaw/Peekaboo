@@ -24,21 +24,17 @@ public final class DesktopStateSnapshotProvider: DesktopStateSnapshotProviding {
             return DesktopStateSnapshot()
 
         case .app, .pid:
-            return try await self.snapshotWithRunningApplications(frontmost: nil)
+            return try await self.snapshotWithRunningApplications()
 
         case .frontmost:
             let frontmost = try await self.applications.getFrontmostApplication()
-            return try await self.snapshotWithRunningApplications(frontmost: frontmost)
+            return DesktopStateSnapshot(frontmostApplication: ApplicationIdentity(frontmost))
         }
     }
 
-    private func snapshotWithRunningApplications(
-        frontmost: ServiceApplicationInfo?) async throws -> DesktopStateSnapshot
-    {
+    private func snapshotWithRunningApplications() async throws -> DesktopStateSnapshot {
         let applications = try await self.applications.listApplications().data.applications
-        return DesktopStateSnapshot(
-            runningApplications: applications.map(ApplicationIdentity.init),
-            frontmostApplication: frontmost.map(ApplicationIdentity.init))
+        return DesktopStateSnapshot(runningApplications: applications.map(ApplicationIdentity.init))
     }
 }
 

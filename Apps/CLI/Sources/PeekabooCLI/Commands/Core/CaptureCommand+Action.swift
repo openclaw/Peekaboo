@@ -175,10 +175,17 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         self.childCommandDispatched = false
         self.childCommandCompleted = false
 
+        try self.resolvedRuntime.requireCompatibleHost()
         let scope = try await resolveScope()
         let options = try buildOptions()
         let timing = try resolveActionTiming(durationLimit: options.duration)
-        let requestedEngine = liveCaptureEnginePreference(for: scope)
+        let requestedEngine = try CaptureCommandOptionParser.enginePreference(
+            cliValue: self.captureEngine,
+            configuredValue: self.resolvedRuntime.configuration.captureEnginePreference,
+            kind: scope.kind,
+            gateOwner: self.services.screenCapture.captureTransactionGateOwner,
+            supportsEngineScope: self.services.screenCapture is any EngineAwareScreenCaptureServiceProtocol
+        )
         let (outputDir, resolvedVideoOut) = try self.resolveOutputPathsBeforeDispatch()
         let captureHostIdentity = try await captureHostIdentity()
         let runID = UUID().uuidString
@@ -283,7 +290,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                         captureCompletedMs: captureCompletedMs,
                         timing: timing,
                         options: options,
-                        requestedEngine: requestedEngine,
+                        requestedEngine: requestedEngine ?? .auto,
                         action: action,
                         capture: capture,
                         captureHostIdentity: captureHostIdentity,
@@ -487,15 +494,16 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
 
     private func startCaptureTask(
         session: WatchCaptureSession,
-        enginePreference: CaptureEnginePreference,
+        enginePreference: CaptureEnginePreference?,
         captureStartedNs: UInt64
     ) -> Task<CaptureActionCaptureCompletion, any Error> {
         let runSession: @MainActor @Sendable () async throws -> CaptureSessionResult = {
             try await session.run()
         }
         return Task { @MainActor in
-            let result: CaptureSessionResult = if let engineAware = services
-                .screenCapture as? any EngineAwareScreenCaptureServiceProtocol {
+            let result: CaptureSessionResult = if let enginePreference,
+                                                  let engineAware = services
+                                                      .screenCapture as? any EngineAwareScreenCaptureServiceProtocol {
                 try await engineAware.withCaptureEngine(enginePreference, operation: runSession)
             } else {
                 try await runSession()
@@ -1306,21 +1314,6 @@ extension CaptureActionCommand {
             throw PeekabooError.invalidInput("Region width and height must be greater than zero")
         }
         return CGRect(x: x, y: y, width: width, height: height)
-    }
-
-    private func liveCaptureEnginePreference(for scope: CaptureScope) -> CaptureEnginePreference {
-        let value = (captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        switch value {
-        case "modern", "modern-only", "sckit", "sc", "screen-capture-kit", "sck":
-            return .modern
-        case "classic", "cg", "legacy", "legacy-only", "false", "0", "no":
-            return .legacy
-        default:
-            return scope.kind == .region ? .legacy : .auto
-        }
     }
 
     private func displayInfo(for index: Int?) async throws -> (index: Int, uuid: String)? {

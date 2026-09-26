@@ -378,6 +378,7 @@ public enum PeekabooBridgeHostCapability {
     public static let backgroundBridgeHost = "backgroundBridgeHost"
     public static let desktopObservationOCR = "desktopObservationOCR"
     public static let desktopObservationCaptureEngine = "desktopObservationCaptureEngine"
+    public static let desktopObservationInlinePixels = "desktopObservationInlinePixels"
     // Old clients require successful preparation as well as implemented ownership support.
     public static let screenCaptureKitProcessOwnership = "screenCaptureKitProcessOwnership"
     public static let screenCaptureKitOwnershipEnforcement = "screenCaptureKitOwnershipEnforcement"
