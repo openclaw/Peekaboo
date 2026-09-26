@@ -129,6 +129,16 @@ compiles inert SwiftPM and Xcode fixtures created with real absorbed Git submodu
 compilation against an uncommitted Commander symbol without running a test bundle or built product. It does not qualify
 Peekaboo's production graph or replace its compile, test, and release gates.
 
+## Tachikoma integration
+
+The internal CLI and Mac app consume the Tachikoma submodule at its published 0.5.1 revision. The tracked consumer
+locks retain their existing compatible versions, including Swift Crypto 4.5.2 and Peekaboo's pinned MCP SDK revision;
+Tachikoma's standalone `Package.resolved` does not replace those consumer locks.
+
+Keep Peekaboo's Agent schema conversion in the integration layer: its recursive union projection preserves structured
+`verify_state` predicate-array items that Tachikoma's legacy parameter projection still treats as strings. Updating the
+dependency does not replace that consumer contract or weaken Agent argument validation.
+
 ## Shared CodeQL build graph
 
 The workspace's `CodeQL` scheme builds the CLI, certification controller, Mac app, Playground, and Inspector
