@@ -111,6 +111,24 @@ struct PasteToolClipboardOwnershipTests {
     }
 
     @Test
+    func `MCP silent clipboard permission refusal retains its reason without mutation`() async throws {
+        let fixture = Fixture(prior: Self.payload("prior"))
+        fixture.clipboard.getError = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied,
+            message: "Synthetic silent clipboard permission is missing")
+
+        let response = try await fixture.run()
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(response.isError)
+        #expect(metadata["refusal_reason"] == .string("permission_denied"))
+        #expect(metadata["retry_safe"] == .bool(true))
+        #expect(metadata["mutation_dispatched"] == .bool(false))
+        #expect(fixture.clipboard.setCallCount == 0)
+        #expect(fixture.clipboard.saveCallCount == 0)
+        #expect(fixture.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
     func `MCP legacy provider refuses before clipboard reads or input`() async throws {
         let fixture = Fixture(prior: nil)
         let legacy = LegacyClipboardService()

@@ -212,6 +212,98 @@ final class ClipboardTemporaryWriteTests: XCTestCase {
         XCTAssertFalse(transaction.didMutate)
     }
 
+    func testTemporaryReadAccessRequiresSilentGeneralPermissionWithoutInspectingContents() throws {
+        guard #available(macOS 15.4, *) else { throw XCTSkip("Pasteboard access policy requires macOS 15.4") }
+        let modes: [NSPasteboard.AccessBehavior] = [.default, .ask, .alwaysAllow, .alwaysDeny]
+        for mode in modes {
+            XCTAssertNoThrow(try ClipboardService.requireTemporaryReadAccess(
+                pasteboardName: NSPasteboard.Name("synthetic.private.board"),
+                accessBehavior: mode))
+            if mode == .alwaysAllow {
+                XCTAssertNoThrow(try ClipboardService.requireTemporaryReadAccess(
+                    pasteboardName: .general, accessBehavior: mode))
+            } else {
+                XCTAssertThrowsError(try ClipboardService.requireTemporaryReadAccess(
+                    pasteboardName: .general, accessBehavior: mode))
+                { error in
+                    guard let failure = error as? DesktopActionFailure else {
+                        return XCTFail("Expected a canonical permission refusal")
+                    }
+                    XCTAssertEqual(failure.outcome.refusalReason, .permissionDenied)
+                    XCTAssertFalse(failure.outcome.dispatchState.mutationDispatched)
+                    XCTAssertEqual(failure.outcome.retrySafety, .safe)
+                }
+            }
+        }
+    }
+
+    func testNativeLazyRepresentationIsMaterializedAndRestored() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let type = NSPasteboard.PasteboardType("synthetic.clipboard.lazy")
+        let bytes = Data("promised contents".utf8)
+        let provider = TemporaryPasteboardDataProvider(data: bytes)
+        let item = NSPasteboardItem()
+        XCTAssertTrue(item.setDataProvider(provider, forTypes: [type]))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+        let generation = pasteboard.changeCount
+
+        let transaction = try ClipboardService(pasteboard: pasteboard).prepareTemporaryWrite()
+        XCTAssertEqual(pasteboard.changeCount, generation)
+        _ = try transaction.write(Self.request("temporary"))
+        guard case .restored = try transaction.cleanup() else { return XCTFail("Expected restoration") }
+        XCTAssertEqual(pasteboard.pasteboardItems?.first?.data(forType: type), bytes)
+        withExtendedLifetime(provider) {}
+    }
+
+    func testNativeUnresolvedRepresentationRefusesWithoutDiscardingReadableCompanion() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let type = NSPasteboard.PasteboardType("synthetic.clipboard.unresolved")
+        let provider = TemporaryPasteboardDataProvider(data: nil)
+        let item = NSPasteboardItem()
+        XCTAssertTrue(item.setString("prior readable text", forType: .string))
+        XCTAssertTrue(item.setDataProvider(provider, forTypes: [type]))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+        let original = try XCTUnwrap(pasteboard.pasteboardItems?.first)
+        let originalTypes = original.types
+        XCTAssertTrue(originalTypes.contains(type))
+        XCTAssertNil(original.data(forType: type))
+        let generation = pasteboard.changeCount
+
+        XCTAssertThrowsError(try ClipboardService(pasteboard: pasteboard).prepareTemporaryWrite()) { error in
+            guard case ClipboardTemporaryWriteError.snapshotUnavailable = error else {
+                return XCTFail("Expected an unavailable complete snapshot")
+            }
+        }
+        XCTAssertEqual(pasteboard.changeCount, generation)
+        XCTAssertEqual(pasteboard.pasteboardItems?.first?.types, originalTypes)
+        XCTAssertEqual(pasteboard.pasteboardItems?.first?.string(forType: .string), "prior readable text")
+        XCTAssertNil(pasteboard.pasteboardItems?.first?.data(forType: type))
+        withExtendedLifetime(provider) {}
+    }
+
+    func testNativeEmptyMarkerDataIsPreservedRatherThanTreatedAsUnavailable() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let type = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+        let item = NSPasteboardItem()
+        XCTAssertTrue(item.setString("prior", forType: .string))
+        XCTAssertTrue(item.setData(Data(), forType: type))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+
+        let transaction = try ClipboardService(pasteboard: pasteboard).prepareTemporaryWrite()
+        _ = try transaction.write(Self.request("temporary"))
+        guard case .restored = try transaction.cleanup() else { return XCTFail("Expected restoration") }
+        let restored = try XCTUnwrap(pasteboard.pasteboardItems?.first)
+        XCTAssertTrue(restored.types.contains(type))
+        XCTAssertEqual(restored.data(forType: type), Data())
+        XCTAssertEqual(restored.string(forType: .string), "prior")
+    }
+
     func testNativeEmptySnapshotIsReadOnlyAndRestoresEmpty() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
@@ -399,6 +491,20 @@ final class ClipboardTemporaryWriteTests: XCTestCase {
         func externalWrite(_ value: ClipboardReadResult) {
             self.generation += 1
             self.current = value
+        }
+    }
+}
+
+private final class TemporaryPasteboardDataProvider: NSObject, NSPasteboardItemDataProvider {
+    let data: Data?
+
+    init(data: Data?) {
+        self.data = data
+    }
+
+    func pasteboard(_: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+        if let data {
+            item.setData(data, forType: type)
         }
     }
 }

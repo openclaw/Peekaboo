@@ -208,16 +208,6 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
     }
 
-    private func temporaryClipboardProvider() throws -> any ClipboardTemporaryWriteProviding {
-        guard let provider = self.services.clipboard as? any ClipboardTemporaryWriteProviding else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .runtimeIncompatible,
-                message: "This clipboard provider does not support ownership-aware temporary writes."
-            )
-        }
-        return provider
-    }
-
     private func requireClipboardPasteRoute(for target: UIAutomationTarget) throws {
         if target.exactWindow != nil {
             _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
@@ -246,6 +236,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let transaction: any ClipboardTemporaryWriteTransaction
         do {
             transaction = try self.temporaryClipboardProvider().prepareTemporaryWrite()
+        } catch let failure as DesktopActionFailure {
+            throw failure
         } catch {
             throw self.preDispatchActionError(for: error)
         }
@@ -874,6 +866,16 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 }
 
 extension PasteCommand {
+    private func temporaryClipboardProvider() throws -> any ClipboardTemporaryWriteProviding {
+        guard let provider = self.services.clipboard as? any ClipboardTemporaryWriteProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "This clipboard provider does not support ownership-aware temporary writes."
+            )
+        }
+        return provider
+    }
+
     private func withInteractionMutationInvalidation<T: Sendable>(
         actionSequence: CommandActionSequenceAccumulator? = nil,
         clipboardMutation: PasteClipboardMutation? = nil,

@@ -249,6 +249,11 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
     }
 
     public func prepareTemporaryWrite() throws -> any ClipboardTemporaryWriteTransaction {
+        if #available(macOS 15.4, *) {
+            try Self.requireTemporaryReadAccess(
+                pasteboardName: self.pasteboard.name,
+                accessBehavior: self.pasteboard.accessBehavior)
+        }
         let originalChangeCount = self.pasteboard.changeCount
         let items = try self.temporarySnapshotItems()
         guard self.pasteboard.changeCount == originalChangeCount else {
@@ -272,6 +277,20 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
                         items,
                         expectedChangeCount: expectedChangeCount)
                 }))
+    }
+
+    @available(macOS 15.4, *)
+    static func requireTemporaryReadAccess(
+        pasteboardName: NSPasteboard.Name,
+        accessBehavior: NSPasteboard.AccessBehavior) throws
+    {
+        guard pasteboardName != .general || accessBehavior == .alwaysAllow else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .permissionDenied,
+                message: "Automatic clipboard replacement requires silently allowed programmatic clipboard reads.",
+                hint: "Arrange clipboard permission for this reader outside automation, then allow future reads. " +
+                    "No clipboard data was read or temporary payload written; Peekaboo will not trigger a prompt.")
+        }
     }
 
     private func temporarySnapshotItems() throws -> [[ClipboardRepresentation]] {

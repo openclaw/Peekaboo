@@ -553,6 +553,8 @@ public struct PasteTool: MCPTool {
         let transaction: any ClipboardTemporaryWriteTransaction
         do {
             transaction = try clipboardProvider.prepareTemporaryWrite()
+        } catch let failure as DesktopActionFailure {
+            throw failure
         } catch {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,

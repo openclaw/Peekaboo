@@ -143,6 +143,25 @@ struct PasteClipboardOwnershipTests {
     }
 
     @Test
+    func `Silent clipboard permission refusal retains its reason without mutation`() async throws {
+        let fixture = OwnershipFixture()
+        fixture.clipboard.getError = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied,
+            message: "Synthetic silent clipboard permission is missing"
+        )
+
+        let result = try await fixture.run()
+        let response = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+        #expect(result.exitStatus != 0)
+        #expect(response.outcome?.refusalReason == .permissionDenied)
+        #expect(response.error?.retry_safe == true)
+        #expect(response.error?.mutation_dispatched == false)
+        #expect(fixture.clipboard.setCallCount == 0)
+        #expect(fixture.clipboard.saveCallCount == 0)
+        #expect(fixture.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
     func `Legacy clipboard provider refuses before reads focus or input`() async throws {
         let fixture = OwnershipFixture()
         let legacy = LegacyClipboardService()
