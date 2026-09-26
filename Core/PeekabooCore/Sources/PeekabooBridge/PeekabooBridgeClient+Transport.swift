@@ -363,9 +363,10 @@ extension PeekabooBridgeClient {
         let socketPath = self.socketPath
         let maxResponseBytes = self.maxResponseBytes
         let hostAuthentication = self.hostAuthentication
-        let requestTimeoutSec: TimeInterval
+        let enqueueTransport = self.enqueueTransport
+        let enqueue: PeekabooBridgeBlockingIO.Enqueue = { enqueueTransport(deadline, $0) }
         do {
-            requestTimeoutSec = try self.remainingTransportTimeout(deadline: deadline)
+            _ = try self.remainingTransportTimeout(deadline: deadline)
         } catch {
             self.invalidateOperationSession(for: attestedContext)
             throw error
@@ -388,13 +389,13 @@ extension PeekabooBridgeClient {
                 nil
             }
             blockingResponse = try await withTaskCancellationHandler {
-                try await PeekabooBridgeBlockingIO.run {
+                try await PeekabooBridgeBlockingIO.run(enqueue: enqueue) {
                     try Self.sendBlocking(
                         .init(
                             socketPath: socketPath,
                             requestData: payload,
                             maxResponseBytes: maxResponseBytes,
-                            timeoutSec: requestTimeoutSec,
+                            deadline: deadline,
                             expectedHost: expectedHost,
                             authenticatesInitialListener: authenticatesInitialListener,
                             hostAuthentication: hostAuthentication),
@@ -829,6 +830,8 @@ extension PeekabooBridgeClient {
         _ request: PeekabooBridgeBlockingRequest,
         cancellation: PeekabooBridgeClientConnectionCancellation) throws -> PeekabooBridgeBlockingResponse
     {
+        try cancellation.check()
+        guard request.deadline.timeIntervalSinceNow > 0 else { throw POSIXError(.ETIMEDOUT) }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         try cancellation.install(fd: fd)
@@ -840,7 +843,8 @@ extension PeekabooBridgeClient {
         do {
             Self.disableSigPipe(fd: fd)
             try PeekabooBridgeSocketIO.configureConnectedSocket(fd)
-            let deadline = Date().addingTimeInterval(request.timeoutSec)
+            // Queue residence consumes the caller's existing transport budget.
+            let deadline = request.deadline
 
             var addr = sockaddr_un()
             addr.sun_family = sa_family_t(AF_UNIX)
@@ -1234,7 +1238,7 @@ private struct PeekabooBridgeBlockingRequest: Sendable {
     let socketPath: String
     let requestData: Data
     let maxResponseBytes: Int
-    let timeoutSec: TimeInterval
+    let deadline: Date
     let expectedHost: PeekabooBridgeExpectedHost?
     let authenticatesInitialListener: Bool
     let hostAuthentication: PeekabooBridgeClientHostAuthentication
