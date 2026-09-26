@@ -129,6 +129,16 @@ compiles inert SwiftPM and Xcode fixtures created with real absorbed Git submodu
 compilation against an uncommitted Commander symbol without running a test bundle or built product. It does not qualify
 Peekaboo's production graph or replace its compile, test, and release gates.
 
+## Swift runtime compatibility
+
+Swift Collections is constrained to exact 1.6.0 at the shared external-dependency boundary, including unlocked CLI
+source builds and release preflight. Version 1.7.0 can emit a strong `_swift_initBorrow` import from its
+availability-qualified borrowing helpers, causing CLI startup to fail on macOS 26 and earlier. The existing tracked
+consumer locks already select 1.6.0; do not advance this constraint until the built artifacts preserve the supported
+macOS runtime baseline. Release runtime verification rejects that strong import in every architecture, including
+reused binaries and extracted archives. Weak imports remain distinct; this does not weak-link the Swift runtime or
+replace system libraries. Successful execution on the build host alone does not prove older-macOS compatibility.
+
 ## Shared CodeQL build graph
 
 The workspace's `CodeQL` scheme builds the CLI, certification controller, Mac app, Playground, and Inspector
