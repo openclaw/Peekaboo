@@ -87,6 +87,42 @@ test("ambient-state tests require the exact shared opt-in", () => {
   );
 });
 
+test("live visualizer smoke requires ambient consent while disabled-feedback proof stays safe", () => {
+  const lines = runtimeTests.split("\n");
+  const declaration = lines.indexOf(
+    "    func `peekaboo visualizer emits JSON (success or error)`() async throws {",
+  );
+  assert.notEqual(declaration, -1, "Missing live visualizer smoke test");
+  assert.equal(
+    lines[declaration - 1].trim(),
+    "@Test(.enabled(if: CLIRuntimeEnvironment.runAmbientStateTests))",
+    "The live visualizer declaration must be immediately governed by the ambient-state gate",
+  );
+
+  const disabledDeclaration = lines.indexOf(
+    "    func `peekaboo visualizer fails fast when visual feedback is disabled`() async throws {",
+  );
+  assert.notEqual(disabledDeclaration, -1, "Missing deterministic disabled-feedback proof");
+  assert.equal(lines[disabledDeclaration - 1].trim(), "@Test");
+  const disabledBody = lines.slice(disabledDeclaration).join("\n").split("\n    }")[0];
+  assert.match(disabledBody, /environment: \["PEEKABOO_VISUAL_FEEDBACK": "false"\]/);
+});
+
+test("real daemon smoke requires ambient consent and cannot run in skip-automation builds", () => {
+  const daemonTests = readFileSync(
+    `${repositoryRoot}/Apps/CLI/Tests/CLIRuntimeTests/DaemonLaunchRuntimeTests.swift`,
+    "utf8",
+  );
+  assert.match(
+    daemonTests,
+    /nonisolated static var isEnabled: Bool \{\s*#if PEEKABOO_SKIP_AUTOMATION\s*false\s*#else\s*CLIRuntimeEnvironment\.runAmbientStateTests &&\s*ProcessInfo\.processInfo\.environment\["PEEKABOO_INCLUDE_AUTOMATION_TESTS"\]\?\.lowercased\(\) == "true"\s*#endif\s*\}/,
+  );
+  assert.match(
+    daemonTests,
+    /@Suite\(\.serialized, \.enabled\(if: DaemonRuntimeTestEnvironment\.isEnabled\)\)\s*struct DaemonLaunchRuntimeTests \{/,
+  );
+});
+
 for (const name of [
   "Remote-selected local mutation installs a caller barrier",
   "Remote coordinator rejects a host observation certificate that forbids preservation",
