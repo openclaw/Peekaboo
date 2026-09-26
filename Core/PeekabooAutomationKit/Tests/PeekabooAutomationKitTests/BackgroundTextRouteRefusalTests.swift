@@ -99,7 +99,9 @@ struct BackgroundTextRouteRefusalTests {
                 return .noChange
             },
             targetedKeyTapper: { _, _, _ in keyTap() },
-            targetedTextReplacer: { _, _, _, _, _ in try TextInputRoute.unproven.permitsAccessibilityEditing() },
+            targetedTextReplacer: { _, _, _, _, _ in
+                try TextInputRoute.unproven.permitsAccessibilityEditing() ? .accessibilityValue : .unsupported
+            },
             targetBundleIdentifier: { _ in nil },
             desktopOperationExecutor: DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
                 coordinationRootURL: coordinationRoot)))

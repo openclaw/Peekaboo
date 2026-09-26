@@ -88,9 +88,9 @@ struct BackgroundTextInputReceiverTests {
     }
 
     @Test(arguments: [SpecialKey.return, .tab, .escape, .upArrow, .f1])
-    func `event only keys never resolve a focused AX receiver`(key: SpecialKey) throws {
+    func `event only keys never resolve a focused AX receiver`(key: SpecialKey) async throws {
         // An invalid PID would fail target validation if the AX editing path were entered.
-        #expect(try BackgroundInputDriver.performFocusedTextKey(key, targetProcessIdentifier: -1) == .unsupported)
+        #expect(try await BackgroundInputDriver.performFocusedTextKey(key, targetProcessIdentifier: -1) == .unsupported)
     }
 
     @MainActor

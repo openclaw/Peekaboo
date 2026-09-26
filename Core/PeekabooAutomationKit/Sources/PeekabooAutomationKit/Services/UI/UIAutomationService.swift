@@ -96,7 +96,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     let continuationFocusedElementReader: @Sendable (FocusedElementIdentity)
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
-    let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity)
+    let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity, RetainedFocusElement?)
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     let exactKeyWindowReader: @Sendable (pid_t) -> ExactKeyWindowSnapshot?
     let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
@@ -186,7 +186,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         continuationFocusedElementReader: @escaping @Sendable (FocusedElementIdentity)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> =
             DetachedExactWindowFocusReader.readContinuation,
-        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
+        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity, RetainedFocusElement?)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> =
             DetachedExactWindowFocusReader.readValue,
         exactKeyWindowReader: @escaping @Sendable (pid_t) -> ExactKeyWindowSnapshot? =

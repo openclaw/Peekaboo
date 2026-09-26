@@ -93,6 +93,123 @@ struct TargetedTypeInputPolicyTests {
         #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == payload.eventUnits)
     }
 
+    @Test(arguments: Payload.allCases, [false, true])
+    func `cancelled unsupported AX attempt cannot dispatch fallback events`(
+        payload: Payload,
+        hasPrefix: Bool) async throws
+    {
+        let fixture = Fixture()
+        fixture.actionResult = .unsupported
+        fixture.actionResults = hasPrefix ? [.accessibilityValue] : []
+        fixture.suspendActionAt = hasPrefix ? 2 : 1
+        let actions = (hasPrefix ? [TypeAction.text("p")] : []) + payload.actions
+        let operation = Task { @MainActor in try await fixture.run(actions, strategy: .actionFirst) }
+        guard await fixture.entered.opensWithin(.seconds(2)) else {
+            operation.cancel()
+            await fixture.release.open()
+            _ = try? await operation.value
+            Issue.record("The unsupported AX attempt did not reach its gate")
+            return
+        }
+        operation.cancel()
+        await fixture.release.open()
+
+        if hasPrefix {
+            let failure = await #expect(throws: InputDeliveryIndeterminateError.self) { try await operation.value }
+            #expect(failure?.emittedUnitCount == 1)
+            #expect(failure?.retrySafe == false)
+            #expect(failure?.delivery?.mechanism == .accessibilityValue)
+        } else {
+            await #expect(throws: CancellationError.self) { try await operation.value }
+        }
+        #expect(fixture.actionCalls.count == (hasPrefix ? 2 : 1))
+        #expect(fixture.eventCalls.isEmpty)
+        #expect(fixture.eventPermissionChecks == 0)
+        #expect(fixture.finalizations == 1)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
+    func `uncancelled unsupported AX return retains its strategy`(
+        strategy: UIInputStrategy,
+        payload: Payload) async throws
+    {
+        let fixture = Fixture()
+        fixture.actionResult = .unsupported
+        fixture.suspendActionAt = 1
+        let operation = Task { @MainActor in try await fixture.run(payload.actions, strategy: strategy) }
+        guard await fixture.entered.opensWithin(.seconds(2)) else {
+            operation.cancel()
+            await fixture.release.open()
+            _ = try? await operation.value
+            Issue.record("The unsupported AX strategy control did not reach its gate")
+            return
+        }
+        await fixture.release.open()
+
+        if strategy == .actionOnly {
+            let failure = await #expect(throws: DesktopActionFailure.self) { try await operation.value }
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.outcome.retrySafety == .safe)
+            #expect(fixture.actionCalls.count == 1)
+            #expect(fixture.eventCalls.isEmpty)
+        } else {
+            let result = try await operation.value
+            #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == payload.eventUnits)
+            #expect(fixture.actionCalls.count == payload.actionUnits)
+            #expect(fixture.eventCalls.count == payload.eventUnits)
+        }
+        #expect(fixture.finalizations == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func `cancelled clear before Delete retains accepted selection and earlier prefix`(hasPrefix: Bool) async throws {
+        let fixture = Fixture()
+        fixture.actionResult = .unsupported
+        fixture.actionResults = hasPrefix ? [.accessibilityValue] : []
+        fixture.suspendContinuationAtEventCount = 1
+        let actions: [TypeAction] = hasPrefix ? [.text("p"), .clear] : [.clear]
+        let operation = Task { @MainActor in try await fixture.run(actions, strategy: .actionFirst) }
+        guard await fixture.entered.opensWithin(.seconds(2)) else {
+            operation.cancel()
+            await fixture.release.open()
+            _ = try? await operation.value
+            Issue.record("Keyboard clear did not reach continuation after Cmd-A")
+            return
+        }
+        #expect(fixture.eventCalls == ["key:0:1048576"])
+        operation.cancel()
+        await fixture.release.open()
+
+        let failure = await #expect(throws: InputDeliveryIndeterminateError.self) { try await operation.value }
+        #expect(failure?.emittedUnitCount == (hasPrefix ? 2 : 1))
+        #expect(failure?.retrySafe == false)
+        #expect(failure?.delivery?.mechanism == (hasPrefix ? .composite : .windowTargetedEvents))
+        #expect(fixture.actionCalls.count == (hasPrefix ? 2 : 1))
+        #expect(fixture.eventCalls == ["key:0:1048576"])
+        #expect(fixture.eventPermissionChecks == 1)
+        #expect(fixture.finalizations == 1)
+    }
+
+    @Test
+    func `event admission cancellation never interrupts a keyboard pair already entered`() async throws {
+        var events: [String] = []
+        let driver = TargetedTypeInputDriver(tapKey: { _, _, _ in
+            events.append("down")
+            withUnsafeCurrentTask { $0?.cancel() }
+            events.append("up")
+        })
+        let operation = Task { @MainActor in
+            try driver.tapKeyboardKey(0, flags: [], processIdentifier: getpid())
+            #expect(events == ["down", "up"])
+            #expect(throws: CancellationError.self) {
+                try driver.tapKeyboardKey(0, flags: [], processIdentifier: getpid())
+            }
+        }
+        try await operation.value
+        #expect(events == ["down", "up"])
+    }
+
     @Test(arguments: Payload.allCases)
     func `action-only refuses unsupported edits without events`(payload: Payload) async throws {
         let fixture = Fixture()
@@ -329,6 +446,10 @@ private final class Fixture {
     var bundleLookups = 0
     var finalizations = 0
     var failContinuation = false
+    let entered = ActionLaneLatch()
+    let release = ActionLaneLatch()
+    var suspendActionAt: Int?
+    var suspendContinuationAtEventCount: Int?
 
     func run(
         _ actions: [TypeAction],
@@ -343,14 +464,16 @@ private final class Fixture {
         policy: UIInputPolicy,
         exactWindow: Bool = true) async throws -> TypeService.TypeActionExecutionSummary
     {
+        let coordinationRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-targeted-typing-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: coordinationRoot) }
         let driver = TargetedTypeInputDriver(
             insertText: { text, pid, window, phase, receiver in
-                try self.action(
+                try await self.action(
                     "insert:\(text)", processIdentifier: pid, exactWindow: window, phase: phase, receiver: receiver)
-                    == .accessibilityValue
             },
             performTextKey: { key, pid, window, phase, receiver in
-                try self.action(
+                try await self.action(
                     "edit:\(key.rawValue)",
                     processIdentifier: pid,
                     exactWindow: window,
@@ -358,9 +481,8 @@ private final class Fixture {
                     receiver: receiver)
             },
             replaceText: { _, pid, window, phase, receiver in
-                try self.action(
+                try await self.action(
                     "clear", processIdentifier: pid, exactWindow: window, phase: phase, receiver: receiver)
-                    == .accessibilityValue
             },
             typeCharacter: { character, _ in try self.event("text:\(character)") },
             tapKey: { code, flags, _ in try self.event("key:\(code):\(flags.rawValue)") })
@@ -373,6 +495,8 @@ private final class Fixture {
                 self.bundleLookups += 1
                 return self.bundleLookups == 1 ? self.bundle : "com.example.different"
             },
+            desktopOperationExecutor: DesktopOperationExecutor(
+                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: coordinationRoot)),
             operationFinalizer: { self.finalizations += 1 })
         let process = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 91)
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
@@ -393,6 +517,10 @@ private final class Fixture {
             deliveryValidator: { self.validationEventCounts.append(self.eventCalls.count) },
             continuationValidator: {
                 self.validationEventCounts.append(self.eventCalls.count)
+                if self.suspendContinuationAtEventCount == self.eventCalls.count {
+                    await self.entered.open()
+                    await self.release.wait()
+                }
                 if self.failContinuation {
                     throw DesktopActionFailure.preDispatchRefusal(
                         reason: .targetUnavailable,
@@ -407,13 +535,17 @@ private final class Fixture {
         processIdentifier: pid_t,
         exactWindow: UIAutomationTarget.ExactWindow?,
         phase: KeyboardFocusValidationPhase,
-        receiver: Element?) throws -> FocusedTextKeyDispatch
+        receiver: Element?) async throws -> FocusedTextKeyDispatch
     {
         self.actionCalls.append(name)
         self.actionProcessIdentifiers.append(processIdentifier)
         self.actionWindows.append(exactWindow)
         self.actionPhases.append(phase)
         self.actionReceiverIdentities.append(receiver.map { ObjectIdentifier($0.underlyingElement) })
+        if self.actionCalls.count == self.suspendActionAt {
+            await self.entered.open()
+            await self.release.wait()
+        }
         if let actionError, self.actionCalls.count == self.actionErrorAt {
             _ = try BackgroundInputDriver.textMutationAccepted(actionError)
         }

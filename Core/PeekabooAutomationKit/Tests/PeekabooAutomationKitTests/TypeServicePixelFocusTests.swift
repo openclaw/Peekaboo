@@ -11,6 +11,17 @@ import Testing
 // swiftlint:disable type_body_length
 @MainActor
 struct TypeServicePixelFocusTests {
+    enum NoOpTypingPayload: CaseIterable {
+        case clear, left
+
+        var action: TypeAction {
+            switch self {
+            case .clear: .clear
+            case .left: .key(.leftArrow)
+            }
+        }
+    }
+
     @Test
     func `pixel focus write and typing share one exact lane and compose units`() async throws {
         let fixture = AutomationTestFixtures.linkedSnapshotTarget(
@@ -157,9 +168,9 @@ struct TypeServicePixelFocusTests {
                 #expect(validatedReceiver.map { ObjectIdentifier($0.underlyingElement) } ==
                     ObjectIdentifier(receiver.underlyingElement))
                 value.set(text)
-                return true
+                return .accessibilityValue
             },
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             processStartIdentityProvider: { _ in 42 },
@@ -216,9 +227,9 @@ struct TypeServicePixelFocusTests {
                 targetedKeyTapper: { _, _, _ in Issue.record("AX clear must not emit keyboard events") },
                 targetedTextReplacer: { text, _, _, _, _ in
                     value.set(text)
-                    return true
+                    return .accessibilityValue
                 },
-                exactFocusedElementValueReader: { focusedElement in
+                exactFocusedElementValueReader: { focusedElement, _ in
                     readbackAvailable
                         ? .success(Self.focusSnapshot(focusedElement, value: value.get()))
                         : .failure(.focusedAttributeUnreadable)
@@ -398,7 +409,7 @@ struct TypeServicePixelFocusTests {
                     #expect(validatedReceiver.map { ObjectIdentifier($0.underlyingElement) } ==
                         ObjectIdentifier(receiver.underlyingElement))
                     typingAttempts += 1
-                    return false
+                    return .unsupported
                 },
                 performTextKey: { _, _, _, _, _ in
                     Issue.record("No editing key requested")
@@ -406,7 +417,7 @@ struct TypeServicePixelFocusTests {
                 },
                 replaceText: { _, _, _, _, _ in
                     Issue.record("No replacement requested")
-                    return false
+                    return .unsupported
                 },
                 typeCharacter: { _, _ in eventCount += 1 },
                 tapKey: { _, _, _ in eventCount += 1 }),
@@ -432,6 +443,104 @@ struct TypeServicePixelFocusTests {
         #expect(focusCount == 1)
         #expect(typingAttempts == 1)
         #expect(eventCount == 0)
+    }
+
+    @Test(arguments: NoOpTypingPayload.allCases, [false, true])
+    func `no-op typing after a mutating pixel focus remains retry unsafe`(
+        payload: NoOpTypingPayload,
+        confirmedFocus: Bool) async throws
+    {
+        let fixture = AutomationTestFixtures.linkedSnapshotTarget(
+            processIdentity: .init(processIdentifier: getpid(), processStartIdentity: 43))
+        let manager = try await InMemorySnapshotManager.containing(fixture.detectionResult)
+        let root = self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = DesktopOperationExecutor(laneCoordinator: DesktopOperationLaneCoordinator(
+            coordinationRootURL: root))
+        let exactWindow = try #require(fixture.targetIdentity.exactWindow)
+        let typingWindow = try UIAutomationTarget.ExactWindow(
+            identity: exactWindow.identity,
+            bounds: exactWindow.bounds,
+            focusedElement: Self.focusedElement(for: exactWindow))
+        let receiver = Element(AXUIElementCreateApplication(getpid()))
+        var focusCount = 0
+        var typingAttempts = 0
+        var eventCount = 0
+        var finalizerCount = 0
+        let noChange = {
+            (
+                pid: pid_t,
+                window: UIAutomationTarget.ExactWindow?,
+                phase: KeyboardFocusValidationPhase,
+                validatedReceiver: Element?) -> FocusedTextKeyDispatch in
+            #expect(pid == exactWindow.identity.ownerProcessIdentifier)
+            #expect(window == typingWindow)
+            #expect(phase == .initial)
+            #expect(validatedReceiver.map { ObjectIdentifier($0.underlyingElement) } ==
+                ObjectIdentifier(receiver.underlyingElement))
+            typingAttempts += 1
+            return .noChange
+        }
+        let service = TypeService(
+            snapshotManager: manager,
+            clickService: ClickService(
+                snapshotManager: manager,
+                exactWindowIdentityValidator: { _, _ in true },
+                processStartIdentityProvider: { _ in 43 },
+                desktopOperationExecutor: executor,
+                exactWindowPixelFocusExecutor: { _, window in
+                    #expect(window == exactWindow)
+                    focusCount += 1
+                    return confirmedFocus ? Self.confirmedFocusAction(for: window) : Self.focusAction(for: window)
+                }),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedInputDriver: TargetedTypeInputDriver(
+                insertText: { _, _, _, _, _ in
+                    Issue.record("No literal text requested")
+                    return .unsupported
+                },
+                performTextKey: { key, pid, window, phase, validatedReceiver in
+                    #expect(payload == .left && key == .leftArrow)
+                    return noChange(pid, window, phase, validatedReceiver)
+                },
+                replaceText: { text, pid, window, phase, validatedReceiver in
+                    #expect(payload == .clear && text.isEmpty)
+                    return noChange(pid, window, phase, validatedReceiver)
+                },
+                typeCharacter: { _, _ in eventCount += 1 },
+                tapKey: { _, _, _ in eventCount += 1 }),
+            targetBundleIdentifier: { _ in nil },
+            desktopOperationExecutor: executor,
+            operationFinalizer: { finalizerCount += 1 })
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            try await service.typeActionsByFocusingPixel(
+                .init(
+                    point: CGPoint(x: 40, y: 50),
+                    actions: [payload.action],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotID: fixture.snapshotID,
+                    windowIdentity: exactWindow.identity,
+                    windowBounds: exactWindow.bounds),
+                deliveryValidator: { _ in },
+                validatedReceiverProvider: { receiver })
+        }
+        #expect(failure?.outcome.state == .indeterminate)
+        #expect(failure?.outcome.dispatchState.unitCount == .one)
+        #expect(failure?.outcome.retrySafety == .unsafe)
+        #expect(failure?.outcome.projection.requiresFreshObservation == true)
+        #expect(failure?.targetReceipt == DesktopTargetIdentity(exactWindow: exactWindow).actionTargetReceipt)
+        #expect(focusCount == 1 && typingAttempts == 1 && finalizerCount == 1)
+        #expect(eventCount == 0)
+        guard case .requiresFreshObservation? = manager.mutationLeases[fixture.snapshotID] else {
+            Issue.record("The focus write must require a fresh snapshot before another mutation")
+            return
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await manager.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        }
     }
 
     @Test
@@ -991,7 +1100,9 @@ struct TypeServicePixelFocusTests {
             frame: focusedElement.frame,
             role: focusedElement.role,
             identifier: focusedElement.identifier,
-            value: value)
+            value: value,
+            nativeElement: RetainedFocusElement(element: AXUIElementCreateApplication(focusedElement
+                    .processIdentifier)))
     }
 
     private static func focusedElement(

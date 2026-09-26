@@ -617,7 +617,10 @@ private final class OutcomeActionInputDriver: ActionInputDriving {
         self.setValueAnchorPoint = setValueAnchorPoint
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
+    func tryClick(
+        element _: AutomationElement,
+        beforeMutation _: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
         UIInputExecutionResult.Action(outcome: self.outcome)
     }
 
@@ -635,7 +638,11 @@ private final class OutcomeActionInputDriver: ActionInputDriving {
         UIInputExecutionResult.Action(outcome: self.outcome)
     }
 
-    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
+    func trySetText(
+        element _: AutomationElement,
+        text _: String,
+        replace _: Bool,
+        beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
         UIInputExecutionResult.Action(outcome: self.outcome)
@@ -648,7 +655,10 @@ private final class OutcomeActionInputDriver: ActionInputDriving {
         return UIInputExecutionResult.Action(outcome: self.outcome)
     }
 
-    func trySetValue(element _: AutomationElement, value: UIElementValue) throws
+    func trySetValue(
+        element _: AutomationElement,
+        value: UIElementValue,
+        beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
         self.setValueCount += 1

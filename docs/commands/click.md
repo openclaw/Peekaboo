@@ -9,6 +9,10 @@ read_when:
 
 `click` is the primary interaction command. It accepts exactly one of an element ID, fuzzy text query, or literal coordinate target and then drives `AutomationServiceBridge.click`. Contradictory or whitespace-only target shapes fail before lookup, focus, or mutation. Background delivery is the default so target apps do not need to become frontmost; pass `--foreground` for focused foreground mouse behavior.
 
+Background text-field focus allows up to 250 ms for the same field to publish an asynchronous focus update.
+Accepted but unverified focus remains indeterminate; observe the target before retrying.
+Cancellation observed before an Accessibility press stops that press before dispatch.
+
 ## Key options
 | Flag | Description |
 | --- | --- |

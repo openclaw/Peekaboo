@@ -5,9 +5,14 @@ import PeekabooFoundation
 /// Primitive operations stay separate so a policy cannot cross into its forbidden mutation path.
 @MainActor
 struct TargetedTypeInputDriver {
-    var insertText: (String, pid_t, UIAutomationTarget.ExactWindow?, KeyboardFocusValidationPhase, Element?) throws
-        -> Bool = { text, pid, exactWindow, phase, validatedReceiver in
-            try BackgroundInputDriver.insertTextIntoFocusedText(
+    var insertText: (
+        String,
+        pid_t,
+        UIAutomationTarget.ExactWindow?,
+        KeyboardFocusValidationPhase,
+        Element?) async throws
+        -> FocusedTextKeyDispatch = { text, pid, exactWindow, phase, validatedReceiver in
+            try await BackgroundInputDriver.insertTextIntoFocusedText(
                 text,
                 targetProcessIdentifier: pid,
                 exactWindow: exactWindow,
@@ -20,8 +25,8 @@ struct TargetedTypeInputDriver {
         pid_t,
         UIAutomationTarget.ExactWindow?,
         KeyboardFocusValidationPhase,
-        Element?) throws -> FocusedTextKeyDispatch = { key, pid, exactWindow, phase, validatedReceiver in
-        try BackgroundInputDriver.performFocusedTextKey(
+        Element?) async throws -> FocusedTextKeyDispatch = { key, pid, exactWindow, phase, validatedReceiver in
+        try await BackgroundInputDriver.performFocusedTextKey(
             key,
             targetProcessIdentifier: pid,
             exactWindow: exactWindow,
@@ -29,9 +34,14 @@ struct TargetedTypeInputDriver {
             validatedReceiver: validatedReceiver)
     }
 
-    var replaceText: (String, pid_t, UIAutomationTarget.ExactWindow?, KeyboardFocusValidationPhase, Element?) throws
-        -> Bool = { text, pid, exactWindow, phase, validatedReceiver in
-            try BackgroundInputDriver.replaceFocusedText(
+    var replaceText: (
+        String,
+        pid_t,
+        UIAutomationTarget.ExactWindow?,
+        KeyboardFocusValidationPhase,
+        Element?) async throws
+        -> FocusedTextKeyDispatch = { text, pid, exactWindow, phase, validatedReceiver in
+            try await BackgroundInputDriver.replaceFocusedText(
                 with: text,
                 targetProcessIdentifier: pid,
                 exactWindow: exactWindow,
@@ -54,14 +64,13 @@ struct TargetedTypeInputDriver {
         phase: KeyboardFocusValidationPhase = .initial,
         validatedReceiver: Element? = nil,
         strategy: UIInputStrategy,
-        keyboardDelivery: DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
+        keyboardDelivery: DesktopActionOutcome.Delivery) async throws -> TypeActionDispatchSummary
     {
-        try self.dispatch(
+        try await self.dispatch(
             strategy: strategy,
             keyboardDelivery: keyboardDelivery,
             action: {
-                try self.insertText(String(character), processIdentifier, exactWindow, phase, validatedReceiver)
-                    ? .accessibilityValue : .unsupported
+                try await self.insertText(String(character), processIdentifier, exactWindow, phase, validatedReceiver)
             },
             synthesis: { try self.typeCharacter(character, processIdentifier) })
     }
@@ -73,12 +82,12 @@ struct TargetedTypeInputDriver {
         phase: KeyboardFocusValidationPhase = .initial,
         validatedReceiver: Element? = nil,
         strategy: UIInputStrategy,
-        keyboardDelivery: DesktopActionOutcome.Delivery) throws -> TypeActionDispatchSummary
+        keyboardDelivery: DesktopActionOutcome.Delivery) async throws -> TypeActionDispatchSummary
     {
-        try self.dispatch(
+        try await self.dispatch(
             strategy: strategy,
             keyboardDelivery: keyboardDelivery,
-            action: { try self.performTextKey(key, processIdentifier, exactWindow, phase, validatedReceiver) },
+            action: { try await self.performTextKey(key, processIdentifier, exactWindow, phase, validatedReceiver) },
             synthesis: { try self.tapKey(TypeServiceSpecialKeyMapping.keyCode(for: key), [], processIdentifier) })
     }
 
@@ -87,14 +96,14 @@ struct TargetedTypeInputDriver {
         exactWindow: UIAutomationTarget.ExactWindow? = nil,
         phase: KeyboardFocusValidationPhase = .initial,
         validatedReceiver: Element? = nil,
-        strategy: UIInputStrategy) throws -> Bool
+        strategy: UIInputStrategy) async throws -> FocusedTextKeyDispatch
     {
-        guard strategy == .actionFirst || strategy == .actionOnly else { return false }
-        if try self.replaceText("", processIdentifier, exactWindow, phase, validatedReceiver) {
-            return true
+        guard strategy == .actionFirst || strategy == .actionOnly else { return .unsupported }
+        let result = try await self.replaceText("", processIdentifier, exactWindow, phase, validatedReceiver)
+        if result == .unsupported {
+            try Self.requireSynthesisAllowed(strategy)
         }
-        try Self.requireSynthesisAllowed(strategy)
-        return false
+        return result
     }
 
     func tapKeyboardKey(_ code: CGKeyCode, flags: CGEventFlags, processIdentifier: pid_t) throws {
@@ -104,12 +113,12 @@ struct TargetedTypeInputDriver {
     private func dispatch(
         strategy: UIInputStrategy,
         keyboardDelivery: DesktopActionOutcome.Delivery,
-        action: () throws -> FocusedTextKeyDispatch,
-        synthesis: () throws -> Void) throws -> TypeActionDispatchSummary
+        action: () async throws -> FocusedTextKeyDispatch,
+        synthesis: () throws -> Void) async throws -> TypeActionDispatchSummary
     {
         let attemptsAction = strategy == .actionFirst || strategy == .actionOnly
         if attemptsAction {
-            switch try action() {
+            switch try await action() {
             case .accessibilityValue:
                 return .dispatched(
                     delivery: .init(mechanism: .accessibilityValue, mode: .background),
@@ -137,6 +146,8 @@ struct TargetedTypeInputDriver {
     }
 
     private static func performEvent(_ operation: () throws -> Void) throws {
+        // Admit the complete stroke once; cancellation must not interrupt its key-up cleanup.
+        try Task.checkCancellation()
         do {
             try operation()
         } catch PeekabooError.permissionDeniedEventSynthesizing {

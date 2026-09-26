@@ -162,7 +162,7 @@ struct TypeServiceAXFailureReceiptTests {
                 targetedTextReplacer: { text, processIdentifier, _, _, _ in
                     #expect(text.isEmpty)
                     try self.applyNativeResult("clear", processIdentifier: processIdentifier)
-                    return true
+                    return .accessibilityValue
                 })
 
             _ = try await service.typeActionsTrackingSecureInput(

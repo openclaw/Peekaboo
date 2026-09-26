@@ -399,17 +399,63 @@ extension PeekabooBridgeServer {
         >,
         legacy: () async throws -> Payload,
         fallbackTarget: PeekabooBridgeHandledResponse.Mutation.TargetDisposition?,
+        failureSnapshotID: String? = nil,
         response: (Payload) -> PeekabooBridgeResponse) async throws -> PeekabooBridgeHandledResponse
     {
-        guard let service = try self.automationOutcomeService() else {
+        let service: (any UIAutomationActionOutcomeProviding)?
+        var capturedTarget: DesktopTargetIdentity?
+        do {
+            try PeekabooBridgeRequestContext.checkRequestIsActive()
+            service = try self.automationOutcomeService()
+            if PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics, let failureSnapshotID {
+                let detection: ElementDetectionResult?
+                do {
+                    detection = try await self.services.snapshots.getDetectionResult(snapshotId: failureSnapshotID)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    detection = nil
+                }
+                if let context = detection?.metadata.windowContext {
+                    capturedTarget = try? DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+                        DesktopTargetEvidenceAdapter.evidence(context: context),
+                    ])
+                }
+            }
+            try PeekabooBridgeRequestContext.checkRequestIsActive()
+        } catch is CancellationError {
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
+                throw CancellationError()
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .requestCancelled,
+                message: "Bridge request was cancelled before dispatch.",
+                hint: "Submit a new request only if the operation is still wanted.")
+        }
+        guard let service else {
             let payload = try await legacy()
             return .init(response: response(payload))
         }
-        let result = try await withOutcome(service)
-        return try Self.handledActionResponse(
-            response: response(result.payload),
-            result: result,
-            fallbackTarget: fallbackTarget)
+        do {
+            let result = try await withOutcome(service)
+            return try Self.handledActionResponse(
+                response: response(result.payload),
+                result: result,
+                fallbackTarget: fallbackTarget)
+        } catch let failure as DesktopActionFailure
+            where failure.outcome.dispatchState.mutationDispatched &&
+            failure.targetReceipt != nil
+        {
+            guard let capturedTarget else { throw failure }
+            // Compact failure receipts omit window geometry. Keep the capture for the existing
+            // attribution coalescer, which still rejects a conflicting execution receipt.
+            let routed = failure.routed(to: .bridge)
+            return .init(
+                response: .error(.init(code: .internalError, actionFailure: routed)),
+                mutation: .init(outcome: routed.outcome, target: .handlerResolved(capturedTarget)),
+                selectedLeafEvidence: routed.selectedLeafEvidence)
+        }
     }
 
     private func automationOutcomeService() throws -> (any UIAutomationActionOutcomeProviding)? {
@@ -451,6 +497,7 @@ extension PeekabooBridgeServer {
                         snapshotId: payload.snapshotId)
                 },
                 fallbackTarget: nil,
+                failureSnapshotID: payload.snapshotId,
                 response: PeekabooBridgeResponse.elementActionResult)
         case let .performAction(payload):
             return try await self.handleAutomationAction(
@@ -467,6 +514,7 @@ extension PeekabooBridgeServer {
                         snapshotId: payload.snapshotId)
                 },
                 fallbackTarget: nil,
+                failureSnapshotID: payload.snapshotId,
                 response: PeekabooBridgeResponse.elementActionResult)
         default:
             throw Self.invalidRequest(for: request)

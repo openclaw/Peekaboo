@@ -60,34 +60,50 @@ extension ActionInputError: LocalizedError {
 
 @MainActor
 protocol ActionInputDriving: Sendable {
-    func tryClick(element: AutomationElement) throws -> UIInputExecutionResult.Action
+    func tryClick(element: AutomationElement, beforeMutation: @MainActor () throws -> Void) async throws
+        -> UIInputExecutionResult.Action
     func tryClick(
         element: AutomationElement,
-        allowAccessibilityValueFallback: Bool) throws -> UIInputExecutionResult.Action
-    func tryFocus(element: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action
+        allowAccessibilityValueFallback: Bool, beforeMutation: @MainActor () throws -> Void) async throws
+        -> UIInputExecutionResult.Action
+    func tryFocus(
+        element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
     func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionResult.Action
     func tryScroll(
         element: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
         pages: Int) throws -> UIInputExecutionResult.Action
-    func trySetText(element: AutomationElement, text: String, replace: Bool) throws -> UIInputExecutionResult.Action
+    func trySetText(
+        element: AutomationElement,
+        text: String,
+        replace: Bool,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult
+        .Action
     func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> UIInputExecutionResult.Action
-    func trySetValue(element: AutomationElement, value: UIElementValue) throws -> UIInputExecutionResult.Action
+    func trySetValue(
+        element: AutomationElement,
+        value: UIElementValue,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
     func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionResult.Action
 }
 
 extension ActionInputDriving {
     func tryClick(
         element: AutomationElement,
-        allowAccessibilityValueFallback: Bool) throws -> UIInputExecutionResult.Action
+        allowAccessibilityValueFallback: Bool,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
     {
         guard allowAccessibilityValueFallback else {
             throw ActionInputError.unsupported(.actionUnsupported)
         }
-        return try self.tryClick(element: element)
+        return try await self.tryClick(element: element, beforeMutation: beforeMutation)
     }
 
-    func tryFocus(element _: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action {
+    func tryFocus(
+        element _: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
         throw ActionInputError.unsupported(.attributeUnsupported)
     }
 }
@@ -95,6 +111,23 @@ extension ActionInputDriving {
 /// Accessibility action implementation for action-first UI input.
 @MainActor
 struct ActionInputDriver: ActionInputDriving {
+    private let observationDelay: @MainActor @Sendable () async throws -> Void
+    private let processStartIdentity: @Sendable (pid_t) -> UInt64?
+    private let nativeReader: AXMutationNativeReader
+
+    init(
+        observationDelay: @escaping @MainActor @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .milliseconds(20))
+        },
+        processStartIdentity: @escaping @Sendable (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity,
+        nativeReader: @escaping AXMutationNativeReader = DetachedAXMutationReader.read)
+    {
+        self.observationDelay = observationDelay
+        self.processStartIdentity = processStartIdentity
+        self.nativeReader = nativeReader
+    }
+
     private static let accessibilityActionDelivery = DesktopActionOutcome.Delivery(
         mechanism: .accessibilityAction,
         mode: .background)
@@ -102,16 +135,20 @@ struct ActionInputDriver: ActionInputDriving {
         mechanism: .accessibilityValue,
         mode: .background)
 
-    func tryClick(element: AutomationElement) throws -> UIInputExecutionResult.Action {
-        try self.tryClick(element: element, allowAccessibilityValueFallback: true)
+    func tryClick(
+        element: AutomationElement,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult.Action
+    {
+        try await self.tryClick(element: element, allowAccessibilityValueFallback: true, beforeMutation: beforeMutation)
     }
 
     func tryClick(
         element: AutomationElement,
-        allowAccessibilityValueFallback: Bool) throws -> UIInputExecutionResult.Action
+        allowAccessibilityValueFallback: Bool,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult.Action
     {
         do {
-            return try self.performAction(AXActionNames.kAXPressAction, on: element)
+            return try self.performAction(AXActionNames.kAXPressAction, on: element, beforeMutation: beforeMutation)
         } catch let error as ActionInputError
             where error == .unsupported(.actionUnsupported) &&
             allowAccessibilityValueFallback &&
@@ -121,15 +158,18 @@ struct ActionInputDriver: ActionInputDriving {
                 isValueSettable: element.isValueSettable,
                 isFocusedSettable: element.isFocusedSettable)
         {
-            return try self.focusForClick(element)
+            return try await self.focusForClick(element, beforeMutation: beforeMutation)
         }
     }
 
-    func tryFocus(element: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action {
+    func tryFocus(
+        element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult.Action
+    {
         guard element.isFocusedSettable else {
             throw FocusedElementReceiptError.focusedAttributeNotSettable
         }
-        return try self.focusForClick(element)
+        return try await self.focusForClick(element, beforeMutation: beforeMutation)
     }
 
     func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionResult.Action {
@@ -183,12 +223,17 @@ struct ActionInputDriver: ActionInputDriving {
         try self.performScrollActions(element: element, direction: direction, pages: pages)
     }
 
-    func trySetText(element: AutomationElement, text: String, replace: Bool) throws
-    -> UIInputExecutionResult.Action {
+    func trySetText(
+        element: AutomationElement,
+        text: String,
+        replace: Bool,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws
+        -> UIInputExecutionResult.Action
+    {
         guard replace else {
             throw ActionInputError.unsupported(.attributeUnsupported)
         }
-        return try self.trySetValue(element: element, value: .string(text))
+        return try await self.trySetValue(element: element, value: .string(text), beforeMutation: beforeMutation)
     }
 
     func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> UIInputExecutionResult.Action {
@@ -205,8 +250,12 @@ struct ActionInputDriver: ActionInputDriving {
         return try self.performAction(AXActionNames.kAXPressAction, on: menuItem)
     }
 
-    func trySetValue(element: AutomationElement, value: UIElementValue) throws -> UIInputExecutionResult.Action {
-        try self.setValue(value, on: element)
+    func trySetValue(
+        element: AutomationElement,
+        value: UIElementValue,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult.Action
+    {
+        try await self.setValue(value, on: element, beforeMutation: beforeMutation)
     }
 
     func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionResult.Action {
@@ -324,11 +373,20 @@ struct ActionInputDriver: ActionInputDriving {
             causeDescription: cause.localizedDescription)
     }
 
-    private func performAction(_ actionName: String, on element: any AutomationElementRepresenting)
-        throws -> UIInputExecutionResult.Action
+    private func performAction(
+        _ actionName: String,
+        on element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void = {}) throws -> UIInputExecutionResult.Action
     {
+        if actionName == AXActionNames.kAXPressAction {
+            try Task.checkCancellation()
+        }
         guard element.supportsAction(actionName) else {
             throw ActionInputError.unsupported(.actionUnsupported)
+        }
+        try beforeMutation()
+        if actionName == AXActionNames.kAXPressAction {
+            try Task.checkCancellation()
         }
 
         do {
@@ -346,8 +404,11 @@ struct ActionInputDriver: ActionInputDriving {
         }
     }
 
-    private func focusForClick(_ element: any AutomationElementRepresenting) throws
-    -> UIInputExecutionResult.Action {
+    private func focusForClick(
+        _ element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws
+        -> UIInputExecutionResult.Action
+    {
         guard let wasFocused = element.focusedState else {
             throw FocusedElementReceiptError.focusedAttributeUnreadable
         }
@@ -362,12 +423,27 @@ struct ActionInputDriver: ActionInputDriving {
                 elementRole: element.role,
                 focusedElement: focusedElement)
         }
+        let observationTarget = try await self.observationTarget(element)
+        try Self.validateBeforeMutation(beforeMutation)
         do {
             try element.setAutomationFocused(true)
         } catch {
             throw Self.classify(error)
         }
-        guard element.focusedState == true else {
+        var confirmedIdentity: FocusedElementIdentity?
+        guard await self.observeMutation(
+            on: element,
+            target: observationTarget,
+            attribute: .focused,
+            matches: { sample in
+                if let sample {
+                    confirmedIdentity = sample.identity
+                    return sample.focused == true
+                }
+                confirmedIdentity = element.focusedElementIdentity
+                return element.focusedState == true
+            })
+        else {
             throw DesktopActionFailure.indeterminate(
                 delivery: Self.accessibilityValueDelivery,
                 evidence: .completionUnknown,
@@ -375,7 +451,7 @@ struct ActionInputDriver: ActionInputDriving {
                 message: FocusedElementReceiptError.focusNotConfirmed.localizedDescription,
                 hint: "Observe the exact field before deciding whether to retry focus.")
         }
-        guard let focusedElement = element.focusedElementIdentity else {
+        guard let focusedElement = confirmedIdentity else {
             throw DesktopActionFailure.indeterminate(
                 delivery: Self.accessibilityValueDelivery,
                 evidence: .completionUnknown,
@@ -388,13 +464,16 @@ struct ActionInputDriver: ActionInputDriving {
                 delivery: Self.accessibilityValueDelivery,
                 unitCount: .one),
             actionName: AXAttributeNames.kAXFocusedAttribute,
-            anchorPoint: element.anchorPoint,
-            elementRole: element.role,
+            anchorPoint: CGPoint(x: focusedElement.frame.midX, y: focusedElement.frame.midY),
+            elementRole: focusedElement.role,
             focusedElement: focusedElement)
     }
 
-    private func setValue(_ value: UIElementValue, on element: any AutomationElementRepresenting)
-        throws -> UIInputExecutionResult.Action
+    private func setValue(
+        _ value: UIElementValue,
+        on element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void = {})
+        async throws -> UIInputExecutionResult.Action
     {
         if let rejectionReason = Self.setValueRejectionReason(
             role: element.role,
@@ -418,17 +497,34 @@ struct ActionInputDriver: ActionInputDriving {
                         valueVerification: .init(
                             attribute: .selected, resolvedKind: .bool, readback: .bool(selectedBefore)))
                 }
+                let observationTarget = try await self.observationTarget(element)
+                try Self.validateBeforeMutation(beforeMutation)
                 try element.setAutomationSelected(requested)
-                let selectedAfter = element.selectedValue
-                guard selectedAfter == requested, let selectedAfter else {
+                var selectedAfter: Bool?
+                var observedIdentity: FocusedElementIdentity?
+                guard await self.observeMutation(
+                    on: element,
+                    target: observationTarget,
+                    attribute: .selected,
+                    matches: { sample in
+                        observedIdentity = sample?.identity
+                        selectedAfter = if let sample {
+                            sample.selected
+                        } else {
+                            element.selectedValue
+                        }
+                        return selectedAfter == requested
+                    }), let selectedAfter
+                else {
                     throw Self.unverifiedValueMutationFailure(attribute: kAXSelectedAttribute as String)
                 }
                 let outcome = Self.dispatchedValueMutationOutcome(preStateKnown: selectedBefore != nil)
                 return UIInputExecutionResult.Action(
                     outcome: outcome,
                     actionName: kAXSelectedAttribute as String,
-                    anchorPoint: element.anchorPoint,
-                    elementRole: element.role,
+                    anchorPoint: observedIdentity.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? element
+                        .anchorPoint,
+                    elementRole: observedIdentity?.role ?? element.role,
                     valueVerification: .init(
                         attribute: .selected, resolvedKind: .bool, readback: .bool(selectedAfter)))
             }
@@ -455,11 +551,32 @@ struct ActionInputDriver: ActionInputDriving {
                         readback: readbackBefore,
                         legacyPresentation: NativeElementValuePresentation.describe(valueBefore)))
             }
+            let observationTarget = try await self.observationTarget(element)
+            try Self.validateBeforeMutation(beforeMutation)
             try element.setAutomationValue(requested)
-            let valueAfter = element.value
-            let readbackAfter = ElementValueReadback(nativeValue: valueAfter)
-            guard let readbackAfter, readbackAfter.isFinite,
-                  ElementValueMutationSemantics.matches(readbackAfter, expected: requested)
+            var presentationAfter: String?
+            var readbackAfter: ElementValueReadback?
+            var observedIdentity: FocusedElementIdentity?
+            guard await self.observeMutation(
+                on: element,
+                target: observationTarget,
+                attribute: .value,
+                matches: { sample in
+                    if let sample {
+                        observedIdentity = sample.identity
+                        presentationAfter = sample.legacyPresentation
+                        readbackAfter = sample.value
+                    } else {
+                        guard element.role != "AXSecureTextField", element.subrole != "AXSecureTextField" else {
+                            return false
+                        }
+                        let valueAfter = element.value
+                        presentationAfter = NativeElementValuePresentation.describe(valueAfter)
+                        readbackAfter = ElementValueReadback(nativeValue: valueAfter)
+                    }
+                    return readbackAfter?.isFinite == true &&
+                        ElementValueMutationSemantics.matches(readbackAfter, expected: requested)
+                }), let readbackAfter
             else {
                 throw Self.unverifiedValueMutationFailure(attribute: AXActionNames.kAXSetValueAction)
             }
@@ -467,18 +584,149 @@ struct ActionInputDriver: ActionInputDriving {
             return UIInputExecutionResult.Action(
                 outcome: outcome,
                 actionName: AXActionNames.kAXSetValueAction,
-                anchorPoint: element.anchorPoint,
-                elementRole: element.role,
+                anchorPoint: observedIdentity.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? element
+                    .anchorPoint,
+                elementRole: observedIdentity?.role ?? element.role,
                 valueVerification: .init(
                     attribute: .value,
                     resolvedKind: requested.comparisonKind,
                     readback: readbackAfter,
-                    legacyPresentation: NativeElementValuePresentation.describe(valueAfter)))
+                    legacyPresentation: presentationAfter))
+        } catch let cancellation as CancellationError {
+            throw cancellation
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch {
             throw Self.classify(error)
         }
+    }
+
+    func performObservedMutation(
+        on element: any AutomationElementRepresenting,
+        attribute: AXMutationObservationAttribute,
+        beforeMutation: @MainActor () throws -> Void = {},
+        mutation: () throws -> FocusedTextKeyDispatch,
+        matches: (AXMutationObservationSnapshot?) -> Bool) async throws -> FocusedTextKeyDispatch
+    {
+        let target = try await self.observationTarget(element)
+        try Self.validateBeforeMutation(beforeMutation)
+        let dispatch = try mutation()
+        guard dispatch == .accessibilityValue else { return dispatch }
+        guard await self.observeMutation(on: element, target: target, attribute: attribute, matches: matches) else {
+            throw Self.unverifiedValueMutationFailure(attribute: String(describing: attribute))
+        }
+        return dispatch
+    }
+
+    private static func validateBeforeMutation(_ beforeMutation: @MainActor () throws -> Void) throws {
+        try beforeMutation()
+        try Task.checkCancellation()
+    }
+
+    private struct ObservationTarget {
+        let element: FocusedElementIdentity
+        let processGeneration: UInt64
+    }
+
+    private func observationTarget(_ element: any AutomationElementRepresenting) async throws -> ObservationTarget? {
+        try Task.checkCancellation()
+        if let native = element.underlyingAXElement {
+            let unavailable = DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The native Accessibility target could not be revalidated before mutation.")
+            do {
+                var pid: pid_t = 0
+                guard AXUIElementGetPid(native, &pid) == .success,
+                      let generation = self.processStartIdentity(pid)
+                else { throw unavailable }
+                let sample = try await self.nativeReader(
+                    RetainedFocusElement(element: native),
+                    AXMutationObservationTarget(processIdentifier: pid, processStartIdentity: generation),
+                    .identity,
+                    .milliseconds(250))
+                try Task.checkCancellation()
+                guard let sample, self.processStartIdentity(pid) == generation else { throw unavailable }
+                return ObservationTarget(element: sample.identity, processGeneration: generation)
+            } catch let cancellation as CancellationError {
+                throw cancellation
+            } catch {
+                try Task.checkCancellation()
+                throw unavailable
+            }
+        }
+        guard let identity = element.focusedElementIdentity,
+              let generation = self.processStartIdentity(identity.processIdentifier)
+        else { return nil }
+        return ObservationTarget(element: identity, processGeneration: generation)
+    }
+
+    private func observationTargetIsCurrent(
+        _ target: ObservationTarget,
+        element: any AutomationElementRepresenting) -> Bool
+    {
+        guard self.processStartIdentity(target.element.processIdentifier) == target.processGeneration,
+              let current = element.focusedElementIdentity,
+              FocusedElementReceiptResolver.matches(current, expected: target.element, phase: .continuation)
+        else { return false }
+        return true
+    }
+
+    /// AX setters may acknowledge queued work before the app publishes its new tree.
+    /// Re-observe the same element; never redispatch the mutation or resolve a replacement.
+    private func observeMutation(
+        on element: any AutomationElementRepresenting,
+        target: ObservationTarget?,
+        attribute: AXMutationObservationAttribute,
+        matches: (AXMutationObservationSnapshot?) -> Bool) async -> Bool
+    {
+        let nativeElement = element.underlyingAXElement.map { RetainedFocusElement(element: $0) }
+        guard nativeElement == nil || target != nil else { return false }
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(250))
+        for sampleIndex in 0..<14 {
+            guard !Task.isCancelled, ContinuousClock.now < deadline else { return false }
+            let matched: Bool
+            if let nativeElement, let target {
+                let remaining = ContinuousClock.now.duration(to: deadline)
+                let sample: AXMutationObservationSnapshot?
+                do {
+                    sample = try await self.nativeReader(
+                        nativeElement,
+                        AXMutationObservationTarget(
+                            processIdentifier: target.element.processIdentifier,
+                            processStartIdentity: target.processGeneration,
+                            expectedIdentity: target.element),
+                        attribute,
+                        remaining)
+                } catch {
+                    return false
+                }
+                guard !Task.isCancelled,
+                      ContinuousClock.now < deadline,
+                      self.processStartIdentity(target.element.processIdentifier) == target.processGeneration
+                else { return false }
+                matched = sample.map { matches($0) } ?? false
+            } else {
+                if let target, !self.observationTargetIsCurrent(target, element: element) {
+                    return false
+                }
+                matched = matches(nil)
+                if let target, !self.observationTargetIsCurrent(target, element: element) {
+                    return false
+                }
+            }
+            if matched {
+                return true
+            }
+            guard target != nil, sampleIndex < 13,
+                  ContinuousClock.now.advanced(by: .milliseconds(20)) < deadline
+            else { return false }
+            do {
+                try await self.observationDelay()
+            } catch {
+                return false
+            }
+        }
+        return false
     }
 
     private static func unverifiedValueMutationFailure(attribute: String) -> DesktopActionFailure {
@@ -1072,10 +1320,11 @@ private struct MenuHotkeyChord: Equatable {
 extension ActionInputDriver {
     func tryClickForTesting(
         element: any AutomationElementRepresenting,
-        allowAccessibilityValueFallback: Bool = true) throws -> UIInputExecutionResult.Action
+        allowAccessibilityValueFallback: Bool = true,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult.Action
     {
         do {
-            return try self.performAction(AXActionNames.kAXPressAction, on: element)
+            return try self.performAction(AXActionNames.kAXPressAction, on: element, beforeMutation: beforeMutation)
         } catch let error as ActionInputError
             where error == .unsupported(.actionUnsupported) &&
             allowAccessibilityValueFallback &&
@@ -1085,15 +1334,16 @@ extension ActionInputDriver {
                 isValueSettable: element.isValueSettable,
                 isFocusedSettable: element.isFocusedSettable)
         {
-            return try self.focusForClick(element)
+            return try await self.focusForClick(element, beforeMutation: beforeMutation)
         }
     }
 
     func trySetValueForTesting(
         element: any AutomationElementRepresenting,
-        value: UIElementValue) throws -> UIInputExecutionResult.Action
+        value: UIElementValue, beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult
+        .Action
     {
-        try self.setValue(value, on: element)
+        try await self.setValue(value, on: element, beforeMutation: beforeMutation)
     }
 
     func tryScrollForTesting(

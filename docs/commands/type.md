@@ -1,5 +1,5 @@
 ---
-summary: 'Inject keystrokes via peekaboo type'
+summary: 'Enter text through targeted Accessibility or keyboard delivery'
 read_when:
   - 'sending text or key chords into a targeted app or element'
   - 'needing predictable background typing cadence during UI automation'
@@ -11,6 +11,24 @@ read_when:
 explicit app, PID, exact window, or snapshot whose metadata identifies a process. Default background-only Agent/MCP
 calls are stricter: they require an explicit fresh exact non-dialog snapshot, and an optional element ID must come from
 that snapshot. Use `press` for standalone keys or chords.
+
+Background Accessibility typing waits for each value write and supported cursor update to settle on the same
+native field before computing the next edit. A write that was accepted but cannot be verified stops typing
+with an indeterminate outcome; Peekaboo does not replay it as another write or keyboard events.
+After every asynchronous preflight, the final write rechecks the application's current focused native receiver
+and exact keyboard window. Losing focus before the first write refuses safely; losing it after an accepted
+text edit stops before selection or further input, retaining the retry-unsafe accepted prefix.
+Value confirmation checks the same receiver again after fetching its value; focus or window drift cannot be
+confirmed using the earlier receiver metadata.
+Text edits and cursor changes also recheck their source text and selection immediately before mutation. If either
+changes during asynchronous preflight, the unit stops without recomputing or replaying it. These checks do not make
+macOS Accessibility reads and writes an atomic transaction.
+The original selection stays bound while a value write settles. A changed selection stops the follow-up cursor
+write unless the requested range is already present, including when it settles during selection preflight;
+in that case no selection write is sent, and subsequent input continues from the verified range.
+Focused-text edits preserve exact Unicode storage; canonically equivalent text is not an automatic no-op.
+Cancellation prevents starting keyboard fallback or another stroke; an already-started stroke still finishes its
+key-up cleanup, and any accepted prefix remains unsafe to replay.
 
 ## Key options
 | Flag | Description |
@@ -81,7 +99,8 @@ that snapshot. Use `press` for standalone keys or chords.
   only when the typing effect is a confirmed change. `confirmed_no_change` and missing outcomes are also non-success.
   Exact-window `--clear` followed only by printable literal text can confirm when a generation-bound, readable,
   non-secure AX value changes from its private pre-dispatch value to the exact requested value during a short bounded
-  settlement window; field contents never enter the result. Pixel-focus typing applies the same private readback after
+  settlement window. Readback retains the pre-dispatch native receiver and permits that same field to reflow without
+  selecting a replacement by label or position; field contents never enter the result. Pixel-focus typing applies the same private readback after
   its focus write; confirmed focus alone never confirms the typing leaf. Parent windows with attached sheets are refused;
   a sheet with its own exact window receipt remains eligible. An already-equal value remains unverifiable. Requested
   actions remain available for diagnosis.

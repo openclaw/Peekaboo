@@ -7,7 +7,7 @@ import Testing
 struct SetValueVerificationTests {
     @MainActor
     @Test
-    func `decimal integer strings preserve all digits and ordinary exponent forms`() throws {
+    func `decimal integer strings preserve all digits and ordinary exponent forms`() async throws {
         let cases: [(String, Int)] = [
             ("9007199254740993.0", 9_007_199_254_740_993),
             ("9007199254740993e0", 9_007_199_254_740_993),
@@ -21,7 +21,7 @@ struct SetValueVerificationTests {
         ]
         for (text, expected) in cases {
             let element = ActionInputMockAutomationElement(value: 3, isValueSettable: true)
-            let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+            let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
             #expect(element.setValues == [.int(expected)])
             #expect(result.valueVerification?.readback == .int(expected))
         }
@@ -35,26 +35,26 @@ struct SetValueVerificationTests {
         "9223372036854775808.0", "-9223372036854775809.0", "0x1p2", "0x1.8p1",
         "", "+", "-", ".", "+.", "1e", "1e+", "e1", "1e1e1", "1..0", "   ",
     ])
-    func `inexact out of range and hexadecimal integer strings fail before dispatch`(text: String) {
+    func `inexact out of range and hexadecimal integer strings fail before dispatch`(text: String) async {
         let element = ActionInputMockAutomationElement(value: 3, isValueSettable: true)
-        #expect(throws: ActionInputError.self) {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+        await #expect(throws: ActionInputError.self) {
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
         }
         #expect(element.setValues.isEmpty)
     }
 
     @MainActor
     @Test(arguments: ["1.0000000000000001", "1e-400", "0x1p2"])
-    func `integer string restrictions never apply to literal text controls`(text: String) throws {
+    func `integer string restrictions never apply to literal text controls`(text: String) async throws {
         let element = ActionInputMockAutomationElement(role: "AXTextField", value: "before", isValueSettable: true)
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
         #expect(element.setValues == [.string(text)])
         #expect(result.valueVerification?.readback == .string(text))
     }
 
     @MainActor
     @Test
-    func `legacy presentation is captured from the same raw native observation`() throws {
+    func `legacy presentation is captured from the same raw native observation`() async throws {
         let cases: [(Any, UIElementValue, String)] = [
             (58.0, .double(58), "58.0"),
             (Float(58), .double(58), "58.0"),
@@ -74,7 +74,7 @@ struct SetValueVerificationTests {
         ]
         for (raw, requested, expectedPresentation) in cases {
             let element = ActionInputMockAutomationElement(role: "AXSlider", value: raw, isValueSettable: true)
-            let result = try ActionInputDriver().trySetValueForTesting(element: element, value: requested)
+            let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: requested)
             let witness = try #require(result.valueVerification)
             #expect(witness.legacyPresentation == expectedPresentation)
             #expect(witness.readback == ElementValueReadback(nativeValue: raw))
@@ -85,11 +85,11 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test
-    func `post dispatch legacy presentation describes the readback not the request`() throws {
+    func `post dispatch legacy presentation describes the readback not the request`() async throws {
         let observed = 57.99999999999999
         let element = ActionInputMockAutomationElement(
             role: "AXSlider", value: 47.0, isValueSettable: true, valueSetterReadbackOverride: .double(observed))
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("58"))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("58"))
         let witness = try #require(result.valueVerification)
         #expect(witness.legacyPresentation == String(observed))
         #expect(witness.legacyPresentation != "58")
@@ -119,7 +119,7 @@ struct SetValueVerificationTests {
     @MainActor
     @Test(arguments: [UIElementValue.string("58"), .int(58), .double(58)])
     func `rounded slider readback is witnessed and repeated requests do not dispatch`(
-        requested: UIElementValue) throws
+        requested: UIElementValue) async throws
     {
         let observed = 57.99999999999999
         let element = ActionInputMockAutomationElement(
@@ -129,7 +129,7 @@ struct SetValueVerificationTests {
             valueSetterReadbackOverride: .double(observed))
         let driver = ActionInputDriver()
 
-        let changed = try driver.trySetValueForTesting(element: element, value: requested)
+        let changed = try await driver.trySetValueForTesting(element: element, value: requested)
         let verification = try #require(changed.valueVerification)
 
         #expect(element.setValues == [.double(58)])
@@ -144,7 +144,7 @@ struct SetValueVerificationTests {
             newValue: String(observed),
             actionName: changed.actionName))
 
-        let unchanged = try driver.trySetValueForTesting(element: element, value: requested)
+        let unchanged = try await driver.trySetValueForTesting(element: element, value: requested)
 
         #expect(element.setValues == [.double(58)])
         #expect(unchanged.outcome.state == .confirmedNoChange)
@@ -154,27 +154,27 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test(arguments: ["AXTextField", "AXSlider"])
-    func `actual numeric-looking string readback remains literal`(role: String) {
+    func `actual numeric-looking string readback remains literal`(role: String) async {
         let element = ActionInputMockAutomationElement(
             role: role,
             value: "47",
             isValueSettable: true,
             valueSetterReadbackOverride: .string("57.99999999999999"))
 
-        self.expectUnverifiedMutation(element: element, requested: .string("58"))
+        await self.expectUnverifiedMutation(element: element, requested: .string("58"))
 
         #expect(element.setValues == [.string("58")])
     }
 
     @MainActor
     @Test
-    func `numeric request on a text field retains a string witness`() throws {
+    func `numeric request on a text field retains a string witness`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXTextFieldRole,
             value: "47",
             isValueSettable: true)
 
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .int(58))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .int(58))
         let verification = try #require(result.valueVerification)
 
         #expect(element.setValues == [.string("58")])
@@ -186,12 +186,12 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test
-    func `integer coercion preserves precision above the floating point exact range`() throws {
+    func `integer coercion preserves precision above the floating point exact range`() async throws {
         let expected = 9_007_199_254_740_993
         let element = ActionInputMockAutomationElement(value: expected - 2, isValueSettable: true)
         let requested = UIElementValue.string("000\(expected)")
 
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: requested)
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: requested)
         let verification = try #require(result.valueVerification)
 
         #expect(element.setValues == [.int(expected)])
@@ -209,24 +209,24 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test(arguments: [UIElementValue.int(9_007_199_254_740_994), .double(9_007_199_254_740_992)])
-    func `integer verification rejects adjacent and floating point readback`(readback: UIElementValue) {
+    func `integer verification rejects adjacent and floating point readback`(readback: UIElementValue) async {
         let expected = 9_007_199_254_740_993
         let element = ActionInputMockAutomationElement(
             value: expected - 2,
             isValueSettable: true,
             valueSetterReadbackOverride: readback)
 
-        self.expectUnverifiedMutation(element: element, requested: .int(expected))
+        await self.expectUnverifiedMutation(element: element, requested: .int(expected))
 
         #expect(element.setValues == [.int(expected)])
     }
 
     @MainActor
     @Test(arguments: [UIElementValue.string(" 001.0 "), .double(1), .bool(true)])
-    func `integer coercion retains existing accepted request forms`(requested: UIElementValue) throws {
+    func `integer coercion retains existing accepted request forms`(requested: UIElementValue) async throws {
         let element = ActionInputMockAutomationElement(value: 0, isValueSettable: true)
 
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: requested)
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: requested)
         let verification = try #require(result.valueVerification)
 
         #expect(element.setValues == [.int(1)])
@@ -237,16 +237,16 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test(arguments: [UIElementValue.string(" on "), .string("YES"), .int(1), .double(1), .bool(true)])
-    func `boolean value witnesses preserve explicit coercion and idempotence`(requested: UIElementValue) throws {
+    func `boolean value witnesses preserve explicit coercion and idempotence`(requested: UIElementValue) async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXCheckBoxRole,
             value: false,
             isValueSettable: true)
         let driver = ActionInputDriver()
 
-        let changed = try driver.trySetValueForTesting(element: element, value: requested)
+        let changed = try await driver.trySetValueForTesting(element: element, value: requested)
         let verification = try #require(changed.valueVerification)
-        let unchanged = try driver.trySetValueForTesting(element: element, value: requested)
+        let unchanged = try await driver.trySetValueForTesting(element: element, value: requested)
 
         #expect(element.setValues == [.bool(true)])
         #expect(verification.attribute == .value)
@@ -260,16 +260,16 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test
-    func `selected-only setter attests selected boolean readback`() throws {
+    func `selected-only setter attests selected boolean readback`() async throws {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXRowRole,
             isSelectedSettable: true,
             selectedValue: false)
         let driver = ActionInputDriver()
 
-        let changed = try driver.trySetValueForTesting(element: element, value: .string("on"))
+        let changed = try await driver.trySetValueForTesting(element: element, value: .string("on"))
         let verification = try #require(changed.valueVerification)
-        let unchanged = try driver.trySetValueForTesting(element: element, value: .bool(true))
+        let unchanged = try await driver.trySetValueForTesting(element: element, value: .bool(true))
 
         #expect(element.setValues.isEmpty)
         #expect(element.setSelectedValues == [true])
@@ -286,13 +286,13 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test
-    func `CFBoolean and integer NSNumber produce distinct resolved kinds and readback tags`() throws {
+    func `CFBoolean and integer NSNumber produce distinct resolved kinds and readback tags`() async throws {
         let booleanElement = ActionInputMockAutomationElement(value: NSNumber(value: false), isValueSettable: true)
         let integerElement = ActionInputMockAutomationElement(value: NSNumber(value: 0), isValueSettable: true)
         let driver = ActionInputDriver()
 
-        let booleanResult = try driver.trySetValueForTesting(element: booleanElement, value: .int(1))
-        let integerResult = try driver.trySetValueForTesting(element: integerElement, value: .int(1))
+        let booleanResult = try await driver.trySetValueForTesting(element: booleanElement, value: .int(1))
+        let integerResult = try await driver.trySetValueForTesting(element: integerElement, value: .int(1))
 
         #expect(booleanElement.setValues == [.bool(true)])
         #expect(booleanResult.valueVerification?.resolvedKind == .bool)
@@ -304,14 +304,14 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test
-    func `integer Boolean readback preserves exact zero and one`() throws {
+    func `integer Boolean readback preserves exact zero and one`() async throws {
         let integerElement = ActionInputMockAutomationElement(
             value: 0,
             isValueSettable: true,
             valueSetterReadbackOverride: .bool(true))
         let driver = ActionInputDriver()
 
-        let integerResult = try driver.trySetValueForTesting(element: integerElement, value: .int(1))
+        let integerResult = try await driver.trySetValueForTesting(element: integerElement, value: .int(1))
         let integerVerification = try #require(integerResult.valueVerification)
 
         #expect(integerVerification.resolvedKind == .int)
@@ -321,7 +321,7 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test(arguments: [0.5, -0.5, 1.5, Double.leastNonzeroMagnitude, Double(1).nextUp])
-    func `fractional numeric Boolean readback is retry unsafe after dispatch`(readback: Double) {
+    func `fractional numeric Boolean readback is retry unsafe after dispatch`(readback: Double) async {
         let requested = readback >= 1
         let element = ActionInputMockAutomationElement(
             role: "AXCheckBox",
@@ -329,31 +329,31 @@ struct SetValueVerificationTests {
             isValueSettable: true,
             valueSetterReadbackOverride: .double(readback))
 
-        self.expectUnverifiedMutation(element: element, requested: .bool(requested))
+        await self.expectUnverifiedMutation(element: element, requested: .bool(requested))
         #expect(element.setValues == [.bool(requested)])
     }
 
     @MainActor
     @Test(arguments: [0.5, -0.5, 1.5])
-    func `fractional Boolean prestate is not an idempotent match`(readback: Double) throws {
+    func `fractional Boolean prestate is not an idempotent match`(readback: Double) async throws {
         let requested = readback >= 1
         let element = ActionInputMockAutomationElement(
             role: "AXCheckBox", value: NSNumber(value: readback), isValueSettable: true)
         let driver = ActionInputDriver()
-        let changed = try driver.trySetValueForTesting(element: element, value: .bool(requested))
+        let changed = try await driver.trySetValueForTesting(element: element, value: .bool(requested))
         #expect(changed.outcome.state == .confirmedChange)
         #expect(element.setValues == [.bool(requested)])
-        let repeated = try driver.trySetValueForTesting(element: element, value: .bool(requested))
+        let repeated = try await driver.trySetValueForTesting(element: element, value: .bool(requested))
         #expect(repeated.outcome.state == .confirmedNoChange)
         #expect(element.setValues == [.bool(requested)])
     }
 
     @MainActor
     @Test(arguments: [false, true])
-    func `exact numeric Boolean prestate remains idempotent`(requested: Bool) throws {
+    func `exact numeric Boolean prestate remains idempotent`(requested: Bool) async throws {
         for raw in [NSNumber(value: requested ? 1 : 0), NSNumber(value: requested ? 1.0 : 0.0)] {
             let element = ActionInputMockAutomationElement(role: "AXCheckBox", value: raw, isValueSettable: true)
-            let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .bool(requested))
+            let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .bool(requested))
             #expect(result.outcome.state == .confirmedNoChange)
             #expect(element.setValues.isEmpty)
         }
@@ -361,28 +361,28 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test(arguments: [UIElementValue.string("2"), .int(2), .double(1.01)])
-    func `boolean coercion rejects non-boolean requests without dispatch`(requested: UIElementValue) {
+    func `boolean coercion rejects non-boolean requests without dispatch`(requested: UIElementValue) async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXCheckBoxRole,
             value: false,
             isValueSettable: true)
 
-        #expect(throws: ActionInputError.self) {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: requested)
+        await #expect(throws: ActionInputError.self) {
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: requested)
         }
         #expect(element.setValues.isEmpty)
     }
 
     @MainActor
     @Test(arguments: [UIElementValue.double(.nan), .double(.infinity), .double(-.infinity), .string("nan")])
-    func `nonfinite numeric requests are rejected before dispatch`(requested: UIElementValue) {
+    func `nonfinite numeric requests are rejected before dispatch`(requested: UIElementValue) async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             value: 47.0,
             isValueSettable: true)
 
-        #expect(throws: ActionInputError.self) {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: requested)
+        await #expect(throws: ActionInputError.self) {
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: requested)
         }
         #expect(element.setValues.isEmpty)
     }
@@ -391,37 +391,37 @@ struct SetValueVerificationTests {
     @Test(arguments: [
         UIElementValue.double(58.000001), .double(.nan), .double(.infinity), .double(-.infinity), .string("58"),
     ])
-    func `unverifiable numeric readback remains retry unsafe after dispatch`(readback: UIElementValue) {
+    func `unverifiable numeric readback remains retry unsafe after dispatch`(readback: UIElementValue) async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             value: 47.0,
             isValueSettable: true,
             valueSetterReadbackOverride: readback)
 
-        self.expectUnverifiedMutation(element: element, requested: .int(58))
+        await self.expectUnverifiedMutation(element: element, requested: .int(58))
 
         #expect(element.setValues == [.double(58)])
     }
 
     @MainActor
     @Test
-    func `unreadable post-dispatch value cannot yield a witness`() {
+    func `unreadable post-dispatch value cannot yield a witness`() async {
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
             isValueSettable: true,
             valueSetterDoesNotChange: true)
 
-        self.expectUnverifiedMutation(element: element, requested: .int(58))
+        await self.expectUnverifiedMutation(element: element, requested: .int(58))
 
         #expect(element.setValues == [.double(58)])
     }
 
     @MainActor
     @Test
-    func `verified readback does not upgrade an unknown pre-state outcome`() throws {
+    func `verified readback does not upgrade an unknown pre-state outcome`() async throws {
         let element = ActionInputMockAutomationElement(role: AXRoleNames.kAXTextFieldRole, isValueSettable: true)
 
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("58"))
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("58"))
 
         #expect(result.outcome.state == .dispatchedUnverified)
         #expect(result.outcome.evidence == .deliveryAccepted)
@@ -558,7 +558,7 @@ struct SetValueVerificationTests {
 
     @MainActor
     @Test
-    func `unsigned native integers outside Int range cannot become wrapped witnesses`() {
+    func `unsigned native integers outside Int range cannot become wrapped witnesses`() async {
         let rawValue = NSNumber(value: UInt64.max)
         let element = ActionInputMockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
@@ -567,8 +567,8 @@ struct SetValueVerificationTests {
 
         #expect(ElementValueReadback(nativeValue: rawValue) == nil)
         #expect(ElementValueReadback(nativeValue: NSNumber(value: UInt64(Int.max))) == .int(Int.max))
-        #expect(throws: ActionInputError.self) {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .int(58))
+        await #expect(throws: ActionInputError.self) {
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .int(58))
         }
         #expect(element.setValues.isEmpty)
     }
@@ -576,10 +576,10 @@ struct SetValueVerificationTests {
     @MainActor
     private func expectUnverifiedMutation(
         element: ActionInputMockAutomationElement,
-        requested: UIElementValue)
+        requested: UIElementValue) async
     {
         do {
-            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: requested)
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: requested)
             Issue.record("Expected the accepted setter to fail readback verification")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .indeterminate)

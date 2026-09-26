@@ -18,6 +18,10 @@ struct TypingFinalReceiverBindingTests {
             case .editingKey: [.key(.leftArrow)]
             }
         }
+
+        var nativeLookupCount: Int {
+            self == .editingKey ? 3 : 5
+        }
     }
 
     @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly], Payload.allCases)
@@ -101,7 +105,7 @@ struct TypingFinalReceiverBindingTests {
             Issue.record("Expected accepted-prefix evidence, got \(error)")
         }
         #expect(fixture.validatedReceivers == [.a, .a])
-        #expect(fixture.nativeLookups == [.a, .b])
+        #expect(fixture.nativeLookups == [.a, .a, .a, .a, .a, .b])
         #expect(fixture.nativePhases.map { $0 == .initial } == [true, false])
         #expect(fixture.textWrites == [.a])
         #expect(fixture.selectionWrites == [.a])
@@ -118,7 +122,7 @@ struct TypingFinalReceiverBindingTests {
         let fixture = TypingReceiverFixture()
         fixture.reflowAfterTextWrite = 1
         let result = try await fixture.run([.text("p")] + payload.actions, strategy: strategy)
-        #expect(fixture.nativeLookups == [.a, .a])
+        #expect(fixture.nativeLookups == Array(repeating: .a, count: 5 + payload.nativeLookupCount))
         #expect(fixture.nativePhases.map { $0 == .initial } == [true, false])
         #expect(!fixture.textWrites.contains(.b))
         #expect(!fixture.selectionWrites.contains(.b))
@@ -131,7 +135,7 @@ struct TypingFinalReceiverBindingTests {
     func `a stable retained receiver accepts native edits`(payload: Payload) async throws {
         let fixture = TypingReceiverFixture()
         let result = try await fixture.run(payload.actions)
-        #expect(fixture.nativeLookups == [.a])
+        #expect(fixture.nativeLookups == Array(repeating: .a, count: payload.nativeLookupCount))
         #expect(fixture.nativePhases.map { $0 == .initial } == [true])
         #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 1)
         #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
@@ -152,7 +156,7 @@ struct TypingFinalReceiverBindingTests {
         #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
         #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 1)
         #expect(result.result.keyPresses == 0)
-        #expect(fixture.nativeLookups == [.a])
+        #expect(fixture.nativeLookups == Array(repeating: .a, count: payload.nativeLookupCount))
         #expect(fixture.events.isEmpty)
         #expect(fixture.eventPermissionChecks == 0)
     }
@@ -194,7 +198,7 @@ struct TypingFinalReceiverBindingTests {
         fixture.providesNativeProof = false
         fixture.snapshotIncludesNativeProof = false
         let result = try await fixture.run([.text("x")], exactWindow: exactWindow, focusedReceipt: false)
-        #expect(fixture.nativeLookups == [.b])
+        #expect(fixture.nativeLookups == [.b, .b, .b, .b, .b])
         #expect(fixture.textWrites == [.b])
         #expect(fixture.values[.b] == "bravox")
         #expect(fixture.events.isEmpty)
@@ -308,8 +312,8 @@ struct TypingFinalReceiverBindingTests {
         }
         #expect(fixture.routeChecks == [.a, .a])
         #expect(fixture.nativePhases.map { $0 == .initial } == [true, false])
-        #expect(fixture.textValueReads == (webPrefix ? [] : [.a]))
-        #expect(fixture.selectedRangeReads == (webPrefix ? [] : [.a]))
+        #expect(fixture.textValueReads == (webPrefix ? [] : Array(repeating: .a, count: 5)))
+        #expect(fixture.selectedRangeReads == (webPrefix ? [] : Array(repeating: .a, count: 5)))
         #expect(fixture.textWrites == (webPrefix ? [] : [.a]))
         #expect(fixture.selectionWrites == (webPrefix ? [] : [.a]))
         #expect(fixture.events == (webPrefix ? ["text:p"] : []))
@@ -393,6 +397,7 @@ private final class TypingReceiverFixture {
                 self.nativeLookups.append(self.focusedReceiver)
                 return self.nativeReceiverAvailable ? self.focusedReceiver : nil
             },
+            sameReceiver: { $0 == $1 },
             isEditable: {
                 self.editabilityReads.append($0)
                 guard self.editable[$0] == true else { return false }
@@ -415,19 +420,24 @@ private final class TypingReceiverFixture {
                 return self.selections[$0]
             },
             focusSnapshot: { self.snapshot(for: $0) },
-            setText: { text, receiver in
+            validateReceiver: { _ in },
+            setText: { text, receiver, beforeMutation in
+                try beforeMutation()
                 self.textWrites.append(receiver)
                 self.values[receiver] = text
                 self.applyRouteTransition(afterDispatchTo: receiver)
                 if self.textWrites.count == self.reflowAfterTextWrite {
                     self.frames[.a] = Self.reflowedFrame
                 }
-                return true
+                return .accessibilityValue
             },
-            selectRange: { range, receiver in
+            selectRange: { range, receiver, beforeMutation in
+                if try beforeMutation() {
+                    return .noChange
+                }
                 self.selectionWrites.append(receiver)
                 self.selections[receiver] = range
-                return true
+                return .accessibilityValue
             })
     }
 
@@ -445,7 +455,7 @@ private final class TypingReceiverFixture {
             insertText: { text, pid, window, phase, validatedReceiver in
                 #expect(pid == Self.processIdentifier)
                 self.nativePhases.append(phase)
-                return try BackgroundInputDriver.insertTextIntoFocusedText(
+                return try await BackgroundInputDriver.insertTextIntoFocusedText(
                     text,
                     exactWindow: window,
                     phase: phase,
@@ -455,7 +465,7 @@ private final class TypingReceiverFixture {
             performTextKey: { key, pid, window, phase, validatedReceiver in
                 #expect(pid == Self.processIdentifier)
                 self.nativePhases.append(phase)
-                return try BackgroundInputDriver.performFocusedTextKey(
+                return try await BackgroundInputDriver.performFocusedTextKey(
                     key,
                     exactWindow: window,
                     phase: phase,
@@ -465,7 +475,7 @@ private final class TypingReceiverFixture {
             replaceText: { text, pid, window, phase, validatedReceiver in
                 #expect(pid == Self.processIdentifier)
                 self.nativePhases.append(phase)
-                return try BackgroundInputDriver.replaceFocusedText(
+                return try await BackgroundInputDriver.replaceFocusedText(
                     with: text,
                     exactWindow: window,
                     phase: phase,
@@ -485,7 +495,7 @@ private final class TypingReceiverFixture {
             },
             targetedInputDriver: driver,
             targetBundleIdentifier: { _ in "example.typing-receiver-fixture" },
-            exactFocusedElementValueReader: { _ in .failure(.focusNotConfirmed) },
+            exactFocusedElementValueReader: { _, _ in .failure(.focusNotConfirmed) },
             exactFocusedValueRunner: { _, _, _, _ in nil },
             processStartIdentityProvider: { _ in 91 },
             desktopOperationExecutor: DesktopOperationExecutor(

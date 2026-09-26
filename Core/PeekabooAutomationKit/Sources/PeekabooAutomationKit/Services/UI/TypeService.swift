@@ -114,7 +114,7 @@ public final class TypeService {
     private let operationFinalizer: @MainActor () -> Void
     private let pixelFocusReceiptPlanner: @MainActor @Sendable (String) async throws -> SnapshotTargetReceiptPlan
     private let pixelFocusPlanEntryHook: @MainActor @Sendable () async throws -> Void
-    private let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity)
+    private let exactFocusedElementValueReader: @Sendable (FocusedElementIdentity, RetainedFocusElement?)
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     private let exactFocusedValueRunner: TypeServiceExactFocusedValueRunner
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
@@ -141,7 +141,7 @@ public final class TypeService {
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
-        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
+        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity, RetainedFocusElement?)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
         exactFocusedValueRunner: @escaping TypeServiceExactFocusedValueRunner =
             TypeService.runExactFocusedValueObservation,
@@ -193,12 +193,12 @@ public final class TypeService {
             pid_t,
             UIAutomationTarget.ExactWindow?,
             KeyboardFocusValidationPhase,
-            Element?) throws -> Bool)? = nil,
+            Element?) async throws -> FocusedTextKeyDispatch)? = nil,
         targetedInputDriver: TargetedTypeInputDriver = TargetedTypeInputDriver(),
         targetBundleIdentifier: @escaping @MainActor (pid_t) -> String? = {
             NSRunningApplication(processIdentifier: $0)?.bundleIdentifier
         },
-        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity)
+        exactFocusedElementValueReader: @escaping @Sendable (FocusedElementIdentity, RetainedFocusElement?)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError> = DetachedExactWindowFocusReader.readValue,
         exactFocusedValueRunner: @escaping TypeServiceExactFocusedValueRunner =
             TypeService.runExactFocusedValueObservation,
@@ -355,10 +355,23 @@ public final class TypeService {
         guard try self.legacyTextInputRouteResolver(focusedElement).permitsAccessibilityEditing() else {
             throw ActionInputError.unsupported(.actionUnsupported)
         }
-        return try self.actionInputDriver.trySetText(
+        guard let processIdentifier = AutomationElementResolver.processIdentifier(of: element),
+              let processGeneration = self.processStartIdentityProvider(processIdentifier)
+        else { throw ActionInputError.targetUnavailable }
+        return try await self.actionInputDriver.trySetText(
             element: element,
             text: text,
-            replace: clearExisting)
+            replace: clearExisting,
+            beforeMutation: {
+                guard self.processStartIdentityProvider(processIdentifier) == processGeneration,
+                      try CFEqual(self.focusedUIElementReader(), focusedElement),
+                      try self.legacyTextInputRouteResolver(focusedElement).permitsAccessibilityEditing()
+                else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "The foreground text receiver changed before the value write.")
+                }
+            })
     }
 
     static func readCurrentFocusedElement() throws -> AXUIElement {
@@ -523,7 +536,7 @@ public final class TypeService {
         let effectConfirmation = automationTarget.exactWindow.flatMap {
             ExactLiteralTypingEffectConfirmation.plan(actions: actions, target: $0)
         }
-        var confirmationPreflightValue: String?
+        var confirmationBaseline: ExactWindowFocusSnapshot?
         var bundleIdentifier: String?
         var strategy = self.actionArrayStrategy(for: automationTarget)
         let executePayload: @MainActor () async throws -> DesktopActionOutcome = {
@@ -561,7 +574,7 @@ public final class TypeService {
             prepare: {
                 bundleIdentifier = targetProcessIdentifier.flatMap(self.targetBundleIdentifier)
                 strategy = self.actionArrayStrategy(for: automationTarget, bundleIdentifier: bundleIdentifier)
-                confirmationPreflightValue = await self.prepareEffectConfirmationBaseline(
+                confirmationBaseline = await self.prepareEffectConfirmationBaseline(
                     effectConfirmation,
                     lanePreparation: lanePreparation)
             },
@@ -586,7 +599,7 @@ public final class TypeService {
                 verifiedExecutionResult.outcome = await self.confirmExactLiteralTypingEffect(
                     from: executionResult.outcome,
                     confirmation: effectConfirmation,
-                    preflightValue: confirmationPreflightValue)
+                    baseline: confirmationBaseline)
                 let completedSummary = TypeActionExecutionSummary(
                     result: payloadSummary.result,
                     executionResult: verifiedExecutionResult,
@@ -664,6 +677,8 @@ public final class TypeService {
                             deliverySummary.record(dispatch)
                             keyPresses += dispatch.keyPressCount
                             emittedUnitCount += dispatch.dispatchedUnitCount
+                        } catch let cancellation as CancellationError {
+                            throw cancellation
                         } catch let error as InputDeliveryIndeterminateError {
                             throw error
                         } catch {
@@ -686,7 +701,7 @@ public final class TypeService {
                         continuationValidator: continuationValidator,
                         emittedUnitCount: emittedUnitCount)
                     do {
-                        let dispatch = try self.dispatchSpecialKey(
+                        let dispatch = try await self.dispatchSpecialKey(
                             key,
                             automationTarget: automationTarget,
                             phase: emittedUnitCount > 0 ? .continuation : .initial,
@@ -697,6 +712,8 @@ public final class TypeService {
                         specialKeyPresses += dispatch.keyPressCount
                         emittedUnitCount += dispatch.dispatchedUnitCount
                         lastDeliveredActionWasKey = dispatch.dispatchedUnitCount > 0 || lastDeliveredActionWasKey
+                    } catch let cancellation as CancellationError {
+                        throw cancellation
                     } catch let error as InputDeliveryIndeterminateError {
                         throw error
                     } catch {
@@ -865,19 +882,21 @@ extension TypeService {
         automationTarget: UIAutomationTarget,
         phase: KeyboardFocusValidationPhase,
         validatedReceiver: Element?,
-        targetedStrategy: UIInputStrategy) throws -> TypeActionDispatchSummary
+        targetedStrategy: UIInputStrategy) async throws -> TypeActionDispatchSummary
     {
         let keyboardDelivery = automationTarget.keyboardDelivery
         if let targetProcessIdentifier = automationTarget.processIdentifier {
-            return try self.targetedSpecialKeyTyper?(key, targetProcessIdentifier, keyboardDelivery) ??
-                self.targetedInputDriver.specialKey(
-                    key,
-                    processIdentifier: targetProcessIdentifier,
-                    exactWindow: automationTarget.exactWindow,
-                    phase: phase,
-                    validatedReceiver: validatedReceiver,
-                    strategy: targetedStrategy,
-                    keyboardDelivery: keyboardDelivery)
+            if let targetedSpecialKeyTyper = self.targetedSpecialKeyTyper {
+                return try targetedSpecialKeyTyper(key, targetProcessIdentifier, keyboardDelivery)
+            }
+            return try await self.targetedInputDriver.specialKey(
+                key,
+                processIdentifier: targetProcessIdentifier,
+                exactWindow: automationTarget.exactWindow,
+                phase: phase,
+                validatedReceiver: validatedReceiver,
+                strategy: targetedStrategy,
+                keyboardDelivery: keyboardDelivery)
         } else {
             return try self.typeSpecialKey(key, keyboardDelivery: keyboardDelivery)
         }
@@ -904,25 +923,25 @@ extension TypeService {
 
         if let targetProcessIdentifier {
             do {
-                if try self.targetedInputDriver.clearUsingAccessibility(
+                switch try await self.targetedInputDriver.clearUsingAccessibility(
                     processIdentifier: targetProcessIdentifier,
                     exactWindow: exactWindow,
                     phase: priorEmittedUnitCount > 0 ? .continuation : .initial,
                     validatedReceiver: validatedReceiverProvider(),
                     strategy: targetedStrategy)
                 {
-                    do {
-                        try await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                    } catch {
-                        throw Self.indeterminateDeliveryError(
-                            from: error,
-                            emittedUnitCount: priorEmittedUnitCount + 1,
-                            delivery: .init(mechanism: .accessibilityValue, mode: .background))
-                    }
+                case .noChange:
+                    return .noChange
+                case .unsupported:
+                    break
+                case .accessibilityValue:
                     return TypeActionDispatchSummary.dispatched(
                         delivery: .init(mechanism: .accessibilityValue, mode: .background),
                         keyPressCount: 0)
                 }
+            } catch let cancellation as CancellationError {
+                // Accepted AX writes report typed uncertainty; raw cancellation means this clear did not dispatch.
+                throw cancellation
             } catch let error as InputDeliveryIndeterminateError {
                 throw error
             } catch {
@@ -936,6 +955,8 @@ extension TypeService {
                     0x00,
                     flags: .maskCommand,
                     processIdentifier: targetProcessIdentifier)
+            } catch let cancellation as CancellationError {
+                throw cancellation
             } catch {
                 throw Self.indeterminateDeliveryError(
                     from: error,
@@ -1053,15 +1074,17 @@ extension TypeService {
         keyboardDelivery: DesktopActionOutcome.Delivery) async throws -> TypeActionDispatchSummary
     {
         if let targetProcessIdentifier {
-            return try self.targetedCharacterTyper?(char, targetProcessIdentifier, keyboardDelivery) ??
-                self.targetedInputDriver.character(
-                    char,
-                    processIdentifier: targetProcessIdentifier,
-                    exactWindow: exactWindow,
-                    phase: phase,
-                    validatedReceiver: validatedReceiver,
-                    strategy: targetedStrategy,
-                    keyboardDelivery: keyboardDelivery)
+            if let targetedCharacterTyper = self.targetedCharacterTyper {
+                return try targetedCharacterTyper(char, targetProcessIdentifier, keyboardDelivery)
+            }
+            return try await self.targetedInputDriver.character(
+                char,
+                processIdentifier: targetProcessIdentifier,
+                exactWindow: exactWindow,
+                phase: phase,
+                validatedReceiver: validatedReceiver,
+                strategy: targetedStrategy,
+                keyboardDelivery: keyboardDelivery)
         } else {
             try self.syntheticInputDriver.type(String(char), delayPerCharacter: 0)
             return .dispatched(delivery: keyboardDelivery, keyPressCount: 1)
@@ -1079,6 +1102,19 @@ extension TypeService {
            failure.outcome.dispatchState == .none
         {
             return failure
+        }
+        if let failure = error as? DesktopActionFailure {
+            let failedUnits = failure.outcome.dispatchState.unitCount?.rawValue
+            let totalUnits = failedUnits.map { (emittedUnitCount ?? 0) + $0 } ?? emittedUnitCount
+            let failedDelivery = failure.outcome.delivery
+            return InputDeliveryIndeterminateError(
+                operation: .type,
+                emittedUnitCount: totalUnits,
+                causeDescription: failure.localizedDescription,
+                delivery: self.combinedDelivery(
+                    delivery,
+                    failedDelivery,
+                    mode: delivery?.mode ?? failedDelivery?.mode))
         }
         if let error = error as? InputDeliveryIndeterminateError {
             return InputDeliveryIndeterminateError(
@@ -1286,7 +1322,7 @@ extension TypeService {
                         focusedElement: focusedElement)
                     let effectConfirmation = ExactLiteralTypingEffectConfirmation.plan(
                         actions: request.actions, target: typingExactWindow)
-                    let confirmationPreflightValue = await self.prepareEffectConfirmationBaseline(
+                    let confirmationBaseline = await self.prepareEffectConfirmationBaseline(
                         effectConfirmation,
                         lanePreparation: {})
                     let typed = try await self.performTypeActions(
@@ -1297,6 +1333,7 @@ extension TypeService {
                         deliveryValidator: validateFocusedElement,
                         continuationValidator: { try await deliveryValidator(focusedElement, .continuation) },
                         validatedReceiverProvider: validatedReceiverProvider)
+                    // A focus change cannot satisfy a no-op typing leaf; retain it as a retry-unsafe prefix.
                     guard let typingDelivery = typed.delivery,
                           let typingUnits = DesktopActionOutcome.DispatchUnitCount(typed.dispatchedUnitCount)
                     else {
@@ -1311,7 +1348,7 @@ extension TypeService {
                     typingOutcome = await self.confirmExactLiteralTypingEffect(
                         from: typingOutcome,
                         confirmation: effectConfirmation,
-                        preflightValue: confirmationPreflightValue)
+                        baseline: confirmationBaseline)
                     sequence.record(.reportedOutcome(
                         typingOutcome,
                         defaultDispatchedUnitCount: typingUnits))
@@ -1380,16 +1417,17 @@ extension TypeService {
 
     func prepareEffectConfirmationBaseline(
         _ confirmation: ExactLiteralTypingEffectConfirmation?,
-        lanePreparation: @escaping @MainActor () async -> Void) async -> String?
+        lanePreparation: @escaping @MainActor () async -> Void) async -> ExactWindowFocusSnapshot?
     {
         await lanePreparation()
         guard let confirmation else { return nil }
-        return await self.exactFocusedValue(for: confirmation)
+        return await self.exactFocusedValueSnapshot(for: confirmation)
     }
 
-    func exactFocusedValue(
+    func exactFocusedValueSnapshot(
         for confirmation: ExactLiteralTypingEffectConfirmation,
-        timeout: Duration = .milliseconds(200)) async -> String?
+        retainedElement: RetainedFocusElement? = nil,
+        timeout: Duration = .milliseconds(200)) async -> ExactWindowFocusSnapshot?
     {
         guard timeout > .zero else { return nil }
         let reader = self.exactFocusedElementValueReader
@@ -1404,22 +1442,29 @@ extension TypeService {
             guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
                 return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
             }
-            let observation = reader(focusedElement)
+            let observation = reader(focusedElement, retainedElement)
             guard processStartIdentityProvider(focusedElement.processIdentifier) == expectedGeneration else {
                 return Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>.failure(.processMismatch)
             }
             return observation
         }
-        return observation.flatMap(confirmation.readableValue(from:))
+        guard let observation,
+              case let .success(snapshot) = observation,
+              snapshot.nativeElement != nil,
+              confirmation.readableValue(from: observation, retainedElement: retainedElement) != nil
+        else { return nil }
+        return snapshot
     }
 
     private func confirmExactLiteralTypingEffect(
         from outcome: DesktopActionOutcome,
         confirmation: ExactLiteralTypingEffectConfirmation?,
-        preflightValue: String?) async -> DesktopActionOutcome
+        baseline: ExactWindowFocusSnapshot?) async -> DesktopActionOutcome
     {
         guard let confirmation,
-              let preflightValue,
+              let baseline,
+              let retainedElement = baseline.nativeElement,
+              let preflightValue = baseline.value,
               !confirmation.expectedValueMatches(preflightValue)
         else { return outcome }
         let timing = self.effectConfirmationTiming
@@ -1430,9 +1475,11 @@ extension TypeService {
             guard sampleStart < deadline else { return outcome }
             sampleCount += 1
             let sampleTimeout = min(.milliseconds(200), sampleStart.duration(to: deadline))
-            guard let observedValue = await self.exactFocusedValue(
+            guard let observed = await self.exactFocusedValueSnapshot(
                 for: confirmation,
+                retainedElement: retainedElement,
                 timeout: sampleTimeout),
+                let observedValue = observed.value,
                 !Task.isCancelled
             else { return outcome }
             if confirmation.expectedValueMatches(observedValue) {

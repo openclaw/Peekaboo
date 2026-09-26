@@ -38,6 +38,7 @@ struct ExactLiteralTypingEffectConfirmationTiming: Sendable {
 struct ExactLiteralTypingEffectConfirmation {
     let focusedElement: FocusedElementIdentity
     let processStartIdentity: UInt64
+    private let windowBounds: CGRect
     private let expectedValue: String
 
     static func plan(
@@ -60,15 +61,34 @@ struct ExactLiteralTypingEffectConfirmation {
         return Self(
             focusedElement: focusedElement,
             processStartIdentity: target.identity.ownerProcessStartIdentity,
+            windowBounds: target.bounds,
             expectedValue: expectedValue)
     }
 
     func readableValue(
-        from observation: Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>) -> String?
+        from observation: Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>,
+        retainedElement: RetainedFocusElement? = nil) -> String?
     {
         guard case let .success(snapshot) = observation,
               snapshot.role != "AXSecureTextField",
-              snapshot.subrole != "AXSecureTextField"
+              snapshot.subrole != "AXSecureTextField",
+              let role = snapshot.role,
+              let windowID = snapshot.windowID,
+              !snapshot.frame.isEmpty,
+              self.windowBounds.contains(CGPoint(x: snapshot.frame.midX, y: snapshot.frame.midY)),
+              retainedElement == nil || snapshot.nativeElement == retainedElement
+        else { return nil }
+        let actual = FocusedElementIdentity(
+            processIdentifier: snapshot.processIdentifier,
+            windowID: windowID,
+            role: role,
+            title: snapshot.title,
+            identifier: snapshot.identifier,
+            frame: snapshot.frame)
+        guard FocusedElementReceiptResolver.matches(
+            actual,
+            expected: self.focusedElement,
+            phase: retainedElement == nil ? .initial : .continuation)
         else { return nil }
         return snapshot.value
     }

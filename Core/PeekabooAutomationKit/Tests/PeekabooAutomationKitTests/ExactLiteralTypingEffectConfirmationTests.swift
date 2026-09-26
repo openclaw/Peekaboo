@@ -169,18 +169,19 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let generations = TypingGenerationSequence([33, 34])
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(ExactWindowFocusSnapshot(
                     processIdentifier: focusedElement.processIdentifier,
                     windowID: focusedElement.windowID,
                     frame: focusedElement.frame,
                     role: focusedElement.role,
                     identifier: focusedElement.identifier,
-                    value: "safe"))
+                    value: "safe",
+                    nativeElement: RetainedFocusElement(element: AXUIElementCreateApplication(333))))
             },
             processStartIdentityProvider: { _ in generations.next() })
 
-        #expect(await service.exactFocusedValue(for: confirmation) == nil)
+        #expect(await service.exactFocusedValueSnapshot(for: confirmation) == nil)
         #expect(generations.readCount == 2)
     }
 
@@ -192,18 +193,19 @@ struct ExactLiteralTypingEffectConfirmationTests {
             target: self.target()))
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(ExactWindowFocusSnapshot(
                     processIdentifier: focusedElement.processIdentifier,
                     windowID: focusedElement.windowID,
                     frame: focusedElement.frame,
                     role: focusedElement.role,
                     identifier: focusedElement.identifier,
-                    value: "safe"))
+                    value: "safe",
+                    nativeElement: RetainedFocusElement(element: AXUIElementCreateApplication(333))))
             },
             processStartIdentityProvider: { _ in 33 })
 
-        #expect(await service.exactFocusedValue(for: confirmation) == "safe")
+        #expect(await service.exactFocusedValueSnapshot(for: confirmation)?.value == "safe")
     }
 
     @Test
@@ -215,14 +217,15 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let value = TypingLockedValue("before preparation")
         let service = TypeService(
             randomSource: SystemTypingCadenceRandomSource(),
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(ExactWindowFocusSnapshot(
                     processIdentifier: focusedElement.processIdentifier,
                     windowID: focusedElement.windowID,
                     frame: focusedElement.frame,
                     role: focusedElement.role,
                     identifier: focusedElement.identifier,
-                    value: value.get()))
+                    value: value.get(),
+                    nativeElement: RetainedFocusElement(element: AXUIElementCreateApplication(333))))
             },
             processStartIdentityProvider: { _ in 33 })
 
@@ -230,7 +233,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             value.set("after preparation")
         }
 
-        #expect(baseline == "after preparation")
+        #expect(baseline?.value == "after preparation")
     }
 
     @Test
@@ -246,7 +249,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = self.eventFallbackService(
             value: value,
             timing: clock.timing(),
-            valueReader: { focusedElement in
+            valueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             })
 
@@ -274,7 +277,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = self.eventFallbackService(
             value: value,
             timing: clock.timing(),
-            valueReader: { focusedElement in
+            valueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             })
 
@@ -306,9 +309,9 @@ struct ExactLiteralTypingEffectConfirmationTests {
             },
             targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
-                return true
+                return .accessibilityValue
             },
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             exactFocusedValueRunner: { _, _, timeout, operation in
@@ -345,7 +348,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = self.eventFallbackService(
             value: value,
             timing: clock.timing(),
-            valueReader: { focusedElement in
+            valueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             processStartIdentityProvider: { _ in generations.next() })
@@ -373,7 +376,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = self.eventFallbackService(
             value: value,
             timing: clock.timing(),
-            valueReader: { focusedElement in
+            valueReader: { focusedElement, _ in
                 switch readCount.next() {
                 case 1:
                     .success(Self.focusSnapshot(focusedElement, value: "before"))
@@ -406,7 +409,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
         let service = self.eventFallbackService(
             value: value,
             timing: clock.timing(),
-            valueReader: { focusedElement in
+            valueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             })
 
@@ -438,9 +441,9 @@ struct ExactLiteralTypingEffectConfirmationTests {
             },
             targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
-                return true
+                return .accessibilityValue
             },
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             processStartIdentityProvider: { _ in 33 })
@@ -465,6 +468,62 @@ struct ExactLiteralTypingEffectConfirmationTests {
         #expect(summary.result.specialKeyPresses == 0)
     }
 
+    enum ReceiverChange: CaseIterable {
+        case moved, replaced, wrongWindow, wrongIdentifier, movedBeforeDispatch
+    }
+
+    @Test(arguments: ReceiverChange.allCases)
+    @MainActor
+    func `exact typing confirms only the same retained receiver after reflow`(
+        change: ReceiverChange) async throws
+    {
+        let target = try self.target()
+        let value = TypingLockedValue("before")
+        let readCount = TypingLockedCounter()
+        let receiver = RetainedFocusElement(element: AXUIElementCreateApplication(333))
+        let replacement = RetainedFocusElement(element: AXUIElementCreateApplication(334))
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: { _ in false },
+            targetedCharacterTyper: { character, _, _ in
+                value.set(value.get() + String(character))
+                return .dispatched(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                    keyPressCount: 0)
+            },
+            targetedTextReplacer: { text, _, _, _, _ in
+                value.set(text)
+                return .accessibilityValue
+            },
+            exactFocusedElementValueReader: { focusedElement, retainedElement in
+                let afterDispatch = readCount.next() > 1
+                #expect(retainedElement == (afterDispatch ? receiver : nil))
+                let moved = afterDispatch || change == .movedBeforeDispatch
+                return .success(ExactWindowFocusSnapshot(
+                    processIdentifier: focusedElement.processIdentifier,
+                    windowID: afterDispatch && change == .wrongWindow ? 43 : focusedElement.windowID,
+                    frame: moved ? focusedElement.frame.offsetBy(dx: 0, dy: 35) : focusedElement.frame,
+                    role: focusedElement.role,
+                    identifier: afterDispatch && change == .wrongIdentifier ? "other" : focusedElement.identifier,
+                    value: value.get(),
+                    nativeElement: afterDispatch && change == .replaced ? replacement : receiver))
+            },
+            processStartIdentityProvider: { _ in 33 },
+            effectConfirmationTiming: TypingEffectPollClock().timing())
+
+        let summary = try await service.typeActionsTrackingSecureInput(
+            [.clear, .text("safe")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            automationTarget: .exactWindow(target),
+            deliveryValidator: {},
+            validatedReceiverProvider: Self.validatedReceiver)
+
+        #expect(value.get() == "safe")
+        #expect(summary.executionResult.outcome.state ==
+            (change == .moved ? .confirmedChange : .dispatchedUnverified))
+    }
+
     @Test
     @MainActor
     func `direct clear reports one accessibility write and zero key presses`() async throws {
@@ -475,9 +534,9 @@ struct ExactLiteralTypingEffectConfirmationTests {
             focusedElementSecurityProbe: { _ in false },
             targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
-                return true
+                return .accessibilityValue
             },
-            exactFocusedElementValueReader: { focusedElement in
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             processStartIdentityProvider: { _ in 33 })
@@ -524,8 +583,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
                         delivery: .init(mechanism: .accessibilityValue, mode: .background),
                         keyPressCount: 0)
                 },
-                targetedTextReplacer: { _, _, _, _, _ in true },
-                exactFocusedElementValueReader: { _ in .failure(.focusedAttributeUnreadable) },
+                targetedTextReplacer: { _, _, _, _, _ in .accessibilityValue },
+                exactFocusedElementValueReader: { _, _ in .failure(.focusedAttributeUnreadable) },
                 processStartIdentityProvider: { _ in 33 })
 
             do {
@@ -585,8 +644,8 @@ struct ExactLiteralTypingEffectConfirmationTests {
             randomSource: SystemTypingCadenceRandomSource(),
             focusedElementSecurityProbe: { _ in false },
             targetedCharacterTyper: { _, _, _ in .noChange },
-            targetedTextReplacer: { _, _, _, _, _ in true },
-            exactFocusedElementValueReader: { focusedElement in
+            targetedTextReplacer: { _, _, _, _, _ in .accessibilityValue },
+            exactFocusedElementValueReader: { focusedElement, _ in
                 .success(Self.focusSnapshot(focusedElement, value: value.get()))
             },
             processStartIdentityProvider: { _ in 33 })
@@ -640,7 +699,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
     private func eventFallbackService(
         value: TypingLockedValue<String>,
         timing: ExactLiteralTypingEffectConfirmationTiming,
-        valueReader: @escaping @Sendable (FocusedElementIdentity)
+        valueReader: @escaping @Sendable (FocusedElementIdentity, RetainedFocusElement?)
             -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? = { _ in 33 }) -> TypeService
     {
@@ -652,7 +711,7 @@ struct ExactLiteralTypingEffectConfirmationTests {
             },
             targetedTextReplacer: { text, _, _, _, _ in
                 value.set(text)
-                return true
+                return .accessibilityValue
             },
             exactFocusedElementValueReader: valueReader,
             processStartIdentityProvider: processStartIdentityProvider,
@@ -669,7 +728,9 @@ struct ExactLiteralTypingEffectConfirmationTests {
             frame: focusedElement.frame,
             role: focusedElement.role,
             identifier: focusedElement.identifier,
-            value: value)
+            value: value,
+            nativeElement: RetainedFocusElement(element: AXUIElementCreateApplication(focusedElement
+                    .processIdentifier)))
     }
 }
 
