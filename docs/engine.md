@@ -24,8 +24,16 @@ Peekaboo supports two capture backends:
 `see --capture-engine` selects the backend on the same Bridge host that normal runtime routing chooses; it does not
 silently move capture or TCC ownership into the CLI process. If no compatible Bridge host is available, the command
 fails before caller-local capture. Add `--no-remote` only when caller-local execution is intentional and that process
-is known to own Screen Recording in the active Aqua session. Other capture commands remain caller-local until their
-remote protocols explicitly carry the engine preference.
+is known to own Screen Recording in the active Aqua session.
+
+`capture live` and `capture action` do not yet transport capture-engine overrides. Without an override they retain
+normal Bridge routing and use the selected host's backend policy. An explicit `--capture-engine` or nonempty
+`PEEKABOO_CAPTURE_ENGINE` still selects caller-local capture when no explicit Bridge socket is requested. Combining
+either override with `--bridge-socket` or a nonempty `PEEKABOO_BRIDGE_SOCKET` is refused before runtime construction,
+focus, output creation, or child execution; the requested host is never silently ignored. This includes `auto` and
+all engine aliases. Omit the flag and unset the engine environment variable to use the selected host's backend policy,
+or explicitly pass `--no-remote` to choose caller-local capture instead. Explicit remote isolation retains precedence
+over a socket selector. `capture video` remains local media ingestion and is unaffected.
 
 Remote `modern` and `classic` selections require a host that advertises
 `desktopObservationCaptureEngine`; older hosts are refused before the observation request is sent rather than silently

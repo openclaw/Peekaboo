@@ -3,12 +3,16 @@ import Foundation
 import Subprocess
 import Testing
 
-/// These tests spawn the real peekaboo binary and its daemon. CI runners
-/// cannot host the daemon (the child times out and is SIGKILLed after
-/// minutes), so they run only alongside the automation suites.
+/// The real daemon observes native windows and connects to shared visualizer storage.
+/// Compiling automation tests does not authorize those ambient host interactions.
 private enum DaemonRuntimeTestEnvironment {
     nonisolated static var isEnabled: Bool {
-        ProcessInfo.processInfo.environment["PEEKABOO_INCLUDE_AUTOMATION_TESTS"]?.lowercased() == "true"
+        #if PEEKABOO_SKIP_AUTOMATION
+        false
+        #else
+        CLIRuntimeEnvironment.runAmbientStateTests &&
+            ProcessInfo.processInfo.environment["PEEKABOO_INCLUDE_AUTOMATION_TESTS"]?.lowercased() == "true"
+        #endif
     }
 }
 

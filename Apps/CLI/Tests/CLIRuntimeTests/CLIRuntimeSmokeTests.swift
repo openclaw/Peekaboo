@@ -726,7 +726,7 @@ struct CLIRuntimeSmokeTests {
         }
     }
 
-    @Test
+    @Test(.enabled(if: CLIRuntimeEnvironment.runAmbientStateTests))
     func `peekaboo visualizer emits JSON (success or error)`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo(["visualizer", "--json", "--no-remote"])

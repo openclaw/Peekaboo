@@ -45,6 +45,8 @@ If LaunchServices cannot resolve `Playground` by name, also set `PEEKABOO_PLAYGR
 
 Tests that read or mutate uncontrolled host state use the shared `PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS=true` selector. Ordinary local and automation-action selectors never imply this consent, and `test:safe` explicitly overrides inherited ambient-state opt-ins. The live clipboard smoke test uses this selector and must only be enabled with fresh authorization to read, replace, and restore the ambient clipboard.
 
+The live visualizer smoke also requires this opt-in: `--no-remote` isolates CLI runtime selection, not visualizer notifications to an already-running Peekaboo.app. The disabled-feedback JSON smoke remains safe and runs without ambient consent. The real-daemon launch smoke requires both automation-test inclusion and ambient consent because daemon startup observes native windows and connects to shared visualizer storage; `PEEKABOO_SKIP_AUTOMATION` always skips it. These skipped live tests are not covered by a passing `test:safe` run.
+
 The caller-barrier and rejected-host-certificate tests in `InteractionMutationInvalidatorTests` also require this opt-in: their caller-local `SnapshotManager` advances the effective-UID desktop watermark and target ledger despite injected trackers and in-memory snapshots. These two bodies are intentionally skipped by safe preflight, not counted as passed, and may run only with explicit authorization for those ambient mutations.
 
 ## Test Categories
