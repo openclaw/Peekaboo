@@ -291,7 +291,7 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run mocked interaction receipt regressions\n")[1];
   assert.ok(body, "Missing mocked interaction receipt CI step");
-  const step = body.split("\n      - name:")[0];
+  const step = body.split(/\n(?:      - |  \S)/)[0];
   assert.match(step, /working-directory: Apps\/CLI/);
   assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"/);
   assert.match(step, /PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"/);
@@ -326,7 +326,7 @@ test("hosted See proof retains target inclusion without opting into ambient test
   const manifest = readFileSync(`${repositoryRoot}/Apps/CLI/Package.swift`, "utf8");
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const step = workflow.split("      - name: Run See configuration environment regressions\n")[1]
-    .split("\n  tachikoma:")[0];
+    .split(/\n(?:      - |  \S)/)[0];
   assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"/);
   assert.match(step, /PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"/);
   assert.match(step, /PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"/);
@@ -335,6 +335,22 @@ test("hosted See proof retains target inclusion without opting into ambient test
   const target = manifest.split('name: "CLIAutomationTests"')[1].split("let package = Package(")[0];
   assert.doesNotMatch(target, /\b(?:exclude|sources):/);
   assert.doesNotMatch(manifest, /PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS/);
+});
+
+test("hosted CLI groups See proof with skip-automation builds before mocked interactions", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  let previous = -1;
+  for (const name of [
+    "Run taskless agent resume regression (skip automation)",
+    "Run See configuration environment regressions",
+    "Run mocked interaction receipt regressions",
+  ]) {
+    const marker = `      - name: ${name}\n`;
+    const position = workflow.indexOf(marker);
+    assert.ok(position > previous, `Expected ${name} after the previous build configuration`);
+    assert.equal(workflow.lastIndexOf(marker), position, `Expected exactly one ${name} step`);
+    previous = position;
+  }
 });
 
 test("See environment proof uses declaration IDs, including backticks and argument labels", () => {

@@ -561,6 +561,15 @@ jobs:
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
             --filter 'AgentCommandBasicTests|AgentCommandValidationIntegrationTests'
 
+      - name: Run See configuration environment regressions
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
+        run: |
+          python3 ../../scripts/test-see-config-environment.py
+
       - name: Run mocked interaction receipt regressions
         working-directory: Apps/CLI
         env:
@@ -580,15 +589,6 @@ jobs:
           grep -Fq 'Suite ClickCommandActionResultTests passed after ' "$test_log"
           grep -Fq 'Suite ClickSnapshotWindowSelectionTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
-
-      - name: Run See configuration environment regressions
-        working-directory: Apps/CLI
-        env:
-          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
-          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
-          PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
-        run: |
-          python3 ../../scripts/test-see-config-environment.py
 
   tachikoma:
     name: Tachikoma build & tests
