@@ -61,6 +61,19 @@ Categories are strings supplied by call sites rather than a central enum. Curren
 
 The separate automation event logger uses Apple's unified logging for command activity; it does not change the stderr/JSON format above.
 
+Detached native AX observations have a debug-only unified-log category, `AXObservation`, under `boo.peekaboo.core`.
+Capture it for the executing CLI or Bridge host while reproducing a slow or incomplete read:
+
+```bash
+log stream --level debug --predicate 'processIdentifier == 12345 AND subsystem == "boo.peekaboo.core" AND category == "AXObservation"'
+```
+
+Replace `12345` with the verified executing host PID. These records report native call type, traversal-node ordinal,
+elapsed milliseconds, raw AX errors, fixed attribute names for embedded errors, batch counts/fallbacks, and total worker
+time. Node zero denotes reads outside traversal. Fast successful reads are omitted; calls taking at least 50 ms and
+failed/fallback reads are retained. No UI values, labels, identifiers or action names are logged, and no additional AX
+queries are performed. This stream is separate from CLI `debug_logs`; it does not require a private-data logging profile.
+
 ## Performance Tracking
 
 `Logger.startTimer(_:)` records a start time. `stopTimer(_:threshold:)` prepares a `Performance` message when verbose mode is active or a supplied threshold is exceeded; the configured minimum level still controls whether that verbose message is emitted:

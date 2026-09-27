@@ -240,6 +240,13 @@ enum DetachedAXObservationWorker {
         validateIdentity: (_ request: DetachedAXObservationRequest) throws -> Void) throws
         -> DetachedAXObservationResult
     {
+        let diagnosticStart = AXObservationReadDiagnostics.start()
+        defer {
+            AXObservationReadDiagnostics.recordObservation(
+                startedAt: diagnosticStart,
+                processIdentifier: request.processIdentifier,
+                windowID: request.windowID)
+        }
         try validateIdentity(request)
         let deadline = ContinuousClock.now.advanced(by: .seconds(request.timing.cooperativeDeadlineSeconds))
         let application = AXUIElementCreateApplication(request.processIdentifier)
@@ -518,7 +525,7 @@ enum DetachedAXObservationWorker {
         state.visited.append(element)
 
         self.prepare(element, deadline: request.deadline)
-        let descriptorRead = self.descriptor(of: element)
+        let descriptorRead = self.descriptor(of: element, node: state.visited.count)
         switch self.nodeTraversalDisposition(
             descriptorAvailable: descriptorRead.descriptor != nil,
             readIncomplete: descriptorRead.isIncomplete)
@@ -554,11 +561,13 @@ enum DetachedAXObservationWorker {
             baseType: baseType,
             resolvedType: elementType)
         let exposesAction = self.actionableRoles.contains(normalizedRole) ||
-            (self.actionLookupRoles.contains(normalizedRole) && self.actions(of: element).contains(kAXPressAction))
+            (self.actionLookupRoles.contains(normalizedRole) &&
+                self.actions(of: element, node: state.visited.count).contains(kAXPressAction))
         let isValueSettable = self.valueSettable(
             of: element,
             role: descriptor.role,
             recoveredType: elementType,
+            node: state.visited.count,
             deadline: request.deadline)
         let isActionable = exposesAction || isValueSettable == true
         let elementID = request.source == nil ?
@@ -620,7 +629,7 @@ enum DetachedAXObservationWorker {
         request: TraversalRequest,
         state: inout TraversalState)
     {
-        let childrenRead = self.children(of: element)
+        let childrenRead = self.children(of: element, node: state.visited.count)
         state.incompleteAccessibilityRead = state.incompleteAccessibilityRead || childrenRead.isIncomplete
         let children = childrenRead.elements
         if children.count > request.budget.maxChildrenPerNode {
@@ -653,18 +662,29 @@ enum DetachedAXObservationWorker {
             }
         }
     }
+}
 
-    private static func descriptor(of element: AXUIElement) -> DescriptorReadResult {
+extension DetachedAXObservationWorker {
+    private static func descriptor(of element: AXUIElement, node: Int) -> DescriptorReadResult {
         var rawValues: CFArray?
+        let startedAt = AXObservationReadDiagnostics.start()
         let error = AXUIElementCopyMultipleAttributeValues(
             element,
             self.descriptorAttributeNames as CFArray,
             [],
             &rawValues)
         let values = rawValues as? [Any]
-        switch self.descriptorReadDisposition(error: error, values: values) {
+        let disposition = self.descriptorReadDisposition(error: error, values: values)
+        AXObservationReadDiagnostics.record(
+            .descriptorBatch,
+            startedAt: startedAt,
+            node: node,
+            error: error,
+            attributes: (self.descriptorAttributeNames, values),
+            disposition: disposition)
+        switch disposition {
         case .fallback:
-            return self.descriptorWithSingleReads(of: element)
+            return self.descriptorWithSingleReads(of: element, node: node)
         case .incomplete:
             return .incomplete
         case .values:
@@ -697,10 +717,10 @@ enum DetachedAXObservationWorker {
             keyboardShortcut: self.stringValue(byName["AXKeyboardShortcut"])))
     }
 
-    private static func descriptorWithSingleReads(of element: AXUIElement) -> DescriptorReadResult {
+    private static func descriptorWithSingleReads(of element: AXUIElement, node: Int) -> DescriptorReadResult {
         var valuesByName: [String: Any] = [:]
         for name in self.descriptorAttributeNames {
-            let read = self.rawAttributeRead(name, of: element)
+            let read = self.rawAttributeRead(name, of: element, node: node)
             if read.invalidatesNode(attribute: name) {
                 return .incomplete
             }
@@ -733,19 +753,28 @@ enum DetachedAXObservationWorker {
             keyboardShortcut: self.stringValue(valuesByName["AXKeyboardShortcut"])))
     }
 
-    private static func children(of element: AXUIElement) -> ChildrenReadResult {
+    private static func children(of element: AXUIElement, node: Int) -> ChildrenReadResult {
         var rawValues: CFArray?
+        let startedAt = AXObservationReadDiagnostics.start()
         let error = AXUIElementCopyMultipleAttributeValues(
             element,
             self.childAttributeNames as CFArray,
             [],
             &rawValues)
         let values = rawValues as? [Any]
-        switch self.childrenReadDisposition(error: error, values: values) {
+        let disposition = self.childrenReadDisposition(error: error, values: values)
+        AXObservationReadDiagnostics.record(
+            .childrenBatch,
+            startedAt: startedAt,
+            node: node,
+            error: error,
+            attributes: (self.childAttributeNames, values),
+            disposition: disposition)
+        switch disposition {
         case .fallback:
-            return self.fallbackChildren(of: element, alreadyIncomplete: false)
+            return self.fallbackChildren(of: element, node: node, alreadyIncomplete: false)
         case .incomplete:
-            return self.fallbackChildren(of: element, alreadyIncomplete: true)
+            return self.fallbackChildren(of: element, node: node, alreadyIncomplete: true)
         case .values:
             break
         }
@@ -763,17 +792,21 @@ enum DetachedAXObservationWorker {
 
     private static func fallbackChildren(
         of element: AXUIElement,
+        node: Int,
         alreadyIncomplete: Bool) -> ChildrenReadResult
     {
-        let read = self.rawAttributeRead(kAXChildrenAttribute, of: element)
+        let read = self.rawAttributeRead(kAXChildrenAttribute, of: element, node: node)
         return ChildrenReadResult(
             elements: read.value as? [AXUIElement] ?? [],
             isIncomplete: alreadyIncomplete || read.isIncomplete)
     }
 
-    private static func actions(of element: AXUIElement) -> [String] {
+    private static func actions(of element: AXUIElement, node: Int) -> [String] {
         var names: CFArray?
-        guard AXUIElementCopyActionNames(element, &names) == .success else { return [] }
+        let startedAt = AXObservationReadDiagnostics.start()
+        let error = AXUIElementCopyActionNames(element, &names)
+        AXObservationReadDiagnostics.record(.actions, startedAt: startedAt, node: node, error: error)
+        guard error == .success else { return [] }
         return names as? [String] ?? []
     }
 
@@ -781,16 +814,19 @@ enum DetachedAXObservationWorker {
         of element: AXUIElement,
         role: String,
         recoveredType: ElementType,
+        node: Int,
         deadline: ContinuousClock.Instant) -> Bool?
     {
         guard recoveredType == .textField || ElementClassifier.supportsValueMetadata(for: role) else { return nil }
         guard let timeout = self.remainingMessagingTimeout(until: deadline) else { return nil }
         AXUIElementSetMessagingTimeout(element, timeout)
         var isSettable = DarwinBoolean(false)
+        let startedAt = AXObservationReadDiagnostics.start()
         let error = AXUIElementIsAttributeSettable(
             element,
             kAXValueAttribute as CFString,
             &isSettable)
+        AXObservationReadDiagnostics.record(.valueSettable, startedAt: startedAt, node: node, error: error)
         return self.valueSettableMetadata(error: error, isSettable: isSettable.boolValue)
     }
 
@@ -816,9 +852,20 @@ enum DetachedAXObservationWorker {
         self.rawAttributeRead(name, of: element).value
     }
 
-    private static func rawAttributeRead(_ name: String, of element: AXUIElement) -> AXAttributeReadResult {
+    private static func rawAttributeRead(
+        _ name: String,
+        of element: AXUIElement,
+        node: Int = 0) -> AXAttributeReadResult
+    {
         var value: CFTypeRef?
+        let startedAt = AXObservationReadDiagnostics.start()
         let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+        AXObservationReadDiagnostics.record(
+            .attribute,
+            startedAt: startedAt,
+            node: node,
+            error: error,
+            attributes: ([name], value.map { [$0] }))
         return AXAttributeReadResult(error: error, value: value)
     }
 

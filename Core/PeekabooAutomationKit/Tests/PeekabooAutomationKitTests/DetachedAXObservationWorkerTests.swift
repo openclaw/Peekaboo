@@ -7,6 +7,55 @@ import Testing
 
 struct DetachedAXObservationWorkerTests {
     @Test
+    func `disabled native read diagnostics never construct attribute payloads`() {
+        var payloadCount = 0
+        func payload() -> (names: [String], values: [Any]?) {
+            payloadCount += 1
+            return ([kAXTitleAttribute], ["private title"])
+        }
+        AXObservationReadDiagnostics.record(
+            .attribute, startedAt: nil, error: .cannotComplete, attributes: payload())
+        #expect(payloadCount == 0)
+    }
+
+    @Test
+    func `native read diagnostics omit healthy fast and unsupported reads`() {
+        for error in [AXError.success, .noValue, .attributeUnsupported, .notImplemented] {
+            #expect(!AXObservationReadDiagnostics.shouldRecord(
+                elapsedMilliseconds: 1, error: error, disposition: .values))
+        }
+        #expect(AXObservationReadDiagnostics.shouldRecord(
+            elapsedMilliseconds: 50, error: .success, disposition: .values))
+    }
+
+    @Test
+    func `native read diagnostics retain failures malformed batches and fallbacks`() {
+        #expect(AXObservationReadDiagnostics.shouldRecord(
+            elapsedMilliseconds: 1, error: .cannotComplete, disposition: nil))
+        #expect(AXObservationReadDiagnostics.shouldRecord(
+            elapsedMilliseconds: 1, error: .success, disposition: .incomplete))
+        #expect(AXObservationReadDiagnostics.shouldRecord(
+            elapsedMilliseconds: 1, error: .attributeUnsupported, disposition: .fallback))
+    }
+
+    @Test
+    func `native read error details never stringify UI values`() throws {
+        let values: [Any] = try [
+            "private title", "private value", Self.errorValue(.cannotComplete),
+            Self.errorValue(.attributeUnsupported), Self.errorValue(.failure),
+        ]
+        let expected = [
+            "\(kAXRoleAttribute):\(AXError.cannotComplete.rawValue)",
+            "\(kAXHelpAttribute):\(AXError.failure.rawValue)",
+        ]
+        #expect(AXObservationReadDiagnostics.embeddedErrorDescriptions(
+            names: [kAXTitleAttribute, kAXValueAttribute, kAXRoleAttribute, "AXLabel", kAXHelpAttribute],
+            values: values) == expected)
+        #expect(AXObservationReadDiagnostics.embeddedErrorDescriptions(
+            names: [kAXTitleAttribute], values: nil).isEmpty)
+    }
+
+    @Test
     func `observation focus decoder accepts native and numeric booleans`() {
         #expect(DetachedAXObservationWorker.booleanAttributeValue(true) == true)
         #expect(DetachedAXObservationWorker.booleanAttributeValue(false) == false)
