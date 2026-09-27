@@ -382,6 +382,15 @@ struct UIAutomationActionOutcomeProvidingTests {
         for result in [windowHotkey, focusedHotkey] {
             #expect(result.outcome == Self.windowBackgroundOutcome)
         }
+        #expect(pidHotkey.targetIdentity == nil)
+        #expect(processHotkey.targetIdentity?.processIdentity == processIdentity)
+        #expect(processHotkey.targetIdentity?.exactWindow == nil)
+        #expect(windowHotkey.targetIdentity?.exactWindow?.identity == windowIdentity)
+        #expect(windowHotkey.targetIdentity?.exactWindow?.bounds == bounds)
+        #expect(windowHotkey.targetIdentity?.exactWindow?.focusedElement == nil)
+        #expect(focusedHotkey.targetIdentity?.exactWindow?.identity == windowIdentity)
+        #expect(focusedHotkey.targetIdentity?.exactWindow?.bounds == bounds)
+        #expect(focusedHotkey.targetIdentity?.exactWindow?.focusedElement == focused)
     }
 
     private func makeSynthesisService(synthetic: OutcomeSyntheticInputDriver) -> UIAutomationService {

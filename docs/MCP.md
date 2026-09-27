@@ -334,6 +334,12 @@ foreground-capable runtimes retain their documented process-targeted typing rout
 
 `type.coords` adds atomic pixel-focus typing for exact screenshot snapshots. Supply `snapshot`, optional matching `coordinate_reference`, and `coordinate_space` (`global_display_points`, `image_pixels`, or `normalized`). It cannot be combined with `on`, app/PID/window selectors, or foreground delivery. Bridge protocol 1.33 retains the focus-only Accessibility write and every keyboard unit under one process lane and exact target receipt; successful dispatch units equal keyboard units plus the focus write, and any completed prefix is reported retry-unsafe. The focus prelude never presses a button or selects a row, and its confirmation cannot confirm the separate typing leaf. Only deterministic clear-plus-literal typing can promote through an exact private value readback.
 
+`press` preserves provider-authored `target_identity` and `target_receipt` in public `_meta` when its contributing
+phases attest a compatible common target. A missing or contradictory leaf target is not filled from setup focus
+or descriptive PID/window fields. Typed failures retain the receipts of the dispatched phases when those agree.
+The existing confirmed-effect requirement is unchanged: an accepted but unverified chord still returns an error,
+with its actual dispatch count, retry-safety guidance, and any provider-authored receipt; observe before continuing.
+
 Successful `type` responses preserve the typing result's `target_identity` and `target_receipt` in public `_meta`,
 including ordinary and pixel-focus typing. Process identities retain the generation as a lossless decimal string;
 exact-window identities also retain the window ID. Missing result identity, including untargeted foreground typing,

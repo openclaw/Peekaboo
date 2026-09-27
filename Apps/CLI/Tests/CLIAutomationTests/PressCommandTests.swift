@@ -149,6 +149,10 @@ struct PressCommandTests {
             unitCount: .one
         )
         automation.actionOutcome = selectionOutcome
+        automation.actionOutcomeTargetIdentity = try DesktopTargetIdentity(processIdentity: .init(
+            processIdentifier: 4201,
+            processStartIdentity: 71
+        ))
 
         let result = try await self.runPress(
             arguments: ["cmd+a", "--window-id", "901", "--json"],
@@ -169,6 +173,10 @@ struct PressCommandTests {
         #expect(payload.outcome?.mutationDispatched == true)
         #expect(payload.outcome?.retrySafe == false)
         #expect(payload.outcome?.requiresFreshObservation == true)
+        #expect(payload.target_identity != nil)
+        #expect(payload.target_receipt?.processIdentifier == 4201)
+        #expect(payload.target_receipt?.processStartIdentity == 71)
+        #expect(payload.target_receipt?.windowID == 901)
         #expect(payload.data.deliveryMode == "background")
         #expect(payload.data.targetPID == 4201)
         #expect(payload.data.targetWindowID == 901)

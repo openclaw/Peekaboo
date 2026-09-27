@@ -10,10 +10,12 @@ import Testing
 struct HotkeySelectAllReceiptTests {
     @Test func `default focused select all reports its accepted value mutation`() async throws {
         let fixture = Fixture()
-        let result = try await fixture.service().hotkey(
+        let execution = try await fixture.service().hotkey(
             keys: "cmd,a",
             holdDuration: 50,
             automationTarget: fixture.target())
+        let result = execution.payload
+        #expect(try execution.targetIdentity?.exactWindow == fixture.target().exactWindow)
 
         #expect(fixture.selectionAttempts == 1)
         #expect(fixture.postedEvents.isEmpty)
@@ -62,6 +64,8 @@ struct HotkeySelectAllReceiptTests {
             #expect(failure.outcome.state == .refused)
             #expect(failure.outcome.dispatchState == .none)
             #expect(failure.outcome.projection.retrySafe)
+            #expect(try failure.targetReceipt ==
+                UIAutomationActionResultSemantics.actionTargetReceipt(for: fixture.target()))
         }
 
         #expect(fixture.selectionAttempts == 1)
@@ -75,7 +79,7 @@ struct HotkeySelectAllReceiptTests {
         let result = try await fixture.service().hotkey(
             keys: "cmd,a",
             holdDuration: 50,
-            automationTarget: fixture.target())
+            automationTarget: fixture.target()).payload
 
         #expect(fixture.selectionAttempts == 1)
         #expect(fixture.postedEvents == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
@@ -531,7 +535,7 @@ struct HotkeySelectAllReceiptTests {
                 keys: "cmd,a",
                 holdDuration: 50,
                 automationTarget: target,
-                deliveryValidator: deliveryValidator)
+                deliveryValidator: deliveryValidator).payload
         }
     }
 }

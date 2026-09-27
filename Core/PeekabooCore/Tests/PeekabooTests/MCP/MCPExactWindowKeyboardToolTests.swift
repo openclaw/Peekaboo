@@ -12,6 +12,31 @@ struct MCPExactWindowKeyboardToolTests {
     private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
 
     @Test
+    func `AX select all retains its leaf target while remaining unverified`() async throws {
+        let fixture = await Self.makeFixture(focusedWindowID: 42)
+        await MainActor.run {
+            fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one))
+        }
+        let response = try await PressTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "window_id": 42, "keys": ["cmd+a", "cmd+l"],
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.count } == 1)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("dispatched_unverified"))
+        #expect(metadata["delivery_mechanism"] == .string("accessibility_value"))
+        #expect(metadata["dispatched_unit_count"] == .int(1))
+        let receipt = try #require(metadata["target_receipt"]?.objectValue)
+        #expect(receipt["pid"] == .int(333))
+        #expect(receipt["window_id"] == .int(42))
+        #expect(receipt["process_start_identity_decimal"] == .string("33"))
+    }
+
+    @Test
     func `Press exact window pins focused element and never uses global delivery`() async throws {
         let fixture = await Self.makeFixture(focusedWindowID: 42)
         let response = try await PressTool(context: fixture.context).execute(arguments: ToolArguments(raw: [

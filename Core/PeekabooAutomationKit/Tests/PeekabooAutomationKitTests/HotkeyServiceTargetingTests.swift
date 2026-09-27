@@ -279,7 +279,7 @@ struct HotkeyServiceTargetingTests {
         let result = try await service.hotkey(
             keys: "cmd,l",
             holdDuration: 50,
-            automationTarget: target)
+            automationTarget: target).payload
 
         #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
         #expect(result.outcome.dispatchState.unitCount?.rawValue == 4)
@@ -527,7 +527,7 @@ struct HotkeyServiceTargetingTests {
                 guard destinationIsValid else {
                     throw HotkeyDeliveryTestError.focusChanged
                 }
-            })
+            }).payload
 
         #expect(validationCount == 4)
         #expect(!destinationIsValid)
@@ -671,7 +671,10 @@ extension HotkeyServiceTargetingTests {
             ? self.heldHotkeyTarget(generation: 717)
             : .process(.init(processIdentifier: getpid()))
 
-        let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+        let execution = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+        let result = execution.payload
+        #expect(execution.targetIdentity?.exactWindow == target.exactWindow)
+        #expect(execution.targetIdentity?.processIdentity == target.processIdentity)
 
         #expect(textCalls == 0)
         #expect(driver.hotkeyCalls.isEmpty)
@@ -777,7 +780,7 @@ extension HotkeyServiceTargetingTests {
         let result = try await service.hotkey(
             keys: "cmd,v",
             holdDuration: 50,
-            automationTarget: self.heldHotkeyTarget(generation: 714))
+            automationTarget: self.heldHotkeyTarget(generation: 714)).payload
 
         #expect(driver.hotkeyCalls.isEmpty)
         #expect(textCalls == 0)
@@ -813,7 +816,10 @@ extension HotkeyServiceTargetingTests {
             runningApplicationResolver: { _ in NSRunningApplication.current },
             processStartIdentityProvider: { _ in 715 })
 
-        let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+        let execution = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+        let result = execution.payload
+        #expect(execution.targetIdentity?.exactWindow == target.exactWindow)
+        #expect(execution.targetIdentity?.processIdentity == target.processIdentity)
 
         #expect(driver.hotkeyCalls.isEmpty)
         #expect(textCalls == 1)
@@ -883,7 +889,7 @@ extension HotkeyServiceTargetingTests {
             ? self.heldHotkeyTarget(generation: 719)
             : .process(.init(processIdentifier: getpid()))
 
-        let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+        let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target).payload
 
         #expect(selectionCalls == 1)
         #expect(driver.hotkeyCalls.isEmpty)
@@ -923,7 +929,7 @@ extension HotkeyServiceTargetingTests {
         let expectsMenu = !exact && selection != "builtin"
 
         do {
-            let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+            let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target).payload
             #expect(!expectsRefusal)
             #expect(result.path == (expectsMenu ? .action : .synth))
             #expect(result.strategy == (selection == "actionOnly" ? .actionOnly : .actionFirst))
@@ -957,7 +963,7 @@ extension HotkeyServiceTargetingTests {
             holdSleeper: { _ in })
 
         let result = try await service.hotkey(
-            keys: "cmd,a", holdDuration: 50, automationTarget: self.heldHotkeyTarget(generation: 722))
+            keys: "cmd,a", holdDuration: 50, automationTarget: self.heldHotkeyTarget(generation: 722)).payload
 
         #expect(result.strategy == strategy)
         #expect(result.path == (strategy == .synthOnly ? .synth : .action))

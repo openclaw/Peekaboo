@@ -174,7 +174,7 @@ public final class HotkeyService {
             keys: keys,
             holdDuration: holdDuration,
             automationTarget: automationTarget,
-            deliveryValidator: deliveryValidator)
+            deliveryValidator: deliveryValidator).payload
     }
 
     @discardableResult
@@ -183,7 +183,7 @@ public final class HotkeyService {
         holdDuration: Int,
         automationTarget: UIAutomationTarget,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
-        -> UIInputExecutionResult
+        -> UIAutomationActionResult<UIInputExecutionResult>
     {
         guard let targetProcessIdentifier = automationTarget.processIdentifier else {
             throw PeekabooError.invalidInput("Targeted hotkey requires a process target")
@@ -306,9 +306,9 @@ public final class HotkeyService {
                         : nil)
             },
             finalize: self.operationFinalizer)
-        let result: UIInputExecutionResult
+        let result: UIAutomationActionResult<UIInputExecutionResult>
         do {
-            result = try await self.desktopOperationExecutor.execute(plan)
+            result = try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
         } catch let error as ActionInputError where error == .unsupported(.actionUnsupported) &&
             automationTarget.exactWindow != nil &&
             strategy.strategy == .actionOnly
@@ -319,7 +319,7 @@ public final class HotkeyService {
                 hint: "Use actionFirst to permit receipt-pinned background keyboard delivery.")
         }
 
-        self.logger.debug("Targeted hotkey completed via \(result.path.rawValue, privacy: .public)")
+        self.logger.debug("Targeted hotkey completed via \(result.payload.path.rawValue, privacy: .public)")
         return result
     }
 

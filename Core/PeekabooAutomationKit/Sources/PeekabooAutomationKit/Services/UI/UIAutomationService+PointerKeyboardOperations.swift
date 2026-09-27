@@ -170,7 +170,7 @@ extension UIAutomationService {
             holdDuration: holdDuration,
             automationTarget: automationTarget,
             deliveryValidator: validator)
-        return UIAutomationActionResult(payload: (), outcome: result.outcome)
+        return UIAutomationActionResult(payload: (), outcome: result.outcome, targetIdentity: result.targetIdentity)
     }
 
     public func hotkey(
@@ -205,7 +205,7 @@ extension UIAutomationService {
             holdDuration: holdDuration,
             automationTarget: automationTarget,
             deliveryValidator: validator)
-        return UIAutomationActionResult(payload: (), outcome: result.outcome)
+        return UIAutomationActionResult(payload: (), outcome: result.outcome, targetIdentity: result.targetIdentity)
     }
 
     public func hotkey(
@@ -239,7 +239,7 @@ extension UIAutomationService {
             holdDuration: holdDuration,
             automationTarget: automationTarget,
             deliveryValidator: validator)
-        return UIAutomationActionResult(payload: (), outcome: result.outcome)
+        return UIAutomationActionResult(payload: (), outcome: result.outcome, targetIdentity: result.targetIdentity)
     }
 
     /// PID-routed hotkeys are background operations and never emit foreground feedback.
