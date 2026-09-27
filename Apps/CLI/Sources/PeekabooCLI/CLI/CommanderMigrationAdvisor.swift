@@ -126,7 +126,7 @@ enum CommanderMigrationAdvisor {
         if root == "clipboard", tokens.contains("--action") || tokens.contains("-a") {
             return CommanderUsageError(
                 message: "Clipboard action options were removed in v4. " +
-                    "Use 'peekaboo clipboard get|set|clear|save|restore'."
+                    "Use 'peekaboo clipboard status|get|set|clear|save|restore'."
             )
         }
 

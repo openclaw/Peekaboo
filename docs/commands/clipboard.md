@@ -12,6 +12,7 @@ Work with the macOS pasteboard. Supports text, files/images, raw base64 payloads
 ## Subcommands
 | Subcommand | Description |
 | --- | --- |
+| `status` | Report the caller-local read policy without reading contents, types, items, or the clipboard generation. |
 | `get` | Read the clipboard. Use `--prefer <uti>` to bias type selection and `--output <path|->` to write binary data. |
 | `set` | Write text (`--text`), file/image (`--file-path`), or base64 + `--uti`. Optional `--also-text` sets a plain-text companion. Use `--verify` to read back. |
 | `clear` | Empty the clipboard. |
@@ -29,9 +30,13 @@ Work with the macOS pasteboard. Supports text, files/images, raw base64 payloads
 | `--also-text <string>` | Add a text representation when setting binary data. |
 | `--allow-large` | Permit payloads over 10 MB (guard is 10 MB by default). |
 | `--verify` | Read back clipboard after `set` and validate contents. |
+| `--allow-prompt` | Explicit manual opt-in for a macOS privacy alert on `get`, `save`, or `set --verify`; never enabled by MCP or automatic context/paste reads. |
 
 ## Examples
 ```bash
+# Inspect this reader's policy without exposing clipboard contents
+peekaboo clipboard status --json
+
 # Copy text
 peekaboo clipboard set --text "hello world"
 
@@ -55,8 +60,12 @@ peekaboo clipboard restore --slot original
 - Size guard: writes larger than 10 MB require `--allow-large`; the guard counts all representations plus any `--also-text` companion text.
 - `--text` writes both `public.plain-text` and `.string` (`public.utf8-plain-text`) for compatibility.
 - `--verify` reads back each representation written and compares payloads (text is normalized for line endings).
+- On macOS 15.4+, General-clipboard reads require native `alwaysAllow` policy by default. `default`, `ask`, `alwaysDeny`, and unknown policies refuse before any content access; this also protects automatic Agent context and current-clipboard paste reads. A policy check cannot atomically exclude a concurrent change in System Settings.
+- `status` reports `policy`, `policy_available`, `read_admitted`, `reader_context: "caller_local"`, and `contents_read: false`. This is an observation, not a grant or reusable permission lease. The built-in clipboard reader remains caller-local even when UI work uses a Bridge host. Named pasteboards remain exempt; on macOS 14–15.3 the native policy API is unavailable and legacy read admission is preserved, not reported as a granted permission.
+- An intentional manual `get --allow-prompt` or `save --allow-prompt` may display the native privacy alert, including the first alert needed for this reader to appear in System Settings. Only use it with human consent outside unattended automation. MCP does not expose this opt-in.
+- Writes do not require read permission. If optional set/clear/restore verification is not silently admitted, the accepted write reports `dispatched_unverified` and remains retry-unsafe. Explicit `set --verify` instead fails retry-unsafe after a refused readback; add `--allow-prompt` only when a manual alert is intended. Temporary paste cleanup still restores only its owned generation and does not require another content read.
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
-- Confirm your target with `peekaboo app list`, `peekaboo window list`, or `peekaboo see` before rerunning.
+- Use `peekaboo clipboard status`; Screen Recording, Accessibility, and a GUI Bridge's grants do not determine the caller's clipboard-read policy.
+- A refused unattended read does not grant permission. Arrange the native permission outside automation, then inspect status again.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

@@ -18,10 +18,12 @@ public struct ClipboardTool: MCPTool {
         if self.context.executionPolicy == .backgroundOnly {
             return """
             Read or snapshot the macOS clipboard under immutable background-only authority. Available actions are
-            `get` and `save`. The `set`, `clear`, and `restore` actions are unavailable because they persistently
+            `status`, `get` and `save`. Reads require silent native permission and never request a privacy alert.
+            The `set`, `clear`, and `restore` actions are unavailable because they persistently
             change the user's shared clipboard state; use exact targeted transactional `paste`, or ask the human to
             start a foreground-capable Agent session or use the standalone CLI when that user-state change is intended.
 
+            - status: report this process's native read policy without reading clipboard contents.
             - get: read the clipboard; optionally prefer a UTI and/or write binary data to a filesystem path.
               MCP stdout is reserved for JSON-RPC, so outputPath '-' is rejected.
             - save: snapshot clipboard contents to a named slot without changing the shared clipboard.
@@ -29,9 +31,11 @@ public struct ClipboardTool: MCPTool {
         }
 
         return """
-        Work with the macOS clipboard (pasteboard). Actions: get, set, clear, save, restore.
+        Work with the macOS clipboard (pasteboard). Actions: status, get, set, clear, save, restore.
+        Reads require silent native permission; MCP never opts into clipboard privacy alerts.
         The `set`, `clear`, and `restore` actions persistently change the user's shared clipboard state. Use them only
         when the human-authorized workflow intends that state change; prefer save/restore around temporary mutation.
+        - status: report this process's native read policy without reading clipboard contents.
         - get: read the clipboard; optionally prefer a UTI and/or write binary data to a filesystem path.
           MCP stdout is reserved for JSON-RPC, so outputPath '-' is rejected.
         - set: write text, file, image, or base64+UTI data to the clipboard (optionally also set plain text).
@@ -42,7 +46,9 @@ public struct ClipboardTool: MCPTool {
 
     public var inputSchema: Value {
         let foregroundCapable = self.context.executionPolicy != .backgroundOnly
-        let actions = foregroundCapable ? ["get", "set", "clear", "save", "restore"] : ["get", "save"]
+        let actions = foregroundCapable
+            ? ["status", "get", "set", "clear", "save", "restore"]
+            : ["status", "get", "save"]
         var properties: [String: Value] = [
             "action": SchemaBuilder.string(
                 description: foregroundCapable
@@ -80,6 +86,8 @@ public struct ClipboardTool: MCPTool {
 
         do {
             switch action {
+            case "status":
+                return try self.handleStatus()
             case "get":
                 return try self.handleGet(arguments: arguments)
             case "set":
@@ -104,6 +112,19 @@ public struct ClipboardTool: MCPTool {
     }
 
     // MARK: - Actions
+
+    @MainActor
+    private func handleStatus() throws -> ToolResponse {
+        guard let provider = self.context.clipboard as? any ClipboardReadAccessProviding else {
+            throw PeekabooError.serviceUnavailable("This clipboard provider does not report native read access policy.")
+        }
+        let access = provider.readAccessStatus()
+        let metadata = try JSONDecoder().decode(Value.self, from: JSONEncoder().encode(access))
+        return ToolResponse.text(
+            "Caller-local clipboard policy: \(access.policy.rawValue). " +
+                "Programmatic reads admitted: \(access.readAdmitted ? "yes" : "no"). No contents were read.",
+            meta: .object(["clipboard_access": metadata]))
+    }
 
     @MainActor
     private func handleGet(arguments: ToolArguments) throws -> ToolResponse {

@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -9,6 +10,75 @@ import UniformTypeIdentifiers
 @MainActor
 @Suite(.serialized)
 struct MCPClipboardOutcomeTests {
+    @Test
+    func `background clipboard status is content free and projects only for clipboard`() async throws {
+        let clipboard = ScriptedClipboardService()
+        clipboard.readAccess = ClipboardReadAccessStatus(policy: .ask)
+        let context = await MCPToolTestHelpers.makeContext(clipboard: clipboard, executionPolicy: .backgroundOnly)
+        let response = try await context.execute(
+            tool: ClipboardTool(context: context), arguments: ToolArguments(raw: ["action": "status"]))
+
+        #expect(!response.isError)
+        let access = try #require(response.meta?.objectValue?["clipboard_access"]?.objectValue)
+        #expect(access["policy"] == .string("ask"))
+        #expect(access["reader_context"] == .string("caller_local"))
+        #expect(access["read_admitted"] == .bool(false))
+        #expect(access["contents_read"] == .bool(false))
+        #expect(MCPToolResponseMetadataProjector.externalFields(
+            from: response.meta, toolName: "clipboard")["clipboard_access"] != nil)
+        #expect(MCPToolResponseMetadataProjector.externalFields(from: response.meta, toolName: "see").isEmpty)
+        #expect(response.meta?.objectValue?["mutation_dispatched"] == nil)
+        #expect(clipboard.readAccessStatusCallCount == 1)
+        #expect(clipboard.getCallCount == 0)
+        #expect(clipboard.saveCallCount == 0)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.clearCallCount == 0)
+    }
+
+    @Test
+    func `clipboard policy diagnostics never fall back to reading an unsupported provider`() async throws {
+        let clipboard = ResultClipboardService()
+        let context = await MCPToolTestHelpers.makeContext(clipboard: clipboard)
+        let response = try await ClipboardTool(context: context).execute(
+            arguments: ToolArguments(raw: ["action": "status"]))
+
+        #expect(response.isError)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.saveCallCount == 0)
+    }
+
+    @Test
+    func `MCP cannot opt into a clipboard privacy prompt`() async throws {
+        let clipboard = ScriptedClipboardService()
+        let context = await MCPToolTestHelpers.makeContext(clipboard: clipboard, executionPolicy: .backgroundOnly)
+        let response = try await context.execute(
+            tool: ClipboardTool(context: context),
+            arguments: ToolArguments(raw: ["action": "get", "allow_prompt": true]))
+
+        #expect(response.isError)
+        #expect(clipboard.getCallCount == 0)
+        #expect(clipboard.readPromptOptions.isEmpty)
+    }
+
+    @Test(arguments: ["get", "save"])
+    func `MCP clipboard reads retain native permission refusals`(_ action: String) async throws {
+        let clipboard = ScriptedClipboardService()
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied, message: "Synthetic native read refusal")
+        clipboard.getError = refusal
+        clipboard.saveError = refusal
+        let context = await MCPToolTestHelpers.makeContext(clipboard: clipboard, executionPolicy: .backgroundOnly)
+        let response = try await context.execute(
+            tool: ClipboardTool(context: context), arguments: ToolArguments(raw: ["action": action]))
+
+        #expect(response.isError)
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .permissionDenied, in: response)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.getCallCount == (action == "get" ? 1 : 0))
+        #expect(clipboard.saveCallCount == (action == "save" ? 1 : 0))
+        #expect(clipboard.readPromptOptions.isEmpty)
+    }
+
     @Test
     func `clipboard mutations publish their canonical foreground transaction outcomes`() async throws {
         let clipboard = ResultClipboardService()

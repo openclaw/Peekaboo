@@ -506,6 +506,39 @@ extension PasteCommandTests {
 
     @Test
     @MainActor
+    func `Foreground current clipboard refusal retains only the completed focus`() async throws {
+        let windows = PasteFocusWindowService()
+        let automation = OutcomeStubAutomationService()
+        let clipboard = StubClipboardService()
+        clipboard.getError = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied, message: "Synthetic clipboard policy refusal"
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            windows: windows, clipboard: clipboard, automation: automation
+        )
+        let result = try await InProcessCommandRunner.run([
+            "paste", "--window-id", String(PasteFocusWindowService.windowID),
+            "--foreground", "--focus-timeout", "1ms", "--focus-retry-count", "0", "--json", "--no-remote",
+        ], services: services)
+        let envelope = try ActionEnvelopeTestProbe.decode(result.stdout)
+
+        #expect(result.exitStatus != 0)
+        #expect(windows.pinnedFocusCalls.count == 1)
+        #expect(clipboard.getCallCount == 1)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.restoreCallCount == 0)
+        #expect(automation.outcomeHotkeyCallCount == 0)
+        #expect(automation.hotkeyCalls.isEmpty)
+        let expected = DesktopActionOutcome.indeterminate(
+            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+            evidence: .completionUnknown,
+            unitCount: .one
+        )
+        ActionEnvelopeTestAssertions.expectCanonicalOutcome(expected, in: envelope)
+    }
+
+    @Test
+    @MainActor
     func `Foreground paste composes a hotkey refusal after focus`() async throws {
         let windows = PasteFocusWindowService()
         let automation = OutcomeStubAutomationService()

@@ -238,22 +238,58 @@ private enum ClipboardMutationResultOwner {
 
 /// Default implementation backed by NSPasteboard.
 @MainActor
-public final class ClipboardService: ClipboardServiceActionResultProviding, ClipboardTemporaryWriteProviding {
+public final class ClipboardService: ClipboardServiceActionResultProviding, ClipboardTemporaryWriteProviding,
+ClipboardReadAccessProviding {
     private let pasteboard: NSPasteboard
     private let sizeLimit: Int
+    private let readAccessStatusReader: @MainActor (NSPasteboard) -> ClipboardReadAccessStatus
     private var slots: [String: [ClipboardRepresentation]] = [:]
 
-    public init(pasteboard: NSPasteboard = .general, sizeLimit: Int = ClipboardPayloadBuilder.defaultSizeLimit) {
+    public convenience init(
+        pasteboard: NSPasteboard = .general,
+        sizeLimit: Int = ClipboardPayloadBuilder.defaultSizeLimit)
+    {
+        self.init(pasteboard: pasteboard, sizeLimit: sizeLimit, readAccessStatusReader: Self.nativeReadAccessStatus)
+    }
+
+    init(
+        pasteboard: NSPasteboard,
+        sizeLimit: Int = ClipboardPayloadBuilder.defaultSizeLimit,
+        readAccessStatusReader: @escaping @MainActor (NSPasteboard) -> ClipboardReadAccessStatus)
+    {
         self.pasteboard = pasteboard
         self.sizeLimit = sizeLimit
+        self.readAccessStatusReader = readAccessStatusReader
+    }
+
+    public func readAccessStatus() -> ClipboardReadAccessStatus {
+        self.readAccessStatusReader(self.pasteboard)
+    }
+
+    private static func nativeReadAccessStatus(_ pasteboard: NSPasteboard) -> ClipboardReadAccessStatus {
+        guard pasteboard.name == .general else { return .init(policy: .notRequired) }
+        guard #available(macOS 15.4, *) else { return .init(policy: .unavailableOnOS) }
+        return self.readAccessStatus(pasteboardName: pasteboard.name, accessBehavior: pasteboard.accessBehavior)
+    }
+
+    @available(macOS 15.4, *)
+    static func readAccessStatus(
+        pasteboardName: NSPasteboard.Name,
+        accessBehavior: NSPasteboard.AccessBehavior) -> ClipboardReadAccessStatus
+    {
+        guard pasteboardName == .general else { return .init(policy: .notRequired) }
+        let policy: ClipboardReadAccessStatus.Policy = switch accessBehavior {
+        case .default: .systemDefault
+        case .ask: .ask
+        case .alwaysAllow: .alwaysAllow
+        case .alwaysDeny: .alwaysDeny
+        @unknown default: .unknown
+        }
+        return .init(policy: policy)
     }
 
     public func prepareTemporaryWrite() throws -> any ClipboardTemporaryWriteTransaction {
-        if #available(macOS 15.4, *) {
-            try Self.requireTemporaryReadAccess(
-                pasteboardName: self.pasteboard.name,
-                accessBehavior: self.pasteboard.accessBehavior)
-        }
+        try Self.requireSilentReadAccess(self.readAccessStatus())
         let originalChangeCount = self.pasteboard.changeCount
         let items = try self.temporarySnapshotItems()
         guard self.pasteboard.changeCount == originalChangeCount else {
@@ -279,17 +315,13 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
                 }))
     }
 
-    @available(macOS 15.4, *)
-    static func requireTemporaryReadAccess(
-        pasteboardName: NSPasteboard.Name,
-        accessBehavior: NSPasteboard.AccessBehavior) throws
-    {
-        guard pasteboardName != .general || accessBehavior == .alwaysAllow else {
+    static func requireSilentReadAccess(_ access: ClipboardReadAccessStatus) throws {
+        guard access.readAdmitted else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .permissionDenied,
-                message: "Automatic clipboard replacement requires silently allowed programmatic clipboard reads.",
-                hint: "Arrange clipboard permission for this reader outside automation, then allow future reads. " +
-                    "No clipboard data was read or temporary payload written; Peekaboo will not trigger a prompt.")
+                message: "Programmatic clipboard reads require silently allowed access.",
+                hint: "No clipboard contents were read. Check clipboard status and arrange permission outside " +
+                    "automation. The manual CLI --allow-prompt option requires intentional human consent.")
         }
     }
 
@@ -368,6 +400,13 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
     // MARK: - Public API
 
     public func get(prefer uti: UTType?) throws -> ClipboardReadResult? {
+        try self.get(prefer: uti, allowPrompt: false)
+    }
+
+    public func get(prefer uti: UTType?, allowPrompt: Bool) throws -> ClipboardReadResult? {
+        if !allowPrompt {
+            try Self.requireSilentReadAccess(self.readAccessStatus())
+        }
         guard let types = self.pasteboard.types, !types.isEmpty else { return nil }
 
         let targetType: NSPasteboard.PasteboardType = if let uti,
@@ -507,16 +546,20 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
                 self.pasteboard.clearContents()
                 didDispatch = true
             },
-            verify: { _ in self.pasteboard.types?.isEmpty != false })
+            verify: { _ in self.readAccessStatus().readAdmitted && self.pasteboard.types?.isEmpty != false })
     }
 
     public func save(slot: String) throws {
+        try self.save(slot: slot, allowPrompt: false)
+    }
+
+    public func save(slot: String, allowPrompt: Bool) throws {
         let trimmedSlot = slot.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSlot.isEmpty else {
             throw ClipboardServiceError.writeFailed("Slot name must not be empty.")
         }
 
-        let reps = self.snapshotCurrentRepresentations()
+        let reps = try self.snapshotRepresentations(from: self.pasteboard, allowPrompt: allowPrompt)
         self.slots[trimmedSlot] = reps
 
         let slotPasteboard = NSPasteboard(name: self.slotPasteboardName(for: trimmedSlot))
@@ -571,7 +614,7 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
             reps = cached
         } else {
             let slotPasteboard = NSPasteboard(name: slotPasteboardName)
-            let loaded = self.snapshotRepresentations(from: slotPasteboard)
+            let loaded = try self.snapshotRepresentations(from: slotPasteboard)
             guard !loaded.isEmpty else {
                 throw ClipboardServiceError.slotNotFound(trimmedSlot)
             }
@@ -588,11 +631,13 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
 
     // MARK: - Helpers
 
-    private func snapshotCurrentRepresentations() -> [ClipboardRepresentation] {
-        self.snapshotRepresentations(from: self.pasteboard)
-    }
-
-    private func snapshotRepresentations(from pasteboard: NSPasteboard) -> [ClipboardRepresentation] {
+    private func snapshotRepresentations(
+        from pasteboard: NSPasteboard,
+        allowPrompt: Bool = false) throws -> [ClipboardRepresentation]
+    {
+        if !allowPrompt {
+            try Self.requireSilentReadAccess(self.readAccessStatusReader(pasteboard))
+        }
         var reps: [ClipboardRepresentation] = []
 
         if let items = pasteboard.pasteboardItems {
@@ -629,6 +674,8 @@ public final class ClipboardService: ClipboardServiceActionResultProviding, Clip
     }
 
     private func matches(representations: [ClipboardRepresentation], alsoText: String?) -> Bool {
+        // A completed write is still dispatched when optional readback would require a prompt.
+        guard self.readAccessStatus().readAdmitted else { return false }
         for representation in representations {
             let type = NSPasteboard.PasteboardType(representation.utiIdentifier)
             guard let actual = self.pasteboard.data(forType: type),

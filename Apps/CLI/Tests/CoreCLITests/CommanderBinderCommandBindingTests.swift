@@ -52,7 +52,7 @@ struct CommanderBinderCommandBindingTests {
                 names.append(name)
             }
         }
-        #expect(names == ["get", "set", "clear", "save", "restore"])
+        #expect(names == ["status", "get", "set", "clear", "save", "restore"])
         #expect(!CommandSignature.describe(ClipboardCommand()).flattened().options.contains { option in
             option.names.contains(.long("action"))
         })

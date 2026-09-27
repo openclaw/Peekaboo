@@ -1,10 +1,25 @@
 import PeekabooAgentRuntime
 import PeekabooAutomation
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 import UniformTypeIdentifiers
 
 struct DesktopContextServiceClipboardGatingTests {
+    @Test
+    @MainActor
+    func `A clipboard permission refusal omits automatic context without requesting a prompt`() async {
+        let clipboard = RecordingClipboardService(textPreview: "must-not-be-returned")
+        clipboard.getError = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied, message: "Synthetic silent read refusal"
+        )
+        let context = await DesktopContextService(services: ServicesWithStubClipboard(clipboard: clipboard))
+            .gatherContext(includeClipboardPreview: true)
+
+        #expect(clipboard.getCallCount == 1)
+        #expect(context.clipboardPreview == nil)
+    }
+
     @Test
     @MainActor
     func `Does not read clipboard when clipboard tool disabled`() async {
@@ -69,7 +84,7 @@ struct DesktopContextServiceClipboardGatingTests {
 
 @MainActor
 private final class ServicesWithStubClipboard: PeekabooServiceProviding {
-    private let base = PeekabooServices()
+    private let base = PeekabooServices(initializeAgentService: false)
     private let stubClipboard: any ClipboardServiceProtocol
     private let stubApplications: any ApplicationServiceProtocol
     private let stubWindows: any WindowManagementServiceProtocol
@@ -279,6 +294,7 @@ private final class DesktopContextWindowServiceStub: WindowManagementServiceProt
 @MainActor
 private final class RecordingClipboardService: ClipboardServiceProtocol {
     private(set) var getCallCount = 0
+    var getError: (any Error)?
     private let textPreview: String
 
     init(textPreview: String) {
@@ -287,6 +303,9 @@ private final class RecordingClipboardService: ClipboardServiceProtocol {
 
     func get(prefer uti: UTType?) throws -> ClipboardReadResult? {
         self.getCallCount += 1
+        if let getError {
+            throw getError
+        }
         return ClipboardReadResult(
             utiIdentifier: UTType.plainText.identifier,
             data: Data(self.textPreview.utf8),

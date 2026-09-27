@@ -51,7 +51,7 @@ struct MCPSpecificToolTests {
         #expect(properties["imagePath"] == nil)
         #expect(properties["dataBase64"] == nil)
         #expect(!actions.contains(.string("load")))
-        #expect(actions == ["get", "save"].map(Value.string))
+        #expect(actions == ["status", "get", "save"].map(Value.string))
         #expect(outputPathDescription.contains("'-' stdout sentinel is not supported"))
         #expect(outputPathDescription.contains("JSON-RPC"))
         #expect(tool.description.contains("persistently"))
@@ -66,7 +66,7 @@ struct MCPSpecificToolTests {
             Issue.record("Expected foreground-capable clipboard schema")
             return
         }
-        #expect(foregroundActions == ["get", "set", "clear", "save", "restore"].map(Value.string))
+        #expect(foregroundActions == ["status", "get", "set", "clear", "save", "restore"].map(Value.string))
         #expect(foregroundProperties["file_path"] != nil)
         #expect(foregroundProperties["data_base64"] != nil)
         #expect(foregroundProperties["filePath"] == nil)

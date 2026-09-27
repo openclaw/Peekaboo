@@ -4,7 +4,11 @@ import UniformTypeIdentifiers
 
 /// In-memory pasteboard with the production temporary-write ownership state machine.
 @MainActor
-open class ScriptedClipboardService: ClipboardTemporaryWriteProviding {
+open class ScriptedClipboardService: ClipboardTemporaryWriteProviding, ClipboardReadAccessProviding {
+    public var readAccess = ClipboardReadAccessStatus(policy: .alwaysAllow)
+    public private(set) var readAccessStatusCallCount = 0
+    public private(set) var readPromptOptions: [Bool] = []
+    public private(set) var savePromptOptions: [Bool] = []
     public var current: ClipboardReadResult? {
         didSet { self.generation += 1 }
     }
@@ -15,6 +19,7 @@ open class ScriptedClipboardService: ClipboardTemporaryWriteProviding {
     public var afterSet: (() -> Void)?
     public var afterPartialSet: (() -> Void)?
     public var getError: (any Error)?
+    public var saveError: (any Error)?
     public var setError: (any Error)?
     public var setMutatesBeforeThrow = false
     public var restoreError: (any Error)?
@@ -29,6 +34,21 @@ open class ScriptedClipboardService: ClipboardTemporaryWriteProviding {
     public init(current: ClipboardReadResult? = nil, restoreError: (any Error)? = nil) {
         self.current = current
         self.restoreError = restoreError
+    }
+
+    public func readAccessStatus() -> ClipboardReadAccessStatus {
+        self.readAccessStatusCallCount += 1
+        return self.readAccess
+    }
+
+    public func get(prefer uti: UTType?, allowPrompt: Bool) throws -> ClipboardReadResult? {
+        self.readPromptOptions.append(allowPrompt)
+        return try self.get(prefer: uti)
+    }
+
+    public func save(slot: String, allowPrompt: Bool) throws {
+        self.savePromptOptions.append(allowPrompt)
+        try self.save(slot: slot)
     }
 
     open func get(prefer _: UTType?) throws -> ClipboardReadResult? {
@@ -82,6 +102,9 @@ open class ScriptedClipboardService: ClipboardTemporaryWriteProviding {
 
     open func save(slot: String) throws {
         self.saveCallCount += 1
+        if let saveError {
+            throw saveError
+        }
         guard let current else { throw ClipboardServiceError.empty }
         self.slots[slot] = current
         self.afterSave?()

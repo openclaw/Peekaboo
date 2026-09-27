@@ -66,7 +66,7 @@ struct LearnCommand {
         - Use `verify` instead of fixed sleeps to wait for stable window and element predicates.
         - Invoke accessibility actions with `action`. Drag changes the shared physical cursor and requires explicit
           foreground consent: `\(Self.foregroundDragExample)`.
-        - Management commands are subcommand trees: `clipboard get|set|clear|save|restore`,
+        - Management commands are subcommand trees: `clipboard status|get|set|clear|save|restore`,
           `menubar list|click`, `agent run|resume|sessions|chat`, `config provider ...`, and
           `permissions request <kind>`.
         - Coordinates use `--at x,y`; add `--global` to force screen coordinates. Durations accept

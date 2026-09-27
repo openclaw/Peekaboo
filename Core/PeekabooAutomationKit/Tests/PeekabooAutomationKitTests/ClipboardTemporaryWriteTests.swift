@@ -216,15 +216,15 @@ final class ClipboardTemporaryWriteTests: XCTestCase {
         guard #available(macOS 15.4, *) else { throw XCTSkip("Pasteboard access policy requires macOS 15.4") }
         let modes: [NSPasteboard.AccessBehavior] = [.default, .ask, .alwaysAllow, .alwaysDeny]
         for mode in modes {
-            XCTAssertNoThrow(try ClipboardService.requireTemporaryReadAccess(
+            XCTAssertNoThrow(try ClipboardService.requireSilentReadAccess(ClipboardService.readAccessStatus(
                 pasteboardName: NSPasteboard.Name("synthetic.private.board"),
-                accessBehavior: mode))
+                accessBehavior: mode)))
             if mode == .alwaysAllow {
-                XCTAssertNoThrow(try ClipboardService.requireTemporaryReadAccess(
-                    pasteboardName: .general, accessBehavior: mode))
+                XCTAssertNoThrow(try ClipboardService.requireSilentReadAccess(ClipboardService.readAccessStatus(
+                    pasteboardName: .general, accessBehavior: mode)))
             } else {
-                XCTAssertThrowsError(try ClipboardService.requireTemporaryReadAccess(
-                    pasteboardName: .general, accessBehavior: mode))
+                XCTAssertThrowsError(try ClipboardService.requireSilentReadAccess(ClipboardService.readAccessStatus(
+                    pasteboardName: .general, accessBehavior: mode)))
                 { error in
                     guard let failure = error as? DesktopActionFailure else {
                         return XCTFail("Expected a canonical permission refusal")

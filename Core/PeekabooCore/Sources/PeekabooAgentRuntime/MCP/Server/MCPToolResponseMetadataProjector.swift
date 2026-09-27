@@ -98,6 +98,9 @@ enum MCPToolResponseMetadataProjector {
         if toolName == "permissions" {
             allowed.formUnion(Self.permissionKeys)
         }
+        if toolName == "clipboard" {
+            allowed.insert("clipboard_access")
+        }
         if toolName == "see" || toolName == "inspect_ui" {
             allowed.insert("focused_element")
             // The opt-in element table (`include_elements`) is observation data, not an action outcome or

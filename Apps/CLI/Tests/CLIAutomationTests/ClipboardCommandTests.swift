@@ -8,6 +8,100 @@ import UniformTypeIdentifiers
 @Suite(.tags(.safe), .serialized)
 struct ClipboardCommandTests {
     @Test
+    @MainActor
+    func `Clipboard status reports caller policy without reading or changing contents`() async throws {
+        let clipboard = StubClipboardService()
+        clipboard.readAccess = ClipboardReadAccessStatus(policy: .ask)
+        let snapshots = StubSnapshotManager()
+        let snapshot = try await snapshots.createSnapshot()
+        let services = TestServicesFactory.makePeekabooServices(snapshots: snapshots, clipboard: clipboard)
+
+        let result = try await InProcessCommandRunner.run(["clipboard", "status", "--json"], services: services)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let data = try #require(payload["data"] as? [String: Any])
+
+        #expect(result.exitStatus == 0)
+        #expect(data["policy"] as? String == "ask")
+        #expect(data["reader_context"] as? String == "caller_local")
+        #expect(data["read_admitted"] as? Bool == false)
+        #expect(data["contents_read"] as? Bool == false)
+        #expect(clipboard.readAccessStatusCallCount == 1)
+        #expect(clipboard.getCallCount == 0)
+        #expect(clipboard.saveCallCount == 0)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.clearCallCount == 0)
+        #expect(await snapshots.getMostRecentSnapshot() == snapshot)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Manual clipboard prompt permission is explicit for get save and verify`(allowPrompt: Bool) async throws {
+        for action in ["get", "save", "set"] {
+            let clipboard = StubClipboardService()
+            clipboard.current = Self.result("synthetic")
+            let services = TestServicesFactory.makePeekabooServices(clipboard: clipboard)
+            var arguments = ["clipboard", action, "--json"]
+            if action == "set" {
+                arguments += ["--data-base64", "dXBkYXRlZA==", "--uti", "public.data", "--verify"]
+            }
+            if allowPrompt {
+                arguments.append("--allow-prompt")
+            }
+
+            let result = try await InProcessCommandRunner.run(arguments, services: services)
+
+            #expect(result.exitStatus == 0)
+            if action == "save" {
+                #expect(clipboard.savePromptOptions == (allowPrompt ? [true] : []))
+                #expect(clipboard.readPromptOptions.isEmpty)
+            } else {
+                #expect(!allowPrompt || !clipboard.readPromptOptions.isEmpty)
+                #expect(clipboard.readPromptOptions.allSatisfy(\.self))
+                #expect(allowPrompt || clipboard.readPromptOptions.isEmpty)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Clipboard prompt opt in without requested verification refuses before writing`() async throws {
+        let clipboard = StubClipboardService()
+        let services = TestServicesFactory.makePeekabooServices(clipboard: clipboard)
+
+        let result = try await InProcessCommandRunner.run(
+            ["clipboard", "set", "--text", "synthetic", "--allow-prompt", "--json"], services: services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("--allow-prompt requires --verify"))
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.readPromptOptions.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Clipboard verify permission refusal preserves the accepted write`() async throws {
+        let clipboard = StubClipboardService()
+        clipboard.getError = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied, message: "Synthetic silent read refusal"
+        )
+        let services = TestServicesFactory.makePeekabooServices(clipboard: clipboard)
+        let result = try await InProcessCommandRunner.run(
+            ["clipboard", "set", "--text", "synthetic", "--verify", "--json"], services: services
+        )
+
+        let envelope = try ActionEnvelopeTestProbe.decode(result.stdout)
+        #expect(result.exitStatus != 0)
+        ActionEnvelopeTestAssertions.expectCanonicalOutcome(
+            .indeterminate(delivery: ClipboardMutationResultSemantics.delivery, evidence: .completionUnknown),
+            in: envelope
+        )
+        #expect(clipboard.setCallCount == 1)
+        #expect(clipboard.getCallCount == 1)
+        #expect(clipboard.readPromptOptions.isEmpty)
+    }
+
+    @Test
     func `Clipboard rejects conflicting action spellings as validation JSON`() async throws {
         let result = try await InProcessCommandRunner.runShared(
             ["clipboard", "get", "--action", "set", "--json"],

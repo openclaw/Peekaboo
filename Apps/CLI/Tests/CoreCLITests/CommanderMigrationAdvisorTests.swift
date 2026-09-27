@@ -26,7 +26,7 @@ struct CommanderMigrationAdvisorTests {
         (["capture", "video", "in.mov", "--every-ms", "500"], "--every"),
         (["type", "hello", "--return"], "peekaboo press Return --foreground"),
         (["agent", "--resume-session", "abc"], "peekaboo agent resume <session-id>"),
-        (["clipboard", "--action", "get"], "clipboard get|set|clear|save|restore"),
+        (["clipboard", "--action", "get"], "clipboard status|get|set|clear|save|restore"),
     ])
     func `Removed options name their replacement`(arguments: [String], replacement: String) throws {
         let error = try #require(CommanderMigrationAdvisor.optionError(for: arguments))

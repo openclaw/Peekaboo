@@ -1293,3 +1293,33 @@ private final class TransactionGateClipboardService: ScriptedClipboardService {
             textPreview: "prior"))
     }
 }
+
+extension PasteToolTransactionGateTests {
+    @Test
+    @MainActor
+    func `current clipboard permission refusal retains only prior foreground focus`() async throws {
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let windows = RecordingWindowService()
+        let clipboard = TransactionGateClipboardService()
+        clipboard.getError = DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied, message: "Synthetic native clipboard refusal")
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation, windows: windows, clipboard: clipboard, executionPolicy: .unrestricted)
+        let response = try await context.execute(
+            tool: PasteTool(context: context),
+            arguments: ToolArguments(raw: ["app": "Editor", "foreground": true, "restore_delay_ms": 0]))
+
+        #expect(response.isError)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("indeterminate"))
+        #expect(metadata["mutation_dispatched"] == .bool(true))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["dispatched_unit_count"] == .int(1))
+        #expect(metadata["target_receipt"]?.objectValue?["window_id"] == .int(700))
+        #expect(windows.pinnedFocusWindowIDs == [700])
+        #expect(clipboard.getCallCount == 1)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.restoreCallCount == 0)
+        #expect(automation.lastHotkeyKeys == nil)
+    }
+}

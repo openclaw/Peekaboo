@@ -106,7 +106,7 @@ struct ToolsCommandTests {
             Issue.record("Expected the policy-filtered clipboard action schema")
             return
         }
-        #expect(actions == ["get", "save"].map(Value.string))
+        #expect(actions == ["status", "get", "save"].map(Value.string))
         #expect(properties["text"] == nil)
         #expect(properties["file_path"] == nil)
         #expect(properties["data_base64"] == nil)

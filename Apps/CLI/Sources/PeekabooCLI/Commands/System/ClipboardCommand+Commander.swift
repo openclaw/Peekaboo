@@ -12,6 +12,7 @@ struct ClipboardCommand: ParsableCommand {
                 commandName: "clipboard",
                 abstract: "Read and write the macOS clipboard",
                 subcommands: [
+                    StatusSubcommand.self,
                     GetSubcommand.self,
                     SetSubcommand.self,
                     ClearSubcommand.self,
@@ -27,6 +28,32 @@ struct ClipboardCommand: ParsableCommand {
 @available(macOS 14.0, *)
 extension ClipboardCommand {
     @MainActor
+    struct StatusSubcommand: RuntimeBackedCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "status",
+            abstract: "Inspect this process's clipboard read policy without reading contents"
+        )
+        @RuntimeStorage var runtime: CommandRuntime?
+        var runtimeOptions = CommandRuntimeOptions()
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+            do {
+                let provider = try clipboardReadAccessProvider(self.services.clipboard)
+                let access = provider.readAccessStatus()
+                self.output(access) {
+                    print("Clipboard policy (caller-local): \(access.policy.rawValue)")
+                    print("Programmatic reads admitted: \(access.readAdmitted ? "yes" : "no"); contents not read")
+                }
+            } catch {
+                self.handleError(error)
+                throw ExitCode.failure
+            }
+        }
+    }
+
+    @MainActor
     struct GetSubcommand: RuntimeBackedCommand {
         static let commandDescription = CommandDescription(commandName: "get", abstract: "Read the clipboard")
 
@@ -35,6 +62,9 @@ extension ClipboardCommand {
 
         @Option(name: .shortAndLong, help: "Output path for binary reads ('-' for stdout)")
         var output: String?
+
+        @Flag(name: .long, help: "Explicitly allow a macOS clipboard permission alert for this manual read")
+        var allowPrompt = false
 
         @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
@@ -45,7 +75,9 @@ extension ClipboardCommand {
 
             do {
                 let preferType = self.prefer.flatMap { UTType($0) }
-                guard let result = try self.services.clipboard.get(prefer: preferType) else {
+                guard let result = try readClipboard(
+                    self.services.clipboard, prefer: preferType, allowPrompt: self.allowPrompt
+                ) else {
                     throw ValidationError("Clipboard is empty")
                 }
 
@@ -120,6 +152,9 @@ extension ClipboardCommand {
         @Flag(name: .long, help: "Read back clipboard after setting and validate contents")
         var verify = false
 
+        @Flag(name: .long, help: "With --verify, explicitly allow a macOS clipboard permission alert")
+        var allowPrompt = false
+
         @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
 
@@ -128,6 +163,9 @@ extension ClipboardCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
+                guard !self.allowPrompt || self.verify else {
+                    throw ValidationError("--allow-prompt requires --verify when setting the clipboard")
+                }
                 let request = try makeClipboardWriteRequest(from: self)
                 self.resolvedRuntime.beginInteractionMutation()
                 let actionResult = try self.services.clipboard.setResult(request)
@@ -140,7 +178,8 @@ extension ClipboardCommand {
                     verification = try verifyClipboardWriteIfNeeded(
                         request: request,
                         verify: self.verify,
-                        clipboard: self.services.clipboard
+                        clipboard: self.services.clipboard,
+                        allowPrompt: self.allowPrompt
                     )
                 } catch {
                     throw ClipboardMutationResultSemantics.postWriteFailure(error, operation: "Clipboard set")
@@ -218,6 +257,9 @@ extension ClipboardCommand {
         @Option(name: .long, help: "Slot name (default: 0)")
         var slot: String?
 
+        @Flag(name: .long, help: "Explicitly allow a macOS clipboard permission alert for this manual snapshot")
+        var allowPrompt = false
+
         @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
 
@@ -227,7 +269,11 @@ extension ClipboardCommand {
 
             do {
                 let slotName = self.slot ?? "0"
-                try self.services.clipboard.save(slot: slotName)
+                if self.allowPrompt {
+                    try clipboardReadAccessProvider(self.services.clipboard).save(slot: slotName, allowPrompt: true)
+                } else {
+                    try self.services.clipboard.save(slot: slotName)
+                }
                 let payload = ClipboardCommandResult(
                     action: "save",
                     uti: nil,
@@ -299,6 +345,7 @@ extension ClipboardCommand {
     }
 }
 
+extension ClipboardCommand.StatusSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable {}
 extension ClipboardCommand.GetSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable {}
 extension ClipboardCommand.SetSubcommand: ActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
 OutputFormattable {}
@@ -309,10 +356,16 @@ extension ClipboardCommand.RestoreSubcommand: ActionOutputFormattable, AsyncRunt
 OutputFormattable {}
 
 @MainActor
+extension ClipboardCommand.StatusSubcommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_: CommanderBindableValues) throws {}
+}
+
+@MainActor
 extension ClipboardCommand.GetSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.prefer = values.singleOption("prefer")
         self.output = values.singleOption("output")
+        self.allowPrompt = values.flag("allowPrompt")
     }
 }
 
@@ -326,6 +379,7 @@ extension ClipboardCommand.SetSubcommand: CommanderBindableCommand {
         self.alsoText = values.singleOption("alsoText")
         self.allowLarge = values.flag("allowLarge")
         self.verify = values.flag("verify")
+        self.allowPrompt = values.flag("allowPrompt")
     }
 }
 
@@ -340,6 +394,7 @@ extension ClipboardCommand.ClearSubcommand: CommanderBindableCommand {
 extension ClipboardCommand.SaveSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.slot = values.singleOption("slot")
+        self.allowPrompt = values.flag("allowPrompt")
     }
 }
 
@@ -384,10 +439,33 @@ private func makeClipboardWriteRequest(from command: ClipboardCommand.SetSubcomm
     throw ValidationError("Provide --text, --file-path, or --data-base64 with --uti")
 }
 
+@MainActor
+private func clipboardReadAccessProvider(
+    _ clipboard: any ClipboardServiceProtocol
+) throws -> any ClipboardReadAccessProviding {
+    guard let provider = clipboard as? any ClipboardReadAccessProviding else {
+        throw PeekabooError.serviceUnavailable("This clipboard provider does not report native read access policy.")
+    }
+    return provider
+}
+
+@MainActor
+private func readClipboard(
+    _ clipboard: any ClipboardServiceProtocol,
+    prefer: UTType?,
+    allowPrompt: Bool
+) throws -> ClipboardReadResult? {
+    if allowPrompt {
+        return try clipboardReadAccessProvider(clipboard).get(prefer: prefer, allowPrompt: true)
+    }
+    return try clipboard.get(prefer: prefer)
+}
+
 private func verifyClipboardWriteIfNeeded(
     request: ClipboardWriteRequest,
     verify: Bool,
-    clipboard: any ClipboardServiceProtocol
+    clipboard: any ClipboardServiceProtocol,
+    allowPrompt: Bool
 ) throws -> ClipboardVerifyResult? {
     guard verify else { return nil }
 
@@ -398,7 +476,7 @@ private func verifyClipboardWriteIfNeeded(
             skippedTypes.append(representation.utiIdentifier)
             continue
         }
-        guard let readBack = try clipboard.get(prefer: preferredType) else {
+        guard let readBack = try readClipboard(clipboard, prefer: preferredType, allowPrompt: allowPrompt) else {
             throw ValidationError("Clipboard verify failed: missing \(representation.utiIdentifier)")
         }
         guard readBack.utiIdentifier == representation.utiIdentifier else {

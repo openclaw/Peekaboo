@@ -716,7 +716,7 @@ struct CLIRuntimeSmokeTests {
                 #expect(properties["foreground"] == nil)
                 #expect(description.contains("focus: Unavailable under background-only authority"))
             case "clipboard":
-                #expect(actions == Set(["get", "save"]))
+                #expect(actions == Set(["status", "get", "save"]))
                 #expect(properties["text"] == nil)
                 #expect(description.contains("persistently"))
                 #expect(description.contains("shared clipboard state"))

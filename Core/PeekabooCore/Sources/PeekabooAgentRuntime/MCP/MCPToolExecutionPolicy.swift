@@ -476,7 +476,7 @@ private enum BackgroundOnlyToolPolicy {
 
     private static func clipboardViolation(_ arguments: ToolArguments) -> Violation? {
         switch self.normalized(arguments.getString("action")) {
-        case nil, "get", "save":
+        case nil, "status", "get", "save":
             nil
         case "set", "clear", "restore":
             .sharedDesktop(

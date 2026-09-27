@@ -29,6 +29,8 @@ If you use a Bridge host, grant permissions to the host reported by `peekaboo pe
 
 For build and runtime version details, see [platform-support.md](platform-support.md).
 
+Clipboard reads have a separate caller-local policy on macOS 15.4+. Use `peekaboo clipboard status --json` to inspect it without reading clipboard contents. A GUI Bridge's Screen Recording, Accessibility, or Event Synthesizing grants do not grant the CLI/MCP reader clipboard access. Unattended reads require `alwaysAllow`; explicit manual `clipboard get --allow-prompt` can request the native alert with human consent. This opt-in is not exposed by MCP or automatic Agent context/paste. See [clipboard commands](commands/clipboard.md) for write verification and older-OS behavior.
+
 ## Granting Permissions
 
 1. **Screen Recording**
