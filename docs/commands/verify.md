@@ -38,3 +38,5 @@ peekaboo verify --pid 1234 --window-bounds 40,80,1200,800,2 --timeout 10s
 ```
 
 The command executes the same `verify_state` MCP tool used by agents, including its 100 ms fresh-observation polling, stability sampling, exact process/window identity checks, and hard ten-second deadline.
+
+For a live explicit PID, polling reads that target's application metadata rather than a full application inventory. Target-specific warnings, failed lookups and process-generation changes remain `unknown`. Proving absence when the native generation is unavailable still requires complete inventory evidence; named-app selectors and optional final screenshots retain their existing inventory checks.

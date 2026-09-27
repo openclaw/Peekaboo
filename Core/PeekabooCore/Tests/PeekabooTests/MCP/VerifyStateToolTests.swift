@@ -538,8 +538,8 @@ struct VerifyStateToolTests {
         let applications = VerifyStateApplicationService(
             applications: [initial],
             windows: [fixture.window],
-            applicationLists: [[initial], [enumerationReportsReplacement ? replacement : initial]],
-            onListApplications: { callCount in
+            applicationLookups: [initial, enumerationReportsReplacement ? replacement : initial],
+            onFindApplication: { callCount in
                 // Reuse belongs to the second poll, independent of identity probe count.
                 if callCount == 2 {
                     identities.set(22, for: initial.processIdentifier)
@@ -570,7 +570,8 @@ struct VerifyStateToolTests {
         #expect(Self.intMeta("stable_samples", response) == 0)
         #expect(Self.intMeta("required_stable_samples", response) == 2)
         #expect(try #require(Self.intMeta("sample_count", response)) >= 2)
-        #expect(applications.listApplicationsCallCount >= 2)
+        #expect(applications.findApplicationIdentifiers.count >= 2)
+        #expect(applications.listApplicationsCallCount == 0)
         #expect(identities.identity(for: initial.processIdentifier) == 22)
         // The same numeric window would satisfy the predicate if the new process slipped through.
         #expect(windows.callCount == 1)
@@ -614,7 +615,7 @@ struct VerifyStateToolTests {
     }
 
     @Test
-    func `PID reuse before missing application cannot prove window absence`() async throws {
+    func `PID reuse during failed targeted lookup cannot prove window absence`() async throws {
         let fixture = VerifyStateFixture()
         let initial = ServiceApplicationInfo(
             processIdentifier: fixture.application.processIdentifier,
@@ -626,8 +627,8 @@ struct VerifyStateToolTests {
         let applications = VerifyStateApplicationService(
             applications: [initial],
             windows: [fixture.window],
-            applicationLists: [[initial], []],
-            onListApplications: { callCount in
+            applicationLookups: [initial, nil],
+            onFindApplication: { callCount in
                 if callCount == 2 {
                     identities.set(22, for: initial.processIdentifier)
                 }
@@ -654,10 +655,11 @@ struct VerifyStateToolTests {
         ]))
 
         #expect(Self.stringMeta("status", response) == "unknown")
-        #expect(Self.stringMeta("reason", response)?.contains("before absence") == true)
+        #expect(Self.stringMeta("reason", response)?.contains("PID resolution failed") == true)
         #expect(Self.intMeta("stable_samples", response) == 0)
         #expect(try #require(Self.intMeta("sample_count", response)) >= 2)
-        #expect(applications.listApplicationsCallCount >= 2)
+        #expect(applications.findApplicationIdentifiers.count >= 2)
+        #expect(applications.listApplicationsCallCount == 0)
         #expect(identities.identity(for: initial.processIdentifier) == 22)
         #expect(windows.callCount == 1)
         #expect(applications.listWindowsCallCount == 0)
@@ -677,7 +679,7 @@ struct VerifyStateToolTests {
         let applications = VerifyStateApplicationService(
             applications: [fixture.application],
             windows: [fixture.window],
-            onListApplications: { callCount in
+            onFindApplication: { callCount in
                 if callCount == 2 {
                     #expect(windows.callCount == 1)
                 }
@@ -704,7 +706,8 @@ struct VerifyStateToolTests {
         #expect(Self.intMeta("stable_samples", response) == 0)
         #expect(Self.intMeta("required_stable_samples", response) == 1)
         #expect(try #require(Self.intMeta("sample_count", response)) >= 2)
-        #expect(applications.listApplicationsCallCount >= 2)
+        #expect(applications.findApplicationIdentifiers.count >= 2)
+        #expect(applications.listApplicationsCallCount == 0)
         // Prove the target-owned replacement was read, not just the initial foreign owner.
         #expect(windows.callCount >= 2)
         #expect(applications.listWindowsCallCount == 0)
@@ -846,7 +849,8 @@ extension VerifyStateToolTests {
             automation: fixture.automation,
             applications: partialApplications)
 
-        let response = try await fixture.tool(context: context).execute(arguments: ToolArguments(raw: [
+        let tool = fixture.tool(context: context, processStartIdentityProvider: { _ in nil })
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
             "pid": Int(fixture.application.processIdentifier),
             "predicates": [["kind": "window_exists", "expected": false]],
             "timeout_ms": 100,
@@ -855,6 +859,7 @@ extension VerifyStateToolTests {
 
         #expect(Self.stringMeta("status", response) == "unknown")
         #expect(Self.stringMeta("reason", response)?.contains("Application enumeration was incomplete") == true)
+        #expect(partialApplications.findApplicationIdentifiers.isEmpty)
     }
 
     @Test
@@ -1498,10 +1503,11 @@ final class VerifyStateFixture {
     func context(
         results: [ElementDetectionResult],
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,
+        applications: (any ApplicationServiceProtocol)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate()) async -> MCPToolContext
     {
         self.automation.results = results
-        let applications = VerifyStateApplicationService(
+        let applications = applications ?? VerifyStateApplicationService(
             applications: self.includeApplication ? [self.application] : [],
             windows: [self.window])
         return await MCPToolTestHelpers.makeContext(
@@ -1578,7 +1584,7 @@ final class LockedSystemWindowIdentitySequence: @unchecked Sendable {
     }
 }
 
-private final class LockedProcessIdentityMap: @unchecked Sendable {
+final class LockedProcessIdentityMap: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [pid_t: UInt64]
 
@@ -1590,7 +1596,7 @@ private final class LockedProcessIdentityMap: @unchecked Sendable {
         self.lock.withLock { self.values[processIdentifier] }
     }
 
-    func set(_ identity: UInt64, for processIdentifier: pid_t) {
+    func set(_ identity: UInt64?, for processIdentifier: pid_t) {
         self.lock.withLock { self.values[processIdentifier] = identity }
     }
 }

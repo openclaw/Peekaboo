@@ -22,6 +22,8 @@
 - Preserve signed background Cmd+A selection results and uncertain-write failures across process and exact-window Bridge routes using shared chord classification; retain concrete receipt-validation diagnostics without mistaking differing CLI/app build labels for a stale host.
 - Add opt-in `include_elements` to the `see` and `inspect_ui` MCP tools, returning the element table as structured `_meta.ui_elements` (same fields as `see --json`) with its `snapshot_id`, so clients can act on element IDs without parsing the text summary; default responses are unchanged. Thanks @gxcsoccer.
 
+- Resolve live exact-PID verification through targeted application lookup instead of repeatedly collecting every app's metadata; unrelated inventory warnings no longer block the target, while generation, incomplete-target and absence checks remain fail-closed.
+
 ## 4.6.0 - 2026-09-25
 
 **Highlights:** Safer typing and bounded clipboard/desktop waits, restored Codex MCP and GUI Bridge connections, explicit background typing strategies, and optional Agent desktop context.

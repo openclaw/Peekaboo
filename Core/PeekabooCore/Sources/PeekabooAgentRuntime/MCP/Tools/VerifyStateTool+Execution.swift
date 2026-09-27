@@ -441,6 +441,15 @@ extension VerifyStateTool {
             }
         case let .pid(pid):
             do {
+                if self.processStartIdentityProvider(pid) != nil {
+                    let application = try await self.context.applications.findApplication(identifier: "PID:\(pid)")
+                    if let warnings = application.metadataWarnings, !warnings.isEmpty {
+                        return .unknown(
+                            "Target application metadata was incomplete: \(warnings.joined(separator: ", "))")
+                    }
+                    return .resolved(application)
+                }
+                // A missing native generation is not proof of exit; complete inventory must establish absence.
                 let output = try await self.context.applications.listApplications()
                 guard case .success = output.summary.status, output.metadata.warnings.isEmpty else {
                     return .unknown(Self.incompleteApplicationListReason(output))
