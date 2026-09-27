@@ -120,15 +120,6 @@ extension VerifyStateTool {
         }
         do {
             try Task.checkCancellation()
-            let applications = try await self.context.applications.listApplications()
-            guard case .success = applications.summary.status,
-                  applications.metadata.warnings.isEmpty,
-                  applications.data.applications.contains(where: {
-                      $0.processIdentifier == application.processIdentifier
-                  })
-            else {
-                return .failure("Could not re-resolve the exact target process before screenshot capture")
-            }
             if let reason = await identityTracker.validate(resolvedApplication) {
                 return .identityFailure(reason)
             }
