@@ -10,7 +10,7 @@ extension ApplicationServiceLifecycleTests {
     @MainActor
     func `explicit application path disables running application substitution`() async throws {
         let recorder = ApplicationOpenRecorder()
-        let service = ApplicationService(applicationOpenHandler: recorder.open)
+        let service = self.optionOnlyLaunchService(recorder: recorder)
 
         _ = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "/System/Library/CoreServices/Finder.app",
@@ -24,7 +24,7 @@ extension ApplicationServiceLifecycleTests {
     @MainActor
     func `bundle identifier launch allows running application substitution`() async throws {
         let recorder = ApplicationOpenRecorder()
-        let service = ApplicationService(applicationOpenHandler: recorder.open)
+        let service = self.optionOnlyLaunchService(recorder: recorder)
 
         _ = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "com.apple.finder",
@@ -32,6 +32,18 @@ extension ApplicationServiceLifecycleTests {
 
         let call = try #require(recorder.calls.first)
         #expect(call.allowsRunningApplicationSubstitution)
+    }
+
+    @MainActor
+    private func optionOnlyLaunchService(recorder: ApplicationOpenRecorder) -> ApplicationService {
+        // The open recorder returns real Finder; these option-only tests must never activate it.
+        ApplicationService(
+            applicationOpenHandler: recorder.open,
+            applicationActivationHandler: { _ in
+                Issue.record("Option-only launch unexpectedly requested activation")
+                return false
+            },
+            applicationActiveProvider: { _ in true })
     }
 
     @Test

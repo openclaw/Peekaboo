@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add content-free debug measurements for slow, incomplete and fallback native AX reads without extra queries or changes to observation completeness, timeouts or stability requirements.
+- Keep application-launch option tests from activating Finder by isolating their activation callbacks from the desktop.
 
 - Honor synthetic hotkey strategies for Cmd+A without AX selection or permission bypass, preserving the built-in focused-selection default and direct event fallback; keep explicit process-menu scope, exact-window guards, and truthful post-action failure delivery.
 - Refuse unattended clipboard reads before macOS privacy prompts, including Agent context and current-clipboard paste; share read admission with temporary writes, preserve retry-unsafe writes when readback is unavailable, and add content-free `clipboard status` plus explicit manual CLI `--allow-prompt` opt-in.
