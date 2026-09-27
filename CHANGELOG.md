@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-- Verify positive element existence from the same exact-identifier evidence used for value matches when unrelated Accessibility reads fail; share witness validation while preserving unknown absence, ambiguity, truncated observations and target-drift checks.
 - Honor synthetic hotkey strategies for Cmd+A without AX selection or permission bypass, preserving the built-in focused-selection default and direct event fallback; keep explicit process-menu scope, exact-window guards, and truthful post-action failure delivery.
 - Refuse unattended clipboard reads before macOS privacy prompts, including Agent context and current-clipboard paste; share read admission with temporary writes, preserve retry-unsafe writes when readback is unavailable, and add content-free `clipboard status` plus explicit manual CLI `--allow-prompt` opt-in.
 - Validate contiguous typing dispatch counts with bounded ranges instead of repeatedly allocating and scanning arrays, preserving receipt acceptance and partial-failure semantics.
@@ -26,6 +25,7 @@
 - Add opt-in `include_elements` to the `see` and `inspect_ui` MCP tools, returning the element table as structured `_meta.ui_elements` (same fields as `see --json`) with its `snapshot_id`, so clients can act on element IDs without parsing the text summary; default responses are unchanged. Thanks @gxcsoccer.
 
 - Resolve live exact-PID verification through targeted application lookup instead of repeatedly collecting every app's metadata; unrelated inventory warnings no longer block the target, while generation, incomplete-target and absence checks remain fail-closed.
+- Verify positive element existence from the same exact-identifier evidence used for value matches when unrelated Accessibility reads fail; share witness validation while preserving unknown absence, ambiguity, truncated observations and target-drift checks.
 
 ## 4.6.0 - 2026-09-25
 
