@@ -286,6 +286,12 @@ enum CommanderCLIBinder {
         options.transportsCaptureEnginePreference = options.requiresDesktopObservation
         options.requiresScreenCaptureKitOwnerCapability = options.transportsCaptureEnginePreference
         options.ignoresCaptureEnginePreference = seeSkipsPixels
+        if commandType == VerifyCommand.self {
+            // Snapshot coordination does not imply that this fixed request captures pixels.
+            let requestsScreenshot = values.singleOption("screenshot") != nil
+            options.dynamicToolScreenCaptureReachable = requestsScreenshot
+            options.ignoresCaptureEnginePreference = !requestsScreenshot
+        }
         return seeSkipsPixels
     }
 

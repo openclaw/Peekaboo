@@ -9,7 +9,7 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
     @OptionGroup var target: InteractionTargetOptions
     @Flag(help: "Require the target window to exist") var windowExists = false
     @Option(help: "Expected window bounds x,y,width,height[,tolerance]") var windowBounds: String?
-    @Option(help: "Element ID or role:label query") var on: String?
+    @Option(help: "Exact AXIdentifier or role:label selector") var on: String?
     @Flag(help: "Require the selected element to exist") var exists = false
     @Option(help: "Expected selected-element value") var valueEquals: String?
     @Flag(help: "Require the selected element to be enabled") var enabled = false
@@ -27,10 +27,13 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
         discussion: """
         Poll fresh native state until every predicate is stable. This replaces sleep-based polling.
         Results are satisfied, unsatisfied, or unknown; unknown never implies success.
+        --on matches an app's AXIdentifier or role:label, not a snapshot-local element ID.
+        From see --json, use data.ui_elements[].identifier rather than data.ui_elements[].id.
 
         Examples:
           peekaboo verify --app Safari --window-exists
           peekaboo verify --app Safari --on button:Reload --exists --enabled --json
+          peekaboo verify --app Playground --on basic-text-field --value-equals Ready --json
         """
     )
 

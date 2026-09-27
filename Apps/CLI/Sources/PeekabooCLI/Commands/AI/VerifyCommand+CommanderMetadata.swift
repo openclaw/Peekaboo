@@ -5,7 +5,7 @@ extension VerifyCommand: CommanderSignatureProviding {
         CommandSignature(
             options: [
                 .commandOption("windowBounds", help: "Expected x,y,width,height[,tolerance]", long: "window-bounds"),
-                .commandOption("on", help: "Element ID or role:label query", long: "on"),
+                .commandOption("on", help: "Exact AXIdentifier or role:label selector", long: "on"),
                 .commandOption("valueEquals", help: "Expected element value", long: "value-equals"),
                 .commandOption(
                     "timeout",

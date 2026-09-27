@@ -219,6 +219,17 @@ struct CommandHelpRendererTests {
         #expect(!help.contains("Required element value"))
     }
 
+    @Test
+    func `verify help distinguishes accessibility identifiers from snapshot element IDs`() {
+        let help = VerifyCommand.helpMessage()
+
+        #expect(help.contains("Exact AXIdentifier or role:label selector"))
+        #expect(help.contains("not a snapshot-local element ID"))
+        #expect(help.contains("data.ui_elements[].identifier rather than data.ui_elements[].id"))
+        #expect(help.contains("--on basic-text-field --value-equals Ready"))
+        #expect(!help.contains("Element ID or role:label query"))
+    }
+
     private func helpEntryCount(_ option: String, in help: String) -> Int {
         help.split(separator: "\n").count { line in
             line.trimmingCharacters(in: .whitespaces).hasPrefix(option)

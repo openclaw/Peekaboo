@@ -32,7 +32,16 @@ struct VerifyCommandTests {
         #expect(command.timeout.roundedMilliseconds == 9000)
         #expect(command.stableSamples == 3)
         #expect(try VerifyCommand.elementSelector("button:Save") == ["role": "button", "label": "Save"])
-        #expect(try VerifyCommand.elementSelector("B7") == ["identifier": "B7"])
+    }
+
+    @Test(arguments: ["basic-text-field", "B7", "elem_37"])
+    func `bare selectors remain literal accessibility identifiers`(identifier: String) throws {
+        let command = try VerifyCommand.parse([
+            "--app", "Playground", "--on", identifier, "--value-equals", "Ready",
+        ])
+        #expect(command.on == identifier)
+        #expect(command.valueEquals == "Ready")
+        #expect(try VerifyCommand.elementSelector(identifier) == ["identifier": identifier])
     }
 
     @Test
