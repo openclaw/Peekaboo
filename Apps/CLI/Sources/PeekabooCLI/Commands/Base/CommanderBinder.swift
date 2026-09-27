@@ -289,6 +289,7 @@ enum CommanderCLIBinder {
         if commandType == VerifyCommand.self {
             // Snapshot coordination does not imply that this fixed request captures pixels.
             let requestsScreenshot = values.singleOption("screenshot") != nil
+            options.usesInlineCaptureEngineTransport = requestsScreenshot
             options.dynamicToolScreenCaptureReachable = requestsScreenshot
             options.ignoresCaptureEnginePreference = !requestsScreenshot
         }

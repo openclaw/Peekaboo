@@ -1,6 +1,7 @@
 import CoreGraphics
 import MCP
 import PeekabooAutomationKit
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -41,7 +42,7 @@ struct VerifyStateScreenshotInventoryTests {
         #expect(applications.listApplicationsCallCount == (explicitPID ? 0 : 1))
         #expect(capture.windowIDs == [CGWindowID(fixture.window.windowID)])
         #expect(capture.visualizerModes == [.none])
-        #expect(capture.permissionCheckCount == 1)
+        #expect(capture.permissionCheckCount == 0)
         #expect(response.content.contains {
             if case .image = $0 {
                 true
@@ -52,7 +53,7 @@ struct VerifyStateScreenshotInventoryTests {
     }
 
     @Test(arguments: [UInt64(2), nil])
-    func `process change during screenshot permission check refuses before window lookup or capture`(
+    func `process change during final capture discards the screenshot`(
         replacementGeneration: UInt64?) async throws
     {
         let fixture = VerifyStateFixture()
@@ -64,7 +65,7 @@ struct VerifyStateScreenshotInventoryTests {
         let capture = VerifyStateScreenCaptureService(
             applicationInfo: fixture.application,
             windowInfo: fixture.window,
-            onPermissionCheck: {
+            onCapture: {
                 await Task.yield()
                 identities.set(replacementGeneration, for: pid)
             })
@@ -89,10 +90,42 @@ struct VerifyStateScreenshotInventoryTests {
         #expect(metadata["stable_samples"] == .int(0))
         #expect(metadata["screenshot_attached"] == .bool(false))
         #expect(metadata["screenshot_error"]?.stringValue?.contains("process identity") == true)
-        #expect(capture.permissionCheckCount == 1)
-        #expect(capture.windowIDs.isEmpty)
-        #expect(windows.callCount == 1)
+        #expect(capture.permissionCheckCount == 0)
+        #expect(capture.windowIDs == [CGWindowID(fixture.window.windowID)])
+        #expect(windows.callCount == 3) // Sample, before capture, and after capture.
         #expect(applications.listApplicationsCallCount == 0)
+        #expect(!response.content.contains {
+            if case .image = $0 {
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    @Test
+    func `capture permission failure omits the optional image without losing satisfied predicates`() async throws {
+        let fixture = VerifyStateFixture()
+        let capture = VerifyStateScreenCaptureService(
+            applicationInfo: fixture.application,
+            windowInfo: fixture.window,
+            onCapture: { throw PeekabooError.permissionDeniedScreenRecording })
+        let context = await fixture.context(results: [], screenCapture: capture)
+        let response = try await fixture.tool(context: context).execute(arguments: ToolArguments(raw: [
+            "pid": Int(fixture.application.processIdentifier),
+            "window_id": fixture.window.windowID,
+            "predicates": [["kind": "window_exists", "expected": true]],
+            "timeout_ms": 500,
+            "stable_samples": 1,
+            "final_screenshot": true,
+        ]))
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["status"] == .string("satisfied"))
+        #expect(metadata["stable_samples"] == .int(1))
+        #expect(metadata["screenshot_attached"] == .bool(false))
+        #expect(metadata["screenshot_error"]?.stringValue?.contains("Screen Recording") == true)
+        #expect(capture.permissionCheckCount == 0)
+        #expect(capture.windowIDs == [CGWindowID(fixture.window.windowID)])
         #expect(!response.content.contains {
             if case .image = $0 {
                 true

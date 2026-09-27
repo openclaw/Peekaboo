@@ -12,9 +12,10 @@ extension RuntimeHostResolver {
         environment: [String: String],
         dependencies: Dependencies
     ) async throws -> RemoteHandshakeCache? {
+        let fixedClassicScope = self.usesFixedClassicCaptureScope(options: options, environment: environment)
         guard options.requiresScreenCaptureKitOwnerCapability,
-              !options.usesPerToolSnapshotInvalidation,
-              options.requiresScreenCapturePermission || options.requiresSilentCapture,
+              !options.usesPerToolSnapshotInvalidation || fixedClassicScope,
+              options.requiresScreenCapturePermission || options.requiresSilentCapture || fixedClassicScope,
               !self.remoteIsolationRequested(options: options, environment: environment),
               let socket = BridgeSocketResolver.explicitBridgeSocket(options: options, environment: environment)
         else { return nil }
@@ -246,7 +247,8 @@ extension RuntimeHostResolver {
         if options.usesPerToolSnapshotInvalidation {
             // Dynamic capture-capable tools can issue request-local auto/modern capture regardless
             // of startup preference. An explicit environment allow-list may prove none are exposed.
-            return options.dynamicToolScreenCaptureReachable
+            return options.dynamicToolScreenCaptureReachable &&
+                !self.usesFixedClassicCaptureScope(options: options, environment: environment)
         }
         return (options.requiresScreenCapturePermission || options.requiresSilentCapture) &&
             self.captureEnginePreferenceForOwnership(options: options, environment: environment) != .legacy
@@ -258,7 +260,8 @@ extension RuntimeHostResolver {
     ) -> Bool {
         guard !self.remoteIsolationRequested(options: options, environment: environment) else { return false }
         if options.usesPerToolSnapshotInvalidation {
-            return options.dynamicToolScreenCaptureReachable
+            return options.dynamicToolScreenCaptureReachable &&
+                !self.usesFixedClassicCaptureScope(options: options, environment: environment)
         }
         let preference = self.captureEnginePreferenceForOwnership(options: options, environment: environment)
         return options.requiresScreenCapturePermission &&
@@ -687,5 +690,13 @@ extension RuntimeHostResolver {
             ),
             configuredValue: nil
         )
+    }
+
+    private static func usesFixedClassicCaptureScope(
+        options: CommandRuntimeOptions,
+        environment: [String: String]
+    ) -> Bool {
+        options.usesInlineCaptureEngineTransport && !options.usesPersistentDynamicToolRuntime &&
+            self.captureEnginePreferenceForOwnership(options: options, environment: environment) == .legacy
     }
 }

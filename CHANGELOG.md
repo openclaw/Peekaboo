@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Honor classic capture for `verify --screenshot` on an explicitly selected compatible Bridge host, preserving optional-image failures, exact-target checks, and screenshot-free verification without extra permission probes.
 - Add content-free debug measurements for slow, incomplete and fallback native AX reads without extra queries or changes to observation completeness, timeouts or stability requirements.
 - Keep application-launch option tests from activating Finder by isolating their activation callbacks from the desktop.
 

@@ -23,7 +23,7 @@ struct CommandRuntimeOptions {
     /// This command carries the capture-engine choice in its remote request instead of
     /// requiring the caller process to own capture/TCC.
     var transportsCaptureEnginePreference = false
-    /// Live/action support inline engine selection on an explicitly selected remote host.
+    /// Fixed capture requests support inline engine selection on an explicitly selected remote host.
     var usesInlineCaptureEngineTransport = false
     var requiresDesktopObservationInlinePixels: Bool {
         self.usesInlineCaptureEngineTransport && self.requiresCaptureEnginePreferenceHost

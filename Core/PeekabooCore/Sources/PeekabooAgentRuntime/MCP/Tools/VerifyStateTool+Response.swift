@@ -112,12 +112,7 @@ extension VerifyStateTool {
         guard let resolvedApplication = await identityTracker.resolvedApplication(for: application) else {
             return .failure("The target process identity was not established")
         }
-        if let reason = await identityTracker.validate(resolvedApplication) {
-            return .identityFailure(reason)
-        }
-        guard await self.context.screenCapture.hasScreenRecordingPermission() else {
-            return .failure("Screen Recording permission is not granted")
-        }
+        // Capture owns the engine-specific permission gate; an unscoped probe can enter ScreenCaptureKit.
         do {
             try Task.checkCancellation()
             if let reason = await identityTracker.validate(resolvedApplication) {

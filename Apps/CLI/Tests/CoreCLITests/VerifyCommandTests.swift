@@ -63,8 +63,11 @@ struct VerifyCommandTests {
         #expect(category == .vision)
     }
 
-    @Test(arguments: [false, true])
-    func `tool failure exits with unknown error status`(jsonOutput: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func `tool or incompatible host failure exits before target lookup`(
+        jsonOutput: Bool,
+        incompatibleHost: Bool
+    ) async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("verify-preflight-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -74,22 +77,29 @@ struct VerifyCommandTests {
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: jsonOutput, logLevel: nil),
             services: VerifyPreflightServices(directory: directory),
-            toolCapturePreflightRefusal: MCPToolCapturePreflightRefusal(message: "fixture capture refusal"),
+            toolCapturePreflightRefusal: incompatibleHost ? nil :
+                MCPToolCapturePreflightRefusal(message: "fixture capture refusal"),
+            requiredHostFailure: incompatibleHost ? "fixture incompatible host" : nil,
             interactionMutationTracker: InteractionMutationTracker(
                 desktopMutationWatermarkStore: DesktopMutationWatermarkStore(directoryURL: directory)
             )
         )
 
-        let exitCode = await #expect(throws: ExitCode.self) {
-            try await command.run(using: runtime)
+        let output = try await captureStandardOutputText {
+            let exitCode = await #expect(throws: ExitCode.self) {
+                try await command.run(using: runtime)
+            }
+            #expect(exitCode == ExitCode(2))
         }
-        #expect(exitCode == ExitCode(2))
+        if jsonOutput {
+            #expect(output.contains(incompatibleHost ? "fixture incompatible host" : "fixture capture refusal"))
+        }
         #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("unused.png").path))
     }
 }
 
 @MainActor
-private final class VerifyPreflightServices: PeekabooServiceProviding {
+final class VerifyPreflightServices: PeekabooServiceProviding {
     let automation: any UIAutomationServiceProtocol = MockAutomationService()
     let windows: any WindowManagementServiceProtocol = MockWindowService(result: [])
     let menu: any MenuServiceProtocol = MockMenuService(barItems: [])
@@ -104,10 +114,10 @@ private final class VerifyPreflightServices: PeekabooServiceProviding {
     let dialogs: any DialogServiceProtocol
     let browser: any BrowserMCPClientProviding
 
-    init(directory: URL) {
+    init(directory: URL, screenCapture: (any ScreenCaptureServiceProtocol)? = nil) {
         // These adapters are inert until called; preflight must refuse before any Bridge request.
         let client = PeekabooBridgeClient(socketPath: directory.appendingPathComponent("absent.sock").path)
-        self.screenCapture = RemoteScreenCaptureService(client: client)
+        self.screenCapture = screenCapture ?? RemoteScreenCaptureService(client: client)
         self.applications = RemoteApplicationService(client: client)
         self.dialogs = RemoteDialogService(client: client)
         self.browser = RemoteBrowserMCPClient(client: client)

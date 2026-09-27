@@ -140,19 +140,19 @@ final class VerifyStateScreenCaptureService: ScreenCaptureServiceProtocol {
     let applicationInfo: ServiceApplicationInfo?
     let windowInfo: ServiceWindowInfo?
     let delay: Duration?
-    private let onPermissionCheck: (@MainActor () async -> Void)?
+    private let onCapture: (@MainActor () async throws -> Void)?
     private(set) var permissionCheckCount = 0
 
     init(
         applicationInfo: ServiceApplicationInfo? = nil,
         windowInfo: ServiceWindowInfo? = nil,
         delay: Duration? = nil,
-        onPermissionCheck: (@MainActor () async -> Void)? = nil)
+        onCapture: (@MainActor () async throws -> Void)? = nil)
     {
         self.applicationInfo = applicationInfo
         self.windowInfo = windowInfo
         self.delay = delay
-        self.onPermissionCheck = onPermissionCheck
+        self.onCapture = onCapture
     }
 
     func captureWindow(
@@ -162,6 +162,7 @@ final class VerifyStateScreenCaptureService: ScreenCaptureServiceProtocol {
     {
         self.windowIDs.append(windowID)
         self.visualizerModes.append(visualizerMode)
+        try await self.onCapture?()
         if let delay {
             await verifyStateNonCooperativeDelay(delay)
         }
@@ -176,7 +177,6 @@ final class VerifyStateScreenCaptureService: ScreenCaptureServiceProtocol {
 
     func hasScreenRecordingPermission() async -> Bool {
         self.permissionCheckCount += 1
-        await self.onPermissionCheck?()
         return true
     }
 

@@ -42,10 +42,13 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         do {
+            try runtime.requireCompatibleHost()
             let arguments = try await self.makeArguments()
             let context = Self.makeToolContext(using: runtime)
             let tool = VerifyStateTool(context: context)
-            let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: arguments))
+            let response = try await self.withScreenshotCaptureEngine(using: runtime) {
+                try await context.execute(tool: tool, arguments: ToolArguments(raw: arguments))
+            }
             guard !response.isError else {
                 try MCPToolCommandOutput.output(
                     tool: tool.name,
@@ -94,6 +97,29 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
             snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator,
             capturePreflightRefusal: runtime.toolCapturePreflightRefusal
         )
+    }
+
+    func withScreenshotCaptureEngine<T: Sendable>(
+        using runtime: CommandRuntime,
+        operation: @MainActor () async throws -> T
+    ) async throws -> T {
+        guard self.screenshot != nil,
+              runtime.configuration.captureEnginePreference != nil || runtime.captureEngineSafetyOverride != nil
+        else { return try await operation() }
+        let capture = runtime.services.screenCapture
+        guard let engineAware = capture as? any EngineAwareScreenCaptureServiceProtocol else {
+            throw ValidationError("The selected capture service cannot honor a capture-engine override.")
+        }
+        let preference = try CaptureCommandOptionParser.enginePreference(
+            cliValue: nil,
+            configuredValue: runtime.configuration.captureEnginePreference,
+            kind: .window,
+            gateOwner: capture.captureTransactionGateOwner,
+            supportsEngineScope: true
+        )
+        return try await engineAware.withCaptureEngine(runtime.captureEngineSafetyOverride ?? preference ?? .auto) {
+            try await operation()
+        }
     }
 
     private func makeArguments() async throws -> [String: Any] {

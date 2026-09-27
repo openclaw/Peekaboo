@@ -13,7 +13,7 @@ An unrelated Accessibility read failure does not invalidate independently observ
 
 Without `--screenshot`, verification does not probe or claim ScreenCaptureKit ownership, and ambient capture-engine settings do not change its selected host. Requested screenshots retain the normal capture-safety checks.
 
-For a requested screenshot, choose classic capture with `PEEKABOO_CAPTURE_ENGINE=classic`; `verify` does not expose `see`'s `--capture-engine` flag.
+For a requested screenshot, choose classic capture with `PEEKABOO_CAPTURE_ENGINE=classic`; `verify` does not expose `see`'s `--capture-engine` flag. With an explicit `--bridge-socket`, that choice is transported to the selected compatible host without changing capture ownership. `--no-remote` explicitly selects caller-local capture. Missing host engine/inline-pixel capabilities refuse before evaluation; an ordinary capture or permission failure omits the optional image without discarding valid predicate results.
 
 Results are ternary. `satisfied` exits 0, `unsatisfied` exits 1, and `unknown` exits 2. Evaluated results in JSON output include every predicate result and an `unknown_reason` field; it is `null` when the result is not unknown.
 
