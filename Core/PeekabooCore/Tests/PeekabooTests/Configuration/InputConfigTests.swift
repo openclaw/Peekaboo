@@ -44,6 +44,8 @@ struct InputConfigTests {
             #expect(policy.strategy(for: .type, bundleIdentifier: "com.example.Other") == .synthFirst)
             #expect(policy.backgroundTypingStrategy(bundleIdentifier: "com.example.Other") == .actionFirst)
             #expect(policy.strategy(for: .hotkey) == .synthFirst)
+            #expect(policy.backgroundSelectAllStrategy() == .actionFirst)
+            #expect(policy.backgroundSelectAllStrategy(bundleIdentifier: "com.example.Other") == .actionFirst)
             #expect(policy.strategy(for: .setValue) == .actionOnly)
             #expect(policy.strategy(for: .performAction) == .actionOnly)
         }
@@ -102,6 +104,8 @@ struct InputConfigTests {
             #expect(policy.backgroundTypingStrategy() == strategy)
             #expect(policy.backgroundTypingStrategy(bundleIdentifier: "com.example.Other") == strategy)
             #expect(policy.strategy(for: .hotkey) == strategy)
+            #expect(policy.backgroundSelectAllStrategy() == strategy)
+            #expect(policy.backgroundSelectAllStrategy(bundleIdentifier: "com.example.Other") == strategy)
             #expect(policy.strategy(for: .setValue) == .actionOnly)
             #expect(policy.strategy(for: .performAction) == .actionOnly)
         }
@@ -285,6 +289,8 @@ struct InputConfigTests {
                 #expect(policy.strategy(for: .click) == strategy)
                 #expect(policy.strategy(for: .scroll) == strategy)
                 #expect(policy.strategy(for: .hotkey) == strategy)
+                #expect(policy.backgroundSelectAllStrategy() == strategy)
+                #expect(policy.backgroundSelectAllStrategy(bundleIdentifier: "com.example.Editor") == strategy)
                 #expect(policy.strategy(for: .setValue) == strategy)
                 #expect(policy.strategy(for: .performAction) == strategy)
             }
@@ -318,6 +324,35 @@ struct InputConfigTests {
             #expect(policy.strategy(for: .click, bundleIdentifier: "com.example.Editor") == .actionOnly)
             #expect(policy.strategy(for: .type, bundleIdentifier: "com.example.Editor") == .actionOnly)
             #expect(policy.backgroundTypingStrategy(bundleIdentifier: "com.example.Editor") == .actionOnly)
+        }
+    }
+
+    @Test(arguments: UIInputStrategy.allCases, ["defaultStrategy", "hotkey"])
+    func `select all honors explicit app choices before top level hotkey config`(
+        strategy: UIInputStrategy, appKey: String) throws
+    {
+        let json = """
+        {"input":{"hotkey":"actionOnly","perApp":{"com.example.Editor":{
+        "\(appKey)":"\(strategy.rawValue)"}}}}
+        """
+        try withIsolatedInputPolicyEnvironment(configJSON: json) {
+            let policy = ConfigurationManager.shared.getUIInputPolicy()
+            #expect(policy.backgroundSelectAllStrategy() == .actionOnly)
+            #expect(policy.backgroundSelectAllStrategy(bundleIdentifier: "com.example.Editor") == strategy)
+        }
+    }
+
+    @Test(arguments: UIInputStrategy.allCases, ["PEEKABOO_INPUT_STRATEGY", "PEEKABOO_HOTKEY_INPUT_STRATEGY"])
+    func `select all honors explicit environment before app and top level config`(
+        strategy: UIInputStrategy, key: String) throws
+    {
+        let json = """
+        {"input":{"hotkey":"actionOnly","perApp":{"com.example.Editor":{"hotkey":"actionOnly"}}}}
+        """
+        try withIsolatedInputPolicyEnvironment(configJSON: json, environment: [key: strategy.rawValue]) {
+            let policy = ConfigurationManager.shared.getUIInputPolicy()
+            #expect(policy.backgroundSelectAllStrategy() == strategy)
+            #expect(policy.backgroundSelectAllStrategy(bundleIdentifier: "com.example.Editor") == strategy)
         }
     }
 

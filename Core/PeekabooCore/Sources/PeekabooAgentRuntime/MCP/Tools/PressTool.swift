@@ -66,7 +66,8 @@ public struct PressTool: MCPTool {
                 maximum: 10000,
                 default: 100),
             "hold": SchemaBuilder.integer(
-                description: "Optional duration to hold each chord in milliseconds. Default: 50.",
+                description: "Hold duration for synthesized chords in milliseconds (default: 50). " +
+                    "Semantic AX/menu actions do not hold keys.",
                 minimum: 0,
                 maximum: 10000,
                 default: 50),

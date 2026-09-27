@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Honor synthetic hotkey strategies for Cmd+A without AX selection or permission bypass, preserving the built-in focused-selection default and direct event fallback; keep explicit process-menu scope, exact-window guards, and truthful post-action failure delivery.
 - Refuse unattended clipboard reads before macOS privacy prompts, including Agent context and current-clipboard paste; share read admission with temporary writes, preserve retry-unsafe writes when readback is unavailable, and add content-free `clipboard status` plus explicit manual CLI `--allow-prompt` opt-in.
 - Refuse exact-window `actionOnly` hotkeys before invoking an app-wide menu, preserving receipt-pinned `actionFirst` fallback, process-scoped menus, and truthful paste retry safety.
 - Stop guessing unreadable menu-shortcut modifiers or enabled state in action-first keyboard input; preserve native read failures and shortcut order while reducing menu traversal to direct Accessibility child reads.

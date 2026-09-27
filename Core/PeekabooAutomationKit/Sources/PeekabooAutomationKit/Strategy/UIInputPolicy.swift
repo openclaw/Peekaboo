@@ -55,7 +55,10 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
         performAction: .actionOnly))
 
     public var defaultStrategy: UIInputStrategy {
-        didSet { self.backgroundTypingDefault = nil }
+        didSet {
+            self.backgroundTypingDefault = nil
+            self.backgroundSelectAllDefault = nil
+        }
     }
 
     public var click: UIInputStrategy?
@@ -67,6 +70,8 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
     public var perApp: [String: AppUIInputPolicy]
     /// Applies only to targeted typing when no explicit type or per-app selection wins.
     public private(set) var backgroundTypingDefault: UIInputStrategy?
+    /// Prefers focused text selection only, not app-wide menus, for targeted Cmd+A without an explicit selection.
+    public private(set) var backgroundSelectAllDefault: UIInputStrategy?
 
     public init(
         defaultStrategy: UIInputStrategy = .synthFirst,
@@ -87,6 +92,7 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
         self.performAction = performAction
         self.perApp = perApp
         self.backgroundTypingDefault = nil
+        self.backgroundSelectAllDefault = nil
     }
 
     /// Keep resolved selections authoritative while preserving the absence of a global override.
@@ -105,6 +111,7 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
             perApp: perApp)
         if selections.defaultStrategy == nil {
             policy.backgroundTypingDefault = .actionFirst
+            policy.backgroundSelectAllDefault = .actionFirst
         }
         return policy
     }
@@ -112,6 +119,28 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
     public func backgroundTypingStrategy(bundleIdentifier: String? = nil) -> UIInputStrategy {
         self.appStrategy(for: .type, bundleIdentifier: bundleIdentifier) ?? self.type ??
             self.backgroundTypingDefault ?? self.defaultStrategy
+    }
+
+    public func backgroundSelectAllStrategy(bundleIdentifier: String? = nil) -> UIInputStrategy {
+        self.resolvedBackgroundHotkeyStrategy(isSelectAll: true, bundleIdentifier: bundleIdentifier).strategy
+    }
+
+    struct BackgroundHotkeyStrategy: Sendable {
+        let strategy: UIInputStrategy
+        let usesBuiltInPreference: Bool
+    }
+
+    func resolvedBackgroundHotkeyStrategy(
+        isSelectAll: Bool,
+        bundleIdentifier: String? = nil) -> BackgroundHotkeyStrategy
+    {
+        if let explicit = self.appStrategy(for: .hotkey, bundleIdentifier: bundleIdentifier) ?? self.hotkey {
+            return .init(strategy: explicit, usesBuiltInPreference: false)
+        }
+        if isSelectAll, let backgroundSelectAllDefault {
+            return .init(strategy: backgroundSelectAllDefault, usesBuiltInPreference: true)
+        }
+        return .init(strategy: self.defaultStrategy, usesBuiltInPreference: false)
     }
 
     public func strategy(for verb: UIInputVerb, bundleIdentifier: String? = nil) -> UIInputStrategy {

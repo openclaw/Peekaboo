@@ -1,6 +1,6 @@
 import Foundation
-import PeekabooAutomationKit
 import Testing
+@testable import PeekabooAutomationKit
 
 struct UIInputPolicyDefaultTests {
     @Test
@@ -9,6 +9,8 @@ struct UIInputPolicyDefaultTests {
 
         #expect(policy == UIInputPolicy(defaultStrategy: .synthFirst))
         #expect(policy.backgroundTypingDefault == nil)
+        #expect(policy.backgroundSelectAllDefault == nil)
+        #expect(policy.backgroundSelectAllStrategy() == .synthFirst)
         #expect(policy.backgroundTypingStrategy() == .synthFirst)
         for verb in UIInputVerb.allCases {
             #expect(policy.strategy(for: verb) == .synthFirst)
@@ -22,6 +24,8 @@ struct UIInputPolicyDefaultTests {
         #expect(policy.defaultStrategy == .synthFirst)
         #expect(policy.type == nil)
         #expect(policy.backgroundTypingDefault == .actionFirst)
+        #expect(policy.backgroundSelectAllDefault == .actionFirst)
+        #expect(policy.backgroundSelectAllStrategy() == .actionFirst)
         #expect(policy.strategy(for: .type) == .synthFirst)
         #expect(policy.backgroundTypingStrategy() == .actionFirst)
         #expect(policy.strategy(for: .click) == .actionFirst)
@@ -102,6 +106,8 @@ struct UIInputPolicyDefaultTests {
 
         #expect(policy.backgroundTypingDefault == nil)
         #expect(policy.strategy(for: .type) == .synthFirst)
+        #expect(policy.backgroundSelectAllDefault == nil)
+        #expect(policy.backgroundSelectAllStrategy() == .synthFirst)
         #expect(policy.backgroundTypingStrategy() == .synthFirst)
         #expect(policy != .currentBehavior)
     }
@@ -213,6 +219,94 @@ struct UIInputPolicyDefaultTests {
         #expect(policy.strategy(for: .type) == .synthOnly)
         #expect(policy.backgroundTypingStrategy() == strategy)
         #expect(try JSONDecoder().decode(UIInputPolicy.self, from: JSONEncoder().encode(policy)) == policy)
+    }
+
+    @Test(arguments: UIInputStrategy.allCases, ["global", "hotkey", "appGlobal", "appHotkey"])
+    func `select all retains the explicit winning field rather than guessing from its value`(
+        strategy: UIInputStrategy, source: String)
+    {
+        let bundle = "com.example.editor"
+        var policy = UIInputPolicy.currentBehavior
+        switch source {
+        case "global": policy.defaultStrategy = strategy
+        case "hotkey": policy.hotkey = strategy
+        case "appGlobal": policy.perApp[bundle] = AppUIInputPolicy(defaultStrategy: strategy)
+        default: policy.perApp[bundle] = AppUIInputPolicy(defaultStrategy: .synthOnly, hotkey: strategy)
+        }
+
+        let resolution = policy.resolvedBackgroundHotkeyStrategy(isSelectAll: true, bundleIdentifier: bundle)
+
+        #expect(resolution.strategy == strategy)
+        #expect(!resolution.usesBuiltInPreference)
+        #expect(policy.backgroundSelectAllStrategy(bundleIdentifier: bundle) == strategy)
+    }
+
+    @Test
+    func `select all default is limited to focused selection and independent from typing`() {
+        var policy = UIInputPolicy.currentBehavior
+        policy.type = .synthOnly
+        policy.perApp["com.example.editor"] = AppUIInputPolicy(type: .actionOnly)
+
+        let selected = policy.resolvedBackgroundHotkeyStrategy(
+            isSelectAll: true, bundleIdentifier: "com.example.editor")
+        let ordinary = policy.resolvedBackgroundHotkeyStrategy(
+            isSelectAll: false, bundleIdentifier: "com.example.editor")
+
+        #expect(selected.strategy == .actionFirst)
+        #expect(selected.usesBuiltInPreference)
+        #expect(ordinary.strategy == .synthFirst)
+        #expect(!ordinary.usesBuiltInPreference)
+        #expect(policy.backgroundTypingStrategy(bundleIdentifier: "com.example.editor") == .actionOnly)
+    }
+
+    @Test
+    func `clearing a hotkey override restores only the named selection preference`() {
+        var policy = UIInputPolicy.currentBehavior
+        policy.hotkey = .actionFirst
+        #expect(!policy.resolvedBackgroundHotkeyStrategy(isSelectAll: true).usesBuiltInPreference)
+
+        policy.hotkey = nil
+        #expect(policy.resolvedBackgroundHotkeyStrategy(isSelectAll: true).usesBuiltInPreference)
+        #expect(policy.backgroundSelectAllStrategy() == .actionFirst)
+        #expect(policy.strategy(for: .hotkey) == .synthFirst)
+
+        policy.defaultStrategy = .synthFirst
+        #expect(policy.backgroundSelectAllDefault == nil)
+        #expect(!policy.resolvedBackgroundHotkeyStrategy(isSelectAll: true).usesBuiltInPreference)
+        #expect(policy.backgroundSelectAllStrategy() == .synthFirst)
+    }
+
+    @Test
+    func `selection preference round trips while old policy JSON stays concrete`() throws {
+        let current = UIInputPolicy.currentBehavior
+        let roundTrip = try JSONDecoder().decode(UIInputPolicy.self, from: JSONEncoder().encode(current))
+        #expect(roundTrip == current)
+        #expect(roundTrip.backgroundSelectAllDefault == .actionFirst)
+        #expect(roundTrip.resolvedBackgroundHotkeyStrategy(isSelectAll: true).usesBuiltInPreference)
+
+        for json in [
+            #"{"defaultStrategy":"synthFirst","perApp":{}}"#,
+            #"{"defaultStrategy":"synthFirst","perApp":{},"backgroundSelectAllDefault":null}"#,
+            #"{"defaultStrategy":"synthFirst","perApp":{},"backgroundTypingDefault":"actionFirst"}"#,
+        ] {
+            let decoded = try JSONDecoder().decode(UIInputPolicy.self, from: Data(json.utf8))
+            #expect(decoded.backgroundSelectAllDefault == nil)
+            #expect(decoded.backgroundSelectAllStrategy() == .synthFirst)
+            #expect(!decoded.resolvedBackgroundHotkeyStrategy(isSelectAll: true).usesBuiltInPreference)
+        }
+    }
+
+    @Test(arguments: UIInputStrategy.allCases)
+    func `a named serialized selection preference changes only targeted select all`(strategy: UIInputStrategy) throws {
+        let json = """
+        {"defaultStrategy":"synthOnly","perApp":{},"backgroundSelectAllDefault":"\(strategy.rawValue)"}
+        """
+        let policy = try JSONDecoder().decode(UIInputPolicy.self, from: Data(json.utf8))
+
+        #expect(policy.backgroundSelectAllStrategy() == strategy)
+        #expect(policy.resolvedBackgroundHotkeyStrategy(isSelectAll: true).usesBuiltInPreference)
+        #expect(policy.strategy(for: .hotkey) == .synthOnly)
+        #expect(policy.backgroundTypingStrategy() == .synthOnly)
     }
 
     @Test(arguments: ["defaultStrategy", "perApp"])

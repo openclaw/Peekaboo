@@ -193,6 +193,11 @@ public final class HotkeyService {
 
         try BackgroundHotkeyPolicy.validate(keys: keys)
         let parsedKeys = try Self.parsedKeys(keys)
+        let plannedChord = try? self.makeHotkeyPlan(parsedKeys)
+        let isSelectAll = plannedChord.map {
+            Self.isSelectAllShortcut(primaryKey: $0.primaryKey, flags: $0.modifierFlags)
+        } ?? false
+        var strategy = self.inputPolicy.resolvedBackgroundHotkeyStrategy(isSelectAll: isSelectAll)
         let targetValidator: @MainActor @Sendable () async throws -> Void = {
             if let expectedProcessIdentity = automationTarget.processIdentity,
                self.processStartIdentityProvider(targetProcessIdentifier) !=
@@ -209,17 +214,44 @@ public final class HotkeyService {
             verb: .hotkey,
             selector: .focused,
             captureReceipt: DesktopOperationPlan.CaptureReceipt(target: automationTarget),
-            strategy: self.inputPolicy.strategy(for: .hotkey),
+            strategy: strategy.strategy,
             prepare: {
                 application = self.runningApplicationResolver(targetProcessIdentifier)
                 bundleIdentifier = application?.bundleIdentifier
+                strategy = self.inputPolicy.resolvedBackgroundHotkeyStrategy(
+                    isSelectAll: isSelectAll, bundleIdentifier: bundleIdentifier)
             },
             routing: {
                 DesktopOperationPlan.Routing(
-                    strategy: self.inputPolicy.strategy(for: .hotkey, bundleIdentifier: bundleIdentifier),
+                    strategy: strategy.strategy,
                     bundleIdentifier: bundleIdentifier)
             },
             action: DesktopOperationPlan.ActionRoute {
+                if isSelectAll, let plan = plannedChord {
+                    try await self.validateDelivery(targetValidator, emittedUnitCount: 0)
+                    try Self.validateTargetProcess(targetProcessIdentifier)
+                    if try self.focusedTextHotkey(
+                        plan.primaryKey,
+                        plan.modifierFlags,
+                        targetProcessIdentifier,
+                        automationTarget.exactWindow)
+                    {
+                        if automationTarget.exactWindow == nil {
+                            try await self.validateDelivery(
+                                targetValidator,
+                                emittedUnitCount: 1,
+                                delivery: .init(mechanism: .accessibilityValue, mode: .background))
+                        }
+                        return UIInputExecutionResult.Action(outcome: .dispatchedUnverified(
+                            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                            evidence: .deliveryAccepted,
+                            unitCount: .one))
+                    }
+                    // The built-in preference authorizes focused selection, not app-wide menu semantics.
+                    guard !strategy.usesBuiltInPreference else {
+                        throw ActionInputError.unsupported(.actionUnsupported)
+                    }
+                }
                 // An application menu cannot certify the exact document receiver before AXPress.
                 guard automationTarget.exactWindow == nil else {
                     throw ActionInputError.unsupported(.actionUnsupported)
@@ -232,7 +264,8 @@ public final class HotkeyService {
                     throw ActionInputError.unsupported(.missingElement)
                 }
                 let actionResult = try self.actionInputDriver.tryHotkey(application: application, keys: parsedKeys)
-                try await self.validateDelivery(targetValidator, emittedUnitCount: 1)
+                try await self.validateDelivery(
+                    targetValidator, emittedUnitCount: 1, delivery: actionResult.outcome.delivery)
                 return actionResult
             },
             synthesis: DesktopOperationPlan.SynthesisRoute {
@@ -240,24 +273,7 @@ public final class HotkeyService {
                     targetValidator,
                     emittedUnitCount: 0)
                 try Self.validateTargetProcess(targetProcessIdentifier)
-                let plan = try self.makeHotkeyPlan(parsedKeys)
-                if try self.focusedTextHotkey(
-                    plan.primaryKey,
-                    plan.modifierFlags,
-                    targetProcessIdentifier,
-                    automationTarget.exactWindow)
-                {
-                    if automationTarget.exactWindow == nil {
-                        try await self.validateDelivery(targetValidator, emittedUnitCount: 1)
-                    }
-                    return .dispatchedUnverified(
-                        delivery: DesktopActionOutcome.Delivery(
-                            mechanism: .accessibilityValue,
-                            mode: .background),
-                        evidence: .deliveryAccepted,
-                        unitCount: .one)
-                }
-
+                let plan = try plannedChord ?? self.makeHotkeyPlan(parsedKeys)
                 let holdNanoseconds = try Self.holdNanoseconds(for: holdDuration)
                 let emittedUnitCount = try await self.postHotkey(
                     plan,
@@ -295,7 +311,7 @@ public final class HotkeyService {
             result = try await self.desktopOperationExecutor.execute(plan)
         } catch let error as ActionInputError where error == .unsupported(.actionUnsupported) &&
             automationTarget.exactWindow != nil &&
-            self.inputPolicy.strategy(for: .hotkey, bundleIdentifier: bundleIdentifier) == .actionOnly
+            strategy.strategy == .actionOnly
         {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .operationUnsupported,
@@ -535,7 +551,8 @@ public final class HotkeyService {
 
     private func validateDelivery(
         _ deliveryValidator: (@MainActor @Sendable () async throws -> Void)?,
-        emittedUnitCount: Int) async throws
+        emittedUnitCount: Int,
+        delivery: DesktopActionOutcome.Delivery? = nil) async throws
     {
         guard let deliveryValidator else { return }
 
@@ -548,7 +565,8 @@ public final class HotkeyService {
             throw InputDeliveryIndeterminateError(
                 operation: .hotkey,
                 emittedUnitCount: emittedUnitCount,
-                causeDescription: error.localizedDescription)
+                causeDescription: error.localizedDescription,
+                delivery: delivery)
         }
     }
 

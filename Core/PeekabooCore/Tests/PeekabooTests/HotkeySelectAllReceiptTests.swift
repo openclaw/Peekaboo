@@ -17,6 +17,9 @@ struct HotkeySelectAllReceiptTests {
 
         #expect(fixture.selectionAttempts == 1)
         #expect(fixture.postedEvents.isEmpty)
+        #expect(result.path == .action)
+        #expect(result.strategy == .actionFirst)
+        #expect(result.fallbackReason == nil)
         #expect(result.outcome.state == .dispatchedUnverified)
         #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
         #expect(result.outcome.dispatchState.unitCount?.rawValue == 1)
@@ -76,6 +79,9 @@ struct HotkeySelectAllReceiptTests {
 
         #expect(fixture.selectionAttempts == 1)
         #expect(fixture.postedEvents == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(result.path == .synth)
+        #expect(result.strategy == .actionFirst)
+        #expect(result.fallbackReason == .actionUnsupported)
         #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
         #expect(result.outcome.state == .dispatchedUnverified)
     }
@@ -102,6 +108,9 @@ struct HotkeySelectAllReceiptTests {
         #expect(fixture.snapshotReceivers == [1])
         #expect(fixture.selections == [.init(receiver: 1, location: 0, length: 3)])
         #expect(fixture.postedEvents.isEmpty)
+        #expect(result.path == .action)
+        #expect(result.strategy == .actionFirst)
+        #expect(result.fallbackReason == nil)
         #expect(result.outcome.state == .dispatchedUnverified)
         #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
         #expect(result.outcome.dispatchState.unitCount?.rawValue == 1)

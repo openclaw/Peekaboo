@@ -43,7 +43,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 | Auto daemon idle timeout | - | `PEEKABOO_DAEMON_IDLE_TIMEOUT_SECONDS` | Seconds before an auto-started daemon exits while idle (default 300). |
 | Tool allow-list | `tools.allow` | `PEEKABOO_ALLOW_TOOLS` | CSV or space list. If set, only these tools are exposed (env replaces config). |
 | Tool deny-list | `tools.deny` | `PEEKABOO_DISABLE_TOOLS` | CSV or space list. Always removed; env list is additive with config. |
-| UI input strategy | `input.*` | `PEEKABOO_INPUT_STRATEGY` and per-verb variants | Choose action invocation versus synthetic input. Built-in policy uses `actionFirst` for click/scroll/background typing and `synthFirst` for legacy SDK typing/hotkey. |
+| UI input strategy | `input.*` | `PEEKABOO_INPUT_STRATEGY` and per-verb variants | Choose action invocation versus synthetic input. Built-in policy prefers actions for click/scroll/background typing and focused background Cmd+A; ordinary hotkeys and legacy SDK typing remain `synthFirst`. |
 | Element detection boxes | `visualizer.elementDetectionEnabled` | `PEEKABOO_VISUAL_ELEMENT_BOXES` | Draw a bounding box per accessibility element during `peekaboo see`. Default `false` (visually noisy); env var overrides config. The Peekaboo.app settings toggle writes the same config key. |
 
 ## GameBridge manifest budget
@@ -126,10 +126,17 @@ models.
 ## UI Input Strategy
 
 Input strategy controls whether UI interactions use accessibility action invocation or synthetic input. The built-in
-policy keeps the global default, legacy SDK typing, and hotkey at `synthFirst`, selects `actionFirst` for click,
-scroll, and background typing,
+policy keeps the global default, legacy SDK typing, and ordinary hotkeys at `synthFirst`, selects `actionFirst` for click,
+scroll, background typing, and focused background Cmd+A,
 and exposes `setValue`/`performAction` as action-only operations. An explicit global strategy overrides the built-in
-click/scroll/type preferences unless a more specific configured override wins.
+click/scroll/type/select-all preferences unless a more specific configured override wins.
+
+The Cmd+A built-in preference is limited to focused text selection: unsupported selection falls directly back to
+targeted events, never to a new process-menu action. Explicit global, hotkey, and per-app selections remain authoritative;
+synthetic choices skip AX selection entirely. The resolved policy records this separately as `backgroundSelectAllDefault`,
+not in the typing preference or generic hotkey override. Concrete SDK policies and older resolved JSON without the new
+preference retain their declared strategy. Action-based selection and menus do not implement key holding; choose a
+synthetic strategy when a physical hold is required.
 
 Precedence is `--input-strategy` CLI flag, then environment, then config file, then built-in default. The CLI flag forces local execution because the current bridge protocol does not forward per-call strategy overrides.
 

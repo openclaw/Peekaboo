@@ -29,7 +29,9 @@ RuntimeOptionsConfigurable {
     @Option(help: "Delay between key presses (bare values are milliseconds)")
     var delay: CLIDuration = .milliseconds(100)
 
-    @Option(help: "Hold duration for each key (bare values are milliseconds)")
+    @Option(
+        help: "Hold duration for synthesized keys (bare values are milliseconds); semantic actions do not hold keys"
+    )
     var hold: CLIDuration = .milliseconds(50)
 
     @Option(help: "Snapshot ID (or explicit 'latest'); no snapshot is inferred when omitted")
