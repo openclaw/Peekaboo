@@ -1038,7 +1038,7 @@ extension PeekabooBridgeOperationResultSemantics {
             }
         }
         return switch (payload.target, payload.clickType) {
-        case (.coordinates, .single): window.map { [$0] } ?? []
+        case (.coordinates, .single): [ax] + (window.map { [$0] } ?? [])
         case (.coordinates, .right), (.coordinates, .double), (.coordinates, .middle), (.coordinates, .triple):
             window.map { [$0] } ?? []
         case (.coordinates, .longPress): []

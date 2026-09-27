@@ -110,6 +110,33 @@ struct PeekabooBridgeTargetedClickValueReceiptTests {
             #expect(deniedReceipt.payload.requestSHA256 == deniedHash)
             #expect(deniedReceipt.payload.requestSHA256 != receipt.payload.requestSHA256)
             #expect(deniedReceipt.payload.target == .window(identity))
+
+            // Native positional AXPress reports accepted delivery without a count; the Bridge fills one AX unit.
+            await MainActor.run {
+                services.automationStub.actionOutcome = .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .deliveryAccepted)
+            }
+            let coordinateTarget = ClickTarget.coordinates(CGPoint(x: 30, y: 40))
+            let coordinateResult = try await client.clickWithOutcome(
+                target: coordinateTarget,
+                clickType: .single,
+                snapshotId: SnapshotReferenceFixtures.first.rawValue,
+                windowEvidence: evidence,
+                allowsAccessibilityValueDelivery: false)
+            let expectedOutcome = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            #expect(coordinateResult.outcome == expectedOutcome)
+            #expect(coordinateResult.targetIdentity?.exactWindow == exactWindow)
+            let coordinateReceipt = try #require(await client.lastOperationReceipt())
+            #expect(coordinateReceipt.payload.outcome == expectedOutcome.projection)
+            #expect(coordinateReceipt.payload.target == .window(identity))
+            let coordinateHash = try PeekabooBridgeOperationReceiptCoding.sha256(
+                Self.request(evidence: evidence, policy: false, target: coordinateTarget))
+            #expect(coordinateReceipt.payload.requestSHA256 == coordinateHash)
         } catch {
             await host.stop()
             throw error
@@ -117,9 +144,13 @@ struct PeekabooBridgeTargetedClickValueReceiptTests {
         await host.stop()
     }
 
-    private static func request(evidence: ExactWindowClickEvidence, policy: Bool?) -> PeekabooBridgeRequest {
+    private static func request(
+        evidence: ExactWindowClickEvidence,
+        policy: Bool?,
+        target: ClickTarget = .elementId("field")) -> PeekabooBridgeRequest
+    {
         .projectedAction(.init(request: .targetedClick(.init(
-            target: .elementId("field"),
+            target: target,
             clickType: .single,
             snapshotId: SnapshotReferenceFixtures.first.rawValue,
             targetProcessIdentifier: evidence.identity.ownerProcessIdentifier,
