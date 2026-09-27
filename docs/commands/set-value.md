@@ -43,6 +43,11 @@ read_when:
 - If the Accessibility write is accepted but its readback cannot be verified, Peekaboo reports an indeterminate,
   retry-unsafe result with the exact target receipt. Observe the target again before deciding whether to retry; never
   replay the write against the old snapshot.
+- Post-write native value samples require readable security metadata. If `AXSubrole` is unreadable, the reader skips
+  the potentially sensitive value; it never falls back to events or replays the accepted write to force confirmation.
+  A later readable sample can confirm within the existing 250 ms budget. Otherwise the result stays indeterminate
+  and retry-unsafe. Known absent subroles (`noValue` or `attributeUnsupported`) remain supported; this does not change
+  the separate pre-dispatch value-reading policy.
 - Secure/password fields are rejected; use explicit typing flows for those contexts.
 - This is not a replacement for `peekaboo type` when the app needs observable keystrokes, IME handling, autocomplete, or undo grouping.
 - JSON and MCP output includes the canonical process-generation `target_identity` and `target_receipt` alongside

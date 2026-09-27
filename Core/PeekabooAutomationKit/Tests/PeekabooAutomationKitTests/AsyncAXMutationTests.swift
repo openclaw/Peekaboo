@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import PeekabooFoundation
 import Testing
-@testable import PeekabooAutomationKit
+@testable @_spi(Testing) import PeekabooAutomationKit
 
 @MainActor
 struct AsyncAXMutationTests {
@@ -20,6 +20,83 @@ struct AsyncAXMutationTests {
 
     enum PressCancellationBoundary: CaseIterable {
         case beforeCall, beforeMutation
+    }
+
+    @Test(arguments: [false, true])
+    func `accepted value writes with unreadable subroles never replay and can recover evidence`(
+        recovers: Bool) async throws
+    {
+        let element = Self.nativeElement(for: .value)
+        let identity = try #require(element.focusedElementIdentity)
+        var postDispatchSamples = 0
+        var valueQueries = 0
+        var synthesisCalls = 0
+        let driver = ActionInputDriver(
+            observationDelay: {},
+            processStartIdentity: { _ in 1 },
+            nativeReader: { retained, target, attribute, timeout in
+                await MainActor.run {
+                    if attribute == .value {
+                        #expect(element.setValues == [.string("after")])
+                        postDispatchSamples += 1
+                    }
+                    let readable = attribute == .identity || (recovers && postDispatchSamples > 1)
+                    return DetachedAXMutationReader.readSynchronously(
+                        request: (target: target, attribute: attribute, deadline: .now.advanced(by: timeout)),
+                        processStartIdentity: { 1 },
+                        readSnapshot: { _ in
+                            ExactWindowFocusSnapshot(
+                                processIdentifier: identity.processIdentifier,
+                                windowID: identity.windowID,
+                                frame: identity.frame,
+                                role: identity.role,
+                                subrole: nil,
+                                subroleIsReadable: readable,
+                                identifier: identity.identifier,
+                                nativeElement: retained)
+                        },
+                        readAttribute: { name, _ in
+                            #expect(readable)
+                            #expect(name == kAXValueAttribute)
+                            valueQueries += 1
+                            return "after" as CFString
+                        })
+                }
+            })
+        let target = try UIAutomationTarget.process(.init(
+            processIdentifier: identity.processIdentifier,
+            identity: .init(processIdentifier: identity.processIdentifier, processStartIdentity: 1)))
+        let plan = try DesktopOperationPlan(
+            verb: .setValue,
+            selector: .focused,
+            captureReceipt: .init(target: target),
+            strategy: .actionFirst,
+            action: .init { try await driver.trySetValueForTesting(element: element, value: .string("after")) },
+            synthesis: .init {
+                synthesisCalls += 1
+                return .dispatchedUnverified(
+                    delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+                    evidence: .deliveryAccepted)
+            })
+
+        do {
+            let result = try await DesktopOperationExecutor().execute(plan)
+            #expect(recovers)
+            #expect(result.outcome.state == .confirmedChange)
+            #expect(postDispatchSamples == 2)
+            #expect(valueQueries == 1)
+        } catch let failure as DesktopActionFailure {
+            #expect(!recovers)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.projection.requiresFreshObservation)
+            #expect(postDispatchSamples > 1 && postDispatchSamples <= 14)
+            #expect(valueQueries == 0)
+        }
+        #expect(element.setValues == [.string("after")])
+        #expect(synthesisCalls == 0)
     }
 
     enum NativeReadCompletion: CaseIterable, Sendable {

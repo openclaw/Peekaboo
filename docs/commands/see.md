@@ -192,6 +192,9 @@ budget is at most 50 ms and one quarter of the observation's remaining time; it 
 missing range can therefore also mean the app could not answer in time. Older hosts can omit it. Selection is
 presentation evidence, not permission to reuse an old snapshot or skip live input validation.
 
+The shared reader also withholds post-mutation value evidence when security metadata is unreadable; see
+[`set-value` outcome guidance](set-value.md#notes) before deciding whether an accepted write can be retried.
+
 ## Troubleshooting tips
 
 - `--verbose` adds a content-free observed-focus summary to the existing capture log (`debug_logs` in JSON mode): raw true/false/unknown `AXFocused` counts, focused element types, `rawResolver`, and cache/partial/truncation/attached-receipt flags. Raw counts include menu-bar nodes; the resolver retains its existing menu-bar exclusion. `rawResolver` describes the boolean-only candidates, while `attached` reflects the final observation, which may additionally corroborate the native application receiver. ROI-filtered captures skip raw re-resolution because their cropped subset cannot explain the original observation's focus. Logging itself adds no Accessibility reads or input authority.

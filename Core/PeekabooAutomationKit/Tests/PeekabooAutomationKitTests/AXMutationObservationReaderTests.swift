@@ -181,6 +181,45 @@ struct AXMutationObservationReaderTests {
         #expect(secure.isReadable && secure.value == "AXSecureTextField")
     }
 
+    @Test(arguments: [false, true])
+    func `mutation value evidence is withheld for unreadable security metadata`(unreadableAfter: Bool) {
+        let reference = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
+        var snapshots = 0
+        var valueReads = 0
+        let observed = DetachedAXMutationReader.readSynchronously(
+            request: (target: Self.target, attribute: .value, deadline: .now.advanced(by: .seconds(1))),
+            processStartIdentity: { 99 },
+            readSnapshot: { _ in
+                snapshots += 1
+                return Self.snapshot(reference: reference, readable: (snapshots == 1) == unreadableAfter)
+            },
+            readAttribute: { name, _ in
+                #expect(name == kAXValueAttribute)
+                valueReads += 1
+                return "after" as CFString
+            })
+
+        #expect(observed != nil)
+        #expect(observed?.value == nil)
+        #expect(observed?.legacyPresentation == nil)
+        #expect(valueReads == (unreadableAfter ? 1 : 0))
+        #expect(snapshots == 2)
+    }
+
+    @Test(arguments: [AXError.noValue, .attributeUnsupported])
+    func `known absent subrole still permits mutation value evidence`(error: AXError) {
+        let reference = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
+        let subrole = DetachedExactWindowFocusReader.subroleObservation(.init(error: error, value: nil))
+        let observed = DetachedAXMutationReader.readSynchronously(
+            request: (target: Self.target, attribute: .value, deadline: .now.advanced(by: .seconds(1))),
+            processStartIdentity: { 99 },
+            readSnapshot: { _ in Self.snapshot(reference: reference, readable: subrole.isReadable) },
+            readAttribute: { _, _ in "after" as CFString })
+
+        #expect(observed?.value == .string("after"))
+        #expect(observed?.legacyPresentation == "after")
+    }
+
     private static var target: AXMutationObservationTarget {
         AXMutationObservationTarget(
             processIdentifier: 4242,
