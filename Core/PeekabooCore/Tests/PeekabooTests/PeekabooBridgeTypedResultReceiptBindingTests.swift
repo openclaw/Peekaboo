@@ -551,6 +551,41 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
 
 extension PeekabooBridgeTypedResultReceiptBindingTests {
     @Test
+    func `bounded dispatch ranges preserve enumerated count semantics`() {
+        typealias Units = PeekabooBridgeOperationResultSemantics.UnitPolicy
+        let counts: [DesktopActionOutcome.DispatchUnitCount?] = [nil] +
+            (1...8).map { DesktopActionOutcome.DispatchUnitCount($0) }
+        for lower in 0...4 {
+            for upper in lower...6 {
+                let range = Units.range(lower...upper)
+                let enumerated = Units.oneOf(Array(lower...upper))
+                #expect(range.defaultSuccessfulCount == enumerated.defaultSuccessfulCount)
+                for count in counts {
+                    #expect(range.acceptsSuccessful(count) == enumerated.acceptsSuccessful(count))
+                    #expect(range.acceptsFailureProgress(count) == enumerated.acceptsFailureProgress(count))
+                }
+            }
+        }
+    }
+
+    @Test
+    func `large dispatch ranges remain bounded without inventing a successful count`() throws {
+        let range = PeekabooBridgeOperationResultSemantics.UnitPolicy.range(2...Int.max)
+        let maximum = try #require(DesktopActionOutcome.DispatchUnitCount(Int.max))
+        #expect(range.acceptsSuccessful(maximum))
+        #expect(!range.acceptsSuccessful(.one))
+        #expect(!range.acceptsSuccessful(nil))
+        #expect(range.acceptsFailureProgress(.one))
+        #expect(range.acceptsFailureProgress(nil))
+        #expect(range.defaultSuccessfulCount == nil)
+
+        let rule = PeekabooBridgeOperationResultSemantics.TypeActionResultRule(
+            actions: Array(repeating: .clear, count: 10000),
+            allowsAccessibilityValueDelivery: true)
+        #expect(rule.dispatchUnits == .range(10000...20000))
+    }
+
+    @Test
     func `signed exact type correlates multiple AX clears key counts units and delivery`() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -565,7 +600,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             expectedFocusedElement: nil))
         let request = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
         let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
-        #expect(plan.typedResponseRule.typeActionDispatchUnits == .oneOf([3, 4, 5]))
+        #expect(plan.typedResponseRule.typeActionDispatchUnits == .range(3...5))
 
         let valid: [(TypeResult, Int, DesktopActionOutcome.Delivery.Mechanism)] = [
             (.init(totalCharacters: 1, keyPresses: 5, specialKeyPresses: 4), 5, .windowTargetedEvents),
@@ -697,7 +732,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             expectedFocusedElement: nil))
         let request = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
         let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
-        #expect(plan.typedResponseRule.typeActionDispatchUnits == .oneOf([0, 1]))
+        #expect(plan.typedResponseRule.typeActionDispatchUnits == .range(0...1))
 
         let response = Self.typeResponse(
             result: .init(totalCharacters: 0, keyPresses: 0, specialKeyPresses: 0),
