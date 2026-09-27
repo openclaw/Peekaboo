@@ -101,6 +101,20 @@ extension VerifyStateTool {
                 detail: "expected \(expected.description) ±\(String(format: "%.2f", tolerance))",
                 observed: actual.description)
         case let .elementExists(selector, expected):
+            if expected, case let .incompleteTraversal(elements, reason) = accessibilityEvidence {
+                return self.incompletePositiveState(
+                    predicate,
+                    selector: selector,
+                    elements: elements,
+                    reason: reason)
+                { _ in
+                    VerifyStatePredicateResult(
+                        kind: predicate.kind,
+                        status: .satisfied,
+                        detail: "\(selector.description): direct existence match from an incomplete traversal",
+                        observed: "count=1")
+                }
+            }
             guard case let .complete(elements) = accessibilityEvidence else {
                 return self.axUnknown(predicate, reason: accessibilityEvidence?.unknownReason)
             }
@@ -150,47 +164,59 @@ extension VerifyStateTool {
     {
         switch accessibilityEvidence {
         case let .complete(elements):
-            return self.elementState(predicate, selector: selector, elements: elements) { element in
+            self.elementState(predicate, selector: selector, elements: elements) { element in
                 let actual = element.value
                 return (actual == expected ? .satisfied : .unsatisfied, actual ?? "<no value>")
             }
         case let .incompleteTraversal(elements, reason):
-            guard selector.hasExactIdentifier else {
-                return self.axUnknown(
-                    predicate,
-                    reason: "\(reason); direct positive value proof requires an exact accessibility identifier")
-            }
-            // Emitted elements have a complete descriptor read; the global incomplete flag can come from a sibling.
-            let matches = elements.filter(selector.matches)
-            guard matches.count == 1, let element = matches.first else {
-                let detail = matches.isEmpty
-                    ? "No element matches \(selector.description)"
-                    : "Selector is ambiguous: \(matches.count) elements match \(selector.description)"
+            self.incompletePositiveState(predicate, selector: selector, elements: elements, reason: reason) { element in
+                let actual = element.value
+                guard actual == expected else {
+                    return VerifyStatePredicateResult(
+                        kind: predicate.kind,
+                        status: .unknown,
+                        detail: "\(selector.description): \(reason); an incomplete traversal cannot disprove " +
+                            "the expected value",
+                        observed: actual ?? "<no value>")
+                }
                 return VerifyStatePredicateResult(
                     kind: predicate.kind,
-                    status: .unknown,
-                    detail: "\(detail); \(reason)",
-                    observed: "count=\(matches.count)")
+                    status: .satisfied,
+                    detail: "\(selector.description): direct value match from an incomplete traversal",
+                    observed: actual)
             }
-            let actual = element.value
-            guard actual == expected else {
-                return VerifyStatePredicateResult(
-                    kind: predicate.kind,
-                    status: .unknown,
-                    detail: "\(selector.description): \(reason); an incomplete traversal cannot disprove " +
-                        "the expected value",
-                    observed: actual ?? "<no value>")
-            }
+        case let .unavailable(reason):
+            self.axUnknown(predicate, reason: reason)
+        case nil:
+            self.axUnknown(predicate, reason: nil)
+        }
+    }
+
+    private static func incompletePositiveState(
+        _ predicate: VerifyStatePredicate,
+        selector: VerifyStateElementSelector,
+        elements: [DetectedElement],
+        reason: String,
+        read: (DetectedElement) -> VerifyStatePredicateResult) -> VerifyStatePredicateResult
+    {
+        guard selector.hasExactIdentifier else {
+            return self.axUnknown(
+                predicate,
+                reason: "\(reason); direct positive proof requires an exact accessibility identifier")
+        }
+        // Emitted elements have a complete descriptor read; the global incomplete flag can come from a sibling.
+        let matches = elements.filter(selector.matches)
+        guard matches.count == 1, let element = matches.first else {
+            let detail = matches.isEmpty
+                ? "No element matches \(selector.description)"
+                : "Selector is ambiguous: \(matches.count) elements match \(selector.description)"
             return VerifyStatePredicateResult(
                 kind: predicate.kind,
-                status: .satisfied,
-                detail: "\(selector.description): direct value match from an incomplete traversal",
-                observed: actual)
-        case let .unavailable(reason):
-            return self.axUnknown(predicate, reason: reason)
-        case nil:
-            return self.axUnknown(predicate, reason: nil)
+                status: .unknown,
+                detail: "\(detail); \(reason)",
+                observed: "count=\(matches.count)")
         }
+        return read(element)
     }
 
     private static func elementState(

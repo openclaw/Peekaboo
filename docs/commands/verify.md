@@ -7,7 +7,9 @@ read_when:
 
 # `peekaboo verify`
 
-`peekaboo verify` polls fresh native window and accessibility state until every requested predicate is stable or the timeout expires. It is the deterministic replacement for sleep-based polling: the command never focuses, clicks, types, or treats an incomplete observation as success.
+`peekaboo verify` polls fresh native window and accessibility state until every requested predicate is stable or the timeout expires. It is the deterministic replacement for sleep-based polling: the command never focuses, clicks, or types.
+
+An unrelated Accessibility read failure does not invalidate independently observed positive evidence: one element matching an exact, nonempty AXIdentifier and the full selector can prove existence or an expected value. Missing or ambiguous matches and selectors without an AXIdentifier remain unknown in an incomplete traversal. Such evidence cannot prove absence, a mismatched value, enabled state, or selected state. Cached, structurally truncated, deadline-limited, or identity-mismatched observations remain ineligible; fresh stability samples are still required.
 
 Without `--screenshot`, verification does not probe or claim ScreenCaptureKit ownership, and ambient capture-engine settings do not change its selected host. Requested screenshots retain the normal capture-safety checks.
 

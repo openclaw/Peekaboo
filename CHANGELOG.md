@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Verify positive element existence from the same exact-identifier evidence used for value matches when unrelated Accessibility reads fail; share witness validation while preserving unknown absence, ambiguity, truncated observations and target-drift checks.
 - Honor synthetic hotkey strategies for Cmd+A without AX selection or permission bypass, preserving the built-in focused-selection default and direct event fallback; keep explicit process-menu scope, exact-window guards, and truthful post-action failure delivery.
 - Refuse unattended clipboard reads before macOS privacy prompts, including Agent context and current-clipboard paste; share read admission with temporary writes, preserve retry-unsafe writes when readback is unavailable, and add content-free `clipboard status` plus explicit manual CLI `--allow-prompt` opt-in.
 - Validate contiguous typing dispatch counts with bounded ranges instead of repeatedly allocating and scanning arrays, preserving receipt acceptance and partial-failure semantics.
