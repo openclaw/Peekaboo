@@ -2,12 +2,61 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooCLI
 
 @Suite(.tags(.safe))
 @MainActor
 struct CommandActionSequenceAccumulatorTests {
+    @Test(arguments: DesktopActionOutcomeFixtures.canonicalCases)
+    func `CLI acceptance preserves the closed state matrix and failure receipt`(
+        _ fixture: CanonicalDesktopActionOutcomeCase
+    ) throws {
+        let sequence = CommandActionSequenceAccumulator()
+        let target = try Self.target(pid: 49, generation: 15, windowID: 109)
+        let acceptedStates: [DesktopActionOutcome.State] = [
+            .confirmedChange, .confirmedNoChange, .dispatchedUnverified,
+        ]
+        if acceptedStates.contains(fixture.state) {
+            try sequence.record(
+                outcome: fixture.outcome,
+                targetIdentity: target,
+                operation: "Fixture action",
+                defaultDispatchedUnitCount: nil
+            )
+            let expectedOutcome: DesktopActionOutcome = if fixture.state == .dispatchedUnverified {
+                try .dispatchedUnverified(
+                    route: fixture.route,
+                    delivery: #require(fixture.delivery),
+                    evidence: .deliveryAccepted,
+                    unitCount: fixture.unitCount
+                )
+            } else {
+                fixture.outcome
+            }
+            #expect(sequence.resolution.outcome == expectedOutcome)
+            #expect(sequence.targetIdentity == target)
+        } else {
+            do {
+                try sequence.record(
+                    outcome: fixture.outcome,
+                    targetIdentity: target,
+                    operation: "Fixture action"
+                )
+                Issue.record("Expected the CLI sequence to reject this outcome")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome == fixture.outcome)
+                #expect(failure.targetReceipt == target.actionTargetReceipt)
+                #expect(failure.message == "Fixture action did not return a successful outcome.")
+                #expect(failure.hint == "Follow the canonical escalation metadata before deciding whether to retry.")
+            }
+            #expect(sequence.resolution.outcome == nil)
+            #expect(sequence.mutationDisposition == .none)
+            #expect(sequence.targetIdentity == nil)
+        }
+    }
+
     @Test
     func `leaf refusal preserves prior focus dispatch and exact target`() throws {
         let target = try Self.target(pid: 41, generation: 7, windowID: 101)
