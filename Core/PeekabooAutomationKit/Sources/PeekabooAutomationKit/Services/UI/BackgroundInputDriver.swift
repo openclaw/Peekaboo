@@ -1296,7 +1296,7 @@ extension BackgroundInputDriver {
         exactWindow: UIAutomationTarget.ExactWindow?,
         access: FocusedTextHotkeyAccess<some Any>) throws -> Bool
     {
-        guard modifierFlags == .maskCommand, primaryKey == "a" else { return false }
+        guard HotkeyService.isSelectAllShortcut(primaryKey: primaryKey, flags: modifierFlags) else { return false }
         guard let element = try access.focusedElement() else {
             if let exactWindow {
                 try self.validateExactWindowTextReceiver(nil, exactWindow: exactWindow)

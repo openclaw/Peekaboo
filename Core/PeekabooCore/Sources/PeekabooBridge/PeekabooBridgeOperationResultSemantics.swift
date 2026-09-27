@@ -790,17 +790,25 @@ extension PeekabooBridgeOperationResultSemantics {
                 valueBackground: valueBackground,
                 processBackground: processBackground,
                 windowBackground: windowBackground)
-        case .targetedHotkey:
-            return [
+        case let .targetedHotkey(payload):
+            var rules = [
                 rule(axBackground, .variable),
                 rule(processBackground, .variable),
                 rule(windowBackground, .variable),
             ]
-        case .exactWindowTargetedHotkey:
-            return [
+            if HotkeyService.isSelectAllShortcut(payload.keys) {
+                rules.append(rule(valueBackground, .exact(1)))
+            }
+            return rules
+        case let .exactWindowTargetedHotkey(payload):
+            var rules = [
                 rule(axBackground, .variable),
                 rule(windowBackground, .variable),
             ]
+            if HotkeyService.isSelectAllShortcut(payload.keys) {
+                rules.append(rule(valueBackground, .exact(1)))
+            }
+            return rules
         case .beginExactWindowHeldPointer:
             return [rule(windowBackground, .exact(2), failureUnits: .oneOf([1, 2, 3]))]
         case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,

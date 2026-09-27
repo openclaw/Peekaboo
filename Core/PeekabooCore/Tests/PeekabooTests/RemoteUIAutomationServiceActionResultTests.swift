@@ -281,6 +281,97 @@ struct RemoteUIAutomationServiceActionResultTests {
         await fixture.host.stop()
     }
 
+    @Test(arguments: [false, true])
+    func `remote select all preserves signed AX selection outcomes`(_ exactWindow: Bool) async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+        let target = try exactWindow
+            ? fixture.target
+            : DesktopTargetIdentity(processIdentity: fixture.windowIdentity.processIdentity)
+        fixture.services.automationStub.uiAutomationOutcomeTargetIdentity = target
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        fixture.services.automationStub.uiAutomationOutcomeScript.append(outcome, for: .hotkey)
+
+        let result: UIAutomationActionResult<Void>
+        if exactWindow {
+            result = try await fixture.remote.hotkeyWithOutcome(
+                keys: "command,a",
+                holdDuration: 0,
+                expectedWindowIdentity: fixture.windowIdentity,
+                expectedWindowBounds: fixture.windowBounds)
+            #expect(fixture.services.automationStub.exactKeyboardEvents == ["hotkey"])
+        } else {
+            result = try await fixture.remote.hotkeyWithOutcome(
+                keys: "command,a", holdDuration: 0, expectedProcessIdentity: fixture.windowIdentity.processIdentity)
+            #expect(fixture.services.automationStub.lastProcessTargetedHotkey?.keys == "command,a")
+        }
+        #expect(fixture.services.automationStub.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
+        try await Self.expect(
+            result,
+            outcome: outcome,
+            target: target,
+            operation: exactWindow ? .exactWindowTargetedHotkey : .targetedHotkey,
+            fixture: fixture)
+        await fixture.host.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func `remote uncertain select all retains signed failure instead of losing its response`(
+        _ exactWindow: Bool) async throws
+    {
+        for count: Int? in [nil, 1] {
+            let fixture = try await Self.makeFixture()
+            defer { Task { await fixture.host.stop() } }
+            let target = try exactWindow
+                ? fixture.target
+                : DesktopTargetIdentity(processIdentity: fixture.windowIdentity.processIdentity)
+            fixture.services.automationStub.uiAutomationOutcomeTargetIdentity = target
+            let error = InputDeliveryIndeterminateError(
+                operation: .hotkey,
+                emittedUnitCount: count,
+                causeDescription: "selection write unconfirmed",
+                delivery: .init(mechanism: .accessibilityValue, mode: .background))
+            if exactWindow {
+                fixture.services.automationStub.exactHotkeyError = error
+            } else {
+                fixture.services.automationStub.targetedHotkeyError = error
+            }
+
+            do {
+                if exactWindow {
+                    _ = try await fixture.remote.hotkeyWithOutcome(
+                        keys: "cmd,a",
+                        holdDuration: 0,
+                        expectedWindowIdentity: fixture.windowIdentity,
+                        expectedWindowBounds: fixture.windowBounds)
+                } else {
+                    _ = try await fixture.remote.hotkeyWithOutcome(
+                        keys: "cmd,a", holdDuration: 0, expectedProcessIdentity: fixture.windowIdentity.processIdentity)
+                }
+                Issue.record("Expected uncertain selection failure")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .indeterminate)
+                #expect(failure.outcome.evidence == .completionUnknown)
+                #expect(failure.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+                #expect(failure.outcome.dispatchState.unitCount?.rawValue == count)
+                #expect(failure.outcome.retrySafety == .unsafe)
+                #expect(failure.causeDescription == "selection write unconfirmed")
+                try await Self.expectFailureReceipt(
+                    failure,
+                    target: .init(targetIdentity: target),
+                    fixture: fixture,
+                    operation: exactWindow ? .exactWindowTargetedHotkey : .targetedHotkey)
+            }
+            #expect(fixture.services.automationStub.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
+            #expect(fixture.services.automationStub.exactKeyboardEvents.isEmpty)
+            #expect(fixture.services.automationStub.lastProcessTargetedHotkey == nil)
+            await fixture.host.stop()
+        }
+    }
+
     @Test
     func `remote automation turns a returned non success result into an exact attributed failure`() async throws {
         let fixture = try await Self.makeFixture()
@@ -337,7 +428,7 @@ struct RemoteUIAutomationServiceActionResultTests {
         #expect(failure.outcome.retrySafety == .safe)
         #expect(fixture.services.automationStub.uiAutomationOutcomeScript.callCount(for: .performAction) == 1)
         #expect(fixture.services.automationStub.lastPerformAction == nil)
-        try await Self.expectPerformActionFailureReceipt(failure, target: nil, fixture: fixture)
+        try await Self.expectFailureReceipt(failure, target: nil, fixture: fixture)
         await fixture.host.stop()
     }
 
@@ -369,26 +460,27 @@ struct RemoteUIAutomationServiceActionResultTests {
         #expect(call.target == "B1")
         #expect(call.actionName == "AXPress")
         #expect(call.snapshotId == Self.snapshotID)
-        try await Self.expectPerformActionFailureReceipt(
+        try await Self.expectFailureReceipt(
             failure,
             target: .window(fixture.windowIdentity),
             fixture: fixture)
         await fixture.host.stop()
     }
 
-    private static func expectPerformActionFailureReceipt(
+    private static func expectFailureReceipt(
         _ failure: DesktopActionFailure,
         target: PeekabooBridgeOperationTargetReceipt?,
-        fixture: Fixture) async throws
+        fixture: Fixture,
+        operation: PeekabooBridgeOperation = .performAction) async throws
     {
         #expect(fixture.handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
-        #expect(fixture.handshake.enabledOperations?.contains(.performAction) == true)
+        #expect(fixture.handshake.enabledOperations?.contains(operation) == true)
         let bundle = try #require(await fixture.client.lastOperationReceiptBundle())
         let listener = try #require(fixture.handshake.operationAttestation)
         let session = try #require(fixture.handshake.operationSessionAttestation)
         try bundle.validate(trustAnchor: .listenerAttestation(listener))
         let payload = bundle.receipt.payload
-        #expect(payload.operation == .performAction)
+        #expect(payload.operation == operation)
         #expect(payload.target == target)
         #expect(payload.targetAttributionFailure == nil)
         #expect(payload.targetAttributionEvidence == nil)
@@ -408,7 +500,7 @@ struct RemoteUIAutomationServiceActionResultTests {
         guard case let .projectedAction(projected) = response,
               case let .error(envelope) = projected.response
         else {
-            Issue.record("Expected a signed projected perform-action failure")
+            Issue.record("Expected a signed projected action failure")
             return
         }
         #expect(projected.outcome == failure.outcome.projection)
@@ -439,7 +531,7 @@ struct RemoteUIAutomationServiceActionResultTests {
             sessionID: session.sessionID,
             sequence: receipt.payload.sessionSequence))
         #expect(receipt.payload.operation == operation)
-        #expect(try receipt.payload.target == .window(#require(target.exactWindow).identity))
+        #expect(receipt.payload.target == .init(targetIdentity: target))
         #expect(receipt.payload.outcome == routedOutcome.projection)
         #expect(receipt.payload.selectedLeafEvidence == result.selectedLeafEvidence)
         #expect(result.selectedLeafEvidence == nil)

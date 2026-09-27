@@ -14,6 +14,7 @@
 - Wait for native Accessibility text, value, and selection writes before dependent input; revalidate the exact receiver and edit state at dispatch, preserve accepted prefixes, and report cancelled pre-service Bridge operations without inventing input.
 - Refuse conflicting explicit Bridge sockets and caller-local input-policy overrides before constructing local services or sending input; preserve explicit local opt-in, implicit policy-local routing, and concrete snapshot producer affinity.
 - Honor live/action capture-engine overrides on explicitly selected capable Bridge hosts using verified inline pixels, preserving implicit caller-local overrides, default routing, and background focus; avoid redundant frontmost app inventories during observation.
+- Preserve signed background Cmd+A selection results and uncertain-write failures across process and exact-window Bridge routes using shared chord classification; retain concrete receipt-validation diagnostics without mistaking differing CLI/app build labels for a stale host.
 
 ## 4.6.0 - 2026-09-25
 

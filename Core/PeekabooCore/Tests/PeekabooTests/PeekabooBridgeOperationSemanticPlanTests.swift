@@ -674,6 +674,87 @@ struct PeekabooBridgeOperationSemanticPlanTests {
         try valid.bundle.validateIntegrity()
     }
 
+    @Test(arguments: ["cmd,a", "command+A", " META a ", "win,a", "cmdOrCtrl,a"])
+    func `select all admits one background AX selection write and uncertain progress`(_ keys: String) {
+        for request in Self.selectionHotkeyRequests(keys: keys) {
+            let success = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(success, request: request))
+            for count: DesktopActionOutcome.DispatchUnitCount? in [nil, .one] {
+                let failure = DesktopActionOutcome.indeterminate(
+                    route: .bridge,
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                    evidence: .completionUnknown,
+                    unitCount: count)
+                #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(failure, request: request))
+            }
+        }
+    }
+
+    @Test(arguments: ["cmd,b", "ctrl,a", "cmd,shift,a", "a", "cmd", "cmd,a,b", "cmd,a,unknown", ""])
+    func `other or malformed hotkeys never authorize AX selection receipts`(_ keys: String) {
+        for request in Self.selectionHotkeyRequests(keys: keys) {
+            let success = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(success, request: request))
+            let failure = DesktopActionOutcome.indeterminate(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .one)
+            #expect(!PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(failure, request: request))
+        }
+    }
+
+    @Test
+    func `select all still rejects foreground value delivery and invalid dispatch counts`() {
+        for request in Self.selectionHotkeyRequests(keys: "cmd,a") {
+            for (mode, count): (DesktopActionOutcome.Delivery.Mode, DesktopActionOutcome.DispatchUnitCount?) in [
+                (.foreground, .one), (.background, nil), (.background, .init(2)),
+            ] {
+                let success = DesktopActionOutcome.dispatchedUnverified(
+                    route: .bridge,
+                    delivery: .init(mechanism: .accessibilityValue, mode: mode),
+                    evidence: .deliveryAccepted,
+                    unitCount: count)
+                #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                    success,
+                    request: request))
+            }
+            let inflatedFailure = DesktopActionOutcome.indeterminate(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .init(2))
+            #expect(!PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+                inflatedFailure, request: request))
+        }
+    }
+
+    private static func selectionHotkeyRequests(keys: String) -> [PeekabooBridgeRequest] {
+        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
+        let identity = WindowMutationIdentity(
+            windowID: 71, ownerProcessIdentifier: 42, ownerProcessStartIdentity: 1001, capturedBounds: bounds)
+        return [
+            .targetedHotkey(.init(
+                keys: keys,
+                holdDuration: 0,
+                targetProcessIdentifier: 42,
+                expectedProcessIdentity: identity.processIdentity)),
+            .exactWindowTargetedHotkey(.init(
+                keys: keys,
+                holdDuration: 0,
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds)),
+        ]
+    }
+
     @Test
     func `Wrong failure delivery is rejected while quit false refusal is admitted`() {
         let move = PeekabooBridgeRequest.moveMouse(.init(

@@ -957,9 +957,7 @@ extension PeekabooBridgeClient {
     {
         let clientBuild = PeekabooBridgeConstants.buildIdentifier
         let hostBuild = context?.reservation.hostBuild.flatMap { $0.isEmpty ? nil : $0 }
-        let buildMismatch = hostBuild.map { $0 != clientBuild } ?? false
-        let buildWarning = buildMismatch ? "Bridge host build differs from this CLI build; update the host. " : ""
-        return buildWarning + "Bridge operation receipt validation failed: \(error.localizedDescription); " +
+        return "Bridge operation receipt validation failed: \(error.localizedDescription); " +
             "host build \(hostBuild ?? "unknown"); client build \(clientBuild)"
     }
 

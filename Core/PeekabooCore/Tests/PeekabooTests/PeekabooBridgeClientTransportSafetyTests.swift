@@ -10,7 +10,9 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeClientTransportSafetyTests {
     @Test(arguments: [true, false])
-    func `unsigned host error preserves diagnostics and session builds`(differentBuild: Bool) async throws {
+    func `unsigned host error preserves diagnostics without blaming different build labels`(
+        differentBuild: Bool) async throws
+    {
         let clientBuild = PeekabooBridgeConstants.buildIdentifier
         let hostBuild = differentBuild ? "fixture-host-\(clientBuild)" : clientBuild
         let (client, peer, root) = try await Self.unsignedResponseClient(
@@ -31,8 +33,8 @@ struct PeekabooBridgeClientTransportSafetyTests {
             #expect(cause.contains("why"))
             #expect(cause.contains("host build \(hostBuild)"))
             #expect(cause.contains("client build \(clientBuild)"))
-            #expect(cause
-                .hasPrefix("Bridge host build differs from this CLI build; update the host.") == differentBuild)
+            #expect(cause.hasPrefix("Bridge operation receipt validation failed:"))
+            #expect(!cause.contains("update the host"))
         }
         await peer.waitUntilFinished()
         #expect(await peer.acceptedConnectionCount == 2)
