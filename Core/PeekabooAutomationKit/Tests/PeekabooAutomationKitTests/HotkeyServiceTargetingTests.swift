@@ -586,6 +586,24 @@ struct HotkeyServiceTargetingTests {
         #expect(postedEvents.map(\.keyCode) == [0x37, 0x01, 0x01, 0x37])
     }
 
+    @Test(arguments: [ActionInputError.targetUnavailable, .permissionDenied, .staleElement])
+    func `action first does not synthesize after unreadable menu metadata`(_ error: ActionInputError) async {
+        var postedEventCount = 0
+        let driver = RecordingHotkeyActionDriver(error: error)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            actionInputDriver: driver,
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current })
+
+        await #expect(throws: (any Error).self) {
+            try await service.hotkey(keys: "cmd,s", holdDuration: 0, targetProcessIdentifier: getpid())
+        }
+        #expect(driver.hotkeyCalls == [["cmd", "s"]])
+        #expect(postedEventCount == 0)
+    }
+
     private func targetedFocusChangeEvents() async -> [PostedKeyboardEvent] {
         var exactWindowHasFocus = true
         var postedEvents: [PostedKeyboardEvent] = []

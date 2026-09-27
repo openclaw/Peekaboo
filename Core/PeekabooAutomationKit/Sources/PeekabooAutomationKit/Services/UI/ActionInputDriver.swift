@@ -64,7 +64,8 @@ protocol ActionInputDriving: Sendable {
         -> UIInputExecutionResult.Action
     func tryClick(
         element: AutomationElement,
-        allowAccessibilityValueFallback: Bool, beforeMutation: @MainActor () throws -> Void) async throws
+        allowAccessibilityValueFallback: Bool,
+        beforeMutation: @MainActor () throws -> Void) async throws
         -> UIInputExecutionResult.Action
     func tryFocus(
         element: any AutomationElementRepresenting,
@@ -114,6 +115,7 @@ struct ActionInputDriver: ActionInputDriving {
     private let observationDelay: @MainActor @Sendable () async throws -> Void
     private let processStartIdentity: @Sendable (pid_t) -> UInt64?
     private let nativeReader: AXMutationNativeReader
+    private let menuReader: MenuShortcutReader
 
     init(
         observationDelay: @escaping @MainActor @Sendable () async throws -> Void = {
@@ -121,11 +123,13 @@ struct ActionInputDriver: ActionInputDriving {
         },
         processStartIdentity: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
-        nativeReader: @escaping AXMutationNativeReader = DetachedAXMutationReader.read)
+        nativeReader: @escaping AXMutationNativeReader = DetachedAXMutationReader.read,
+        menuReader: MenuShortcutReader = MenuShortcutReader())
     {
         self.observationDelay = observationDelay
         self.processStartIdentity = processStartIdentity
         self.nativeReader = nativeReader
+        self.menuReader = menuReader
     }
 
     private static let accessibilityActionDelivery = DesktopActionOutcome.Delivery(
@@ -243,7 +247,7 @@ struct ActionInputDriver: ActionInputDriving {
             throw ActionInputError.unsupported(.missingElement)
         }
 
-        guard let menuItem = self.findMenuItem(matching: chord, in: menuBar) else {
+        guard let menuItem = try self.findMenuItem(matching: chord, in: menuBar) else {
             throw ActionInputError.unsupported(.menuShortcutUnavailable)
         }
 
@@ -1129,21 +1133,21 @@ extension ActionInputDriver {
 
     private func findMenuItem(
         matching chord: MenuHotkeyChord,
-        in menuBar: any AutomationElementRepresenting) -> (any AutomationElementRepresenting)?
+        in menuBar: any AutomationElementRepresenting) throws -> (any AutomationElementRepresenting)?
     {
         var remainingBudget = 600
 
-        for menuBarItem in menuBar.automationChildren {
+        for menuBarItem in try self.menuReader.children(of: menuBar) {
             guard remainingBudget > 0 else { return nil }
             remainingBudget -= 1
 
-            guard let menu = menuBarItem.automationChildren.first(where: { $0.role == AXRoleNames.kAXMenuRole }) else {
+            guard let menu = try self.submenu(of: menuBarItem) else {
                 continue
             }
 
-            if let match = self.findMenuItem(
+            if let match = try self.findMenuItem(
                 matching: chord,
-                inMenuChildren: menu.automationChildren,
+                inMenuChildren: self.menuReader.children(of: menu),
                 budget: &remainingBudget)
             {
                 return match
@@ -1156,20 +1160,20 @@ extension ActionInputDriver {
     private func findMenuItem(
         matching chord: MenuHotkeyChord,
         inMenuChildren children: [any AutomationElementRepresenting],
-        budget: inout Int) -> (any AutomationElementRepresenting)?
+        budget: inout Int) throws -> (any AutomationElementRepresenting)?
     {
         for child in children {
             guard budget > 0 else { return nil }
             budget -= 1
 
-            if self.menuItem(child, matches: chord) {
+            if try self.menuItem(child, matches: chord) {
                 return child
             }
 
-            if let submenu = child.automationChildren.first(where: { $0.role == AXRoleNames.kAXMenuRole }),
-               let match = self.findMenuItem(
+            if let submenu = try self.submenu(of: child),
+               let match = try self.findMenuItem(
                    matching: chord,
-                   inMenuChildren: submenu.automationChildren,
+                   inMenuChildren: self.menuReader.children(of: submenu),
                    budget: &budget)
             {
                 return match
@@ -1179,19 +1183,22 @@ extension ActionInputDriver {
         return nil
     }
 
-    private func menuItem(_ element: any AutomationElementRepresenting, matches chord: MenuHotkeyChord) -> Bool {
-        guard element.role == AXRoleNames.kAXMenuItemRole else { return false }
-        guard element.isEnabled else { return false }
+    private func submenu(of element: any AutomationElementRepresenting) throws -> (any AutomationElementRepresenting)? {
+        try self.menuReader.children(of: element).first { try self.menuReader.role(of: $0) == AXRoleNames.kAXMenuRole }
+    }
 
-        guard let commandCharacter = element.stringAttribute("AXMenuItemCmdChar"),
-              !commandCharacter.isEmpty
+    private func menuItem(_ element: any AutomationElementRepresenting, matches chord: MenuHotkeyChord) throws -> Bool {
+        guard try self.menuReader.role(of: element) == AXRoleNames.kAXMenuItemRole else { return false }
+        guard let commandCharacter = try self.menuReader.commandCharacter(of: element),
+              !commandCharacter.isEmpty,
+              MenuHotkeyChord.normalizedCommandCharacter(commandCharacter) == chord.key
         else {
             return false
         }
 
-        let modifiers = element.intAttribute("AXMenuItemCmdModifiers") ?? 0
-        return MenuHotkeyChord.normalizedCommandCharacter(commandCharacter) == chord.key &&
-            MenuHotkeyChord.modifiers(fromMenuItemModifiers: modifiers) == chord.modifiers
+        guard try self.menuReader.isEnabled(element) else { return false }
+        let modifiers = try self.menuReader.modifiers(of: element)
+        return MenuHotkeyChord.modifiers(fromMenuItemModifiers: modifiers) == chord.modifiers
     }
 }
 
@@ -1340,7 +1347,8 @@ extension ActionInputDriver {
 
     func trySetValueForTesting(
         element: any AutomationElementRepresenting,
-        value: UIElementValue, beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult
+        value: UIElementValue,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult
         .Action
     {
         try await self.setValue(value, on: element, beforeMutation: beforeMutation)
@@ -1366,7 +1374,7 @@ extension ActionInputDriver {
         menuBar: any AutomationElementRepresenting) throws -> UIInputExecutionResult.Action
     {
         let chord = try MenuHotkeyChord(keys: keys)
-        guard let menuItem = self.findMenuItem(matching: chord, in: menuBar) else {
+        guard let menuItem = try self.findMenuItem(matching: chord, in: menuBar) else {
             throw ActionInputError.unsupported(.menuShortcutUnavailable)
         }
         return try self.performAction(AXActionNames.kAXPressAction, on: menuItem)

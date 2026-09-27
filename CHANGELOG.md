@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Stop guessing unreadable menu-shortcut modifiers or enabled state in action-first keyboard input; preserve native read failures and shortcut order while reducing menu traversal to direct Accessibility child reads.
 - Preserve newer user or application clipboard updates during CLI and MCP paste cleanup, including cancellation and partial-write failures; require silent clipboard-read access and complete prior contents before replacement, restore only while the temporary generation is owned, and retain earlier clipboard effects when input is refused.
 - Preserve native scalar tool arguments in Agent provider schemas and preflight validation so `set_value` accepts Boolean and numeric values without string coercion; retain existing structured-schema compatibility and native safety checks.
 - Keep CLI builds on Swift Collections 1.6.0 and reject unsupported strong borrowing-runtime imports in release artifacts, preventing the 4.6.0 startup failure on supported Macs without the macOS 27 runtime. Thanks @changexbc and @jandubois! #831.
