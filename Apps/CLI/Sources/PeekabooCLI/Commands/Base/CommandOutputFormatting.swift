@@ -10,7 +10,7 @@ protocol OutputFormattable {
 
 extension OutputFormattable {
     func output(
-        _ data: some Codable,
+        _ data: some Encodable,
         effect: ActionEffect? = nil,
         outcome: DesktopActionOutcome? = nil,
         targetIdentity: DesktopTargetIdentity? = nil,

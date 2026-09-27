@@ -347,7 +347,7 @@ nonisolated enum ErrorCode: String, Codable, Sendable {
 }
 
 func outputSuccessCodable(
-    data: some Codable,
+    data: some Encodable,
     messages: [String]? = nil,
     effect: ActionEffect? = nil,
     outcome: DesktopActionOutcome? = nil,

@@ -56,7 +56,7 @@ struct ClipboardCommandTests {
                 #expect(clipboard.readPromptOptions.isEmpty)
             } else {
                 #expect(!allowPrompt || !clipboard.readPromptOptions.isEmpty)
-                #expect(clipboard.readPromptOptions.allSatisfy(\.self))
+                #expect(!clipboard.readPromptOptions.contains(false))
                 #expect(allowPrompt || clipboard.readPromptOptions.isEmpty)
             }
         }

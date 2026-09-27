@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 import UniformTypeIdentifiers
 
 @available(macOS 14.0, *)
