@@ -718,19 +718,8 @@ enum BackgroundInputDriver {
             element,
             kAXSelectedTextRangeAttribute as CFString,
             &value)
-        guard error == .success,
-              let value,
-              CFGetTypeID(value) == AXValueGetTypeID()
-        else {
-            return nil
-        }
-
-        var range = CFRange(location: 0, length: 0)
-        let axValue = unsafeDowncast(value, to: AXValue.self)
-        guard AXValueGetValue(axValue, .cfRange, &range) else {
-            return nil
-        }
-        return range
+        guard error == .success else { return nil }
+        return TextSelectionRange(nativeValue: value)?.nativeRange
     }
 
     @discardableResult
@@ -957,9 +946,10 @@ extension BackgroundInputDriver {
             },
             matches: { sample in
                 if let sample {
-                    return sample.selectedTextRange == AXMutationTextRange(
-                        location: range.location,
-                        length: range.length)
+                    guard let expected = TextSelectionRange(location: range.location, length: range.length) else {
+                        return false
+                    }
+                    return sample.selectedTextRange == expected
                 }
                 return matches()
             })
@@ -1036,18 +1026,17 @@ extension BackgroundInputDriver {
             self.textValue = readTextValue
             self.selectedRange = selectedRange
             self.focusSnapshot = focusSnapshot
-            let beforeMutation = {
-                (receiver: Receiver, expectedState: FocusedTextEditState, noChangeSelection: CFRange?) throws -> Bool in
+            let beforeMutation = { (receiver: Receiver, expected: FocusedTextEditState, selection: CFRange?) in
                 try Task.checkCancellation()
                 try validateReceiver(receiver)
                 let currentState = try FocusedTextEditState(
                     text: readTextValue(receiver),
                     selection: selectedRange(receiver))
                 try Task.checkCancellation()
-                let alreadySelected = noChangeSelection.map {
-                    currentState == FocusedTextEditState(text: expectedState.text, selection: $0)
+                let alreadySelected = selection.map {
+                    currentState == FocusedTextEditState(text: expected.text, selection: $0)
                 } ?? false
-                guard currentState == expectedState || alreadySelected else {
+                guard currentState == expected || alreadySelected else {
                     throw DesktopActionFailure.preDispatchRefusal(
                         reason: .targetUnavailable,
                         message: "The focused text or selection changed before mutation; observe it again.")

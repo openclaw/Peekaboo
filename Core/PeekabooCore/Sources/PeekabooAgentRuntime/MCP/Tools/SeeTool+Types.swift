@@ -142,12 +142,14 @@ struct SeeSummaryBuilder {
     let screenshotPath: String
     let truncationInfo: DetectionTruncationInfo?
     let traversalBudget: AXTraversalBudget?
+    let selectionSummaries: [String]
 
     func build() async -> String {
         var lines = self.headerLines()
         await lines.append(contentsOf: self.metadataLines())
         lines.append("Screenshot: \(self.screenshotPath)")
         lines.append("Elements found: \(self.elements.count)")
+        lines.append(contentsOf: self.selectionSummaries)
         lines.append(contentsOf: self.truncationWarningLines())
         lines.append("")
         lines.append(contentsOf: self.elementSection())

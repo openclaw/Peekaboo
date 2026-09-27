@@ -431,7 +431,7 @@ struct AsyncAXTypingTests {
             #expect(failure?.delivery?.mechanism == .accessibilityValue)
             #expect(fixture.textWrites == [""])
             #expect(fixture.selectionWrites.map(\.location) == (suspension == .selectionSettlement ? [0] : []))
-            #expect(fixture.element.stringValue == "")
+            #expect(fixture.element.stringValue?.isEmpty == true)
         }
         #expect(fixture.events.isEmpty)
         #expect(fixture.observedSuspension)
@@ -612,7 +612,7 @@ struct AsyncAXTypingTests {
                             identifier: "editor",
                             frame: self.currentFrame),
                         value: .string(self.element.stringValue ?? ""),
-                        selectedTextRange: AXMutationTextRange(
+                        selectedTextRange: TextSelectionRange(
                             location: self.selection.location,
                             length: self.selection.length))
                 }

@@ -24,6 +24,7 @@ public struct UIElementSummary: Codable, Equatable, Sendable {
     public let is_selected: Bool?
     public let is_value_settable: Bool?
     public let keyboard_shortcut: String?
+    public let selected_text_range: TextSelectionRange?
 
     public init(
         id: String,
@@ -42,7 +43,8 @@ public struct UIElementSummary: Codable, Equatable, Sendable {
         is_enabled: Bool?,
         is_selected: Bool?,
         is_value_settable: Bool?,
-        keyboard_shortcut: String?)
+        keyboard_shortcut: String?,
+        selected_text_range: TextSelectionRange? = nil)
     {
         self.id = id
         self.role = role
@@ -61,6 +63,7 @@ public struct UIElementSummary: Codable, Equatable, Sendable {
         self.is_selected = is_selected
         self.is_value_settable = is_value_settable
         self.keyboard_shortcut = keyboard_shortcut
+        self.selected_text_range = selected_text_range
     }
 
     /// Projects a detected element into its table row.
@@ -85,7 +88,8 @@ public struct UIElementSummary: Codable, Equatable, Sendable {
             is_enabled: element.knownIsEnabled,
             is_selected: element.isSelected,
             is_value_settable: mutationTargetingAvailable ? element.isValueSettable : nil,
-            keyboard_shortcut: element.attributes["keyboardShortcut"])
+            keyboard_shortcut: element.attributes["keyboardShortcut"],
+            selected_text_range: mutationTargetingAvailable ? element.selectedTextRange : nil)
     }
 }
 
@@ -100,5 +104,15 @@ public struct UIElementBounds: Codable, Equatable, Sendable {
         self.y = rect.origin.y
         self.width = rect.size.width
         self.height = rect.size.height
+    }
+}
+
+enum ObservedTextSelectionSummary {
+    static func lines(for elements: [DetectedElement]) -> [String] {
+        elements.compactMap { element in
+            element.selectedTextRange.map {
+                "Text selection \(element.id): UTF-16 location \($0.location), length \($0.length)"
+            }
+        }
     }
 }

@@ -10,6 +10,68 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeTypedResultReceiptBindingTests {
     @Test
+    func `selection attributes preserve old element coding and remain signed response data`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let element = DetectedElement(
+            id: "field",
+            type: .textField,
+            value: "A😀B",
+            bounds: CGRect(x: 10, y: 20, width: 80, height: 30),
+            attributes: [
+                "role": "AXTextField",
+                "isFocused": "true",
+                "selectedTextRangeLocation": "1",
+                "selectedTextRangeLength": "2",
+            ])
+        let bytes = try PeekabooBridgeOperationReceiptCoding.canonicalData(element)
+        let legacy = try JSONDecoder.peekabooBridgeDecoder().decode(LegacyDetectedElement.self, from: bytes)
+        #expect(try PeekabooBridgeOperationReceiptCoding.canonicalData(legacy) == bytes)
+        let context = Self.resolvedTreeContext(fixture: fixture)
+        let request = PeekabooBridgeRequest.getDetectionResult(.init(snapshotId: "snapshot"))
+        let response = PeekabooBridgeResponse.detection(Self.detection(
+            snapshotID: "snapshot",
+            context: context,
+            elements: .init(textFields: [element])))
+        let bundle = try await Self.signedBundle(
+            fixture: fixture,
+            sequence: 0,
+            request: request,
+            response: response,
+            target: .global)
+        try bundle.validateIntegrity()
+        let altered = DetectedElement(
+            id: element.id,
+            type: element.type,
+            value: element.value,
+            bounds: element.bounds,
+            attributes: element.attributes.merging(["selectedTextRangeLocation": "2"]) { _, new in new })
+        let forged = try OperationReceiptSessionFixture.bundle(
+            authority: fixture.authority,
+            sessionAttestation: fixture.session.attestation,
+            receipt: bundle.receipt,
+            request: request,
+            response: .detection(Self.detection(
+                snapshotID: "snapshot",
+                context: context,
+                elements: .init(textFields: [altered]))))
+        #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch("the exported verification bundle")) {
+            try forged.validateIntegrity()
+        }
+    }
+
+    private struct LegacyDetectedElement: Codable {
+        let id: String
+        let type: ElementType
+        let label: String?
+        let value: String?
+        let bounds: CGRect
+        let isEnabled: Bool
+        let isSelected: Bool?
+        let attributes: [String: String]
+    }
+
+    @Test
     func `signed keyed read responses are bound live and offline`() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -1044,6 +1106,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
     private static func detection(
         snapshotID: String,
         context: WindowContext?,
+        elements: DetectedElements = .init(),
         warnings: [String] = [],
         truncationInfo: DetectionTruncationInfo? = nil,
         fallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin? = nil) -> ElementDetectionResult
@@ -1051,10 +1114,10 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         ElementDetectionResult(
             snapshotId: snapshotID,
             screenshotPath: "/tmp/\(snapshotID).png",
-            elements: .init(),
+            elements: elements,
             metadata: .init(
                 detectionTime: 0,
-                elementCount: 0,
+                elementCount: elements.all.count,
                 method: "fixture",
                 warnings: warnings,
                 windowContext: context,

@@ -159,6 +159,7 @@ When `--json` is supplied, the CLI prints:
 - `semantic_scope`, `snapshot_reusable`, and `mutation_targeting_available` – authority for the returned semantics. `application_partial` always carries `snapshot_id: null`, an empty `ui_map`, both authority booleans `false`, `interactable_count: 0`, and no actionable/value-settable element claims; its elements are read-only context from the exact window's attested process, not evidence for the requested exact window.
 - `ui_map` – path to an existing, producer-owned snapshot file when the selected snapshot manager exposes one locally; otherwise an empty string. In-memory and Bridge-hosted snapshots normally have no caller-local file. An empty map path does not invalidate `snapshot_id`, inline `ui_elements`, or the reported mutation authority; use the snapshot reference for follow-up commands.
 - `ui_elements` – flattened AX nodes with honest `is_actionable` and optional `is_value_settable` capability metadata.
+- `ui_elements[].selected_text_range` – optional `{location, length}` for the uniquely proven focused text field, in UTF-16 code units. A zero length is a caret; a missing range means unknown, not an empty selection. This is text selection, not `AXSelected`/`is_selected` or `verify --selected`.
 - `focused_element` – optional existing observed focus identity (`processIdentifier`, `windowID`, `role`, optional `title`/`identifier`, and `frame`). Its frame uses global logical coordinates even for ROI captures; `identifier` is an AX identifier, not a snapshot-local element ID. Missing focus means unknown, including absent, ambiguous, cached, or application-partial observations—not that no element is focused. This readback does not grant input authority or guarantee that focus remains unchanged; typing still requires its normal snapshot and live receiver checks.
 - `coordinate_context` – capture-owned raster mapping. ROI results include the full-window and cropped viewport rectangles described above.
 - `interactable_count`, `element_count`, `capture_mode`, and performance metadata for debugging.
@@ -178,7 +179,18 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 # Inspect already-proven focus without opening the snapshot file:
 peekaboo see --window-id 12345 --tree --no-screenshot --json \
   | jq '.data.focused_element // null'
+
+# Inspect a freshly observed text selection (UTF-16 offsets, not character counts):
+peekaboo see --window-id 12345 --tree --no-screenshot --json \
+  | jq '.data.ui_elements[] | select(.selected_text_range != null) | {id, selected_text_range}'
 ```
+
+Selection readback is optional and read-only. It reads no selected-text content and never activates or focuses the
+field. The same native receiver must retain its identity, focus, and nonsecure metadata across the range read.
+Cached, application-partial, truncated, ambiguous, secure, or unreadable evidence omits the range. Its shared probe
+budget is at most 50 ms and one quarter of the observation's remaining time; it never extends that deadline. A
+missing range can therefore also mean the app could not answer in time. Older hosts can omit it. Selection is
+presentation evidence, not permission to reuse an old snapshot or skip live input validation.
 
 ## Troubleshooting tips
 

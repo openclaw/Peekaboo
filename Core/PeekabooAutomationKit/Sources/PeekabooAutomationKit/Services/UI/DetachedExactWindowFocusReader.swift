@@ -17,6 +17,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
     let frame: CGRect
     let role: String?
     let subrole: String?
+    let subroleIsReadable: Bool
     let title: String?
     let identifier: String?
     let value: String?
@@ -28,6 +29,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
         frame: CGRect,
         role: String? = nil,
         subrole: String? = nil,
+        subroleIsReadable: Bool = true,
         title: String? = nil,
         identifier: String? = nil,
         value: String? = nil,
@@ -38,6 +40,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
         self.frame = frame
         self.role = role
         self.subrole = subrole
+        self.subroleIsReadable = subroleIsReadable
         self.title = title
         self.identifier = identifier
         self.value = value
@@ -73,8 +76,15 @@ enum DetachedExactWindowFocusReader {
         return self.read(element: focusedElement, processIdentifier: processIdentifier)
     }
 
-    static func read(element focusedElement: AXUIElement, processIdentifier: pid_t) -> ExactWindowFocusSnapshot? {
-        AXUIElementSetMessagingTimeout(focusedElement, self.messagingTimeout)
+    static func read(
+        element focusedElement: AXUIElement,
+        processIdentifier: pid_t,
+        deadline: ContinuousClock.Instant? = nil) -> ExactWindowFocusSnapshot?
+    {
+        guard deadline.map({ ContinuousClock.now < $0 }) ?? true else { return nil }
+        if deadline == nil {
+            AXUIElementSetMessagingTimeout(focusedElement, self.messagingTimeout)
+        }
         defer { AXUIElementSetMessagingTimeout(focusedElement, 0) }
         var focusedProcessIdentifier: pid_t = 0
         guard AXUIElementGetPid(focusedElement, &focusedProcessIdentifier) == .success,
@@ -83,21 +93,39 @@ enum DetachedExactWindowFocusReader {
             return nil
         }
 
-        let frame = self.frame(of: focusedElement) ?? .zero
-        let window = self.elementAttribute(kAXWindowAttribute, of: focusedElement)
-        if let window {
-            AXUIElementSetMessagingTimeout(window, self.messagingTimeout)
+        let frame = self.frame(of: focusedElement, deadline: deadline) ?? .zero
+        let window = self.elementAttribute(kAXWindowAttribute, of: focusedElement, deadline: deadline)
+        let windowID = window.flatMap { window in
+            if deadline == nil {
+                AXUIElementSetMessagingTimeout(window, self.messagingTimeout)
+            }
+            defer {
+                if deadline != nil {
+                    AXUIElementSetMessagingTimeout(window, 0)
+                }
+            }
+            return self.readBeforeDeadline(
+                deadline,
+                applyTimeout: { AXUIElementSetMessagingTimeout(window, $0) == .success },
+                read: { AXWindowIDResolver.windowID(of: window).map(Int.init) })
         }
-        let role = self.stringAttribute(kAXRoleAttribute as String, of: focusedElement)
-        let subrole = self.stringAttribute(kAXSubroleAttribute as String, of: focusedElement)
+        let role = self.stringAttribute(kAXRoleAttribute as String, of: focusedElement, deadline: deadline)
+        let subrole = self.subroleObservation(self.attributeRead(
+            kAXSubroleAttribute,
+            of: focusedElement,
+            deadline: deadline))
+        let title = self.stringAttribute(kAXTitleAttribute as String, of: focusedElement, deadline: deadline)
+        let identifier = self.stringAttribute(kAXIdentifierAttribute as String, of: focusedElement, deadline: deadline)
+        guard deadline.map({ ContinuousClock.now < $0 }) ?? true else { return nil }
         return ExactWindowFocusSnapshot(
             processIdentifier: focusedProcessIdentifier,
-            windowID: window.flatMap(AXWindowIDResolver.windowID(of:)).map(Int.init),
+            windowID: windowID,
             frame: frame,
             role: role,
-            subrole: subrole,
-            title: self.stringAttribute(kAXTitleAttribute as String, of: focusedElement),
-            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: focusedElement),
+            subrole: subrole.value,
+            subroleIsReadable: subrole.isReadable,
+            title: title,
+            identifier: identifier,
             nativeElement: RetainedFocusElement(element: focusedElement))
     }
 
@@ -130,9 +158,10 @@ enum DetachedExactWindowFocusReader {
         guard let receiver = initialSnapshot.nativeElement else { return .failure(.focusNotConfirmed) }
         let element = receiver.element
         return self.readValue(
-            expected: expected,
-            initialSnapshot: initialSnapshot,
-            phase: retainedElement == nil ? .initial : .continuation,
+            observation: (
+                expected: expected,
+                initialSnapshot: initialSnapshot,
+                phase: retainedElement == nil ? .initial : .continuation),
             readSnapshot: { self.read(element: element, processIdentifier: expected.processIdentifier) },
             readFocusedState: {
                 AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
@@ -147,18 +176,20 @@ enum DetachedExactWindowFocusReader {
     }
 
     static func readValue(
-        expected: FocusedElementIdentity,
-        initialSnapshot: ExactWindowFocusSnapshot,
-        phase: KeyboardFocusValidationPhase,
+        observation: (
+            expected: FocusedElementIdentity,
+            initialSnapshot: ExactWindowFocusSnapshot,
+            phase: KeyboardFocusValidationPhase),
         readSnapshot: () -> ExactWindowFocusSnapshot?,
         readFocusedState: () -> Bool?,
         readValue: () -> String?) -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     {
+        let (expected, initialSnapshot, phase) = observation
         do {
             try self.validateValueSnapshot(initialSnapshot, expected: expected, phase: phase)
             guard let focused = readFocusedState() else { return .failure(.focusedAttributeUnreadable) }
             guard focused else { return .failure(.focusNotConfirmed) }
-            let value = self.allowsValueRead(role: initialSnapshot.role, subrole: initialSnapshot.subrole)
+            let value = self.allowsValueRead(initialSnapshot)
                 ? readValue() : nil
             // AXValue is a separate RPC; never attach its result to pre-read receiver authority.
             guard let current = readSnapshot() else { return .failure(.processMismatch) }
@@ -172,9 +203,10 @@ enum DetachedExactWindowFocusReader {
                 frame: current.frame,
                 role: current.role,
                 subrole: current.subrole,
+                subroleIsReadable: current.subroleIsReadable,
                 title: current.title,
                 identifier: current.identifier,
-                value: self.allowsValueRead(role: current.role, subrole: current.subrole) ? value : nil,
+                value: self.allowsValueRead(current) ? value : nil,
                 nativeElement: current.nativeElement))
         } catch let error as FocusedElementReceiptError {
             return .failure(error)
@@ -293,13 +325,14 @@ enum DetachedExactWindowFocusReader {
             return .failure(.missingElementFrame)
         }
 
-        let subrole = self.stringAttribute(kAXSubroleAttribute as String, of: element)
+        let subrole = self.subroleObservation(self.attributeRead(kAXSubroleAttribute, of: element))
         return .success(ExactWindowFocusSnapshot(
             processIdentifier: expected.processIdentifier,
             windowID: expected.windowID,
             frame: frame,
             role: expected.role,
-            subrole: subrole,
+            subrole: subrole.value,
+            subroleIsReadable: subrole.isReadable,
             title: self.stringAttribute(kAXTitleAttribute as String, of: element),
             identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
             nativeElement: RetainedFocusElement(element: element)))
@@ -370,10 +403,12 @@ enum DetachedExactWindowFocusReader {
             hasAttachedSheet: !self.elementArrayAttribute("AXSheets", of: focusedWindow).isEmpty)
     }
 
-    private static func elementAttribute(_ name: String, of element: AXUIElement) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,
-              let value,
+    private static func elementAttribute(
+        _ name: String,
+        of element: AXUIElement,
+        deadline: ContinuousClock.Instant? = nil) -> AXUIElement?
+    {
+        guard let value = self.attribute(name, of: element, deadline: deadline),
               CFGetTypeID(value) == AXUIElementGetTypeID()
         else {
             return nil
@@ -391,10 +426,73 @@ enum DetachedExactWindowFocusReader {
         return elements
     }
 
-    private static func stringAttribute(_ name: String, of element: AXUIElement) -> String? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value as? String
+    private static func stringAttribute(
+        _ name: String,
+        of element: AXUIElement,
+        deadline: ContinuousClock.Instant? = nil) -> String?
+    {
+        self.attribute(name, of: element, deadline: deadline) as? String
+    }
+
+    static func attribute(
+        _ name: String,
+        of element: AXUIElement,
+        deadline: ContinuousClock.Instant? = nil) -> CFTypeRef?
+    {
+        guard let read = self.attributeRead(name, of: element, deadline: deadline), read.error == .success,
+              let value = read.value else { return nil }
+        return value as CFTypeRef
+    }
+
+    private static func attributeRead(
+        _ name: String,
+        of element: AXUIElement,
+        deadline: ContinuousClock.Instant? = nil) -> AXDescriptorReader.SingleAttributeRead?
+    {
+        defer {
+            if deadline != nil {
+                AXUIElementSetMessagingTimeout(element, 0)
+            }
+        }
+        return self.readBeforeDeadline(
+            deadline,
+            applyTimeout: { AXUIElementSetMessagingTimeout(element, $0) == .success },
+            read: {
+                var value: CFTypeRef?
+                let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+                return AXDescriptorReader.SingleAttributeRead(error: error, value: value)
+            })
+    }
+
+    static func subroleObservation(_ read: AXDescriptorReader
+        .SingleAttributeRead?) -> (value: String?, isReadable: Bool)
+    {
+        guard let read else { return (nil, false) }
+        switch read.error {
+        case .noValue, .attributeUnsupported:
+            return (nil, true)
+        case .success:
+            guard let value = read.value as? String else { return (nil, false) }
+            return (value, true)
+        default:
+            return (nil, false)
+        }
+    }
+
+    static func readBeforeDeadline<Value>(
+        _ deadline: ContinuousClock.Instant?,
+        now: () -> ContinuousClock.Instant = { .now },
+        applyTimeout: (Float) -> Bool,
+        read: () -> Value?) -> Value?
+    {
+        guard let deadline else { return read() }
+        let remaining = now().duration(to: deadline).components
+        let seconds = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
+        guard seconds > 0,
+              applyTimeout(min(self.messagingTimeout, Float(seconds))), now() < deadline
+        else { return nil }
+        let value = read()
+        return now() < deadline ? value : nil
     }
 
     private static func boolAttribute(_ name: String, of element: AXUIElement) -> Bool? {
@@ -411,19 +509,13 @@ enum DetachedExactWindowFocusReader {
         role != "AXSecureTextField" && subrole != "AXSecureTextField"
     }
 
-    private static func frame(of element: AXUIElement) -> CGRect? {
-        var positionValue: CFTypeRef?
-        var sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            kAXPositionAttribute as CFString,
-            &positionValue) == .success,
-            AXUIElementCopyAttributeValue(
-                element,
-                kAXSizeAttribute as CFString,
-                &sizeValue) == .success,
-            let position = self.pointValue(positionValue),
-            let size = self.sizeValue(sizeValue)
+    static func allowsValueRead(_ snapshot: ExactWindowFocusSnapshot) -> Bool {
+        snapshot.subroleIsReadable && self.allowsValueRead(role: snapshot.role, subrole: snapshot.subrole)
+    }
+
+    private static func frame(of element: AXUIElement, deadline: ContinuousClock.Instant? = nil) -> CGRect? {
+        guard let position = self.pointValue(self.attribute(kAXPositionAttribute, of: element, deadline: deadline)),
+              let size = self.sizeValue(self.attribute(kAXSizeAttribute, of: element, deadline: deadline))
         else {
             return nil
         }

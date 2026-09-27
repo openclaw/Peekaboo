@@ -45,6 +45,7 @@ struct InspectUISummaryBuilder {
         var lines = self.headerLines()
         await lines.append(contentsOf: self.metadataLines())
         lines.append("Elements found: \(self.result.elements.all.count)")
+        lines.append(contentsOf: ObservedTextSelectionSummary.lines(for: self.result.elements.all))
         if self.result.metadata.method.contains("cached") {
             lines.append("(Result from cached accessibility tree)")
         }

@@ -10,11 +10,6 @@ enum AXMutationObservationAttribute: Sendable {
     case selectedTextRange
 }
 
-struct AXMutationTextRange: Equatable, Sendable {
-    let location: Int
-    let length: Int
-}
-
 struct AXMutationObservationTarget: Sendable {
     let processIdentifier: pid_t
     let processStartIdentity: UInt64
@@ -37,7 +32,7 @@ struct AXMutationObservationSnapshot: Sendable {
     let value: ElementValueReadback?
     let legacyPresentation: String?
     let selected: Bool?
-    let selectedTextRange: AXMutationTextRange?
+    let selectedTextRange: TextSelectionRange?
 
     init(
         identity: FocusedElementIdentity,
@@ -45,7 +40,7 @@ struct AXMutationObservationSnapshot: Sendable {
         value: ElementValueReadback? = nil,
         legacyPresentation: String? = nil,
         selected: Bool? = nil,
-        selectedTextRange: AXMutationTextRange? = nil)
+        selectedTextRange: TextSelectionRange? = nil)
     {
         self.identity = identity
         self.focused = focused
@@ -70,72 +65,122 @@ enum DetachedAXMutationReader {
         timeout: Duration) async throws -> AXMutationObservationSnapshot?
     {
         guard timeout > .zero else { return nil }
-        let processIdentifier = target.processIdentifier
-        let processStartIdentity = target.processStartIdentity
-        let expectedIdentity = target.expectedIdentity
+        let deadline = ContinuousClock.now.advanced(by: timeout)
         let components = timeout.components
         let seconds = TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
-        // The existing lane retains occupied capacity after a timeout until the native RPC returns.
-        // It bounds caller latency without joining blocked AX work or accumulating new readers.
+        // Admission retains the occupied lane until a noncooperative native read actually returns.
         return try await ElementDetectionTimeoutRunner.runDetached(
-            targetProcessIdentifier: processIdentifier,
-            targetProcessStartIdentity: processStartIdentity,
+            targetProcessIdentifier: target.processIdentifier,
+            targetProcessStartIdentity: target.processStartIdentity,
             seconds: seconds,
             maximumPendingOperationCount: 1)
-        { () -> AXMutationObservationSnapshot? in
-            guard SystemIdentityResolver.processStartIdentity(processIdentifier) == processStartIdentity,
-                  let before = DetachedExactWindowFocusReader.read(
-                      element: element.element, processIdentifier: processIdentifier),
-                  let beforeIdentity = self.identity(before),
-                  expectedIdentity.map({
-                      FocusedElementReceiptResolver.matches(beforeIdentity, expected: $0, phase: .continuation)
-                  }) ?? true
-            else { return nil }
+        {
+            self.readSynchronously(element: element, target: target, attribute: attribute, deadline: deadline)
+        }
+    }
 
-            AXUIElementSetMessagingTimeout(element.element, 0.05)
-            defer { AXUIElementSetMessagingTimeout(element.element, 0) }
-            var focused: Bool?
-            var value: ElementValueReadback?
-            var legacyPresentation: String?
-            var selected: Bool?
-            var selectedTextRange: AXMutationTextRange?
-            switch attribute {
-            case .identity:
-                break
-            case .focused:
-                focused = self.boolAttribute(kAXFocusedAttribute, element: element.element)
-            case .selected:
-                selected = self.boolAttribute(kAXSelectedAttribute, element: element.element)
-            case .value:
-                if !self.isSecure(before) {
-                    let nativeValue = self.attribute(kAXValueAttribute, element: element.element)
-                    if let readback = ElementValueReadback(nativeValue: nativeValue), readback.isFinite {
-                        value = readback
-                        legacyPresentation = NativeElementValuePresentation.describe(nativeValue)
-                    }
-                }
-            case .selectedTextRange:
-                if !self.isSecure(before) {
-                    selectedTextRange = self.textRange(element.element)
+    /// The caller must already own the process AX lane; never nest the async reader inside it.
+    static func readSynchronously(
+        element: RetainedFocusElement,
+        target: AXMutationObservationTarget,
+        attribute: AXMutationObservationAttribute,
+        deadline: ContinuousClock.Instant,
+        requiresFocusedReceiver: Bool = false) -> AXMutationObservationSnapshot?
+    {
+        self.readSynchronously(
+            request: (target: target, attribute: attribute, deadline: deadline),
+            requiresFocusedReceiver: requiresFocusedReceiver,
+            processStartIdentity: { SystemIdentityResolver.processStartIdentity(target.processIdentifier) },
+            readSnapshot: {
+                DetachedExactWindowFocusReader.read(
+                    element: element.element,
+                    processIdentifier: target.processIdentifier,
+                    deadline: $0)
+            },
+            readAttribute: { name, deadline in
+                DetachedExactWindowFocusReader.attribute(name, of: element.element, deadline: deadline)
+            })
+    }
+
+    static func readSynchronously(
+        request: (
+            target: AXMutationObservationTarget,
+            attribute: AXMutationObservationAttribute,
+            deadline: ContinuousClock.Instant),
+        requiresFocusedReceiver: Bool = false,
+        now: () -> ContinuousClock.Instant = { .now },
+        processStartIdentity: () -> UInt64?,
+        readSnapshot: (ContinuousClock.Instant) -> ExactWindowFocusSnapshot?,
+        readAttribute: (String, ContinuousClock.Instant) -> CFTypeRef?) -> AXMutationObservationSnapshot?
+    {
+        let (target, attribute, deadline) = request
+        guard now() < deadline, processStartIdentity() == target.processStartIdentity, now() < deadline,
+              let before = readSnapshot(deadline), now() < deadline,
+              let beforeIdentity = self.identity(before),
+              target.expectedIdentity.map({
+                  FocusedElementReceiptResolver.matches(beforeIdentity, expected: $0, phase: .continuation)
+              }) ?? true
+        else { return nil }
+        if requiresFocusedReceiver {
+            guard DetachedExactWindowFocusReader.allowsValueRead(before), before.nativeElement != nil, now() < deadline,
+                  self.boolean(readAttribute(kAXFocusedAttribute, deadline)) == true, now() < deadline
+            else { return nil }
+        }
+
+        var focused: Bool?
+        var value: ElementValueReadback?
+        var legacyPresentation: String?
+        var selected: Bool?
+        var selectedTextRange: TextSelectionRange?
+        switch attribute {
+        case .identity:
+            break
+        case .focused:
+            focused = self.boolean(readAttribute(kAXFocusedAttribute, deadline))
+        case .selected:
+            selected = self.boolean(readAttribute(kAXSelectedAttribute, deadline))
+        case .value:
+            if DetachedExactWindowFocusReader.allowsValueRead(before) {
+                let nativeValue = readAttribute(kAXValueAttribute, deadline)
+                if let readback = ElementValueReadback(nativeValue: nativeValue), readback.isFinite {
+                    value = readback
+                    legacyPresentation = NativeElementValuePresentation.describe(nativeValue)
                 }
             }
-
-            guard let after = DetachedExactWindowFocusReader.read(
-                element: element.element, processIdentifier: processIdentifier),
-                let afterIdentity = self.identity(after),
-                FocusedElementReceiptResolver.matches(
-                    afterIdentity, expected: expectedIdentity ?? beforeIdentity, phase: .continuation),
-                SystemIdentityResolver.processStartIdentity(processIdentifier) == processStartIdentity
-            else { return nil }
-            let secure = self.isSecure(after)
-            return AXMutationObservationSnapshot(
-                identity: afterIdentity,
-                focused: focused,
-                value: secure ? nil : value,
-                legacyPresentation: secure ? nil : legacyPresentation,
-                selected: selected,
-                selectedTextRange: secure ? nil : selectedTextRange)
+        case .selectedTextRange:
+            if DetachedExactWindowFocusReader.allowsValueRead(before) {
+                selectedTextRange = TextSelectionRange(nativeValue: readAttribute(
+                    kAXSelectedTextRangeAttribute,
+                    deadline))
+            }
         }
+
+        if requiresFocusedReceiver, attribute == .selectedTextRange, selectedTextRange == nil {
+            return nil
+        }
+
+        guard now() < deadline, let after = readSnapshot(deadline), now() < deadline,
+              let afterIdentity = self.identity(after),
+              FocusedElementReceiptResolver.matches(
+                  afterIdentity,
+                  expected: target.expectedIdentity ?? beforeIdentity,
+                  phase: .continuation)
+        else { return nil }
+        if requiresFocusedReceiver {
+            guard after.nativeElement == before.nativeElement,
+                  self.boolean(readAttribute(kAXFocusedAttribute, deadline)) == true, now() < deadline
+            else { return nil }
+            focused = true
+        }
+        guard processStartIdentity() == target.processStartIdentity, now() < deadline else { return nil }
+        let readable = DetachedExactWindowFocusReader.allowsValueRead(after)
+        return AXMutationObservationSnapshot(
+            identity: afterIdentity,
+            focused: focused,
+            value: readable ? value : nil,
+            legacyPresentation: readable ? legacyPresentation : nil,
+            selected: selected,
+            selectedTextRange: readable ? selectedTextRange : nil)
     }
 
     private static func identity(_ snapshot: ExactWindowFocusSnapshot) -> FocusedElementIdentity? {
@@ -154,31 +199,8 @@ enum DetachedAXMutationReader {
             frame: snapshot.frame)
     }
 
-    private static func isSecure(_ snapshot: ExactWindowFocusSnapshot) -> Bool {
-        snapshot.role == "AXSecureTextField" || snapshot.subrole == "AXSecureTextField"
-    }
-
-    private static func attribute(_ name: String, element: AXUIElement) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value
-    }
-
-    private static func boolAttribute(_ name: String, element: AXUIElement) -> Bool? {
-        guard let value = self.attribute(name, element: element),
-              CFGetTypeID(value) == CFBooleanGetTypeID()
-        else { return nil }
+    private static func boolean(_ value: CFTypeRef?) -> Bool? {
+        guard let value, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
         return value as? Bool
-    }
-
-    private static func textRange(_ element: AXUIElement) -> AXMutationTextRange? {
-        guard let value = self.attribute(kAXSelectedTextRangeAttribute, element: element),
-              CFGetTypeID(value) == AXValueGetTypeID()
-        else { return nil }
-        var range = CFRange()
-        guard AXValueGetValue(unsafeDowncast(value, to: AXValue.self), .cfRange, &range),
-              range.location >= 0, range.length >= 0
-        else { return nil }
-        return AXMutationTextRange(location: range.location, length: range.length)
     }
 }

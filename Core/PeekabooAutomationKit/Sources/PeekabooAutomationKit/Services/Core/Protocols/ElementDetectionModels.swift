@@ -129,6 +129,34 @@ public struct DetectedElement: Sendable, Codable {
         self.attributes["isFocused"].flatMap(Bool.init)
     }
 
+    /// Fresh native selection in UTF-16 units; absent when selection could not be safely observed.
+    public var selectedTextRange: TextSelectionRange? {
+        guard self.type == .textField, self.isFocused == true,
+              self.attributes["role"] != "AXSecureTextField", self.attributes["subrole"] != "AXSecureTextField",
+              let location = self.attributes["selectedTextRangeLocation"].flatMap(Int.init),
+              let length = self.attributes["selectedTextRangeLength"].flatMap(Int.init)
+        else { return nil }
+        return TextSelectionRange(location: location, length: length)
+    }
+
+    func replacingSelectedTextRange(_ range: TextSelectionRange?) -> Self {
+        guard range != nil || self.attributes["selectedTextRangeLocation"] != nil ||
+            self.attributes["selectedTextRangeLength"] != nil
+        else { return self }
+        var attributes = self.attributes
+        attributes["selectedTextRangeLocation"] = range.map { String($0.location) }
+        attributes["selectedTextRangeLength"] = range.map { String($0.length) }
+        return Self(
+            id: self.id,
+            type: self.type,
+            label: self.label,
+            value: self.value,
+            bounds: self.bounds,
+            isEnabled: self.isEnabled,
+            isSelected: self.isSelected,
+            attributes: attributes)
+    }
+
     public var isOCRSemanticEvidence: Bool {
         OCRSemanticEvidencePolicy.isSemanticEvidence(
             id: self.id,

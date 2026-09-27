@@ -7,6 +7,7 @@ import Testing
 struct ExactWindowValueObservationTests {
     enum Change: CaseIterable {
         case stable, reflow, window, role, identifier, replacement, missing, focusLost, focusUnreadable, secure
+        case secureMetadataUnreadable
     }
 
     @Test(arguments: [KeyboardFocusValidationPhase.initial, .continuation], Change.allCases)
@@ -27,9 +28,7 @@ struct ExactWindowValueObservationTests {
         var focusReads = 0
         var snapshotReads = 0
         let result = DetachedExactWindowFocusReader.readValue(
-            expected: expected,
-            initialSnapshot: initial,
-            phase: phase,
+            observation: (expected: expected, initialSnapshot: initial, phase: phase),
             readSnapshot: {
                 #expect(afterValueRead)
                 snapshotReads += 1
@@ -40,6 +39,7 @@ struct ExactWindowValueObservationTests {
                     frame: change == .reflow ? expected.frame.offsetBy(dx: 10, dy: 20) : expected.frame,
                     role: change == .role ? "AXButton" : expected.role,
                     subrole: change == .secure ? "AXSecureTextField" : nil,
+                    subroleIsReadable: change != .secureMetadataUnreadable,
                     identifier: change == .identifier ? "sibling" : expected.identifier,
                     nativeElement: change == .replacement ? replacement : receiver)
             },
@@ -61,9 +61,9 @@ struct ExactWindowValueObservationTests {
         #expect(afterValueRead)
         #expect(snapshotReads == 1)
         switch change {
-        case .stable, .secure:
+        case .stable, .secure, .secureMetadataUnreadable:
             let observed = try result.get()
-            #expect(observed.value == (change == .secure ? nil : "settled"))
+            #expect(observed.value == (change == .stable ? "settled" : nil))
             #expect(observed.nativeElement == receiver)
             #expect(focusReads == 2)
         case .reflow where phase == .continuation:
@@ -90,6 +90,67 @@ struct ExactWindowValueObservationTests {
     }
 
     @Test
+    func `unreadable initial secure metadata never queries the value`() throws {
+        let receiver = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
+        let expected = FocusedElementIdentity(
+            processIdentifier: 4242,
+            windowID: 42,
+            role: "AXTextField",
+            frame: CGRect(x: 20, y: 30, width: 160, height: 24))
+        let initial = ExactWindowFocusSnapshot(
+            processIdentifier: 4242,
+            windowID: 42,
+            frame: expected.frame,
+            role: expected.role,
+            subroleIsReadable: false,
+            nativeElement: receiver)
+        var reads = 0
+        let result = DetachedExactWindowFocusReader.readValue(
+            observation: (expected: expected, initialSnapshot: initial, phase: .initial),
+            readSnapshot: { Self.snapshot(expected: expected, receiver: receiver) },
+            readFocusedState: { true },
+            readValue: { reads += 1; return "must remain unread" })
+        #expect(try result.get().value == nil)
+        #expect(reads == 0)
+    }
+
+    @Test
+    func `native call budgets shrink within one deadline and reject late data`() {
+        let started = ContinuousClock.now
+        let deadline = started.advanced(by: .milliseconds(80))
+        var now = started
+        var timeouts: [Float] = []
+        let read = {
+            DetachedExactWindowFocusReader.readBeforeDeadline(
+                deadline,
+                now: { now },
+                applyTimeout: { timeouts.append($0); return true },
+                read: { now = now.advanced(by: .milliseconds(40)); return 1 })
+        }
+        #expect(read() == 1)
+        #expect(read() == nil)
+        #expect(read() == nil)
+        #expect(timeouts.count == 2)
+        #expect(abs(timeouts[0] - 0.05) < 0.000_001)
+        #expect(abs(timeouts[1] - 0.04) < 0.000_001)
+    }
+
+    @Test(arguments: [false, true])
+    func `expired budgets and failed timeout installation never query native attributes`(expired: Bool) {
+        let now = ContinuousClock.now
+        var installations = 0
+        var reads = 0
+        let result = DetachedExactWindowFocusReader.readBeforeDeadline(
+            now.advanced(by: expired ? .milliseconds(-1) : .milliseconds(50)),
+            now: { now },
+            applyTimeout: { _ in installations += 1; return false },
+            read: { reads += 1; return 1 })
+        #expect(result == nil)
+        #expect(reads == 0)
+        #expect(installations == (expired ? 0 : 1))
+    }
+
+    @Test
     func `unfocused receivers are refused before reading their value`() {
         let receiver = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
         let expected = FocusedElementIdentity(
@@ -98,9 +159,10 @@ struct ExactWindowValueObservationTests {
             role: "AXTextField",
             frame: CGRect(x: 20, y: 30, width: 160, height: 24))
         let result = DetachedExactWindowFocusReader.readValue(
-            expected: expected,
-            initialSnapshot: Self.snapshot(expected: expected, receiver: receiver),
-            phase: .initial,
+            observation: (
+                expected: expected,
+                initialSnapshot: Self.snapshot(expected: expected, receiver: receiver),
+                phase: .initial),
             readSnapshot: {
                 Issue.record("Unfocused baseline must stop before another read")
                 return nil

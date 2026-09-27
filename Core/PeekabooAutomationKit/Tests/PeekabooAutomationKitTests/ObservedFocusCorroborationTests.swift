@@ -511,7 +511,7 @@ struct ObservedFocusCorroborationTests {
         #expect(result.metadata.truncationInfo == truncation)
     }
 
-    private func context() -> WindowContext {
+    func context() -> WindowContext {
         WindowContext(
             applicationName: "Synthetic Editor",
             applicationProcessId: 700,
@@ -536,7 +536,7 @@ struct ObservedFocusCorroborationTests {
             capturedBounds: Self.bounds)
     }
 
-    private func ambiguousElements() -> [DetectedElement] {
+    func ambiguousElements() -> [DetectedElement] {
         [
             self.element(id: "outer", type: .group, frame: CGRect(x: 120, y: 120, width: 700, height: 500)),
             self.element(id: "inner", type: .group, frame: CGRect(x: 130, y: 130, width: 400, height: 200)),
@@ -544,7 +544,7 @@ struct ObservedFocusCorroborationTests {
         ]
     }
 
-    private func element(
+    func element(
         id: String,
         type: ElementType = .textField,
         focused: Bool? = true,
@@ -561,7 +561,7 @@ struct ObservedFocusCorroborationTests {
         return DetectedElement(id: id, type: type, label: id, bounds: frame, attributes: attributes)
     }
 
-    private func result(
+    func result(
         elements: [DetectedElement],
         usedCache: Bool = false,
         truncation: DetectionTruncationInfo? = nil,

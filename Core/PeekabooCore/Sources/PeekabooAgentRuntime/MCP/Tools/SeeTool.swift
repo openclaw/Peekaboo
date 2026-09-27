@@ -363,12 +363,14 @@ public struct SeeTool: MCPTool {
     {
         let observation = actionResult.payload
         let finalScreenshot = output.annotatedPath ?? output.screenshotPath
-        let summaryText = await buildSummary(
+        let summaryText = await SeeSummaryBuilder(
             snapshot: snapshot,
             elements: elements,
             screenshotPath: finalScreenshot,
             truncationInfo: observation.elements?.metadata.truncationInfo,
-            traversalBudget: observation.elements?.metadata.windowContext?.traversalBudget)
+            traversalBudget: observation.elements?.metadata.windowContext?.traversalBudget,
+            selectionSummaries: ObservedTextSelectionSummary.lines(for: observation.elements?.elements.all ?? []))
+            .build()
 
         var content: [MCP.Tool.Content] = [.text(text: summaryText, annotations: nil, _meta: nil)]
         content.append(
@@ -512,22 +514,5 @@ public struct SeeTool: MCPTool {
             imageData: imageData,
             elements: protocolElements,
             windowBounds: windowBounds)
-    }
-
-    @MainActor
-    private func buildSummary(
-        snapshot: UISnapshot,
-        elements: [UIElement],
-        screenshotPath: String,
-        truncationInfo: DetectionTruncationInfo?,
-        traversalBudget: AXTraversalBudget?) async -> String
-    {
-        await SeeSummaryBuilder(
-            snapshot: snapshot,
-            elements: elements,
-            screenshotPath: screenshotPath,
-            truncationInfo: truncationInfo,
-            traversalBudget: traversalBudget)
-            .build()
     }
 }

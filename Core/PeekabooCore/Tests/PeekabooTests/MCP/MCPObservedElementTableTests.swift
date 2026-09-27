@@ -25,7 +25,13 @@ struct MCPObservedElementTableTests {
         label: "Username",
         value: "alice",
         bounds: CGRect(x: 400, y: 500, width: 200, height: 24),
-        attributes: ["role": "AXTextField", "isValueSettable": "true"])
+        attributes: [
+            "role": "AXTextField",
+            "isValueSettable": "true",
+            "isFocused": "true",
+            "selectedTextRangeLocation": "1",
+            "selectedTextRangeLength": "2",
+        ])
 
     @Test(arguments: ["see", "inspect_ui"])
     @MainActor
@@ -54,6 +60,13 @@ struct MCPObservedElementTableTests {
         let wire = try Self.wireMetadata(response, toolName: "inspect_ui")
         #expect(wire["ui_elements"] == nil)
         #expect(wire["snapshot_id"] == nil)
+        #expect(response.content.contains {
+            if case let .text(text, _, _) = $0 {
+                text.contains("Text selection elem_2: UTF-16 location 1, length 2")
+            } else {
+                false
+            }
+        })
     }
 
     @Test
@@ -79,6 +92,7 @@ struct MCPObservedElementTableTests {
         #expect(rows.first?.ax_role == "AXButton")
         #expect(rows.first?.description == "Submit the form")
         #expect(rows.last?.value == "alice")
+        #expect(rows.last?.selected_text_range == TextSelectionRange(location: 1, length: 2))
         #expect(rows.last?.bounds == UIElementBounds(CGRect(x: 400, y: 500, width: 200, height: 24)))
 
         let first = try #require(wire["ui_elements"]?.arrayValue?.first?.objectValue)
@@ -87,6 +101,22 @@ struct MCPObservedElementTableTests {
         ])
         let bounds = try #require(first["bounds"]?.objectValue)
         #expect(Set(bounds.keys) == ["x", "y", "width", "height"])
+    }
+
+    @Test
+    @MainActor
+    func `normal see text exposes selection without changing the signed snapshot element shape`() async {
+        let elements = [Self.button, Self.field]
+        let summary = await SeeSummaryBuilder(
+            snapshot: UISnapshot(),
+            elements: DetectedElementSnapshotConverter.convert(elements),
+            screenshotPath: "/synthetic/fixture.png",
+            truncationInfo: nil,
+            traversalBudget: nil,
+            selectionSummaries: ObservedTextSelectionSummary.lines(for: elements)).build()
+        #expect(summary.contains("Text selection elem_2: UTF-16 location 1, length 2"))
+        #expect(!summary.contains("Text selection elem_1"))
+        #expect(UIElementSummary(Self.field, mutationTargetingAvailable: false).selected_text_range == nil)
     }
 
     @Test

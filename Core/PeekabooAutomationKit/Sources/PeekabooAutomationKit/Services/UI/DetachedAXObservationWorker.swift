@@ -335,6 +335,14 @@ enum DetachedAXObservationWorker {
                 self.focusedElement(
                     $0, belongsTo: window, processIdentifier: request.processIdentifier, deadline: deadline)
             })
+        state.elements = self.attachingFocusedTextSelection(
+            observation: (
+                elements: state.elements,
+                references: state.focusedReferences,
+                corroboratedElementID: corroboratedFocus,
+                isComplete: !isApplicationScopedFallback && state.truncationInfo?.isTruncated != true),
+            request: request,
+            deadline: deadline)
         let partialFallback = isApplicationScopedFallback
             ? DetectionTruncationInfo(incompleteAccessibilityRead: true)
             : nil

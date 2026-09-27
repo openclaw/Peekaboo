@@ -433,13 +433,9 @@ extension DialogService {
     }
 
     static func dialogSelectedTextRange(_ field: Element) -> CFRange? {
-        guard let rawValue = field.rawAttributeValue(named: AXAttributeNames.kAXSelectedTextRangeAttribute),
-              CFGetTypeID(rawValue as CFTypeRef) == AXValueGetTypeID()
+        guard let value = field.rawAttributeValue(named: AXAttributeNames.kAXSelectedTextRangeAttribute)
         else { return nil }
-        let value = unsafeDowncast(rawValue as CFTypeRef, to: AXValue.self)
-        guard AXValueGetType(value) == .cfRange else { return nil }
-        var range = CFRange(location: 0, length: 0)
-        return AXValueGetValue(value, .cfRange, &range) ? range : nil
+        return TextSelectionRange(nativeValue: value as CFTypeRef)?.nativeRange
     }
 
     static func sameDialogTextRange(_ lhs: CFRange?, _ rhs: CFRange?) -> Bool {

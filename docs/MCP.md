@@ -239,12 +239,24 @@ Pass `include_elements: true` to `see` or `inspect_ui` to also receive the eleme
 `_meta.ui_elements`, together with `_meta.snapshot_id`. Each row uses the same type and field names as
 `ui_elements[]` in `peekaboo see --json` (`id`, semantic `role`, raw `ax_role`, `title`, `label`, `value`,
 `description`, `role_description`, `help`, `identifier`, `confidence`, `bounds` `{x, y, width, height}`,
-`is_actionable`, `is_enabled`, `is_selected`, `is_value_settable`, `keyboard_shortcut`; absent values are omitted).
+`is_actionable`, `is_enabled`, `is_selected`, `is_value_settable`, `keyboard_shortcut`, `selected_text_range`; absent values are omitted).
 `see` bounds follow the same presentation rules as the CLI, so ROI results are ROI-local; application-partial
 observations make no actionable or value-settable claims. Clients that act on element IDs across calls can read this
 table instead of parsing the text summary. The option is off by default because a window can expose hundreds of
 elements. The table includes full collected field values rather than the prose summary's shortened display values;
 without the option, the response is unchanged.
+
+Fresh, complete exact-window observations can include `selected_text_range: {location, length}` for the uniquely
+proven focused text field. Offsets and lengths use UTF-16 code units, not user-perceived characters; zero length
+means a caret and absence means unknown. This is independent of `is_selected`/`AXSelected` and the `selected`
+verification predicate. Both `see` and `inspect_ui` also include a short `Text selection <id>: UTF-16 location …,
+length …` line in their normal text output when available, including native Agent calls without `include_elements`.
+
+This optional probe reads no selected-text content, performs no focus change, and grants no input authority. The
+same native receiver must retain identity, focus, and readable nonsecure metadata across the range read. Cached,
+partial, truncated, ambiguous, secure, or unreadable observations omit it. The probe shares at most 50 ms and one
+quarter of the remaining observation budget, never extending the original deadline; a slow app or older host may
+omit the range. Continue to use fresh snapshots and ordinary live receiver validation for input.
 
 Successful `capture` results bind every retained frame and `contact.png` to capture-session-authored SHA-256 values.
 MCP exposes them in `artifact_sha256`; finalization revalidates those bytes, complete PNG decoding and dimensions, and
