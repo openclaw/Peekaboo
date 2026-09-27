@@ -220,6 +220,10 @@ public final class HotkeyService {
                     bundleIdentifier: bundleIdentifier)
             },
             action: DesktopOperationPlan.ActionRoute {
+                // An application menu cannot certify the exact document receiver before AXPress.
+                guard automationTarget.exactWindow == nil else {
+                    throw ActionInputError.unsupported(.actionUnsupported)
+                }
                 try await self.validateDelivery(
                     targetValidator,
                     emittedUnitCount: 0)
@@ -228,9 +232,7 @@ public final class HotkeyService {
                     throw ActionInputError.unsupported(.missingElement)
                 }
                 let actionResult = try self.actionInputDriver.tryHotkey(application: application, keys: parsedKeys)
-                if automationTarget.exactWindow == nil {
-                    try await self.validateDelivery(targetValidator, emittedUnitCount: 1)
-                }
+                try await self.validateDelivery(targetValidator, emittedUnitCount: 1)
                 return actionResult
             },
             synthesis: DesktopOperationPlan.SynthesisRoute {
@@ -288,7 +290,18 @@ public final class HotkeyService {
                         : nil)
             },
             finalize: self.operationFinalizer)
-        let result = try await self.desktopOperationExecutor.execute(plan)
+        let result: UIInputExecutionResult
+        do {
+            result = try await self.desktopOperationExecutor.execute(plan)
+        } catch let error as ActionInputError where error == .unsupported(.actionUnsupported) &&
+            automationTarget.exactWindow != nil &&
+            self.inputPolicy.strategy(for: .hotkey, bundleIdentifier: bundleIdentifier) == .actionOnly
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Exact-window hotkeys cannot use application-wide menu actions.",
+                hint: "Use actionFirst to permit receipt-pinned background keyboard delivery.")
+        }
 
         self.logger.debug("Targeted hotkey completed via \(result.path.rawValue, privacy: .public)")
         return result
