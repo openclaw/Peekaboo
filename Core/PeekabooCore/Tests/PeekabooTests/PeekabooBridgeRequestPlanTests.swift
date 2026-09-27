@@ -168,6 +168,56 @@ struct PeekabooBridgeRequestPlanTests {
     }
 
     @Test(arguments: [Semantics.PeekabooBridgeRequestPlan.Vocabulary.legacy, .current])
+    func `Projected carriage retains the inner routing plan and original wrapper`(
+        vocabulary: Semantics.PeekabooBridgeRequestPlan.Vocabulary) throws
+    {
+        let fixture = AutomationTestFixtures.linkedDesktopTarget()
+        let requests: [PeekabooBridgeRequest] = [
+            .focusWindow(.init(
+                target: .windowId(fixture.windowIdentity.windowID),
+                expectedIdentity: fixture.windowIdentity)),
+            .targetedHotkey(.init(
+                keys: "cmd,a",
+                holdDuration: 0,
+                targetProcessIdentifier: fixture.windowIdentity.ownerProcessIdentifier,
+                expectedProcessIdentity: fixture.windowIdentity.processIdentity)),
+            .setValue(.init(target: "B1", value: .string("fixture"), snapshotId: "snapshot")),
+        ]
+
+        for request in requests {
+            let direct = Semantics.requestPlan(for: request, vocabulary: vocabulary)
+            let projected = Semantics.requestPlan(
+                for: .projectedAction(.init(request: request)),
+                vocabulary: vocabulary)
+
+            #expect(projected.request.operation == direct.request.operation)
+            #expect(projected.descriptor == direct.descriptor)
+            #expect(projected.vocabulary == direct.vocabulary)
+            #expect(projected.target.policy == direct.target.policy)
+            #expect(projected.target.responseEvidenceSource == direct.target.responseEvidenceSource)
+            #expect(projected.target.requestEvidence == direct.target.requestEvidence)
+            #expect(projected.target.desktopOperationScope == direct.target.desktopOperationScope)
+            #expect(projected.target.desktopReadOperationLane?.scope == direct.target.desktopReadOperationLane?.scope)
+            #expect(projected.target.desktopReadOperationLane?.access == direct.target.desktopReadOperationLane?.access)
+            #expect(projected.target.exactReadTarget == direct.target.exactReadTarget)
+            #expect(projected.target.pinnedWindowMutation?.identity == direct.target.pinnedWindowMutation?.identity)
+            #expect(projected.target.requiresPinnedWindowMutation == direct.target.requiresPinnedWindowMutation)
+            #expect(projected.result.completion == direct.result.completion)
+            #expect(projected.result.responseFamilies == direct.result.responseFamilies)
+            #expect(projected.result.deliveryRules == direct.result.deliveryRules)
+            #expect(projected.result.allowedSuccessStates == direct.result.allowedSuccessStates)
+            #expect(projected.result.successResponsePolicy == direct.result.successResponsePolicy)
+            #expect(projected.result.deliveryAgnosticFailureUnits == direct.result.deliveryAgnosticFailureUnits)
+            #expect(projected.result.typedResponseRule == direct.result.typedResponseRule)
+            guard case let .projectedAction(carriage) = projected.carriageRequest else {
+                Issue.record("Projected routing must retain its original wrapper for receipt signing")
+                continue
+            }
+            #expect(try carriage.validatedRequest().operation == request.operation)
+        }
+    }
+
+    @Test(arguments: [Semantics.PeekabooBridgeRequestPlan.Vocabulary.legacy, .current])
     func `Invalid nested carriage remains a fail closed plan`(
         vocabulary: Semantics.PeekabooBridgeRequestPlan.Vocabulary)
     {
