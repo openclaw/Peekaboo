@@ -41,8 +41,9 @@ read_when:
 - Accepted writes are observed for up to 250 ms to allow apps to publish asynchronous Accessibility updates. Each
   sample revalidates the original field and process generation; the write is never repeated.
 - Native samples batch non-value identity metadata to reduce AX round trips, while still checking identity before
-  and after reading the value. Apps without batch support retain bounded single-attribute reads. The observation
-  budget and security checks are unchanged; batching is not an atomic-state guarantee.
+  and after reading the value. Unsupported, malformed or generically failed batches retain bounded single-attribute
+  reads within the original deadline. The observation budget and security checks are unchanged; batching is not an
+  atomic-state guarantee.
 - If the Accessibility write is accepted but its readback cannot be verified, Peekaboo reports an indeterminate,
   retry-unsafe result with the exact target receipt. Observe the target again before deciding whether to retry; never
   replay the write against the old snapshot.

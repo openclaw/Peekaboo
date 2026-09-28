@@ -182,7 +182,8 @@ enum DetachedExactWindowFocusReader {
             kAXIdentifierAttribute,
         ]
         guard let batch = copyAttributes(names) else { return nil }
-        if AXDescriptorReader.shouldFallbackToSingleAttributeReads(
+        // Providers can reject a combined request while still serving the same individual attributes.
+        if batch.error == .failure || AXDescriptorReader.shouldFallbackToSingleAttributeReads(
             error: batch.error, hasExpectedValueShape: batch.values?.count == names.count)
         {
             var metadata: [String: AXDescriptorReader.SingleAttributeRead] = [:]

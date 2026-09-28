@@ -66,8 +66,14 @@ struct DetachedExactWindowFocusMetadataTests {
         }
     }
 
-    @Test(arguments: [AXError.attributeUnsupported, .parameterizedAttributeUnsupported, .notImplemented, .success])
-    func `unsupported or malformed batches use existing single-attribute reads`(error: AXError) throws {
+    @Test(arguments: [
+        AXError.attributeUnsupported,
+        .parameterizedAttributeUnsupported,
+        .notImplemented,
+        .failure,
+        .success,
+    ])
+    func `unsupported failed or malformed batches use existing single-attribute reads`(error: AXError) throws {
         var singles: [String] = []
         let result = try #require(DetachedExactWindowFocusReader.readMetadata(
             copyAttributes: { _ in (error, []) },
@@ -80,7 +86,7 @@ struct DetachedExactWindowFocusMetadataTests {
         #expect(!DetachedExactWindowFocusReader.subroleObservation(result[kAXSubroleAttribute]).isReadable)
     }
 
-    @Test(arguments: [AXError.cannotComplete, .invalidUIElement, .apiDisabled, .failure, .noValue])
+    @Test(arguments: [AXError.cannotComplete, .invalidUIElement, .apiDisabled, .noValue])
     func `hard batch failures do not trigger more native reads`(error: AXError) {
         let result = DetachedExactWindowFocusReader.readMetadata(
             copyAttributes: { _ in (error, nil) },
@@ -88,8 +94,8 @@ struct DetachedExactWindowFocusMetadataTests {
         #expect(result == nil)
     }
 
-    @Test(arguments: ["expired", "timeoutRejected", "late"])
-    func `batch deadline refusal never starts fallback`(stage: String) {
+    @Test(arguments: ["expired", "timeoutRejected", "late"], [AXError.attributeUnsupported, .failure])
+    func `batch deadline refusal never starts fallback`(stage: String, error: AXError) {
         let start = ContinuousClock.now
         let deadline = start.advanced(by: .milliseconds(50))
         var now = stage == "expired" ? deadline : start
@@ -103,7 +109,7 @@ struct DetachedExactWindowFocusMetadataTests {
                     read: {
                         batches += 1
                         now = deadline
-                        return (AXError.attributeUnsupported, [Any]?.none)
+                        return (error, [Any]?.none)
                     })
             },
             copyAttribute: { _ in Issue.record("Expired batch started fallback"); return nil })
@@ -124,8 +130,10 @@ struct DetachedExactWindowFocusMetadataTests {
         #expect(singles == Array(Self.names.prefix(3)))
     }
 
-    @Test
-    func `scalar observation retains both metadata snapshots around its admitted value read`() throws {
+    @Test(arguments: [AXError.success, .failure])
+    func `scalar observation retains both metadata snapshots around its admitted value read`(
+        batchError: AXError) throws
+    {
         var events: [String] = []
         let native = AXUIElementCreateApplication(4242)
         let values = try Self.nativeMetadata(window: native)
@@ -139,9 +147,15 @@ struct DetachedExactWindowFocusMetadataTests {
                     copyAttributes: { names in
                         events.append("batch")
                         #expect(names == Self.names)
-                        return (.success, values)
+                        return (batchError, values)
                     },
-                    copyAttribute: { _ in Issue.record("Unexpected fallback"); return nil })
+                    copyAttribute: { name in
+                        events.append(name)
+                        guard let index = Self.names.firstIndex(of: name) else { return nil }
+                        let value = values[index]
+                        let error = AXAttributeReadCompletenessPolicy.embeddedError(in: value) ?? .success
+                        return .init(error: error, value: error == .success ? value : nil)
+                    })
                 else { return nil }
                 return DetachedExactWindowFocusReader.snapshot(
                     element: native,
@@ -165,7 +179,8 @@ struct DetachedExactWindowFocusMetadataTests {
         #expect(result?.identity.role == "AXSlider")
         #expect(result?.identity.title == "Volume")
         #expect(result?.identity.identifier == "slider")
-        #expect(events == ["batch", "window", "value", "batch", "window"])
+        let identityReads = ["batch"] + (batchError == .failure ? Self.names : []) + ["window"]
+        #expect(events == identityReads + ["value"] + identityReads)
     }
 
     @Test(arguments: [kAXPositionAttribute, kAXSizeAttribute, kAXWindowAttribute, kAXRoleAttribute], [false, true])
