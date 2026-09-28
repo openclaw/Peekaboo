@@ -742,44 +742,6 @@ struct WindowStateMutationPolicyTests {
 
         #expect(selected == primary)
     }
-
-    @Test
-    func `maximize dispatch accepts asynchronous final geometry for the pinned window`() {
-        #expect(backgroundGeometryDispatchRemainsPinned(
-            expectedIdentity: self.identity,
-            positionSetSucceeded: true,
-            sizeSetSucceeded: true,
-            liveProcessStartIdentity: 7,
-            candidateWindowID: 924))
-    }
-
-    @Test
-    func `maximize dispatch rejects AX failure or identity replacement`() {
-        #expect(!backgroundGeometryDispatchRemainsPinned(
-            expectedIdentity: self.identity,
-            positionSetSucceeded: false,
-            sizeSetSucceeded: true,
-            liveProcessStartIdentity: 7,
-            candidateWindowID: 924))
-        #expect(!backgroundGeometryDispatchRemainsPinned(
-            expectedIdentity: self.identity,
-            positionSetSucceeded: true,
-            sizeSetSucceeded: false,
-            liveProcessStartIdentity: 7,
-            candidateWindowID: 924))
-        #expect(!backgroundGeometryDispatchRemainsPinned(
-            expectedIdentity: self.identity,
-            positionSetSucceeded: true,
-            sizeSetSucceeded: true,
-            liveProcessStartIdentity: 8,
-            candidateWindowID: 924))
-        #expect(!backgroundGeometryDispatchRemainsPinned(
-            expectedIdentity: self.identity,
-            positionSetSucceeded: true,
-            sizeSetSucceeded: true,
-            liveProcessStartIdentity: 7,
-            candidateWindowID: 925))
-    }
 }
 
 private enum ForegroundCloseTestError: Error {

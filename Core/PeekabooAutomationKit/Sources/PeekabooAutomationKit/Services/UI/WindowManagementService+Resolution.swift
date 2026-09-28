@@ -68,9 +68,9 @@ extension WindowManagementService {
     func waitForRepinnedWindowMutation(
         _ expectedIdentity: WindowMutationIdentity,
         expectedBounds: CGRect,
-        timeout: Duration = .seconds(2)) async throws -> WindowMutationIdentity
+        deadline: ContinuousClock.Instant = ContinuousClock.now.advanced(by: .seconds(2)))
+        async throws -> WindowMutationIdentity
     {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
         while ContinuousClock.now < deadline {
             try Task.checkCancellation()
             if let repinned = SystemIdentityResolver.repinWindowMutationIdentity(

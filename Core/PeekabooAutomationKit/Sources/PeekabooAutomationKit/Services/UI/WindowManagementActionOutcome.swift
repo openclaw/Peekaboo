@@ -2,15 +2,6 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
-struct WindowGeometryDispatchAcceptance: Equatable {
-    let positionAccepted: Bool
-    let sizeAccepted: Bool
-
-    var dispatchCount: Int {
-        (self.positionAccepted ? 1 : 0) + (self.sizeAccepted ? 1 : 0)
-    }
-}
-
 enum WindowManagementActionOutcome {
     static let backgroundActionDelivery = DesktopActionOutcome.Delivery(
         mechanism: .accessibilityAction,
@@ -121,6 +112,30 @@ enum WindowManagementActionOutcome {
         return .operationUnsupported
     }
 
+    static func geometryFailure(action: String, failure: PinnedWindowGeometryFailure) -> any Error {
+        switch failure.mutation {
+        case .none:
+            failure.cause
+        case let .definite(count):
+            // An unchanged readback cannot rule out a delayed, already accepted AX write.
+            DesktopActionFailure.dispatchedUnverified(
+                delivery: self.backgroundValueDelivery,
+                evidence: .deliveryAccepted,
+                unitCount: count,
+                message: "The \(action) request was accepted, but its exact result could not be verified",
+                hint: "Observe the exact window before retrying.",
+                causeDescription: String(describing: failure.cause))
+        case let .possible(count):
+            DesktopActionFailure.indeterminate(
+                delivery: self.backgroundValueDelivery,
+                evidence: .completionUnknown,
+                unitCount: count,
+                message: "The \(action) request may have changed the window",
+                hint: "Observe the exact window before retrying; native completion is unknown.",
+                causeDescription: String(describing: failure.cause))
+        }
+    }
+
     private static func refusalHint(
         reason: DesktopActionOutcome.RefusalReason,
         action: String) -> String
@@ -150,34 +165,5 @@ enum WindowManagementActionOutcome {
             preconditionFailure("Window mutation dispatch counts must be positive")
         }
         return count
-    }
-}
-
-@MainActor
-extension WindowManagementService {
-    func geometryVerificationFailure(
-        action: String,
-        expectedIdentity: WindowMutationIdentity,
-        dispatchCount: Int,
-        cause: any Error) -> DesktopActionFailure
-    {
-        let current = self.windowIdentityService.getWindowServerInfo(
-            windowID: CGWindowID(expectedIdentity.windowID))
-        if let current,
-           current.ownerPID == expectedIdentity.ownerProcessIdentifier,
-           SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
-           current.bounds == expectedIdentity.capturedBounds
-        {
-            return WindowManagementActionOutcome.suspectedNoop(
-                action: action,
-                delivery: WindowManagementActionOutcome.backgroundValueDelivery,
-                dispatchCount: dispatchCount,
-                cause: cause)
-        }
-        return WindowManagementActionOutcome.dispatchedUnverified(
-            action: action,
-            delivery: WindowManagementActionOutcome.backgroundValueDelivery,
-            dispatchCount: dispatchCount,
-            cause: cause)
     }
 }

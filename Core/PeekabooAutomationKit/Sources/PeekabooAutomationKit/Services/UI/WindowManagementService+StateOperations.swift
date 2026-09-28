@@ -305,67 +305,57 @@ extension WindowManagementService {
                 else {
                     throw PeekabooError.windowNotFound(criteria: "windowId \(windowInfo.windowID)")
                 }
-                let dispatch = await BoundedBackgroundWindowAX.setBounds(
+                return try await self.completeWindowGeometry(
+                    action: "maximize window",
                     expectedIdentity: expectedIdentity,
                     bounds: desiredBounds)
-                guard dispatch.dispatchCount > 0 else {
-                    throw OperationError.interactionFailed(
-                        action: "maximize window",
-                        reason: "The bounded background geometry request failed before dispatch")
-                }
-                guard dispatch.identityRemainedPinned else {
-                    throw WindowManagementActionOutcome.dispatchedUnverified(
-                        action: "maximize window",
-                        delivery: WindowManagementActionOutcome.backgroundValueDelivery,
-                        dispatchCount: dispatch.dispatchCount,
-                        cause: PeekabooError.commandFailed(
-                            "Window identity changed during bounded background geometry dispatch"))
-                }
-
-                do {
-                    guard try await self.waitForWindowBounds(
-                        windowID: windowInfo.windowID,
-                        expectedIdentity: expectedIdentity,
-                        expected: desiredBounds,
-                        timeoutSeconds: 2)
-                    else {
-                        let achieved = self.windowIdentityService
-                            .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID))?.bounds
-                        let cause = OperationError.interactionFailed(
-                            action: "maximize window",
-                            reason: "The window did not reach the target screen's visible bounds within 2 seconds " +
-                                "(requested: \(desiredBounds), achieved: \(String(describing: achieved)))")
-                        if WindowMutationGeometryPostcondition.boundsMatch(
-                            windowInfo.bounds,
-                            achieved ?? .null)
-                        {
-                            throw WindowManagementActionOutcome.suspectedNoop(
-                                action: "maximize window",
-                                delivery: WindowManagementActionOutcome.backgroundValueDelivery,
-                                dispatchCount: dispatch.dispatchCount,
-                                cause: cause)
-                        }
-                        throw WindowManagementActionOutcome.dispatchedUnverified(
-                            action: "maximize window",
-                            delivery: WindowManagementActionOutcome.backgroundValueDelivery,
-                            dispatchCount: dispatch.dispatchCount,
-                            cause: cause)
-                    }
-                } catch let failure as DesktopActionFailure {
-                    throw failure
-                } catch {
-                    throw WindowManagementActionOutcome.dispatchedUnverified(
-                        action: "maximize window",
-                        delivery: WindowManagementActionOutcome.backgroundValueDelivery,
-                        dispatchCount: dispatch.dispatchCount,
-                        cause: error)
-                }
-                return WindowManagementActionOutcome.confirmedChange(
-                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
-                    dispatchCount: dispatch.dispatchCount)
             }
         }
         return DesktopActionResult(outcome: outcome)
+    }
+
+    func completeWindowGeometry(
+        action: String,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws -> DesktopActionOutcome
+    {
+        do {
+            let mutation = try await completePinnedWindowGeometry(
+                expectedIdentity: expectedIdentity,
+                bounds: bounds,
+                operations: PinnedWindowGeometryOperations(
+                    dispatch: { identity, value, admission in
+                        await BoundedBackgroundWindowAX.setGeometryValue(
+                            expectedIdentity: identity,
+                            value: value,
+                            admission: admission)
+                    },
+                    repin: { identity, expectedBounds, deadline in
+                        try await self.waitForRepinnedWindowMutation(
+                            identity,
+                            expectedBounds: expectedBounds,
+                            deadline: deadline)
+                    },
+                    validateNoChange: { identity, admission in
+                        await BoundedBackgroundWindowAX.validateGeometryNoChange(
+                            expectedIdentity: identity,
+                            admission: admission)
+                    }))
+            switch mutation {
+            case .none:
+                return WindowManagementActionOutcome.confirmedNoChange
+            case let .definite(count):
+                return .confirmedChange(
+                    delivery: WindowManagementActionOutcome.backgroundValueDelivery,
+                    unitCount: count)
+            case .possible:
+                throw PinnedWindowGeometryFailure(
+                    mutation: mutation,
+                    cause: PeekabooError.commandFailed("Geometry completion is unknown"))
+            }
+        } catch let failure as PinnedWindowGeometryFailure {
+            throw WindowManagementActionOutcome.geometryFailure(action: action, failure: failure)
+        }
     }
 
     private func maximizedBounds(for windowBounds: CGRect) throws -> CGRect {
@@ -375,34 +365,6 @@ extension WindowManagementService {
             throw PeekabooError.commandFailed("No display is available for window maximize")
         }
         return target
-    }
-
-    private func waitForWindowBounds(
-        windowID: Int,
-        expectedIdentity: WindowMutationIdentity,
-        expected: CGRect,
-        timeoutSeconds: TimeInterval) async throws -> Bool
-    {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(timeoutSeconds))
-        while clock.now < deadline {
-            try Task.checkCancellation()
-            if let info = self.windowIdentityService
-                .getWindowServerInfo(windowID: CGWindowID(windowID)),
-                info.ownerPID == expectedIdentity.ownerProcessIdentifier,
-                SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
-                WindowMutationGeometryPostcondition.boundsMatch(
-                    info.bounds,
-                    expected),
-                SystemIdentityResolver.repinWindowMutationIdentity(
-                    expectedIdentity,
-                    expectedBounds: expected) != nil
-            {
-                return true
-            }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        return false
     }
 
     func attemptPinnedBackgroundClose(
@@ -1037,34 +999,6 @@ func maximizedVisibleFrame(
         screenVisibleWorkAreas: screenVisibleFramesTopLeft)
 }
 
-func backgroundGeometryDispatchRemainsPinned(
-    expectedIdentity: WindowMutationIdentity,
-    positionSetSucceeded: Bool,
-    sizeSetSucceeded: Bool,
-    liveProcessStartIdentity: UInt64?,
-    candidateWindowID: Int?) -> Bool
-{
-    positionSetSucceeded &&
-        sizeSetSucceeded &&
-        liveProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity &&
-        candidateWindowID == expectedIdentity.windowID
-}
-
-private struct BackgroundWindowGeometryDispatchResult {
-    let acceptance: WindowGeometryDispatchAcceptance
-    let identityRemainedPinned: Bool
-
-    static let notDispatched = Self(
-        acceptance: WindowGeometryDispatchAcceptance(
-            positionAccepted: false,
-            sizeAccepted: false),
-        identityRemainedPinned: false)
-
-    var dispatchCount: Int {
-        self.acceptance.dispatchCount
-    }
-}
-
 extension CGRect {
     private var area: CGFloat {
         guard !self.isNull, !self.isInfinite else { return 0 }
@@ -1215,62 +1149,95 @@ private enum BoundedBackgroundWindowAX {
         }
     }
 
-    static func setBounds(
+    static func validateGeometryNoChange(
         expectedIdentity: WindowMutationIdentity,
-        bounds: CGRect) async -> BackgroundWindowGeometryDispatchResult
+        admission: PinnedWindowGeometryAdmission) async -> Bool
     {
         await self.perform(expectedIdentity: expectedIdentity) {
-            guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
+            guard admission.remainingSeconds != nil,
                   let capturedBounds = expectedIdentity.capturedBounds,
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID),
-                  let rawWindow = self.exactWindow(
+                  SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
+                  SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity) ||
+                  (expectedIdentity.isMinimized == true && SystemIdentityResolver.windowIdentity(windowID) == nil),
+                  let window = self.exactWindow(
                       windowID: windowID,
-                      ownerPID: expectedIdentity.ownerProcessIdentifier)
+                      ownerPID: expectedIdentity.ownerProcessIdentifier,
+                      admission: admission)
+            else {
+                return false
+            }
+            defer { AXUIElementSetMessagingTimeout(window, 0) }
+            var ownerPID: pid_t = 0
+            var candidateWindowID: CGWindowID = 0
+            return AXUIElementGetPid(window, &ownerPID) == .success &&
+                ownerPID == expectedIdentity.ownerProcessIdentifier &&
+                self.bounds(of: window, admission: admission) == capturedBounds &&
+                self.applyMessagingTimeout(to: window, admission: admission) &&
+                AXWindowIDResolver.copyWindowID(window, into: &candidateWindowID) == .success &&
+                candidateWindowID == windowID &&
+                SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity)
+        }
+    }
+
+    static func setGeometryValue(
+        expectedIdentity: WindowMutationIdentity,
+        value: PinnedWindowGeometryValue,
+        admission: PinnedWindowGeometryAdmission) async -> PinnedWindowGeometryDispatch
+    {
+        await self.perform(expectedIdentity: expectedIdentity) {
+            guard admission.remainingSeconds != nil,
+                  SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
+                  let capturedBounds = expectedIdentity.capturedBounds,
+                  let windowID = CGWindowID(exactly: expectedIdentity.windowID),
+                  let window = self.exactWindow(
+                      windowID: windowID,
+                      ownerPID: expectedIdentity.ownerProcessIdentifier,
+                      admission: admission)
             else {
                 return .notDispatched
             }
-            return AXChildWindowMessagingTimeout.perform(
-                on: rawWindow,
-                timeout: self.messagingTimeout)
-            { childWindow in
-                guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
-                      self.bounds(of: childWindow) == capturedBounds
-                else {
-                    return .notDispatched
-                }
-
-                var origin = bounds.origin
-                var size = bounds.size
-                guard let originValue = AXValueCreate(.cgPoint, &origin),
-                      let sizeValue = AXValueCreate(.cgSize, &size)
-                else {
-                    return .notDispatched
-                }
-
-                let positionResult = AXUIElementSetAttributeValue(
-                    childWindow,
-                    kAXPositionAttribute as CFString,
-                    originValue)
-                let sizeResult = AXUIElementSetAttributeValue(
-                    childWindow,
-                    kAXSizeAttribute as CFString,
-                    sizeValue)
-                var candidateWindowID: CGWindowID = 0
-                let windowIDResult = AXWindowIDResolver.copyWindowID(
-                    childWindow,
-                    into: &candidateWindowID)
-                let positionAccepted = positionResult == .success
-                let sizeAccepted = sizeResult == .success
-                let liveProcessStartIdentity = SystemIdentityResolver.processStartIdentity(
-                    expectedIdentity.ownerProcessIdentifier)
-                let resolvedCandidateWindowID = windowIDResult == .success ? Int(candidateWindowID) : nil
-                return BackgroundWindowGeometryDispatchResult(
-                    acceptance: WindowGeometryDispatchAcceptance(
-                        positionAccepted: positionAccepted,
-                        sizeAccepted: sizeAccepted),
-                    identityRemainedPinned: liveProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity &&
-                        resolvedCandidateWindowID == expectedIdentity.windowID)
+            defer { AXUIElementSetMessagingTimeout(window, 0) }
+            var ownerPID: pid_t = 0
+            guard AXUIElementGetPid(window, &ownerPID) == .success,
+                  ownerPID == expectedIdentity.ownerProcessIdentifier,
+                  SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
+                  self.bounds(of: window, admission: admission) == capturedBounds
+            else {
+                return .notDispatched
             }
+
+            let attribute: CFString
+            let boxed: AXValue?
+            switch value {
+            case var .position(origin):
+                attribute = kAXPositionAttribute as CFString
+                boxed = AXValueCreate(.cgPoint, &origin)
+            case var .size(size):
+                attribute = kAXSizeAttribute as CFString
+                boxed = AXValueCreate(.cgSize, &size)
+            }
+            var admittedWindowID: CGWindowID = 0
+            guard let boxed,
+                  self.applyMessagingTimeout(to: window, admission: admission),
+                  AXWindowIDResolver.copyWindowID(window, into: &admittedWindowID) == .success,
+                  admittedWindowID == windowID,
+                  SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
+                  self.applyMessagingTimeout(to: window, admission: admission),
+                  admission.claimWrite()
+            else {
+                return .notDispatched
+            }
+            let result = AXUIElementSetAttributeValue(window, attribute, boxed)
+            var candidateWindowID: CGWindowID = 0
+            let identityRemainedPinned =
+                self.applyMessagingTimeout(to: window, admission: admission) &&
+                AXWindowIDResolver.copyWindowID(window, into: &candidateWindowID) == .success &&
+                candidateWindowID == windowID &&
+                SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity)
+            return PinnedWindowGeometryDispatch(
+                nativeResult: result,
+                identityRemainedPinned: identityRemainedPinned)
         }
     }
 
@@ -1284,9 +1251,13 @@ private enum BoundedBackgroundWindowAX {
         return await Task.detached(priority: .userInitiated, operation: operation).value
     }
 
-    private static func exactWindow(windowID: CGWindowID, ownerPID: pid_t) -> AXUIElement? {
+    private static func exactWindow(
+        windowID: CGWindowID,
+        ownerPID: pid_t,
+        admission: PinnedWindowGeometryAdmission? = nil) -> AXUIElement?
+    {
         let application = AXUIElementCreateApplication(ownerPID)
-        AXUIElementSetMessagingTimeout(application, self.messagingTimeout)
+        guard self.applyMessagingTimeout(to: application, admission: admission) else { return nil }
         defer { AXUIElementSetMessagingTimeout(application, 0) }
 
         var windowsValue: CFTypeRef?
@@ -1300,14 +1271,13 @@ private enum BoundedBackgroundWindowAX {
         }
 
         for window in windows {
-            let matches = AXChildWindowMessagingTimeout.perform(
-                on: window,
-                timeout: self.messagingTimeout)
-            { childWindow in
+            let matches: Bool = {
+                guard self.applyMessagingTimeout(to: window, admission: admission) else { return false }
+                defer { AXUIElementSetMessagingTimeout(window, 0) }
                 var candidateID: CGWindowID = 0
-                return AXWindowIDResolver.copyWindowID(childWindow, into: &candidateID) == .success &&
+                return AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success &&
                     candidateID == windowID
-            }
+            }()
             if matches {
                 return window
             }
@@ -1367,19 +1337,39 @@ private enum BoundedBackgroundWindowAX {
             isComplete: isComplete)
     }
 
-    private static func bounds(of element: AXUIElement) -> CGRect? {
+    private static func applyMessagingTimeout(
+        to element: AXUIElement,
+        admission: PinnedWindowGeometryAdmission?) -> Bool
+    {
+        let timeout: Float
+        if let admission {
+            guard let remaining = admission.remainingSeconds else { return false }
+            timeout = min(self.messagingTimeout, Float(remaining))
+        } else {
+            timeout = self.messagingTimeout
+        }
+        guard timeout.isFinite, timeout > 0 else { return false }
+        return AXUIElementSetMessagingTimeout(element, timeout) == .success
+    }
+
+    private static func bounds(
+        of element: AXUIElement,
+        admission: PinnedWindowGeometryAdmission? = nil) -> CGRect?
+    {
         var positionValue: CFTypeRef?
         var sizeValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            kAXPositionAttribute as CFString,
-            &positionValue) == .success,
-            AXUIElementCopyAttributeValue(
-                element,
-                kAXSizeAttribute as CFString,
-                &sizeValue) == .success,
-            let position = self.pointValue(positionValue),
-            let size = self.sizeValue(sizeValue)
+        guard admission == nil || self.applyMessagingTimeout(to: element, admission: admission),
+              AXUIElementCopyAttributeValue(
+                  element,
+                  kAXPositionAttribute as CFString,
+                  &positionValue) == .success,
+              admission == nil || self.applyMessagingTimeout(to: element, admission: admission),
+              AXUIElementCopyAttributeValue(
+                  element,
+                  kAXSizeAttribute as CFString,
+                  &sizeValue) == .success,
+              let position = self.pointValue(positionValue),
+              let size = self.sizeValue(sizeValue)
         else {
             return nil
         }

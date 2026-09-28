@@ -341,7 +341,7 @@ struct ActionInputDriver: ActionInputDriving {
         error ?? .unsupported(.actionUnsupported)
     }
 
-    private nonisolated static func scrollFailureMayHaveDispatched(_ error: ActionInputError) -> Bool {
+    nonisolated static func nativeMutationFailureMayHaveDispatched(_ error: ActionInputError) -> Bool {
         switch error {
         case .targetUnavailable, .failed:
             true
@@ -873,7 +873,7 @@ extension ActionInputDriver {
                     break
                 } catch let error as ActionInputError {
                     lastError = error
-                    if Self.scrollFailureMayHaveDispatched(error) {
+                    if Self.nativeMutationFailureMayHaveDispatched(error) {
                         throw Self.scrollProgressFailure(
                             completedUnitCount: completedPages,
                             currentUnitMayHaveDispatched: true,
@@ -939,7 +939,7 @@ extension ActionInputDriver {
                     _ = try self.performAction(actionName, on: scrollBar)
                     completedPages += 1
                 } catch let error as ActionInputError {
-                    if Self.scrollFailureMayHaveDispatched(error) {
+                    if Self.nativeMutationFailureMayHaveDispatched(error) {
                         throw Self.scrollProgressFailure(
                             completedUnitCount: completedPages,
                             currentUnitMayHaveDispatched: true,
@@ -1021,7 +1021,7 @@ extension ActionInputDriver {
                 try scrollBar.setAutomationValue(.double(requestedValue))
             } catch {
                 let classified = Self.classify(error)
-                if Self.scrollFailureMayHaveDispatched(classified) {
+                if Self.nativeMutationFailureMayHaveDispatched(classified) {
                     throw Self.scrollProgressFailure(
                         completedUnitCount: 0,
                         currentUnitMayHaveDispatched: true,

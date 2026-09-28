@@ -118,24 +118,6 @@ struct WindowManagementServiceProtocolTests {
         #expect(failure.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
     }
 
-    @Test(arguments: [
-        (positionAccepted: false, sizeAccepted: false, expectedCount: 0),
-        (positionAccepted: true, sizeAccepted: false, expectedCount: 1),
-        (positionAccepted: false, sizeAccepted: true, expectedCount: 1),
-        (positionAccepted: true, sizeAccepted: true, expectedCount: 2),
-    ])
-    func `geometry dispatch counts zero partial and complete AX acceptance`(
-        positionAccepted: Bool,
-        sizeAccepted: Bool,
-        expectedCount: Int)
-    {
-        let acceptance = WindowGeometryDispatchAcceptance(
-            positionAccepted: positionAccepted,
-            sizeAccepted: sizeAccepted)
-
-        #expect(acceptance.dispatchCount == expectedCount)
-    }
-
     @Test
     func `identity defaults fail closed without dispatching legacy numeric overloads`() async {
         let double = LegacyOnlyWindowManagementService()
