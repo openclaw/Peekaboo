@@ -14,7 +14,10 @@ Observation is read-only with respect to focus: targeting a background app does 
 The command's `--timeout` also bounds pixel-only observations (`--no-elements`, raw image stdout, area, and multi
 capture), including snapshot reservation, capture, optional analysis, and failure cleanup. Multiple captures share
 one budget rather than restarting it for each image. Timed-out work cannot later publish successful command output.
-Host discovery precedes this command budget; synchronous native calls cannot be preempted.
+Abandoned attempts remove their generated raw-stdout files once preparation settles and start best-effort cleanup of
+their own reserved snapshot; cleanup does not extend an expired deadline, and remote cleanup is not guaranteed after
+the CLI exits. Caller-requested image paths are not removed. Host discovery precedes this command budget; synchronous
+native calls cannot be preempted.
 
 Timeout handling for plain observations, including AX-tree-only reads, does not advance the desktop mutation
 watermark or borrow an enclosing mutation's barrier. Completing a successful read does not by itself invalidate its

@@ -51,22 +51,38 @@ struct SeePixelTimeoutTests {
         #expect(!fixture.runtime.interactionMutationTracker.hasPendingDurableMutation)
     }
 
-    @Test
-    func `cleanup cannot add a second unbounded wait after a pixel failure`() async throws {
+    @Test(arguments: [false, true])
+    func `cleanup cannot add a second unbounded wait after a pixel failure`(publication: Bool) async throws {
         let fixture = try await Fixture()
         defer { fixture.removeFiles() }
         let entered = AsyncTestLatch()
         let release = AsyncTestLatch()
         let watchdog = Self.watchdog(release)
         defer { watchdog.cancel() }
-        fixture.observation.handler = { _ in throw CaptureError.captureFailure("synthetic capture failure") }
+        fixture.observation.handler = { request in
+            if publication {
+                return try fixture.result(request)
+            }
+            throw CaptureError.captureFailure("synthetic capture failure")
+        }
         fixture.snapshots.beforeCleanSnapshot = { _ in
             await entered.open()
             await release.wait()
         }
         var command = fixture.command()
+        let url = fixture.root.appendingPathComponent("capture.png")
+        let changed = Data(repeating: 0x78, count: Data("synthetic pixel bytes".utf8).count)
+        let afterPreparation: @Sendable () -> Void = {
+            if publication {
+                _ = try? changed.write(to: url)
+            }
+        }
         let output = try await captureStandardOutputText {
-            let operation = Task { @MainActor in try await command.run(using: fixture.runtime) }
+            let operation = Task { @MainActor in
+                try await SeeCommandPreparationContext.$didCapture.withValue(afterPreparation) {
+                    try await command.run(using: fixture.runtime)
+                }
+            }
             #expect(await entered.opensWithin(.seconds(1)))
             await #expect(throws: ExitCode.self) { try await operation.value }
             #expect(await !release.isOpen)
@@ -74,7 +90,13 @@ struct SeePixelTimeoutTests {
             #expect(await Self.waitForCleanup(fixture.snapshots))
         }
         let envelope = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
-        #expect((envelope["error"] as? [String: Any])?["code"] as? String == "TIMEOUT")
+        #expect(envelope["success"] as? Bool == false)
+        if publication {
+            #expect(try Data(contentsOf: url) == changed)
+        } else {
+            #expect(((envelope["error"] as? [String: Any])?["message"] as? String)?
+                .contains("synthetic capture failure") == true)
+        }
         #expect(fixture.snapshots.cleanedSnapshotIDs.count == 1)
         #expect(await fixture.snapshots.getMostRecentSnapshot() == fixture.priorSnapshot)
     }
@@ -109,6 +131,92 @@ struct SeePixelTimeoutTests {
         }
         #expect(output.isEmpty)
         #expect(fixture.snapshots.createExplicitCallCount == 0)
+        let path = try #require(fixture.observation.requests.first?.output.path)
+        #expect(!FileManager.default.fileExists(atPath: path))
+    }
+
+    @Test(arguments: [false, true])
+    func `post preparation cancellation and output corruption clean the reservation`(cancel: Bool) async throws {
+        let fixture = try await Fixture()
+        defer { fixture.removeFiles() }
+        fixture.observation.handler = { try fixture.result($0) }
+        var command = fixture.command()
+        command.timeout = .seconds(1)
+        let url = fixture.root.appendingPathComponent("capture.png")
+        let changed = Data(repeating: 0x78, count: Data("synthetic pixel bytes".utf8).count)
+        let afterPreparation: @Sendable () -> Void = {
+            if cancel {
+                withUnsafeCurrentTask { $0?.cancel() }
+            } else {
+                _ = try? changed.write(to: url)
+            }
+        }
+        let output = try await captureStandardOutputText {
+            let operation = Task { @MainActor in
+                try await SeeCommandPreparationContext.$didCapture.withValue(afterPreparation) {
+                    try await command.run(using: fixture.runtime)
+                }
+            }
+            await #expect(throws: ExitCode.self) { try await operation.value }
+            #expect(await Self.waitForCleanup(fixture.snapshots))
+        }
+        let envelope = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        #expect(envelope["success"] as? Bool == false)
+        #expect(fixture.snapshots.cleanedSnapshotIDs.count == 1)
+        #expect(await fixture.snapshots.getMostRecentSnapshot() == fixture.priorSnapshot)
+        #expect(FileManager.default.fileExists(atPath: url.path), "Caller-requested output must not be deleted")
+        if !cancel {
+            #expect(try Data(contentsOf: url) == changed)
+        }
+    }
+
+    @Test
+    func `post preparation raw cancellation removes only its generated file`() async throws {
+        let fixture = try await Fixture(json: false)
+        defer { fixture.removeFiles() }
+        fixture.observation.handler = { try fixture.result($0) }
+        var command = fixture.command()
+        command.path = "-"
+        command.timeout = .seconds(1)
+        let afterPreparation: @Sendable () -> Void = { withUnsafeCurrentTask { $0?.cancel() } }
+        let output = try await captureStandardOutputBytes {
+            let operation = Task { @MainActor in
+                try await SeeCommandPreparationContext.$didCapture.withValue(afterPreparation) {
+                    try await command.run(using: fixture.runtime)
+                }
+            }
+            await #expect(throws: ExitCode.self) { try await operation.value }
+        }
+        #expect(output.isEmpty)
+        #expect(fixture.snapshots.createExplicitCallCount == 0)
+        let path = try #require(fixture.observation.requests.first?.output.path)
+        #expect(!FileManager.default.fileExists(atPath: path))
+    }
+
+    @Test(arguments: [false, true])
+    func `abandoned attempt cleans once only after preparation settles`(abandonFirst: Bool) async throws {
+        let fixture = try await Fixture()
+        defer { fixture.removeFiles() }
+        let attempt = SeePixelCaptureAttempt(
+            deadline: .distantPast, snapshots: fixture.snapshots
+        )
+        let url = fixture.root.appendingPathComponent("generated.png")
+        if abandonFirst {
+            #expect(attempt.abandon() == nil)
+        }
+        attempt.snapshotID = try await fixture.snapshots.createExplicitSnapshot()
+        attempt.temporaryOutputURLs.insert(url)
+        try Data("pixels".utf8).write(to: url)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(fixture.snapshots.cleanedSnapshotIDs.isEmpty)
+        attempt.finishPreparation()
+        _ = attempt.abandon()
+        _ = attempt.abandon()
+        attempt.finishPreparation()
+        #expect(await Self.waitForCleanup(fixture.snapshots))
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(fixture.snapshots.cleanedSnapshotIDs == [attempt.snapshotID])
+        #expect(await fixture.snapshots.getMostRecentSnapshot() == fixture.priorSnapshot)
     }
 
     @Test

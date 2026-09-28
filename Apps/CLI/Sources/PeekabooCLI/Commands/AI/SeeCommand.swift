@@ -126,7 +126,7 @@ RuntimeBackedCommand {
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 
-    var pixelObservationDeadline: Date?
+    var pixelCaptureAttempt: SeePixelCaptureAttempt?
 
     var verbose: Bool {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose

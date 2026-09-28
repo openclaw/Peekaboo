@@ -12,33 +12,88 @@ private struct PreparedPixelCapture {
 }
 
 @MainActor
+final class SeePixelCaptureAttempt {
+    let deadline: Date
+    var snapshotID: String?
+    var temporaryOutputURLs: Set<URL> = []
+    private let snapshots: any SnapshotManagerProtocol
+    private var preparationFinished = false
+    private var abandoned = false
+    private var cleanupStarted = false
+    private var cleanupTask: Task<Void, Never>?
+
+    init(deadline: Date, snapshots: any SnapshotManagerProtocol) {
+        self.deadline = deadline
+        self.snapshots = snapshots
+    }
+
+    func finishPreparation() {
+        self.preparationFinished = true
+        _ = self.startCleanupIfNeeded()
+    }
+
+    func abandon() -> Task<Void, Never>? {
+        self.abandoned = true
+        return self.startCleanupIfNeeded()
+    }
+
+    private func startCleanupIfNeeded() -> Task<Void, Never>? {
+        guard self.abandoned, self.preparationFinished, !self.cleanupStarted else { return self.cleanupTask }
+        self.cleanupStarted = true
+        for url in self.temporaryOutputURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if let snapshotID = self.snapshotID {
+            let snapshots = self.snapshots
+            self.cleanupTask = Task { @MainActor in
+                _ = try? await snapshots.cleanSnapshot(snapshotId: snapshotID)
+            }
+        }
+        return self.cleanupTask
+    }
+}
+
+@MainActor
 extension SeeCommand {
     func runPixelOnlyCapture() async throws {
         try self.validateStdoutStreamingOptions()
         let timeout = self.overallTimeoutSeconds
         let deadline = Date().addingTimeInterval(timeout)
+        let attempt = SeePixelCaptureAttempt(deadline: deadline, snapshots: self.services.snapshots)
         var timedCommand = self
-        timedCommand.pixelObservationDeadline = deadline
+        timedCommand.pixelCaptureAttempt = attempt
         let command = timedCommand
         let timeoutError = self.pixelCaptureTimeoutError
-        let prepared = try await withMainActorCommandTimeout(
-            seconds: timeout,
-            operationName: "see pixel capture",
-            timeoutError: { timeoutError },
-            operation: { try await command.preparePixelCapture() }
-        )
-
-        // Abandoned capture work must never publish success or raw stdout after the timeout wins.
-        try Task.checkCancellation()
-        _ = try Self.remainingObservationTimeout(
-            until: deadline, overallTimeout: timeout, timeoutError: self.pixelCaptureTimeoutError
-        )
-        if self.streamsImageToStdout {
-            try self.outputImageToStdout(prepared.captures)
-        } else if let analysis = prepared.analysis {
-            try self.outputResultsWithAnalysis(prepared.captures, analysis: analysis)
-        } else {
-            try self.outputResults(prepared.captures)
+        var receipt = SeeExecutionReceipt.none
+        do {
+            let prepared = try await withMainActorCommandTimeout(
+                seconds: timeout,
+                operationName: "see pixel capture",
+                timeoutError: { timeoutError },
+                operation: { try await command.preparePixelCapture(attempt: attempt) }
+            )
+            receipt = SeeExecutionReceipt.combining(prepared.captures.map(\.receipt))
+            SeeCommandPreparationContext.didCapture?()
+            // Abandoned capture work must never publish success or raw stdout after the timeout wins.
+            try Task.checkCancellation()
+            _ = try Self.remainingObservationTimeout(
+                until: deadline, overallTimeout: timeout, timeoutError: timeoutError
+            )
+            if self.streamsImageToStdout {
+                try self.outputImageToStdout(prepared.captures)
+            } else if let analysis = prepared.analysis {
+                try self.outputResultsWithAnalysis(prepared.captures, analysis: analysis)
+            } else {
+                try self.outputResults(prepared.captures)
+            }
+        } catch {
+            let remaining = deadline.timeIntervalSinceNow
+            if let cleanup = attempt.abandon(), remaining > 0 {
+                _ = try? await withMainActorCommandTimeout(seconds: remaining, operationName: "see pixel cleanup") {
+                    await cleanup.value
+                }
+            }
+            throw receipt.preservingFailure(error, operation: "see pixel publication")
         }
     }
 
@@ -46,15 +101,17 @@ extension SeeCommand {
         .timeout("see pixel capture exceeded \(formatDuration(self.overallTimeoutSeconds))")
     }
 
-    private func preparePixelCapture() async throws -> PreparedPixelCapture {
-        var coordinateReceiptID: String?
+    private func preparePixelCapture(attempt: SeePixelCaptureAttempt) async throws -> PreparedPixelCapture {
+        // The caller can time out before a cancellation-ignoring provider returns its reservation or file.
+        defer { attempt.finishPreparation() }
         var captures: [ImageCapturedFile] = []
         do {
+            try Task.checkCancellation()
             if self.publishesPixelCoordinateReceipt {
-                coordinateReceiptID = try await self.services.snapshots.createExplicitSnapshot()
+                attempt.snapshotID = try await self.services.snapshots.createExplicitSnapshot()
             }
             try Task.checkCancellation()
-            captures = try await self.performPixelCapture(snapshotID: coordinateReceiptID)
+            captures = try await self.performPixelCapture(snapshotID: attempt.snapshotID)
             try Task.checkCancellation()
             try self.validatePixelCaptureForPublishing(captures)
             let analysis: ImageAnalysisData? = if let prompt = self.analyze, let firstCapture = captures.first {
@@ -65,9 +122,6 @@ extension SeeCommand {
             try Task.checkCancellation()
             return PreparedPixelCapture(captures: captures, analysis: analysis)
         } catch {
-            if let coordinateReceiptID {
-                try? await self.services.snapshots.cleanSnapshot(snapshotId: coordinateReceiptID)
-            }
             let receipt = SeeExecutionReceipt.combining(captures.map(\.receipt))
             throw receipt.preservingFailure(error, operation: "see pixel capture")
         }
@@ -322,14 +376,17 @@ extension SeeCommand {
     ) async throws -> SeeObservationActionResult {
         try Task.checkCancellation()
         try Self.requireSupportedPixelCaptureFocus(self.captureFocus, target: target)
-        let remaining = try self.pixelObservationDeadline.map {
+        let remaining = try self.pixelCaptureAttempt.map {
             try Self.remainingObservationTimeout(
-                until: $0,
+                until: $0.deadline,
                 overallTimeout: self.overallTimeoutSeconds,
                 timeoutError: self.pixelCaptureTimeoutError
             )
         } ?? self.overallTimeoutSeconds
         let url = self.makeOutputURL(preferredName: preferredName, index: index)
+        if self.streamsImageToStdout {
+            self.pixelCaptureAttempt?.temporaryOutputURLs.insert(url)
+        }
         let request = self.makePixelObservationRequest(
             target: target,
             outputURL: url,
