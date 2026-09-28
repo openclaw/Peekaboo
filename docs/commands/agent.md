@@ -36,6 +36,9 @@ read_when:
   authoritative, and terminal tools can add a final reason that is not a model text chunk.
 - Custom OpenAI-compatible streaming no longer prints endpoint/model metadata or request previews, including for
   GPT-5-named models or the former `DEBUG_OPENAI` switch. Separate verbose-generation and decoding diagnostics are unchanged.
+- Compatible-provider streams assemble indexed tool-argument fragments before the Agent validates and executes them.
+  Complete batches are delivered at a successful terminal; incomplete or malformed arguments fail before dispatch,
+  while explicit empty no-argument calls remain supported. Agent schema and background-authority checks still apply.
 - Session metadata lives inside `agentService` (PeekabooCore). `agent resume` grabs the most recent session, `agent sessions` prints the cached list, and `--no-cache` keeps a run in memory.
 - Automatic desktop context is enabled by default. Before model turns it reads the frontmost application/window,
   cursor position, and running-application names; it also reads a clipboard preview when the clipboard tool is available.

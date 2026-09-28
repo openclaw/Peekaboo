@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve fragmented tool arguments in compatible-provider Agent streams, validate complete call batches before execution, and retain explicit empty no-argument calls along with existing terminal, schema, and background-authority safeguards.
 - Update Tachikoma to remove compatible streaming request dumps that could expose prompts/tool schemas and contaminate Agent JSON or quiet output, without changing provider requests or stream delivery.
 - Restore the SDK Agent text-stream callback with exact text chunks and whitespace, separate from reasoning and tool events, while retaining model-specific terminal buffering and awaited cancellation-aware delivery.
 - Skip discarded Agent progress-event rendering in JSON and quiet runs, share event completion/cancellation draining across task, resume, and audio execution, and remove the unused streaming-delegate adapter without changing provider selection, typed results, or safety metadata.
