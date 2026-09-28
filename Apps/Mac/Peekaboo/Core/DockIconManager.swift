@@ -60,7 +60,9 @@ final class DockIconManager {
             return
         }
 
-        let userWantsDockShown = self.settings?.showInDock ?? true // Default to showing
+        // LSUIElement keeps startup accessory; do not promote before the saved preference is connected.
+        guard let settings = self.settings else { return }
+        let userWantsDockShown = settings.showInDock
         self.logger.debug("Updating Dock visibility - User wants shown: \(userWantsDockShown)")
         self.applyActivationPolicy(userWantsDockShown ? .regular : .accessory)
     }

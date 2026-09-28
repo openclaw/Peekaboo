@@ -6,13 +6,28 @@ import Testing
 @MainActor
 struct DockIconManagerTests {
     @Test(arguments: [false, true])
-    func `startup applies policy before settings connect`(backgroundHost: Bool) {
+    func `only unattended startup applies policy before settings connect`(backgroundHost: Bool) {
         let recorder = ActivationPolicyRecorder()
         _ = DockIconManager(
             isBackgroundBridgeHost: backgroundHost,
             applyActivationPolicy: recorder.apply)
 
-        #expect(recorder.policies == [backgroundHost ? .accessory : .regular])
+        #expect(recorder.policies == (backgroundHost ? [.accessory] : []))
+    }
+
+    @Test(arguments: [false, true])
+    func `ordinary startup waits for the loaded preference`(showInDock: Bool) {
+        let recorder = ActivationPolicyRecorder()
+        let manager = DockIconManager(isBackgroundBridgeHost: false, applyActivationPolicy: recorder.apply)
+
+        manager.updateDockVisibility()
+        manager.setBackgroundBridgeHostMode(false)
+        manager.prepareForPresentation()
+        #expect(recorder.policies.isEmpty)
+
+        manager.connectToSettings(DockPreferences(showInDock: showInDock))
+
+        #expect(recorder.policies == [showInDock ? .regular : .accessory])
     }
 
     @Test(arguments: [false, true])
@@ -29,7 +44,7 @@ struct DockIconManagerTests {
 
         let preferred: NSApplication.ActivationPolicy = showInDock ? .regular : .accessory
         let toggled: NSApplication.ActivationPolicy = showInDock ? .accessory : .regular
-        #expect(recorder.policies == [.regular, preferred, toggled, preferred])
+        #expect(recorder.policies == [preferred, toggled, preferred])
     }
 
     @Test(arguments: [false, true], [false, true])
@@ -78,7 +93,7 @@ struct DockIconManagerTests {
         settings.showInDock = true
         manager.updateDockVisibility()
 
-        #expect(recorder.policies == [.accessory, .regular, .regular, .accessory, .accessory, .regular])
+        #expect(recorder.policies == [.accessory, .accessory, .accessory, .regular])
     }
 
     @Test

@@ -39,7 +39,8 @@ The full menu-bar app (visualizer, permission flows, status item) ships as a dra
 In Settings, **Show Peekaboo in → Menu bar only** keeps Peekaboo out of the Dock and Command-Tab,
 even while Settings, Inspector, or an enabled Sessions window is open. Use the menu-bar item or
 configured keyboard shortcuts to return to those windows. **Menu bar and Dock** keeps the Dock
-and Command-Tab entry available even after all windows are closed.
+and Command-Tab entry available even after all windows are closed. Launch starts in accessory mode until
+the saved preference is connected, so **Menu bar only** never briefly promotes the app into the Dock.
 
 An unattended background Bridge host stays out of the Dock and suppresses automatic window
 presentation regardless of the saved Dock preference. Explicitly opening a window from the menu

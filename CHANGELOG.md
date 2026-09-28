@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Share background window-geometry sequencing across move, resize, set-bounds, and maximize: verify dependent position changes before resizing, skip unchanged components, and retain retry-unsafe accounting for accepted or uncertain native writes.
+- Apply the saved Dock preference before promoting the Mac app at startup, keeping **Menu bar only** launches in accessory mode on macOS 27 while preserving unattended Bridge-host behavior. Thanks @tobihagemann! #861.
 - Include full visible work-area bounds in `screen list` JSON and its origin in human output, reusing global logical coordinates while preserving the existing display and visible-size fields.
 - Preserve Accessibility-value opt-out through background positional click fallback, and retain signed one-unit focus/selection results without upgrading unverified delivery to confirmed change.
 - Reduce native AX round trips during exact-field observation by batching non-value identity metadata, preserving bounded individual-read compatibility, before/after validation, secure-field admission, deadlines, and retry-unsafe write outcomes.
