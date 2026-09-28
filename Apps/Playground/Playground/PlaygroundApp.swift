@@ -52,7 +52,8 @@ struct PlaygroundApp: App {
         NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
             let (eventTypeStr, keyInfo) = self.describeKeyEvent(event)
 
-            let logMessage = "\(eventTypeStr): \(keyInfo) (keyCode: \(event.keyCode))"
+            let context = KeyboardEventLogContext(event: event, application: NSApplication.shared)
+            let logMessage = "\(eventTypeStr): \(keyInfo) (keyCode: \(event.keyCode); \(context.message))"
             keyLogger.info("\(logMessage, privacy: .public)")
 
             // Also log to ActionLogger for UI display (only for keyDown events)

@@ -64,6 +64,16 @@ left down/up Playground records, exact process-generation readback before and af
 DiagnosticReports comparison. No standalone held-pointer helper, separate signing ceremony, or helper custody chain is
 part of the contract. Neither the app log nor controller result alone proves both application handling and release.
 
+Playground's existing `Key` log also appends the raw received modifier flags to every key-down, key-up, and
+flags-changed event, together with its event window number, the app's current key-window number, app activation state,
+and the key window's text-editor selection as UTF-16 location/length. Event and key-window IDs are separate evidence;
+the logger does not infer that a PID-routed event belongs to the key window. Missing or non-text responders and known
+secure field editors report `keySelection: unavailable`, not an empty selection. These are passive pre-handler samples:
+the monitor returns the original event unchanged, and the next independent UI read must establish the resulting effect.
+The appended metadata contains no field text and does not change the existing human key description or on-screen log.
+Query the exact fixture PID and time interval; a received character alone does not prove received Command modifiers,
+shortcut handling, or global modifier release.
+
 The owner-private held-pointer plan binds the same exact signed controller build and protocol-1.30 Bridge host as live-v4,
 one visible exact PID/generation/window/bounds target, one in-bounds global point, a fixed 500 ms hold, and a fresh artifact
 directory. The controller derives an RFC 9562 UUIDv8 client identity from the execution nonce, so every listener-signed
