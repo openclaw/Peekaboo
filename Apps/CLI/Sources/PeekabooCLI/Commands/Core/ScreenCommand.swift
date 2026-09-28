@@ -44,36 +44,36 @@ struct ScreenCommand: ParsableCommand {
             if self.jsonOutput {
                 outputSuccessCodable(data: output.data, logger: self.outputLogger)
             } else {
-                self.displayScreenDetails(screens, count: screens.count)
+                self.displayScreenDetails(screenListData)
             }
         }
 
-        private func displayScreenDetails(_ screens: [PeekabooCore.ScreenInfo], count: Int) {
-            Swift.print("Screens (\(count) total):")
-            let primaryFrame = screens.first(where: \.isPrimary)?.frame
-            for screen in screens {
-                let globalBounds = Self.globalBounds(
-                    fromAppKit: screen.frame,
-                    primaryScreenFrame: primaryFrame
-                )
+        private func displayScreenDetails(_ data: ScreenListData) {
+            Swift.print("Screens (\(data.screens.count) total):")
+            for screen in data.screens {
                 let primaryBadge = screen.isPrimary ? " (Primary)" : ""
                 Swift.print("\n\(screen.index). \(screen.name)\(primaryBadge)")
-                Swift.print("   Resolution: \(Int(globalBounds.width))×\(Int(globalBounds.height))")
-                Swift.print("   Position: \(Int(globalBounds.origin.x)),\(Int(globalBounds.origin.y))")
+                Swift.print("   Resolution: \(screen.bounds.width)×\(screen.bounds.height)")
+                Swift.print("   Position: \(screen.position.x),\(screen.position.y)")
                 let retinaBadge = screen.scaleFactor > 1 ? " (Retina)" : ""
                 Swift.print("   Scale: \(screen.scaleFactor)x\(retinaBadge)")
-                if screen.visibleFrame.size != screen.frame.size {
-                    Swift.print("   Visible Area: \(Int(screen.visibleFrame.width))×\(Int(screen.visibleFrame.height))")
+                if screen.visibleBounds != screen.bounds {
+                    Swift.print("   Visible Area: \(screen.visibleArea.width)×\(screen.visibleArea.height)")
+                    Swift.print("   Visible Position: \(screen.visibleBounds.x),\(screen.visibleBounds.y)")
                 }
             }
             Swift.print("\n💡 Use 'peekaboo see --screen-index N' to capture a specific screen")
         }
 
-        private func buildScreenListData(from screens: [PeekabooCore.ScreenInfo]) -> ScreenListData {
+        func buildScreenListData(from screens: [PeekabooCore.ScreenInfo]) -> ScreenListData {
             let primaryFrame = screens.first(where: \.isPrimary)?.frame
             let details = screens.map { screen in
                 let globalBounds = Self.globalBounds(
                     fromAppKit: screen.frame,
+                    primaryScreenFrame: primaryFrame
+                )
+                let visibleBounds = Self.globalBounds(
+                    fromAppKit: screen.visibleFrame,
                     primaryScreenFrame: primaryFrame
                 )
                 return ScreenListData.ScreenDetails(
@@ -92,6 +92,12 @@ struct ScreenCommand: ParsableCommand {
                         y: Int(globalBounds.origin.y),
                         width: Int(globalBounds.width),
                         height: Int(globalBounds.height)
+                    ),
+                    visibleBounds: ScreenListData.Bounds(
+                        x: Int(visibleBounds.origin.x),
+                        y: Int(visibleBounds.origin.y),
+                        width: Int(visibleBounds.width),
+                        height: Int(visibleBounds.height)
                     ),
                     visibleArea: ScreenListData.Resolution(
                         width: Int(screen.visibleFrame.width),
@@ -178,6 +184,7 @@ struct ScreenListData {
         let resolution: Resolution
         let position: Position
         let bounds: Bounds
+        let visibleBounds: Bounds
         let visibleArea: Resolution
         let isPrimary: Bool
         let scaleFactor: CGFloat
@@ -206,4 +213,4 @@ nonisolated extension ScreenListData: Sendable, Codable {}
 nonisolated extension ScreenListData.ScreenDetails: Sendable, Codable {}
 nonisolated extension ScreenListData.Resolution: Sendable, Codable {}
 nonisolated extension ScreenListData.Position: Sendable, Codable {}
-nonisolated extension ScreenListData.Bounds: Sendable, Codable {}
+nonisolated extension ScreenListData.Bounds: Sendable, Codable, Equatable {}
