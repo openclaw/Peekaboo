@@ -201,6 +201,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     var agentSessionDeletionTombstones: [String: AgentSessionDeletionTombstone] = [:]
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
+    var phaseTimingObserver: ((AgentPhaseTiming) -> Void)?
     var isVerbose: Bool = false
 
     /// Construction-only propagation. Every built tool captures the resulting immutable context,

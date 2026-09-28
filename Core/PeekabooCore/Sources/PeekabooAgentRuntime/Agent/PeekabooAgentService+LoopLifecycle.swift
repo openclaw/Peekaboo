@@ -4,6 +4,63 @@ import Tachikoma
 @available(macOS 14.0, *)
 @MainActor
 extension PeekabooAgentService {
+    struct AgentPhaseTiming {
+        enum Phase: String {
+            case providerStream = "provider_stream"
+            case providerGenerate = "provider_generate"
+            case tool
+        }
+
+        enum Status: String {
+            case success
+            case error
+            case cancelled
+        }
+
+        let phase: Phase
+        let stepIndex: Int
+        let elapsedMilliseconds: Double
+        let status: Status
+
+        var logMessage: String {
+            "phase=\(self.phase.rawValue) step=\(self.stepIndex) " +
+                "elapsed_ms=\(self.elapsedMilliseconds) status=\(self.status.rawValue)"
+        }
+    }
+
+    func withAgentPhaseTiming<T>(
+        _ phase: AgentPhaseTiming.Phase,
+        stepIndex: Int,
+        resultIsFailure: (T) -> Bool = { _ in false },
+        operation: () async throws -> T) async rethrows -> T
+    {
+        let startedAt = ContinuousClock.now
+        var status = AgentPhaseTiming.Status.success
+        defer {
+            let elapsed = startedAt.duration(to: .now).components
+            let timing = AgentPhaseTiming(
+                phase: phase,
+                stepIndex: stepIndex,
+                elapsedMilliseconds: Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15,
+                status: status)
+            self.logger.debug("\(timing.logMessage, privacy: .public)")
+            self.phaseTimingObserver?(timing)
+        }
+        do {
+            let result = try await operation()
+            let failed = resultIsFailure(result)
+            if Task.isCancelled {
+                status = .cancelled
+            } else if failed {
+                status = .error
+            }
+            return result
+        } catch {
+            status = self.isAgentCancellation(error) ? .cancelled : .error
+            throw error
+        }
+    }
+
     enum AgentToolImageLifecycleError: Error {
         case executionAlreadyActive(String)
     }
@@ -37,6 +94,21 @@ extension PeekabooAgentService {
             usage: state.usage,
             toolCallCount: state.toolCallCount,
             reachedStepLimit: reachedStepLimit)
+    }
+
+    func contentByAppendingTurnBoundaryReason(
+        _ stopReason: String,
+        to content: String) -> String
+    {
+        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedReason = stopReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedReason.isEmpty else { return normalizedContent }
+        guard !normalizedContent.isEmpty else { return normalizedReason }
+
+        if normalizedContent == normalizedReason || normalizedContent.hasSuffix("\n\(normalizedReason)") {
+            return normalizedContent
+        }
+        return "\(normalizedContent)\n\n\(normalizedReason)"
     }
 
     func logStreamingStepStart(_ stepIndex: Int, tools: [AgentTool]) {

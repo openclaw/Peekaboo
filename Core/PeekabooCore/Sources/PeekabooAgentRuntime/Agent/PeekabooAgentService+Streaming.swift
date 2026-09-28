@@ -234,22 +234,23 @@ extension PeekabooAgentService {
             }
             try Task.checkCancellation()
 
-            let streamResult = try await streamText(
-                model: configuration.model,
-                provider: configuration.provider,
-                messages: state.messages,
-                tools: configuration.tools.isEmpty ? nil : configuration.tools,
-                settings: self.generationSettings(for: configuration.model))
-
             var terminalUsage: Usage?
             let output: StreamProcessingOutput
             do {
-                output = try await self.collectStreamOutput(
-                    from: streamResult,
-                    model: configuration.model,
-                    eventHandler: configuration.eventHandler,
-                    stepIndex: stepIndex,
-                    onTerminalUsage: { terminalUsage = $0 })
+                output = try await self.withAgentPhaseTiming(.providerStream, stepIndex: stepIndex) {
+                    let streamResult = try await streamText(
+                        model: configuration.model,
+                        provider: configuration.provider,
+                        messages: state.messages,
+                        tools: configuration.tools.isEmpty ? nil : configuration.tools,
+                        settings: self.generationSettings(for: configuration.model))
+                    return try await self.collectStreamOutput(
+                        from: streamResult,
+                        model: configuration.model,
+                        eventHandler: configuration.eventHandler,
+                        stepIndex: stepIndex,
+                        onTerminalUsage: { terminalUsage = $0 })
+                }
             } catch {
                 if let terminalUsage {
                     state.usage = usageAccumulator.record(terminalUsage)
@@ -1048,21 +1049,6 @@ extension PeekabooAgentService {
             isError: true)
     }
 
-    func contentByAppendingTurnBoundaryReason(
-        _ stopReason: String,
-        to content: String) -> String
-    {
-        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedReason = stopReason.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedReason.isEmpty else { return normalizedContent }
-        guard !normalizedContent.isEmpty else { return normalizedReason }
-
-        if normalizedContent == normalizedReason || normalizedContent.hasSuffix("\n\(normalizedReason)") {
-            return normalizedContent
-        }
-        return "\(normalizedContent)\n\n\(normalizedReason)"
-    }
-
     private func executeToolCall(
         _ toolCall: AgentToolCall,
         tool: AgentTool,
@@ -1094,11 +1080,21 @@ extension PeekabooAgentService {
                     "supportsVision": context.supportsVision ? "true" : "false",
                 ])
             let toolArguments = AgentToolArguments(toolCall.arguments)
-            let execution = try await self.executeTool(
-                tool,
-                arguments: toolArguments,
-                executionContext: executionContext,
-                options: context.enhancementOptions)
+            var resultFailed = false
+            let execution = try await self.withAgentPhaseTiming(
+                .tool,
+                stepIndex: options.stepIndex,
+                resultIsFailure: {
+                    resultFailed = Self.resultEncodesToolFailure($0.result)
+                    return resultFailed
+                },
+                operation: {
+                    try await self.executeTool(
+                        tool,
+                        arguments: toolArguments,
+                        executionContext: executionContext,
+                        options: context.enhancementOptions)
+                })
             let result = execution.result
             let resultBoundaryDecision = context.turnBoundary.recordResult(
                 toolName: toolCall.name,
@@ -1106,7 +1102,7 @@ extension PeekabooAgentService {
             let effectiveBoundaryDecision = Self.effectiveBoundaryDecision(
                 initial: boundaryDecision,
                 afterResult: resultBoundaryDecision)
-            if !Self.resultEncodesToolFailure(result) {
+            if !resultFailed {
                 context.turnBoundary.recordSuccessfulCompletion(
                     toolName: toolCall.name,
                     arguments: toolCall.arguments,
@@ -1121,7 +1117,7 @@ extension PeekabooAgentService {
             case let .continueNextStep(reason):
                 toolValue = self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: toolValue)
             case let .stopAgentAfterSuccessfulTool(reason)
-                where options.allowSuccessfulToolBoundary && !Self.resultEncodesToolFailure(result):
+                where options.allowSuccessfulToolBoundary && !resultFailed:
                 toolValue = self.addTurnBoundarySignal(.stopAgent(reason: reason), to: toolValue)
             case .stopAgentAfterSuccessfulTool:
                 break

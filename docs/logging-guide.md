@@ -85,6 +85,35 @@ queries are performed. This stream is separate from CLI `debug_logs`; it does no
 
 `operationStart` and `operationComplete` wrap this timer behavior and add `Operation` metadata.
 
+### Agent phase timing
+
+The Agent runtime separately emits content-free debug records through unified logging under subsystem
+`boo.peekaboo`, category `agent`. Capture them for the verified executing Agent process without enabling verbose
+payload logging:
+
+```bash
+log stream --level debug --predicate 'processIdentifier == 12345 AND subsystem == "boo.peekaboo" AND category == "agent" AND eventMessage BEGINSWITH "phase="'
+```
+
+Each completed phase emits only a fixed phase name, zero-based model-step number, monotonic elapsed milliseconds,
+and `success`, `error`, or `cancelled` status:
+
+```text
+phase=provider_stream step=0 elapsed_ms=1234.5 status=success
+phase=tool step=0 elapsed_ms=42.0 status=success
+```
+
+`provider_stream` covers stream setup and consumption, including event delivery during consumption;
+`provider_generate` covers the non-streaming provider call. `tool` covers actual tool execution, including optional
+verification, and uses the runtime's existing tool-failure classification. Calls skipped before execution emit no tool
+timing. Phase completion is not task completion or proof that a native mutation was confirmed.
+
+These are inclusive wall-time intervals, not CPU or model-reasoning measurements. Context preparation, session writes,
+and work outside these boundaries remain unmeasured. Concurrent runs in the same process are not distinguished by a
+session identifier, so do not assign their interleaved records to one run or add overlapping durations as exclusive time.
+The records contain no model names, prompts, tool names, arguments, results, paths, or session/call identifiers. They do
+not change CLI `debug_logs`, execution traces, or saved sessions, and need no private-data logging profile.
+
 ## JSON Output Mode
 
 When a command enables JSON output, the logger buffers messages instead of writing them beside the JSON document. Standard CLI response types include those buffered strings in `debug_logs`:

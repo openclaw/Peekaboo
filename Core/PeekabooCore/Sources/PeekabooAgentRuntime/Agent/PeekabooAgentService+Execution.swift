@@ -621,7 +621,9 @@ extension PeekabooAgentService {
                     provider: provider),
                 tools: configuration.tools.isEmpty ? nil : configuration.tools,
                 settings: self.generationSettings(for: configuration.model))
-            let response = try await provider.generateText(request: request)
+            let response = try await self.withAgentPhaseTiming(.providerGenerate, stepIndex: stepIndex) {
+                try await provider.generateText(request: request)
+            }
             state.messages.removeConsumedAgentToolImageContext()
 
             if let usage = response.usage {

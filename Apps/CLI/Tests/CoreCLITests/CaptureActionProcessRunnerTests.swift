@@ -121,15 +121,34 @@ struct CaptureActionProcessRunnerTests {
 
     @Test
     func `runner escalates timeout for TERM ignoring child`() async throws {
-        let started = Date()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-action-term-ignore-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ready = root.appendingPathComponent("ready")
         let result = try await CaptureActionProcessRunner.run(
-            command: ["/bin/sh", "-c", "trap '' TERM; while true; do sleep 0.2; done"],
-            timeoutSeconds: 0.1
+            command: [
+                "/usr/bin/perl",
+                "-e",
+                "$SIG{TERM} = 'IGNORE'; open(my $ready, '>', $ARGV[0]) or die $!; " +
+                    "print $ready \"$$\\n\"; close($ready) or die $!; sleep 10; exit 42;",
+                ready.path,
+            ],
+            timeoutSeconds: 1
         )
 
+        let readyPID = try #require(pid_t(
+            String(contentsOf: ready, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+        try #require(readyPID == result.processIdentifier)
         #expect(result.timedOut == true)
-        #expect(result.exitCode != 0)
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(result.processGroupCleaned == true)
+        #expect(result.exitCode == 128 + SIGKILL)
+        let lifecycleLimitMs = Int(
+            (result.timeoutSeconds + CaptureActionProcessRunner.completionReserveSeconds) * 1000
+        )
+        #expect(result.durationMs <= lifecycleLimitMs)
     }
 
     @Test

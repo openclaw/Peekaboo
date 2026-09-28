@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add content-free monotonic Agent provider and tool phase timings for performance diagnosis, preserving streaming selection, results, cancellation, and public output formats.
 - Share background window-geometry sequencing across move, resize, set-bounds, and maximize: verify dependent position changes before resizing, skip unchanged components, and retain retry-unsafe accounting for accepted or uncertain native writes.
 - Include full visible work-area bounds in `screen list` JSON and its origin in human output, reusing global logical coordinates while preserving the existing display and visible-size fields.
 - Preserve Accessibility-value opt-out through background positional click fallback, and retain signed one-unit focus/selection results without upgrading unverified delivery to confirmed change.
