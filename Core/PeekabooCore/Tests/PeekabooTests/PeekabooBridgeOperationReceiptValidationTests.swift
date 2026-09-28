@@ -153,8 +153,10 @@ extension PeekabooBridgeOperationReceiptTests {
         authority.complete(accepted.claim)
     }
 
-    @Test
-    func `exact window click receipts admit only exact AX or window delivery and target`() async throws {
+    @Test(arguments: [ClickTarget.elementId("B1"), .coordinates(CGPoint(x: 30, y: 40))])
+    func `exact window click receipts admit only exact AX or window delivery and target`(
+        clickTarget: ClickTarget) async throws
+    {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "peekaboo-exact-window-click-receipt-\(UUID().uuidString)",
             isDirectory: true)
@@ -169,7 +171,7 @@ extension PeekabooBridgeOperationReceiptTests {
             ownerProcessStartIdentity: 1001,
             capturedBounds: bounds)
         let request = PeekabooBridgeRequest.projectedAction(.init(request: .targetedClick(.init(
-            target: .elementId("B1"),
+            target: clickTarget,
             clickType: .single,
             snapshotId: "snapshot",
             targetProcessIdentifier: identity.ownerProcessIdentifier,

@@ -587,9 +587,36 @@ struct PeekabooBridgeOperationSemanticPlanTests {
         #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
             valid[1],
             request: coordinateRequest))
-        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+        #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
             valid[0],
             request: coordinateRequest))
+        for outcome in invalid {
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                outcome,
+                request: coordinateRequest))
+        }
+        for clickType in [ClickType.right, .double, .middle, .triple, .longPress] {
+            let variant = PeekabooBridgeRequest.targetedClick(.init(
+                target: .coordinates(CGPoint(x: 30, y: 40)),
+                clickType: clickType,
+                snapshotId: "snapshot",
+                targetProcessIdentifier: identity.ownerProcessIdentifier,
+                targetWindowID: identity.windowID,
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds))
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                valid[0],
+                request: variant))
+        }
+        let processOnlyCoordinates = PeekabooBridgeRequest.targetedClick(.init(
+            target: .coordinates(CGPoint(x: 30, y: 40)),
+            clickType: .single,
+            snapshotId: "snapshot",
+            targetProcessIdentifier: identity.ownerProcessIdentifier,
+            expectedProcessIdentity: identity.processIdentity))
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            valid[0],
+            request: processOnlyCoordinates))
     }
 
     @Test

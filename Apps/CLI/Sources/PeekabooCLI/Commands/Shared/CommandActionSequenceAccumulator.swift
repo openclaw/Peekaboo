@@ -8,8 +8,8 @@ func commandActionRoute(for services: any PeekabooServiceProviding) -> DesktopAc
 
 /// Command-layer composition for setup actions followed by one or more mutation leaves.
 ///
-/// `UIAutomationActionResultSequenceAccumulator` owns outcome and target composition. This wrapper
-/// retains the command-facing validation and result surface used by the CLI.
+/// Shared automation helpers own outcome validation and target composition. This wrapper selects
+/// the CLI acceptance policy and retains its command-facing result surface.
 @MainActor
 final class CommandActionSequenceAccumulator {
     private struct MissingReceiptPolicy {
@@ -72,10 +72,12 @@ final class CommandActionSequenceAccumulator {
         missingReceiptPolicy: MissingReceiptPolicy
     ) throws {
         if let outcome {
-            try Self.requireSuccessfulOutcome(
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
                 outcome,
+                policy: .confirmedOrDispatched,
+                operation: operation,
                 targetReceipt: targetIdentity?.actionTargetReceipt,
-                operation: operation
+                rejectedOutcomeMessage: "\(operation) did not return a successful outcome."
             )
         }
 
@@ -171,23 +173,5 @@ final class CommandActionSequenceAccumulator {
             hint: hint,
             causeDescription: leafFailure.causeDescription ?? error.localizedDescription
         )
-    }
-
-    private static func requireSuccessfulOutcome(
-        _ outcome: DesktopActionOutcome,
-        targetReceipt: DesktopActionTargetReceipt?,
-        operation: String
-    ) throws {
-        guard !outcome.isAccepted(by: .confirmedOrDispatched) else { return }
-        guard let failure = DesktopActionFailure(
-            outcome: outcome,
-            message: "\(operation) did not return a successful outcome.",
-            hint: "Follow the canonical escalation metadata before deciding whether to retry.",
-            targetReceipt: targetReceipt
-        )
-        else {
-            preconditionFailure("A non-success outcome must construct a desktop action failure")
-        }
-        throw failure
     }
 }
