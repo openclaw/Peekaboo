@@ -229,7 +229,8 @@ struct VerifyStateWindowReceiptTests {
                 "bounds": Self.boundsArguments(expectedBounds),
                 "tolerance": 0,
             ]],
-            "timeout_ms": 500,
+            // Exercise receipt drift after capture, not a missed poll under scheduler load.
+            "timeout_ms": 1000,
             "stable_samples": 1,
             "final_screenshot": true,
         ]))
@@ -239,6 +240,8 @@ struct VerifyStateWindowReceiptTests {
         #expect(Self.boolMeta("screenshot_attached", response) == false)
         #expect(Self.stringMeta("screenshot_error", response)?.contains("verification receipt changed") == true)
         #expect(capture.windowIDs == [CGWindowID(fixture.window.windowID)])
+        #expect(Self.intMeta("sample_count", response) == 2)
+        #expect(windows.callCount == 4)
     }
 
     @Test
