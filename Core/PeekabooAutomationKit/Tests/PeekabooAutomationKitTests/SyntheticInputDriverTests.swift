@@ -1,6 +1,7 @@
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
+import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 import Testing
@@ -8,6 +9,54 @@ import Testing
 
 @MainActor
 struct SyntheticInputDriverTests {
+    @Test
+    func `legacy exact click adapter refuses only a denied single left value policy`() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let target = ExactWindowPointerTarget(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 12345,
+                ownerProcessStartIdentity: 1,
+                capturedBounds: bounds),
+            bounds: bounds)
+        let cases: [(Bool, MouseButton, Int)] = [
+            (false, .left, 1), (true, .left, 1), (false, .right, 1),
+            (false, .middle, 1), (false, .left, 2), (false, .left, 3),
+        ]
+        for (allowed, button, count) in cases {
+            let recorded = ClickRecordingSyntheticInputDriver()
+            let driver: any SyntheticInputDriving = recorded
+            if !allowed, button == .left, count == 1 {
+                let failure = await #expect(throws: DesktopActionFailure.self) {
+                    try await driver.click(
+                        at: CGPoint(x: 10, y: 20),
+                        button: button,
+                        count: count,
+                        target: target,
+                        allowsAccessibilityValueDelivery: allowed)
+                }
+                #expect(failure?.outcome.state == .refused)
+                #expect(failure?.localizedDescription.contains("cannot enforce") == true)
+                #expect(recorded.targetedClickAttempts == 0)
+                #expect(recorded.events.isEmpty)
+            } else {
+                _ = try await driver.click(
+                    at: CGPoint(x: 10, y: 20),
+                    button: button,
+                    count: count,
+                    target: target,
+                    allowsAccessibilityValueDelivery: allowed)
+                #expect(recorded.targetedClickAttempts == 1)
+                #expect(recorded.events == [.targetedClick(
+                    point: CGPoint(x: 10, y: 20),
+                    button: button,
+                    count: count,
+                    targetProcessIdentifier: 12345,
+                    targetWindowID: 42)])
+            }
+        }
+    }
+
     @Test
     func `long press uses ordinary mouse pressure`() throws {
         let point = CGPoint(x: 12, y: 34)
@@ -194,8 +243,11 @@ struct SyntheticInputDriverTests {
         let operation = Task { @MainActor in
             defer { signal.continuation.finish() }
             return try await service.type(
-                text: "ab", target: nil, clearExisting: false,
-                typingDelay: milliseconds, snapshotId: nil)
+                text: "ab",
+                target: nil,
+                clearExisting: false,
+                typingDelay: milliseconds,
+                snapshotId: nil)
         }
 
         for await _ in signal.stream {

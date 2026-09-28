@@ -299,7 +299,8 @@ protocol SyntheticInputDriving: Sendable {
         at point: CGPoint,
         button: MouseButton,
         count: Int,
-        target: ExactWindowPointerTarget) async throws -> DesktopActionOutcome
+        target: ExactWindowPointerTarget,
+        allowsAccessibilityValueDelivery: Bool) async throws -> DesktopActionOutcome
     func move(to point: CGPoint) throws
     func currentLocation() -> CGPoint?
     func sharedInputActivityToken() -> SharedInputActivityToken
@@ -338,9 +339,17 @@ extension SyntheticInputDriving {
         at point: CGPoint,
         button: MouseButton,
         count: Int,
-        target: ExactWindowPointerTarget) async throws -> DesktopActionOutcome
+        target: ExactWindowPointerTarget,
+        allowsAccessibilityValueDelivery: Bool) async throws -> DesktopActionOutcome
     {
-        try await self.click(
+        // Legacy positional drivers cannot prove whether a single left click writes an AX value.
+        guard allowsAccessibilityValueDelivery || button != .left || count != 1 else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Synthetic input driver cannot enforce the requested Accessibility-value click policy.",
+                hint: "Use an exact-window driver with explicit value-delivery policy support.")
+        }
+        return try await self.click(
             at: point,
             button: button,
             count: count,
@@ -430,7 +439,8 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         at point: CGPoint,
         button: MouseButton = .left,
         count: Int = 1,
-        target: ExactWindowPointerTarget) async throws -> DesktopActionOutcome
+        target: ExactWindowPointerTarget,
+        allowsAccessibilityValueDelivery: Bool) async throws -> DesktopActionOutcome
     {
         try await BackgroundInputDriver.click(
             at: point,
@@ -439,7 +449,8 @@ struct SyntheticInputDriver: SyntheticInputDriving {
             targetProcessIdentifier: target.identity.ownerProcessIdentifier,
             targetWindowID: CGWindowID(target.identity.windowID),
             expectedWindowIdentity: target.identity,
-            expectedWindowBounds: target.bounds)
+            expectedWindowBounds: target.bounds,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
     }
 
     func move(to point: CGPoint) throws {

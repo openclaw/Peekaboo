@@ -1010,8 +1010,8 @@ extension PeekabooBridgeOperationResultSemantics {
         windowBackground: DesktopActionOutcome.Delivery) -> [DeliveryRule]
     {
         let ax = DeliveryRule(delivery: axBackground, units: .exact(1))
-        // AXPress is absent on focusable text fields. ClickService truthfully falls back to one
-        // verified AXFocused value write, which is still a single background click action.
+        // An admitted click may write AXFocused or AXSelected. Its outcome retains whether the
+        // effect was confirmed; allowing one value-delivery unit does not upgrade that evidence.
         let value = payload.allowsAccessibilityValueDelivery != false
             ? [DeliveryRule(delivery: valueBackground, units: .exact(1))]
             : []
@@ -1038,7 +1038,7 @@ extension PeekabooBridgeOperationResultSemantics {
             }
         }
         return switch (payload.target, payload.clickType) {
-        case (.coordinates, .single): [ax] + (window.map { [$0] } ?? [])
+        case (.coordinates, .single): [ax] + value + (window.map { [$0] } ?? [])
         case (.coordinates, .right), (.coordinates, .double), (.coordinates, .middle), (.coordinates, .triple):
             window.map { [$0] } ?? []
         case (.coordinates, .longPress): []

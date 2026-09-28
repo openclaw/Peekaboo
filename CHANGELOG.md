@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve Accessibility-value opt-out through background positional click fallback, and retain signed one-unit focus/selection results without upgrading unverified delivery to confirmed change.
 - Reduce native AX round trips during exact-field observation by batching non-value identity metadata, preserving bounded individual-read compatibility, before/after validation, secure-field admission, deadlines, and retry-unsafe write outcomes.
 - Explain authenticated producer-bound snapshot requirements when an explicit Bridge host cannot serve `see`, instead of suggesting the older protocol 1.26 publication capability is sufficient; preserve host trust and refusal behavior.
 - Preserve signed background coordinate-click results when native hit-testing uses AXPress, retaining exact-window receipts, one-action accounting, and unverified retry-unsafe outcomes.

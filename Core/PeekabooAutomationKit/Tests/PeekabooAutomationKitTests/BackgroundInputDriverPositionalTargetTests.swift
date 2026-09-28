@@ -9,6 +9,44 @@ import Testing
 /// Single left positional clicks use accessibility actions. Pixel right- and double-clicks use
 /// exact-window routed events and are covered separately by `WindowRoutedPointerDriverTests`.
 struct BackgroundInputDriverPositionalTargetTests {
+    @Test(arguments: [BackgroundInputDriver.PositionalClickAction.focus, .select], [false, true])
+    @MainActor
+    func `positional value policy is checked before focus or selection setters`(
+        action: BackgroundInputDriver.PositionalClickAction,
+        allowed: Bool) async throws
+    {
+        let element = PositionalMockElement(isFocusedSettable: true, isSelectedSettable: true)
+        if allowed {
+            let outcome = try await BackgroundInputDriver.performPositionalClickAction(
+                action, on: element, allowsAccessibilityValueDelivery: true)
+            #expect(outcome.state == .dispatchedUnverified)
+            #expect(outcome.delivery?.mechanism == .accessibilityValue)
+        } else {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                try await BackgroundInputDriver.performPositionalClickAction(
+                    action, on: element, allowsAccessibilityValueDelivery: false)
+            }
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.localizedDescription.contains("value delivery is disabled") == true)
+        }
+        #expect(element.setFocusedValues == (allowed && action == .focus ? [true] : []))
+        #expect(element.setSelectedValues == (allowed && action == .select ? [true] : []))
+        #expect(element.performedActions.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `positional value opt-out retains ordinary AXPress`() async throws {
+        let element = PositionalMockElement(supportedActions: [AXActionNames.kAXPressAction])
+        let outcome = try await BackgroundInputDriver.performPositionalClickAction(
+            .press, on: element, allowsAccessibilityValueDelivery: false)
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.delivery?.mechanism == .accessibilityAction)
+        #expect(element.performedActions == [AXActionNames.kAXPressAction])
+        #expect(element.setFocusedValues.isEmpty)
+        #expect(element.setSelectedValues.isEmpty)
+    }
+
     @Test
     @MainActor
     func `focus-only resolution never presses a button or selects a row`() {
@@ -475,6 +513,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
     let automationChildren: [any AutomationElementRepresenting] = []
     var setFocusedValues: [Bool] = []
     var setSelectedValues: [Bool] = []
+    var performedActions: [String] = []
 
     /// Actions reported by the real `AXUIElementCopyActionNames` API in production. Kept separate
     /// from `actionNames` (the attribute read) so tests can model the SwiftUI case where the
@@ -513,6 +552,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
         guard self.supportedActions.contains(actionName) else {
             throw AccessibilitySystemError(.actionUnsupported)
         }
+        self.performedActions.append(actionName)
     }
 
     func setAutomationValue(_ value: UIElementValue) throws {

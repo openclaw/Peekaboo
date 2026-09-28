@@ -1467,8 +1467,15 @@ extension BackgroundInputDriver {
     @MainActor
     static func performPositionalClickAction(
         _ action: PositionalClickAction,
-        on element: any AutomationElementRepresenting) async throws -> DesktopActionOutcome
+        on element: any AutomationElementRepresenting,
+        allowsAccessibilityValueDelivery: Bool = true) async throws -> DesktopActionOutcome
     {
+        if !allowsAccessibilityValueDelivery, action == .select || action == .focus {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Targeted click Accessibility-value delivery is disabled.",
+                hint: "Use an allowed Accessibility action or explicitly admit value delivery.")
+        }
         switch action {
         case .press:
             return try await self.performDetachedAction(
@@ -1637,7 +1644,8 @@ extension BackgroundInputDriver {
         targetProcessIdentifier: pid_t,
         targetWindowID: CGWindowID? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil) async throws -> DesktopActionOutcome
+        expectedWindowBounds: CGRect? = nil,
+        allowsAccessibilityValueDelivery: Bool = true) async throws -> DesktopActionOutcome
     {
         guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
             throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
@@ -1704,7 +1712,10 @@ extension BackgroundInputDriver {
             try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
         }
 
-        return try await self.performPositionalClickAction(resolved.action, on: resolved.element)
+        return try await self.performPositionalClickAction(
+            resolved.action,
+            on: resolved.element,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
     }
 }
 

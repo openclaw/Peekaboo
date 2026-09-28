@@ -137,6 +137,32 @@ struct PeekabooBridgeTargetedClickValueReceiptTests {
             let coordinateHash = try PeekabooBridgeOperationReceiptCoding.sha256(
                 Self.request(evidence: evidence, policy: false, target: coordinateTarget))
             #expect(coordinateReceipt.payload.requestSHA256 == coordinateHash)
+
+            // Positional focus/selection uses the same one-unit normalization without confirming its effect.
+            await MainActor.run {
+                services.automationStub.actionOutcome = .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                    evidence: .deliveryAccepted)
+            }
+            let valueResult = try await client.clickWithOutcome(
+                target: coordinateTarget,
+                clickType: .single,
+                snapshotId: SnapshotReferenceFixtures.first.rawValue,
+                windowEvidence: evidence,
+                allowsAccessibilityValueDelivery: true)
+            let valueOutcome = DesktopActionOutcome.dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+            #expect(valueResult.outcome == valueOutcome)
+            #expect(valueResult.targetIdentity?.exactWindow == exactWindow)
+            let valueReceipt = try #require(await client.lastOperationReceipt())
+            #expect(valueReceipt.payload.outcome == valueOutcome.projection)
+            #expect(valueReceipt.payload.target == .window(identity))
+            let valueHash = try PeekabooBridgeOperationReceiptCoding.sha256(
+                Self.request(evidence: evidence, policy: true, target: coordinateTarget))
+            #expect(valueReceipt.payload.requestSHA256 == valueHash)
         } catch {
             await host.stop()
             throw error

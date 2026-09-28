@@ -16,6 +16,54 @@ struct ClickServiceExactWindowTests {
 
     @Test
     @MainActor
+    func `value opt-out does not alter explicit foreground synthesis`() async throws {
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic)
+        let result = try await service.click(
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            clickType: .single,
+            snapshotId: nil,
+            automationTarget: .foreground,
+            allowsAccessibilityValueDelivery: false)
+        #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(synthetic.events == [.click(point: CGPoint(x: 10, y: 20), button: .left, count: 1)])
+    }
+
+    @Test
+    @MainActor
+    func `coordinate value opt-out is retained through the positional driver`() async throws {
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 12345,
+            ownerProcessStartIdentity: 1,
+            capturedBounds: bounds)
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in true })
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .single,
+                snapshotId: nil,
+                automationTarget: .exactWindow(.init(identity: identity, bounds: bounds)),
+                allowsAccessibilityValueDelivery: false)
+        }
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.localizedDescription.contains("cannot enforce") == true)
+        #expect(synthetic.targetedClickAttempts == 0)
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `Middle and triple clicks use only the exact-window routed synthesis owner`() async throws {
         let identity = try WindowMutationIdentity(
             windowID: 42,
@@ -48,7 +96,8 @@ struct ClickServiceExactWindowTests {
                 automationTarget: .exactWindow(.init(
                     identity: identity,
                     bounds: #require(identity.capturedBounds))),
-                validatesProcessIdentity: true)
+                validatesProcessIdentity: true,
+                allowsAccessibilityValueDelivery: false)
 
             #expect(result.path == .synth)
             #expect(result.outcome == outcome)

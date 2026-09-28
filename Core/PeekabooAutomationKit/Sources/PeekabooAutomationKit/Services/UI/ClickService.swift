@@ -43,6 +43,7 @@ import PeekabooFoundation
 private struct SyntheticClickDestination {
     let captureReceipt: DesktopOperationPlan.CaptureReceipt
     let validatesProcessIdentity: Bool
+    let allowsAccessibilityValueDelivery: Bool
 
     var processIdentifier: pid_t? {
         self.captureReceipt.processIdentifier
@@ -717,7 +718,8 @@ public final class ClickService {
                 clickType: .single,
                 destination: SyntheticClickDestination(
                     captureReceipt: DesktopOperationPlan.CaptureReceipt(target: .foreground),
-                    validatesProcessIdentity: false))
+                    validatesProcessIdentity: false,
+                    allowsAccessibilityValueDelivery: true))
             try await Task.sleep(nanoseconds: 60_000_000) // 60ms
 
             if self.isFocusedTextInput(expectedIdentifier: normalizedExpectedIdentifier) {
@@ -937,7 +939,8 @@ public final class ClickService {
                     count: count,
                     target: ExactWindowPointerTarget(
                         identity: exactWindowReceipt.identity,
-                        bounds: exactWindowReceipt.bounds))
+                        bounds: exactWindowReceipt.bounds),
+                    allowsAccessibilityValueDelivery: destination.allowsAccessibilityValueDelivery)
             } else {
                 try await self.syntheticInputDriver.click(
                     at: point,
@@ -1431,7 +1434,8 @@ extension ClickService {
                     mutationReceipt = preparedReceipt
                     syntheticDestination = SyntheticClickDestination(
                         captureReceipt: preparedReceipt,
-                        validatesProcessIdentity: validatesProcessIdentity)
+                        validatesProcessIdentity: validatesProcessIdentity,
+                        allowsAccessibilityValueDelivery: request.allowsAccessibilityValueDelivery)
                 },
                 routing: {
                     DesktopOperationPlan.Routing(
