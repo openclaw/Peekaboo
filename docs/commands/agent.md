@@ -34,6 +34,8 @@ read_when:
   tool events, or a duplicated final summary. Callbacks are awaited in order and share the model's existing terminal
   buffering policy. They are progress, not confirmation of task success; the returned result or thrown error remains
   authoritative, and terminal tools can add a final reason that is not a model text chunk.
+- Custom OpenAI-compatible streaming no longer prints endpoint/model metadata or request previews, including for
+  GPT-5-named models or the former `DEBUG_OPENAI` switch. Separate verbose-generation and decoding diagnostics are unchanged.
 - Session metadata lives inside `agentService` (PeekabooCore). `agent resume` grabs the most recent session, `agent sessions` prints the cached list, and `--no-cache` keeps a run in memory.
 - Automatic desktop context is enabled by default. Before model turns it reads the frontmost application/window,
   cursor position, and running-application names; it also reads a clipboard preview when the clipboard tool is available.
