@@ -504,6 +504,26 @@ jobs:
           print("Built CLI accepted structured experimental capabilities over stdio")
           PY
 
+      - name: Run mocked interaction receipt regressions
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          RUN_AUTOMATION_READ: "true"
+          RUN_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_ACTIONS: "false"
+          RUN_LOCAL_TESTS: "false"
+        run: |
+          set -o pipefail
+          test_log="$RUNNER_TEMP/interaction-receipt-contracts.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel \
+            --filter '^CLIAutomationTests[.](PressCommandTests|ClickCommandTests|ClickCommandActionResultTests|ClickSnapshotWindowSelectionTests)/' 2>&1 | tee "$test_log"
+          grep -Fq 'Suite PressCommandTests passed after ' "$test_log"
+          grep -Fq 'Suite ClickCommandTests passed after ' "$test_log"
+          grep -Fq 'Suite ClickCommandActionResultTests passed after ' "$test_log"
+          grep -Fq 'Suite ClickSnapshotWindowSelectionTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run CLI unit tests (skip automation)
         working-directory: Apps/CLI
         run: |
@@ -569,26 +589,6 @@ jobs:
           PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
         run: |
           python3 ../../scripts/test-see-config-environment.py
-
-      - name: Run mocked interaction receipt regressions
-        working-directory: Apps/CLI
-        env:
-          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
-          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
-          RUN_AUTOMATION_READ: "true"
-          RUN_AUTOMATION_TESTS: "false"
-          RUN_AUTOMATION_ACTIONS: "false"
-          RUN_LOCAL_TESTS: "false"
-        run: |
-          set -o pipefail
-          test_log="$RUNNER_TEMP/interaction-receipt-contracts.log"
-          swift test --disable-xctest --enable-swift-testing --no-parallel \
-            --filter '^CLIAutomationTests[.](PressCommandTests|ClickCommandTests|ClickCommandActionResultTests|ClickSnapshotWindowSelectionTests)/' 2>&1 | tee "$test_log"
-          grep -Fq 'Suite PressCommandTests passed after ' "$test_log"
-          grep -Fq 'Suite ClickCommandTests passed after ' "$test_log"
-          grep -Fq 'Suite ClickCommandActionResultTests passed after ' "$test_log"
-          grep -Fq 'Suite ClickSnapshotWindowSelectionTests passed after ' "$test_log"
-          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
   tachikoma:
     name: Tachikoma build & tests

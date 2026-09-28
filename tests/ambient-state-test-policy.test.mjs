@@ -337,13 +337,20 @@ test("hosted See proof retains target inclusion without opting into ambient test
   assert.doesNotMatch(manifest, /PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS/);
 });
 
-test("hosted CLI groups See proof with skip-automation builds before mocked interactions", () => {
+test("hosted CLI keeps cold-binary smoke first and groups tests by compiler configuration", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   let previous = -1;
   for (const name of [
+    "Build CLI target",
+    "Smoke test the built CLI and tool catalog",
+    "Smoke test structured MCP initialization over stdio",
+    "Run mocked interaction receipt regressions",
+    "Run CLI unit tests (skip automation)",
+    "Run Agent JSON and outcome-notice contracts (skip automation)",
+    "Run CLI paste admission timeout regression (skip automation)",
+    "Run paste observation invalidation contracts (skip automation)",
     "Run taskless agent resume regression (skip automation)",
     "Run See configuration environment regressions",
-    "Run mocked interaction receipt regressions",
   ]) {
     const marker = `      - name: ${name}\n`;
     const position = workflow.indexOf(marker);
