@@ -1025,6 +1025,13 @@ private func explicitSnapshotPublicationFailure(
     options: CommandRuntimeOptions
 ) -> String? {
     guard explicitSocket != nil, options.requiresExplicitSnapshotPublication else { return nil }
+    if options.requiresProducerBoundSnapshotReferences {
+        let version = PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion
+        return "This command requires authenticated, producer-bound snapshots " +
+            "(Bridge protocol \(version.major).\(version.minor) or newer). Use a current signed Peekaboo host " +
+            "on its standard socket, or remove --bridge-socket for automatic host selection. " +
+            "Custom sockets without a host-signing policy cannot negotiate authenticated snapshots."
+    }
     return "The explicitly selected Bridge host cannot publish an explicit-reference-only coordinate " +
         "receipt; protocol 1.26 is required. Update and relaunch Peekaboo on that host, or remove " +
         "--bridge-socket so Peekaboo can select a current host."

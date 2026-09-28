@@ -6,7 +6,7 @@ import Testing
 
 struct ExplicitSnapshotPublicationRuntimeTests {
     @Test
-    func `exact no-elements receipts require protocol 1_26 explicit publication`() throws {
+    func `exact no-elements receipts require explicit publication and authenticated producer references`() throws {
         let exact = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -62,6 +62,14 @@ struct ExplicitSnapshotPublicationRuntimeTests {
                 PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
             ]
         ).withProducerBoundSnapshotFixture()
+        let unattestedHost = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 28),
+            hostKind: .onDemand,
+            build: "current",
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: publicationOnlyHost.hostCapabilities
+        )
 
         #expect(exact.requiresExplicitSnapshotPublication)
         #expect(!processOnly.requiresExplicitSnapshotPublication)
@@ -69,14 +77,29 @@ struct ExplicitSnapshotPublicationRuntimeTests {
         #expect(!CommandRuntime.supportsRemoteRequirements(for: oldHost, options: exact))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: oldHost, options: processOnly))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: publicationOnlyHost, options: exact))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: unattestedHost, options: exact))
         #expect(CommandRuntime.supportsRemoteRequirements(for: currentHost, options: exact))
-        #expect(RuntimeHostResolver.requiredHostFailure(
+        let failure = try #require(RuntimeHostResolver.requiredHostFailure(
             explicitSocket: "/tmp/old.sock",
             options: exact
+        ))
+        #expect(failure.contains("protocol 1.34"))
+        #expect(failure.contains("authenticated, producer-bound snapshots"))
+        #expect(failure.contains("standard socket"))
+        #expect(failure.contains("host-signing policy"))
+        #expect(!failure.contains("protocol 1.26"))
+        #expect(RuntimeHostResolver.requiredHostFailure(explicitSocket: nil, options: exact) == nil)
+
+        var producerOnly = CommandRuntimeOptions()
+        producerOnly.requiresProducerBoundSnapshotReferences = true
+        #expect(RuntimeHostResolver.requiredHostFailure(
+            explicitSocket: "/tmp/old.sock", options: producerOnly
+        ) == nil)
+
+        var publicationOnly = CommandRuntimeOptions()
+        publicationOnly.requiresExplicitSnapshotPublication = true
+        #expect(RuntimeHostResolver.requiredHostFailure(
+            explicitSocket: "/tmp/old.sock", options: publicationOnly
         )?.contains("protocol 1.26") == true)
-        #expect(RuntimeHostResolver.requiredHostFailure(
-            explicitSocket: "/tmp/old.sock",
-            options: exact
-        )?.contains("Update and relaunch Peekaboo") == true)
     }
 }

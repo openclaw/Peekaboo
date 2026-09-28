@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Explain authenticated producer-bound snapshot requirements when an explicit Bridge host cannot serve `see`, instead of suggesting the older protocol 1.26 publication capability is sufficient; preserve host trust and refusal behavior.
 - Honor classic capture for `verify --screenshot` on an explicitly selected compatible Bridge host, preserving optional-image failures, exact-target checks, and screenshot-free verification without extra permission probes.
 - Preserve generation-pinned native hotkey targets through CLI and MCP results using the shared executor and sequence metadata; keep unverified chords retry-unsafe and never borrow a setup-focus receipt for an unattributed input leaf.
 - Add content-free debug measurements for slow, incomplete and fallback native AX reads without extra queries or changes to observation completeness, timeouts or stability requirements.
