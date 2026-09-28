@@ -215,6 +215,118 @@ struct DaemonControlTransportTests {
         await peer.stop()
     }
 
+    @Test(arguments: [false, true])
+    func `accepted conditional stop requires confirmed process termination`(terminated: Bool) async throws {
+        let peer = try ScriptedBridgePeer(responses: [.handshake(Self.handshake), .bool(true)])
+        let client = DaemonControlClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        let operation = {
+            try await client.stopAndWait(
+                waitSeconds: 1,
+                expectedPID: 42,
+                requireIdentityMatch: true,
+                processHasTerminated: { pid in
+                    #expect(pid == 42)
+                    return terminated
+                }
+            )
+        }
+        if terminated {
+            #expect(try await operation())
+        } else {
+            let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) { try await operation() }
+            #expect(error?.code == .timeout)
+            #expect(error?.message.contains("accepted stop request") == true)
+        }
+        await peer.stop()
+        let requests = await peer.requests
+        #expect(requests.count == 2)
+        let stop = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeRequest.self, from: requests[1])
+        guard case let .daemonStopIf(request) = stop else {
+            Issue.record("Conditional stop lost its expected PID")
+            return
+        }
+        #expect(request.expectedPID == 42)
+    }
+
+    @Test
+    func `accepted stop deadline is TIMEOUT rather than a refusal in JSON`() async throws {
+        let peer = try ScriptedBridgePeer(responses: [.handshake(Self.handshake), .bool(true)])
+        let client = DaemonControlClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await client.stopAndWait(waitSeconds: 0, expectedPID: nil)
+        }
+        await peer.stop()
+        let failure = try #require(error)
+        #expect(failure.code == .timeout)
+        let output = try await captureStandardOutputText { handleGenericError(
+            failure, jsonOutput: true, logger: Logger.shared
+        ) }
+        let envelope = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let detail = try #require(envelope["error"] as? [String: Any])
+        #expect(envelope["success"] as? Bool == false)
+        #expect(detail["code"] as? String == "TIMEOUT")
+        #expect(detail["message"] as? String == failure.message)
+        #expect(!failure.message.contains("refused"))
+    }
+
+    @Test
+    func `explicit daemon refusal does not wait or inspect processes`() async throws {
+        let peer = try ScriptedBridgePeer(responses: [.handshake(Self.handshake), .bool(false)])
+        let client = DaemonControlClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        #expect(try await client.stopAndWait(waitSeconds: 0, expectedPID: 42, processHasTerminated: { _ in
+            Issue.record("Refused stop must not inspect process termination")
+            return true
+        }) == false)
+        await peer.stop()
+        #expect(await peer.acceptedConnectionCount == 2)
+    }
+
+    @Test
+    func `stop request errors retain precedence over deadline diagnostics`() async throws {
+        let peer = try ScriptedBridgePeer(responses: [
+            .handshake(Self.handshake), .error(.init(code: .unauthorizedClient, message: "Fixture request failure")),
+        ])
+        let client = DaemonControlClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await client.stopAndWait(waitSeconds: 0, expectedPID: 42)
+        }
+        await peer.stop()
+        #expect(error?.code == .unauthorizedClient)
+        #expect(error?.message == "Fixture request failure")
+    }
+
+    @Test
+    func `uncertain endpoint cannot succeed even when the process is terminal`() async throws {
+        let peer = try ScriptedBridgePeer(scripts: [
+            [.respond(.handshake(Self.handshake))], [.respond(.bool(true))],
+            [.respond(.error(.init(code: .timeout, message: "Fixture probe failure"))), .idle(seconds: 2)],
+        ])
+        let client = DaemonControlClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        let error = await #expect(throws: (any Error).self) {
+            _ = try await client.stopAndWait(waitSeconds: 1, expectedPID: 42, processHasTerminated: { _ in
+                Issue.record("Unknown endpoint must not authorize completion from a process probe")
+                return true
+            })
+        }
+        await peer.stop()
+        #expect(error?.localizedDescription.contains("accepted stop request") == false)
+    }
+
+    @Test
+    func `cancelled stop preserves cancellation without checking process state`() async throws {
+        let peer = try ScriptedBridgePeer(steps: [.idle(seconds: 2)])
+        let client = DaemonControlClient(socketPath: peer.socketPath, requestTimeoutSec: 0.1)
+        let task = Task {
+            try await client.stopAndWait(waitSeconds: 1, expectedPID: 42, processHasTerminated: { _ in
+                Issue.record("Cancelled stop must not inspect process termination")
+                return true
+            })
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        await peer.stop()
+    }
+
     private static var handshake: PeekabooBridgeHandshakeResponse {
         BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 28),

@@ -75,6 +75,13 @@ Options:
 - `--bridge-socket <path>` override the default daemon socket path.
 - `--wait <duration>` how long to wait for shutdown (default `12s`, above the Bridge request deadline).
 
+Stop confirms that the daemon endpoint is absent and, when its PID is known, that the process is gone or the kernel
+identifies it as an exited zombie awaiting parent reaping. This also works when a script synchronously invokes `stop`
+while owning the daemon child. Unreadable process state or an uncertain endpoint never counts as successful cleanup.
+An explicit server refusal remains a refusal; an accepted request whose shutdown cannot be confirmed before `--wait`
+expires reports `TIMEOUT` in JSON instead of incorrectly saying the request was refused. The command does not force-kill
+the daemon on a timeout.
+
 ## Notes
 - Normal automation commands auto-start the daemon in `auto` mode when the selected reusable socket is unavailable;
   exact-build routing for the command categories above can select `daemon-<build>.sock` before the default socket or

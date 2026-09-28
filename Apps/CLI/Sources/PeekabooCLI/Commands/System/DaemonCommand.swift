@@ -112,7 +112,8 @@ struct DaemonControlClient {
     func stopAndWait(
         waitSeconds: Int,
         expectedPID: pid_t?,
-        requireIdentityMatch: Bool = false
+        requireIdentityMatch: Bool = false,
+        processHasTerminated: (pid_t) -> Bool = { Self.hasProcessTerminated($0) }
     ) async throws -> Bool {
         var requestError: (any Error)?
         var accepted = false
@@ -134,7 +135,7 @@ struct DaemonControlClient {
             do {
                 if try await self.fetchControllableDaemonStatus() == nil {
                     if let expectedPID {
-                        if !Self.isProcessAlive(expectedPID) {
+                        if processHasTerminated(expectedPID) {
                             return true
                         }
                     } else if requestError == nil {
@@ -156,14 +157,10 @@ struct DaemonControlClient {
         if let probeError {
             throw probeError
         }
-        return false
-    }
-
-    private static func isProcessAlive(_ pid: pid_t) -> Bool {
-        if kill(pid, 0) == 0 {
-            return true
-        }
-        return errno != ESRCH
+        throw PeekabooBridgeErrorEnvelope(
+            code: .timeout,
+            message: "Daemon accepted stop request, but shutdown was not confirmed within \(waitSeconds) seconds"
+        )
     }
 
     private func fallbackStatus(handshake: PeekabooBridgeHandshakeResponse) -> PeekabooDaemonStatus {
