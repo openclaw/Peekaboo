@@ -22,8 +22,17 @@ public enum AgentEvent: Sendable {
 /// Protocol for receiving agent events
 @MainActor
 public protocol AgentEventDelegate: AnyObject, Sendable {
+    /// Read once per execution. Opting out skips progress events without changing provider streaming or results.
+    var receivesAgentEvents: Bool { get }
+
     /// Called when an agent event is emitted
     func agentDidEmitEvent(_ event: AgentEvent)
+}
+
+extension AgentEventDelegate {
+    public var receivesAgentEvents: Bool {
+        true
+    }
 }
 
 // MARK: - Agent Execution Types

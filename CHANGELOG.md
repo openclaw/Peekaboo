@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore the SDK Agent text-stream callback with exact text chunks and whitespace, separate from reasoning and tool events, while retaining model-specific terminal buffering and awaited cancellation-aware delivery.
+- Skip discarded Agent progress-event rendering in JSON and quiet runs, share event completion/cancellation draining across task, resume, and audio execution, and remove the unused streaming-delegate adapter without changing provider selection, typed results, or safety metadata.
 - Add content-free monotonic Agent provider and tool phase timings for performance diagnosis, preserving streaming selection, results, cancellation, and public output formats.
 - Share background window-geometry sequencing across move, resize, set-bounds, and maximize: verify dependent position changes before resizing, skip unchanged components, and retain retry-unsafe accounting for accepted or uncertain native writes.
 - Apply the saved Dock preference before promoting the Mac app at startup, keeping **Menu bar only** launches in accessory mode on macOS 27 while preserving unattended Bridge-host behavior. Thanks @tobihagemann! #861.

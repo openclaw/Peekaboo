@@ -229,6 +229,10 @@ extension AgentCommand {
     }
 
     final class SilentAgentEventDelegate: AgentEventDelegate {
+        var receivesAgentEvents: Bool {
+            false
+        }
+
         func agentDidEmitEvent(_ event: AgentEvent) {}
     }
 

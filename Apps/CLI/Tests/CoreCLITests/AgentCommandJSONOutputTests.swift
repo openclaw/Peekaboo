@@ -7,6 +7,15 @@ import Testing
 @Suite(.tags(.safe))
 @MainActor
 struct AgentCommandJSONOutputTests {
+    @Test(arguments: [["--json"], ["--quiet"], ["--json", "--quiet"]])
+    func `Silent output retains the streaming delegate without requesting progress events`(options: [String]) throws {
+        let command = try AgentCommand.parse(["Inspect nothing"] + options)
+
+        #expect(command.makeDisplayDelegate(for: "Inspect nothing") == nil)
+        let delegate = try #require(command.makeStreamingDelegate(using: nil))
+        #expect(!delegate.receivesAgentEvents)
+    }
+
     @Test
     func `No cache JSON keeps legacy calls and emits a payload-safe correlated trace`() throws {
         let png = "iVBORw0KGgo" + String(repeating: "A", count: 2000)

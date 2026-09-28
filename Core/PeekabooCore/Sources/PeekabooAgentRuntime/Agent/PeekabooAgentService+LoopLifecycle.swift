@@ -4,6 +4,47 @@ import Tachikoma
 @available(macOS 14.0, *)
 @MainActor
 extension PeekabooAgentService {
+    func withAgentEventDelivery(
+        task: String,
+        delegate: any AgentEventDelegate,
+        operation: (EventHandler?) async throws -> AgentExecutionResult) async throws -> AgentExecutionResult
+    {
+        let continuation: AsyncStream<AgentEvent>.Continuation?
+        let consumer: Task<Void, Never>?
+        let handler: EventHandler?
+        if delegate.receivesAgentEvents {
+            let (events, eventContinuation) = AsyncStream<AgentEvent>.makeStream()
+            continuation = eventContinuation
+            // Unstructured so execution cancellation cannot discard queued delegate callbacks.
+            consumer = Task { @MainActor in
+                delegate.agentDidEmitEvent(.started(task: task))
+                for await event in events {
+                    delegate.agentDidEmitEvent(event)
+                }
+            }
+            handler = EventHandler { event in eventContinuation.yield(event) }
+        } else {
+            continuation = nil
+            consumer = nil
+            handler = nil
+        }
+
+        let outcome: Result<AgentExecutionResult, any Error>
+        do {
+            let result = try await operation(handler)
+            await handler?.send(.completed(summary: result.content, usage: result.usage))
+            outcome = .success(result)
+        } catch {
+            if !(error is CancellationError) {
+                await handler?.send(.error(message: error.localizedDescription))
+            }
+            outcome = .failure(error)
+        }
+        continuation?.finish()
+        await consumer?.value
+        return try outcome.get()
+    }
+
     struct AgentPhaseTiming {
         enum Phase: String {
             case providerStream = "provider_stream"
@@ -122,6 +163,16 @@ extension PeekabooAgentService {
 
         let toolNames = tools.map(\.name).joined(separator: ", ")
         self.logger.debug("Available tools: \(toolNames)")
+    }
+
+    func logStepCompletion(
+        stepIndex: Int,
+        stepText: String,
+        toolCalls: [AgentToolCall])
+    {
+        guard self.isVerbose else { return }
+        self.logger.debug(
+            "Step \(stepIndex) completed: collected \(toolCalls.count) tool calls, text length: \(stepText.count)")
     }
 
     func isAgentCancellation(_ error: any Error) -> Bool {

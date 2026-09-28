@@ -27,6 +27,13 @@ read_when:
 
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
+- JSON and quiet runs skip progress-event construction and rendering but retain provider streaming, typed tool results,
+  usage, execution traces, safety metadata, and session history. SDK event delegates keep receiving events by default;
+  `receivesAgentEvents = false` opts out for one execution without changing provider selection.
+- The SDK's `executeTaskStreaming` callback receives typed text chunks, including whitespace, without native reasoning,
+  tool events, or a duplicated final summary. Callbacks are awaited in order and share the model's existing terminal
+  buffering policy. They are progress, not confirmation of task success; the returned result or thrown error remains
+  authoritative, and terminal tools can add a final reason that is not a model text chunk.
 - Session metadata lives inside `agentService` (PeekabooCore). `agent resume` grabs the most recent session, `agent sessions` prints the cached list, and `--no-cache` keeps a run in memory.
 - Automatic desktop context is enabled by default. Before model turns it reads the frontmost application/window,
   cursor position, and running-application names; it also reads a clipboard preview when the clipboard tool is available.

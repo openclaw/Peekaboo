@@ -12,6 +12,11 @@ import Testing
 // swiftlint:disable file_length
 
 @MainActor
+private final class BrowserFixtureAgentEventDelegate: AgentEventDelegate {
+    func agentDidEmitEvent(_: AgentEvent) {}
+}
+
+@MainActor
 // swiftlint:disable:next type_body_length
 struct BrowserMCPSessionManagerTests {
     @Test
@@ -2531,7 +2536,7 @@ struct BrowserMCPSessionManagerTests {
             services: Self.services(browser: root),
             defaultModel: model)
         let delegate: (any AgentEventDelegate)? = streaming
-            ? StreamingEventDelegate { _ in }
+            ? BrowserFixtureAgentEventDelegate()
             : nil
 
         await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
@@ -2591,7 +2596,7 @@ struct BrowserMCPSessionManagerTests {
             defaultModel: model,
             sessionManager: sessionManager)
         let delegate: (any AgentEventDelegate)? = streaming
-            ? StreamingEventDelegate { _ in }
+            ? BrowserFixtureAgentEventDelegate()
             : nil
 
         await #expect(throws: AgentRemoteBrowserOpenFixtureError.self) {
@@ -2776,7 +2781,7 @@ struct BrowserMCPSessionManagerTests {
             defaultModel: model,
             sessionManager: sessionManager)
         let delegate: (any AgentEventDelegate)? = streaming
-            ? StreamingEventDelegate { _ in }
+            ? BrowserFixtureAgentEventDelegate()
             : nil
         let cancellationFinished = CompletionFlag()
 
@@ -3377,8 +3382,7 @@ struct BrowserMCPSessionManagerTests {
                 _ = try await agent.executeWithStreaming(
                     context: context,
                     model: .anthropic(.sonnet45),
-                    maxSteps: 0,
-                    streamingDelegate: StreamingEventDelegate { _ in })
+                    maxSteps: 0)
             } else {
                 _ = try await agent.executeWithoutStreaming(
                     context: context,

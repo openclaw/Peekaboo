@@ -9,6 +9,8 @@ import Tachikoma
 
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
+    typealias TextStreamHandler = @Sendable (String) async -> Void
+
     struct StreamProcessingOutput {
         let text: String
         let toolCalls: [AgentToolCall]
@@ -25,12 +27,14 @@ extension PeekabooAgentService {
 
     private enum BufferedStreamEvent {
         case event(AgentEvent)
+        case text(String)
     }
 
     func collectStreamOutput(
         from streamResult: StreamTextResult,
         model: LanguageModel,
         eventHandler: EventHandler?,
+        textHandler: TextStreamHandler? = nil,
         stepIndex: Int,
         onTerminalUsage: ((Usage?) -> Void)? = nil) async throws -> StreamProcessingOutput
     {
@@ -74,13 +78,14 @@ extension PeekabooAgentService {
                     type: pendingReasoningType,
                     reasoningBlocks: &reasoningBlocks)
                 guard let content = delta.content else { continue }
-                await self.handleTextDelta(
+                try await self.handleTextDelta(
                     content,
                     stepText: &stepText,
                     isThinking: &isThinking,
                     bufferedEvents: &bufferedEvents,
                     buffersAssistantTextUntilDone: buffersAssistantTextUntilDone,
-                    eventHandler: eventHandler)
+                    eventHandler: eventHandler,
+                    textHandler: textHandler)
 
             case .toolCall:
                 self.flushPendingReasoningText(
@@ -168,12 +173,7 @@ extension PeekabooAgentService {
             finishReason,
             hasToolCalls: !stepToolCalls.isEmpty)
 
-        for event in bufferedEvents {
-            switch event {
-            case let .event(agentEvent):
-                await eventHandler?.send(agentEvent)
-            }
-        }
+        try await self.deliverBufferedStreamEvents(bufferedEvents, eventHandler: eventHandler, textHandler: textHandler)
 
         return StreamProcessingOutput(
             text: stepText,
@@ -181,6 +181,29 @@ extension PeekabooAgentService {
             usage: usage,
             finishReason: finishReason,
             reasoningBlocks: reasoningBlocks)
+    }
+
+    private func deliverTextChunk(_ content: String, to handler: TextStreamHandler) async throws {
+        try Task.checkCancellation()
+        await handler(content)
+        try Task.checkCancellation()
+    }
+
+    private func deliverBufferedStreamEvents(
+        _ events: [BufferedStreamEvent],
+        eventHandler: EventHandler?,
+        textHandler: TextStreamHandler?) async throws
+    {
+        for event in events {
+            switch event {
+            case let .event(agentEvent):
+                await eventHandler?.send(agentEvent)
+            case let .text(content):
+                if let textHandler {
+                    try await self.deliverTextChunk(content, to: textHandler)
+                }
+            }
+        }
     }
 
     private func flushPendingReasoningText(
@@ -208,13 +231,21 @@ extension PeekabooAgentService {
         isThinking: inout Bool,
         bufferedEvents: inout [BufferedStreamEvent],
         buffersAssistantTextUntilDone: Bool,
-        eventHandler: EventHandler?) async
+        eventHandler: EventHandler?,
+        textHandler: TextStreamHandler?) async throws
     {
         if self.isVerbose {
             self.logger.debug("Text delta content: \(content)")
         }
 
         stepText += content
+        if let textHandler {
+            if buffersAssistantTextUntilDone {
+                bufferedEvents.append(.text(content))
+            } else {
+                try await self.deliverTextChunk(content, to: textHandler)
+            }
+        }
 
         let trimmed = content.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         guard !trimmed.isEmpty, let eventHandler else { return }

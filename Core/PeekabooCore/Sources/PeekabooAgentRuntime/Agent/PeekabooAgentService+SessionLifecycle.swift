@@ -284,58 +284,25 @@ extension PeekabooAgentService {
             executionGeneration: executionGeneration)
 
         if let eventDelegate {
-            let unsafeDelegate = UnsafeTransfer<any AgentEventDelegate>(eventDelegate)
-            let (eventStream, eventContinuation) = AsyncStream<AgentEvent>.makeStream()
-
-            let eventTask = Task { @MainActor in
-                let delegate = unsafeDelegate.wrappedValue
-                delegate.agentDidEmitEvent(.started(task: taskDescription))
-                for await event in eventStream {
-                    delegate.agentDidEmitEvent(event)
+            return try await self
+                .withAgentEventDelivery(task: taskDescription, delegate: eventDelegate) { eventHandler in
+                    if selectedModel.supportsStreaming {
+                        try await self.executeWithStreaming(
+                            context: sessionContext,
+                            model: selectedModel,
+                            maxSteps: maxSteps,
+                            queueMode: queueMode,
+                            eventHandler: eventHandler,
+                            enhancementOptions: enhancementOptions)
+                    } else {
+                        try await self.executeWithoutStreaming(
+                            context: sessionContext,
+                            model: selectedModel,
+                            maxSteps: maxSteps,
+                            eventHandler: eventHandler,
+                            enhancementOptions: enhancementOptions)
+                    }
                 }
-            }
-
-            let eventHandler = EventHandler { event in
-                eventContinuation.yield(event)
-            }
-
-            let streamingDelegate = StreamingEventDelegate { chunk in
-                await eventHandler.send(.assistantMessage(content: chunk))
-            }
-
-            do {
-                let result = if selectedModel.supportsStreaming {
-                    try await self.executeWithStreaming(
-                        context: sessionContext,
-                        model: selectedModel,
-                        maxSteps: maxSteps,
-                        streamingDelegate: streamingDelegate,
-                        queueMode: queueMode,
-                        eventHandler: eventHandler,
-                        enhancementOptions: enhancementOptions)
-                } else {
-                    try await self.executeWithoutStreaming(
-                        context: sessionContext,
-                        model: selectedModel,
-                        maxSteps: maxSteps,
-                        eventHandler: eventHandler,
-                        enhancementOptions: enhancementOptions)
-                }
-
-                await eventHandler.send(.completed(summary: result.content, usage: result.usage))
-                eventContinuation.finish()
-                await eventTask.value
-                return result
-            } catch let error as CancellationError {
-                eventContinuation.finish()
-                await eventTask.value
-                throw error
-            } catch {
-                await eventHandler.send(.error(message: error.localizedDescription))
-                eventContinuation.finish()
-                await eventTask.value
-                throw error
-            }
         } else {
             return try await self.executeWithoutStreaming(
                 context: sessionContext,

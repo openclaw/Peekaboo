@@ -215,40 +215,18 @@ extension PeekabooAgentService {
         queueMode: QueueMode,
         eventDelegate: any AgentEventDelegate) async throws -> AgentExecutionResult
     {
-        let unsafeDelegate = UnsafeTransfer<any AgentEventDelegate>(eventDelegate)
-        let (eventStream, eventContinuation) = AsyncStream<AgentEvent>.makeStream()
-
-        let eventTask = Task { @MainActor in
-            let delegate = unsafeDelegate.wrappedValue
-            delegate.agentDidEmitEvent(.started(task: input))
-            for await event in eventStream {
-                delegate.agentDidEmitEvent(event)
-            }
-        }
-
-        let eventHandler = EventHandler { event in
-            eventContinuation.yield(event)
-        }
-
-        let streamingDelegate = await MainActor.run {
-            StreamingEventDelegate { chunk in
-                await eventHandler.send(.assistantMessage(content: chunk))
-            }
-        }
-
-        do {
+        try await self.withAgentEventDelivery(task: input, delegate: eventDelegate) { eventHandler in
             let sessionContext = try await self.prepareSession(
                 task: input,
                 model: self.defaultLanguageModel,
                 label: "audio-stream",
                 logBehavior: .always)
 
-            let result = if self.defaultLanguageModel.supportsStreaming {
+            return if self.defaultLanguageModel.supportsStreaming {
                 try await self.executeWithStreaming(
                     context: sessionContext,
                     model: self.defaultLanguageModel,
                     maxSteps: maxSteps,
-                    streamingDelegate: streamingDelegate,
                     queueMode: queueMode,
                     eventHandler: eventHandler)
             } else {
@@ -258,20 +236,6 @@ extension PeekabooAgentService {
                     maxSteps: maxSteps,
                     eventHandler: eventHandler)
             }
-
-            await eventHandler.send(.completed(summary: result.content, usage: result.usage))
-            eventContinuation.finish()
-            await eventTask.value
-            return result
-        } catch let error as CancellationError {
-            eventContinuation.finish()
-            await eventTask.value
-            throw error
-        } catch {
-            await eventHandler.send(.error(message: error.localizedDescription))
-            eventContinuation.finish()
-            await eventTask.value
-            throw error
         }
     }
 }
@@ -287,17 +251,6 @@ actor EventHandler {
 
     func send(_ event: AgentEvent) async {
         await self.handler(event)
-    }
-}
-
-// MARK: - Unsafe Transfer
-
-/// Safely transfer non-Sendable values across isolation boundaries
-struct UnsafeTransfer<T>: @unchecked Sendable {
-    let wrappedValue: T
-
-    init(_ value: T) {
-        self.wrappedValue = value
     }
 }
 
@@ -352,9 +305,9 @@ extension PeekabooAgentService {
         context: SessionContext,
         model: LanguageModel,
         maxSteps: Int = 20,
-        streamingDelegate: StreamingEventDelegate,
         queueMode: QueueMode = .oneAtATime,
         eventHandler: EventHandler? = nil,
+        textHandler: TextStreamHandler? = nil,
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
         defer {
@@ -363,7 +316,6 @@ extension PeekabooAgentService {
                 executionGeneration: context.executionGeneration)
         }
         let maxSteps = try AgentStepBudget.validate(maxSteps)
-        _ = streamingDelegate
         let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
         await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
         defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
@@ -383,6 +335,7 @@ extension PeekabooAgentService {
             tools: tools,
             sessionId: context.id,
             eventHandler: eventHandler,
+            textHandler: textHandler,
             enhancementOptions: enhancementOptions,
             executionPolicy: context.toolExecutionPolicy)
 

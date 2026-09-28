@@ -452,7 +452,6 @@ struct PeekabooAgentStepLimitTests {
                     context: context,
                     model: model,
                     maxSteps: 1,
-                    streamingDelegate: StreamingEventDelegate { _ in },
                     eventHandler: eventHandler,
                     enhancementOptions: nil)
             } else {
@@ -528,7 +527,6 @@ struct PeekabooAgentStepLimitTests {
                     context: context,
                     model: model,
                     maxSteps: 1,
-                    streamingDelegate: StreamingEventDelegate { _ in },
                     eventHandler: eventHandler,
                     enhancementOptions: nil)
             } else {
@@ -753,7 +751,6 @@ struct PeekabooAgentStepLimitTests {
                         context: context,
                         model: model,
                         maxSteps: 1,
-                        streamingDelegate: StreamingEventDelegate { _ in },
                         enhancementOptions: nil)
                 } else {
                     _ = try await agentService.executeWithoutStreaming(
@@ -927,7 +924,6 @@ extension PeekabooAgentStepLimitTests {
                             context: context,
                             model: model,
                             maxSteps: 2,
-                            streamingDelegate: StreamingEventDelegate { _ in },
                             enhancementOptions: nil)
                     } else {
                         _ = try await agentService.executeWithoutStreaming(
@@ -944,7 +940,6 @@ extension PeekabooAgentStepLimitTests {
                             context: context,
                             model: model,
                             maxSteps: 2,
-                            streamingDelegate: StreamingEventDelegate { _ in },
                             enhancementOptions: nil)
                     } else {
                         _ = try await agentService.executeWithoutStreaming(

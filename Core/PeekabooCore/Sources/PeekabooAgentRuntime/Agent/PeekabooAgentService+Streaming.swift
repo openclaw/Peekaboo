@@ -51,6 +51,7 @@ extension PeekabooAgentService {
         let tools: [AgentTool]
         let sessionId: String
         let eventHandler: EventHandler?
+        let textHandler: TextStreamHandler?
         let enhancementOptions: AgentEnhancementOptions?
         let executionPolicy: MCPToolExecutionPolicy
 
@@ -60,6 +61,7 @@ extension PeekabooAgentService {
             tools: [AgentTool],
             sessionId: String,
             eventHandler: EventHandler?,
+            textHandler: TextStreamHandler? = nil,
             enhancementOptions: AgentEnhancementOptions?,
             executionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
         {
@@ -68,6 +70,7 @@ extension PeekabooAgentService {
             self.tools = tools
             self.sessionId = sessionId
             self.eventHandler = eventHandler
+            self.textHandler = textHandler
             self.enhancementOptions = enhancementOptions
             self.executionPolicy = executionPolicy
         }
@@ -248,6 +251,7 @@ extension PeekabooAgentService {
                         from: streamResult,
                         model: configuration.model,
                         eventHandler: configuration.eventHandler,
+                        textHandler: configuration.textHandler,
                         stepIndex: stepIndex,
                         onTerminalUsage: { terminalUsage = $0 })
                 }
@@ -1307,23 +1311,13 @@ extension PeekabooAgentService {
         }
     }
 
-    private func logStepCompletion(
-        stepIndex: Int,
-        stepText: String,
-        toolCalls: [AgentToolCall])
-    {
-        guard self.isVerbose else { return }
-        self.logger.debug(
-            "Step \(stepIndex) completed: collected \(toolCalls.count) tool calls, text length: \(stepText.count)")
-    }
-
-    private func sendToolCompletionEvent(
+    func sendToolCompletionEvent(
         name: String,
-        payload: String,
+        payload: @autoclosure () -> String,
         eventHandler: EventHandler?) async
     {
         guard let eventHandler else { return }
-        await eventHandler.send(.toolCallCompleted(name: name, result: payload))
+        await eventHandler.send(.toolCallCompleted(name: name, result: payload()))
     }
 
     private func sendToolStartEvent(_ toolCall: AgentToolCall, eventHandler: EventHandler?) async throws {
@@ -1333,7 +1327,7 @@ extension PeekabooAgentService {
         await eventHandler.send(.toolCallStarted(name: toolCall.name, arguments: argumentsJSON))
     }
 
-    private func toolResultPayload(from result: AnyAgentToolValue, toolName: String) -> String {
+    func toolResultPayload(from result: AnyAgentToolValue, toolName: String) -> String {
         do {
             let jsonObject = try result.toJSON()
             var wrapped: [String: Any] = if let dict = jsonObject as? [String: Any] {

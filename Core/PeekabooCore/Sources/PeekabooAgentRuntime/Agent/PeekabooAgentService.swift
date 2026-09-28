@@ -6,35 +6,6 @@ import PeekabooAutomation
 import PeekabooFoundation
 import Tachikoma
 
-// MARK: - Helper Types
-
-/// Simple event delegate wrapper for streaming
-@available(macOS 14.0, *)
-@MainActor
-final class StreamingEventDelegate: @unchecked Sendable, AgentEventDelegate {
-    let onChunk: @MainActor @Sendable (String) async -> Void
-
-    init(onChunk: @MainActor @escaping @Sendable (String) async -> Void) {
-        self.onChunk = onChunk
-    }
-
-    func agentDidEmitEvent(_ event: AgentEvent) {
-        // Extract content from different event types and schedule async work
-        Task { @MainActor in
-            switch event {
-            case let .thinkingMessage(content):
-                await self.onChunk(content)
-            case let .assistantMessage(content):
-                await self.onChunk(content)
-            case let .completed(summary, _):
-                await self.onChunk(summary)
-            default:
-                break
-            }
-        }
-    }
-}
-
 // MARK: - Peekaboo Agent Service
 
 enum AgentToolConstructionContext {
@@ -485,36 +456,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
 
         // If we have an event delegate, emit events even for non-streaming models.
         if let eventDelegate {
-            // SAFETY: We ensure that the delegate is only accessed on MainActor
-            // This is a legacy API pattern that predates Swift's strict concurrency
-            let unsafeDelegate = UnsafeTransfer<any AgentEventDelegate>(eventDelegate)
-
-            // Create event stream infrastructure
-            let (eventStream, eventContinuation) = AsyncStream<AgentEvent>.makeStream()
-
-            // Start processing events on MainActor
-            let eventTask = Task { @MainActor in
-                let delegate = unsafeDelegate.wrappedValue
-
-                // Send start event
-                delegate.agentDidEmitEvent(.started(task: task))
-
-                for await event in eventStream {
-                    delegate.agentDidEmitEvent(event)
-                }
-            }
-
-            // Create the event handler
-            let eventHandler = EventHandler { event in
-                eventContinuation.yield(event)
-            }
-
-            // Create event delegate wrapper for streaming
-            let streamingDelegate = StreamingEventDelegate { chunk in
-                await eventHandler.send(.assistantMessage(content: chunk))
-            }
-
-            do {
+            return try await self.withAgentEventDelivery(task: task, delegate: eventDelegate) { eventHandler in
                 let sessionContext = try await self.prepareSession(
                     task: task,
                     model: selectedModel,
@@ -523,12 +465,11 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                     persistSession: persistSession,
                     toolExecutionPolicy: toolExecutionPolicy)
 
-                let result = if selectedModel.supportsStreaming {
+                return if selectedModel.supportsStreaming {
                     try await self.executeWithStreaming(
                         context: sessionContext,
                         model: selectedModel,
                         maxSteps: maxSteps,
-                        streamingDelegate: streamingDelegate,
                         queueMode: queueMode,
                         eventHandler: eventHandler,
                         enhancementOptions: enhancementOptions)
@@ -540,21 +481,6 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                         eventHandler: eventHandler,
                         enhancementOptions: enhancementOptions)
                 }
-
-                // Send completion event with usage information
-                await eventHandler.send(.completed(summary: result.content, usage: result.usage))
-                eventContinuation.finish()
-                await eventTask.value
-                return result
-            } catch let error as CancellationError {
-                eventContinuation.finish()
-                await eventTask.value
-                throw error
-            } catch {
-                await eventHandler.send(.error(message: error.localizedDescription))
-                eventContinuation.finish()
-                await eventTask.value
-                throw error
             }
         } else {
             // Non-streaming execution
@@ -598,8 +524,6 @@ public final class PeekabooAgentService: AgentServiceProtocol {
             return result
         }
 
-        // For streaming without event handler, create a dummy delegate that discards chunks
-        let dummyDelegate = StreamingEventDelegate { _ in /* discard */ }
         let sessionContext = try await self.prepareSession(
             task: task,
             model: selectedModel,
@@ -610,9 +534,9 @@ public final class PeekabooAgentService: AgentServiceProtocol {
             context: sessionContext,
             model: selectedModel,
             maxSteps: 20,
-            streamingDelegate: dummyDelegate,
             queueMode: .oneAtATime,
-            eventHandler: nil)
+            eventHandler: nil,
+            textHandler: streamHandler)
     }
 
     func resolveModel(_ requestedModel: LanguageModel?) -> LanguageModel {
