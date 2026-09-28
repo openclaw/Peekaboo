@@ -126,6 +126,8 @@ RuntimeBackedCommand {
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 
+    var pixelObservationDeadline: Date?
+
     var verbose: Bool {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose
     }
@@ -513,47 +515,18 @@ RuntimeBackedCommand {
         }
     }
 
-    private func runPixelOnlyCapture() async throws {
-        try self.validateStdoutStreamingOptions()
-        let coordinateReceiptID: String? =
-            if self.publishesPixelCoordinateReceipt {
-                try await self.services.snapshots.createExplicitSnapshot()
-            } else {
-                nil
-            }
-
-        var captures: [ImageCapturedFile] = []
-        do {
-            captures = try await self.performPixelCapture(snapshotID: coordinateReceiptID)
-            try self.validatePixelCaptureForPublishing(captures)
-            if self.streamsImageToStdout {
-                try self.outputImageToStdout(captures)
-            } else if let prompt = self.analyze, let firstCapture = captures.first {
-                let analysis = try await self.analyzeImage(firstCapture.imageData, with: prompt)
-                try self.outputResultsWithAnalysis(captures, analysis: analysis)
-            } else {
-                try self.outputResults(captures)
-            }
-        } catch {
-            if let coordinateReceiptID {
-                try? await self.services.snapshots.cleanSnapshot(snapshotId: coordinateReceiptID)
-            }
-            let receipt = SeeExecutionReceipt.combining(captures.map(\.receipt))
-            throw receipt.preservingFailure(error, operation: "see pixel capture")
-        }
-    }
-
     var publishesPixelCoordinateReceipt: Bool {
         self.noElements && self.windowId != nil && !self.streamsImageToStdout
     }
 
-    private static func remainingObservationTimeout(
+    static func remainingObservationTimeout(
         until deadline: Date,
-        overallTimeout: TimeInterval
+        overallTimeout: TimeInterval,
+        timeoutError: (any Error)? = nil
     ) throws -> TimeInterval {
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else {
-            throw CaptureError.detectionTimedOut(overallTimeout)
+            throw timeoutError ?? CaptureError.detectionTimedOut(overallTimeout)
         }
         return remaining
     }

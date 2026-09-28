@@ -203,6 +203,7 @@ final class OwnerPolicyFixtureServices: PeekabooBridgeServiceProviding, Peekaboo
         ownerAware: Bool,
         observation: (any DesktopObservationServiceProtocol)? = nil,
         snapshots: any SnapshotManagerProtocol = InMemorySnapshotManager(),
+        windows: any WindowManagementServiceProtocol = MockWindowService(result: []),
         remoteClient: PeekabooBridgeClient? = nil,
         capturePolicy: RemoteCapturePolicy = .unrestricted
     ) {
@@ -210,6 +211,7 @@ final class OwnerPolicyFixtureServices: PeekabooBridgeServiceProviding, Peekaboo
         self.supportsClassicCaptureWithoutScreenCaptureKit = ownerAware
         self.remoteClient = remoteClient
         self.snapshots = snapshots
+        self.windows = windows
         if let remoteClient {
             self.desktopObservation = RemoteDesktopObservationService(
                 client: remoteClient, capturePolicy: capturePolicy, supportsDesktopObservationCaptureEngine: true
@@ -246,7 +248,7 @@ final class OwnerPolicyFixtureServices: PeekabooBridgeServiceProviding, Peekaboo
         loggingService: MockLoggingService()
     )
     let screenCapture: any ScreenCaptureServiceProtocol
-    let windows: any WindowManagementServiceProtocol = MockWindowService(result: [])
+    let windows: any WindowManagementServiceProtocol
     let menu: any MenuServiceProtocol = MockMenuService(barItems: [])
     let dock: any DockServiceProtocol = MockDockService(items: [])
 

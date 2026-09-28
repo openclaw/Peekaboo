@@ -34,6 +34,20 @@ struct ObservationPolicyDefaultsTests {
     }
 
     @Test
+    func `pixel observations carry configured and remaining time budgets`() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pixel-timeout.png")
+        var command = try SeeCommand.parse(["--no-elements"])
+        #expect(command.makePixelObservationRequest(target: .frontmost, outputURL: url).timeout.overall == 20)
+        command.analyze = "summarize"
+        #expect(command.makePixelObservationRequest(target: .frontmost, outputURL: url).timeout.overall == 60)
+        command.timeout = .seconds(45)
+        #expect(command.makePixelObservationRequest(target: .frontmost, outputURL: url).timeout.overall == 45)
+        #expect(command.makePixelObservationRequest(
+            target: .frontmost, outputURL: url, timeoutSeconds: 0.125
+        ).timeout.overall == 0.125)
+    }
+
+    @Test
     func `See menu timeout projection preserves exact mutation receipt`() throws {
         var command = try SeeCommand.parse(["--menubar"])
         command.runtime = CommandRuntime(

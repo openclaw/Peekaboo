@@ -6,7 +6,73 @@ import PeekabooCore
 import PeekabooFoundation
 
 @MainActor
+private struct PreparedPixelCapture {
+    let captures: [ImageCapturedFile]
+    let analysis: ImageAnalysisData?
+}
+
+@MainActor
 extension SeeCommand {
+    func runPixelOnlyCapture() async throws {
+        try self.validateStdoutStreamingOptions()
+        let timeout = self.overallTimeoutSeconds
+        let deadline = Date().addingTimeInterval(timeout)
+        var timedCommand = self
+        timedCommand.pixelObservationDeadline = deadline
+        let command = timedCommand
+        let timeoutError = self.pixelCaptureTimeoutError
+        let prepared = try await withMainActorCommandTimeout(
+            seconds: timeout,
+            operationName: "see pixel capture",
+            timeoutError: { timeoutError },
+            operation: { try await command.preparePixelCapture() }
+        )
+
+        // Abandoned capture work must never publish success or raw stdout after the timeout wins.
+        try Task.checkCancellation()
+        _ = try Self.remainingObservationTimeout(
+            until: deadline, overallTimeout: timeout, timeoutError: self.pixelCaptureTimeoutError
+        )
+        if self.streamsImageToStdout {
+            try self.outputImageToStdout(prepared.captures)
+        } else if let analysis = prepared.analysis {
+            try self.outputResultsWithAnalysis(prepared.captures, analysis: analysis)
+        } else {
+            try self.outputResults(prepared.captures)
+        }
+    }
+
+    private var pixelCaptureTimeoutError: PeekabooError {
+        .timeout("see pixel capture exceeded \(formatDuration(self.overallTimeoutSeconds))")
+    }
+
+    private func preparePixelCapture() async throws -> PreparedPixelCapture {
+        var coordinateReceiptID: String?
+        var captures: [ImageCapturedFile] = []
+        do {
+            if self.publishesPixelCoordinateReceipt {
+                coordinateReceiptID = try await self.services.snapshots.createExplicitSnapshot()
+            }
+            try Task.checkCancellation()
+            captures = try await self.performPixelCapture(snapshotID: coordinateReceiptID)
+            try Task.checkCancellation()
+            try self.validatePixelCaptureForPublishing(captures)
+            let analysis: ImageAnalysisData? = if let prompt = self.analyze, let firstCapture = captures.first {
+                try await self.analyzeImage(firstCapture.imageData, with: prompt)
+            } else {
+                nil
+            }
+            try Task.checkCancellation()
+            return PreparedPixelCapture(captures: captures, analysis: analysis)
+        } catch {
+            if let coordinateReceiptID {
+                try? await self.services.snapshots.cleanSnapshot(snapshotId: coordinateReceiptID)
+            }
+            let receipt = SeeExecutionReceipt.combining(captures.map(\.receipt))
+            throw receipt.preservingFailure(error, operation: "see pixel capture")
+        }
+    }
+
     func performPixelCapture(snapshotID: String? = nil) async throws -> [ImageCapturedFile] {
         try Self.requireSupportedPixelCaptureFocus(self.captureFocus, target: .frontmost)
         if let appName = self.app?.lowercased() {
@@ -254,14 +320,24 @@ extension SeeCommand {
         index: Int?,
         snapshotID: String? = nil
     ) async throws -> SeeObservationActionResult {
+        try Task.checkCancellation()
         try Self.requireSupportedPixelCaptureFocus(self.captureFocus, target: target)
+        let remaining = try self.pixelObservationDeadline.map {
+            try Self.remainingObservationTimeout(
+                until: $0,
+                overallTimeout: self.overallTimeoutSeconds,
+                timeoutError: self.pixelCaptureTimeoutError
+            )
+        } ?? self.overallTimeoutSeconds
         let url = self.makeOutputURL(preferredName: preferredName, index: index)
         let request = self.makePixelObservationRequest(
             target: target,
             outputURL: url,
-            snapshotID: snapshotID
+            snapshotID: snapshotID,
+            timeoutSeconds: remaining
         )
         let actionResult = try await self.services.desktopObservation.observeResult(request)
+        try Task.checkCancellation()
         let requiresTarget = switch target {
         case .app, .pid, .windowID, .frontmost:
             true

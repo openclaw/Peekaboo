@@ -56,7 +56,8 @@ extension SeeCommand {
     func makePixelObservationRequest(
         target: DesktopObservationTargetRequest,
         outputURL: URL,
-        snapshotID: String? = nil
+        snapshotID: String? = nil,
+        timeoutSeconds: TimeInterval? = nil
     ) -> DesktopObservationRequest {
         DesktopObservationRequest(
             target: target,
@@ -73,7 +74,8 @@ extension SeeCommand {
                 saveRawScreenshot: true,
                 saveSnapshot: snapshotID != nil,
                 snapshotID: snapshotID
-            )
+            ),
+            timeout: DesktopObservationTimeouts(overall: timeoutSeconds ?? self.overallTimeoutSeconds)
         )
     }
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Honor `see --timeout` for pixel-only, raw-output, area, and multi-window captures, sharing the remaining budget with the selected host and preventing late successful output after timeout or cancellation.
 - Include received modifiers, event/key-window identity, activation state, and text-selection metadata in Playground keyboard diagnostics so background shortcut tests can distinguish delivery from verified effects without changing input handling.
 - Confirm daemon shutdown when its socket is gone and the process has exited but awaits parent reaping, avoiding false refusal/timeouts in synchronous automation; distinguish accepted shutdown timeouts from explicit refusals while preserving uncertain-state and probe-error safeguards.
 - Preserve fragmented tool arguments in compatible-provider Agent streams, validate complete call batches before execution, and retain explicit empty no-argument calls along with existing terminal, schema, and background-authority safeguards.

@@ -20,12 +20,15 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     public private(set) var ownsCalls: [String] = []
     public private(set) var createCalls: [Date?] = []
     public private(set) var createExplicitCallCount = 0
+    public private(set) var cleanedSnapshotIDs: [String] = []
     public private(set) var storeDetectionResultCalls: [String] = []
     public var failFinish = false
     public var ownsSnapshotError: (any Error)?
     public var getDetectionResultError: (any Error)?
     /// Suspends after real acquisition, before the caller receives the lease.
     public var afterBeginSnapshotMutation: (@MainActor (SnapshotMutationLease) async -> Void)?
+    public var afterCreateExplicitSnapshot: (@MainActor (String) async -> Void)?
+    public var beforeCleanSnapshot: (@MainActor (String) async -> Void)?
 
     private let wrapped: any SnapshotManagerProtocol
     private let producerBoundSnapshotReferencesOverride: Bool?
@@ -90,7 +93,9 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
         if let createdSnapshotReferenceOverride {
             return createdSnapshotReferenceOverride
         }
-        return try await self.wrapped.createExplicitSnapshot()
+        let snapshotID = try await self.wrapped.createExplicitSnapshot()
+        await self.afterCreateExplicitSnapshot?(snapshotID)
+        return snapshotID
     }
 
     public func ownsSnapshot(snapshotId: String) async throws -> Bool {
@@ -149,7 +154,9 @@ public final class SnapshotMutationRecordingManager: SnapshotManagerProtocol {
     }
 
     public func cleanSnapshot(snapshotId: String) async throws {
+        await self.beforeCleanSnapshot?(snapshotId)
         try await self.wrapped.cleanSnapshot(snapshotId: snapshotId)
+        self.cleanedSnapshotIDs.append(snapshotId)
     }
 
     public func cleanSnapshotsOlderThan(days: Int) async throws -> Int {
