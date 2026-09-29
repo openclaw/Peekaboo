@@ -109,7 +109,8 @@ struct AgentEventRenderingTests {
                 if entry == .resume {
                     let seeded = try await service.executeTask(
                         "seed", maxSteps: 1, model: model, enhancementOptions: nil)
-                    sessionID = try #require(seeded.sessionId)
+                    let seededSessionID: String = try #require(seeded.sessionId)
+                    sessionID = seededSessionID
                     provider.requests.withValue { $0.removeAll() }
                 }
                 provider.terminal.withValue { $0 = terminal }

@@ -1396,7 +1396,6 @@ extension PeekabooBridgeOperationReceiptSemantics {
         _ response: PeekabooBridgeResponse,
         plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) throws
     {
-        let request = plan.request
         guard case let .projectedAction(projected) = response else { return }
         if case let .browserToolResponse(browserResponse) = projected.response {
             guard let connectionReceipt = browserResponse.connectionReceipt,
