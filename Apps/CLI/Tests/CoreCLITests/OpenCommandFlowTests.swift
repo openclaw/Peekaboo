@@ -171,6 +171,24 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
+    func `Launch transmits the existing canonical private-prefix path`() async throws {
+        let root = URL(fileURLWithPath: "/private/tmp/peekaboo-cli-launch-path-\(UUID().uuidString)")
+        let appURL = root.appendingPathComponent("Fixture.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let canonicalPath = appURL.standardizedFileURL.path
+        #expect(canonicalPath != appURL.path)
+        let service = self.makeLaunchService(name: "Fixture", bundleIdentifier: "com.example.fixture")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = appURL.path
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        #expect(service.launchRequests.first?.applicationIdentifier == canonicalPath)
+        #expect(service.launchRequests.first?.activates == false)
+    }
+
+    @Test
     func `Switch to app activates through application service`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 42,

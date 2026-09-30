@@ -197,23 +197,37 @@ extension ApplicationService {
         else {
             return application
         }
-        let selectedCandidate = ApplicationIdentifierMatcher.Candidate(application)
-        let selectorIdentifier: String
-        // Preserve a reported literal path; canonicalizing only that selector can invalidate its proof.
-        if launch.disablesRunningApplicationSubstitution,
-           selectedCandidate.bundlePath != ApplicationIdentifierMatcher.normalized(identifier)
-        {
+        let nativeCandidate = ApplicationIdentifierMatcher.Candidate(application)
+        let canonicalBundlePath: String?
+        if launch.disablesRunningApplicationSubstitution {
             guard let applicationURL = launch.applicationURL else {
                 throw PeekabooError.commandFailed(
                     "The explicit application path did not resolve to an application URL")
             }
-            selectorIdentifier = Self.canonicalApplicationPath(applicationURL)
+            canonicalBundlePath = Self.canonicalApplicationPath(applicationURL)
         } else {
-            selectorIdentifier = identifier
+            canonicalBundlePath = nil
         }
+        let requestedSelector = ApplicationIdentifierMatcher.normalized(identifier)
+        let selectorIdentifier: String = if let canonicalBundlePath,
+                                            nativeCandidate.bundlePath != requestedSelector
+        {
+            canonicalBundlePath
+        } else {
+            requestedSelector
+        }
+        let selectedCandidate = Self.launchSelectorCandidate(
+            nativeCandidate,
+            canonicalBundlePath: canonicalBundlePath,
+            proofBundlePath: selectorIdentifier)
         let runningCandidates = launch.createsNewInstance
             ? [selectedCandidate]
-            : self.applicationSelectorCandidatesProvider()
+            : self.applicationSelectorCandidatesProvider().map {
+                Self.launchSelectorCandidate(
+                    $0,
+                    canonicalBundlePath: canonicalBundlePath,
+                    proofBundlePath: selectorIdentifier)
+            }
         let systemResolution = try ApplicationIdentifierMatcher.resolution(
             for: selectorIdentifier,
             in: runningCandidates)
@@ -240,7 +254,23 @@ extension ApplicationService {
         }
         return application.withSelectorResolutionProofs([
             resolution.proof(selectedProcessIdentity: processIdentity),
-        ])
+        ], bundlePath: selectedCandidate.bundlePath)
+    }
+
+    private static func launchSelectorCandidate(
+        _ candidate: ApplicationIdentifierMatcher.Candidate,
+        canonicalBundlePath: String?,
+        proofBundlePath: String) -> ApplicationIdentifierMatcher.Candidate
+    {
+        guard let canonicalBundlePath,
+              let path = candidate.bundlePath,
+              path.hasPrefix("/"),
+              self.canonicalApplicationPath(URL(fileURLWithPath: path)) == canonicalBundlePath
+        else {
+            return candidate
+        }
+        // Freeze equivalent live paths in one spelling so resolution, output and offline proof agree.
+        return candidate.withBundlePath(proofBundlePath)
     }
 
     private func performVerifiedBackgroundLaunchNoOp(

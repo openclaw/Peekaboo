@@ -1,10 +1,54 @@
 import Foundation
-import PeekabooAutomationKit
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooBridge
 
 @Suite(.serialized)
 struct PeekabooBridgeSelectorResolutionReceiptSecurityTests {
+    @Test
+    @MainActor
+    func `canonical launch binding stays receipt-valid after its native path disappears`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let nativePath = "/private\(fixture.root.path)/Fixture.app"
+        try FileManager.default.createDirectory(atPath: nativePath, withIntermediateDirectories: true)
+        let requestPath = URL(fileURLWithPath: nativePath).standardizedFileURL.path
+        #expect(requestPath != nativePath)
+        let nativeCandidate = ApplicationIdentifierMatcher.Candidate(
+            processIdentifier: Self.safariIdentity.processIdentifier,
+            bundleIdentifier: "org.example.launch-selector-fixture",
+            name: "Fixture",
+            bundlePath: nativePath,
+            executablePath: "\(nativePath)/Contents/MacOS/Fixture")
+        let application = Self.application(candidate: nativeCandidate, identity: Self.safariIdentity, proofs: nil)
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw CancellationError() },
+            applicationSelectorCandidatesProvider: { [nativeCandidate] })
+        let returned = try await service.bindSelectorResolution(application, launch: .init(
+            applicationURL: URL(fileURLWithPath: requestPath),
+            openURLs: [],
+            activates: false,
+            waitUntilReady: false,
+            waitForWindow: false,
+            createsNewInstance: false,
+            disablesRunningApplicationSubstitution: true,
+            requestedRunningApplicationIdentity: nil,
+            applicationIdentifier: requestPath))
+        #expect(returned.bundlePath == requestPath)
+        #expect(returned.executablePath == application.executablePath)
+        let bundle = try await Self.signedBundle(
+            authority: fixture.authority,
+            session: fixture.session,
+            sequence: 0,
+            request: .launchApplicationWithOptions(.init(applicationIdentifier: requestPath)),
+            response: .application(returned))
+        try bundle.validate()
+        let archived = try JSONEncoder().encode(bundle)
+        try FileManager.default.removeItem(atPath: nativePath)
+
+        try JSONDecoder().decode(PeekabooBridgeOperationReceiptBundle.self, from: archived).validate()
+    }
+
     @Test
     func `signed exact-path launch receipt retains its selector after the path disappears`() async throws {
         let fixture = try await Self.makeFixture()

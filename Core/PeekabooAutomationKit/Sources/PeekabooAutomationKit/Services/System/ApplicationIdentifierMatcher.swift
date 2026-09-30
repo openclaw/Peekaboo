@@ -93,6 +93,17 @@ public enum ApplicationIdentifierMatcher {
                 allowsFuzzyMatching: application.activationPolicy != .prohibited,
                 isRegularApplication: application.activationPolicy == .regular)
         }
+
+        func withBundlePath(_ bundlePath: String) -> Self {
+            Self(
+                processIdentifier: self.processIdentifier,
+                bundleIdentifier: self.bundleIdentifier,
+                name: self.name,
+                bundlePath: bundlePath,
+                executablePath: self.executablePath,
+                allowsFuzzyMatching: self.allowsFuzzyMatching,
+                isRegularApplication: self.isRegularApplication)
+        }
     }
 
     /// Selects the same candidate that application discovery would return for the identifier.

@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- Preserve exact running-app path spelling in launch selector proofs, fixing verified background no-ops for `/private/tmp` bundles without changing native URL, process-generation, ambiguity, or signed-receipt checks.
+- Keep app-launch bundle paths and selector proofs consistent across canonical spellings, fixing background verification under `/private/tmp` while preserving process-generation, ambiguity, and caller-local alias checks.
+- Bind companion-app installation and rollback quits to verified exact-path process generations, refusing ambiguous targets, inspection failures, and uncertain retries without raw PID signals. #874.
 
 ## 4.7.0 - 2026-09-29
 
@@ -21,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add opt-in `include_elements` to the `see` and `inspect_ui` MCP tools, returning the element table as structured `_meta.ui_elements` (same fields as `see --json`) with its `snapshot_id`, so clients can act on element IDs without parsing the text summary; default responses are unchanged. Thanks @gxcsoccer.
 - Expose bounded, privacy-checked focused text selection as UTF-16 ranges in CLI JSON and MCP/Agent observations; consolidate native range decoding and preserve the existing signed receipt shape.
 - Include full visible work-area bounds in `screen list` JSON and its origin in human output, reusing global logical coordinates while preserving the existing display and visible-size fields.
-- Bind companion-app installation and rollback quits to verified exact-path process generations, refusing ambiguous targets, inspection failures, and uncertain retries without raw PID signals.
 - Update Chrome DevTools MCP to 1.10.1 with its per-server browser owner, preserving one-socket verification, telemetry isolation, redirect/reconnect refusal, and exact-page element routing; keep unprojected CSS response references unavailable.
 - Update Tachikoma to 0.5.1 for cancellable provider streams, correct LM Studio tool-call history, and preserved numeric tool values, retaining Peekaboo's existing tool schemas and compatible dependency pins.
 - Update Tachikoma to remove compatible streaming request dumps that could expose prompts/tool schemas and contaminate Agent JSON or quiet output, without changing provider requests or stream delivery.

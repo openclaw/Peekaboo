@@ -739,12 +739,16 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
     }
 
     public func withSelectorResolutionProofs(_ proofs: [SelectorResolutionProof]?) -> Self {
+        self.withSelectorResolutionProofs(proofs, bundlePath: self.bundlePath)
+    }
+
+    func withSelectorResolutionProofs(_ proofs: [SelectorResolutionProof]?, bundlePath: String?) -> Self {
         Self(
             processIdentifier: self.processIdentifier,
             processStartIdentity: self.processStartIdentity,
             bundleIdentifier: self.bundleIdentifier,
             name: self.name,
-            bundlePath: self.bundlePath,
+            bundlePath: bundlePath,
             executablePath: self.executablePath,
             isActive: self.isActive,
             isHidden: self.isHidden,
