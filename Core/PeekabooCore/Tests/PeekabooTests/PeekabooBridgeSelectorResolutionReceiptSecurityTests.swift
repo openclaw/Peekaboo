@@ -6,6 +6,38 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeSelectorResolutionReceiptSecurityTests {
     @Test
+    func `signed exact-path launch receipt retains its selector after the path disappears`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let path = "/private\(fixture.root.path)/Fixture.app"
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        #expect(URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path != path)
+        let candidate = ApplicationIdentifierMatcher.Candidate(
+            processIdentifier: Self.safariIdentity.processIdentifier,
+            bundleIdentifier: "org.example.launch-selector-fixture",
+            name: "Fixture",
+            bundlePath: path,
+            executablePath: "\(path)/Contents/MacOS/Fixture")
+        let resolution = try #require(try ApplicationIdentifierMatcher.resolution(for: path, in: [candidate]))
+        let application = Self.application(
+            candidate: candidate,
+            identity: Self.safariIdentity,
+            proofs: [resolution.proof(selectedProcessIdentity: Self.safariIdentity)])
+        let bundle = try await Self.signedBundle(
+            authority: fixture.authority,
+            session: fixture.session,
+            sequence: 0,
+            request: .launchApplicationWithOptions(.init(applicationIdentifier: path)),
+            response: .application(application))
+        try bundle.validate()
+        let archived = try JSONEncoder().encode(bundle)
+        try FileManager.default.removeItem(atPath: path)
+
+        let restored = try JSONDecoder().decode(PeekabooBridgeOperationReceiptBundle.self, from: archived)
+        try restored.validate()
+    }
+
+    @Test
     func `signed application receipt rejects a substituted winner and missing proof`() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

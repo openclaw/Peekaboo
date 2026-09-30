@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Preserve exact running-app path spelling in launch selector proofs, fixing verified background no-ops for `/private/tmp` bundles without changing native URL, process-generation, ambiguity, or signed-receipt checks.
+
 ## 4.7.0 - 2026-09-29
 
 **Highlights:** Fix the 4.6.0 CLI startup failure on Macs without the macOS 27 runtime, add GPT-6 Astra, Sol, and Luna plus GPT-6.1 Sol models, keep unattended clipboard reads from triggering macOS privacy prompts, give MCP and JSON clients structured element tables, focused text selection, and visible display bounds, and make compatible-provider Agent streaming reliable.

@@ -188,7 +188,7 @@ extension ApplicationService {
         }
     }
 
-    private func bindSelectorResolution(
+    func bindSelectorResolution(
         _ application: ServiceApplicationInfo,
         launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo
     {
@@ -197,8 +197,12 @@ extension ApplicationService {
         else {
             return application
         }
+        let selectedCandidate = ApplicationIdentifierMatcher.Candidate(application)
         let selectorIdentifier: String
-        if launch.disablesRunningApplicationSubstitution {
+        // Preserve a reported literal path; canonicalizing only that selector can invalidate its proof.
+        if launch.disablesRunningApplicationSubstitution,
+           selectedCandidate.bundlePath != ApplicationIdentifierMatcher.normalized(identifier)
+        {
             guard let applicationURL = launch.applicationURL else {
                 throw PeekabooError.commandFailed(
                     "The explicit application path did not resolve to an application URL")
@@ -207,7 +211,6 @@ extension ApplicationService {
         } else {
             selectorIdentifier = identifier
         }
-        let selectedCandidate = ApplicationIdentifierMatcher.Candidate(application)
         let runningCandidates = launch.createsNewInstance
             ? [selectedCandidate]
             : self.applicationSelectorCandidatesProvider()
