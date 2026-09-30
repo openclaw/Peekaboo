@@ -219,9 +219,14 @@ public struct ScrollTool: MCPTool {
                     payload: automation.scroll(serviceRequest),
                     outcome: nil)
             }
-            try DesktopActionFailure.requireConfirmedIfReported(
-                actionResult.outcome,
-                operation: "Scroll")
+            if let outcome = actionResult.outcome {
+                _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                    outcome,
+                    policy: .confirmed,
+                    operation: "Scroll",
+                    targetReceipt: request.foreground ? nil : actionResult.actionTargetReceipt,
+                    rejectedOutcomeMessage: "Scroll did not return a confirmed outcome.")
+            }
         } catch let failure as DesktopActionFailure {
             throw setupFocusResult?.preservingFailure(failure, operation: "Scroll") ?? failure
         } catch {

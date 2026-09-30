@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve reported receiver receipts in MCP background scroll errors without changing retry safety, snapshot invalidation, or foreground global-input attribution.
 - Preserve reported process-generation and exact-window receipts in CLI and MCP paste errors after unconfirmed targeted input, without changing retry safety or attributing shared clipboard effects to a window.
 - Report conflicting concrete snapshot and target selectors in `set-value` and `action` as retry-safe, non-dispatched `INVALID_INPUT` refusals instead of unknown, unverifiable errors; clarify the targeting alternatives.
 - Keep app-launch bundle paths and selector proofs consistent across canonical spellings, fixing background verification under `/private/tmp` while preserving process-generation, ambiguity, and caller-local alias checks.

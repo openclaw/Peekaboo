@@ -38,6 +38,7 @@ Amounts whose magnitude or smooth-mode tick count cannot be represented are reje
 - macOS does not acknowledge receiver consumption for PID-routed wheel events. A successful routed dispatch therefore reports `effect: "unverifiable"`, `retry_safe: false`, and requires a fresh observation before another scroll. Hidden apps, AX-only snapshots, Electron/Chromium/Catalyst apps, stale receipts, and changed bounds keep the existing pre-dispatch refusal.
 - Foreground mode verifies focus when a target exists, then uses synthetic wheel events. Focus failure aborts before pointer dispatch.
 - JSON output reports target diagnostics for element scrolls and the current pointer position for explicit foreground targetless scrolls. When a snapshot carries a complete exact receipt, `targetReceipt` repeats its snapshot ID, PID, decimal process-generation identity, window ID, and bounds so callers can audit the dispatched destination.
+- MCP background scroll errors retain the service's reported `target_receipt` when an unconfirmed result becomes an error. Missing receipts are not inferred from the request snapshot, and foreground global input is not attributed to a window; outcome, retry safety, and snapshot invalidation are unchanged.
 - `ScrollRequest` is handed directly to `AutomationServiceBridge.scroll`, so the CLI benefits from the same smooth/step semantics the agent runtime sees.
 
 ## Examples

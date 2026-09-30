@@ -543,11 +543,14 @@ struct MCPDesktopActionOutcomeProjectionTests {
     @MainActor
     func `scroll partial failure projects exact accepted prefix without retry permission`() async throws {
         let automation = StubAutomationService()
+        let reportedTarget = try DesktopTargetIdentity(
+            processIdentity: .init(processIdentifier: 778, processStartIdentity: 78))
         automation.uiAutomationOutcomeScript.appendFailure(
             DesktopActionFailure.partial(
                 delivery: .init(mechanism: .accessibilityAction, mode: .background),
                 unitCount: .one,
-                message: "One of three page units was accepted"),
+                message: "One of three page units was accepted")
+                .attributed(to: reportedTarget.actionTargetReceipt),
             for: .scroll)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
@@ -571,6 +574,7 @@ struct MCPDesktopActionOutcomeProjectionTests {
         #expect(meta["requires_fresh_observation"] == .bool(false))
         #expect(meta["escalation"] == .string("recover_side_effect"))
         #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+        #expect(try meta["target_receipt"] == Value(reportedTarget.actionTargetReceipt))
     }
 
     @Test
@@ -1505,7 +1509,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
     }
 
     @MainActor
-    private static func makeExactScrollSnapshot(context: MCPToolContext) async throws -> String {
+    static func makeExactScrollSnapshot(context: MCPToolContext) async throws -> String {
         let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
         let snapshotID = await snapshot.id
         let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
