@@ -53,6 +53,50 @@ login-keychain or Dropbox fallbacks, and the private locator is never tracked in
   beta build must pass the same complete release gates; hosted Xcode 26.x tests provide additional compatibility coverage,
   not proof of the Xcode 27 publication build. Do not change the machine's global toolchain selection during release.
 
+### Release helper pin and relocated publication checkout
+
+Credentialed release steps run through the shared `agent-scripts` `release-mac-app` helper, pinned by commit plus
+executable and library SHA-256 (`EXPECTED_RELEASE_HELPER_*` in `scripts/build-terminal-artifacts.sh`). The helper is
+found only at `../agent-scripts` beside the publication checkout, then at `~/Projects/agent-scripts`; it must be a
+clean Git checkout at exactly the pinned commit, and the terminal pipeline refuses `MAC_RELEASE_TOOL` overrides. The
+release plan freezes the pin, and `--resume-publication` refuses any change to it. Check it before starting:
+
+```bash
+scripts/build-terminal-artifacts.sh check-helper
+```
+
+The shared `~/Projects/agent-scripts` checkout normally moves ahead of the pin (61 commits ahead during 4.7.0), and
+every release entry point then stops with `mac-release helper commit mismatch: <sha>`. Do not reset the shared checkout
+or bump the pin mid-release. Publish from a relocated checkout instead: a fresh clone of Peekaboo `main` in a staging
+directory, with a detached `agent-scripts` worktree at the pinned commit beside it so the `../agent-scripts` lookup wins.
+
+```bash
+STAGE="$HOME/Projects/.release-staging-peekaboo-<version>"
+mkdir -p "$STAGE"
+git clone --recurse-submodules https://github.com/openclaw/Peekaboo.git "$STAGE/Peekaboo"
+PIN="$(sed -n 's/^EXPECTED_RELEASE_HELPER_COMMIT=//p' "$STAGE/Peekaboo/scripts/build-terminal-artifacts.sh")"
+git -C "$HOME/Projects/agent-scripts" worktree add --detach "$STAGE/agent-scripts" "$PIN"
+cd "$STAGE/Peekaboo"
+python3 scripts/setup-swift-workspace.py setup --release
+pnpm install --frozen-lockfile
+scripts/build-terminal-artifacts.sh check-helper
+```
+
+Configure the maintainer Git identity in that clone, and after pushing the dated publication commit, pull it there with
+`--ff-only`. Everything from preflight through closeout then runs in `$STAGE/Peekaboo`: the retained `build/release`
+directory and generated `appcast.xml` live there, `--resume-publication` must run from the same clone, and the appcast
+commit is pushed from it. Remove the clone and `git -C ~/Projects/agent-scripts worktree remove "$STAGE/agent-scripts"`
+only after closeout.
+
+Bumping the pin is a separate reviewed change, never a release-time fix. Review every `skills/release-mac-app` change
+between the pin and the candidate (`git -C ~/Projects/agent-scripts log -p <pin>..<candidate> -- skills/release-mac-app`)
+for credential, signing, notarization, Sparkle, and PATH behavior. Then update the commit and both hashes together
+wherever they are asserted: the `EXPECTED_RELEASE_HELPER_*` constants and embedded manifest literals in
+`scripts/build-terminal-artifacts.sh`, `scripts/validate-terminal-artifact-manifest.mjs`,
+`scripts/test-terminal-artifact-env.sh`, and `scripts/test-terminal-manifest-portability.sh`. As of 2026-09-30 the
+helper executable is unchanged since `20ab9a5e`, but `lib/mac_release.sh` has changed, so a bump changes the library
+hash and needs that library's diff reviewed.
+
 ## 2. Validate the preparation patch
 
 On a busy Mac, run the commands below and the release driver under `nice -n 19`.
@@ -224,9 +268,18 @@ pnpm run prepare-release
 
 Do not build release artifacts until publication preflight succeeds; dirty trees produce invalid version metadata.
 
+The release driver runs this preflight again, usually from an interactive terminal, so tests must not depend on the
+controlling terminal or on pipe capacity. During 4.7.0 a test captured process-wide stdout into an in-memory pipe it
+read only after the command returned, deadlocking once the output passed the 16 KB pipe buffer, and fixture scripts ran
+bare `rm` on read-only files, which prompts whenever stdin is a terminal. Commit `test: keep release preflight tests
+from blocking on output or prompts` fixed both; use the shared file-backed `captureStandardOutputBytes` helper and
+`rm -f` for intended deletions. A preflight that stops producing output while a test process stays alive is almost
+always one of these rather than a slow build, so inspect the process tree before waiting longer.
+
 ## 4. Publish
 
-Load release credentials through the maintainer 1Password workflow, then run interactively:
+Load release credentials through the maintainer 1Password workflow and satisfy the
+[caller environment](#caller-environment), then run interactively:
 
 ```bash
 ./scripts/release-binaries.sh \
@@ -252,7 +305,7 @@ not OS-account isolation: run safe tests in a fresh VM before introducing task c
 ownership remain with the existing compilation helpers; do not wrap the whole preflight in the workspace runner.
 Publication eligibility still requires the same complete successful gate. Install `uv`
 with Homebrew before running it; the pinned `dmgbuild` environment writes Finder layout metadata directly. The npm
-step requires `NPM_TOKEN`; the maintainer release command provides it through the manifest's credential pass. A 404
+step requires `NPM_TOKEN` in the driver's own environment (see [caller environment](#caller-environment)). A 404
 response to a registry PUT means npm authentication is missing or invalid, not that the package is missing. When the
 script pauses at the npm confirmation, inspect the prepared artifacts, release plan, notes, and proof, then answer `y`
 to authorize publication. This confirmation occurs before GitHub draft creation. The signing identity must be:
@@ -313,6 +366,59 @@ gh release edit v<version> --draft=false
 
 For beta versions, the script publishes with the `beta` tag. Peekaboo beta releases are still the default release, so
 also run `npm dist-tag add @steipete/peekaboo@<version> latest` before publishing the GitHub draft.
+
+### Caller environment
+
+The driver shell must already hold `NPM_TOKEN`. The tracked manifest's `MAC_RELEASE_OP_ENV_REFS` names the token's
+`op://` reference, but the helper resolves it only for children of its own credential passes; nothing places it in the
+driver's environment. Add that same reference as `NPM_TOKEN=...` to the `op run` env file next to the App Store Connect
+fields. With `--publish-npm` the driver now refuses to start without the token; previously the missing token surfaced
+only at the npm step, after the full build and notarization. Secret references cannot contain parentheses, so the env
+file must address the App Store Connect item by its 1Password item ID rather than its title. The manifest's
+`MAC_RELEASE_OP_ITEM` keeps the title because the helper looks that item up by name, not through an `op://` reference.
+
+`scripts/mac-release` narrows `PATH` to `/usr/bin:/bin` before it executes the pinned helper, and the helper records its
+inherited `PATH` as `MAC_RELEASE_CALLER_PATH`, which becomes the wrapped command's `PATH` behind the codesign shim. The
+CLI build's `codesign-run -- pnpm run build:swift:all` therefore could not find `pnpm`. The driver now passes
+`MAC_RELEASE_CALLER_PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, the preflight's tool path, unless the caller
+already set one; an explicit value still wins. Export that value yourself when publishing a commit that predates this
+change, as 4.7.0 did. The terminal pipeline and the manual recovery commands above set an explicit `PATH` inside the
+wrapped command and are unaffected.
+
+### npm two-factor publication
+
+The npm account enforces a one-time password on every publish, and the release tarball is about 32 MB. The driver's
+`pnpm publish` cannot answer that challenge when its input or output is piped: `printf 'y\n' | ...` or `| tee log`
+makes pnpm stop with `ERR_PNPM_OTP_NON_INTERACTIVE`, and by then the GitHub draft already exists. A TOTP supplied up
+front does not survive the upload either. During 4.7.0, codes passed through `NPM_CONFIG_OTP` expired during the two- to
+three-minute upload and npm answered `EOTP`, from a faster fleet Mac as well. Retrying through the driver with
+`--retry-npm-publish` or longer fetch timeouts hits the same wall.
+
+Finish npm publication interactively instead. In a real terminal authenticated to npmjs as `steipete`, publish the
+exact retained tarball (never a fresh pack) and complete npm's browser authentication with the npmjs TOTP as soon as
+npm prints the URL:
+
+```bash
+npm whoami --registry https://registry.npmjs.org
+npm publish "$PWD/build/release/steipete-peekaboo-<version>.tgz" \
+  --registry https://registry.npmjs.org --access public --tag latest
+```
+
+Use `--tag beta` for prerelease versions, matching the driver. Then rerun `./scripts/release-binaries.sh
+--resume-publication` from the same checkout and credentialed shell. Resume finds the published version, verifies that
+the registry integrity equals the retained tarball's SHA-512, skips its own publish, and finishes the draft body;
+a different tarball fails closed. `--retry-npm-publish` is unnecessary once the version is visible. If the driver
+already attempted its own publish, its retained attempt marker makes resume refuse to publish again until the registry
+shows the version.
+
+### Resume cost
+
+When the draft already exists, resume uploads the complete inventory again with `gh release upload --clobber` before
+it reaches npm. Its pre-upload check only rejects duplicate or unexpected asset names and does not compare digests, so
+an intact draft still re-uploads all eleven assets of a universal release, including the three CLI archives, the npm
+tarball, the app zip, and the DMG. On a slow uplink that dominates a resume's wall time, so budget for it before the
+npm step rather than assuming resume is quick. The strict check that follows the upload verifies each asset's size and
+server-reported SHA-256 digest against the frozen receipt.
 
 ## 5. Verify
 

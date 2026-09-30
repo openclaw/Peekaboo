@@ -34,6 +34,7 @@ Developer ID release keychain:
 npm publish token:
 
 - Resolve token/TOTP locators from `$release-private`.
+- `NPM_TOKEN` must be in the driver's own environment: add the `NPM_TOKEN` op:// ref from `MAC_RELEASE_OP_ENV_REFS` in `.mac-release.env` to the `op run` env file. The manifest ref only reaches helper children, never the driver; with `--publish-npm` the driver refuses to start without it.
 - Use `$npm` rules. Run inside the same tmux session, write only a temp npmrc, delete it immediately, and use the `npmjs` TOTP item for web auth if npm prompts.
 - Do not create short-lived/granular bypass tokens for a normal Peekaboo publish. They add cleanup risk and did not help the 3.2.1 slow-upload/web-auth path.
 
@@ -52,7 +53,11 @@ Create a temp env file with service-account refs from `$release-private`:
 APP_STORE_CONNECT_API_KEY_P8=<1Password ref from release-private>
 APP_STORE_CONNECT_KEY_ID=<1Password ref from release-private>
 APP_STORE_CONNECT_ISSUER_ID=<1Password ref from release-private>
+NPM_TOKEN=<NPM_TOKEN op:// ref from MAC_RELEASE_OP_ENV_REFS in .mac-release.env>
 ```
+
+op:// refs cannot contain parentheses. The App Store Connect item title has them, so address it by 1Password item ID
+(`op://<vault>/<item-id>/<field>`); fetch the ID as metadata only, never the values.
 
 Before a release, verify shape and Apple auth without printing values:
 
@@ -99,6 +104,12 @@ If both `history` and non-S3 `submit` fail, suspect wrong access level or stale 
 7. Push `main`.
 8. Run:
 
+Before building, run `scripts/build-terminal-artifacts.sh check-helper`. On `mac-release helper commit mismatch`, do not
+reset `~/Projects/agent-scripts` or bump the pin mid-release: publish from a fresh staging clone of `main` with a
+detached `agent-scripts` worktree at the pinned commit beside it (`docs/RELEASING.md`, "Release helper pin and
+relocated publication checkout"). Preflight, the driver, resume, and the appcast commit then all run in that clone;
+remove the clone and the worktree only after closeout. A pin bump is its own reviewed PR.
+
 Prepare a bounded reviewed Markdown proof file containing the exact hosted CI and local release-gate results, then set
 `RELEASE_PROOF_FILE` to its absolute path. The driver retains and hashes it into the release plan and GitHub body.
 
@@ -109,6 +120,13 @@ op run --env-file "$ENVFILE" -- \
 
 The script builds universal CLI, npm package, signed/notarized app zip and branded DMG, appcast, checksums, draft GitHub release, and npm publish.
 Use a non-login shell: profile exports can replace current 1Password ASC IDs with stale values while leaving the current `.p8`, producing a misleading `401`.
+The piped `y` (and any `| tee`) makes pnpm non-interactive, so with npm 2FA enforced the npm step stops with
+`ERR_PNPM_OTP_NON_INTERACTIVE` after the draft exists; finish with the npm 2FA path below.
+The driver passes `MAC_RELEASE_CALLER_PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` to the CLI build's
+`codesign-run`. Publication commits that predate that default (4.7.0 and earlier) need it exported, or `pnpm` is not
+found because `scripts/mac-release` narrows `PATH` before the helper records it.
+If the preflight goes silent while a test process stays alive, suspect a test blocked on a pipe or terminal prompt
+(fixed for 4.7.0 in `test: keep release preflight tests from blocking on output or prompts`), not a slow build.
 
 When resuming before any public action after a release interruption with a CLI already built from the same clean `HEAD`, add
 `--reuse-built-cli`. The script verifies the full signer, entitlement, native-only, runtime-library, architecture,
@@ -127,7 +145,22 @@ on local-only or reduced-check builds, preventing `--resume-publication` from pr
 
 Every notarized release payload must sign with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`, not a personal or development identity. This includes Peekaboo.app, nested helpers and frameworks, the standalone and npm CLIs, and the DMG. The tracked release manifest and shared credential helper resolve the shared passwordless signing keychain; never copy its machine-specific path or signing material into the repository. Peekaboo 3.8+ bridge hosts keep accepting transition-era personal-team clients for staged upgrades, but Foundation-signed 3.9.6+ CLIs require a 3.8+ host.
 
-If npm upload is slow and TOTP expires, use the stored npm token through a temp npmrc and complete npm web auth immediately when prompted with the configured TOTP. Do not create granular bypass tokens for this; if one was created by mistake, delete it before closeout.
+npm 2FA: the ~32 MB upload outlives any TOTP. Codes from `--otp`/`NPM_CONFIG_OTP` fail with `EOTP`, even from a faster
+fleet Mac, and driver retries (`--retry-npm-publish`, longer fetch timeouts) hit the same wall. Publish the exact retained
+tarball from an interactive terminal (no pipes) authenticated as `steipete`, using the stored npm token through a temp
+npmrc or an existing login, and complete npm's browser auth with the configured TOTP as soon as npm prints the URL:
+
+```bash
+npm publish "$PWD/build/release/steipete-peekaboo-<version>.tgz" \
+  --registry https://registry.npmjs.org --access public --tag latest   # --tag beta for prereleases
+```
+
+Then rerun `./scripts/release-binaries.sh --resume-publication`. It accepts the already-published version only if the
+registry integrity equals the retained tarball, and it finishes the draft body. Do not create granular bypass tokens for
+this; if one was created by mistake, delete it before closeout.
+
+Resume cost: whenever the draft exists, resume re-uploads every asset with `gh release upload --clobber` before npm,
+because its pre-upload check compares names, not digests. On a slow uplink expect the full asset upload each time.
 
 ## Verify
 
