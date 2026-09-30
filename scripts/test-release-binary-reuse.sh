@@ -40,6 +40,14 @@ printf '%s\n' \
 HELPER
 chmod +x "$FIXTURE_ROOT/scripts/build-terminal-artifacts.sh"
 
+# Records the non-reuse CLI build's credential-runner request, then stops the release.
+cat >"$FIXTURE_ROOT/scripts/mac-release" <<'MAC_RELEASE'
+#!/usr/bin/env bash
+printf 'mac-release %s caller-path=%s\n' "$*" "${MAC_RELEASE_CALLER_PATH:-unset}" >>"${PEEKABOO_REUSE_TEST_LOG:?}"
+exit 1
+MAC_RELEASE
+chmod +x "$FIXTURE_ROOT/scripts/mac-release"
+
 cat >"$FIXTURE_ROOT/package.json" <<'JSON'
 {"name":"peekaboo-release-reuse-fixture","version":"9.9.9"}
 JSON
@@ -487,6 +495,58 @@ for public_action in --create-github-release --publish-npm; do
   fi
   grep -Fq -- '--proof-file' "$TEST_ROOT/missing-proof.out"
   [[ ! -s "$VERIFY_LOG" ]]
+done
+
+printf 'reviewed proof\n' > "$TEST_ROOT/public-proof.md"
+run_public_release() {
+  (
+    cd "$FIXTURE_ROOT"
+    /usr/bin/env -u NPM_TOKEN -u CODESIGN_KEYCHAIN -u MAC_RELEASE_CALLER_PATH "$@" \
+      PATH="$FAKE_BIN:$PATH" PEEKABOO_REUSE_REAL_NODE="$REAL_NODE" \
+      PEEKABOO_REUSE_NODE_LOG="$NODE_LOG" PEEKABOO_REUSE_TEST_LOG="$VERIFY_LOG" \
+      ./scripts/release-binaries.sh --create-github-release --publish-npm \
+      --proof-file "$TEST_ROOT/public-proof.md"
+  )
+}
+
+# npm publication happens after the full build; its token must be checked first.
+: >"$VERIFY_LOG"
+: >"$NODE_LOG"
+if run_public_release >"$TEST_ROOT/missing-npm-token.out" 2>&1; then
+  echo 'public release accepted a missing NPM_TOKEN' >&2
+  exit 1
+fi
+grep -Fq 'NPM_TOKEN is required for --publish-npm' "$TEST_ROOT/missing-npm-token.out"
+[[ ! -s "$VERIFY_LOG" ]]
+if grep -Fq 'prepare-release.js' "$NODE_LOG"; then
+  echo 'missing NPM_TOKEN reached the release preflight' >&2
+  exit 1
+fi
+
+# scripts/mac-release narrows PATH before the helper records the child PATH.
+for caller_path in default /fixture/bin:/usr/bin:/bin; do
+  : >"$VERIFY_LOG"
+  caller_env=()
+  expected_caller_path=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  if [[ "$caller_path" != default ]]; then
+    caller_env=("MAC_RELEASE_CALLER_PATH=$caller_path")
+    expected_caller_path=$caller_path
+  fi
+  if run_public_release NPM_TOKEN=fixture-token ${caller_env[@]+"${caller_env[@]}"} \
+    >"$TEST_ROOT/npm-token.out" 2>&1; then
+    echo 'fixture public release unexpectedly passed the stubbed CLI build' >&2
+    exit 1
+  fi
+  if grep -Fq 'NPM_TOKEN is required' "$TEST_ROOT/npm-token.out"; then
+    echo 'public release rejected a present NPM_TOKEN' >&2
+    exit 1
+  fi
+  grep -Fq 'prepare-release scripts/prepare-release.js' "$VERIFY_LOG"
+  grep -Fxq "mac-release codesign-run -- pnpm run build:swift:all caller-path=$expected_caller_path" \
+    "$VERIFY_LOG" || {
+    echo "CLI build codesign-run did not receive caller PATH $expected_caller_path" >&2
+    exit 1
+  }
 done
 
 mkdir -p "$FIXTURE_ROOT/build"

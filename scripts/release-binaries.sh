@@ -1253,6 +1253,11 @@ OBSERVED_RELEASE_OPTION_FINGERPRINT="$SKIP_CHECKS|$CREATE_GITHUB_RELEASE|$PUBLIS
 [[ "$RELEASE_OPTION_FINGERPRINT" == "$OBSERVED_RELEASE_OPTION_FINGERPRINT" ]] ||
     fail "Release manifest changed command-line publication authority"
 validate_publication_options
+# The manifest's MAC_RELEASE_OP_ENV_REFS reaches only helper children, never this
+# shell; without this check a missing token surfaces after the full build.
+if [[ "$PUBLISH_NPM" == true && -z "${NPM_TOKEN:-}" ]]; then
+    fail "NPM_TOKEN is required for --publish-npm and must be set before the build starts; add the NPM_TOKEN op:// reference from MAC_RELEASE_OP_ENV_REFS in .mac-release.env to the op run env file"
+fi
 # This inventory also owns retained-publication verification and upload.
 CLI_ARCHITECTURES=(arm64)
 if [ "$UNIVERSAL" = true ]; then
@@ -1358,9 +1363,12 @@ else
     else
         BUILD_COMMAND=("$PROJECT_ROOT/scripts/mac-release" codesign-run -- pnpm run "$BUILD_SCRIPT")
     fi
+    # scripts/mac-release narrows PATH to /usr/bin:/bin before the pinned helper
+    # records it as the child PATH, which hides pnpm. Use the preflight tool PATH.
     if ! MAC_RELEASE_EXPECTED_HELPER_COMMIT="$RELEASE_HELPER_COMMIT" \
         MAC_RELEASE_EXPECTED_HELPER_EXECUTABLE_SHA256="$RELEASE_HELPER_EXECUTABLE_SHA256" \
         MAC_RELEASE_EXPECTED_HELPER_LIBRARY_SHA256="$RELEASE_HELPER_LIBRARY_SHA256" \
+        MAC_RELEASE_CALLER_PATH="${MAC_RELEASE_CALLER_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin}" \
         MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" "${BUILD_COMMAND[@]}"; then
         echo -e "${RED}❌ Swift build failed!${NC}"
         exit 1
