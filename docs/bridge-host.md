@@ -73,6 +73,12 @@ of sending a raw PID signal or retrying an uncertain quit. The current signed he
 advertise both the read-only launch and generation-bound quit contracts in its help; this is checked
 before interrupted-transaction recovery can invoke application lifecycle commands.
 
+If the companion declines a normal quit, deployment intentionally stops and preserves its recovery
+journal and bundles; there is no automatic force-quit fallback. Finish or cancel ongoing work, quit
+Peekaboo from its menu-bar menu, then rerun the same deployment command with the signed app and
+healthcheck CLI. Leave the recovery journal and transaction directory intact so the installer can
+verify and recover them; do not delete them or signal a PID copied from an earlier attempt.
+
 Deployment may launch the GUI permission broker with the process argument
 `--background-bridge-host`. That unattended mode still initializes the menu-bar status item,
 permission state, and GUI Bridge listener, but startup never presents API-key or permission
