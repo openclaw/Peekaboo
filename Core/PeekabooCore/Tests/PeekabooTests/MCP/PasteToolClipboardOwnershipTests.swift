@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import MCP
 import PeekabooAutomationKit
@@ -12,6 +13,45 @@ import UniformTypeIdentifiers
 @Suite(.serialized)
 @MainActor
 struct PasteToolClipboardOwnershipTests {
+    @Test(arguments: [false, true], [false, true])
+    func `MCP process clipboard paste retains the reported hotkey target and dispatch count`(
+        explicitPayload: Bool,
+        indeterminate: Bool) async throws
+    {
+        let fixture = Fixture(prior: Self.payload("prior"))
+        let bounds = CGRect(x: 20, y: 30, width: 600, height: 400)
+        let reportedIdentity = try DesktopTargetIdentity(exactWindow: .init(
+            identity: .init(
+                windowID: 864,
+                ownerProcessIdentifier: 2468,
+                ownerProcessStartIdentity: 71,
+                capturedBounds: bounds),
+            bounds: bounds))
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .processTargetedEvents, mode: .background)
+        let outcome: DesktopActionOutcome = indeterminate
+            ? .indeterminate(route: .bridge, delivery: delivery, evidence: .completionUnknown, unitCount: .init(3))
+            : .dispatchedUnverified(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: .init(4))
+        let automation = OutcomeOwnershipAutomation(outcome: outcome, targetIdentity: reportedIdentity)
+
+        let response = try await fixture.run(automation: automation, explicitPayload: explicitPayload)
+
+        #expect(response.isError)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(try metadata["target_receipt"] == Value(reportedIdentity.actionTargetReceipt))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["clipboard_cleanup_status"] == (explicitPayload ? .string("restored") : nil))
+        #expect(automation.targetedHotkeyCalls.count == 1)
+        #expect(automation.lastHotkeyKeys == nil)
+        #expect(fixture.clipboard.setCallCount == (explicitPayload ? 1 : 0))
+        #expect(fixture.clipboard.restoreCallCount == (explicitPayload ? 1 : 0))
+        #expect(fixture.clipboard.current?.data == Data("prior".utf8))
+    }
+
     @Test(arguments: [false, true], [false, true])
     func `MCP preserves a newer clipboard generation including identical bytes`(
         hadPriorContents: Bool,
@@ -61,7 +101,7 @@ struct PasteToolClipboardOwnershipTests {
     }
 
     @Test(arguments: [false, true])
-    func `MCP refused input retains the clipboard effect without claiming receiver dispatch`(
+    func `MCP attributed input refusal retains only the global clipboard effect`(
         newerCopy: Bool) async throws
     {
         let fixture = Fixture(prior: Self.payload("prior"))
@@ -159,7 +199,8 @@ struct PasteToolClipboardOwnershipTests {
         func run(
             clipboard: (any ClipboardServiceProtocol)? = nil,
             foreground: Bool = false,
-            automation: (any UIAutomationServiceProtocol)? = nil) async throws -> ToolResponse
+            automation: (any UIAutomationServiceProtocol)? = nil,
+            explicitPayload: Bool = true) async throws -> ToolResponse
         {
             let app = AutomationTestFixtures.application(
                 processIdentifier: 2468,
@@ -171,16 +212,33 @@ struct PasteToolClipboardOwnershipTests {
                 applications: MockApplicationService(applications: [app]),
                 clipboard: clipboard ?? self.clipboard,
                 executionPolicy: .unrestricted)
-            return try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            var arguments: [String: Any] = [
                 "app": "SyntheticClipboardTarget", "foreground": foreground,
-                "dataBase64": "aGVsbG8=", "uti": "public.data", "restore_delay_ms": 0,
-            ]))
+                "restore_delay_ms": 0,
+            ]
+            if explicitPayload {
+                arguments["dataBase64"] = "aGVsbG8="
+                arguments["uti"] = "public.data"
+            }
+            return try await PasteTool(context: context).execute(arguments: ToolArguments(raw: arguments))
         }
     }
 }
 
 private enum OwnershipFailure: Error {
     case afterDispatch
+}
+
+@MainActor
+private final class OutcomeOwnershipAutomation: MockAutomationService, ScriptedUIAutomationActionOutcomeProviding {
+    let uiAutomationOutcomeScript: UIAutomationOutcomeScript
+    let uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
+
+    init(outcome: DesktopActionOutcome, targetIdentity: DesktopTargetIdentity) {
+        self.uiAutomationOutcomeScript = UIAutomationOutcomeScript(defaultResponse: .outcome(outcome))
+        self.uiAutomationOutcomeTargetIdentity = targetIdentity
+        super.init(accessibilityGranted: true)
+    }
 }
 
 @MainActor
@@ -193,14 +251,16 @@ private final class RefusingOwnershipAutomation: MockAutomationService, Scripted
     func hotkeyWithOutcome(
         keys _: String,
         holdDuration _: Int,
-        expectedProcessIdentity _: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
     {
         self.refusalCalls += 1
         self.beforeRefusal?()
+        let identity = try DesktopTargetIdentity(processIdentity: expectedProcessIdentity)
         throw DesktopActionFailure.preDispatchRefusal(
             reason: .targetUnavailable,
             message: "Synthetic hotkey refused before dispatch",
             standardErrorCode: .timeout)
+            .attributed(to: identity.actionTargetReceipt)
     }
 }
 

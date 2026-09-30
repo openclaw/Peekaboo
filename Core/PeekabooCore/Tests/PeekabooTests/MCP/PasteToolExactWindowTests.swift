@@ -87,6 +87,52 @@ struct PasteToolExactWindowTests {
         #expect(meta["retry_safe"] == .bool(false))
     }
 
+    @Test(arguments: [false, true], [false, true])
+    @MainActor
+    func `Exact clipboard paste retains rejected hotkey receipt without replay`(
+        explicitPayload: Bool,
+        indeterminate: Bool) async throws
+    {
+        let fixture = await self.makeFixture(exactKeyboardSupported: true)
+        let automation = try #require(fixture.exactAutomation)
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .windowTargetedEvents, mode: .background)
+        let outcome: DesktopActionOutcome = indeterminate
+            ? .indeterminate(route: .bridge, delivery: delivery, evidence: .completionUnknown, unitCount: .init(3))
+            : .dispatchedUnverified(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: .init(4))
+        automation.uiAutomationOutcomeScript.setDefaultOutcome(outcome)
+        var arguments: [String: Any] = [
+            "window_id": self.secondWindow.windowID,
+            "restore_delay_ms": 0,
+        ]
+        if explicitPayload {
+            arguments["dataBase64"] = Data("{\\rtf1 exact}".utf8).base64EncodedString()
+            arguments["uti"] = UTType.rtf.identifier
+        }
+
+        let response = try await fixture.tool.execute(arguments: ToolArguments(raw: arguments))
+
+        #expect(response.isError)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
+        let metadata = try #require(response.meta?.objectValue)
+        let receipt = try #require(metadata["target_receipt"]?.objectValue)
+        #expect(receipt["pid"] == .int(333))
+        #expect(receipt["process_start_identity_decimal"] == .string("33"))
+        #expect(receipt["window_id"] == .int(self.secondWindow.windowID))
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["clipboard_cleanup_status"] == (explicitPayload ? .string("restored") : nil))
+        #expect(automation.exactHotkeyCalls.count == 1)
+        #expect(automation.exactHotkeyCalls.first?.targetWindowID == self.secondWindow.windowID)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(automation.lastHotkeyKeys == nil)
+        #expect(fixture.clipboard.setCallCount == (explicitPayload ? 1 : 0))
+        #expect(fixture.clipboard.restoreCallCount == (explicitPayload ? 1 : 0))
+        #expect(try fixture.clipboard.get(prefer: nil)?.data == Data("before".utf8))
+    }
+
     @Test
     func `Exact rich paste fails before clipboard mutation when atomic delivery is unavailable`() async throws {
         let fixture = await self.makeFixture(exactKeyboardSupported: false)

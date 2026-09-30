@@ -506,9 +506,13 @@ public struct PasteTool: MCPTool {
             let validated = try ExactWindowKeyboardRuntime.validateRouteReceipt(
                 result,
                 operation: "Exact-window paste")
-            try DesktopActionFailure.requireConfirmedIfReported(
-                validated.outcome,
-                operation: "Paste hotkey")
+            if validated.outcome != nil {
+                _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                    validated,
+                    policy: .confirmed,
+                    operation: "Paste hotkey",
+                    rejectedOutcomeMessage: "Paste hotkey did not return a confirmed outcome.")
+            }
             return validated
         case let .process(automation):
             guard let processIdentity = destination.processIdentity else {
@@ -519,9 +523,13 @@ public struct PasteTool: MCPTool {
                     keys: "cmd,v",
                     holdDuration: 50,
                     expectedProcessIdentity: processIdentity)
-                try DesktopActionFailure.requireConfirmedIfReported(
-                    result.outcome,
-                    operation: "Paste hotkey")
+                if result.outcome != nil {
+                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                        result,
+                        policy: .confirmed,
+                        operation: "Paste hotkey",
+                        rejectedOutcomeMessage: "Paste hotkey did not return a confirmed outcome.")
+                }
                 return result
             }
             try await automation.hotkey(keys: "cmd,v", holdDuration: 50, expectedProcessIdentity: processIdentity)

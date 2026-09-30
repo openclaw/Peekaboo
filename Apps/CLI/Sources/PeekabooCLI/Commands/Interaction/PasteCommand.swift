@@ -612,10 +612,15 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             holdDuration: 50,
             target: target
         )
-        try DesktopActionFailure.requireConfirmedIfReported(
-            result.outcome,
-            operation: "Paste hotkey"
-        )
+        if result.outcome != nil {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result.outcome,
+                policy: .confirmed,
+                operation: "Paste hotkey",
+                targetReceipt: target.processIdentifier == nil ? nil : result.actionTargetReceipt,
+                rejectedOutcomeMessage: "Paste hotkey did not return a confirmed outcome."
+            )
+        }
         if let actionSequence {
             try actionSequence.recordExactTargetLeaf(
                 outcome: result.outcome,
