@@ -866,7 +866,7 @@ extension InteractionObservationContextTests {
         var target = InteractionTargetOptions()
         target.pid = 123
 
-        await #expect(throws: PeekabooError.self) {
+        await #expect(throws: PreDispatchActionError.self) {
             _ = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
                 observation,
                 options: TargetedElementObservationRefreshOptions(

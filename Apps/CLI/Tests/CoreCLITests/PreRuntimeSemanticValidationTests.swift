@@ -144,10 +144,15 @@ struct PreRuntimeSemanticValidationTests {
             )
             let validator = try #require(command as? any PreRuntimeValidatingCommand)
 
-            let error = #expect(throws: PeekabooError.self) {
+            let error = #expect(throws: PreDispatchActionError.self) {
                 try validator.validateBeforeRuntime()
             }
             #expect(error?.localizedDescription.contains("Do not combine an explicit --snapshot") == true)
+            #expect(error?.code == .INVALID_INPUT)
+            #expect(error?.envelopeEffect == .refused)
+            #expect(error?.envelopeRetrySafe == true)
+            #expect(error?.envelopeMutationDispatched == false)
+            #expect(error?.failure.outcome.refusalReason == .invalidRequest)
         }
     }
 

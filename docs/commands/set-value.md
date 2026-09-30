@@ -22,6 +22,7 @@ read_when:
 ## Notes
 
 - The target element must expose a settable accessibility value.
+- A concrete `--snapshot` already identifies the app and window; do not combine it with target flags. Omit the concrete snapshot (or use `--snapshot latest`) when supplying target flags to capture a fresh targeted snapshot. Conflicts return `INVALID_INPUT` with a retry-safe, non-dispatched refusal before runtime discovery.
 - Numeric controls retain native numeric verification, including floating-point rounding tolerance; numeric-looking
   text remains literal. Successful output reports the observed value, not a replacement copy of the requested value.
 - Boolean verification requires an actual Boolean or exact numeric `0`/`1`; fractional values are not truncated.

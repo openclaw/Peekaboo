@@ -31,6 +31,17 @@ struct InvalidInputOrderingCLITests {
         let hint: String?
         let debugLogs: [String]
         let mutationDispatched: Bool?
+        let effect: String?
+        let retrySafe: Bool?
+        let outcome: Outcome?
+    }
+
+    private struct Outcome: Decodable {
+        let state: String
+        let effect: String
+        let refusal_reason: String?
+        let mutation_dispatched: Bool
+        let retry_safe: Bool
     }
 
     @Test(arguments: [
@@ -174,6 +185,45 @@ struct InvalidInputOrderingCLITests {
         #expect(envelope.message == "Use either --app or --pid, not both.")
         #expect(envelope.debugLogs.isEmpty)
         #expect(envelope.mutationDispatched == false)
+    }
+
+    @Test(arguments: [
+        SystemSelectorCase(arguments: [
+            "set-value", "hello", "--on", "T1", "--app", "TextEdit",
+        ]),
+        SystemSelectorCase(arguments: [
+            "action", "AXIncrement", "--on", "B1", "--window-id", "42",
+        ]),
+    ])
+    func `concrete snapshot selector conflicts report a safe pre-dispatch refusal`(
+        _ testCase: SystemSelectorCase
+    ) async throws {
+        let socketPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-snapshot-conflict-\(UUID().uuidString).sock").path
+        let result = try await TestChildProcess.runPeekaboo(
+            testCase.arguments + [
+                "--snapshot", "ps1_00000000000000000000000000000001",
+                "--bridge-socket", socketPath, "--json",
+            ],
+            isolateFromRemoteHosts: false
+        )
+
+        #expect(result.status == .exited(1))
+        #expect(result.standardError.isEmpty)
+        let envelope = try Self.errorEnvelope(from: result.standardOutput)
+        #expect(envelope.code == "INVALID_INPUT")
+        #expect(envelope.message == "Invalid input: Do not combine an explicit --snapshot with --app, --pid, " +
+            "or window targeting options. The snapshot already identifies the element's application and window.")
+        #expect(envelope.debugLogs.isEmpty)
+        #expect(envelope.effect == "refused")
+        #expect(envelope.retrySafe == true)
+        #expect(envelope.mutationDispatched == false)
+        let outcome = try #require(envelope.outcome)
+        #expect(outcome.state == "refused")
+        #expect(outcome.effect == "refused")
+        #expect(outcome.refusal_reason == "invalid_request")
+        #expect(outcome.retry_safe)
+        #expect(!outcome.mutation_dispatched)
     }
 
     @Test
@@ -320,12 +370,18 @@ struct InvalidInputOrderingCLITests {
         )
         #expect(object["success"] as? Bool == false)
         let error = try #require(object["error"] as? [String: Any])
+        let outcome = try object["outcome"].map {
+            try JSONDecoder().decode(Outcome.self, from: JSONSerialization.data(withJSONObject: $0))
+        }
         return try ErrorEnvelope(
             code: #require(error["code"] as? String),
             message: #require(error["message"] as? String),
             hint: error["hint"] as? String,
             debugLogs: #require(object["debug_logs"] as? [String]),
-            mutationDispatched: error["mutation_dispatched"] as? Bool
+            mutationDispatched: error["mutation_dispatched"] as? Bool,
+            effect: object["effect"] as? String,
+            retrySafe: error["retry_safe"] as? Bool,
+            outcome: outcome
         )
     }
 }

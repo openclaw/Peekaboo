@@ -193,9 +193,12 @@ enum InteractionObservationRefresher {
         target: InteractionTargetOptions
     ) throws {
         guard target.hasAnyTarget, InteractionSnapshotReference.isConcrete(snapshot) else { return }
-        throw PeekabooError.invalidInput(
-            "Do not combine an explicit --snapshot with --app, --pid, or window targeting options. " +
-                "The snapshot already identifies the element's application and window."
+        throw PreDispatchActionError(
+            message: "Invalid input: Do not combine an explicit --snapshot with --app, --pid, " +
+                "or window targeting options. The snapshot already identifies the element's application and window.",
+            code: .INVALID_INPUT,
+            hint: nil,
+            reason: .invalidRequest
         )
     }
 
