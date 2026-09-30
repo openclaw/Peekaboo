@@ -66,6 +66,13 @@ The `--` separates pnpm's script invocation from the installer options. You can 
 signed CLI, then retains the transactional signer/native-only/readiness/rollback gates described
 below.
 
+Before replacement or rollback stops a process, the installer verifies its exact bundle path with
+the CLI's read-only `app launch` no-op and retains that process-generation receipt for a non-forced
+`app quit`. It refuses ambiguous targets, failed process inspection, and changed generations instead
+of sending a raw PID signal or retrying an uncertain quit. The current signed healthcheck CLI must
+advertise both the read-only launch and generation-bound quit contracts in its help; this is checked
+before interrupted-transaction recovery can invoke application lifecycle commands.
+
 Deployment may launch the GUI permission broker with the process argument
 `--background-bridge-host`. That unattended mode still initializes the menu-bar status item,
 permission state, and GUI Bridge listener, but startup never presents API-key or permission

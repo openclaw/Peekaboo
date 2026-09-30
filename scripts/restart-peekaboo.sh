@@ -69,7 +69,6 @@ MV_BIN="${PEEKABOO_MV_BIN:-/bin/mv}"
 OPEN_BIN="${PEEKABOO_OPEN_BIN:-/usr/bin/open}"
 PGREP_BIN="${PEEKABOO_PGREP_BIN:-/usr/bin/pgrep}"
 PLISTBUDDY_BIN="${PEEKABOO_PLISTBUDDY_BIN:-/usr/libexec/PlistBuddy}"
-KILL_BIN="${PEEKABOO_KILL_BIN:-/bin/kill}"
 RM_BIN="${PEEKABOO_RM_BIN:-/bin/rm}"
 SHASUM_BIN="${PEEKABOO_SHASUM_BIN:-/usr/bin/shasum}"
 SLEEP_BIN="${PEEKABOO_SLEEP_BIN:-/bin/sleep}"
@@ -119,6 +118,9 @@ PREVIOUS_DIGEST=""
 HAD_PREVIOUS_APP=0
 LAUNCHED_PID=""
 LAUNCHED_PROCESS_START_IDENTITY=""
+STOP_TARGET_PID=""
+STOP_TARGET_PROCESS_START_IDENTITY=""
+STOP_REQUESTED=0
 
 log() { printf '%s\n' "$*"; }
 
@@ -796,30 +798,95 @@ regex_escape() {
 }
 
 is_bundle_running() {
-  bundle_pids "$1" >/dev/null 2>&1
+  local exit_code
+
+  if bundle_pids "$1" >/dev/null; then
+    return 0
+  else
+    exit_code=$?
+  fi
+  [[ "${exit_code}" == "1" ]] || fail "Could not inspect processes from $1"
+  return 1
 }
 
 bundle_pids() {
-  local executable_pattern
+  local executable_pattern exit_code pid pids
   executable_pattern="^$(regex_escape "${1}/Contents/MacOS/${APP_NAME}")([[:space:]]|$)"
-  "${PGREP_BIN}" -f "${executable_pattern}"
+  if pids="$("${PGREP_BIN}" -f "${executable_pattern}")"; then
+    [[ -n "${pids}" ]] || return 2
+    while IFS= read -r pid; do
+      [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 2
+    done <<<"${pids}"
+    printf '%s\n' "${pids}"
+  else
+    exit_code=$?
+    [[ "${exit_code}" == "1" ]] || return 2
+    return 1
+  fi
+}
+
+run_healthcheck_cli() {
+  env -i \
+    HOME="${HOME}" \
+    USER="${USER:-$(id -un)}" \
+    LOGNAME="${LOGNAME:-$(id -un)}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    LANG="${LANG:-en_US.UTF-8}" \
+    "${HEALTHCHECK_CLI}" "$@"
+}
+
+query_bundle_process_start_identity() {
+  local bundle="$1" pid="$2" output process_start_identity
+
+  # Without --foreground, app launch only verifies a live canonical bundle path. Its native
+  # receipt binds that path to a generation; argv matching alone cannot authorize a quit.
+  output="$(run_healthcheck_cli app launch "${bundle}" --no-remote --json 2>/dev/null)" || return 1
+  # shellcheck disable=SC2016
+  process_start_identity="$("${JQ_BIN}" -er --argjson pid "${pid}" --arg bundle_id "${EXPECTED_BUNDLE_ID}" '
+    select(.success == true and .data.action == "launch" and .data.pid == $pid and
+      .data.bundle_id == $bundle_id and .data.new_instance == false and
+      .outcome.state == "confirmed_no_change" and .outcome.mutation_dispatched == false and
+      .outcome.dispatch_state == "none" and .outcome.evidence == "verified_no_change" and
+      .outcome.route == "local") |
+    .data.process_start_identity_decimal | select(type == "string" and test("^[1-9][0-9]*$"))
+  ' <<<"${output}")" || return 1
+  [[ "$(bundle_pids "${bundle}")" == "${pid}" ]] || return 1
+  [[ "$(query_process_start_identity "${pid}")" == "${process_start_identity}" ]] || return 1
+  printf '%s\n' "${process_start_identity}"
 }
 
 stop_peekaboo() {
-  local attempt pid pids
+  local attempt exit_code output pids process_start_identity
 
-  pids="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)"
-  if [[ -z "${pids}" ]]; then
-    return 0
-  fi
-
-  while IFS= read -r pid; do
-    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
-    if ! "${KILL_BIN}" -TERM "${pid}"; then
-      printf 'Could not stop %s process %s from %s\n' "${APP_NAME}" "${pid}" "${APP_BUNDLE}" >&2
+  if pids="$(bundle_pids "${APP_BUNDLE}")"; then
+    [[ "${pids}" == "${STOP_TARGET_PID}" && -n "${STOP_TARGET_PROCESS_START_IDENTITY}" ]] || {
+      printf 'Refusing to stop an unpinned or changed %s process generation.\n' "${APP_NAME}" >&2
       return 1
-    fi
-  done <<<"${pids}"
+    }
+  else
+    exit_code=$?
+    [[ "${exit_code}" == "1" ]] && return 0
+    printf 'Could not inspect %s processes before stopping.\n' "${APP_NAME}" >&2
+    return 1
+  fi
+  ((STOP_REQUESTED == 0)) || {
+    printf 'The pinned %s quit was already attempted; preserving recovery without replay.\n' "${APP_NAME}" >&2
+    return 1
+  }
+  process_start_identity="$(query_bundle_process_start_identity "${APP_BUNDLE}" "${pids}")" || return 1
+  [[ "${process_start_identity}" == "${STOP_TARGET_PROCESS_START_IDENTITY}" ]] || return 1
+  STOP_REQUESTED=1
+  output="$(run_healthcheck_cli app quit --pid "${STOP_TARGET_PID}" \
+    --expected-process-start-identity "${STOP_TARGET_PROCESS_START_IDENTITY}" --no-remote --json 2>/dev/null)" || return 1
+  # shellcheck disable=SC2016
+  "${JQ_BIN}" -e --argjson pid "${STOP_TARGET_PID}" \
+    --arg process_start_identity "${STOP_TARGET_PROCESS_START_IDENTITY}" '
+      .success == true and .data.action == "quit" and .data.force == false and
+      (.data.results | length == 1) and .data.results[0].success == true and
+      .data.results[0].pid == $pid and
+      .data.results[0].process_start_identity_decimal == $process_start_identity
+    ' <<<"${output}" >/dev/null || return 1
 
   for ((attempt = 0; attempt < 15; attempt += 1)); do
     if ! is_bundle_running "${APP_BUNDLE}"; then
@@ -891,7 +958,10 @@ launch_and_verify_bundle() {
     return 1
   fi
   for ((attempt = 0; attempt < LAUNCH_VERIFY_ATTEMPTS; attempt += 1)); do
-    pids="$(bundle_pids "${bundle}" 2>/dev/null || true)"
+    pids="$(bundle_pids "${bundle}")" || {
+      [[ "$?" == "1" ]] || return 1
+      pids=""
+    }
     if [[ -n "${pids}" ]]; then
       seen_pid=""
       seen_pid_count=0
@@ -902,9 +972,10 @@ launch_and_verify_bundle() {
       done <<<"${pids}"
       if ((seen_pid_count == 1)); then
         LAUNCHED_PID="${seen_pid}"
-        LAUNCHED_PROCESS_START_IDENTITY="$(query_process_start_identity "${seen_pid}")" || return 1
-        [[ "${LAUNCHED_PROCESS_START_IDENTITY}" =~ ^[0-9]+$ ]] || return 1
-        [[ "${LAUNCHED_PROCESS_START_IDENTITY}" != "0" ]] || return 1
+        LAUNCHED_PROCESS_START_IDENTITY="$(query_bundle_process_start_identity "${bundle}" "${seen_pid}")" || return 1
+        STOP_TARGET_PID="${LAUNCHED_PID}"
+        STOP_TARGET_PROCESS_START_IDENTITY="${LAUNCHED_PROCESS_START_IDENTITY}"
+        STOP_REQUESTED=0
         return 0
       fi
       printf 'Expected one new %s process from %s, found %s\n' \
@@ -921,16 +992,7 @@ query_process_start_identity() {
   local pid="$1"
   local output process_start_identity
 
-  output="$(
-    env -i \
-      HOME="${HOME}" \
-      USER="${USER:-$(id -un)}" \
-      LOGNAME="${LOGNAME:-$(id -un)}" \
-      TMPDIR="${TMPDIR:-/tmp}" \
-      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-      LANG="${LANG:-en_US.UTF-8}" \
-      "${HEALTHCHECK_CLI}" app list --include-hidden --include-background --no-remote --json 2>/dev/null
-  )" || return 1
+  output="$(run_healthcheck_cli app list --include-hidden --include-background --no-remote --json 2>/dev/null)" || return 1
   # shellcheck disable=SC2016
   process_start_identity="$("${JQ_BIN}" -er --argjson pid "${pid}" '
     select(.success == true) |
@@ -959,19 +1021,22 @@ validate_healthcheck_configuration() {
   [[ "${healthcheck_identifier}" == "${HEALTHCHECK_CLI_BUNDLE_ID}" ]] || \
     fail "Healthcheck CLI identifier is ${healthcheck_identifier}; expected ${HEALTHCHECK_CLI_BUNDLE_ID}"
 
+  # Inspect help before invoking app launch: older signed CLIs could launch a cold app in
+  # the background instead of enforcing the read-only exact-path verification contract.
+  output="$(run_healthcheck_cli app launch --help 2>/dev/null)" || \
+    fail 'Healthcheck CLI cannot describe its application launch contract'
+  [[ "${output}" == *'read-only exact no-op'* ]] || \
+    fail 'Healthcheck CLI lacks read-only exact-path verification; pass a current signed CLI'
+  output="$(run_healthcheck_cli app quit --help 2>/dev/null)" || \
+    fail 'Healthcheck CLI cannot describe its application quit contract'
+  [[ "${output}" == *'--expected-process-start-identity'* ]] || \
+    fail 'Healthcheck CLI lacks generation-bound application quit; pass a current signed CLI'
+
   # This installer depends on lossless process-generation receipts added alongside the GUI host
   # identity handshake. Reject an older signed CLI before building, stopping, or renaming anything;
   # accepting it here would make the ordinary first upgrade fail only after installation.
-  output="$(
-    env -i \
-      HOME="${HOME}" \
-      USER="${USER:-$(id -un)}" \
-      LOGNAME="${LOGNAME:-$(id -un)}" \
-      TMPDIR="${TMPDIR:-/tmp}" \
-      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-      LANG="${LANG:-en_US.UTF-8}" \
-      "${HEALTHCHECK_CLI}" app list --include-hidden --include-background --no-remote --json 2>/dev/null
-  )" || fail "Healthcheck CLI could not prove the current installer contract: ${HEALTHCHECK_CLI}"
+  output="$(run_healthcheck_cli app list --include-hidden --include-background --no-remote --json 2>/dev/null)" || \
+    fail "Healthcheck CLI could not prove the current installer contract: ${HEALTHCHECK_CLI}"
   "${JQ_BIN}" -e '
     .success == true and
     (.data.apps | type == "array") and
@@ -995,16 +1060,7 @@ verify_exact_bridge_health() {
 
   for ((attempt = 0; attempt < HEALTH_VERIFY_ATTEMPTS; attempt += 1)); do
     # shellcheck disable=SC2016
-    if output="$(
-      env -i \
-        HOME="${HOME}" \
-        USER="${USER:-$(id -un)}" \
-        LOGNAME="${LOGNAME:-$(id -un)}" \
-        TMPDIR="${TMPDIR:-/tmp}" \
-        PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-        LANG="${LANG:-en_US.UTF-8}" \
-        "${HEALTHCHECK_CLI}" bridge status --bridge-socket "${BRIDGE_SOCKET}" --json 2>/dev/null
-    )" && "${JQ_BIN}" -e \
+    if output="$(run_healthcheck_cli bridge status --bridge-socket "${BRIDGE_SOCKET}" --json 2>/dev/null)" && "${JQ_BIN}" -e \
       --arg socket "${BRIDGE_SOCKET}" \
       --argjson pid "${LAUNCHED_PID}" \
       --arg process_start_identity "${LAUNCHED_PROCESS_START_IDENTITY}" \
@@ -1030,7 +1086,7 @@ verify_exact_bridge_health() {
       ' <<<"${output}" >/dev/null
     then
       current_start_identity_before="$(query_process_start_identity "${LAUNCHED_PID}")" || return 1
-      current_pids="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)"
+      current_pids="$(bundle_pids "${APP_BUNDLE}")" || return 1
       current_start_identity_after="$(query_process_start_identity "${LAUNCHED_PID}")" || return 1
       if [[ "${current_start_identity_before}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
             "${current_start_identity_after}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
@@ -1056,18 +1112,10 @@ verify_restored_bridge_health() {
       "${SLEEP_BIN}" "${HEALTH_VERIFY_INTERVAL}"
       continue
     }
-    current_pids_before="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)"
+    current_pids_before="$(bundle_pids "${APP_BUNDLE}")" || return 1
     socket_pids_before="$("${LSOF_BIN}" -t -a -U -- "${BRIDGE_SOCKET}" 2>/dev/null | awk '!seen[$0]++')"
-    if output="$(
-      env -i \
-        HOME="${HOME}" \
-        USER="${USER:-$(id -un)}" \
-        LOGNAME="${LOGNAME:-$(id -un)}" \
-        TMPDIR="${TMPDIR:-/tmp}" \
-        PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-        LANG="${LANG:-en_US.UTF-8}" \
-        "${HEALTHCHECK_CLI}" bridge status --bridge-socket "${BRIDGE_SOCKET}" --json 2>/dev/null
-    )" && "${JQ_BIN}" -e \
+    # shellcheck disable=SC2016
+    if output="$(run_healthcheck_cli bridge status --bridge-socket "${BRIDGE_SOCKET}" --json 2>/dev/null)" && "${JQ_BIN}" -e \
       --arg socket "${BRIDGE_SOCKET}" '
         .success == true and
         .data.selected.source == "remote" and
@@ -1082,7 +1130,7 @@ verify_restored_bridge_health() {
         return $?
       fi
       if current_start_identity_after="$(query_process_start_identity "${LAUNCHED_PID}")" &&
-       current_pids_after="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)" &&
+       current_pids_after="$(bundle_pids "${APP_BUNDLE}")" &&
        socket_pids_after="$("${LSOF_BIN}" -t -a -U -- "${BRIDGE_SOCKET}" 2>/dev/null | awk '!seen[$0]++')" &&
        [[ "${current_start_identity_before}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
           "${current_start_identity_after}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
@@ -1104,7 +1152,7 @@ verify_restored_bridge_health() {
 observe_running_bundle_generation() {
   local bundle="$1" pid pids seen_pid="" seen_pid_count=0
 
-  pids="$(bundle_pids "${bundle}" 2>/dev/null || true)"
+  pids="$(bundle_pids "${bundle}")" || return 1
   while IFS= read -r pid; do
     [[ "${pid}" =~ ^[0-9]+$ ]] || continue
     seen_pid="${pid}"
@@ -1112,8 +1160,10 @@ observe_running_bundle_generation() {
   done <<<"${pids}"
   ((seen_pid_count == 1)) || return 1
   LAUNCHED_PID="${seen_pid}"
-  LAUNCHED_PROCESS_START_IDENTITY="$(query_process_start_identity "${seen_pid}")" || return 1
-  [[ "${LAUNCHED_PROCESS_START_IDENTITY}" =~ ^[1-9][0-9]*$ ]]
+  LAUNCHED_PROCESS_START_IDENTITY="$(query_bundle_process_start_identity "${bundle}" "${seen_pid}")" || return 1
+  STOP_TARGET_PID="${LAUNCHED_PID}"
+  STOP_TARGET_PROCESS_START_IDENTITY="${LAUNCHED_PROCESS_START_IDENTITY}"
+  STOP_REQUESTED=0
 }
 
 ensure_restored_bundle_ready() {
@@ -1168,8 +1218,6 @@ rollback_install() {
             release_install_lock || true
             exit "${exit_code}"
           fi
-        elif ! is_bundle_running "${APP_BUNDLE}"; then
-          TARGET_STOPPED=1
         fi
       fi
       if ((TARGET_STOPPED == 1 && TARGET_WAS_RUNNING == 1)) && [[ -d "${APP_BUNDLE}" ]]; then
@@ -1338,8 +1386,8 @@ trap rollback_install EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-recover_interrupted_install
 validate_healthcheck_configuration
+recover_interrupted_install
 
 if ((NO_BUILD == 0)); then
   log '==> Verify native-only source policy'
@@ -1371,6 +1419,8 @@ prepare_install_candidate || fail "Could not prepare a verified install candidat
 
 if is_bundle_running "${APP_BUNDLE}"; then
   TARGET_WAS_RUNNING=1
+  observe_running_bundle_generation "${APP_BUNDLE}" || \
+    fail "Could not pin the exact previous app process; the running app was not stopped"
 fi
 write_journal_state staged "${INSTALL_ROOT}" "${HAD_PREVIOUS_APP}" \
   "${TARGET_WAS_RUNNING}" "${ARTIFACT_DIGEST}"
@@ -1379,6 +1429,9 @@ log "==> Stop ${APP_NAME}"
 TARGET_STOP_ATTEMPTED=1
 stop_peekaboo || fail "Could not stop ${APP_NAME}; install was not changed"
 TARGET_STOPPED=1
+STOP_TARGET_PID=""
+STOP_TARGET_PROCESS_START_IDENTITY=""
+STOP_REQUESTED=0
 
 log "==> Install signed app at ${APP_BUNDLE}"
 INSTALL_STARTED=1
