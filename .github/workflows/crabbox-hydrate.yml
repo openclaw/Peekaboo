@@ -43,13 +43,15 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: '11.27.1'
 
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Prepare pnpm and Swift workspace
+      - name: Prepare portable checks
         shell: bash
         run: |
           set -euo pipefail
@@ -57,7 +59,8 @@ jobs:
           pnpm install --frozen-lockfile
           node --version
           pnpm --version
-          swift --version
+          # Native Swift targets are gated by macOS CI, not this Linux hydration lane.
+          if command -v swift >/dev/null 2>&1; then swift --version; fi
 
       - name: Mark Crabbox ready
         shell: bash

@@ -43,6 +43,7 @@ const expectedPageScopedNames = namesInContractSection("page-scoped");
 const expectedExplicitPageTargetNames = namesInContractSection("explicit-page-target");
 const expectedGlobalNames = namesInContractSection("global");
 const expectedBlockedSelectedPageNames = namesInContractSection("blocked-selected-page");
+const expectedUnsupportedResponseNames = namesInContractSection("unsupported-response");
 const expectedReadOnlyNames = namesInContractSection("semantic-read-only", semanticsContract);
 const expectedMutatingNames = namesInContractSection("semantic-mutating", semanticsContract);
 const expectedArgumentDependentNames = namesInContractSection("semantic-argument-dependent", semanticsContract);
@@ -62,7 +63,7 @@ const expectedElementReferencePaths = namesInContractSection("element-reference-
 const expectedPageResponseNames = namesInContractSection("page-response");
 const expectedSnapshotResponseNames = namesInContractSection("snapshot-response");
 
-assert.equal(declaredVersion, "1.9.0", "keep the audited browser routing contract pinned exactly");
+assert.equal(declaredVersion, "1.10.1", "keep the audited browser routing contract pinned exactly");
 assert.equal(dependencyPackage.version, declaredVersion, "installed Chrome DevTools MCP must match the pin");
 assert.equal(swiftVersion, declaredVersion, "Swift browser routing contract must match the dependency pin");
 
@@ -137,7 +138,7 @@ const fixtureContext = {
 const unpatchedFixture = await new UnpatchedToolHandler(
   structuredFixtureTool, serverArgs, async () => fixtureContext, inertMutex,
 ).handle({});
-assert.equal(unpatchedFixture.isError, true, "the unfixed 1.9.0 handler must reproduce the telemetry probe");
+assert.equal(unpatchedFixture.isError, true, "the unfixed 1.10.1 handler must reproduce the telemetry probe");
 assert.equal(disabledTelemetryMetadataReads, 1, "the negative control must reach DevTools metadata");
 disabledTelemetryMetadataReads = 0;
 const structuredHandler = new ToolHandler(
@@ -235,7 +236,7 @@ try {
 
 function unwrapOptional(schema) {
   let current = schema;
-  while (["ZodOptional", "ZodNullable", "ZodDefault"].includes(current?._def?.typeName)) {
+  while (["optional", "nullable", "default"].includes(current?._def?.type)) {
     current = current._def.innerType;
   }
   return current;
@@ -244,14 +245,14 @@ function unwrapOptional(schema) {
 function uidPaths(schema, prefix = "") {
   const current = unwrapOptional(schema);
   if (!current) return [];
-  if (current._def?.typeName === "ZodString") {
-    const description = `${schema?._def?.description ?? ""} ${current._def.description ?? ""}`;
+  if (current._def?.type === "string") {
+    const description = `${schema?.description ?? ""} ${current.description ?? ""}`;
     return /\buid\b/i.test(description) ? [prefix] : [];
   }
-  if (current._def?.typeName === "ZodArray") {
-    return uidPaths(current._def.type, `${prefix}[]`);
+  if (current._def?.type === "array") {
+    return uidPaths(current._def.element, `${prefix}[]`);
   }
-  if (current._def?.typeName === "ZodObject") {
+  if (current._def?.type === "object") {
     return Object.entries(current.shape).flatMap(([key, child]) =>
       uidPaths(child, prefix ? `${prefix}.${key}` : key),
     );
@@ -472,7 +473,7 @@ const pageTargetedNames = tools.filter((tool) => {
 const pageScopedNames = pageScopedTools.map((tool) => tool.name).sort();
 const explicitPageTargetNames = pageTargetedNames.filter((name) => !pageScopedNames.includes(name));
 const globalNames = tools.map((tool) => tool.name).filter((name) => !pageTargetedNames.includes(name)).sort();
-const registeredNames = tools.filter((tool) => handlers.get(tool.name).shouldRegister).map((tool) => tool.name).sort();
+const registeredNames = tools.filter((tool) => !handlers.get(tool.name).disabled).map((tool) => tool.name).sort();
 const auditedNames = [
   ...expectedPageScopedNames,
   ...expectedExplicitPageTargetNames,
@@ -480,22 +481,24 @@ const auditedNames = [
   ...expectedBlockedSelectedPageNames,
 ].sort();
 
-assert.equal(pageScopedTools.length, 32, "the pinned dependency page-scoped contract changed");
-assert.equal(registeredNames.length, 29, "the pinned provider's default registered catalog changed");
+assert.equal(pageScopedTools.length, 33, "the pinned dependency page-scoped contract changed");
+assert.equal(registeredNames.length, 30, "the pinned provider's default registered catalog changed");
 assert.deepEqual(
   [
     ...expectedAlwaysForegroundNames,
     ...expectedConditionalUserActivationNames,
     ...expectedSourceProvenBackgroundNames,
+    ...expectedUnsupportedResponseNames,
   ].sort(),
   registeredNames,
-  "user-activation policy must partition every default registered provider tool",
+  "user-activation policy and response refusals must partition every default registered provider tool",
 );
 assert.equal(
   new Set([
     ...expectedAlwaysForegroundNames,
     ...expectedConditionalUserActivationNames,
     ...expectedSourceProvenBackgroundNames,
+    ...expectedUnsupportedResponseNames,
   ]).size,
   registeredNames.length,
   "user-activation policy categories must be disjoint",

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Update Chrome DevTools MCP to 1.10.1 with its per-server browser owner, preserving one-socket verification, telemetry isolation, redirect/reconnect refusal, and exact-page element routing; keep unprojected CSS response references unavailable.
 - Honor `see --timeout` for pixel-only, raw-output, area, and multi-window captures, sharing the remaining budget with the selected host and preventing late successful output after timeout or cancellation.
 - Include received modifiers, event/key-window identity, activation state, and text-selection metadata in Playground keyboard diagnostics so background shortcut tests can distinguish delivery from verified effects without changing input handling.
 - Confirm daemon shutdown when its socket is gone and the process has exited but awaits parent reaping, avoiding false refusal/timeouts in synchronous automation; distinguish accepted shutdown timeouts from explicit refusals while preserving uncertain-state and probe-error safeguards.

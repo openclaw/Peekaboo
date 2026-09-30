@@ -1193,7 +1193,7 @@ public final class BrowserMCPService: BrowserMCPClientProviding, BrowserMCPActio
 
     private static let chromeDevToolsBaseArguments = [
         "-y",
-        "--package=chrome-devtools-mcp@1.9.0",
+        "--package=chrome-devtools-mcp@1.10.1",
         "--",
         "node",
         "--input-type=module",

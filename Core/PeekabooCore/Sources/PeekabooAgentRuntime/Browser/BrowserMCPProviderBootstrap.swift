@@ -20,12 +20,12 @@ enum BrowserMCPProviderBootstrap {
     }
     if (!root) throw new Error('Peekaboo: pinned Chrome DevTools MCP package missing');
     const metadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    if (metadata.name !== 'chrome-devtools-mcp' || metadata.version !== '1.9.0') {
+    if (metadata.name !== 'chrome-devtools-mcp' || metadata.version !== '1.10.1') {
       throw new Error('Peekaboo: unexpected Chrome DevTools MCP package');
     }
     const entry = join(root, 'build/src/bin/chrome-devtools-mcp.js');
     const target = pathToFileURL(join(root, 'build/src/ToolHandler.js')).href;
-    const browserTarget = pathToFileURL(join(root, 'build/src/browser.js')).href;
+    const browserTarget = pathToFileURL(join(root, 'build/src/BrowserManager.js')).href;
     const transportTarget = pathToFileURL(join(root, 'build/src/third_party/index.js')).href;
     const loader = `
       import {createHash} from 'node:crypto';
@@ -36,7 +36,7 @@ enum BrowserMCPProviderBootstrap {
         if (url === transportTarget) {
           const source = Buffer.from(result.source);
           if (createHash('sha256').update(source).digest('hex') !==
-              'fc6ae43cb8f6007eba4b0f269290ec8fea6db7670686d17967b4812d90d2cc10') {
+              'c988e0684584b75e87ae04b768c4f8ae7064401afe5187ec0d4878b2c6833f12') {
             throw new Error('Peekaboo: unaudited Chrome DevTools MCP dependencies');
           }
           const before = 'const ws = new WebSocket$1(url, [], {\\n                followRedirects: true,';
@@ -47,22 +47,22 @@ enum BrowserMCPProviderBootstrap {
         if (url === browserTarget) {
           const source = Buffer.from(result.source);
           if (createHash('sha256').update(source).digest('hex') !==
-              '17f861505810a9d25784fd71bf0592966f513c420b57a728b344280e97fe596c') {
+              'e8ad9ae18a6836a0e56771afbf453b4b9ea1d384b4b0db9fccca04300a9fa222') {
             throw new Error('Peekaboo: unaudited Chrome DevTools MCP browser transport');
           }
           const before = 'const connectOptions = {';
-          const after = "if (browser) throw new Error('Peekaboo: Chrome disconnected; reconnect explicitly');\\n" +
+          const after = "if (this.#browser) throw new Error('Peekaboo: Chrome disconnected; reconnect explicitly');\\n" +
             before;
           return {...result, source: source.toString('utf8').replace(before, after)};
         }
         if (url !== target) return result;
         const source = Buffer.from(result.source);
         if (createHash('sha256').update(source).digest('hex') !==
-            '49dd8d88257394e778573e3449af6e03fdc2fab73cc8370af26205aeecd8ab7d') {
+            'c2b1000dabc7c3bebba97561402e5496d0317a48c893e8eae0582a8293f948ff') {
           throw new Error('Peekaboo: unaudited Chrome DevTools MCP ToolHandler');
         }
         const before = 'devToolsData = await context.getDevToolsData(page);\\n' +
-          '            pageUrl = context.getSelectedMcpPageUrl(page);';
+          '                pageUrl = context.getSelectedMcpPageUrl(page);';
         const after = 'if (ClearcutLogger.get()) {\\n' + before + '\\n            }';
         return {...result, source: source.toString('utf8').replace(before, after)};
       }
@@ -70,10 +70,13 @@ enum BrowserMCPProviderBootstrap {
     register('data:text/javascript,' + encodeURIComponent(loader), {data: {target, browserTarget, transportTarget}});
     // Fail before starting the server (and before any browser connection) if the patch cannot load.
     await import(target);
-    const {ensureBrowserConnected} = await import(browserTarget);
+    await import(browserTarget);
     const {McpServer} = await import(pathToFileURL(join(root, 'build/src/index.js')).href);
     const createServer = McpServer.from;
     McpServer.from = async function(args, options) {
+      if (args.wsEndpoint && !options?.browserManager) {
+        throw new Error('Peekaboo: provider browser owner missing');
+      }
       const server = await createServer.call(this, args, options);
       if (args.wsEndpoint) {
         let connection;
@@ -83,7 +86,7 @@ enum BrowserMCPProviderBootstrap {
         }, () => {
           // Cache failure too: no tool invocation may silently reopen Chrome's approval UI.
           connection ??= (async () => {
-            const browser = await ensureBrowserConnected({wsEndpoint: args.wsEndpoint});
+            const browser = await options.browserManager.ensureBrowser();
             const session = await browser.target().createCDPSession();
             try {
               const version = await session.send('Browser.getVersion');

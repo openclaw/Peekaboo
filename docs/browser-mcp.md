@@ -20,7 +20,7 @@ Use Peekaboo native tools for macOS UI, browser chrome, menus, dialogs, permissi
 
 ## Provider update guard
 
-The provider is pinned to 1.9.0, including bundled Puppeteer 25.10.0 and MCP SDK 1.30.0. Its unmodified handler calls
+The provider is pinned to 1.10.1, including bundled Puppeteer 25.11.0 and MCP SDK 2.0.0. Its unmodified handler calls
 `context.getDevToolsData(page)` after every tool even when usage statistics are disabled. With DevTools open, this
 calls `hasDevTools()`, `openDevTools()`, and DevTools-page Puppeteer evaluation with CDP `userGesture: true`.
 An otherwise background-safe console read can therefore grant web user activation in DevTools. Disabling
@@ -34,8 +34,9 @@ receives the fix too. It does not edit npm caches, suppress tool-owned DevTools 
 or weaken Peekaboo's foreground policy. Node's module loader registration supports the provider's existing runtime
 minimum; no extra dependency is needed.
 
-The same bootstrap verifies `browser.js` and the bundled dependency module before disabling automatic reconnection
-and WebSocket redirects. Its private owner tool obtains `Browser.getVersion` through the provider's retained socket.
+The same bootstrap verifies `BrowserManager.js` and the bundled dependency module before disabling automatic
+reconnection and WebSocket redirects. Its private owner tool obtains `Browser.getVersion` through the same per-server
+browser manager used by ordinary provider tools, retaining one socket.
 Redirects must remain disabled: Puppeteer otherwise follows a redirect while continuing to report the original
 WebSocket URL, which would misattribute the resulting connection. The synthetic socket fixture exercises the real
 bundled Puppeteer, including refusal, reuse, disconnect, and redirect rejection.
@@ -45,13 +46,16 @@ reads with disabled telemetry on both success and error paths, and verifies enab
 It also rejects changed handler bytes, audits every tool's routing/UID/response contract, and starts the full launcher
 without attaching Chrome. Remove the patch only when an upstream release fixes this path and passes the complete
 routing, UID, and user-activation audit. The
-[1.9.0 handler](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.9.0/src/ToolHandler.ts)
-and [page helper](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.9.0/src/McpPage.ts)
+[1.10.1 handler](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.10.1/src/ToolHandler.ts)
+and [page helper](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.10.1/src/McpPage.ts)
 own the behavior; changing Peekaboo's background policy would weaken the existing contract.
 
-The audit covers all 58 upstream tools, while public raw-call schemas advertise only the 29 tools registered by this
+The audit covers all 59 upstream tools in the configured catalog, while public raw-call schemas advertise 29 of the 30 tools registered by this
 provider configuration. Optional PWA tools require a category that conflicts with an existing-browser connection;
 those and disabled experimental tools are not advertised as usable capabilities.
+
+The new `get_css_styles` tool remains unavailable through Peekaboo: its nested CSS response references need an
+opaque-reference projection before they can safely become caller-facing element references.
 
 ## Permission flow
 
@@ -251,7 +255,7 @@ Common actions:
 Advanced escape hatch:
 
 - `call` with `mcp_tool` and `mcp_args_json` forwards a raw tool from the audited, pinned Chrome DevTools MCP
-  v1.9.0 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
+  v1.10.1 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
   it as upstream `pageId`, overriding any nested value in `mcp_args_json`. Truly global tools such as `list_pages`
   reject `page_id`. UID-bearing raw schemas are resolved only at their audited positions, including
   `evaluate_script.args`, form elements, and third-party singleton `{ "uid": ... }` parameters; unrelated domain

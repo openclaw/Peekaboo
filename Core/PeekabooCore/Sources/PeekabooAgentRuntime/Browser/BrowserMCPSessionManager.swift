@@ -707,7 +707,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                         expectedProviderSessionEpoch: expectedSessionBinding.providerSessionEpoch,
                         connectionPolicy: .requireExistingLiveReceipt)
                     let currentUIDs = BrowserMCPProviderSnapshotParser.providerUIDs(in: preflight.response)
-                    // chrome-devtools-mcp v1.9.0 preserves a UID only for the same per-page
+                    // chrome-devtools-mcp v1.10.1 preserves a UID only for the same per-page
                     // loaderId/backendNodeId pair. The pinned dependency contract checks that identity rule.
                     guard !preflight.response.isError,
                           preflight.actionFailure == nil,

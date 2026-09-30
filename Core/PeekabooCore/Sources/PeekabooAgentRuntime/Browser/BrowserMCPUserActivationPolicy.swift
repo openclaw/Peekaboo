@@ -2,7 +2,7 @@ import Foundation
 
 /// Fail-closed user-activation policy for the exactly pinned Chrome DevTools MCP provider.
 ///
-/// Puppeteer 25.10.0 sends every `evaluate` and `evaluateHandle` call with CDP `userGesture: true`. The provider can
+/// Puppeteer 25.11.0 sends every `evaluate` and `evaluateHandle` call with CDP `userGesture: true`. The provider can
 /// therefore grant transient browser user activation without visibly fronting a page. Background execution is limited
 /// to routes whose complete successful call path is source-proven not to reach those Puppeteer APIs.
 enum BrowserMCPUserActivationPolicy {

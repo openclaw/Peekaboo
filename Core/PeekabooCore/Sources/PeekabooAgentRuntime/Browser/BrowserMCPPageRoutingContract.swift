@@ -43,7 +43,12 @@ enum BrowserMCPPageRoutingContract {
 
     typealias ActionSemantics = BrowserToolActionSemantics
 
-    static let dependencyVersion = "1.9.0"
+    static let dependencyVersion = "1.10.1"
+
+    // CSS responses introduce nested element references that do not yet have an opaque-reference projection.
+    // chrome-devtools-mcp-contract:unsupported-response-begin
+    static let unsupportedResponseToolNames: Set<String> = ["get_css_styles"]
+    // chrome-devtools-mcp-contract:unsupported-response-end
 
     // chrome-devtools-mcp-contract:element-reference-path-begin
     static let elementReferencePathMarkers: Set<String> = [
@@ -54,6 +59,7 @@ enum BrowserMCPPageRoutingContract {
         "execute_3p_developer_tool.params{*}.uid",
         "fill.uid",
         "fill_form.elements[].uid",
+        "get_css_styles.uid",
         "hover.uid",
         "take_screenshot.uid",
         "upload_file.uid",
@@ -101,6 +107,7 @@ enum BrowserMCPPageRoutingContract {
         "fill",
         "fill_form",
         "get_console_message",
+        "get_css_styles",
         "get_network_request",
         "get_tab_id",
         "handle_dialog",
@@ -127,7 +134,7 @@ enum BrowserMCPPageRoutingContract {
     ]
     // chrome-devtools-mcp-contract:page-scoped-end
 
-    // These upstream tools are not marked `pageScoped`, but their v1.9.0 schemas still require `pageId`.
+    // These upstream tools are not marked `pageScoped`, but their v1.10.1 schemas still require `pageId`.
     // chrome-devtools-mcp-contract:explicit-page-target-begin
     static let explicitPageTargetToolNames: Set<String> = [
         "close_page",
@@ -205,7 +212,8 @@ enum BrowserMCPPageRoutingContract {
         for toolName: String,
         arguments: [String: Any] = [:]) -> BrowserMCPToolCapabilityContract?
     {
-        guard self.routing(for: toolName) != nil else { return nil }
+        guard self.routing(for: toolName) != nil,
+              !self.unsupportedResponseToolNames.contains(toolName) else { return nil }
         let elementInputs: [BrowserMCPToolCapabilityContract.ElementInput] = switch toolName {
         case "click", "fill", "hover", "take_screenshot", "upload_file":
             [.direct("uid")]

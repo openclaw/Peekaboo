@@ -26,6 +26,7 @@ struct BrowserToolCapabilityContractTests {
             "execute_3p_developer_tool.params{*}.uid",
             "fill.uid",
             "fill_form.elements[].uid",
+            "get_css_styles.uid",
             "hover.uid",
             "take_screenshot.uid",
             "upload_file.uid",

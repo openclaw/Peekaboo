@@ -9,13 +9,13 @@ importers:
   .:
     devDependencies:
       chrome-devtools-mcp:
-        specifier: 1.9.0
-        version: 1.9.0
+        specifier: 1.10.1
+        version: 1.10.1
 
 packages:
 
-  chrome-devtools-mcp@1.9.0:
-    resolution: {integrity: sha512-RnzXoJiUQ44hpOihWk90uOhLD/CnwDkDy0ldHMZONJ2nYQ+dWN1fq1luHHqyd+7FuYnyIlCY6uTThbN5ut9kSQ==}
+  chrome-devtools-mcp@1.10.1:
+    resolution: {integrity: sha512-Klw6HWDqHC/XS1JwZldd2r49aUhbUJN9m9Mvcx4SEueIPXtzuQX+QelxAViobv8YUkDZ7HWDrmViR6LeYK0wAw==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=23}
     hasBin: true
     peerDependencies:
@@ -29,4 +29,4 @@ packages:
 
 snapshots:
 
-  chrome-devtools-mcp@1.9.0: {}
+  chrome-devtools-mcp@1.10.1: {}

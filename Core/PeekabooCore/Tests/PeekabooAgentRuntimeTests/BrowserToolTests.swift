@@ -713,8 +713,8 @@ struct BrowserToolTests {
         #expect(client.executedTools.isEmpty)
     }
 
-    @Test
-    func `Browser raw call rejects tools outside audited routing contract`() async throws {
+    @Test(arguments: ["future_selected_page_escape_hatch", "get_css_styles"])
+    func `Browser raw call rejects tools without a complete capability contract`(toolName: String) async throws {
         let client = MockBrowserMCPClient(status: BrowserMCPStatus(
             isConnected: true,
             toolCount: 31,
@@ -723,7 +723,7 @@ struct BrowserToolTests {
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "call",
-            "mcp_tool": "future_selected_page_escape_hatch",
+            "mcp_tool": toolName,
         ]))
 
         #expect(response.isError == true)
@@ -733,12 +733,14 @@ struct BrowserToolTests {
 
     @Test
     func `Audited browser routing contract partitions pinned tool catalog`() {
-        #expect(BrowserMCPPageRoutingContract.dependencyVersion == "1.9.0")
-        #expect(BrowserMCPPageRoutingContract.pageScopedToolNames.count == 32)
+        #expect(BrowserMCPPageRoutingContract.dependencyVersion == "1.10.1")
+        #expect(BrowserMCPPageRoutingContract.capabilityContract(for: "get_css_styles") == nil)
+        #expect(!BrowserMCPUserActivationPolicy.registeredToolNames.contains("get_css_styles"))
+        #expect(BrowserMCPPageRoutingContract.pageScopedToolNames.count == 33)
         #expect(BrowserMCPPageRoutingContract.explicitPageTargetToolNames.count == 3)
         #expect(BrowserMCPPageRoutingContract.globalToolNames.count == 22)
         #expect(BrowserMCPPageRoutingContract.blockedSelectedPageToolNames == ["trigger_extension_action"])
-        #expect(BrowserMCPPageRoutingContract.allToolNames.count == 58)
+        #expect(BrowserMCPPageRoutingContract.allToolNames.count == 59)
         #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
             with: BrowserMCPPageRoutingContract.globalToolNames))
         #expect(BrowserMCPPageRoutingContract.pageTargetedToolNames.isDisjoint(
@@ -746,7 +748,7 @@ struct BrowserToolTests {
         #expect(BrowserMCPPageRoutingContract.globalToolNames.isDisjoint(
             with: BrowserMCPPageRoutingContract.blockedSelectedPageToolNames))
         #expect(BrowserMCPPageRoutingContract.routing(for: "trigger_extension_action") == .blockedSelectedPage)
-        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 30)
+        #expect(BrowserMCPPageRoutingContract.readOnlyToolNames.count == 31)
         #expect(BrowserMCPPageRoutingContract.mutatingToolNames.count == 26)
         #expect(BrowserMCPPageRoutingContract.argumentDependentToolNames == [
             "performance_start_trace",

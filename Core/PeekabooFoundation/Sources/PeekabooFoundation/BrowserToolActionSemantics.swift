@@ -16,6 +16,7 @@ public enum BrowserToolActionSemantics: Equatable, Sendable {
         "close_heapsnapshot",
         "compare_heapsnapshots",
         "get_console_message",
+        "get_css_styles",
         "get_heapsnapshot_class_nodes",
         "get_heapsnapshot_details",
         "get_heapsnapshot_dominators",
