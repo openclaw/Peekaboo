@@ -205,6 +205,8 @@ The build and final manifests also record and revalidate the canonicalized `DEVE
 `xcodebuild -version`, macOS SDK version, and `swiftc --version`. The 4.3.0 publication toolchain is Xcode 27; retain its
 exact beta/build identity in proof rather than conflating it with hosted Xcode 26.x compatibility results. A toolchain
 receipt does not replace successful universal builds, tests, runtime-library validation, signing, or notarization.
+Runtime-library verification, including reused binaries, audits strong `libswift*` imports and prints the baseline
+SDK used; see [Swift runtime compatibility](building.md#swift-runtime-compatibility).
 The published `terminal-artifacts.json` is portable schema 7 with `root:"."`; every path is relative to its own
 directory. It retains its validator, canonical tree generator, commit-materialized controller/monitor/lock snapshot,
 rich universal Foundation-signed controller and monitor records, and pinned Node runtime. Copying the sealed directory to another absolute

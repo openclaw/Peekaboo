@@ -139,6 +139,27 @@ macOS runtime baseline. Release runtime verification rejects that strong import 
 reused binaries and extracted archives. Weak imports remain distinct; this does not weak-link the Swift runtime or
 replace system libraries. Successful execution on the build host alone does not prove older-macOS compatibility.
 
+Runtime verification also audits every strong `libswift*` import per architecture against a versioned SDK export
+baseline, following re-exports transitively. Weak imports and bundled `libswiftCompatibility*` libraries are excluded;
+undefined symbols without a two-level source library fail closed. Swift symbols imported from frameworks such as
+Foundation and SwiftUI are outside this audit. The oldest baseline
+at or above the highest slice's minimum macOS version wins. The export list is checked in so every release host
+gives the same answer: a host whose oldest installed SDK is already 27 cannot silently weaken the gate and accept
+the #831 failure, and a Command Line Tools update removing an older SDK cannot block releases. The cost is a
+4.4 MB generated file and an explicit regeneration step:
+
+```bash
+python3 scripts/swift-runtime-exports.py generate --oldest-installed \
+  --output scripts/swift-runtime-baselines/macos-26.5.exports
+python3 scripts/swift-runtime-exports.py check --installed \
+  --baseline scripts/swift-runtime-baselines/macos-26.5.exports
+```
+
+Review the selected SDK before replacing a baseline. The 26.5 baseline proves compatibility with the macOS 26.5
+runtime, not every release down to the macOS 15.0 deployment target. Symbols introduced between 15 and 26.5 remain
+guarded by compiler availability checking. Adding an older baseline generated on a host with a MacOSX15 SDK
+automatically tightens the audit because the oldest eligible baseline wins.
+
 ## Tachikoma integration
 
 The internal CLI and Mac app consume the committed Tachikoma submodule revision. The tracked consumer

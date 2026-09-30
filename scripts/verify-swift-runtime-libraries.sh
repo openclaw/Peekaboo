@@ -1,8 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RUNTIME_BASELINE_DIR="$SCRIPT_DIR/swift-runtime-baselines"
+if [ "${1:-}" = --runtime-baseline-dir ] && [ "$#" -ge 2 ]; then
+    RUNTIME_BASELINE_DIR="$2"
+    shift 2
+fi
+
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <executable> <runtime-library-directory>" >&2
+    echo "Usage: $0 [--runtime-baseline-dir DIR] <executable> <runtime-library-directory>" >&2
     exit 2
 fi
 
@@ -27,6 +34,8 @@ if awk '/\(undefined\)/ && !/ weak / && / _swift_initBorrow([[:space:]]|$)/ { fo
     echo "Unsupported strong macOS 27 Swift runtime import: _swift_initBorrow ($EXECUTABLE_PATH)" >&2
     exit 1
 fi
+
+python3 "$SCRIPT_DIR/swift-runtime-exports.py" audit --baseline-dir "$RUNTIME_BASELINE_DIR" "$EXECUTABLE_PATH" || exit 1
 
 compatibility_dependencies=$(otool -L "$EXECUTABLE_PATH" | awk '
     $1 ~ /^@rpath\/libswiftCompatibility.*\.dylib$/ { print $1 }
