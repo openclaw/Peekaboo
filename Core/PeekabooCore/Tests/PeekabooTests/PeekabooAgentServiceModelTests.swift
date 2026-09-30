@@ -92,6 +92,7 @@ extension PeekabooAgentServiceTests {
                     LanguageModel.openai(.gpt56Sol),
                     .openai(.gpt6Astra),
                     .openai(.gpt6Sol),
+                    .openai(.gpt61Sol),
                     .openai(.gpt6Luna),
                     .openai(.gpt56Terra),
                     .openai(.gpt56Luna),
@@ -112,7 +113,7 @@ extension PeekabooAgentServiceTests {
             {"agent": {"maxTokens": 128000, "temperature": 0.2}}
             """) {
                 let agentService = try PeekabooAgentService(services: self.makeServices())
-                for id in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+                for id in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"] {
                     for routedID in [id, "openai/\(id)", "openai/\(id):nitro"] {
                         for model in [
                             LanguageModel.openRouter(modelId: routedID),

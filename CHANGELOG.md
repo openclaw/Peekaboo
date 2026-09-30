@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add GPT-6.1 Sol selection through Tachikoma, retaining its 128K output allowance on native and compatible Agent routes and validating its supported reasoning settings.
+
 ## 4.7.0 - 2026-09-29
 
 **Highlights:** Fix the 4.6.0 CLI startup failure on Macs without the macOS 27 runtime, add GPT-6 Astra, Sol, and Luna models, keep unattended clipboard reads from triggering macOS privacy prompts, give MCP and JSON clients structured element tables, focused text selection, and visible display bounds, and make compatible-provider Agent streaming reliable.

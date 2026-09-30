@@ -204,6 +204,9 @@ peekaboo agent "Check the current window" --model gpt-6-astra
 peekaboo agent "Check the current window" --model gpt-6-sol
 peekaboo agent "Check the current window" --model gpt-6-luna
 
+# Use GPT-6.1 Sol (the gpt-6.1 shortcut selects Sol 6.1)
+peekaboo agent "Check the current window" --model gpt-6.1-sol
+
 # Use GPT-5.6 Sol (the gpt-5.6 shortcut selects Sol)
 peekaboo agent "Check the current window" --model gpt-5.6
 

@@ -91,6 +91,10 @@ struct AgentCommandTests {
         #expect(command.parseModelString("gpt-6-astra") == .openai(.gpt6Astra))
         #expect(command.parseModelString("openai/gpt-6-sol") == .openai(.gpt6Sol))
         #expect(command.parseModelString("gpt6luna") == .openai(.gpt6Luna))
+        #expect(command.parseModelString("gpt-6.1") == .openai(.gpt61Sol))
+        #expect(command.parseModelString("openai/gpt-6.1-sol") == .openai(.gpt61Sol))
+        #expect(command.parseModelString("gpt61sol") == .openai(.gpt61Sol))
+        #expect(command.parseModelString("gpt-6.10-sol") == nil)
         #expect(command.parseModelString("gpt-6-terra") == nil)
     }
 

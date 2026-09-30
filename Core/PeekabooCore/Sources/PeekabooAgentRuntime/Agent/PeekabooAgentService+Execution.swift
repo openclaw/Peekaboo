@@ -22,7 +22,7 @@ extension PeekabooAgentService {
         let temperature = self.shouldOmitTemperature(for: model) ? nil : self.configuredTemperature(for: model)
 
         return switch model {
-        case .openai(.gpt6Astra), .openai(.gpt6Sol), .openai(.gpt6Luna),
+        case .openai(.gpt61Sol), .openai(.gpt6Astra), .openai(.gpt6Sol), .openai(.gpt6Luna),
              .openai(.gpt56Sol), .openai(.gpt56Terra), .openai(.gpt56Luna),
              .openai(.gpt55), .openai(.gpt54), .openai(.gpt54Mini), .openai(.gpt54Nano), .openai(.gpt5):
             GenerationSettings(
@@ -123,7 +123,7 @@ extension PeekabooAgentService {
         let parts = component.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard let name = parts.first, parts.count == 1 || !parts[1].isEmpty else { return false }
         return switch LanguageModel.parse(from: String(name)) {
-        case .openai(.gpt6Astra), .openai(.gpt6Sol), .openai(.gpt6Luna): true
+        case .openai(.gpt61Sol), .openai(.gpt6Astra), .openai(.gpt6Sol), .openai(.gpt6Luna): true
         default: false
         }
     }
@@ -147,6 +147,7 @@ extension PeekabooAgentService {
         case let .openai(openAIModel):
             switch openAIModel {
             case .chatLatest,
+                 .gpt61Sol,
                  .gpt6Astra,
                  .gpt6Sol,
                  .gpt6Luna,
