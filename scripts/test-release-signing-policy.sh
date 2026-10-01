@@ -89,8 +89,13 @@ rg -Fq 'readonly GITHUB_HOST GITHUB_REPOSITORY GITHUB_API_REPOSITORY NPM_REGISTR
 rg -Fq -- '--registry "$NPM_REGISTRY"' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq '@steipete:registry=%s/' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--resume-publication' "$ROOT_DIR/scripts/release-binaries.sh"
-rg -Fq 'gh release upload "v${VERSION}" "${RELEASE_ASSETS[@]}"' \
+rg -Fq 'select_release_asset_uploads' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'gh release upload "v${VERSION}" "${RELEASE_ASSET_UPLOADS[@]}"' \
   "$ROOT_DIR/scripts/release-binaries.sh"
+if rg -Fq 'gh release upload "v${VERSION}" "${RELEASE_ASSETS[@]}"' "$ROOT_DIR/scripts/release-binaries.sh"; then
+  echo 'resume must upload only the draft assets that are missing or differ from the frozen receipt' >&2
+  exit 1
+fi
 rg -Fq 'npm_publication_exists' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'validate_npm_publish_attempt' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--retry-npm-publish' "$ROOT_DIR/scripts/release-binaries.sh"
