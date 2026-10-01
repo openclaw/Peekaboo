@@ -139,26 +139,27 @@ macOS runtime baseline. Release runtime verification rejects that strong import 
 reused binaries and extracted archives. Weak imports remain distinct; this does not weak-link the Swift runtime or
 replace system libraries. Successful execution on the build host alone does not prove older-macOS compatibility.
 
-Runtime verification also audits every strong `libswift*` import per architecture against a versioned SDK export
-baseline, following re-exports transitively. Weak imports and bundled `libswiftCompatibility*` libraries are excluded;
-undefined symbols without a two-level source library fail closed. Swift symbols imported from frameworks such as
-Foundation and SwiftUI are outside this audit. The oldest baseline
-at or above the highest slice's minimum macOS version wins. The export list is checked in so every release host
-gives the same answer: a host whose oldest installed SDK is already 27 cannot silently weaken the gate and accept
-the #831 failure, and a Command Line Tools update removing an older SDK cannot block releases. The cost is a
-4.4 MB generated file and an explicit regeneration step:
+Runtime verification also audits every strong `libswift*` import per architecture by parsing the
+installed SDK's Swift `.tbd` files at verification time, following re-exports transitively. Weak imports
+and bundled `libswiftCompatibility*` libraries are excluded; undefined symbols without a two-level
+source library fail closed. Swift symbols imported from frameworks such as Foundation and SwiftUI are
+outside this audit. Generated export data is intentionally not checked in.
 
-```bash
-python3 scripts/swift-runtime-exports.py generate --oldest-installed \
-  --output scripts/swift-runtime-baselines/macos-26.5.exports
-python3 scripts/swift-runtime-exports.py check --installed \
-  --baseline scripts/swift-runtime-baselines/macos-26.5.exports
-```
+The audit selects the oldest installed macOS SDK at or above the highest slice's minimum macOS version
+and older than macOS 27. It records the SDK version, build, full path, and export digest with each
+successful audit. Hosts may legitimately select different SDKs: an older eligible SDK is stricter and
+still correct, and the record line makes proofs comparable. The macOS 27 limit is a deliberate code
+constant, `BASELINE_MUST_PREDATE`, protecting against the macOS 27-only symbol behind #831; raise it only
+deliberately, when no older SDK can be provisioned on release hosts.
 
-Review the selected SDK before replacing a baseline. The 26.5 baseline proves compatibility with the macOS 26.5
-runtime, not every release down to the macOS 15.0 deployment target. Symbols introduced between 15 and 26.5 remain
-guarded by compiler availability checking. Adding an older baseline generated on a host with a MacOSX15 SDK
-automatically tightens the audit because the oldest eligible baseline wins.
+When no eligible SDK is installed, verification fails closed. Release and signed-build hosts need
+Command Line Tools or Xcode providing such an SDK, for example CLT's `MacOSX26.5.sdk`. A host with only
+macOS 27 SDKs cannot weaken this gate.
+
+A 26.x SDK proves compatibility with that runtime, not every release down to the macOS 15.0 deployment
+target. Symbols introduced between 15.0 and the selected SDK remain guarded by compiler availability
+checking. A host with a macOS 15 SDK, for example from Xcode 16, automatically audits more strictly
+because the oldest eligible SDK wins.
 
 ## Tachikoma integration
 

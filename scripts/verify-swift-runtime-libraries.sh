@@ -2,14 +2,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUNTIME_BASELINE_DIR="$SCRIPT_DIR/swift-runtime-baselines"
-if [ "${1:-}" = --runtime-baseline-dir ] && [ "$#" -ge 2 ]; then
-    RUNTIME_BASELINE_DIR="$2"
+RUNTIME_SDK_ARGS=()
+if [ "${1:-}" = --runtime-sdk-root ] && [ "$#" -ge 2 ]; then
+    RUNTIME_SDK_ARGS=(--sdk-root "$2")
     shift 2
 fi
 
 if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 [--runtime-baseline-dir DIR] <executable> <runtime-library-directory>" >&2
+    echo "Usage: $0 [--runtime-sdk-root DIR] <executable> <runtime-library-directory>" >&2
     exit 2
 fi
 
@@ -35,7 +35,7 @@ if awk '/\(undefined\)/ && !/ weak / && / _swift_initBorrow([[:space:]]|$)/ { fo
     exit 1
 fi
 
-python3 "$SCRIPT_DIR/swift-runtime-exports.py" audit --baseline-dir "$RUNTIME_BASELINE_DIR" "$EXECUTABLE_PATH" || exit 1
+python3 "$SCRIPT_DIR/swift-runtime-exports.py" audit ${RUNTIME_SDK_ARGS[@]+"${RUNTIME_SDK_ARGS[@]}"} "$EXECUTABLE_PATH" || exit 1
 
 compatibility_dependencies=$(otool -L "$EXECUTABLE_PATH" | awk '
     $1 ~ /^@rpath\/libswiftCompatibility.*\.dylib$/ { print $1 }

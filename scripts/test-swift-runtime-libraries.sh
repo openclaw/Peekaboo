@@ -7,7 +7,6 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 
 EXPORTS_TOOL="$ROOT_DIR/scripts/swift-runtime-exports.py"
 SDK="$TEST_DIR/SDK/MacOSX15.0.sdk"
-BASELINES="$TEST_DIR/baselines"
 mkdir -p "$SDK/usr/lib/swift"
 
 sdk_identity() {
@@ -26,7 +25,7 @@ PY
 }
 
 verify_fixture() {
-    "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" --runtime-baseline-dir "$BASELINES" "$@"
+    "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" --runtime-sdk-root "$TEST_DIR/SDK" "$@"
 }
 
 expect_refusal() {
@@ -106,35 +105,38 @@ exports:
     symbols: [ _ignoredLibrary ]
 ...
 EOF
-python3 "$EXPORTS_TOOL" generate --sdk "$SDK" --output "$BASELINES/macos-15.0.exports"
-python3 "$EXPORTS_TOOL" check --sdk "$SDK" --baseline "$BASELINES/macos-15.0.exports"
-python3 - "$BASELINES/macos-15.0.exports" <<'PY'
+python3 -B - "$EXPORTS_TOOL" "$SDK" <<'PY'
+import importlib.util
 from pathlib import Path
 import sys
 
-text = Path(sys.argv[1]).read_text()
-lines = set(text.splitlines())
-assert {'* _swift_initBorrow', '* _swift_initBorrowRelated', "* _quoted'symbol",
-        '* _weakExport', '* _threadLocalExport', '* _symbolReexport',
-        '* _OBJC_CLASS_$_FixtureClass', '* _OBJC_METACLASS_$_FixtureClass',
-        '* _OBJC_EHTYPE_$_FixtureException', '* _OBJC_IVAR_$_FixtureClass.value',
-        'arm64 _swift_armOnly', 'x86_64 _swift_intelOnly',
-        '[libswiftSecondDocument]', '* _secondDocument',
-        'reexport * libswift_DarwinFoundation1', 'reexport * libswift_errno'} <= lines
-assert '$ld$' not in text and '_swift_ignoredTarget' not in text and 'libswiftIgnored' not in text
+spec = importlib.util.spec_from_file_location('swift_runtime_exports', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+libraries = {}
+for path in sorted((Path(sys.argv[2]) / 'usr/lib/swift').glob('*.tbd')):
+    module.parse_tbd(path, path.read_bytes(), libraries)
+for arch in module.ARCHES:
+    assert {"_quoted'symbol", '_threadLocalExport', '_OBJC_CLASS_$_FixtureClass',
+            '_OBJC_METACLASS_$_FixtureClass', '_OBJC_EHTYPE_$_FixtureException',
+            '_OBJC_IVAR_$_FixtureClass.value'} <= libraries['libswiftCore'].symbols[arch]
+    symbols = set().union(*(lib.symbols[arch] for lib in libraries.values()))
+    assert not any(symbol.startswith('$ld$') for symbol in symbols)
+    assert '_swift_ignoredTarget' not in symbols and '_ignoredLibrary' not in symbols
 PY
 
-# Regenerate a second baseline with the errno edge removed; symbols remain in Foundation1.
-cp -R "$SDK" "$TEST_DIR/NoReexport.sdk"
+# Remove the errno edge in a second SDK; symbols remain in Foundation1.
+mkdir "$TEST_DIR/NoReexportRoot"
+cp -R "$SDK" "$TEST_DIR/NoReexportRoot/MacOSX15.0.sdk"
 sed '/^reexported-libraries:/,$d' "$SDK/usr/lib/swift/libswift_errno.tbd" \
-    > "$TEST_DIR/NoReexport.sdk/usr/lib/swift/libswift_errno.tbd"
-python3 "$EXPORTS_TOOL" generate --sdk "$TEST_DIR/NoReexport.sdk" \
-    --output "$TEST_DIR/no-reexport/macos-15.0.exports"
+    > "$TEST_DIR/NoReexportRoot/MacOSX15.0.sdk/usr/lib/swift/libswift_errno.tbd"
 
 # Link inert fixtures against a synthetic runtime; never execute them or alter the system runtime.
 printf '%s\n' 'void swift_initBorrow(void) {}' 'void swift_initBorrowRelated(void) {}' \
     'void swift_futureRuntimeEntry(void) {}' 'void swift_intelOnly(void) {}' \
-    'void swift_armOnly(void) {}' 'void swift_ignoredTarget(void) {}' > "$TEST_DIR/Runtime.c"
+    'void swift_armOnly(void) {}' 'void swift_ignoredTarget(void) {}' \
+    'void weakExport(void) {}' 'void symbolReexport(void) {}' > "$TEST_DIR/Runtime.c"
 printf '%s\n' 'extern void swift_initBorrow(void);' \
     'int main(void) { swift_initBorrow(); return 0; }' > "$TEST_DIR/Strong.c"
 printf '%s\n' 'extern void swift_initBorrow(void) __attribute__((weak_import));' \
@@ -149,6 +151,11 @@ for entry in intelOnly armOnly ignoredTarget reexportedEntry compatibilityEntry;
     printf 'extern void swift_%s(void);\nint main(void) { swift_%s(); return 0; }\n' "$entry" "$entry" \
         > "$TEST_DIR/$entry.c"
 done
+for entry in weakExport symbolReexport secondDocument; do
+    printf 'extern void %s(void);\nint main(void) { %s(); return 0; }\n' "$entry" "$entry" \
+        > "$TEST_DIR/$entry.c"
+done
+printf '%s\n' 'void secondDocument(void) {}' > "$TEST_DIR/SecondDocumentRuntime.c"
 printf '%s\n' 'void swift_reexportedEntry(void) {}' > "$TEST_DIR/Foundation.c"
 printf '%s\n' 'void synthetic_errno(void) {}' > "$TEST_DIR/Errno.c"
 printf '%s\n' 'void swift_compatibilityEntry(void) {}' > "$TEST_DIR/Compatibility.c"
@@ -156,7 +163,7 @@ for architecture in arm64 x86_64; do
     mkdir "$TEST_DIR/$architecture"
     xcrun clang -arch "$architecture" -mmacosx-version-min=15.0 -dynamiclib "$TEST_DIR/Runtime.c" \
         -install_name /usr/lib/swift/libswiftCore.dylib -o "$TEST_DIR/$architecture/libswiftCore.dylib"
-    for kind in Strong Weak Related Future FutureWeak intelOnly armOnly ignoredTarget; do
+    for kind in Strong Weak Related Future FutureWeak intelOnly armOnly ignoredTarget weakExport symbolReexport; do
         xcrun clang -arch "$architecture" -mmacosx-version-min=15.0 "$TEST_DIR/$kind.c" \
             -L"$TEST_DIR/$architecture" -lswiftCore -o "$TEST_DIR/$kind-$architecture"
     done
@@ -169,6 +176,14 @@ for architecture in arm64 x86_64; do
     verify_fixture "$TEST_DIR/Weak-$architecture" "$TEST_DIR"
     verify_fixture "$TEST_DIR/Related-$architecture" "$TEST_DIR"
     verify_fixture "$TEST_DIR/$architecture/libswiftCore.dylib" "$TEST_DIR"
+    verify_fixture "$TEST_DIR/weakExport-$architecture" "$TEST_DIR"
+    verify_fixture "$TEST_DIR/symbolReexport-$architecture" "$TEST_DIR"
+    xcrun clang -arch "$architecture" -mmacosx-version-min=15.0 -dynamiclib "$TEST_DIR/SecondDocumentRuntime.c" \
+        -install_name /usr/lib/swift/libswiftSecondDocument.dylib \
+        -o "$TEST_DIR/$architecture/libswiftSecondDocument.dylib"
+    xcrun clang -arch "$architecture" -mmacosx-version-min=15.0 "$TEST_DIR/secondDocument.c" \
+        -L"$TEST_DIR/$architecture" -lswiftSecondDocument -o "$TEST_DIR/SecondDocument-$architecture"
+    verify_fixture "$TEST_DIR/SecondDocument-$architecture" "$TEST_DIR"
 
     expect_refusal 'Strong Swift runtime imports missing from' \
         verify_fixture "$TEST_DIR/Future-$architecture" "$TEST_DIR"
@@ -199,7 +214,7 @@ for architecture in arm64 x86_64; do
     grep -Fq '_swift_reexportedEntry (from libswift_errno)' "$TEST_DIR/reexport-nm"
     verify_fixture "$TEST_DIR/Reexport-$architecture" "$TEST_DIR"
     expect_refusal "$architecture libswift_errno _swift_reexportedEntry" \
-        "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" --runtime-baseline-dir "$TEST_DIR/no-reexport" \
+        "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" --runtime-sdk-root "$TEST_DIR/NoReexportRoot" \
         "$TEST_DIR/Reexport-$architecture" "$TEST_DIR"
 
     if [ "$architecture" = x86_64 ]; then
@@ -255,49 +270,57 @@ if verify_fixture \
 fi
 grep -Fq 'Unable to inspect Swift runtime imports' "$TEST_DIR/refusal"
 
-# Selection ignores baselines below the deployment target and prefers the oldest eligible SDK.
-cp -R "$SDK" "$TEST_DIR/Selection.sdk"
-for sdk_version in 14.0 15.0 26.0; do
-    sdk_identity "$TEST_DIR/Selection.sdk" "$sdk_version"
-    python3 "$EXPORTS_TOOL" generate --sdk "$TEST_DIR/Selection.sdk" \
-        --output "$TEST_DIR/selection/macos-$sdk_version.exports"
+# Selection ignores SDKs below the deployment target or at/above the deliberate macOS 27 limit.
+mkdir "$TEST_DIR/selection"
+for sdk_version in 14.0 15.0 26.0 27.0; do
+    selection_sdk="$TEST_DIR/selection/MacOSX$sdk_version.sdk"
+    cp -R "$SDK" "$selection_sdk"
+    sdk_identity "$selection_sdk" "$sdk_version"
 done
-python3 "$EXPORTS_TOOL" audit --baseline-dir "$TEST_DIR/selection" "$TEST_DIR/Related-arm64" \
-    > "$TEST_DIR/selection-output"
-grep -Fq "Swift runtime baseline: macOS 15.0 (FixtureBuild, Selection.sdk) from $TEST_DIR/selection/macos-15.0.exports" \
+python3 "$EXPORTS_TOOL" audit --sdk-root "$TEST_DIR/selection" "$TEST_DIR/Related-arm64" \
+    > "$TEST_DIR/selection-output" 2> "$TEST_DIR/selection-candidates"
+selection_sdk=$(cd "$TEST_DIR/selection/MacOSX15.0.sdk" && pwd -P)
+grep -Fq "Swift runtime baseline: macOS 15.0 (FixtureBuild) $selection_sdk sha256:" \
     "$TEST_DIR/selection-output"
-mkdir "$TEST_DIR/too-old" "$TEST_DIR/duplicate"
-cp "$TEST_DIR/selection/macos-14.0.exports" "$TEST_DIR/too-old/"
-expect_refusal 'No Swift runtime baseline covers' \
-    python3 "$EXPORTS_TOOL" audit --baseline-dir "$TEST_DIR/too-old" "$TEST_DIR/Related-arm64"
-cp "$BASELINES/macos-15.0.exports" "$TEST_DIR/duplicate/one.exports"
-cp "$BASELINES/macos-15.0.exports" "$TEST_DIR/duplicate/two.exports"
-expect_refusal 'duplicate baseline version' \
-    python3 "$EXPORTS_TOOL" audit --baseline-dir "$TEST_DIR/duplicate" "$TEST_DIR/Related-arm64"
+grep -Fq 'ineligible (below minimum macOS 15.0)' "$TEST_DIR/selection-candidates"
+grep -Fq 'ineligible (not older than macOS 27)' "$TEST_DIR/selection-candidates"
+mkdir "$TEST_DIR/ineligible" "$TEST_DIR/only-27" "$TEST_DIR/duplicate"
+cp -R "$TEST_DIR/selection/MacOSX14.0.sdk" "$TEST_DIR/ineligible/"
+cp -R "$TEST_DIR/selection/MacOSX27.0.sdk" "$TEST_DIR/ineligible/"
+cp -R "$TEST_DIR/selection/MacOSX27.0.sdk" "$TEST_DIR/only-27/"
+for sdk_root in "$TEST_DIR/ineligible" "$TEST_DIR/only-27"; do
+    expect_refusal 'No eligible macOS SDK for the Swift runtime audit:' \
+        python3 "$EXPORTS_TOOL" audit --sdk-root "$sdk_root" "$TEST_DIR/Related-arm64"
+    grep -Fq 'minimum macOS 15.0, SDK must predate macOS 27' "$TEST_DIR/refusal"
+    grep -Fq 'install Command Line Tools or an Xcode' "$TEST_DIR/refusal"
+done
+
+# Equal version/build SDKs use the first realpath, irrespective of creation order or aliases.
+cp -R "$SDK" "$TEST_DIR/duplicate/Last.sdk"
+cp -R "$SDK" "$TEST_DIR/duplicate/First.sdk"
+ln -s Last.sdk "$TEST_DIR/duplicate/Alias.sdk"
+python3 "$EXPORTS_TOOL" audit --sdk-root "$TEST_DIR/only-27" --sdk-root "$TEST_DIR/duplicate" \
+    "$TEST_DIR/Related-arm64" > "$TEST_DIR/duplicate-output" 2> "$TEST_DIR/duplicate-candidates"
+first_sdk=$(cd "$TEST_DIR/duplicate/First.sdk" && pwd -P)
+grep -Fq "Swift runtime baseline: macOS 15.0 (FixtureBuild) $first_sdk sha256:" \
+    "$TEST_DIR/duplicate-output"
+[ "$(grep -c 'candidate .*Last.sdk: 15.0' "$TEST_DIR/duplicate-candidates")" -eq 1 ]
 
 # Unsupported schema additions must fail closed instead of silently dropping exports.
-cp -R "$SDK" "$TEST_DIR/Invalid.sdk"
-invalid_tbd="$TEST_DIR/Invalid.sdk/usr/lib/swift/libswiftCore.tbd"
+mkdir "$TEST_DIR/InvalidRoot"
+cp -R "$SDK" "$TEST_DIR/InvalidRoot/MacOSX15.0.sdk"
+invalid_tbd="$TEST_DIR/InvalidRoot/MacOSX15.0.sdk/usr/lib/swift/libswiftCore.tbd"
 sed '/^tbd-version:/a\
 unknown-top-level: 1\
 ' "$SDK/usr/lib/swift/libswiftCore.tbd" > "$invalid_tbd"
 expect_refusal 'unknown tbd top-level key: unknown-top-level' \
-    python3 "$EXPORTS_TOOL" generate --sdk "$TEST_DIR/Invalid.sdk" --output "$TEST_DIR/invalid.exports"
+    python3 "$EXPORTS_TOOL" audit --sdk-root "$TEST_DIR/InvalidRoot" "$TEST_DIR/Related-arm64"
 sed 's/    weak-symbols:/    unknown-export-field:/' "$SDK/usr/lib/swift/libswiftCore.tbd" > "$invalid_tbd"
 expect_refusal 'unknown tbd item field: unknown-export-field' \
-    python3 "$EXPORTS_TOOL" generate --sdk "$TEST_DIR/Invalid.sdk" --output "$TEST_DIR/invalid.exports"
+    python3 "$EXPORTS_TOOL" audit --sdk-root "$TEST_DIR/InvalidRoot" "$TEST_DIR/Related-arm64"
 printf '%s\n' '{"tapi_tbd_version": 5}' > "$invalid_tbd"
 expect_refusal 'JSON/v5 tbd is unsupported' \
-    python3 "$EXPORTS_TOOL" generate --sdk "$TEST_DIR/Invalid.sdk" --output "$TEST_DIR/invalid.exports"
-
-real_baseline="$ROOT_DIR/scripts/swift-runtime-baselines/macos-26.5.exports"
-python3 "$EXPORTS_TOOL" check --installed --baseline "$real_baseline"
-awk '/^\[/ { core = ($0 == "[libswiftCore]") } core { print }' "$real_baseline" > "$TEST_DIR/core-exports"
-if grep -Eq '^(\*|arm64|x86_64) _swift_initBorrow$' "$TEST_DIR/core-exports"; then
-    echo "Real baseline unexpectedly exports _swift_initBorrow from libswiftCore" >&2
-    exit 1
-fi
-grep -Fxq '* _swift_retain' "$TEST_DIR/core-exports"
+    python3 "$EXPORTS_TOOL" audit --sdk-root "$TEST_DIR/InvalidRoot" "$TEST_DIR/Related-arm64"
 
 printf '%s\n' 'print(OutputSpan<UInt8>.self)' > "$TEST_DIR/SpanProbe.swift"
 xcrun swiftc \
