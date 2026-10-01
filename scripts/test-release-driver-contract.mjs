@@ -14,6 +14,7 @@ import {
   classifyNpmViewResult,
   composeGitHubBody,
   extractReleaseNotes,
+  githubReleaseAssetsNeedingUpload,
   npmIntegrity,
   validateAppZipMembers,
   validateGitHubRelease,
@@ -391,6 +392,42 @@ assert.doesNotThrow(() => validateGitHubRelease({
   version: '9.8.7', sourceCommit, tagCommit: sourceCommit,
   expectedAssets, expectedBody: null, expectDraft: true, allowAssetRepair: true,
 }));
+const repairInput = {
+  release, version: '9.8.7', sourceCommit, tagCommit: sourceCommit,
+  expectedAssets, expectedBody: notes, expectDraft: true, allowAssetRepair: true,
+};
+assert.deepEqual(validateGitHubRelease(repairInput), []);
+const firstAsset = release.assets[0];
+const assetWithoutDigest = { name: firstAsset.name, size: firstAsset.size };
+for (const assets of [
+  release.assets.slice(1),
+  [{ ...firstAsset, size: firstAsset.size + 1 }, ...release.assets.slice(1)],
+  [{ ...firstAsset, digest: 'sha256:wrong' }, ...release.assets.slice(1)],
+  [assetWithoutDigest, ...release.assets.slice(1)],
+  [{ ...firstAsset, digest: null }, ...release.assets.slice(1)],
+  [{ ...firstAsset, digest: 42 }, ...release.assets.slice(1)],
+]) {
+  assert.deepEqual(validateGitHubRelease({ ...repairInput, release: { ...release, assets } }), [firstAsset.name]);
+}
+const combinedRepairAssets = release.assets.slice(1).map((asset, index) => {
+  if (index === 0) return { ...asset, size: asset.size + 1 };
+  if (index === 1) return { ...asset, digest: 'sha256:wrong' };
+  if (index === 2) return { name: asset.name, size: asset.size };
+  return asset;
+});
+const combinedRepairNames = release.assets.slice(0, 4).map(asset => asset.name).sort();
+assert.deepEqual(validateGitHubRelease({
+  ...repairInput, release: { ...release, assets: combinedRepairAssets },
+}), combinedRepairNames);
+assert.deepEqual(githubReleaseAssetsNeedingUpload({ assets: combinedRepairAssets, expectedAssets }), combinedRepairNames);
+assert.deepEqual(validateGitHubRelease({ ...repairInput, release: { ...release, assets: [] } }),
+  Object.keys(expectedAssets).sort());
+assert.throws(() => validateGitHubRelease({
+  ...repairInput, release: { ...release, assets: [...release.assets, firstAsset] },
+}), /cannot be repaired/);
+assert.throws(() => validateGitHubRelease({
+  ...repairInput, release: { ...release, isDraft: false },
+}), /draft state/);
 assert.throws(() => validateGitHubRelease({
   release: { ...release, assets: [...release.assets, { name: 'foreign', size: 1, digest: 'sha256:bad' }] },
   version: '9.8.7', sourceCommit, tagCommit: sourceCommit,
@@ -419,12 +456,39 @@ for (const changed of [
   { ...release, assets: release.assets.map((asset, index) => index === 0 ? { ...asset, size: 43 } : asset) },
   { ...release, assets: release.assets.map((asset, index) => index === 0 ?
     { ...asset, digest: `sha256:${'e'.repeat(64)}` } : asset) },
+  { ...release, assets: [assetWithoutDigest, ...release.assets.slice(1)] },
   { ...release, assets: [...release.assets, { name: 'extra', size: 1, digest: `sha256:${'f'.repeat(64)}` }] },
 ]) {
   assert.throws(() => validateGitHubRelease({
     release: changed, version: '9.8.7', sourceCommit, tagCommit: sourceCommit,
     expectedAssets, expectedBody: notes, expectDraft: true,
   }));
+}
+
+for (const [input, expectedOutput] of [
+  [{ ...repairInput, release: { ...release, assets: combinedRepairAssets } }, `${combinedRepairNames.join('\n')}\n`],
+  [repairInput, ''],
+  [{ ...repairInput, allowAssetRepair: false }, ''],
+]) {
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('./release-driver-contract.mjs', import.meta.url)), 'github-release',
+  ], { encoding: 'utf8', input: JSON.stringify(input) });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, expectedOutput);
+}
+for (const control of ['\u0000', '\t', '\n', '\r', '\u001f', '\u007f']) {
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('./release-driver-contract.mjs', import.meta.url)), 'github-release',
+  ], {
+    encoding: 'utf8',
+    input: JSON.stringify({
+      ...repairInput, release: { ...release, assets: [] },
+      expectedAssets: { ...expectedAssets, [`unsafe${control}name`]: expectedAssets[firstAsset.name] },
+    }),
+  });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /release-driver-contract: .*control character/);
 }
 
 console.log('test-release-driver-contract: ok');

@@ -159,8 +159,8 @@ Then rerun `./scripts/release-binaries.sh --resume-publication`. It accepts the 
 registry integrity equals the retained tarball, and it finishes the draft body. Do not create granular bypass tokens for
 this; if one was created by mistake, delete it before closeout.
 
-Resume cost: whenever the draft exists, resume re-uploads every asset with `gh release upload --clobber` before npm,
-because its pre-upload check compares names, not digests. On a slow uplink expect the full asset upload each time.
+Resume cost: resume compares draft sizes and SHA-256 digests with the frozen receipt, re-uploading only missing,
+mismatched, or digest-less assets with `--clobber`; intact drafts upload nothing. Each repaired asset uploads in full.
 
 ## Verify
 

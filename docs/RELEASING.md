@@ -413,12 +413,13 @@ shows the version.
 
 ### Resume cost
 
-When the draft already exists, resume uploads the complete inventory again with `gh release upload --clobber` before
-it reaches npm. Its pre-upload check only rejects duplicate or unexpected asset names and does not compare digests, so
-an intact draft still re-uploads all eleven assets of a universal release, including the three CLI archives, the npm
-tarball, the app zip, and the DMG. On a slow uplink that dominates a resume's wall time, so budget for it before the
-npm step rather than assuming resume is quick. The strict check that follows the upload verifies each asset's size and
-server-reported SHA-256 digest against the frozen receipt.
+When the draft already exists, resume compares each asset's size and server-reported SHA-256 digest with the frozen
+receipt. It re-uploads with `gh release upload --clobber` only assets that are missing, differ, or have no digest yet;
+an intact draft uploads nothing. Duplicate or unexpected asset names still fail closed. The strict check that follows
+verifies the exact inventory, sizes, and digests against the frozen receipt and remains the gate before npm.
+
+An interrupted large asset still costs that asset's full re-upload on a slow uplink, whether it is the DMG, app zip,
+or ~32 MB npm tarball.
 
 ## 5. Verify
 

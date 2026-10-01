@@ -787,9 +787,11 @@ ensure_github_release_tag() {
 }
 
 verify_github_release_assets() {
+    GITHUB_RELEASE_REPAIR_ASSETS=()
     local npm_metadata_path="${1:-}" allow_body_mismatch="${2:-false}"
     local allow_asset_repair="${3:-false}"
     local expected_assets_json expected_body_json release_json release_api_path tag_commit
+    local repair_assets repair_name
 
     echo -e "\n${BLUE}Verifying GitHub release assets...${NC}"
     assert_publication_receipt "$npm_metadata_path"
@@ -808,10 +810,16 @@ process.stdout.write(JSON.stringify(receipt.assets));
 
     release_api_path=$(github_release_api_path) || fail "Could not locate the GitHub release draft"
     release_json=$(gh api --hostname "$GITHUB_HOST" "$release_api_path")
-    printf '{"release":%s,"version":"%s","sourceCommit":"%s","tagCommit":"%s","expectedAssets":%s,"expectedBody":%s,"expectDraft":true,"allowAssetRepair":%s}\n' \
+    # Repair mode prints the expected assets that are missing or differ, one per line; strict mode prints nothing.
+    repair_assets=$(printf '{"release":%s,"version":"%s","sourceCommit":"%s","tagCommit":"%s","expectedAssets":%s,"expectedBody":%s,"expectDraft":true,"allowAssetRepair":%s}\n' \
         "$release_json" "$VERSION" "$RELEASE_SOURCE_COMMIT" "$tag_commit" "$expected_assets_json" \
         "$expected_body_json" "$allow_asset_repair" |
-        node "$RELEASE_CONTRACT" github-release
+        node "$RELEASE_CONTRACT" github-release) || fail "GitHub release verification failed"
+    while IFS= read -r repair_name; do
+        if [[ -n "$repair_name" ]]; then
+            GITHUB_RELEASE_REPAIR_ASSETS+=("$repair_name")
+        fi
+    done <<< "$repair_assets"
     echo -e "${GREEN}✅ GitHub release assets verified${NC}"
 }
 
@@ -974,6 +982,32 @@ prepare_release_assets() {
     RELEASE_ASSETS+=("$RELEASE_DIR/checksums.txt")
 }
 
+select_release_asset_uploads() {
+    local repair_name asset_path matches
+    RELEASE_ASSET_UPLOADS=()
+    # Bash 3.2 treats an empty "${array[@]}" as unbound under set -u.
+    [[ ${#GITHUB_RELEASE_REPAIR_ASSETS[@]} -gt 0 ]] || return 0
+    [[ ${#RELEASE_ASSETS[@]} -gt 0 ]] || fail "GitHub repair assets have no local release assets"
+    for repair_name in "${GITHUB_RELEASE_REPAIR_ASSETS[@]}"; do
+        matches=0
+        for asset_path in "${RELEASE_ASSETS[@]}"; do
+            if [[ "${asset_path##*/}" == "$repair_name" ]]; then
+                matches=$((matches + 1))
+            fi
+        done
+        [[ "$matches" -eq 1 ]] ||
+            fail "GitHub repair asset $repair_name matches $matches local release assets; expected exactly one"
+    done
+    for asset_path in "${RELEASE_ASSETS[@]}"; do
+        for repair_name in "${GITHUB_RELEASE_REPAIR_ASSETS[@]}"; do
+            if [[ "${asset_path##*/}" == "$repair_name" ]]; then
+                RELEASE_ASSET_UPLOADS+=("$asset_path")
+                break
+            fi
+        done
+    done
+}
+
 github_release_api_path() {
     local error_path result api_url release_id
     error_path=$(mktemp "${TMPDIR:-/tmp}/peekaboo-gh-release-view.XXXXXX")
@@ -1098,8 +1132,14 @@ resume_publication() {
         else
             verify_github_release_assets "" true true
         fi
-        gh release upload "v${VERSION}" "${RELEASE_ASSETS[@]}" \
-          --repo "$GITHUB_REPOSITORY" --clobber
+        select_release_asset_uploads
+        if [[ ${#RELEASE_ASSET_UPLOADS[@]} -gt 0 ]]; then
+            echo -e "${BLUE}Re-uploading ${#RELEASE_ASSET_UPLOADS[@]} of ${#RELEASE_ASSETS[@]} draft assets: ${GITHUB_RELEASE_REPAIR_ASSETS[*]}${NC}"
+            gh release upload "v${VERSION}" "${RELEASE_ASSET_UPLOADS[@]}" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+        else
+            echo -e "${GREEN}All ${#RELEASE_ASSETS[@]} draft assets match the frozen receipt; upload skipped${NC}"
+        fi
     else
         if [[ "$npm_already_published" == true ]]; then
             create_github_release_draft "$RELEASE_DIR/npm-publication.json"
