@@ -20,6 +20,7 @@ struct ToolRegistryTests {
             "click",
             "type",
             "scroll",
+            "drag",
             "press",
             "action",
             "app",
@@ -32,7 +33,7 @@ struct ToolRegistryTests {
         ]
 
         #expect(toolNames.isSuperset(of: expectedTools))
-        #expect(toolNames.isDisjoint(with: ["hotkey", "launch_app", "list", "drag", "move", "shell"]))
+        #expect(toolNames.isDisjoint(with: ["hotkey", "launch_app", "list", "move", "shell"]))
     }
 
     @Test
@@ -74,7 +75,7 @@ struct ToolRegistryTests {
 
     @MainActor
     private func installDefaults() -> PeekabooServices {
-        let services = PeekabooServices()
+        let services = PeekabooServices(initializeAgentService: false)
         // The default factories capture this owner unowned; each caller must retain it through its assertions.
         services.installAgentRuntimeDefaults()
         return services
