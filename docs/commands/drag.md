@@ -28,6 +28,7 @@ Cross-window/application drops, modifiers, human movement, and shared physical c
 
 ## Implementation notes
 - Background drag has its own capability-gated Bridge protocol 1.39 request. Older hosts refuse before dispatch; there is no implicit foreground fallback. Background targeting comes only from the snapshot, so app/window selectors require foreground mode.
+- Signed drag receipts preserve the snapshot's optional focused-element evidence alongside its exact process/window identity and bounds. This is captured context, not proof of current focus or drop success.
 - The existing held-pointer lifecycle owns the exact-window lane, validates generation and immutable bounds at every sample, and performs terminal cleanup once at the last accepted point. Cancellation, expiry, and target drift await cleanup; a recycled PID never receives mouse-up.
 - Results count the routing primer, down, each accepted drag sample, and cleanup up. The complete count is `steps + 3`; interrupted drags retain the exact accepted prefix and target receipt with `indeterminate`/`completion_unknown` evidence, never a claim of verified drop or failed cleanup merely because the path stopped.
 - Input validation enforces “pick exactly one source and one destination flavor,” so you can’t accidentally mix coordinate + ID on the same side.

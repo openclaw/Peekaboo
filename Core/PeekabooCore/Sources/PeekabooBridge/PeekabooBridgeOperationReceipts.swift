@@ -1276,9 +1276,7 @@ extension PeekabooBridgeRequest {
                 windowIdentity: payload.request.windowIdentity,
                 bounds: payload.request.windowBounds)]
         case let .exactWindowDrag(payload):
-            [DesktopTargetEvidenceAdapter.evidence(
-                windowIdentity: payload.target.identity,
-                bounds: payload.target.bounds)]
+            [.init(target: DesktopTargetIdentity(exactWindow: payload.target))]
         case let .releaseExactWindowHeldPointer(payload),
              let .revokeExactWindowHeldPointer(payload):
             [DesktopTargetEvidenceAdapter.evidence(

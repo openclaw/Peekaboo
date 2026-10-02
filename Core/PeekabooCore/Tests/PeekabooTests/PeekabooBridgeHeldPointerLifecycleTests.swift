@@ -23,8 +23,11 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             defaultTimeoutSec: 30, durationMilliseconds: 10000) == 30)
     }
 
-    @Test(arguments: [38, 39])
-    func `one shot drag is separately gated and carries exact signed count`(minor: Int) async throws {
+    @Test(arguments: [38, 39], [false, true])
+    func `one shot drag is separately gated and carries exact signed count`(
+        minor: Int,
+        includesFocusedElement: Bool) async throws
+    {
         let fixture = await self.makeHost(protocolVersion: .init(major: 1, minor: minor))
         try await fixture.host.startChecked()
         defer { Task { await fixture.host.stop() } }
@@ -32,9 +35,20 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         let handshake = try await client.handshake(client: Self.clientIdentity)
         #expect(await client.exactWindowDragEnabled == handshake.supportsExactWindowDrag)
         let hold = fixture.automation.request
+        let focusedElement: FocusedElementIdentity? = includesFocusedElement
+            ? .init(
+                processIdentifier: hold.windowIdentity.ownerProcessIdentifier,
+                windowID: hold.windowIdentity.windowID,
+                role: "AXWindow",
+                title: "Captured window",
+                frame: hold.windowBounds)
+            : nil
         let request = try ExactWindowDragRequest(
             snapshotID: "ps1_0123456789abcdef0123456789abcdef",
-            target: .init(identity: hold.windowIdentity, bounds: hold.windowBounds),
+            target: .init(
+                identity: hold.windowIdentity,
+                bounds: hold.windowBounds,
+                focusedElement: focusedElement),
             from: hold.point,
             to: CGPoint(x: 100, y: 100),
             steps: 5)
@@ -48,7 +62,63 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             #expect(result.outcome?.dispatchState.unitCount?.rawValue == 8)
             #expect(result.targetIdentity == DesktopTargetIdentity(exactWindow: request.target))
             #expect(await fixture.automation.dragCount == 1)
-            try #require(await client.lastOperationReceiptBundle()).validate()
+            let bundle = try #require(await client.lastOperationReceiptBundle())
+            #expect(bundle.receipt.payload.focusedElement == focusedElement)
+            try bundle.validate()
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `signed drag rejects changed or omitted captured focus`(omitsFocus: Bool) async throws {
+        let root = URL(fileURLWithPath: "/tmp/pb-drag-focus-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("bridge.sock").path)
+        let session = try await OperationReceiptSessionFixture.make(authority: authority)
+        let bounds = CGRect(x: 10, y: 20, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 901,
+            ownerProcessIdentifier: 77001,
+            ownerProcessStartIdentity: 88,
+            capturedBounds: bounds)
+        let focusedElement = FocusedElementIdentity(
+            processIdentifier: identity.ownerProcessIdentifier,
+            windowID: identity.windowID,
+            role: "AXWindow",
+            title: "Captured window",
+            frame: bounds)
+        let drag = try ExactWindowDragRequest(
+            snapshotID: "ps1_0123456789abcdef0123456789abcdef",
+            target: .init(identity: identity, bounds: bounds, focusedElement: focusedElement),
+            from: CGPoint(x: 50, y: 60),
+            to: CGPoint(x: 100, y: 100),
+            steps: 5)
+        let request = PeekabooBridgeRequest.projectedAction(.init(request: .exactWindowDrag(drag)))
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .init(drag.dispatchedUnitCount))
+        let response = PeekabooBridgeResponse.projectedAction(.init(response: .ok, outcome: outcome.projection))
+        let forgedFocus: FocusedElementIdentity? = omitsFocus
+            ? nil
+            : .init(
+                processIdentifier: identity.ownerProcessIdentifier,
+                windowID: identity.windowID,
+                role: "AXWindow",
+                title: "Different window title",
+                frame: bounds)
+        let bundle = try await session.signedBundle(
+            authority: authority,
+            sequence: 0,
+            request: request,
+            response: response,
+            target: .window(identity),
+            focusedElement: forgedFocus,
+            outcome: outcome.projection)
+
+        #expect(throws: PeekabooBridgeOperationReceiptError.receiptMismatch("canonical target attribution")) {
+            try bundle.validateIntegrity()
         }
     }
 
