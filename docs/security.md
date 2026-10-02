@@ -83,7 +83,8 @@ If you disable the `clipboard` tool via allow/deny filters, the injected DESKTOP
   - `capture`: records retained screen/window/region frames, contact sheets, metadata, and optional MP4 files. Disable it when MCP or agent clients should not persist screen contents.
   - `click`, `type`, and `paste`: can trigger actions in foreground apps or target a background app when a safe receipt is known. Background clicks use Accessibility; background typed delivery requires Event Synthesizing. Direct CLI raw `press` requires either an exact window/focused-element receipt or explicit `--foreground` consent; background-only Agent/MCP accepts only an explicit fresh exact non-dialog snapshot.
   - `scroll`: targeted background scrolling prefers Accessibility. A fresh exact-window pixel snapshot may use retry-unsafe PID-routed wheel delivery only for visible WebKit-linked, non-Electron apps; targetless, smooth, and delayed scrolling require explicit foreground mode and Event Synthesizing.
-  - `drag`, `move`: manipulate the shared physical cursor, require explicit foreground consent, and need Event Synthesizing.
+  - `drag`: bounded linear background gestures require an explicit fresh exact-window snapshot and protocol 1.39, never move the physical cursor, and report unverified, retry-unsafe dispatch. Cross-window/app drops, modifiers, and human profiles require explicit foreground consent. Both routes need Event Synthesizing.
+  - `move`: manipulates the shared physical cursor, requires explicit foreground consent, and needs Event Synthesizing.
   - `window`, `app`, `menu_click`, `dock_launch`, `space`: can close apps, move windows, switch spaces.  
   - `permissions`: can prompt/alter macOS permissions flow; disable for locked-down sessions.  
   - `agent`: can cascade into other tools via MCP, but the nested invocation is always background-only and omits Shell.

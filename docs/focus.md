@@ -108,8 +108,10 @@ By default, Peekaboo will:
 Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, and `paste`
 default to background delivery when Peekaboo can resolve a target process. Raw `press` stays background only with a
 fresh exact-window/snapshot receipt; app/PID-only and targetless forms require `--foreground`. Targeted scroll stays
-background through Accessibility or a capability-gated exact-window WebKit route, while targetless/smooth scroll and
-all move/drag operations require explicit foreground mode.
+background through Accessibility or a capability-gated exact-window WebKit route. Bounded linear `drag --snapshot <id>`
+stays inside that exact window without activation on protocol 1.39 hosts; it reports unverified, retry-unsafe dispatch.
+Targetless/smooth scroll, `move`, and cross-window/app drag require explicit foreground mode, as do drag modifiers
+and human profiles.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).

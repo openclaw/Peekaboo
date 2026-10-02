@@ -229,6 +229,25 @@ test('generated guidance sources retain CLI and policy distinctions', () => {
   assert.match(pressMetadata, /never infers latest/);
 });
 
+test('drag guidance exposes bounded background delivery without implying effect verification', () => {
+  for (const path of [
+    'skills/peekaboo/SKILL.md',
+    'docs/quickstart.md',
+    'docs/focus.md',
+    'docs/security.md',
+    'docs/commands/tools.md',
+  ]) {
+    const source = read(path);
+    assert.match(source, /(?:Background `drag`|[Bb]ounded linear|`drag`: bounded linear)/, path);
+    assert.match(source, /unverified.*retry-unsafe/s, path);
+    assert.doesNotMatch(source, /all move\/drag operations require explicit foreground mode/, path);
+    assert.doesNotMatch(source, /such as `move` and `drag`, are omitted/, path);
+  }
+  const drag = read('docs/commands/drag.md');
+  assert.match(drag, /Background element IDs resolve immediately/);
+  assert.match(drag, /Only foreground mode may omit `--snapshot`/);
+});
+
 test('security and local-test guidance retain exact background exceptions', () => {
   const security = read('docs/security.md');
   const localTests = read('Apps/CLI/Tests/LOCAL_TESTS.md');

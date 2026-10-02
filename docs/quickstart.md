@@ -87,7 +87,7 @@ Targeted click and type use background delivery by default, so Safari can receiv
 `press` can stay background with a fresh exact-window/snapshot receipt; app/PID-only or targetless chords require
 explicit `--foreground`. Prefer semantic actions for background confirmation when one exists.
 
-Targeted `scroll --on <id>` is background-safe through Accessibility or, for a fresh exact-window pixel snapshot of a visible WebKit surface, PID-routed wheel events. The latter reports an unverifiable effect and must be observed before retry. Targetless/smooth scroll, `move`, and `drag` use the shared physical cursor and require explicit `--foreground`.
+Targeted `scroll --on <id>` is background-safe through Accessibility or, for a fresh exact-window pixel snapshot of a visible WebKit surface, PID-routed wheel events. The latter reports an unverifiable effect and must be observed before retry. Bounded linear `drag --snapshot <id>` also stays in the background on protocol 1.39 hosts when both endpoints are inside that exact window; coordinates are global logical points. Drag dispatch is unverified and retry-unsafe. Targetless/smooth scroll, `move`, and cross-window/app drag use the shared physical cursor and require explicit `--foreground`.
 
 ## 5. Run an agent
 

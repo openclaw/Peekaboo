@@ -32,7 +32,7 @@ Cross-window/application drops, modifiers, human movement, and shared physical c
 - Results count the routing primer, down, each accepted drag sample, and cleanup up. The complete count is `steps + 3`; interrupted drags retain the exact accepted prefix and target receipt with `indeterminate`/`completion_unknown` evidence, never a claim of verified drop or failed cleanup merely because the path stopped.
 - Input validation enforces “pick exactly one source and one destination flavor,” so you can’t accidentally mix coordinate + ID on the same side.
 - When you pass `--to-app`, the command resolves the app’s focused window via AX and drags to its midpoint; `Trash` is handled specially by scraping the Dock’s accessibility hierarchy.
-- Element IDs are resolved through `AutomationServiceBridge.waitForElement` (5 s timeout) and use the element’s bounds midpoint as the drag point.
+- Background element IDs resolve immediately from the supplied immutable snapshot; a missing ID refuses without waiting or input. Foreground IDs use `AutomationServiceBridge.waitForElement` (5 s timeout). Both use the element’s bounds midpoint as the drag point.
 - Modifiers are validated and normalized to `cmd|shift|option|ctrl|fn`; aliases `command|alt|control` are accepted.
 - `--profile human` chooses adaptive duration/samples and posts drag events along the generated curve; `--steps` is honored up to the 96-sample safety cap.
 - Results are logged in both human-readable form and JSON (`DragResult`) with start/end coordinates, duration, steps, modifiers, execution time, and `fromTargetPoint`/`toTargetPoint` diagnostics when either endpoint resolves from a snapshot element.
@@ -58,5 +58,5 @@ peekaboo drag --from row_1 --to row_5 --modifiers shift --foreground
 ## Troubleshooting
 - Verify Event Synthesizing permission (`peekaboo permissions status`).
 - Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
-- If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see` (or omit `--snapshot` to use the most recent one).
+- If you see `SNAPSHOT_NOT_FOUND`, observe again with `peekaboo see` and pass its new snapshot explicitly. Only foreground mode may omit `--snapshot` to use the most recent one.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
