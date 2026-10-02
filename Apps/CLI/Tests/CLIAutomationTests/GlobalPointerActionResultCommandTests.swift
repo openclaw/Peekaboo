@@ -9,9 +9,9 @@ import Testing
 @Suite(.serialized, .tags(.safe))
 @MainActor
 struct GlobalPointerActionResultCommandTests {
-    @Test(arguments: [false, true])
+    @Test(arguments: [nil, "source", "destination"] as [String?])
     func `background drag leases its snapshot and rejects missing IDs or replay without global input`(
-        missingElement: Bool
+        missingElement: String?
     ) async throws {
         let automation = ExactDragStubAutomationService()
         let context = TestServicesFactory.makeAutomationTestContext(automation: automation)
@@ -33,13 +33,26 @@ struct GlobalPointerActionResultCommandTests {
             ))
         ))
         let arguments = [
-            "drag", "--from", missingElement ? "missing-drag-element" : "10,20", "--to", "30,40",
+            "drag", "--from", missingElement == "source" ? "missing-source" : "10,20",
+            "--to", missingElement == "destination" ? "missing-destination" : "30,40",
             "--snapshot", snapshotID, "--json", "--no-remote",
         ]
         let first = try await InProcessCommandRunner.run(arguments, services: context.services)
         #expect(automation.waitForElementCalls.isEmpty)
-        if missingElement {
+        if let missingElement {
+            let firstJSON = try Self.jsonObject(first.stdout)
+            let error = try #require(firstJSON["error"] as? [String: Any])
+            let outcome = try #require(firstJSON["outcome"] as? [String: Any])
             #expect(first.exitStatus != 0)
+            #expect(error["code"] as? String == "ELEMENT_NOT_FOUND")
+            #expect((error["message"] as? String)?.contains("missing-\(missingElement)") == true)
+            #expect(outcome["state"] as? String == DesktopActionOutcome.State.refused.rawValue)
+            #expect(outcome["refusal_reason"] as? String == DesktopActionOutcome.RefusalReason.targetUnavailable
+                .rawValue)
+            #expect(outcome["dispatch_state"] as? String == "none")
+            #expect(outcome["mutation_dispatched"] as? Bool == false)
+            #expect(outcome["retry_safe"] as? Bool == true)
+            #expect(firstJSON["target_receipt"] == nil)
             #expect(automation.exactDragCalls.isEmpty)
             #expect(automation.dragCalls.isEmpty)
             #expect(automation.moveMouseCalls.isEmpty)

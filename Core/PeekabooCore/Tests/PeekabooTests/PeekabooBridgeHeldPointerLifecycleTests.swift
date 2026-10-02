@@ -30,6 +30,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         defer { Task { await fixture.host.stop() } }
         let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
         let handshake = try await client.handshake(client: Self.clientIdentity)
+        #expect(await client.exactWindowDragEnabled == handshake.supportsExactWindowDrag)
         let hold = fixture.automation.request
         let request = try ExactWindowDragRequest(
             snapshotID: "ps1_0123456789abcdef0123456789abcdef",

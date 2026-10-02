@@ -845,12 +845,7 @@ public actor PeekabooBridgeClient {
                     PeekabooBridgeOperation.createExactWindowHeldPointerOwner,
                     .beginExactWindowHeldPointer,
                 ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
-            exactWindowDragEnabled:
-            handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowDragVersion &&
-                handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.exactWindowDrag) == true &&
-                handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
-                handshake.supportedOperations.contains(.exactWindowDrag) &&
-                (handshake.enabledOperations ?? handshake.supportedOperations).contains(.exactWindowDrag),
+            exactWindowDragEnabled: handshake.supportsExactWindowDrag,
             exactWindowHeldPointerTerminalCleanupEnabled:
             handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion &&
                 handshake.hostCapabilities?.contains(

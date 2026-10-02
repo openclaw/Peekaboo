@@ -345,7 +345,10 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 snapshots: self.services.snapshots
             )
             guard let element = detection.elements.findById(elementId) else {
-                throw PeekabooError.elementNotFound("Element with ID '\(elementId)' not found in the drag snapshot")
+                throw self.preDispatchActionError(
+                    for: PeekabooError.elementNotFound("Element with ID '\(elementId)' not found in the drag snapshot"),
+                    reason: .targetUnavailable
+                )
             }
             return try await InteractionTargetPointResolver.elementCenterResolution(
                 element: element,

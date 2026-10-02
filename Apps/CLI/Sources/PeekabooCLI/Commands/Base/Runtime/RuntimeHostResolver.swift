@@ -967,7 +967,7 @@ extension RuntimeHostResolver {
                 : "Bridge host lacks foreground modifier-click",
             supportsExactWindowHeldPointerLifecycle:
             BridgeCapabilityPolicy.supportsExactWindowHeldPointerLifecycle(for: handshake),
-            supportsExactWindowDrag: BridgeCapabilityPolicy.supportsExactWindowDrag(for: handshake),
+            supportsExactWindowDrag: handshake.supportsExactWindowDrag,
             supportsPostEventPermissionRequest: BridgeCapabilityPolicy.supportsPostEventPermissionRequest(
                 for: handshake
             ),

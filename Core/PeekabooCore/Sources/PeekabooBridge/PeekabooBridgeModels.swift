@@ -449,6 +449,15 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     /// Listener-signed, peer-bound replay session for protocol 1.29 requests.
     public let operationSessionAttestation: PeekabooBridgeOperationSessionAttestation?
 
+    /// Negotiated drag support; authentication and live request admission remain transport/server-owned.
+    public var supportsExactWindowDrag: Bool {
+        self.negotiatedVersion >= PeekabooBridgeConstants.exactWindowDragVersion &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.exactWindowDrag) == true &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            self.supportedOperations.contains(.exactWindowDrag) &&
+            (self.enabledOperations ?? self.supportedOperations).contains(.exactWindowDrag)
+    }
+
     public init(
         negotiatedVersion: PeekabooBridgeProtocolVersion,
         hostKind: PeekabooBridgeHostKind,

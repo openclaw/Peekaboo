@@ -819,13 +819,6 @@ enum BridgeCapabilityPolicy {
             requiredOperations.isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations))
     }
 
-    static func supportsExactWindowDrag(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
-        handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowDragVersion &&
-            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.exactWindowDrag) == true &&
-            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
-            self.supportsOperation(.exactWindowDrag, for: handshake)
-    }
-
     static func supportsTargetedScroll(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 11),
               handshake.supportedOperations.contains(.targetedScroll)
