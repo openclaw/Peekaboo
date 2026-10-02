@@ -8,6 +8,44 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct VerifyStateTargetedPIDTests {
+    @Test(arguments: ["", "Verifier"])
+    func `unavailable native window titles do not constrain fresh AX verification`(nativeTitle: String) async throws {
+        let fixture = VerifyStateFixture()
+        let context = await fixture.context(results: [fixture.satisfiedResult, fixture.satisfiedResult])
+        let nativeWindow = fixture.systemWindowIdentity(
+            ownerProcessIdentifier: fixture.application.processIdentifier,
+            bounds: fixture.window.bounds,
+            title: nativeTitle)
+        let tool = fixture.tool(context: context, windowIdentityProvider: { _ in nativeWindow })
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "pid": Int(fixture.application.processIdentifier),
+            "window_id": fixture.window.windowID,
+            "predicates": [[
+                "kind": "element_value",
+                "selector": ["identifier": "document-content"],
+                "expected_value": "Ready",
+            ]],
+            "timeout_ms": 1000,
+        ]))
+
+        #expect(response.meta?.objectValue?["status"] == .string("satisfied"))
+        #expect(response.meta?.objectValue?["stable_samples"] == .int(2))
+        let contexts = fixture.inspectionContexts
+        #expect(contexts.count == 2)
+        for inspection in contexts {
+            #expect(inspection.applicationProcessId == fixture.application.processIdentifier)
+            #expect(inspection.applicationBundleId == fixture.application.bundleIdentifier)
+            #expect(inspection.windowID == fixture.window.windowID)
+            #expect(inspection.windowBounds == fixture.window.bounds)
+            #expect(inspection.windowTitle == (nativeTitle.isEmpty ? nil : nativeTitle))
+            #expect(inspection.shouldFocusWebContent == false)
+            #expect(inspection.includeMenuBarElements == false)
+            #expect(inspection.requiresFreshAccessibilityTree == true)
+            #expect(inspection.allowApplicationScopedAccessibilityFallback != true)
+        }
+    }
+
     @Test(arguments: [UInt64(11), UInt64(22)])
     func `complete inventory cannot prove absence when pinned PID becomes readable again`(
         restoredGeneration: UInt64) async throws

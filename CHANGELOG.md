@@ -11,6 +11,7 @@
 - Report conflicting concrete snapshot and target selectors in `set-value` and `action` as retry-safe, non-dispatched `INVALID_INPUT` refusals instead of unknown, unverifiable errors; clarify the targeting alternatives.
 - Keep app-launch bundle paths and selector proofs consistent across canonical spellings, fixing background verification under `/private/tmp` while preserving process-generation, ambiguity, and caller-local alias checks.
 - Bind companion-app installation and rollback quits to verified exact-path process generations, refusing ambiguous targets, inspection failures, and uncertain retries without raw PID signals. #874.
+- Fix Bridge verification when macOS hides the caller's window title, preserving exact process/window identity, fresh Accessibility reads, and strict signed-receipt validation.
 
 ## 4.7.0 - 2026-09-29
 

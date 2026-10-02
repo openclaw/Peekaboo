@@ -184,9 +184,7 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
             capturedBounds: fixture.windowIdentity.capturedBounds)
         let contradictorySelectors = [
             WindowContext(applicationName: "Other", windowID: fixture.windowIdentity.windowID),
-            WindowContext(
-                applicationName: "/Applications/Other.app",
-                windowID: fixture.windowIdentity.windowID),
+            WindowContext(applicationName: "/Applications/Other.app", windowID: fixture.windowIdentity.windowID),
             WindowContext(
                 applicationName: "/Applications/Fixture.app/Contents/MacOS/other",
                 windowID: fixture.windowIdentity.windowID),
@@ -195,6 +193,7 @@ struct PeekabooBridgeTypedResultReceiptBindingTests {
                 applicationProcessId: fixture.windowIdentity.ownerProcessIdentifier + 1,
                 windowID: fixture.windowIdentity.windowID),
             WindowContext(windowTitle: "Other", windowID: fixture.windowIdentity.windowID),
+            WindowContext(windowTitle: "", windowID: fixture.windowIdentity.windowID),
             WindowContext(windowID: fixture.windowIdentity.windowID + 1),
             WindowContext(
                 windowID: fixture.windowIdentity.windowID,

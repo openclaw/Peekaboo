@@ -193,11 +193,12 @@ extension VerifyStateTool {
                     accessibilityEvidence: nil)
             }
 
+            // CoreGraphics may hide the caller's title even when the Bridge host can read it through AX.
             let context = WindowContext(
                 applicationName: application.name,
                 applicationBundleId: application.bundleIdentifier,
                 applicationProcessId: application.processIdentifier,
-                windowTitle: window.title,
+                windowTitle: window.title.isEmpty ? nil : window.title,
                 windowID: window.windowID,
                 windowBounds: window.bounds,
                 shouldFocusWebContent: false,
