@@ -288,6 +288,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
             .targetedHotkey,
             .exactWindowTargetedHotkey,
             .beginExactWindowHeldPointer,
+            .exactWindowDrag,
             .releaseExactWindowHeldPointer,
             .revokeExactWindowHeldPointer,
             .disconnectExactWindowHeldPointerOwner,

@@ -18,7 +18,7 @@ struct PeekabooMCPServerTests {
         let server = try await makeServer()
         let names = await server.registeredToolNamesForTesting()
 
-        #expect(names.count == 24)
+        #expect(names.count == 25)
         #expect(names == names.sorted())
         #expect(names.contains("capture"))
         #expect(names.contains("image"))
@@ -30,7 +30,8 @@ struct PeekabooMCPServerTests {
         #expect(names.contains("set_value"))
         #expect(names.contains("action"))
         #expect(names.contains("press"))
-        #expect(Set(names).isDisjoint(with: ["drag", "move"]))
+        #expect(names.contains("drag"))
+        #expect(!names.contains("move"))
         #expect(!names.contains("hotkey"))
         #expect(!names.contains("swipe"))
     }
@@ -541,7 +542,7 @@ struct PeekabooMCPServerTests {
 
         do {
             let (tools, _) = try await session.client.listTools()
-            #expect(tools.count == 24)
+            #expect(tools.count == 25)
 
             for (index, tool) in tools.sorted(by: { $0.name < $1.name }).enumerated() {
                 guard case let .object(schema) = tool.inputSchema else {

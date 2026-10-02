@@ -76,6 +76,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case exactWindowTargetedHotkey
     case createExactWindowHeldPointerOwner
     case beginExactWindowHeldPointer
+    case exactWindowDrag
     case releaseExactWindowHeldPointer
     case revokeExactWindowHeldPointer
     case disconnectExactWindowHeldPointerOwner
@@ -266,6 +267,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
                 .disconnectExactWindowHeldPointerOwner,
             ])
         }
+        if version < PeekabooBridgeConstants.exactWindowDragVersion {
+            compatible.remove(.exactWindowDrag)
+        }
         if version < PeekabooBridgeConstants.agentExecutionTraceVersion {
             compatible.remove(.agentExecutionTrace)
         }
@@ -402,6 +406,7 @@ public enum PeekabooBridgeHostCapability {
     public static let attestedOperationReceipts = "attestedOperationReceipts"
     public static let plannerInventoryTransport = "plannerInventoryTransport"
     public static let exactWindowHeldPointerLifecycle = "exactWindowHeldPointerLifecycle"
+    public static let exactWindowDrag = "exactWindowDrag"
     public static let statelessClickVariants = "statelessClickVariants"
     public static let agentExecutionTrace = "agentExecutionTrace"
     public static let processGenerationObservation = "processGenerationObservation"

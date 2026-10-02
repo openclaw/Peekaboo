@@ -62,6 +62,7 @@ extension PeekabooBridgeOperation {
         .exactWindowTargetedHotkey,
         .createExactWindowHeldPointerOwner,
         .beginExactWindowHeldPointer,
+        .exactWindowDrag,
         .releaseExactWindowHeldPointer,
         .revokeExactWindowHeldPointer,
         .disconnectExactWindowHeldPointerOwner,

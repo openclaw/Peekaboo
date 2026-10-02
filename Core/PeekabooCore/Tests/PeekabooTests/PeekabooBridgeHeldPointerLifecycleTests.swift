@@ -14,6 +14,125 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
         processIdentifier: getpid())
 
     @Test
+    func `drag transport budget includes bounded movement cleanup and receipt headroom`() {
+        #expect(PeekabooBridgeClient.exactWindowDragRequestTimeout(
+            defaultTimeoutSec: 10, durationMilliseconds: 10000) == 13)
+        #expect(PeekabooBridgeClient.exactWindowDragRequestTimeout(
+            defaultTimeoutSec: 10, durationMilliseconds: 500) == 10)
+        #expect(PeekabooBridgeClient.exactWindowDragRequestTimeout(
+            defaultTimeoutSec: 30, durationMilliseconds: 10000) == 30)
+    }
+
+    @Test(arguments: [38, 39])
+    func `one shot drag is separately gated and carries exact signed count`(minor: Int) async throws {
+        let fixture = await self.makeHost(protocolVersion: .init(major: 1, minor: minor))
+        try await fixture.host.startChecked()
+        defer { Task { await fixture.host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
+        let handshake = try await client.handshake(client: Self.clientIdentity)
+        let hold = fixture.automation.request
+        let request = try ExactWindowDragRequest(
+            snapshotID: "ps1_0123456789abcdef0123456789abcdef",
+            target: .init(identity: hold.windowIdentity, bounds: hold.windowBounds),
+            from: hold.point,
+            to: CGPoint(x: 100, y: 100),
+            steps: 5)
+        #expect(handshake.supportedOperations.contains(.exactWindowDrag) == (minor == 39))
+        if minor == 38 {
+            await #expect(throws: DesktopActionFailure.self) { _ = try await client.dragExactWindow(request) }
+            #expect(await fixture.automation.dragCount == 0)
+        } else {
+            let result = try await client.dragExactWindow(request)
+            #expect(result.outcome?.state == .dispatchedUnverified)
+            #expect(result.outcome?.dispatchState.unitCount?.rawValue == 8)
+            #expect(result.targetIdentity == DesktopTargetIdentity(exactWindow: request.target))
+            #expect(await fixture.automation.dragCount == 1)
+            try #require(await client.lastOperationReceiptBundle()).validate()
+        }
+    }
+
+    @Test
+    func `one shot drag semantics reject global delivery and counts outside bounded request`() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 200, height: 200)
+        let request = try PeekabooBridgeRequest.exactWindowDrag(.init(
+            snapshotID: "ps1_0123456789abcdef0123456789abcdef",
+            target: .init(identity: .init(
+                windowID: 7,
+                ownerProcessIdentifier: 8,
+                ownerProcessStartIdentity: 9,
+                capturedBounds: bounds), bounds: bounds),
+            from: CGPoint(x: 10, y: 10),
+            to: CGPoint(x: 100, y: 100),
+            steps: 5))
+        for count in 1...9 {
+            let delivery = DesktopActionOutcome.Delivery(mechanism: .windowTargetedEvents, mode: .background)
+            #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                .dispatchedUnverified(
+                    route: .bridge,
+                    delivery: delivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: .init(count)),
+                request: request) == (count == 8))
+            #expect(PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+                DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: delivery,
+                    evidence: .completionUnknown,
+                    unitCount: .init(count),
+                    message: "prefix").outcome,
+                request: request) == (count <= 8))
+            #expect(!PeekabooBridgeOperationResultSemantics.failureOutcomeMatchesContract(
+                DesktopActionFailure.partial(
+                    route: .bridge,
+                    delivery: delivery,
+                    unitCount: .init(count),
+                    message: "Unproven primary effect").outcome,
+                request: request))
+        }
+        #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+            .dispatchedUnverified(
+                route: .bridge,
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted,
+                unitCount: .init(8)), request: request))
+    }
+
+    @Test
+    func `signed interrupted drag retains prefix without verified effect evidence`() async throws {
+        let fixture = await self.makeHost(protocolVersion: PeekabooBridgeConstants.protocolVersion)
+        try await fixture.host.startChecked()
+        defer { Task { await fixture.host.stop() } }
+        let client = TrustedBridgeClientFixture.make(socketPath: fixture.socketPath, requestTimeoutSec: 2)
+        _ = try await client.handshake(client: Self.clientIdentity)
+        let hold = fixture.automation.request
+        let request = try ExactWindowDragRequest(
+            snapshotID: "ps1_0123456789abcdef0123456789abcdef",
+            target: .init(identity: hold.windowIdentity, bounds: hold.windowBounds),
+            from: hold.point,
+            to: CGPoint(x: 100, y: 100),
+            steps: 5)
+        await MainActor.run {
+            fixture.automation.dragFailure = .indeterminate(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .init(4),
+                message: "Interrupted after one sample and cleanup")
+                .attributed(to: request.target.identity.actionTargetReceipt)
+        }
+        do {
+            _ = try await client.dragExactWindow(request)
+            Issue.record("Expected interrupted drag")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 4)
+            #expect(failure.targetReceipt == request.target.identity.actionTargetReceipt)
+        }
+        try #require(await client.lastOperationReceiptBundle()).validate()
+        #expect(await fixture.automation.dragCount == 1)
+    }
+
+    @Test
     func `held lifecycle keeps success counts exact while admitting truthful failure progress`() throws {
         let bounds = CGRect(x: 10, y: 20, width: 100, height: 80)
         let identity = WindowMutationIdentity(
@@ -602,6 +721,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
             let services = StubServices(
                 automation: automation,
                 ownedDesktopOperationLanes: [
+                    .exactWindowDrag,
                     .beginExactWindowHeldPointer,
                     .releaseExactWindowHeldPointer,
                     .revokeExactWindowHeldPointer,
@@ -614,6 +734,7 @@ struct PeekabooBridgeHeldPointerLifecycleTests {
                 allowlistedBundles: [],
                 supportedVersions: protocolVersion...protocolVersion,
                 allowedOperations: [
+                    .exactWindowDrag,
                     .targetedClick,
                     .exactWindowTargetedClick,
                     .createExactWindowHeldPointerOwner,
@@ -663,9 +784,13 @@ private final class HeldPointerPermissionState: @unchecked Sendable {
 @MainActor
 private final class HeldPointerBridgeAutomationStub:
     ExactWindowHeldPointerLifecycleServiceProtocol,
+    ExactWindowDragServiceProtocol,
     ExactWindowTargetedClickServiceProtocol
 {
     let supportsExactWindowHeldPointerLifecycle: Bool
+    let supportsExactWindowDrag = true
+    private(set) var dragCount = 0
+    var dragFailure: DesktopActionFailure?
     let supportsStatelessClickVariants: Bool
     let supportsExactWindowTargetedClicks = true
     private(set) var createCount = 0
@@ -680,6 +805,23 @@ private final class HeldPointerBridgeAutomationStub:
         [:]
     private var failed: [ExactWindowHeldPointerOwner: (ExactWindowHeldPointerReceipt, DesktopActionFailure)] = [:]
     let request: ExactWindowHeldPointerRequest
+
+    func dragExactWindow(
+        _ request: ExactWindowDragRequest,
+        boundTo _: ApplicationProcessIdentity?) async throws -> UIAutomationActionResult<Void>
+    {
+        self.dragCount += 1
+        if let dragFailure {
+            throw dragFailure
+        }
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .init(request.dispatchedUnitCount)),
+            targetIdentity: DesktopTargetIdentity(exactWindow: request.target))
+    }
 
     init(
         supportsStatelessClickVariants: Bool,

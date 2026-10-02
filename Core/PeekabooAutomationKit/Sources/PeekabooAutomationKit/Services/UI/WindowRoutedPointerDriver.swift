@@ -285,6 +285,7 @@ struct WindowRoutedPointerDriver {
             point)
         guard receipt.identity == target.identity,
               receipt.bounds == target.bounds,
+              receipt.screenPoint == point,
               receipt.windowLayer == Int(CGWindowLevelForKey(.normalWindow)),
               receipt.bounds.contains(point)
         else {
@@ -351,6 +352,40 @@ struct WindowRoutedPointerDriver {
             transport: dispatch.transport,
             postedEventCount: &postedEventCount)
         return postedEventCount
+    }
+
+    /// Advances a held route only after this one drag sample has been accepted. Cleanup retains
+    /// the original generation and the last accepted point if a later sample fails.
+    func postHeldMove(_ dispatch: HeldPointerDispatch, to point: CGPoint) throws -> HeldPointerDispatch {
+        guard point.x.isFinite, point.y.isFinite, dispatch.receipt.bounds.contains(point) else {
+            throw PeekabooError.operationError(message: "Drag sample must be finite and inside the exact window")
+        }
+        guard self.hasPostEventAccess() else { throw PeekabooError.permissionDeniedEventSynthesizing }
+        guard self.processGenerationIsCurrent(dispatch.receipt) else {
+            throw PeekabooError.snapshotStale("Original held-pointer process generation changed")
+        }
+        let receipt = RouteReceipt(
+            identity: dispatch.receipt.identity,
+            bounds: dispatch.receipt.bounds,
+            screenPoint: point,
+            windowLayer: dispatch.receipt.windowLayer)
+        var count = 0
+        try self.post(
+            EventSpecification(
+                type: dispatch.down.button == .right ? .rightMouseDragged : .leftMouseDragged,
+                button: dispatch.down.button,
+                clickState: 1,
+                buttonNumber: dispatch.down.buttonNumber),
+            receipt: receipt,
+            clickGroup: dispatch.clickGroup,
+            transport: dispatch.transport,
+            postedEventCount: &count)
+        return HeldPointerDispatch(
+            receipt: receipt,
+            clickGroup: dispatch.clickGroup,
+            transport: dispatch.transport,
+            down: dispatch.down,
+            up: dispatch.up)
     }
 
     func heldPointerRouteState(_ dispatch: HeldPointerDispatch) -> HeldPointerRouteState {
@@ -576,6 +611,8 @@ struct WindowRoutedPointerDriver {
         }
 
         Self.stampRoutingFields(on: event, receipt: receipt, clickGroup: clickGroup)
+        // Background pointer input never borrows a user's physically held modifiers.
+        event.flags = []
         Self.setIntegerField(1, clickState: specification.clickState, on: event)
         Self.setIntegerField(3, clickState: specification.buttonNumber, on: event)
         Self.setIntegerField(7, clickState: 3, on: event)

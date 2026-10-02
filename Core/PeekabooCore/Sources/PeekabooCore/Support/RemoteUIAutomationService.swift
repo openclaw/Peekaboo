@@ -45,6 +45,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsForegroundModifierClickSnapshotLease: Bool
     public let foregroundModifierClickUnavailableReason: String?
     public let supportsExactWindowHeldPointerLifecycle: Bool
+    public let supportsExactWindowDrag: Bool
     public let supportsSetValueResultTargetBinding: Bool
 
     public init(
@@ -77,6 +78,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         supportsForegroundModifierClick: Bool = false,
         foregroundModifierClickUnavailableReason: String? = nil,
         supportsExactWindowHeldPointerLifecycle: Bool = false,
+        supportsExactWindowDrag: Bool = false,
         supportsSetValueResultTargetBinding: Bool = false)
     {
         self.client = client
@@ -109,6 +111,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsForegroundModifierClickSnapshotLease = supportsForegroundModifierClick
         self.foregroundModifierClickUnavailableReason = foregroundModifierClickUnavailableReason
         self.supportsExactWindowHeldPointerLifecycle = supportsExactWindowHeldPointerLifecycle
+        self.supportsExactWindowDrag = supportsExactWindowDrag
         self.supportsSetValueResultTargetBinding = supportsSetValueResultTargetBinding
     }
 
@@ -736,6 +739,15 @@ ElementActionAutomationServiceProtocol {
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
+    }
+}
+
+extension RemoteUIAutomationService: ExactWindowDragServiceProtocol {
+    public func dragExactWindow(
+        _ request: ExactWindowDragRequest,
+        boundTo _: ApplicationProcessIdentity? = nil) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.client.dragExactWindow(request)
     }
 }
 

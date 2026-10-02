@@ -5,6 +5,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let screenCaptureKitOwnershipDiagnostics: Bool
     let statelessClickVariants: Bool
     let exactWindowHeldPointerLifecycle: Bool
+    let exactWindowDrag: Bool
     let nativeBrowserConnectionBinding: Bool
     let browserConnectionHandoff: Bool
     let producerBoundSnapshotReferences: Bool
@@ -26,6 +27,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         protocolVersion: PeekabooBridgeConstants.protocolVersion,
         statelessClickVariants: true,
         exactWindowHeldPointerLifecycle: true,
+        exactWindowDrag: true,
         nativeBrowserConnectionBinding: true,
         browserConnectionHandoff: true,
         producerBoundSnapshotReferences: true,
@@ -40,6 +42,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         protocolVersion: PeekabooBridgeProtocolVersion,
         statelessClickVariants: Bool,
         exactWindowHeldPointerLifecycle: Bool,
+        exactWindowDrag: Bool = false,
         nativeBrowserConnectionBinding: Bool = false,
         browserConnectionHandoff: Bool = false,
         producerBoundSnapshotReferences: Bool = false,
@@ -54,6 +57,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.screenCaptureKitOwnershipDiagnostics = screenCaptureKitOwnershipDiagnostics
         self.statelessClickVariants = statelessClickVariants
         self.exactWindowHeldPointerLifecycle = exactWindowHeldPointerLifecycle
+        self.exactWindowDrag = exactWindowDrag
         self.nativeBrowserConnectionBinding = nativeBrowserConnectionBinding
         self.browserConnectionHandoff = browserConnectionHandoff
         self.producerBoundSnapshotReferences = producerBoundSnapshotReferences

@@ -309,6 +309,22 @@ and cleanup outcomes through signed operation receipts, and refuse zero-dispatch
 The host retains the exact-window write lane until terminal cleanup; a short watchdog handles expiry, window drift,
 client-generation exit, and target-generation exit without ever posting mouse-up to a recycled PID.
 
+Protocol `1.39` adds the separately capability-gated `exactWindowDrag` operation. One request carries a fresh snapshot,
+its immutable exact-window receipt, two finite in-window global logical points, a 1–10000 ms duration, and 1–96 linear
+drag samples. The existing held-pointer owner retains the window lane through primer, down, movement, and one terminal
+up; no outer Bridge lane is acquired. Each successful sample advances the owner's retained cleanup point and count.
+Cancellation and drift await that same owner's terminal cleanup, while PID recycling suppresses cleanup entirely.
+Success is window-targeted background `dispatchedUnverified` with exactly `steps + 3` accepted units. Failure retains
+the bounded accepted prefix and target with indeterminate completion evidence; an up event never certifies a drop. Older or receiptless hosts are rejected
+before dispatch, and the protocol-1.30 fixed-point begin/release counts and payloads are unchanged.
+
+The drag client's total request deadline is at least the requested duration plus three seconds, or the configured
+timeout when longer. This budget includes client queueing, host lane admission, the gesture, cleanup, and receipt;
+it does not restart when the lane opens. The existing held-owner watchdog starts before window-lane acquisition and
+expires after the requested duration plus two seconds. A long lane wait can therefore refuse before down or interrupt
+a later gesture. Cancellation waits for the same owner's cleanup; transport timeout, disconnect, or a lost signed
+response remains retry-unsafe when dispatch may have begun, never a reason to repeat the drag automatically.
+
 Protocol `1.31` adds the capability-gated `agentExecutionTrace` operation for one long-running, signed background Agent
 execution. It is a single Bridge request from launch through terminal reap, not a prepare/start or other two-call
 lifecycle. The host derives the executable from the exact authenticated Peekaboo CLI peer and accepts only the task and

@@ -218,7 +218,7 @@ final class ExactWindowHeldPointerLifecycle {
         var lifecycleTask: Task<Void, Never>?
         var watchdogTask: Task<Void, Never>?
         var dispatch: WindowRoutedPointerDriver.HeldPointerDispatch?
-        var downUnitCount = 0
+        var dispatchedUnitCount = 0
         var completedAt: Date?
     }
 
@@ -229,6 +229,7 @@ final class ExactWindowHeldPointerLifecycle {
     private let monotonicNow: @MainActor @Sendable () -> ContinuousClock.Instant
     private let watchdogSleeper: @MainActor @Sendable () async throws -> Void
     private let beginResolutionHook: @MainActor @Sendable () async -> Void
+    private let dragSleeper: @MainActor @Sendable (Duration) async throws -> Void
     private let ownerCapacity: Int
     private let terminalRetentionCapacity: Int
     private let terminalRetentionDuration: TimeInterval
@@ -245,6 +246,9 @@ final class ExactWindowHeldPointerLifecycle {
             try await Task.sleep(for: .milliseconds(20))
         },
         beginResolutionHook: @escaping @MainActor @Sendable () async -> Void = {},
+        dragSleeper: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        },
         ownerCapacity: Int = 1024,
         terminalRetentionCapacity: Int = 256,
         terminalRetentionDuration: TimeInterval = 60)
@@ -256,6 +260,7 @@ final class ExactWindowHeldPointerLifecycle {
         self.monotonicNow = monotonicNow
         self.watchdogSleeper = watchdogSleeper
         self.beginResolutionHook = beginResolutionHook
+        self.dragSleeper = dragSleeper
         self.ownerCapacity = max(1, ownerCapacity)
         self.terminalRetentionCapacity = max(1, terminalRetentionCapacity)
         self.terminalRetentionDuration = max(0, terminalRetentionDuration)
@@ -276,7 +281,8 @@ final class ExactWindowHeldPointerLifecycle {
 
     func begin(
         owner: ExactWindowHeldPointerOwner,
-        request: ExactWindowHeldPointerRequest) async throws
+        request: ExactWindowHeldPointerRequest,
+        validateTarget: @escaping @MainActor @Sendable () async throws -> Void = {}) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
     {
         self.pruneTerminalHolds()
@@ -292,7 +298,7 @@ final class ExactWindowHeldPointerLifecycle {
         _ = try UIAutomationTarget.ExactWindow(
             identity: request.windowIdentity,
             bounds: request.windowBounds)
-        guard request.windowBounds.contains(request.point) else {
+        guard request.point.x.isFinite, request.point.y.isFinite, request.windowBounds.contains(request.point) else {
             throw ExactWindowHeldPointerLifecycleError.operationFailed(
                 "Held pointer point is outside the exact target window bounds")
         }
@@ -319,7 +325,7 @@ final class ExactWindowHeldPointerLifecycle {
 
         let lifecycleTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.runHold(token: token, request: request)
+            await self.runHold(token: token, request: request, validateTarget: validateTarget)
         }
         self.holds[token]?.lifecycleTask = lifecycleTask
 
@@ -397,6 +403,128 @@ final class ExactWindowHeldPointerLifecycle {
         }
     }
 
+    /// Internal owner-authorized movement; there is intentionally no split-move SDK or wire API.
+    /// No suspension separates terminal admission, posting, and retained progress publication.
+    func move(owner: ExactWindowHeldPointerOwner, receipt: ExactWindowHeldPointerReceipt, to point: CGPoint) throws {
+        guard var hold = self.holds[receipt.token], hold.owner == owner,
+              hold.receipt == receipt, self.owners[owner]?.activeToken == receipt.token,
+              hold.terminalSignal.resolvedValue == nil, hold.completedAt == nil,
+              let dispatch = hold.dispatch
+        else { throw ExactWindowHeldPointerLifecycleError.receiptMismatch }
+        guard !Task.isCancelled else {
+            self.signalTerminal(token: receipt.token, reason: .callerCancelled)
+            throw CancellationError()
+        }
+        if let reason = self.preDispatchTerminalReason(hold: hold) {
+            self.signalTerminal(token: receipt.token, reason: reason)
+            throw ExactWindowHeldPointerLifecycleError.operationFailed("Held pointer is already terminal")
+        }
+        hold.dispatch = try self.pointerDriver.postHeldMove(dispatch, to: point)
+        hold.dispatchedUnitCount += 1
+        self.holds[receipt.token] = hold
+    }
+
+    func drag(
+        request: ExactWindowDragRequest,
+        boundTo processIdentity: ApplicationProcessIdentity?,
+        validateTarget: @escaping @MainActor @Sendable () async throws -> Void = {}) async throws
+        -> UIAutomationActionResult<Void>
+    {
+        try Task.checkCancellation()
+        try request.validate()
+        let target = DesktopTargetIdentity(exactWindow: request.target)
+        let owner = try self.createOwner(boundTo: processIdentity)
+        do {
+            let started = try await self.begin(
+                owner: owner,
+                request: .init(
+                    point: request.from,
+                    windowIdentity: request.target.identity,
+                    windowBounds: request.target.bounds,
+                    button: request.button,
+                    expiresAfterSeconds: Double(request.durationMilliseconds) / 1000 + 2),
+                validateTarget: validateTarget)
+            let receipt = started.payload
+            let termination: ExactWindowHeldPointerTermination
+            do {
+                termination = try await withTaskCancellationHandler {
+                    for index in 1...request.steps {
+                        try await self.dragSleeper(.seconds(
+                            Double(request.durationMilliseconds) / 1000 / Double(request.steps)))
+                        let fraction = CGFloat(index) / CGFloat(request.steps)
+                        let point = CGPoint(
+                            x: request.from.x + (request.to.x - request.from.x) * fraction,
+                            y: request.from.y + (request.to.y - request.from.y) * fraction)
+                        try self.move(owner: owner, receipt: receipt, to: point)
+                    }
+                    try Task.checkCancellation()
+                    if let dispatch = self.holds[receipt.token]?.dispatch {
+                        switch self.pointerDriver.heldPointerRouteState(dispatch) {
+                        case .current: break
+                        case .windowChanged:
+                            self.signalTerminal(token: receipt.token, reason: .windowChanged)
+                        case .processGenerationChanged:
+                            self.signalTerminal(token: receipt.token, reason: .processGenerationChanged)
+                        }
+                    }
+                    return try await self.release(owner: owner, receipt: receipt)
+                } onCancel: {
+                    Task { @MainActor [weak self] in
+                        self?.signalTerminal(token: receipt.token, reason: .callerCancelled)
+                    }
+                }
+            } catch {
+                // The existing lifecycle owner alone sends mouse-up, even if cancellation,
+                // watchdog expiry, or a failed sample won the terminal race.
+                let terminal = try await self.revoke(owner: owner, receipt: receipt)
+                throw self.dragInterrupted(terminal, cause: error.localizedDescription)
+            }
+            guard termination.reason == .released,
+                  termination.lifecycleDispatchedUnitCount == request.dispatchedUnitCount
+            else { throw self.dragInterrupted(termination, cause: termination.reason.rawValue) }
+            _ = try await self.disconnect(owner: owner)
+            return UIAutomationActionResult(
+                payload: (),
+                outcome: .dispatchedUnverified(
+                    delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .init(termination.lifecycleDispatchedUnitCount)),
+                targetIdentity: target)
+        } catch {
+            _ = try? await self.disconnect(owner: owner)
+            if let failure = error as? DesktopActionFailure {
+                if failure.outcome.dispatchState.mutationDispatched, failure.outcome.state != .indeterminate {
+                    // Split holds retain their existing cleanup contract. A one-shot drag has
+                    // no receiver proof of a primary effect, even when its accepted prefix is known.
+                    throw DesktopActionFailure.indeterminate(
+                        route: failure.outcome.route,
+                        delivery: failure.outcome.delivery,
+                        evidence: .completionUnknown,
+                        unitCount: failure.outcome.dispatchState.unitCount,
+                        message: failure.message,
+                        hint: "Observe the exact target before retrying; the drag effect is unknown.",
+                        causeDescription: failure.causeDescription)
+                        .attributed(to: target.actionTargetReceipt)
+                }
+                throw failure.attributed(to: target.actionTargetReceipt)
+            }
+            throw error
+        }
+    }
+
+    private func dragInterrupted(
+        _ termination: ExactWindowHeldPointerTermination,
+        cause: String) -> DesktopActionFailure
+    {
+        .indeterminate(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .init(termination.lifecycleDispatchedUnitCount),
+            message: "Exact-window drag stopped after an accepted prefix; its effect is unknown.",
+            hint: "Observe the exact target before another action; mouse-up does not prove the requested drop.",
+            causeDescription: cause)
+    }
+
     private func terminate(
         owner: ExactWindowHeldPointerOwner,
         receipt: ExactWindowHeldPointerReceipt,
@@ -425,12 +553,17 @@ final class ExactWindowHeldPointerLifecycle {
         }
     }
 
-    private func runHold(token: UUID, request: ExactWindowHeldPointerRequest) async {
+    private func runHold(
+        token: UUID,
+        request: ExactWindowHeldPointerRequest,
+        validateTarget: @escaping @MainActor @Sendable () async throws -> Void) async
+    {
         guard let hold = self.holds[token] else { return }
         var completedTerminal: TerminalResolution?
         var completedReason: ExactWindowHeldPointerTerminalReason?
         do {
             try await self.laneCoordinator.run(scope: .window(request.windowIdentity), access: .write) {
+                try await validateTarget()
                 guard hold.terminalSignal.resolvedValue == nil else {
                     throw ExactWindowHeldPointerLifecycleError.cancelledBeforeDispatch
                 }
@@ -457,18 +590,20 @@ final class ExactWindowHeldPointerLifecycle {
                 }
                 let downUnits = try await self.pointerDriver.postHeldDown(dispatch)
                 self.holds[token]?.dispatch = dispatch
-                self.holds[token]?.downUnitCount = downUnits
+                self.holds[token]?.dispatchedUnitCount = downUnits
                 hold.start.resolve(.started(hold.receipt, dispatchedUnitCount: downUnits))
                 self.startWatchdog(token: token)
 
                 let reason = await hold.terminalSignal.wait()
                 completedReason = reason
                 self.holds[token]?.watchdogTask?.cancel()
-                completedTerminal = self.finishHold(
-                    hold: hold,
-                    dispatch: dispatch,
-                    downUnitCount: downUnits,
-                    reason: reason)
+                if let current = self.holds[token], let lastDispatch = current.dispatch {
+                    completedTerminal = self.finishHold(
+                        hold: current,
+                        dispatch: lastDispatch,
+                        downUnitCount: current.dispatchedUnitCount,
+                        reason: reason)
+                }
             }
         } catch {
             let failure = self.startFailure(error)
@@ -486,7 +621,7 @@ final class ExactWindowHeldPointerLifecycle {
             } else {
                 completedTerminal = .failed(self.terminalFailure(
                     error,
-                    downUnitCount: self.holds[token]?.downUnitCount ?? 0))
+                    downUnitCount: self.holds[token]?.dispatchedUnitCount ?? 0))
             }
         }
         self.holds[token]?.watchdogTask?.cancel()

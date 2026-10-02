@@ -1,9 +1,11 @@
 import Foundation
 import MCP
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 struct DragRequest {
+    let foreground: Bool
     let fromTarget: DragLocationInput
     let toTarget: DragLocationInput
     let snapshotId: String?
@@ -15,14 +17,14 @@ struct DragRequest {
     let profile: MovementProfileOption
 
     init(arguments: ToolArguments) throws {
-        guard arguments.getBool("foreground") == true else {
-            throw DragToolError(
-                "drag changes the shared physical cursor and requires foreground=true.")
-        }
+        let foreground = arguments.getBool("foreground") == true
         let fromElement = arguments.getString("from")
         let fromCoords = arguments.getString("from_coords")
         let toElement = arguments.getString("to")
         let toCoords = arguments.getString("to_coords")
+        guard fromElement == nil || fromCoords == nil, toElement == nil || toCoords == nil else {
+            throw DragToolError("Specify exactly one input form for each drag endpoint.")
+        }
 
         guard let fromTarget = DragLocationInput(element: fromElement, coordinates: fromCoords) else {
             throw DragToolError("Must specify either 'from' or 'from_coords' for the start point.")
@@ -61,6 +63,19 @@ struct DragRequest {
             }
         }
 
+        if !foreground {
+            guard let snapshot = arguments.getString("snapshot"), SnapshotReference(rawValue: snapshot) != nil
+            else { throw DragToolError("Background drag requires one explicit fresh snapshot ID.") }
+            guard arguments.getString("to_app") == nil, arguments.getString("modifiers") == nil,
+                  profileName == "linear"
+            else { throw DragToolError("Cross-app drops, modifiers, and human movement require foreground=true.") }
+            guard ExactWindowDragRequest.durationMillisecondsRange.contains(durationOverride ?? 500),
+                  ExactWindowDragRequest.sampleCountRange.contains(stepsOverride ?? 20)
+            else {
+                throw DragToolError("Background drag accepts 1...10000 milliseconds and 1...96 steps.")
+            }
+        }
+        self.foreground = foreground
         self.fromTarget = fromTarget
         self.toTarget = toTarget
         self.snapshotId = arguments.getString("snapshot")

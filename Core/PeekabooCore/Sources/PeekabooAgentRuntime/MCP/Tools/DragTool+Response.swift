@@ -17,7 +17,7 @@ extension DragTool {
         let distance = sqrt(deltaX * deltaX + deltaY * deltaY)
 
         var message = """
-        \(AgentDisplayTokens.Status.success) Performed drag and drop from \(from.description) to \(to.description)
+        \(AgentDisplayTokens.Status.success) Dispatched drag from \(from.description) to \(to.description)
         """
         message += " using \(movement.profileName) profile"
         if let modifiers = request.modifiers, !modifiers.isEmpty {
@@ -26,6 +26,7 @@ extension DragTool {
         message += " over \(movement.duration)ms with \(movement.steps) steps"
         message += " (distance: \(String(format: "%.1f", distance))px)"
         message += " in \(String(format: "%.2f", executionTime))s"
+        message += ". Observe the target to verify the drop; delivery is unverified and unsafe to retry blindly."
 
         var metaData: [String: Value] = [
             "from": .object([
@@ -55,6 +56,7 @@ extension DragTool {
         if let invalidatedSnapshotID = context.invalidatedSnapshotID {
             metaData["invalidated_snapshot"] = .string(invalidatedSnapshotID)
         }
+        metaData = try MCPDesktopTargetMetadataProjector.fields(context.actionResult.targetIdentity, merging: metaData)
 
         let summary = ToolEventSummary(
             targetApp: request.targetApp ?? to.targetApp ?? from.targetApp,

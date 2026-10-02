@@ -429,7 +429,13 @@ struct MCPSpecificToolTests {
             "direction": "down",
         ]))
 
-        for response in [move, drag, scroll] {
+        #expect(drag.isError)
+        guard case let .text(text: dragMessage, annotations: _, _meta: _) = drag.content.first else {
+            Issue.record("Expected background drag snapshot refusal")
+            return
+        }
+        #expect(dragMessage.contains("explicit fresh snapshot"))
+        for response in [move, scroll] {
             #expect(response.isError)
             guard case let .text(text: message, annotations: _, _meta: _) = response.content.first else {
                 Issue.record("Expected text validation error")

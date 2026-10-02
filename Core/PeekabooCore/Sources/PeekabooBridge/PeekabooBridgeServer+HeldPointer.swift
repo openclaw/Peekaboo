@@ -3,6 +3,27 @@ import PeekabooFoundation
 
 @MainActor
 extension PeekabooBridgeServer {
+    func handleExactWindowDrag(
+        _ request: ExactWindowDragRequest,
+        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.automation as? any ExactWindowDragServiceProtocol,
+              service.supportsExactWindowDrag
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "Exact-window drag is unavailable on this Bridge host.",
+                hint: "Update the host to protocol 1.39 with exactWindowDrag support.")
+        }
+        try request.validate()
+        let peerIdentity = try self.heldPointerPeerIdentity(peer)
+        self.automationActivityObserver?(request.target.identity.ownerProcessIdentifier)
+        let result = try await self.translateHeldPointerErrors {
+            try await service.dragExactWindow(request, boundTo: peerIdentity)
+        }
+        return try Self.handledActionResponse(response: .ok, result: result, fallbackTarget: .requestPinned)
+    }
+
     private static let heldPointerClosedOwnerRetention: Duration = .seconds(60)
     private static let heldPointerClosedOwnerCapacity = 256
 

@@ -27,7 +27,8 @@ struct ToolRegistryContractTests {
             "app",
             "window",
         ]))
-        #expect(names.isDisjoint(with: ["drag", "move", "shell", "hotkey", "launch_app", "list"]))
+        #expect(names.contains("drag"))
+        #expect(names.isDisjoint(with: ["move", "shell", "hotkey", "launch_app", "list"]))
 
         let agent = try PeekabooAgentService(services: services)
         let sessionNames = await Set(agent.buildToolset(for: .anthropic(.sonnet45)).map(\.name))

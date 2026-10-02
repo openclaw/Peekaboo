@@ -95,7 +95,8 @@ struct ToolsCommandTests {
         let names = Set(tools.map(\.name))
 
         #expect(names.isSuperset(of: ["click", "type", "press", "paste", "clipboard", "app", "window"]))
-        #expect(names.isDisjoint(with: ["move", "drag"]))
+        #expect(names.contains("drag"))
+        #expect(!names.contains("move"))
 
         let clipboard = try #require(tools.first { $0.name == "clipboard" })
         guard case let .object(schema) = clipboard.inputSchema,

@@ -17,7 +17,7 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
     static let refusalErrorCode = "AGENT_EXECUTION_POLICY_REFUSAL"
 
     private static let nonUnrestrictedCatalogExclusions: Set<String> = ["shell"]
-    private static let backgroundOnlyCatalogExclusions: Set<String> = ["drag", "move"]
+    private static let backgroundOnlyCatalogExclusions: Set<String> = ["move"]
 
     func exposesToolInCatalog(named toolName: String) -> Bool {
         switch self {
@@ -219,7 +219,9 @@ private enum BackgroundOnlyToolPolicy {
             self.browserViolation(arguments)
         case "paste":
             self.pasteViolation(arguments)
-        case "drag", "move":
+        case "drag":
+            self.explicitForeground(arguments)
+        case "move":
             self.sharedInputViolation(toolName: toolName)
         case "shell":
             .sharedDesktop("shell execution can bypass the Agent's background-only tool boundary")

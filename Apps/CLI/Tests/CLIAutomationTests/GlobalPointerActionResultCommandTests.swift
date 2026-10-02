@@ -9,6 +9,55 @@ import Testing
 @Suite(.serialized, .tags(.safe))
 @MainActor
 struct GlobalPointerActionResultCommandTests {
+    @Test(arguments: [false, true])
+    func `background drag leases its snapshot and rejects missing IDs or replay without global input`(
+        missingElement: Bool
+    ) async throws {
+        let automation = ExactDragStubAutomationService()
+        let context = TestServicesFactory.makeAutomationTestContext(automation: automation)
+        let snapshotID = try await context.snapshots.createSnapshot()
+        let bounds = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let identity = WindowMutationIdentity(
+            windowID: 71, ownerProcessIdentifier: 42, ownerProcessStartIdentity: 9001, capturedBounds: bounds
+        )
+        try await context.snapshots.storeDetectionResult(snapshotId: snapshotID, result: .init(
+            snapshotId: snapshotID,
+            screenshotPath: "/tmp/synthetic-drag.png",
+            elements: DetectedElements(),
+            metadata: .init(detectionTime: 0, elementCount: 0, method: "synthetic", windowContext: .init(
+                applicationProcessId: identity.ownerProcessIdentifier,
+                applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+                windowID: identity.windowID,
+                windowBounds: bounds,
+                windowMutationIdentity: identity
+            ))
+        ))
+        let arguments = [
+            "drag", "--from", missingElement ? "missing-drag-element" : "10,20", "--to", "30,40",
+            "--snapshot", snapshotID, "--json", "--no-remote",
+        ]
+        let first = try await InProcessCommandRunner.run(arguments, services: context.services)
+        #expect(automation.waitForElementCalls.isEmpty)
+        if missingElement {
+            #expect(first.exitStatus != 0)
+            #expect(automation.exactDragCalls.isEmpty)
+            #expect(automation.dragCalls.isEmpty)
+            #expect(automation.moveMouseCalls.isEmpty)
+            return
+        }
+        let firstJSON = try Self.jsonObject(first.stdout)
+        #expect(first.exitStatus == 0)
+        #expect((firstJSON["outcome"] as? [String: Any])?["dispatched_unit_count"] as? Int == 23)
+        #expect(firstJSON["target_receipt"] != nil)
+        let second = try await InProcessCommandRunner.run(arguments, services: context.services)
+        let secondJSON = try Self.jsonObject(second.stdout)
+        #expect(second.exitStatus != 0)
+        #expect((secondJSON["outcome"] as? [String: Any])?["mutation_dispatched"] as? Bool == false)
+        #expect(automation.exactDragCalls.count == 1)
+        #expect(automation.dragCalls.isEmpty)
+        #expect(automation.moveMouseCalls.isEmpty)
+    }
+
     @Test(arguments: [GlobalPointerCommand.drag, .move])
     func `verified global pointer commands publish one canonical global result`(
         command: GlobalPointerCommand
@@ -265,6 +314,29 @@ enum GlobalPointerCommand: String, CaseIterable, Sendable {
         case .move:
             ["move", "--at", "30,40"]
         }
+    }
+}
+
+@MainActor
+private final class ExactDragStubAutomationService: StubAutomationService, ExactWindowDragServiceProtocol {
+    let supportsExactWindowDrag = true
+    private(set) var exactDragCalls: [ExactWindowDragRequest] = []
+
+    func dragExactWindow(
+        _ request: ExactWindowDragRequest,
+        boundTo _: ApplicationProcessIdentity?
+    ) async throws -> UIAutomationActionResult<Void> {
+        try request.validate()
+        self.exactDragCalls.append(request)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: .dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .init(request.dispatchedUnitCount)
+            ),
+            targetIdentity: DesktopTargetIdentity(exactWindow: request.target)
+        )
     }
 }
 #endif

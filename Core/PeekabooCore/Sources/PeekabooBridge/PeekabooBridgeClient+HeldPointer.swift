@@ -1,7 +1,32 @@
+import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeClient {
+    public func dragExactWindow(_ request: ExactWindowDragRequest) async throws -> UIAutomationActionResult<Void> {
+        try request.validate()
+        return try await self.actionResult(
+            for: .exactWindowDrag(request),
+            expectedResponse: "exact-window drag",
+            requiresTargetIdentity: true,
+            timeoutSec: Self.exactWindowDragRequestTimeout(
+                defaultTimeoutSec: self.requestTimeoutSec,
+                durationMilliseconds: request.durationMilliseconds),
+            operationReceiptRequirement: .required)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
+    }
+
+    static func exactWindowDragRequestTimeout(
+        defaultTimeoutSec: TimeInterval,
+        durationMilliseconds: Int) -> TimeInterval
+    {
+        // One total transport budget, including queue/admission; it does not restart at mouse-down.
+        max(defaultTimeoutSec, Double(durationMilliseconds) / 1000 + 3)
+    }
+
     public func createExactWindowHeldPointerOwner() async throws -> ExactWindowHeldPointerOwner {
         try self.requireExactWindowHeldPointerBegin()
         let response = try await self.send(.createExactWindowHeldPointerOwner)

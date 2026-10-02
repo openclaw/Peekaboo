@@ -319,6 +319,13 @@ extension PeekabooBridgeClient {
                 message: "Bridge protocol 1.30 exact-window held-pointer support is unavailable.",
                 hint: "Update or relaunch the Peekaboo Bridge host before retrying.")
         }
+        if request.unwrappedOperationRequest.operation == .exactWindowDrag, !self.exactWindowDragEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge protocol 1.39 exact-window drag support is unavailable.",
+                hint: "Update the selected host; no foreground fallback was attempted.")
+        }
         if request.requiresExactWindowHeldPointerTerminalSupport,
            !self.exactWindowHeldPointerTerminalCleanupEnabled
         {

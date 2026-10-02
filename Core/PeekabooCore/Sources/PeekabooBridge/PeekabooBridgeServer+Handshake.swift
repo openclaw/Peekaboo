@@ -73,6 +73,10 @@ extension PeekabooBridgeServer {
             usesAttestedOperationReceipts: supportsAttestedOperationReceipts)
         var advertisedOps = compatibleOperations.advertised.sorted { $0.rawValue < $1.rawValue }
         var enabledOps = compatibleOperations.enabled
+        if !supportsAttestedOperationReceipts {
+            advertisedOps.removeAll { $0 == .exactWindowDrag }
+            enabledOps.remove(.exactWindowDrag)
+        }
         let clientCapabilities = Set(payload.clientCapabilities ?? [])
         let browserHandoffOperations: Set<PeekabooBridgeOperation> = [
             .browserStatus,
@@ -217,6 +221,13 @@ extension PeekabooBridgeServer {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)
         }
         if !supportsAttestedOperationReceipts ||
+            negotiated < PeekabooBridgeConstants.exactWindowDragVersion ||
+            !advertisedOps.contains(.exactWindowDrag) ||
+            (self.services.automation as? any ExactWindowDragServiceProtocol)?.supportsExactWindowDrag != true
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.exactWindowDrag)
+        }
+        if !supportsAttestedOperationReceipts ||
             negotiated < PeekabooBridgeConstants.agentExecutionTraceVersion ||
             !advertisedOps.contains(.agentExecutionTrace) ||
             !enabledOps.contains(.agentExecutionTrace)
@@ -305,6 +316,7 @@ extension PeekabooBridgeServer {
                             PeekabooBridgeHostCapability.statelessClickVariants),
                         exactWindowHeldPointerLifecycle: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle),
+                        exactWindowDrag: advertisedCapabilities.contains(PeekabooBridgeHostCapability.exactWindowDrag),
                         nativeBrowserConnectionBinding: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.nativeBrowserConnectionBinding),
                         browserConnectionHandoff: advertisedCapabilities.contains(
@@ -521,6 +533,9 @@ extension PeekabooBridgeServer {
                 .revokeExactWindowHeldPointer,
                 .disconnectExactWindowHeldPointerOwner,
             ])
+        }
+        if (self.services.automation as? any ExactWindowDragServiceProtocol)?.supportsExactWindowDrag != true {
+            operations.remove(.exactWindowDrag)
         }
         if !self.services.snapshots.supportsImplicitLatestSnapshotInvalidation {
             operations.remove(.invalidateImplicitLatestSnapshot)

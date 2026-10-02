@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add bounded exact-window background drag to CLI and MCP using one held-pointer owner, generation-bound last-point cleanup, and protocol-1.39 receipts; preserve explicit foreground gestures and report unverified retry-unsafe delivery without claiming the drop succeeded.
+
 - Clarify that foreground `paste` does not confirm receiver consumption, explain how to inspect an unconfirmed paste outcome instead of replaying it, and add a charset-safe HTML hyperlink paste example. Thanks @marcoantoniofassa! #885.
 - Preserve reported receiver receipts in MCP background scroll errors without changing retry safety, snapshot invalidation, or foreground global-input attribution.
 - Preserve reported process-generation and exact-window receipts in CLI and MCP paste errors after unconfirmed targeted input, without changing retry safety or attributing shared clipboard effects to a window.

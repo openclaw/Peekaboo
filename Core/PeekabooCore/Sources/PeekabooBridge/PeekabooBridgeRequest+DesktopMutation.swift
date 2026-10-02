@@ -29,6 +29,9 @@ extension PeekabooBridgeRequest {
     }
 
     var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
+        if self.unwrappedOperationRequest.operation == .exactWindowDrag {
+            return PeekabooBridgeConstants.exactWindowDragVersion
+        }
         if self.requiresNativeBrowserConnectionBinding {
             return PeekabooBridgeConstants.nativeBrowserConnectionBindingVersion
         }

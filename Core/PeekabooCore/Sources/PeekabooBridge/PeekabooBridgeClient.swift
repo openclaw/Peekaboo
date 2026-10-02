@@ -55,6 +55,7 @@ public actor PeekabooBridgeClient {
     var applicationMutationInventoryTransportEnabled = false
     var windowMutationInventoryTransportEnabled = false
     var exactWindowHeldPointerLifecycleEnabled = false
+    var exactWindowDragEnabled = false
     var exactWindowHeldPointerTerminalCleanupEnabled = false
     var statelessClickVariantPayloadsEnabled = false
     var statelessClickVariantsEnabled = false
@@ -466,6 +467,7 @@ public actor PeekabooBridgeClient {
 
     func clearNegotiatedInputCapabilities() {
         self.exactWindowHeldPointerLifecycleEnabled = false
+        self.exactWindowDragEnabled = false
         self.exactWindowHeldPointerTerminalCleanupEnabled = false
         self.statelessClickVariantPayloadsEnabled = false
         self.statelessClickVariantsEnabled = false
@@ -843,6 +845,12 @@ public actor PeekabooBridgeClient {
                     PeekabooBridgeOperation.createExactWindowHeldPointerOwner,
                     .beginExactWindowHeldPointer,
                 ]).isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations)),
+            exactWindowDragEnabled:
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowDragVersion &&
+                handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.exactWindowDrag) == true &&
+                handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+                handshake.supportedOperations.contains(.exactWindowDrag) &&
+                (handshake.enabledOperations ?? handshake.supportedOperations).contains(.exactWindowDrag),
             exactWindowHeldPointerTerminalCleanupEnabled:
             handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion &&
                 handshake.hostCapabilities?.contains(
@@ -1182,6 +1190,7 @@ public actor PeekabooBridgeClient {
             candidate.applicationMutationInventoryTransportEnabled
         self.windowMutationInventoryTransportEnabled = candidate.windowMutationInventoryTransportEnabled
         self.exactWindowHeldPointerLifecycleEnabled = candidate.exactWindowHeldPointerLifecycleEnabled
+        self.exactWindowDragEnabled = candidate.exactWindowDragEnabled
         self.exactWindowHeldPointerTerminalCleanupEnabled = candidate.exactWindowHeldPointerTerminalCleanupEnabled
         self.statelessClickVariantPayloadsEnabled = candidate.statelessClickVariantPayloadsEnabled
         self.statelessClickVariantsEnabled = candidate.statelessClickVariantsEnabled
@@ -1492,6 +1501,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let applicationMutationInventoryTransportEnabled: Bool
     let windowMutationInventoryTransportEnabled: Bool
     let exactWindowHeldPointerLifecycleEnabled: Bool
+    let exactWindowDragEnabled: Bool
     let exactWindowHeldPointerTerminalCleanupEnabled: Bool
     let statelessClickVariantPayloadsEnabled: Bool
     let statelessClickVariantsEnabled: Bool

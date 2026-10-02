@@ -170,7 +170,8 @@ struct LearnCommand {
         ## MCP / Agent Tool Quick Reference
         - **Vision**: see, image
         - **UI Automation**: click, type, press, scroll
-        - **Foreground-only CLI pointer**: move and drag require explicit `--foreground` consent
+        - **Background drag**: linear drag inside one fresh explicit snapshot window; observe the unverified drop
+        - **Foreground-only CLI pointer**: move and cross-window drag require explicit `--foreground` consent
         - **Window Management**: window, space
         - **Applications**: app
         - **Elements**: inspect_ui, verify_state, set_value, action

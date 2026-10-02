@@ -1,7 +1,22 @@
 import Foundation
+import PeekabooAutomationKit
 import PeekabooFoundation
 
 extension PeekabooBridgeOperationResultSemantics {
+    static func targetedClickOperationScope(
+        _ payload: PeekabooBridgeTargetedClickRequest) -> DesktopOperationScope
+    {
+        if let targetWindowID = payload.targetWindowID,
+           let identity = payload.expectedWindowIdentity,
+           payload.expectedWindowBounds != nil,
+           identity.windowID == targetWindowID
+        {
+            .process(identity.processIdentity)
+        } else {
+            payload.expectedProcessIdentity.map(DesktopOperationScope.process) ?? .global
+        }
+    }
+
     // The single exhaustive owner for static Bridge operation semantics.
     // swiftlint:disable:next cyclomatic_complexity function_body_length
     static func operationDescriptor(for operation: PeekabooBridgeOperation) -> OperationDescriptor {
@@ -285,6 +300,13 @@ extension PeekabooBridgeOperationResultSemantics {
                 completion: .dispatchedUnverified(windowBackground),
                 targetPolicy: .requestPinned,
                 responseFamilies: [.heldPointerReceipt])
+        case .exactWindowDrag:
+            descriptor(
+                ownership: .service,
+                requiredPermissions: [.postEvent],
+                completion: .dispatchedUnverified(windowBackground),
+                targetPolicy: .requestPinned,
+                responseFamilies: [.ok])
         case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer:
             descriptor(
                 ownership: .service,

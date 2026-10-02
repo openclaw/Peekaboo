@@ -19,7 +19,7 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     @Option(help: "Target application (e.g., 'Trash', 'Finder')")
     var toApp: String?
 
-    @Option(help: "Snapshot ID for element resolution, or 'latest'")
+    @Option(help: "Explicit fresh exact-window snapshot for background drag; foreground may use 'latest'")
     var snapshot: String?
 
     @Option(help: "Duration of drag (bare values are milliseconds; default: 500ms)")
@@ -58,16 +58,18 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 snapshots: self.services.snapshots
             )
             let refreshRuntime = self.resolvedRuntime
-            observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
-                observation,
-                elementIds: [fromInput.element, toInput.element],
-                target: self.target,
-                services: self.services,
-                logger: self.logger,
-                beforeRefresh: { startedAt in
-                    refreshRuntime.beginInteractionMutation(at: startedAt)
-                }
-            )
+            if self.focusOptions.foreground {
+                observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
+                    observation,
+                    elementIds: [fromInput.element, toInput.element],
+                    target: self.target,
+                    services: self.services,
+                    logger: self.logger,
+                    beforeRefresh: { startedAt in
+                        refreshRuntime.beginInteractionMutation(at: startedAt)
+                    }
+                )
+            }
             if needsSnapshot {
                 _ = try await observation.requireDetectionResult(using: self.services.snapshots)
             } else {
@@ -75,13 +77,7 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             }
 
             self.resolvedRuntime.beginInteractionMutation()
-            let focusResult = try await ensureConfirmedForegroundFocus(
-                snapshotId: observation.focusSnapshotId(for: self.target),
-                target: self.target,
-                options: self.focusOptions,
-                services: self.services,
-                operation: "Drag setup focus"
-            ) ?? UIAutomationActionResult(payload: (), outcome: nil)
+            let focusResult = try await self.setupFocus(observation: observation)
 
             let startResolution = try await self.resolvePoint(
                 elementId: fromInput.element,
@@ -133,7 +129,14 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 button: self.resolvedButton ?? .left,
                 profile: movement.profile
             )
-            let actionResult = try await self.performDrag(dragRequest, setupFocus: focusResult)
+            let actionResult: UIAutomationActionResult<Void> = if self.focusOptions.foreground {
+                try await self.performDrag(dragRequest, setupFocus: focusResult)
+            } else {
+                try await self.performBackgroundDrag(
+                    dragRequest,
+                    snapshotID: observation.requireSnapshot()
+                )
+            }
             AutomationEventLogger.log(
                 .drag,
                 "drag from=(\(Int(startPoint.x)),\(Int(startPoint.y))) to=(\(Int(endPoint.x)),\(Int(endPoint.y))) "
@@ -195,6 +198,17 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         }
     }
 
+    private func setupFocus(observation: InteractionObservationContext) async throws -> UIAutomationActionResult<Void> {
+        guard self.focusOptions.foreground else { return UIAutomationActionResult(payload: (), outcome: nil) }
+        return try await ensureConfirmedForegroundFocus(
+            snapshotId: observation.focusSnapshotId(for: self.target),
+            target: self.target,
+            options: self.focusOptions,
+            services: self.services,
+            operation: "Drag setup focus"
+        ) ?? UIAutomationActionResult(payload: (), outcome: nil)
+    }
+
     private func performDrag(
         _ request: DragRequest,
         setupFocus: UIAutomationActionResult<Void>
@@ -217,6 +231,35 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         }
     }
 
+    private func performBackgroundDrag(
+        _ drag: DragRequest,
+        snapshotID: String
+    ) async throws -> UIAutomationActionResult<Void> {
+        guard let service = self.services.automation as? any ExactWindowDragServiceProtocol,
+              service.supportsExactWindowDrag,
+              let exactWindow = try await SnapshotTargetReceiptPlanner(snapshots: self.services.snapshots)
+                  .planForMutation(snapshotID: snapshotID).receipt.requireIdentity().exactWindow
+        else {
+            throw ValidationError("Background drag requires a capable host and a fresh exact-window snapshot")
+        }
+        let request = ExactWindowDragRequest(
+            snapshotID: snapshotID,
+            target: exactWindow,
+            from: drag.from,
+            to: drag.to,
+            durationMilliseconds: drag.duration,
+            steps: drag.steps,
+            button: drag.button == .right ? .right : .left
+        )
+        try request.validate()
+        return try await self.services.snapshots.withSnapshotMutation(
+            snapshotId: snapshotID,
+            targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow),
+            operation: { try await service.dragExactWindow(request, boundTo: nil) },
+            outcome: { $0.outcome }
+        )
+    }
+
     /// Validate user input combinations
     private mutating func validateInputs() throws {
         try self.target.validate()
@@ -231,13 +274,26 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         if self.to != nil, self.toApp != nil {
             throw ValidationError("Specify only one of --to or --to-app")
         }
-        guard self.focusOptions.foreground else {
-            throw PreDispatchActionError(
-                message: "drag changes the physical cursor and requires explicit consent.",
-                code: .VALIDATION_ERROR,
-                hint: "Use --foreground to provide explicit consent.",
-                reason: .foregroundConsentRequired
-            )
+        if !self.focusOptions.foreground {
+            guard let snapshot = self.snapshot, SnapshotReference(rawValue: snapshot) != nil else {
+                throw ValidationError("Background drag requires one explicit fresh --snapshot ID")
+            }
+            guard !self.target.hasAnyTarget, self.toApp == nil else {
+                throw ValidationError(
+                    "Background drag uses only the snapshot window; target selectors and --to-app require --foreground"
+                )
+            }
+            guard self.modifiers == nil, (self.profile ?? "linear").lowercased() == "linear",
+                  !self.focusOptions.hasForegroundFocusOverrides
+            else {
+                throw ValidationError("Modifiers, human movement, and focus options require --foreground")
+            }
+            guard ExactWindowDragRequest.durationMillisecondsRange.contains(self.duration?.roundedMilliseconds ?? 500),
+                  ExactWindowDragRequest.sampleCountRange.contains(self.steps ?? 20)
+            else { throw ValidationError("Background drag accepts 1...10000ms and 1...96 steps") }
+        }
+        if self.focusOptions.foreground, self.focusOptions.focusBackground {
+            throw ValidationError("--foreground cannot be combined with --focus-background")
         }
         guard self.resolvedButton != nil else {
             throw ValidationError("--button must be either 'left' or 'right'")
@@ -282,7 +338,23 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         snapshotId: String?,
         description: String
     ) async throws -> InteractionTargetPointResolution {
-        try await InteractionTargetPointResolver.elementOrCoordinateResolution(
+        if !self.focusOptions.foreground, let elementId {
+            guard let snapshotId else { throw ValidationError("Background drag requires an explicit snapshot") }
+            let detection = try await SnapshotValidation.requireDetectionResult(
+                snapshotId: snapshotId,
+                snapshots: self.services.snapshots
+            )
+            guard let element = detection.elements.findById(elementId) else {
+                throw PeekabooError.elementNotFound("Element with ID '\(elementId)' not found in the drag snapshot")
+            }
+            return try await InteractionTargetPointResolver.elementCenterResolution(
+                element: element,
+                elementId: elementId,
+                snapshotId: snapshotId,
+                snapshots: self.services.snapshots
+            )
+        }
+        return try await InteractionTargetPointResolver.elementOrCoordinateResolution(
             InteractionTargetPointRequest(
                 elementId: elementId,
                 coordinates: coords,
@@ -315,6 +387,7 @@ extension DragCommand: ParsableCommand {
                 Execute click-and-drag operations for moving elements, selecting text, or dragging files.
 
                 EXAMPLES:
+                  peekaboo drag --from "100,200" --to "400,300" --snapshot "$SNAPSHOT_ID"
                   peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
                   peekaboo drag --from "100,200" --to "400,300" --foreground
                   peekaboo drag --from "$SOURCE_ID" --to-app Trash --foreground
@@ -322,7 +395,9 @@ extension DragCommand: ParsableCommand {
                   peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --modifiers shift --foreground
                   peekaboo drag --from "100,200" --to "400,300" --button right --foreground
 
-                Drag always changes the shared physical cursor and requires --foreground.
+                Background drag requires a fresh --snapshot and a bounded linear path inside that one window.
+                Coordinates are global logical points. Cross-window/app drops, modifiers, human profiles,
+                and shared physical cursor input require explicit --foreground.
                 """,
                 version: "2.0.0",
                 showHelpOnEmptyInvocation: true

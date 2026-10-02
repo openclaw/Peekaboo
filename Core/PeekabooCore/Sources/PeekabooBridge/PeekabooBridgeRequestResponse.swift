@@ -44,6 +44,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case exactWindowTargetedHotkey(PeekabooBridgeExactWindowHotkeyRequest)
     case createExactWindowHeldPointerOwner
     case beginExactWindowHeldPointer(PeekabooBridgeBeginHeldPointerRequest)
+    case exactWindowDrag(ExactWindowDragRequest)
     case releaseExactWindowHeldPointer(PeekabooBridgeFinishHeldPointerRequest)
     case revokeExactWindowHeldPointer(PeekabooBridgeFinishHeldPointerRequest)
     case disconnectExactWindowHeldPointerOwner(PeekabooBridgeHeldPointerOwnerRequest)
@@ -170,6 +171,7 @@ extension PeekabooBridgeRequest {
         case .exactWindowTargetedHotkey: .exactWindowTargetedHotkey
         case .createExactWindowHeldPointerOwner: .createExactWindowHeldPointerOwner
         case .beginExactWindowHeldPointer: .beginExactWindowHeldPointer
+        case .exactWindowDrag: .exactWindowDrag
         case .releaseExactWindowHeldPointer: .releaseExactWindowHeldPointer
         case .revokeExactWindowHeldPointer: .revokeExactWindowHeldPointer
         case .disconnectExactWindowHeldPointerOwner: .disconnectExactWindowHeldPointerOwner

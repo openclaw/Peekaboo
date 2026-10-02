@@ -93,6 +93,9 @@ extension PeekabooBridgeServer {
              .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
              .disconnectExactWindowHeldPointerOwner:
             return try await self.handleHeldPointerRequest(request, peer: peer)
+        case .exactWindowDrag:
+            guard case let .exactWindowDrag(payload) = request else { throw Self.invalidRequest(for: request) }
+            return try await self.handleExactWindowDrag(payload, peer: peer)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .backgroundCloseWindow,
              .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow:

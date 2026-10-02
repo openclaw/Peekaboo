@@ -117,6 +117,47 @@ struct PreRuntimeSemanticValidationTests {
         }
     }
 
+    @Test(arguments: [
+        [String](), ["--profile", "human"], ["--modifiers", "shift"], ["--steps", "97"],
+        ["--duration", "11s"], ["--window-id", "42"], ["--space-switch"],
+    ])
+    func `background drag rejects missing snapshot or foreground only options`(_ extra: [String]) throws {
+        var arguments = ["peekaboo", "drag", "--from", "10,20", "--to", "30,40"]
+        if !extra.isEmpty {
+            arguments += ["--snapshot", SnapshotReferenceFixtures.first.rawValue]
+        }
+        let resolved = try CommanderRuntimeRouter.resolve(argv: arguments + extra)
+        let command = try CommanderCLIBinder.instantiateCommand(
+            type: resolved.type,
+            parsedValues: resolved.parsedValues
+        )
+        let validator = try #require(command as? any PreRuntimeValidatingCommand)
+        #expect(throws: ValidationError.self) { try validator.validateBeforeRuntime() }
+    }
+
+    @Test
+    func `background drag accepts a bounded explicit snapshot without foreground`() throws {
+        let resolved = try CommanderRuntimeRouter.resolve(argv: [
+            "peekaboo", "drag", "--from", "10,20", "--to", "30,40", "--snapshot",
+            SnapshotReferenceFixtures.first.rawValue, "--steps", "96", "--duration", "10s",
+        ])
+        let command = try CommanderCLIBinder.instantiateCommand(
+            type: resolved.type,
+            parsedValues: resolved.parsedValues
+        )
+        let validator = try #require(command as? any PreRuntimeValidatingCommand)
+        try validator.validateBeforeRuntime()
+    }
+
+    @Test(arguments: ["latest", "most-recent", "most_recent", "", " "])
+    func `background drag rejects snapshot aliases before runtime`(snapshot: String) throws {
+        var command = DragCommand()
+        command.from = "10,20"
+        command.to = "30,40"
+        command.snapshot = snapshot
+        #expect(throws: ValidationError.self) { try command.validateBeforeRuntime() }
+    }
+
     @Test
     func `direct element actions reject concrete snapshots with explicit targets before runtime selection`() throws {
         let cases = [

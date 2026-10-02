@@ -280,8 +280,6 @@ extension PeekabooBridgeOperationResultSemantics {
 
     private static func desktopOperationScope(for request: PeekabooBridgeRequest) -> DesktopOperationScope {
         switch request {
-        case .foregroundModifierClick:
-            .global
         case let .exactWindowTargetedTypeActions(payload):
             .process(payload.expectedWindowIdentity.processIdentity)
         case let .exactWindowPixelFocusType(payload):
@@ -290,6 +288,8 @@ extension PeekabooBridgeOperationResultSemantics {
             .process(payload.expectedWindowIdentity.processIdentity)
         case let .beginExactWindowHeldPointer(payload):
             .window(payload.request.windowIdentity)
+        case let .exactWindowDrag(payload):
+            .window(payload.target.identity)
         case let .releaseExactWindowHeldPointer(payload),
              let .revokeExactWindowHeldPointer(payload):
             .window(payload.receipt.windowIdentity)
@@ -328,20 +328,6 @@ extension PeekabooBridgeOperationResultSemantics {
             .window(receipt.target.identity)
         default:
             .global
-        }
-    }
-
-    private static func targetedClickOperationScope(
-        _ payload: PeekabooBridgeTargetedClickRequest) -> DesktopOperationScope
-    {
-        if let targetWindowID = payload.targetWindowID,
-           let identity = payload.expectedWindowIdentity,
-           payload.expectedWindowBounds != nil,
-           identity.windowID == targetWindowID
-        {
-            .process(identity.processIdentity)
-        } else {
-            payload.expectedProcessIdentity.map(DesktopOperationScope.process) ?? .global
         }
     }
 
@@ -491,6 +477,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .foregroundModifierClick,
              .createExactWindowHeldPointerOwner,
              .beginExactWindowHeldPointer,
+             .exactWindowDrag,
              .releaseExactWindowHeldPointer,
              .revokeExactWindowHeldPointer,
              .disconnectExactWindowHeldPointerOwner,
@@ -612,7 +599,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .detectElements, .inspectAccessibilityTree,
              .exactDialogForceDismiss:
             return [.dispatchedUnverified]
-        case .beginExactWindowHeldPointer:
+        case .beginExactWindowHeldPointer, .exactWindowDrag:
             return [.dispatchedUnverified]
         case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer:
             return [.confirmedNoChange, .dispatchedUnverified]
@@ -811,6 +798,12 @@ extension PeekabooBridgeOperationResultSemantics {
             return rules
         case .beginExactWindowHeldPointer:
             return [rule(windowBackground, .exact(2), failureUnits: .oneOf([1, 2, 3]))]
+        case let .exactWindowDrag(payload):
+            guard (try? payload.validate()) != nil else { return [] }
+            return [rule(
+                windowBackground,
+                .exact(payload.dispatchedUnitCount),
+                failureUnits: .range(1...payload.dispatchedUnitCount))]
         case .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
              .disconnectExactWindowHeldPointerOwner:
             return [rule(windowBackground, .exact(1), failureUnits: .exact(2))]
@@ -1151,6 +1144,11 @@ extension PeekabooBridgeOperationResultSemantics {
         plan: PeekabooBridgeRequestPlan) -> Bool
     {
         guard outcome.route == .bridge, !outcome.isConfirmed else { return false }
+        if plan.operation == .exactWindowDrag,
+           ![.refused, .dispatchedUnverified, .indeterminate].contains(outcome.state)
+        {
+            return false
+        }
         if outcome.state == .refused {
             return outcome.delivery == nil && outcome.dispatchState == .none
         }

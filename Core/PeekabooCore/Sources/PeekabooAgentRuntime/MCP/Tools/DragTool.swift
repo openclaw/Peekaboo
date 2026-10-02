@@ -16,7 +16,8 @@ public struct DragTool: MCPTool {
         """
         Perform drag and drop operations between UI elements or coordinates.
         Supports element queries, specific IDs, or raw coordinates for both start and end points.
-        This always changes the shared physical cursor and requires foreground=true.
+        Background drag requires an explicit fresh snapshot and a bounded linear path inside its exact window.
+        Coordinates are global logical points. Cross-window drops and shared cursor input require foreground=true.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -35,8 +36,8 @@ public struct DragTool: MCPTool {
                 "to_app": SchemaBuilder.string(
                     description: "Optional. Target application name when dragging between apps"),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
-                        "Uses latest snapshot if not specified"),
+                    description: "Required in background mode: an explicit fresh exact-window snapshot from `see` " +
+                        "or `inspect_ui`. Foreground mode may use the latest snapshot."),
                 "duration": SchemaBuilder.integer(
                     description: "Optional. Duration in milliseconds (default: 500)",
                     default: 500),
@@ -54,9 +55,9 @@ public struct DragTool: MCPTool {
                     enum: ["left", "right"],
                     default: "left"),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Required. Confirm foreground use of the shared physical cursor."),
+                    description: "Optional. Confirm foreground use of the shared physical cursor. Default: false."),
             ],
-            required: ["foreground"])
+            required: [])
     }
 
     public init(context: MCPToolContext = .shared) {
@@ -69,27 +70,35 @@ public struct DragTool: MCPTool {
         do {
             request = try DragRequest(arguments: arguments)
         } catch let error as DragToolError {
-            return ToolResponse.error(error.message)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message, reason: .invalidRequest)
         } catch {
             return ToolResponse.error(error.localizedDescription)
         }
 
+        var completedAction: UIAutomationActionResult<Void>?
         do {
             let startTime = Date()
             let fromPoint = try await self.resolveLocation(
                 target: request.fromTarget,
                 snapshotId: request.snapshotId,
-                parameterName: "from")
+                parameterName: "from",
+                background: !request.foreground)
             let toPoint = try await self.resolveLocation(
                 target: request.toTarget,
                 snapshotId: request.snapshotId,
-                parameterName: "to")
+                parameterName: "to",
+                background: !request.foreground)
 
             guard fromPoint.point != toPoint.point else {
                 return ToolResponse.error("Start and end points must be different")
             }
 
-            let setupFocus = try await self.focusTargetIfNeeded(request: request, from: fromPoint, to: toPoint)
+            let setupFocus: MCPInteractionFocusResult? = if request.foreground {
+                try await self.focusTargetIfNeeded(request: request, from: fromPoint, to: toPoint)
+            } else {
+                nil
+            }
 
             let distance = hypot(toPoint.point.x - fromPoint.point.x, toPoint.point.y - fromPoint.point.y)
             let movement = request.profile.resolveParameters(
@@ -102,22 +111,53 @@ public struct DragTool: MCPTool {
 
             let actionResult: UIAutomationActionResult<Void>
             do {
-                let pointerAction = try await MCPGlobalPointerActionResult.drag(
-                    automation: self.context.automation,
-                    request: DragOperationRequest(
+                if !request.foreground {
+                    guard let service = self.context.automation as? any ExactWindowDragServiceProtocol,
+                          service.supportsExactWindowDrag,
+                          let snapshotID = request.snapshotId,
+                          let snapshot = await self.getSnapshot(id: snapshotID),
+                          let target = try snapshot.targetReceipt().requireIdentity().exactWindow
+                    else {
+                        throw DragToolError(
+                            "Background drag requires a capable host and a fresh exact-window snapshot.")
+                    }
+                    let drag = ExactWindowDragRequest(
+                        snapshotID: snapshotID,
+                        target: target,
                         from: fromPoint.point,
                         to: toPoint.point,
-                        duration: movement.duration,
+                        durationMilliseconds: movement.duration,
                         steps: movement.steps,
-                        modifiers: request.modifiers,
-                        button: request.button,
-                        profile: movement.profile))
-                actionResult = try MCPGlobalPointerActionResult.compose(
-                    setupFocus: setupFocus,
-                    pointerAction: pointerAction,
-                    operation: "Drag",
-                    route: MCPGlobalPointerActionResult.route(for: self.context))
+                        button: request.button == .right ? .right : .left)
+                    try drag.validate()
+                    actionResult = try await self.context.snapshots.withSnapshotMutation(
+                        snapshotId: snapshotID,
+                        targetIdentity: DesktopTargetIdentity(exactWindow: target),
+                        operation: {
+                            try await service.dragExactWindow(drag, boundTo: nil)
+                        },
+                        outcome: { $0.outcome })
+                } else {
+                    let pointerAction = try await MCPGlobalPointerActionResult.drag(
+                        automation: self.context.automation,
+                        request: DragOperationRequest(
+                            from: fromPoint.point,
+                            to: toPoint.point,
+                            duration: movement.duration,
+                            steps: movement.steps,
+                            modifiers: request.modifiers,
+                            button: request.button,
+                            profile: movement.profile))
+                    actionResult = try MCPGlobalPointerActionResult.compose(
+                        setupFocus: setupFocus,
+                        pointerAction: pointerAction,
+                        operation: "Drag",
+                        route: MCPGlobalPointerActionResult.route(for: self.context))
+                }
             } catch {
+                if !request.foreground {
+                    throw error
+                }
                 let failure = MCPGlobalPointerActionResult.failure(
                     error,
                     setupFocus: setupFocus,
@@ -129,6 +169,7 @@ public struct DragTool: MCPTool {
                     snapshotID: request.snapshotId)
             }
 
+            completedAction = actionResult
             let executionTime = Date().timeIntervalSince(startTime)
             let invalidatedSnapshotID = await MCPDesktopActionSnapshotInvalidator.invalidate(
                 uiSnapshots: self.context.uiSnapshots,
@@ -149,10 +190,23 @@ public struct DragTool: MCPTool {
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: request.snapshotId)
         } catch let error as CoordinateParseError {
-            return ToolResponse.error(error.message)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message, reason: .invalidRequest)
         } catch let error as DragToolError {
-            return ToolResponse.error(error.message)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message, reason: .invalidRequest)
         } catch {
+            if let completedAction, let outcome = completedAction.outcome,
+               let failure = DesktopActionFailure(
+                   outcome: outcome,
+                   message: "Drag dispatched, but its response could not be completed.",
+                   hint: "Observe the exact target before any retry.",
+                   causeDescription: error.localizedDescription,
+                   targetReceipt: completedAction.actionTargetReceipt)
+            {
+                return try await MCPDesktopActionFailureHandler.response(
+                    for: failure, uiSnapshots: self.context.uiSnapshots, snapshotID: request.snapshotId)
+            }
             self.logger.error("Drag execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform drag operation: \(error.localizedDescription)")
         }

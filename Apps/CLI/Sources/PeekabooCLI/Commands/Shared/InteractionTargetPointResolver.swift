@@ -117,7 +117,7 @@ enum InteractionTargetPointResolver {
         let components = coordinateString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard components.count == 2,
               let x = Double(components[0]),
-              let y = Double(components[1])
+              let y = Double(components[1]), x.isFinite, y.isFinite
         else {
             throw Commander.ValidationError("Invalid coordinates format: '\(coordinateString)'. Expected 'x,y'")
         }

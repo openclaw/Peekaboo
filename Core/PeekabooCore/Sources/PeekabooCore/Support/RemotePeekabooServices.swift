@@ -66,6 +66,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsForegroundModifierClick: Bool = false,
         foregroundModifierClickUnavailableReason: String? = nil,
         supportsExactWindowHeldPointerLifecycle: Bool = false,
+        supportsExactWindowDrag: Bool = false,
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
         supportsSetValueResultTargetBinding: Bool = false,
@@ -154,6 +155,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsForegroundModifierClick: supportsForegroundModifierClick,
                 foregroundModifierClickUnavailableReason: foregroundModifierClickUnavailableReason,
                 supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle,
+                supportsExactWindowDrag: supportsExactWindowDrag,
                 supportsSetValueResultTargetBinding: supportsSetValueResultTargetBinding)
         } else {
             RemoteUIAutomationService(
@@ -187,7 +189,8 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 exactWindowPixelFocusTypingUnavailableReason: exactWindowPixelFocusTypingUnavailableReason,
                 supportsForegroundModifierClick: supportsForegroundModifierClick,
                 foregroundModifierClickUnavailableReason: foregroundModifierClickUnavailableReason,
-                supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle)
+                supportsExactWindowHeldPointerLifecycle: supportsExactWindowHeldPointerLifecycle,
+                supportsExactWindowDrag: supportsExactWindowDrag)
         }
         self.windows = RemoteWindowManagementService(
             client: client,

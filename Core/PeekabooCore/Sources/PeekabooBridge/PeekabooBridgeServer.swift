@@ -1154,7 +1154,8 @@ public final class PeekabooBridgeServer {
                   session?.targetedClickAccessibilityValueDelivery == true,
                   !request.requiresBackgroundStatelessClickVariantSupport || session?.statelessClickVariants == true,
                   !request.requiresExactWindowHeldPointerLifecycleSupport ||
-                  session?.exactWindowHeldPointerLifecycle == true
+                  session?.exactWindowHeldPointerLifecycle == true,
+                  op != .exactWindowDrag || session?.exactWindowDrag == true
             else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
@@ -1338,6 +1339,9 @@ private func protocolHostCapabilities(
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.exactWindowHeldPointerLifecycleVersion {
         capabilities.insert(PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle)
+    }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.exactWindowDragVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.exactWindowDrag)
     }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.statelessClickVariantVersion {
         capabilities.insert(PeekabooBridgeHostCapability.statelessClickVariants)
