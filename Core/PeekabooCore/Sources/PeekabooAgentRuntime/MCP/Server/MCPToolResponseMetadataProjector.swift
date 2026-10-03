@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 
@@ -43,7 +44,10 @@ enum MCPToolResponseMetadataProjector {
         "target_receipt",
     ])
 
+    private static let clipboardCleanupStatusKey = "clipboard_cleanup_status"
+
     private static let providerReservedKeys = Self.safetyKeys.union([
+        Self.clipboardCleanupStatusKey,
         "turn_boundary",
     ])
 
@@ -114,7 +118,11 @@ enum MCPToolResponseMetadataProjector {
         if toolName == "agent" {
             allowed.insert("recordedOutcomeNotice")
         }
-        return fields.filter { allowed.contains($0.key) }
+        var projected = fields.filter { allowed.contains($0.key) }
+        if toolName == "paste" {
+            projected[Self.clipboardCleanupStatusKey] = self.clipboardCleanupStatus(from: fields)
+        }
+        return projected
     }
 
     static func agentFields(from value: Value?) -> [String: Value] {
@@ -122,7 +130,19 @@ enum MCPToolResponseMetadataProjector {
         let allowed = Self.safetyKeys
             .union(Self.captureErrorKeys)
             .union(Self.permissionKeys)
-        return fields.filter { allowed.contains($0.key) }
+        var projected = fields.filter { allowed.contains($0.key) }
+        projected[Self.clipboardCleanupStatusKey] = self.clipboardCleanupStatus(from: fields)
+        return projected
+    }
+
+    private static func clipboardCleanupStatus(from fields: [String: Value]) -> Value? {
+        guard case let .string(rawValue)? = fields[clipboardCleanupStatusKey],
+              let cleanup = ClipboardTemporaryCleanupStatus(rawValue: rawValue)
+        else { return nil }
+        switch cleanup {
+        case .restored, .preservedNewerContents, .notNeeded:
+            return .string(cleanup.rawValue)
+        }
     }
 
     /// Keeps untrusted provider diagnostics available without allowing them to assert

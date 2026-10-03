@@ -153,6 +153,60 @@ struct MCPDesktopActionOutcomeProjectionTests {
         #expect(provider["provider_meta"]?.objectValue == ["untrusted": .string("drop")])
     }
 
+    @Test(arguments: ["restored", "preserved_newer_contents", "not_needed"])
+    func `Public paste errors retain only known cleanup status and canonical outcome`(cleanup: String) throws {
+        let failure = DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: .clipboardTransaction, mode: .foreground),
+            evidence: .completionUnknown,
+            message: "Paste input refused after temporary clipboard mutation")
+        let response = try MCPToolResponseMetadataProjector.errorResponse(
+            for: failure,
+            invalidatedSnapshotID: nil,
+            additionalFields: [
+                "clipboard_cleanup_status": .string(cleanup),
+                "prior_clipboard": .string("private prior payload"),
+            ])
+
+        let result = PeekabooMCPServer.callToolResult(from: response, toolName: "paste")
+        let data = try JSONEncoder().encode(result)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let metadata = try #require(json["_meta"] as? [String: Any])
+
+        #expect(metadata["clipboard_cleanup_status"] as? String == cleanup)
+        #expect(metadata["state"] as? String == "indeterminate")
+        #expect(metadata["delivery_mechanism"] as? String == "clipboard_transaction")
+        #expect(metadata["delivery_mode"] as? String == "foreground")
+        #expect(metadata["mutation_dispatched"] as? Bool == true)
+        #expect(metadata["retry_safe"] as? Bool == false)
+        #expect(metadata["target_receipt"] == nil)
+        #expect(metadata["prior_clipboard"] == nil)
+    }
+
+    @Test
+    func `Cleanup projection rejects unknown values and untrusted provider claims`() {
+        let invalid: [Value] = [
+            .string("unknown"), .string("RESTORED"), .string("restored "),
+            .bool(true), .int(1), .null, .object(["status": .string("restored")]),
+        ]
+        for value in invalid {
+            let fields = MCPToolResponseMetadataProjector.externalFields(
+                from: .object(["clipboard_cleanup_status": value]), toolName: "paste")
+            #expect(fields["clipboard_cleanup_status"] == nil)
+        }
+
+        let metadata: Value = .object([
+            "clipboard_cleanup_status": .string("restored"),
+            "diagnostic": .string("provider diagnostic"),
+        ])
+        let provider = MCPToolResponseMetadataProjector.providerFields(from: metadata)
+        #expect(provider["clipboard_cleanup_status"] == nil)
+        #expect(provider["provider_meta"]?.objectValue == ["diagnostic": .string("provider diagnostic")])
+        #expect(MCPToolResponseMetadataProjector.agentFields(
+            from: .object(provider))["clipboard_cleanup_status"] == nil)
+        #expect(MCPToolResponseMetadataProjector.externalFields(
+            from: metadata, toolName: "browser")["clipboard_cleanup_status"] == nil)
+    }
+
     @Test
     @MainActor
     func `action tool projects every native outcome state without inferring from invalidation`() async throws {

@@ -1,4 +1,5 @@
 import MCP
+import PeekabooFoundation
 import Tachikoma
 import TachikomaMCP
 import Testing
@@ -76,6 +77,57 @@ struct AgentToolMCPBridgeMetaTests {
         #expect(payload["error"] as? String == "native tool failed")
         #expect(payload["meta"] == nil)
         #expect(ToolEventSummary.from(resultJSON: payload) == nil)
+    }
+
+    @Test(arguments: ["restored", "preserved_newer_contents", "not_needed"])
+    func `Paste errors preserve cleanup status without changing canonical input evidence`(cleanup: String) throws {
+        let unitCount = try #require(DesktopActionOutcome.DispatchUnitCount(8))
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .composite, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: unitCount)
+        let receipt = DesktopActionTargetReceipt(
+            processIdentifier: 42, processStartIdentity: 1001, windowID: 73)
+        let response = try ToolResponse.error(
+            "Paste input was not confirmed",
+            meta: MCPToolResponseMetadataProjector.metadata(
+                merging: [
+                    "clipboard_cleanup_status": .string(cleanup),
+                    "target_receipt": Value(receipt),
+                    "prior_clipboard": .string("private prior payload"),
+                ],
+                outcome: outcome))
+
+        let converted = AgentToolMCPBridge.convert(response)
+        let payload = try #require(converted.value.objectValue)
+        let failureMetadata = try #require(converted.failure?.metadata?.objectValue)
+
+        #expect(payload["clipboard_cleanup_status"]?.stringValue == cleanup)
+        #expect(failureMetadata["clipboard_cleanup_status"]?.stringValue == cleanup)
+        #expect(payload["state"]?.stringValue == "dispatched_unverified")
+        #expect(payload["delivery_mode"]?.stringValue == "background")
+        #expect(payload["dispatched_unit_count"]?.intValue == 8)
+        #expect(payload["retry_safe"]?.boolValue == false)
+        #expect(payload["target_receipt"] == failureMetadata["target_receipt"])
+        #expect(payload["target_receipt"]?.objectValue?["window_id"]?.intValue == 73)
+        #expect(payload["prior_clipboard"] == nil)
+        #expect(failureMetadata["prior_clipboard"] == nil)
+    }
+
+    @Test
+    func `Paste errors discard unknown and non-string cleanup claims`() {
+        let invalid: [Value] = [
+            .string(""), .string("RESTORED"), .string("restored "), .string("private arbitrary status"),
+            .bool(true), .int(1), .null, .array([.string("restored")]),
+            .object(["status": .string("restored")]),
+        ]
+        for value in invalid {
+            let converted = AgentToolMCPBridge.convert(.error(
+                "Paste failed",
+                meta: .object(["clipboard_cleanup_status": value])))
+            #expect(converted.value.objectValue?["clipboard_cleanup_status"] == nil)
+            #expect(converted.failure?.metadata?.objectValue?["clipboard_cleanup_status"] == nil)
+        }
     }
 
     @Test

@@ -155,6 +155,9 @@ derived from the same bounded, privacy-safe argument projection as the execution
 descriptions or runtime addresses. Calls beyond the trace limit and any call/trace mismatch use
 `{"redacted":true}` rather than raw provider arguments.
 
+Live tool-start and tool-update argument previews also redact `dataBase64` payloads, including incomplete streamed
+values, before display. This changes presentation only; the authorized tool still receives the supplied payload.
+
 `executionTrace.entries[].arguments` is a JSON object rather than the legacy string preview. Trace arguments are
 bounded and allowlist only audit-relevant targeting, delivery modes, action enums, timeouts, predicate kinds, and safe
 boolean controls. Content-bearing and unknown values are represented by typed redaction summaries, including typed or
@@ -175,6 +178,11 @@ Tool results blocked by pending snapshot cleanup retain `snapshot_invalidation.t
 an earlier mutation; inspect current state and distinguish cleanup retries from newly dispatched input.
 Browser-provider metadata is filtered and namespaced before projection, including results from legacy read-only
 clients, so provider-authored cleanup or action claims cannot become Peekaboo-owned receipts.
+
+Authorized paste errors retain the content-free `clipboard_cleanup_status` in model-facing tool-error results and
+structured failure metadata: `restored`, `preserved_newer_contents`, or `not_needed`. The final JSON execution trace
+keeps its smaller status-summary allowlist and does not include this field. Cleanup status does not confirm paste input
+or change its retry safety, and prior clipboard contents are not included.
 
 Mutating trace entries expose `mutationDispatch` as `dispatched`, `not_dispatched`, or `possibly_dispatched`.
 `mutation_dispatched` is retained in the bounded result summary only when the tool explicitly reported the legacy

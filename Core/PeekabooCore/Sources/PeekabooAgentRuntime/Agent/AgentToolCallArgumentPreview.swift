@@ -7,7 +7,7 @@ import Foundation
 
 enum AgentToolCallArgumentPreview {
     /// Redact obviously sensitive fields before previewing tool-call arguments.
-    /// Masks values for keys containing token/secret/key/password/auth/cookie and inline secret patterns.
+    /// Masks inline dataBase64 payloads, sensitive keys, and inline secret patterns.
     static func redacted(from data: Data, maxLength: Int = 320) -> String {
         let rawText = String(data: data, encoding: .utf8) ?? "{}"
         let text: String = if let object = try? JSONSerialization.jsonObject(with: data),
@@ -57,7 +57,8 @@ enum AgentToolCallArgumentPreview {
 
     private static func isSensitiveKey(_ key: String) -> Bool {
         let lowerKey = key.lowercased()
-        return lowerKey.contains("token") ||
+        return lowerKey == "database64" ||
+            lowerKey.contains("token") ||
             lowerKey.contains("secret") ||
             lowerKey.contains("password") ||
             lowerKey.contains("key") ||

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Redact inline base64 payloads from Agent live tool-call previews, including nested and partially streamed values, without changing authorized tool input.
+- Preserve known clipboard cleanup status through Agent paste errors and public MCP metadata, keeping provider claims isolated and canonical dispatch, target, and retry semantics unchanged.
 - Bound ScreenCaptureKit process-safety signing inspections to two concurrent workers across censuses, preserving complete blocker collection, identity checks, registration retries, and fail-closed readiness.
 - Preserve Bridge route, reported target receipts, hints, and causes on typed stale-snapshot CLI refusals instead of replacing them with local errors; keep snapshot-consumption and finalization safeguards unchanged.
 - Preserve retry-safe no-dispatch outcomes for background wheel failures before the first event, including stale or out-of-window geometry, without weakening accepted-prefix or uncertain-delivery failures.
