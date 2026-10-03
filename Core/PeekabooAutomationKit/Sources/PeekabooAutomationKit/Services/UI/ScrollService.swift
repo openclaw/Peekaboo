@@ -248,7 +248,7 @@ public final class ScrollService {
         } catch let error as ActionInputError
             where !request.foreground && error.allowsSynthesisFallback
         {
-            throw PeekabooError.invalidInput(Self.foregroundRequiredMessage(for: error))
+            throw Self.unsupportedBackgroundFailure(for: error, target: captureReceipt.exactWindow)
         }
     }
 
@@ -263,10 +263,16 @@ public final class ScrollService {
         request.foreground
     }
 
-    nonisolated static func foregroundRequiredMessage(for error: ActionInputError? = nil) -> String {
-        let reason = error?.localizedDescription ?? "the requested scroll has no Accessibility scroll action"
-        return "Background scroll is Accessibility-only, but \(reason). " +
-            "Retry with foreground enabled to allow synthetic wheel events."
+    private nonisolated static func unsupportedBackgroundFailure(
+        for error: ActionInputError,
+        target: UIAutomationTarget.ExactWindow?) -> DesktopActionFailure
+    {
+        DesktopActionFailure.preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: "Background scroll has no supported route for the observed target.",
+            hint: "Observe again and select a scrollable control or eligible WebKit content element.",
+            causeDescription: error.localizedDescription)
+            .attributed(to: target.map { DesktopTargetIdentity(exactWindow: $0).actionTargetReceipt })
     }
 
     private nonisolated static func validateExpectedWindow(

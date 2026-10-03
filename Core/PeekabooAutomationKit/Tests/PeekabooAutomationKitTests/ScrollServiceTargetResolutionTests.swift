@@ -275,24 +275,26 @@ struct ScrollServiceTargetResolutionTests {
         #expect(posted == 0)
     }
 
-    @Test
+    @Test(arguments: ["AXGroup", "AXScrollArea", "AXScrollBar"])
     @MainActor
-    func `unsupported AX group refuses when application lacks WebKit capability`() async throws {
+    func `unsupported background target retains a typed zero-dispatch refusal`(role: String) async throws {
         let laneRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("web-scroll-refusal-lane-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: laneRoot) }
         let element = DetectedElement(
             id: "S1",
-            type: .group,
-            label: "Opaque panel",
+            type: role == "AXGroup" ? .group : .other,
+            label: "Unsupported scroll target",
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
-            attributes: ["role": "AXGroup"])
+            attributes: ["role": role])
         let action = ScrollRecordingActionInputDriver(
             scrollError: ActionInputError.unsupported(.actionUnsupported))
+        let synthetic = ScrollRecordingSyntheticInputDriver()
         let service = try await ScrollService(
             snapshotManager: InMemorySnapshotManager.containing(
                 Self.exactDetectionResult(element: element)),
             actionInputDriver: action,
+            syntheticInputDriver: synthetic,
             automationElementResolver: ScrollFixedAutomationElementResolver(),
             backgroundWheelCapability: { _ in false },
             exactWindowIdentityValidator: { _, _ in true },
@@ -302,13 +304,21 @@ struct ScrollServiceTargetResolutionTests {
 
         do {
             _ = try await service.scroll(Self.backgroundRequest())
-            Issue.record("Expected foreground-required refusal")
-        } catch let error as PeekabooError {
-            #expect(error.localizedDescription.contains("foreground"))
+            Issue.record("Expected an unsupported background route refusal")
+        } catch let error as DesktopActionFailure {
+            #expect(error.outcome.state == .refused)
+            #expect(error.outcome.refusalReason == .operationUnsupported)
+            #expect(error.outcome.dispatchState == .none)
+            #expect(error.outcome.retrySafety == .safe)
+            #expect(error.targetReceipt?.processIdentifier == getpid())
+            #expect(error.targetReceipt?.processStartIdentity == 11)
+            #expect(error.targetReceipt?.windowID == 42)
+            #expect(!error.message.contains("Accessibility-only"))
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
         #expect(action.scrollCalls.count == 1)
+        #expect(synthetic.events.isEmpty)
     }
 
     @Test
@@ -418,7 +428,7 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background unresolved snapshot target requires foreground without synthetic fallback`() async throws {
+    func `background unresolved snapshot target refuses without synthetic fallback`() async throws {
         let element = DetectedElement(
             id: "S1",
             type: .other,
@@ -445,9 +455,11 @@ struct ScrollServiceTargetResolutionTests {
                 smooth: false,
                 delay: 0,
                 snapshotId: Self.snapshotID))
-            Issue.record("Expected an explicit foreground-required error")
-        } catch let error as PeekabooError {
-            #expect(error.localizedDescription.contains("foreground"))
+            Issue.record("Expected an unsupported background target refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
         }
 
         #expect(synthetic.events.isEmpty)

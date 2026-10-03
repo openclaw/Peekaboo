@@ -35,7 +35,11 @@ struct PeekabooBridgeScrollReceiptTests {
 
     @Test
     func `post dispatch failure retains request pinned exact target`() async throws {
-        let fixture = try await Self.makeFixture(postDispatchFailure: true)
+        let fixture = try await Self.makeFixture(failure: .indeterminate(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Accessibility scroll bar value did not change after dispatch"))
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
         #expect(fixture.handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
@@ -65,9 +69,47 @@ struct PeekabooBridgeScrollReceiptTests {
     }
 
     @Test
+    func `unsupported background scroll stays retry safe through a real bridge round trip`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        await MainActor.run {
+            fixture.services.automationStub.uiAutomationOutcomeScript.appendFailure(
+                DesktopActionFailure.preDispatchRefusal(
+                    reason: .operationUnsupported,
+                    message: "Background scroll has no supported route for the observed target.")
+                    .attributed(to: DesktopTargetIdentity(exactWindow: fixture.exactWindow).actionTargetReceipt),
+                for: .scroll)
+        }
+
+        do {
+            _ = try await fixture.client.scrollWithOutcome(.init(
+                direction: .up,
+                amount: 10,
+                target: "S1",
+                snapshotId: "snapshot",
+                expectedWindow: fixture.exactWindow))
+            Issue.record("Expected unsupported scroll refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .operationUnsupported)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.targetReceipt == DesktopTargetIdentity(
+                exactWindow: fixture.exactWindow).actionTargetReceipt)
+        }
+        let receipt = try #require(await fixture.client.lastOperationReceipt())
+        // No-dispatch envelopes stay targetless; the failure retains the service's validated target.
+        #expect(receipt.payload.target == nil)
+        #expect(receipt.payload.targetAttributionFailure == nil)
+        #expect(receipt.payload.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(receipt.payload.outcome?.state == .refused)
+        await fixture.host.stop()
+    }
+
+    @Test
     func `negotiated downgrade strips exact scroll receipt capability`() async throws {
         let fixture = try await Self.makeFixture(
-            postDispatchFailure: false,
             supportedVersions: Self.previousProtocolVersion...Self.previousProtocolVersion,
             requestedVersion: Self.previousProtocolVersion)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -83,7 +125,6 @@ struct PeekabooBridgeScrollReceiptTests {
     @Test
     func `current handshake derives exact scroll capability from service`() async throws {
         let fixture = try await Self.makeFixture(
-            postDispatchFailure: false,
             serviceSupportsReceipt: false)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
@@ -98,7 +139,6 @@ struct PeekabooBridgeScrollReceiptTests {
     @Test
     func `new client refuses previous host before targeted scroll transport`() async throws {
         let fixture = try await Self.makeFixture(
-            postDispatchFailure: false,
             supportedVersions: Self.previousProtocolVersion...Self.previousProtocolVersion,
             requestedVersion: Self.previousProtocolVersion)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -168,7 +208,7 @@ struct PeekabooBridgeScrollReceiptTests {
 
     @Test
     func `missing exact request target refuses before provider dispatch`() async throws {
-        let fixture = try await Self.makeFixture(postDispatchFailure: false)
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
         do {
@@ -201,7 +241,7 @@ struct PeekabooBridgeScrollReceiptTests {
     }
 
     private static func makeFixture(
-        postDispatchFailure: Bool,
+        failure: DesktopActionFailure? = nil,
         serviceSupportsReceipt: Bool = true,
         supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion> = PeekabooBridgeConstants.supportedProtocolRange,
         requestedVersion: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants
@@ -220,14 +260,8 @@ struct PeekabooBridgeScrollReceiptTests {
         let services = await MainActor.run {
             let services = StubServices()
             services.automationStub.supportsRequestPinnedExactWindowScrollReceipt = serviceSupportsReceipt
-            if postDispatchFailure {
-                services.automationStub.uiAutomationOutcomeScript.appendFailure(
-                    DesktopActionFailure.indeterminate(
-                        delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                        evidence: .completionUnknown,
-                        unitCount: .one,
-                        message: "Accessibility scroll bar value did not change after dispatch"),
-                    for: .scroll)
+            if let failure {
+                services.automationStub.uiAutomationOutcomeScript.appendFailure(failure, for: .scroll)
             }
             return services
         }
