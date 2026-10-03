@@ -76,8 +76,7 @@ struct HeldPointerCertificationReceipt: Codable, Equatable, Sendable {
 }
 
 enum HeldPointerReceiptTargetExpectation {
-    case unchecked
-    case absent
+    case global
     case exact(WindowMutationIdentity)
 }
 
@@ -216,8 +215,7 @@ enum HeldPointerCertificationSemantics {
         expected: HeldPointerReceiptTargetExpectation
     ) throws {
         let matches = switch expected {
-        case .unchecked: true
-        case .absent: actual == nil
+        case .global: actual == .global
         case let .exact(identity): actual == .window(identity)
         }
         guard matches else {
@@ -244,7 +242,7 @@ private struct HeldPointerReceiptTracker {
     mutating func record(
         client: PeekabooBridgeClient,
         expectedOperation: PeekabooBridgeOperation,
-        expectedTarget: HeldPointerReceiptTargetExpectation = .unchecked,
+        expectedTarget: HeldPointerReceiptTargetExpectation,
         expectedOutcome: DesktopActionOutcome.Projection? = nil
     ) async throws -> HeldPointerCertificationOperationReceipt {
         guard await client.lastOperationReceiptExportFailure() == nil,
@@ -437,12 +435,20 @@ enum HeldPointerCertificationRunner {
             let firstInventory = try await client.listWindowMutationInventory(
                 target: .windowId(plan.target.windowID)
             )
-            try await operations.append(tracker.record(client: client, expectedOperation: .listWindows))
+            try await operations.append(tracker.record(
+                client: client,
+                expectedOperation: .listWindows,
+                expectedTarget: .global
+            ))
             let firstWindow = try self.exactWindow(from: firstInventory, plan: plan)
             let secondInventory = try await client.listWindowMutationInventory(
                 target: .windowId(plan.target.windowID)
             )
-            try await operations.append(tracker.record(client: client, expectedOperation: .listWindows))
+            try await operations.append(tracker.record(
+                client: client,
+                expectedOperation: .listWindows,
+                expectedTarget: .global
+            ))
             let secondWindow = try self.exactWindow(from: secondInventory, plan: plan)
             guard firstWindow == secondWindow, let identity = secondWindow.mutationIdentity else {
                 throw CertificationControllerError.runtimeRefusal(
@@ -459,7 +465,8 @@ enum HeldPointerCertificationRunner {
             )
             try await operations.append(tracker.record(
                 client: client,
-                expectedOperation: .createExactWindowHeldPointerOwner
+                expectedOperation: .createExactWindowHeldPointerOwner,
+                expectedTarget: .global
             ))
             let begin = try await client.beginExactWindowPointerHold(
                 owner: createdOwner,
@@ -514,6 +521,7 @@ enum HeldPointerCertificationRunner {
             ))
 
             let disconnect = try await client.disconnectExactWindowHeldPointerOwner(createdOwner)
+            owner = nil
             try HeldPointerCertificationSemantics.requireDisconnect(
                 outcome: disconnect.outcome,
                 hasPayload: disconnect.payload != nil,
@@ -522,10 +530,9 @@ enum HeldPointerCertificationRunner {
             try await operations.append(tracker.record(
                 client: client,
                 expectedOperation: .disconnectExactWindowHeldPointerOwner,
-                expectedTarget: .absent,
+                expectedTarget: .global,
                 expectedOutcome: disconnect.outcome?.projection
             ))
-            owner = nil
             guard operations.map(\.operation) == self.expectedOperationOrder,
                   tracker.requestIDs.count == self.expectedOperationOrder.count
             else {

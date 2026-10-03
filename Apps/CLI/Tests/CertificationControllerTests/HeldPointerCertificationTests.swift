@@ -214,10 +214,16 @@ struct HeldPointerCertificationTests {
                 expected: .init(identity: identity, bounds: bounds, point: point)
             )
         }
-        try HeldPointerCertificationSemantics.requireReceiptTarget(nil, expected: .absent)
+        try HeldPointerCertificationSemantics.requireReceiptTarget(.global, expected: .global)
         try HeldPointerCertificationSemantics.requireReceiptTarget(.window(identity), expected: .exact(identity))
         #expect(throws: CertificationControllerError.self) {
-            try HeldPointerCertificationSemantics.requireReceiptTarget(.window(identity), expected: .absent)
+            try HeldPointerCertificationSemantics.requireReceiptTarget(nil, expected: .global)
+        }
+        #expect(throws: CertificationControllerError.self) {
+            try HeldPointerCertificationSemantics.requireReceiptTarget(.window(identity), expected: .global)
+        }
+        #expect(throws: CertificationControllerError.self) {
+            try HeldPointerCertificationSemantics.requireReceiptTarget(.global, expected: .exact(identity))
         }
     }
 

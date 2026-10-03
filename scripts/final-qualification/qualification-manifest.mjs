@@ -2688,6 +2688,7 @@ function adjunct(value, label, { kind, binding }) {
     const operations = [];
     const listenerIDs = new Set();
     const expectedOperations = controller.operations.map((entry) => entry.operation);
+    let previousInventoryWindow = null;
     for (let index = 0; index < value.raw_bundles.length; index += 1) {
       const pair = semanticValidatorPair(
         value.raw_bundles[index],
@@ -2715,28 +2716,63 @@ function adjunct(value, label, { kind, binding }) {
         && sameJSON(pair.payload.outcome ?? null, controller.operations[index].outcome),
       `${label}[${index}] signed controller, host, listener, request, or operation differs`);
       const targetBoundOperations = [
-        'listWindows', 'beginExactWindowHeldPointer', 'releaseExactWindowHeldPointer',
+        'beginExactWindowHeldPointer', 'releaseExactWindowHeldPointer',
       ];
       if (targetBoundOperations.includes(pair.payload.operation)) {
         requireCondition(pair.report.target_attested === true
           && sameJSON(targetFromPayload(pair.payload, `${label}[${index}]`), controller.target),
         `${label}[${index}] held-pointer target-bearing operation differs from the controlled fixture`);
-        if (pair.payload.operation !== 'listWindows') {
-          requireCondition(pair.report.outcome_attested === true
-            && pair.payload.outcome?.delivery_mode === 'background'
-            && pair.payload.outcome?.delivery_mechanism === 'window_targeted_events'
-            && pair.payload.outcome?.dispatched_unit_count
-              === (pair.payload.operation === 'beginExactWindowHeldPointer' ? 2 : 1),
-          `${label}[${index}] held-pointer mutation is not target-attested background delivery`);
-        }
+        requireCondition(pair.report.outcome_attested === true
+          && pair.payload.outcome?.delivery_mode === 'background'
+          && pair.payload.outcome?.delivery_mechanism === 'window_targeted_events'
+          && pair.payload.outcome?.dispatched_unit_count
+            === (pair.payload.operation === 'beginExactWindowHeldPointer' ? 2 : 1),
+        `${label}[${index}] held-pointer mutation is not target-attested background delivery`);
       } else {
-        requireCondition(pair.payload.target == null && pair.report.target_attested === false,
-          `${label}[${index}] targetless held-pointer operation claimed a target`);
+        requireCondition(sameJSON(pair.payload.target, { kind: 'global' })
+          && pair.report.target_attested === true,
+        `${label}[${index}] global held-pointer operation lacks its exact signed scope`);
+      }
+      if (pair.payload.operation === 'listWindows') {
+        const requestEvidence = decodeCanonicalBase64JSON(
+          pair.bundle.value.canonicalRequest, `${label}[${index}] inventory request`,
+        );
+        const responseEvidence = decodeCanonicalBase64JSON(
+          pair.bundle.value.canonicalResponse, `${label}[${index}] inventory response`,
+        );
+        requireCondition(requestEvidence.sha256 === pair.payload.requestSHA256
+          && responseEvidence.sha256 === pair.payload.responseSHA256
+          && requestEvidence.sha256 === controller.operations[index].bundle.request_sha256
+          && responseEvidence.sha256 === controller.operations[index].bundle.response_sha256,
+        `${label}[${index}] inventory bytes differ from their receipt/controller digests`);
+        const request = requestEvidence.value;
+        const response = responseEvidence.value;
+        const inventory = response.windowMutationInventory?._0;
+        const window = inventory?.items?.[0];
+        const bounds = controller.value.target.bounds;
+        const wireBounds = [[bounds.x, bounds.y], [bounds.width, bounds.height]];
+        const identity = window?.mutationIdentity;
+        requireCondition(sameJSON(request, {
+          listWindowMutationInventory: { _0: {
+            target: { kind: 'windowId', windowId: controller.target.window_id },
+          } },
+        }) && inventory?.completeness === 'complete' && sameJSON(inventory.warnings, [])
+          && inventory.items?.length === 1
+          && window.window_id === controller.target.window_id && window.isMinimized === false
+          && sameJSON(window.bounds, wireBounds)
+          && Number.isSafeInteger(identity?.ownerProcessStartIdentity)
+          && String(identity.ownerProcessStartIdentity) === controller.target.start_identity
+          && sameJSON(identity, {
+            windowID: controller.target.window_id,
+            ownerProcessIdentifier: controller.target.pid,
+            ownerProcessStartIdentity: identity.ownerProcessStartIdentity,
+            capturedBounds: wireBounds, isMinimized: false,
+          }) && (previousInventoryWindow === null || sameJSON(window, previousInventoryWindow)),
+        `${label}[${index}] held-pointer inventory is incomplete, changed, or off-target`);
+        previousInventoryWindow = window;
       }
       if (pair.payload.operation === 'disconnectExactWindowHeldPointerOwner') {
-        requireCondition(pair.payload.target == null
-          && pair.report.target_attested === false
-          && pair.report.outcome_attested === true
+        requireCondition(pair.report.outcome_attested === true
           && pair.payload.outcome?.state === 'confirmed_no_change'
           && pair.payload.outcome?.evidence === 'verified_no_change'
           && pair.payload.outcome?.dispatch_state === 'none'

@@ -122,6 +122,13 @@ owner creation, begin, release, and owner disconnect. The begin receipt must att
 release must attest one additional unit and the three-unit `released` lifecycle; disconnect must attest zero dispatch.
 Validate every retained bundle against the still-live exact Bridge listener before sealing final evidence.
 
+The inventory, owner-creation, and completed owner-disconnect receipts have signed `global` scope. This is not
+foreground input: those operations carry no concrete window identity in the receipt itself. The two authenticated
+inventory responses must independently identify the same complete exact target, including its generation and bounds;
+begin and release carry exact-window receipt scope. An idle disconnect returns no concrete action target while still
+signing `global` scope. Missing receipt scope is not equivalent to that explicit value, and a later evidence error must
+not repeat an already-acknowledged owner disconnect.
+
 Certification requires a stamped CLI whose `--version --json` output contains one canonical 40-hex `sourceCommit`.
 Remote certification pins every command to one exact Bridge socket and requires its additive host-identity receipt to
 expose the same source commit. Raw SwiftPM and manual unstamped Xcode builds report `unknown` and are intentionally
