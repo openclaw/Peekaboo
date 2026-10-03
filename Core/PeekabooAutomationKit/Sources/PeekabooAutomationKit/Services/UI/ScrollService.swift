@@ -301,7 +301,7 @@ public final class ScrollService {
             return false
         }
         let role = element.attributes["role"]?.lowercased()
-        return element.type == .group || role == "axgroup" || role == "axwebarea"
+        return element.type == .group || role == "axgroup" || role == "axwebarea" || role == "axscrollarea"
     }
 
     private func resolveActionScrollTarget(

@@ -145,18 +145,18 @@ struct ScrollServiceTargetResolutionTests {
         #expect(synthetic.events.isEmpty)
     }
 
-    @Test
+    @Test(arguments: ["AXGroup", "AXWebArea", "AXScrollArea"])
     @MainActor
-    func `unsupported AX group uses exact WebKit wheel route without global synthesis`() async throws {
+    func `unsupported AX container uses exact WebKit wheel route without global synthesis`(role: String) async throws {
         let laneRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("web-scroll-lane-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: laneRoot) }
         let element = DetectedElement(
             id: "S1",
-            type: .group,
+            type: role == "AXGroup" ? .group : .other,
             label: "Web content",
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
-            attributes: ["role": "AXGroup"])
+            attributes: ["role": role])
         let detectionResult = Self.exactDetectionResult(element: element)
         let identity = try #require(detectionResult.metadata.windowContext?.windowMutationIdentity)
         let bounds = try #require(detectionResult.metadata.windowContext?.windowBounds)
@@ -321,19 +321,27 @@ struct ScrollServiceTargetResolutionTests {
         #expect(synthetic.events.isEmpty)
     }
 
-    @Test
-    func `window-routed wheel requires pixel-backed container evidence`() {
+    @Test(arguments: ["AXGroup", "AXWebArea", "AXScrollArea"])
+    func `window-routed wheel requires pixel-backed container evidence`(role: String) {
         let element = DetectedElement(
             id: "S1",
-            type: .group,
+            type: .other,
             label: "Web content",
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
-            attributes: ["role": "AXGroup"])
+            attributes: ["role": role])
 
         #expect(ScrollService.supportsWindowRoutedWheelTarget(element, screenshotPath: "/tmp/shot.png"))
         #expect(!ScrollService.supportsWindowRoutedWheelTarget(element, screenshotPath: ""))
         #expect(!ScrollService.supportsWindowRoutedWheelTarget(
             DetectedElement(id: "B1", type: .button, label: "Button", bounds: element.bounds),
+            screenshotPath: "/tmp/shot.png"))
+        #expect(!ScrollService.supportsWindowRoutedWheelTarget(
+            DetectedElement(
+                id: "ocr_1",
+                type: .staticText,
+                label: "OCR",
+                bounds: element.bounds,
+                attributes: ["role": role, "description": "ocr"]),
             screenshotPath: "/tmp/shot.png"))
     }
 

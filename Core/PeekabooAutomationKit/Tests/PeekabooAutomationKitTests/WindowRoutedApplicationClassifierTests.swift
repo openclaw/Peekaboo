@@ -5,6 +5,8 @@ import Testing
 struct WindowRoutedApplicationClassifierTests {
     private static let executableURL = URL(fileURLWithPath: "/test/PeekabooFixture")
     private static let webKitPrefix = Data("/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit".utf8)
+    private static let safariPrefix = Data(
+        "/System/Library/PrivateFrameworks/Safari.framework/Versions/A/Safari".utf8)
 
     @Test(arguments: Family.allCases)
     @MainActor
@@ -71,6 +73,70 @@ struct WindowRoutedApplicationClassifierTests {
         #expect(classifier.supportsBackgroundWheelScroll)
         #expect(classifier.pointerTransport == .publicCGEvent)
         #expect(readURLs == [Self.executableURL])
+    }
+
+    @Test(arguments: [0, 1, 2, 4, 8, 16, 32])
+    @MainActor
+    func `known Safari framework preserves every wheel eligibility guard`(flags: Int) {
+        let metadata = WindowRoutedApplicationClassifier.Metadata(
+            bundleIdentifier: "com.apple.Safari",
+            principalClass: flags & 4 == 0 ? "BrowserApplication" : "AtomApplication",
+            hasElectronAsarIntegrity: flags & 8 != 0,
+            isCatalyst: flags & 16 != 0,
+            isHidden: flags & 1 != 0,
+            isTerminated: flags & 2 != 0,
+            executableURL: flags & 32 == 0 ? Self.executableURL : nil)
+        var readURLs: [URL] = []
+        let classifier = WindowRoutedApplicationClassifier(metadata: metadata) { url in
+            readURLs.append(url)
+            return Self.safariPrefix
+        }
+
+        #expect(classifier.supportsBackgroundWheelScroll == (flags == 0))
+        #expect(readURLs == (flags == 0 ? [Self.executableURL] : []))
+        if flags == 0 {
+            #expect(classifier.kind == .appKit)
+            #expect(classifier.pointerTransport == .publicCGEvent)
+            #expect(readURLs == [Self.executableURL])
+        }
+    }
+
+    @Test(arguments: [
+        nil, "com.example.Native", "com.apple.safari", "com.apple.Safari.extra",
+        "com.apple.SafariTechnologyPreview",
+    ] as [String?])
+    @MainActor
+    func `Safari framework marker requires the exact Safari bundle identifier`(_ bundleIdentifier: String?) {
+        let classifier = WindowRoutedApplicationClassifier(metadata: .init(
+            bundleIdentifier: bundleIdentifier,
+            principalClass: "BrowserApplication",
+            hasElectronAsarIntegrity: false,
+            isCatalyst: false,
+            executableURL: Self.executableURL)) { _ in Self.safariPrefix }
+
+        #expect(!classifier.supportsBackgroundWheelScroll)
+    }
+
+    @Test(arguments: [
+        nil, "", "Safari.framework", "/Safari.framework/",
+        "/System/Library/PrivateFrameworks/Safari.framework/Versions/B/Safari",
+    ] as [String?])
+    @MainActor
+    func `Safari wheel capability requires its full readable framework marker`(_ prefix: String?) {
+        var readCount = 0
+        let classifier = WindowRoutedApplicationClassifier(metadata: .init(
+            bundleIdentifier: "com.apple.Safari",
+            principalClass: "BrowserApplication",
+            hasElectronAsarIntegrity: false,
+            isCatalyst: false,
+            executableURL: Self.executableURL))
+        { _ in
+            readCount += 1
+            return prefix.map { Data($0.utf8) }
+        }
+
+        #expect(!classifier.supportsBackgroundWheelScroll)
+        #expect(readCount == 1)
     }
 
     @Test

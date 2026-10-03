@@ -10,7 +10,8 @@ enum WindowRoutedApplicationKind: Equatable {
 
 /// A narrow runtime gate for process-targeted pointer delivery.
 ///
-/// Wheel events are enabled only for visible native applications whose executable imports WebKit.
+/// Wheel events are enabled only for visible native applications with a WebKit import, or known
+/// Safari executables that import Safari.framework instead of linking WebKit directly.
 /// Electron, Chromium, and Catalyst keep their existing click transport classification but are not
 /// admitted to background wheel delivery because receiver consumption cannot be proven there.
 @MainActor
@@ -35,6 +36,8 @@ struct WindowRoutedApplicationClassifier {
     ]
     private static let executableProbeLimit = 1_048_576
     private static let webKitImportMarker = Data("/WebKit.framework/".utf8)
+    private static let safariImportMarker = Data(
+        "/System/Library/PrivateFrameworks/Safari.framework/Versions/A/Safari".utf8)
 
     private let metadata: Metadata
     private let executablePrefixReader: @MainActor (URL) -> Data?
@@ -81,7 +84,10 @@ struct WindowRoutedApplicationClassifier {
         else {
             return false
         }
-        return prefix.range(of: Self.webKitImportMarker) != nil
+        let importsWebKit = prefix.range(of: Self.webKitImportMarker) != nil
+        let importsKnownSafari = self.metadata.bundleIdentifier == "com.apple.Safari" &&
+            prefix.range(of: Self.safariImportMarker) != nil
+        return importsWebKit || importsKnownSafari
     }
 
     static func pointerTransport(processIdentifier: pid_t) -> WindowRoutedPointerTransport {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Recognize Safari's framework-linked executable and scroll-area containers for eligible exact-window background wheel dispatch, preserving hidden-app exclusions, exact receipt checks, and unverified retry-unsafe outcomes.
 - Preserve unsupported background scrolls as exact-target, retry-safe no-dispatch refusals through Bridge instead of reporting a possible mutation or implying all background scroll is Accessibility-only.
 - Sign debug CLI builds with the canonical Peekaboo CLI identifier so they satisfy existing GUI Bridge and deployment healthcheck identity checks.
 - Preserve native Accessibility date values as ISO-8601 UTC timestamps in UI observations instead of silently omitting them, including Calendar's date-valued controls.
