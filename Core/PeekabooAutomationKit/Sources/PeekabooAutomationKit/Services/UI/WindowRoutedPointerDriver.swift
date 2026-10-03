@@ -436,6 +436,39 @@ struct WindowRoutedPointerDriver {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> DesktopActionOutcome
     {
+        var postedEventCount = 0
+        do {
+            return try await self.scrollTrackingDispatch(
+                at: point,
+                direction: direction,
+                ticks: ticks,
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: targetWindowID,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds,
+                postedEventCount: &postedEventCount)
+        } catch let error as PeekabooError where postedEventCount == 0 {
+            // Only the delivery owner knows these raw failures occurred before any wheel event.
+            // Already-typed failures keep their original, potentially retry-unsafe evidence.
+            throw Self.scrollPreDispatchFailure(error)
+        } catch is CancellationError where postedEventCount == 0 {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .requestCancelled,
+                message: "Window-routed scroll was cancelled before any wheel event was dispatched",
+                standardErrorCode: .cancelled)
+        }
+    }
+
+    private func scrollTrackingDispatch(
+        at point: CGPoint,
+        direction: PeekabooFoundation.ScrollDirection,
+        ticks: Int,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        postedEventCount: inout Int) async throws -> DesktopActionOutcome
+    {
         guard ticks > 0 else {
             throw PeekabooError.invalidInput("Window-routed scroll requires at least one tick")
         }
@@ -456,7 +489,6 @@ struct WindowRoutedPointerDriver {
         }
 
         let transport = self.resolveTransport(targetProcessIdentifier)
-        var postedEventCount = 0
         for tick in 0..<ticks {
             if Task.isCancelled {
                 if postedEventCount == 0 {
@@ -859,6 +891,29 @@ struct WindowRoutedPointerDriver {
             return false
         }
         return true
+    }
+}
+
+extension WindowRoutedPointerDriver {
+    fileprivate static func scrollPreDispatchFailure(_ error: PeekabooError) -> DesktopActionFailure {
+        let (reason, code): (DesktopActionOutcome.RefusalReason, StandardErrorCode) = switch error {
+        case .invalidInput, .invalidCoordinates:
+            (.invalidRequest, error.code)
+        case .permissionDeniedEventSynthesizing, .permissionDeniedAccessibility,
+             .permissionDeniedScreenRecording, .permissionDenied:
+            (.permissionDenied, error.code)
+        case .snapshotStale:
+            (.targetUnavailable, .snapshotStale)
+        case .snapshotNotFound, .windowNotFound, .appNotFound:
+            (.targetUnavailable, error.code)
+        default:
+            (.runtimeIncompatible, error.code)
+        }
+        return .preDispatchRefusal(
+            reason: reason,
+            message: error.localizedDescription,
+            hint: error.suggestedAction,
+            standardErrorCode: code)
     }
 }
 

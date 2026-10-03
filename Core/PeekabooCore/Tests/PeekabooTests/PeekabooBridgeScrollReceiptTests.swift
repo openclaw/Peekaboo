@@ -68,15 +68,18 @@ struct PeekabooBridgeScrollReceiptTests {
         await fixture.host.stop()
     }
 
-    @Test
-    func `unsupported background scroll stays retry safe through a real bridge round trip`() async throws {
+    @Test(arguments: [false, true])
+    func `background scroll refusal stays retry safe through a real bridge round trip`(staleTarget: Bool) async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let reason: DesktopActionOutcome.RefusalReason = staleTarget ? .targetUnavailable : .operationUnsupported
         await MainActor.run {
             fixture.services.automationStub.uiAutomationOutcomeScript.appendFailure(
                 DesktopActionFailure.preDispatchRefusal(
-                    reason: .operationUnsupported,
-                    message: "Background scroll has no supported route for the observed target.")
+                    reason: reason,
+                    message: staleTarget ? "Captured wheel point is outside the exact window." :
+                        "Background scroll has no supported route for the observed target.",
+                    standardErrorCode: staleTarget ? .snapshotStale : nil)
                     .attributed(to: DesktopTargetIdentity(exactWindow: fixture.exactWindow).actionTargetReceipt),
                 for: .scroll)
         }
@@ -88,13 +91,14 @@ struct PeekabooBridgeScrollReceiptTests {
                 target: "S1",
                 snapshotId: "snapshot",
                 expectedWindow: fixture.exactWindow))
-            Issue.record("Expected unsupported scroll refusal")
+            Issue.record("Expected pre-dispatch scroll refusal")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.route == .bridge)
             #expect(failure.outcome.state == .refused)
-            #expect(failure.outcome.refusalReason == .operationUnsupported)
+            #expect(failure.outcome.refusalReason == reason)
             #expect(failure.outcome.dispatchState == .none)
             #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.standardErrorCode == (staleTarget ? .snapshotStale : nil))
             #expect(failure.targetReceipt == DesktopTargetIdentity(
                 exactWindow: fixture.exactWindow).actionTargetReceipt)
         }

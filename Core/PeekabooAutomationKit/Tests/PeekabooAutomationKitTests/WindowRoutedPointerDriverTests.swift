@@ -154,7 +154,7 @@ struct WindowRoutedPointerDriverTests {
             windowIsVisible: { _ in true },
             sleep: { _ in })
 
-        await #expect(throws: PeekabooError.self) {
+        let failure = await #expect(throws: DesktopActionFailure.self) {
             _ = try await driver.scroll(
                 at: receipt.screenPoint,
                 direction: .down,
@@ -164,6 +164,9 @@ struct WindowRoutedPointerDriverTests {
                 expectedWindowIdentity: receipt.identity,
                 expectedWindowBounds: receipt.bounds)
         }
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
         #expect(posts == 0)
     }
 
