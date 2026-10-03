@@ -27,6 +27,12 @@ struct PasteClipboardGuardTests {
         #expect(result.exitStatus == 1)
         #expect(response.error?.mutation_dispatched == dispatched)
         #expect(response.error?.retry_safe == !dispatched)
+        if !hostSupportsPaste {
+            let hint = try #require(response.error?.hint)
+            #expect(hint.contains("peekaboo bridge status --bridge-socket <path>"))
+            #expect(hint.contains("custom-socket trust policy can cap negotiation at protocol 1.28"))
+            #expect(!hint.contains("Update the Peekaboo host"))
+        }
         #expect(clipboard.setCallCount == (dispatched ? 1 : 0))
         #expect(clipboard.getCallCount == (hostSupportsPaste ? 1 : 0))
         #expect(clipboard.restoreCallCount == (dispatched ? 1 : 0))

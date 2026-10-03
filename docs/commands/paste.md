@@ -24,6 +24,7 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 | Focus flags | Foreground focus controls (`--space-switch`, `--no-auto-focus`, etc.). |
 
 ## Delivery modes
+- Bridge requirements apply to the negotiated connection, not just the host's installed version. A current host on a custom socket can be limited to protocol 1.28 by the client's host-trust policy and refuse before clipboard access or input. Inspect the same socket with `peekaboo bridge status --bridge-socket <path>`; see [Bridge host trust](bridge.md#notes).
 - **Background** is the default when Peekaboo can resolve a target. Exact-window routes pin the process generation, window ID/bounds, and focused element. App/PID routes upgrade when one eligible window exists and refuse when several are eligible. Plain text is delivered directly without touching the clipboard. Binary/rich and current-clipboard requests remain receiver-unverifiable and return “may have pasted; do not retry” after cleanup.
 - **Foreground** (`--foreground`) requires a supplied target to return a confirmed exact-window focus receipt before Cmd+V. A genuinely targetless foreground call remains intentionally global. `--no-auto-focus` cannot be combined with a target because Peekaboo will not guess that the requested window already owns keyboard focus.
 - Without an app/PID target, `paste` fails before mutating the clipboard. Add `--foreground` only when global delivery is intentional.

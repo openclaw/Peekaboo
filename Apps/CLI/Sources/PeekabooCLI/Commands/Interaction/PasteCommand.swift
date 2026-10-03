@@ -862,7 +862,9 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 throw PreDispatchActionError(
                     message: error.localizedDescription,
                     code: .INTERACTION_FAILED,
-                    hint: "Update the Peekaboo host and retry with a fresh exact-window target.",
+                    hint: "Check the selected runtime's capabilities. For Bridge, inspect the same socket with " +
+                        "`peekaboo bridge status --bridge-socket <path>`; custom-socket trust policy can cap " +
+                        "negotiation at protocol 1.28 even on a current host.",
                     reason: .runtimeIncompatible
                 )
             }
