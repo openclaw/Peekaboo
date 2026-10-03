@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Recheck the application's focused editor during background rich-paste preparation, refusing late sibling-focus changes without requiring an already-key target window or erasing earlier clipboard/preparation effects.
 - Preserve plain and attributed Accessibility value labels in menu listing, path selection, and menu-extra matching, keeping title precedence and ambiguous-name refusals unchanged.
 - Redact inline base64 payloads from Agent live tool-call previews, including nested and partially streamed values, without changing authorized tool input.
 - Preserve known clipboard cleanup status through Agent paste errors and public MCP metadata, keeping provider claims isolated and canonical dispatch, target, and retry semantics unchanged.

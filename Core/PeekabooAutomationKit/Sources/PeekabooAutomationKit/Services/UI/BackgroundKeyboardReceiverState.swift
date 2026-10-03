@@ -25,31 +25,41 @@ struct BackgroundKeyboardReceiverState: Sendable, Equatable {
         retained: Self? = nil) throws -> Self
     {
         try self.read(
+            applicationFocusedElement: {
+                let application = AXUIElementCreateApplication(expected.processIdentifier)
+                return DetachedExactWindowFocusReader.focusedElementReference(
+                    of: application, deadline: ContinuousClock.now.advanced(by: .milliseconds(50)))
+                    .map { RetainedFocusElement(element: $0) }
+            },
             snapshot: {
                 try DetachedExactWindowFocusReader.readValue(
                     expected: expected, retainedElement: retained?.snapshot.nativeElement).get()
             },
             selection: { element in
                 TextSelectionRange(nativeValue: DetachedExactWindowFocusReader.attribute(
-                    kAXSelectedTextRangeAttribute, of: element.element,
+                    kAXSelectedTextRangeAttribute,
+                    of: element.element,
                     deadline: ContinuousClock.now.advanced(by: .milliseconds(50))))
             },
             retained: retained)
     }
 
     static func read(
+        applicationFocusedElement: () throws -> RetainedFocusElement?,
         snapshot: () throws -> ExactWindowFocusSnapshot,
         selection: (RetainedFocusElement) throws -> TextSelectionRange?,
         retained: Self?) throws -> Self
     {
         func sample() throws -> Self {
+            guard let focusedBefore = try applicationFocusedElement() else { throw Self.refusal() }
             let snapshot = try snapshot()
             guard [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(snapshot.role),
                   DetachedExactWindowFocusReader.allowsValueRead(snapshot),
-                  let native = snapshot.nativeElement, let value = snapshot.value,
+                  let native = snapshot.nativeElement, native == focusedBefore, let value = snapshot.value,
                   let selection = try selection(native),
                   selection.location + selection.length <= value.utf16.count
             else { throw Self.refusal() }
+            guard try applicationFocusedElement() == native else { throw Self.refusal() }
             return Self(snapshot: snapshot, selection: selection)
         }
         let before = try sample()
@@ -61,7 +71,7 @@ struct BackgroundKeyboardReceiverState: Sendable, Equatable {
     private static func refusal() -> DesktopActionFailure {
         .preDispatchRefusal(
             reason: .targetUnavailable,
-            message: "The exact background editor, UTF-16 text, or selection could not be retained unchanged.",
+            message: "The app-focused background editor, UTF-16 text, or selection could not be retained unchanged.",
             hint: "Observe the target again; preparation never restores stale focus, text, or selection.")
     }
 }
