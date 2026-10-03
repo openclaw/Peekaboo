@@ -86,14 +86,24 @@ enum BackgroundWindowKeyboardPreparation {
             message: error.localizedDescription)
     }
 
-    private static func read<Value: Sendable>(
+    static func read<Value: Sendable>(
         target: UIAutomationTarget.ExactWindow,
         operation: @escaping @Sendable () throws -> Value) async throws -> Value
     {
-        try await ElementDetectionTimeoutRunner.runDetached(
-            targetProcessIdentifier: target.identity.ownerProcessIdentifier,
-            targetProcessStartIdentity: target.identity.ownerProcessStartIdentity,
-            seconds: 0.5,
-            operation: operation)
+        do {
+            return try await ElementDetectionTimeoutRunner.runDetached(
+                targetProcessIdentifier: target.identity.ownerProcessIdentifier,
+                targetProcessStartIdentity: target.identity.ownerProcessStartIdentity,
+                seconds: 0.5,
+                operation: operation)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch {
+            // This worker only observes; the sequence separately retains any earlier preparation effects.
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: error is CancellationError ? .requestCancelled : .targetUnavailable,
+                message: "The exact background window and focused editor could not be observed unchanged.",
+                hint: "Observe the target again; this observation did not dispatch preparation input.")
+        }
     }
 }

@@ -253,7 +253,7 @@ public enum FocusedElementReceiptError: LocalizedError, Equatable, Sendable {
         case .focusedAttributeUnreadable:
             "The selected element's AXFocused attribute could not be read."
         case .focusNotConfirmed:
-            "The selected element did not report AXFocused=true after the native focus request."
+            "The selected element did not report AXFocused=true."
         case .noFocusedElement:
             "The exact target window reports no focused element."
         case .multipleFocusedElements:

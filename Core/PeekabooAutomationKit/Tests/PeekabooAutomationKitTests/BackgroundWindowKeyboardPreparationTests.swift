@@ -6,6 +6,81 @@ import Testing
 @MainActor
 struct BackgroundWindowKeyboardPreparationTests {
     @Test
+    func `focus observation error does not claim a focus request was sent`() {
+        #expect(FocusedElementReceiptError.focusNotConfirmed.errorDescription ==
+            "The selected element did not report AXFocused=true.")
+    }
+
+    @Test(arguments: [0, 1, 2])
+    func `read-only focus loss preserves only the earlier preparation prefix`(phase: Int) async throws {
+        let target = try Self.observationTarget()
+        func read() async throws {
+            let _: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) {
+                throw FocusedElementReceiptError.focusNotConfirmed
+            }
+        }
+        do {
+            if phase == 0 {
+                try await read()
+            }
+            _ = try await BackgroundWindowKeyboardPreparation.sequence(
+                activation: { Self.activation },
+                pointer: {
+                    if phase == 1 {
+                        try await read()
+                    }
+                    return Self.pointer
+                },
+                postvalidate: { try await read() })
+            Issue.record("Expected observation refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == (phase == 0 ? .refused : .indeterminate))
+            #expect(failure.outcome.retrySafety == (phase == 0 ? .safe : .unsafe))
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == (phase == 0 ? nil : (phase == 1 ? 1 : 4)))
+            #expect(!failure.message.contains("native focus request"))
+        }
+    }
+
+    @Test
+    func `cancelled observation is a no-input refusal`() async throws {
+        let target = try Self.observationTarget()
+        do {
+            let _: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) {
+                throw CancellationError()
+            }
+            Issue.record("Expected cancellation refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .requestCancelled)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.outcome.dispatchState.unitCount == nil)
+        }
+    }
+
+    @Test
+    func `observation never weakens an existing canonical failure`() async throws {
+        let target = try Self.observationTarget()
+        let existing = BackgroundWindowKeyboardPreparation.leafFailure(
+            InputDeliveryIndeterminateError(operation: .click, emittedUnitCount: 1),
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background))
+        do {
+            let _: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) { throw existing }
+            Issue.record("Expected retained failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == existing.outcome)
+            #expect(failure.message == existing.message)
+        }
+    }
+
+    private static func observationTarget() throws -> UIAutomationTarget.ExactWindow {
+        let bounds = CGRect(x: 0, y: 32, width: 500, height: 400)
+        return try UIAutomationTarget.ExactWindow(
+            identity: WindowMutationIdentity(
+                windowID: 100, ownerProcessIdentifier: 9001, ownerProcessStartIdentity: 800),
+            bounds: bounds)
+    }
+
+    @Test
     func `activation and ordinary pointer outcomes compose without asserting effect`() async throws {
         var order: [String] = []
         let result = try await BackgroundWindowKeyboardPreparation.sequence(
