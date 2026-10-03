@@ -341,10 +341,14 @@ import CoreGraphics
     }
 
     /// Normalizes the scalar shapes AXValue uses for user-visible control state.
-    /// Descriptor strings such as titles must remain string-only, but values can legitimately be numbers or booleans.
+    /// Titles remain string-only; control values may also be numbers, booleans, or dates.
     @_spi(Testing) public static func displayValue(_ value: Any?) -> String? {
         if let string = value as? String {
             return string
+        }
+        if let date = value as? Date {
+            guard date.timeIntervalSinceReferenceDate.isFinite else { return nil }
+            return date.ISO8601Format(.init(includingFractionalSeconds: true))
         }
         guard let value else { return nil }
         let cfValue = value as CFTypeRef

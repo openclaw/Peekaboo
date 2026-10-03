@@ -11,6 +11,9 @@ read_when:
 
 Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows.
 
+Native Accessibility date values are exposed as ISO-8601 UTC timestamps with milliseconds, alongside existing string,
+number and boolean control values. Nonfinite dates remain unavailable; titles and labels remain string-only.
+
 The command's `--timeout` also bounds pixel-only observations (`--no-elements`, raw image stdout, area, and multi
 capture), including snapshot reservation, capture, optional analysis, and failure cleanup. Multiple captures share
 one budget rather than restarting it for each image. Timed-out work cannot later publish successful command output.

@@ -1,8 +1,46 @@
 import ApplicationServices
+import Foundation
 import Testing
 @testable @_spi(Testing) import PeekabooAutomationKit
 
 struct AXDescriptorReaderPolicyTests {
+    @Test
+    func `Date value representations use the same UTC timestamp`() throws {
+        let date = Date(timeIntervalSince1970: 1_791_033_456.125)
+        let cfDate = try #require(CFDateCreate(nil, date.timeIntervalSinceReferenceDate))
+        let values: [Any] = [date, date as NSDate, cfDate]
+
+        for value in values {
+            #expect(AXDescriptorReader.displayValue(value) == "2026-10-03T13:17:36.125Z")
+            #expect(AXDescriptorReader.stringValue(value) == nil)
+        }
+    }
+
+    @Test(arguments: [Double.nan, .infinity, -.infinity])
+    func `Nonfinite date values remain unavailable`(seconds: Double) {
+        #expect(AXDescriptorReader.displayValue(Date(timeIntervalSinceReferenceDate: seconds)) == nil)
+    }
+
+    @Test
+    func `Date control state survives descriptor mapping without coercing its title`() {
+        let date = Date(timeIntervalSince1970: 1_791_033_456.125)
+        var reads = Self.requiredDescriptorReads(role: "AXGroup", identifier: "active-view")
+        reads["AXValue"] = AXDescriptorReader.SingleAttributeRead(error: .success, value: date as NSDate)
+        reads["AXTitle"] = AXDescriptorReader.SingleAttributeRead(error: .success, value: date as NSDate)
+        let result = AXDescriptorReader.describeWithSingleAttributeReads { name in
+            reads[name] ?? AXDescriptorReader.SingleAttributeRead(error: .noValue, value: nil)
+        }
+
+        guard case let .descriptor(descriptor) = result else {
+            Issue.record("Expected a date-valued descriptor, got \(result)")
+            return
+        }
+        #expect(descriptor.value == "2026-10-03T13:17:36.125Z")
+        #expect(descriptor.title == nil)
+        #expect(descriptor.identifier == "active-view")
+        #expect(descriptor.frame == CGRect(x: 10, y: 20, width: 100, height: 40))
+    }
+
     @Test
     func `Batch capability and shape errors retain single-read fallback`() {
         let capabilityErrors: [AXError] = [
