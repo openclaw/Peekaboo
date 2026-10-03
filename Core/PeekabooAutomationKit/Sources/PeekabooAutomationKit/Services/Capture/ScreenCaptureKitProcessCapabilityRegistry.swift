@@ -14,10 +14,11 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
     private static let filePrefix = "boo.peekaboo.sckit-aware"
     private static let maximumReceiptBytes = 4096
     private static let registryLock = NSLock()
+    private static let processInspectionSlots = DispatchSemaphore(value: 2)
     private nonisolated(unsafe) static var heldDescriptorsByPath: [String: Int32] = [:]
     private nonisolated(unsafe) static var processInspectionCache: [ProcessInspectionKey: ProcessInspection] = [:]
 
-    private struct ProcessInspectionKey: Hashable {
+    struct ProcessInspectionKey: Hashable, Sendable {
         let processIdentifier: pid_t
         let processStartIdentity: UInt64
         let executablePath: String
@@ -26,6 +27,24 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
     private struct ProcessInspection {
         let signature: CodeSignatureIdentity?
         let isPotentialHost: Bool
+    }
+
+    struct ProcessCensusRow: Sendable {
+        let key: ProcessInspectionKey
+        let conflict: Lease.UncoordinatedProcess?
+    }
+
+    private final class CensusRows: @unchecked Sendable {
+        private let lock = NSLock()
+        private var rows: [ProcessCensusRow] = []
+
+        func append(_ row: ProcessCensusRow) {
+            self.lock.withLock { self.rows.append(row) }
+        }
+
+        func snapshot() -> [ProcessCensusRow] {
+            self.lock.withLock { self.rows }
+        }
     }
 
     struct ProcessCapabilityReceipt: Codable, Sendable {
@@ -134,67 +153,84 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
     static func liveUncoordinatedProcesses(
         excluding currentIdentity: Lease.OwnerIdentity) throws -> [Lease.UncoordinatedProcess]
     {
-        let processIdentifiers = try self.allProcessIdentifiers()
-        var conflicts: [Lease.UncoordinatedProcess] = []
-        var seen = Set<pid_t>()
-        var activeInspectionKeys = Set<ProcessInspectionKey>()
-
-        for processIdentifier in processIdentifiers where processIdentifier > 0 {
-            guard processIdentifier != currentIdentity.processIdentifier,
-                  seen.insert(processIdentifier).inserted,
-                  self.userIdentifier(for: processIdentifier) == geteuid(),
-                  let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier),
-                  let executablePath = self.executablePath(for: processIdentifier)
-            else {
-                continue
-            }
-
-            let (inspectionKey, inspection) = self.processInspection(
-                processIdentifier: processIdentifier,
-                processStartIdentity: processStartIdentity,
-                executablePath: executablePath)
-            activeInspectionKeys.insert(inspectionKey)
-            guard inspection.isPotentialHost
-            else {
-                continue
-            }
-
-            guard SystemIdentityResolver.processStartIdentity(processIdentifier) == processStartIdentity,
-                  self.executablePath(for: processIdentifier) == executablePath
-            else {
-                continue
-            }
-            var hasValidCapability = self.hasValidCapability(
-                processIdentifier: processIdentifier,
-                processStartIdentity: processStartIdentity,
-                executablePath: executablePath,
-                signature: inspection.signature)
-            if !hasValidCapability {
-                // A current binary can become visible between exec and entrypoint registration.
-                for _ in 0..<3 {
-                    usleep(10000)
-                    hasValidCapability = self.hasValidCapability(
-                        processIdentifier: processIdentifier,
-                        processStartIdentity: processStartIdentity,
-                        executablePath: executablePath,
-                        signature: inspection.signature)
-                    if hasValidCapability {
-                        break
-                    }
-                }
-            }
-            if hasValidCapability {
-                continue
-            }
-            conflicts.append(Lease.UncoordinatedProcess(
-                processIdentifier: processIdentifier,
-                processStartIdentity: processStartIdentity,
-                executablePath: executablePath))
-        }
+        let rows = try self.collectProcessCensus(
+            in: self.allProcessIdentifiers(),
+            excluding: currentIdentity.processIdentifier,
+            inspect: self.inspectProcess)
+        // Pruning and authority decisions require every worker's completed inspection.
+        let activeInspectionKeys = Set(rows.map(\.key))
         self.registryLock.withLock {
             self.processInspectionCache = self.processInspectionCache.filter { activeInspectionKeys.contains($0.key) }
         }
-        return conflicts.sorted { $0.processIdentifier < $1.processIdentifier }
+        return rows.compactMap(\.conflict).sorted { $0.processIdentifier < $1.processIdentifier }
+    }
+
+    static func collectProcessCensus(
+        in processIdentifiers: [pid_t],
+        excluding currentProcessIdentifier: pid_t,
+        inspect: @escaping @Sendable (pid_t) -> ProcessCensusRow?) -> [ProcessCensusRow]
+    {
+        var seen = Set<pid_t>()
+        let candidates = processIdentifiers.filter {
+            $0 > 0 && $0 != currentProcessIdentifier && seen.insert($0).inserted
+        }
+        let rows = CensusRows()
+        let workerCount = min(2, candidates.count)
+        DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
+            for index in stride(from: worker, to: candidates.count, by: workerCount) {
+                // Startup and ownership-boundary censuses share the same process-wide bound.
+                self.processInspectionSlots.wait()
+                defer { self.processInspectionSlots.signal() }
+                if let row = inspect(candidates[index]) {
+                    rows.append(row)
+                }
+            }
+        }
+        return rows.snapshot()
+    }
+
+    private static func inspectProcess(_ processIdentifier: pid_t) -> ProcessCensusRow? {
+        guard self.userIdentifier(for: processIdentifier) == geteuid(),
+              let processStartIdentity = SystemIdentityResolver.processStartIdentity(processIdentifier),
+              let executablePath = self.executablePath(for: processIdentifier)
+        else {
+            return nil
+        }
+
+        let (key, inspection) = self.processInspection(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            executablePath: executablePath)
+        guard inspection.isPotentialHost else { return ProcessCensusRow(key: key, conflict: nil) }
+
+        guard SystemIdentityResolver.processStartIdentity(processIdentifier) == processStartIdentity,
+              self.executablePath(for: processIdentifier) == executablePath
+        else {
+            return ProcessCensusRow(key: key, conflict: nil)
+        }
+        var hasValidCapability = self.hasValidCapability(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            executablePath: executablePath,
+            signature: inspection.signature)
+        if !hasValidCapability {
+            // A current binary can become visible between exec and entrypoint registration.
+            for _ in 0..<3 {
+                usleep(10000)
+                hasValidCapability = self.hasValidCapability(
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: processStartIdentity,
+                    executablePath: executablePath,
+                    signature: inspection.signature)
+                if hasValidCapability {
+                    break
+                }
+            }
+        }
+        return ProcessCensusRow(key: key, conflict: hasValidCapability ? nil : Lease.UncoordinatedProcess(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            executablePath: executablePath))
     }
 
     private static func processInspection(
