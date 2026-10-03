@@ -436,8 +436,7 @@ extension PeekabooBridgeOperationResultSemantics {
             .typeActions(.init(
                 actions: payload.request.actions,
                 allowsAccessibilityValueDelivery: true,
-                additionalDispatchUnits: 1,
-                additionalUsesAccessibilityValue: true,
+                additionalAccessibilityUnits: 1,
                 allowsConfirmedChange: true))
         case let .setValue(payload):
             .setValue(

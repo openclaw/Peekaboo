@@ -204,8 +204,7 @@ enum PeekabooBridgeOperationResultSemantics {
         init(
             actions: [TypeAction],
             allowsAccessibilityValueDelivery: Bool = false,
-            additionalDispatchUnits: Int = 0,
-            additionalUsesAccessibilityValue: Bool = false,
+            additionalAccessibilityUnits: Int = 0,
             allowsConfirmedChange: Bool = false)
         {
             var totalCharacters = 0
@@ -254,9 +253,9 @@ enum PeekabooBridgeOperationResultSemantics {
             self.flexibleSpecialAccessibilityUnits = flexibleSpecialAccessibilityUnits
             self.noChangeCapableAccessibilityKeys = noChangeCapableAccessibilityKeys
             self.flexibleClearCount = flexibleClearCount
-            self.additionalAccessibilityUnits = additionalUsesAccessibilityValue ? additionalDispatchUnits : 0
+            self.additionalAccessibilityUnits = additionalAccessibilityUnits
             self.allowsConfirmedChange = allowsConfirmedChange && Self.isDeterministicClearLiteral(actions)
-            precondition(additionalUsesAccessibilityValue || additionalDispatchUnits == 0)
+            precondition(additionalAccessibilityUnits >= 0)
         }
 
         var dispatchUnits: UnitPolicy {
