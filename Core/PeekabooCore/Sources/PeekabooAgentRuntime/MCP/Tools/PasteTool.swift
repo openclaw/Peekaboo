@@ -521,17 +521,14 @@ public struct PasteTool: MCPTool {
             return try self.validatedExactPasteResult(result, prepared: true)
         case let .exact(automation):
             guard let exactWindow = destination.exactWindow,
-                  let focusedElement = exactWindow.focusedElement
+                  let keyboardTarget = exactWindow.keyboardTarget
             else {
                 throw PasteToolError("Exact-window paste requires a focused-element receipt.")
             }
             let result = try await automation.hotkeyWithOutcome(
                 keys: "cmd,v",
                 holdDuration: 50,
-                target: ExactWindowKeyboardTarget(
-                    windowIdentity: exactWindow.identity,
-                    windowBounds: exactWindow.bounds,
-                    focusedElement: focusedElement))
+                target: keyboardTarget)
             return try self.validatedExactPasteResult(result)
         case let .process(automation):
             guard let processIdentity = destination.processIdentity else {
@@ -819,7 +816,7 @@ public struct PasteTool: MCPTool {
             let outcomeAutomation = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
                 automation: self.context.automation,
                 operation: "Exact-window background text delivery")
-            guard let focusedElement = exactWindow.focusedElement else {
+            guard let keyboardTarget = exactWindow.keyboardTarget else {
                 throw PasteToolError("Exact-window paste requires a focused-element receipt.")
             }
             try Task.checkCancellation()
@@ -829,10 +826,7 @@ public struct PasteTool: MCPTool {
                         [.text(text)],
                         cadence: .fixed(milliseconds: 0),
                         snapshotId: nil,
-                        target: ExactWindowKeyboardTarget(
-                            windowIdentity: exactWindow.identity,
-                            windowBounds: exactWindow.bounds,
-                            focusedElement: focusedElement)),
+                        target: keyboardTarget),
                     operation: "Exact-window background text delivery")
             } catch let error as InputDeliveryIndeterminateError {
                 return try await self.directTextOutcomeResponse(

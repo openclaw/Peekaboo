@@ -341,7 +341,7 @@ public struct PressTool: MCPTool {
             let outcomeAutomation = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
                 automation: self.context.automation,
                 operation: "Background hotkeys")
-            guard let focusedElement = exactWindow.focusedElement else {
+            guard let keyboardTarget = exactWindow.keyboardTarget else {
                 throw PressToolValidationError(
                     message: "Exact-window background hotkeys require a focused-element receipt.")
             }
@@ -349,10 +349,7 @@ public struct PressTool: MCPTool {
                 outcomeAutomation.hotkeyWithOutcome(
                     keys: chord.serviceKeys,
                     holdDuration: hold,
-                    target: ExactWindowKeyboardTarget(
-                        windowIdentity: exactWindow.identity,
-                        windowBounds: exactWindow.bounds,
-                        focusedElement: focusedElement)),
+                    target: keyboardTarget),
                 keys: chord.serviceKeys,
                 operation: "Background hotkeys")
         }

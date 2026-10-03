@@ -38,6 +38,15 @@ public enum UIAutomationTarget: Sendable, Equatable {
         public let bounds: CGRect
         public let focusedElement: FocusedElementIdentity?
 
+        /// Planning-only projection; delivery still owns freshness checks.
+        public var keyboardTarget: ExactWindowKeyboardTarget? {
+            guard let focusedElement = self.focusedElement else { return nil }
+            return ExactWindowKeyboardTarget(
+                windowIdentity: self.identity,
+                windowBounds: self.bounds,
+                focusedElement: focusedElement)
+        }
+
         public init(
             processIdentifier: pid_t,
             windowID: Int,

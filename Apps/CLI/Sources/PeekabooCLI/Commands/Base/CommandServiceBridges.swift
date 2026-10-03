@@ -233,7 +233,7 @@ enum AutomationServiceBridge {
                     operation: "Background typing"
                 )
             }
-            guard let focusedElement = exactWindow.focusedElement else {
+            guard let keyboardTarget = exactWindow.keyboardTarget else {
                 throw PeekabooError.invalidInput(
                     field: "target",
                     reason: "Exact-window typing requires a focused-element receipt"
@@ -244,11 +244,7 @@ enum AutomationServiceBridge {
                     request.actions,
                     cadence: request.cadence,
                     snapshotId: request.snapshotId,
-                    target: ExactWindowKeyboardTarget(
-                        windowIdentity: exactWindow.identity,
-                        windowBounds: exactWindow.bounds,
-                        focusedElement: focusedElement
-                    )
+                    target: keyboardTarget
                 ),
                 operation: "Background typing",
                 allowsCompositeTypeDelivery: requiresCompositeTypeDelivery
@@ -408,7 +404,7 @@ enum AutomationServiceBridge {
                 automation: automation,
                 operation: "Background hotkeys"
             )
-            guard let focusedElement = exactWindow.focusedElement else {
+            guard let keyboardTarget = exactWindow.keyboardTarget else {
                 throw PeekabooError.invalidInput(
                     field: "target",
                     reason: "Exact-window hotkeys require a focused-element receipt"
@@ -418,11 +414,7 @@ enum AutomationServiceBridge {
                 outcomeService.hotkeyWithOutcome(
                     keys: keys,
                     holdDuration: holdDuration,
-                    target: ExactWindowKeyboardTarget(
-                        windowIdentity: exactWindow.identity,
-                        windowBounds: exactWindow.bounds,
-                        focusedElement: focusedElement
-                    )
+                    target: keyboardTarget
                 ),
                 keys: keys,
                 operation: "Background hotkeys"

@@ -929,7 +929,7 @@ extension TypeTool {
                     error.localizedDescription,
                     refusalReason: .runtimeIncompatible)
             }
-            guard let focusedElement = exactWindow.focusedElement else {
+            guard let keyboardTarget = exactWindow.keyboardTarget else {
                 throw TypeToolValidationError(
                     "Exact-window background typing requires a focused-element receipt.",
                     refusalReason: .targetUnavailable)
@@ -940,10 +940,7 @@ extension TypeTool {
                     request.actions,
                     cadence: request.cadence,
                     snapshotId: request.snapshotId,
-                    target: ExactWindowKeyboardTarget(
-                        windowIdentity: exactWindow.identity,
-                        windowBounds: exactWindow.bounds,
-                        focusedElement: focusedElement)),
+                    target: keyboardTarget),
                 operation: "Background typing",
                 allowsCompositeTypeDelivery: requiresCompositeTypeDelivery)
         }

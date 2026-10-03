@@ -8,6 +8,24 @@ struct UIAutomationTargetTests {
     private let processIdentity = AutomationTestFixtures.processIdentity()
     private let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
 
+    @Test(arguments: [false, true])
+    func `keyboard projection preserves the exact window and focused element receipts`(isMinimized: Bool) throws {
+        let exact = try self.exactWindowTarget(isMinimized: isMinimized)
+        let keyboard = try #require(exact.keyboardTarget)
+
+        #expect(keyboard.windowIdentity == exact.identity)
+        #expect(keyboard.windowBounds == exact.bounds)
+        #expect(keyboard.focusedElement == exact.focusedElement)
+    }
+
+    @Test
+    func `keyboard projection does not invent a focused element receipt`() throws {
+        let exact = try self.exactWindowTarget()
+        let withoutFocus = try UIAutomationTarget.ExactWindow(identity: exact.identity, bounds: exact.bounds)
+
+        #expect(withoutFocus.keyboardTarget == nil)
+    }
+
     @Test
     func `target cases expose only their validated receipt level`() throws {
         let unpinned = try UIAutomationTarget.Process(
