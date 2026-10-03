@@ -28,7 +28,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -90,7 +90,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -133,7 +133,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -204,7 +204,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -276,7 +276,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -435,7 +435,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -468,7 +468,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         var cancelled = false
         do {
@@ -528,7 +528,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         let task = Task { @MainActor () -> CancellationWorkerOutcome in
             var messages: [ModelMessage] = []
@@ -615,7 +615,7 @@ struct AgentTurnBoundaryTranscriptTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "test-session",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         await #expect(throws: CancellationError.self) {
             _ = try await service.handleToolCalls(

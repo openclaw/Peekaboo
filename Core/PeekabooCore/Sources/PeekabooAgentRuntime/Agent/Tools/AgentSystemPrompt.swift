@@ -34,8 +34,15 @@ public struct AgentSystemPrompt {
         for model: LanguageModel? = nil,
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) -> String
     {
-        let allowsForeground = executionPolicy != .backgroundOnly
-        let allowsShell = executionPolicy == .unrestricted
+        self.generate(for: model, executionAuthority: MCPToolExecutionAuthority(basePolicy: executionPolicy))
+    }
+
+    public static func generate(
+        for model: LanguageModel? = nil,
+        executionAuthority: MCPToolExecutionAuthority) -> String
+    {
+        let allowsForeground = executionAuthority.basePolicy != .backgroundOnly
+        let allowsShell = executionAuthority.basePolicy == .unrestricted
         var sections: [String] = [
             Self.corePrompt(allowsForeground: allowsForeground, allowsShell: allowsShell),
             Self.communicationSection(),
@@ -48,6 +55,18 @@ public struct AgentSystemPrompt {
 
         if Self.isGPT5(model) {
             sections.insert(Self.gpt5Preamble(), at: 1)
+        }
+
+        if !allowsForeground, executionAuthority.temporaryClipboardPasteGranted {
+            sections.append("""
+            This invocation has explicit temporary-clipboard permission, independent of its background-only UI
+            authority. `paste` additionally accepts bounded dataBase64+uti, optional alsoText and restore_delay_ms,
+            and one fresh exact non-dialog snapshot with no competing app/PID/window selectors. Clipboard-backed
+            paste briefly changes the General clipboard, restores only while still owned, and preserves newer
+            contents. Prepared input is unverified and retry-unsafe; observe the exact target afterward and never
+            blindly replay it. Current-clipboard paste, persistent clipboard writes, file/image paths, allowLarge,
+            and foreground UI remain unavailable. This permission is not inherited by nested Agent execution.
+            """)
         }
 
         return sections.joined(separator: "\n")

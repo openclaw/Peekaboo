@@ -12,7 +12,7 @@ read_when:
 ## Subcommands
 | Name | Purpose | Key options |
 | --- | --- | --- |
-| `serve` | Run Peekaboo’s MCP server over stdio. | `--transport stdio` (default); `--allow-foreground` explicitly authorizes foreground/global UI, including browser connection setup, for this server process; global `--bridge-socket <path>` attaches to an existing Bridge host. HTTP/SSE names and `--port` are reserved for future support and currently fail with an actionable error. |
+| `serve` | Run Peekaboo’s MCP server over stdio. | `--transport stdio` (default); `--allow-foreground` authorizes foreground/global UI; `--allow-temporary-clipboard` separately permits bounded temporary paste while keeping UI background-only; global `--bridge-socket <path>` attaches to an existing Bridge host. HTTP/SSE names and `--port` are reserved for future support and currently fail with an actionable error. |
 
 ## Implementation notes
 - `serve` instantiates `PeekabooMCPServer` and maps the transport string to `PeekabooCore.TransportType`. Stdio is the default for Claude Code integrations.
@@ -37,8 +37,20 @@ read_when:
   expose `browser connect` or fall back to the Bridge root. Missing, stale, mismatched, consumed, or downgraded
   handoffs fail before provider dispatch.
 - Direct-text `paste` is admitted only with an exact generation-pinned app/PID/window authorization and a canonical
-  background result. Targetless, foreground, current-clipboard, and binary paste are refused before dispatch. The
+  background result. Targetless, foreground, current-clipboard, and binary paste are refused by default. The
   nested `agent` tool likewise retains immutable background-only authority and never exposes Shell.
+- A server started with `--allow-temporary-clipboard` also exposes `paste` with explicit `dataBase64` + `uti`, one
+  fresh exact non-dialog/non-system-UI `snapshot`, optional `alsoText`, and `restore_delay_ms` (`0...10000`, default
+  `150`). The payload and companion are limited to 10 MB. This form cannot combine snapshot with app/PID/window
+  selectors. File/image paths, `allowLarge`, current-clipboard paste, persistent clipboard writes, and foreground UI
+  remain unavailable. Remote delivery requires negotiated protocol 1.41 and prepared clipboard-guarded input.
+  The grant belongs only to this server process, survives its scoped context copies, and does not reach nested Agent
+  execution. It cannot be enabled by tool arguments or prompts.
+- Temporary paste requires silent clipboard access, snapshots the complete prior contents, restores only while its
+  write generation is still owned, and preserves newer copies. Dispatched input remains unverified and retry-unsafe;
+  inspect the exact target afterward rather than replaying it. Clipboard-only failures retain truthful global
+  `clipboard_transaction` metadata and cleanup status without inventing an input receiver. This is not permission
+  for foreground UI, even when a provider returns an error result claiming foreground delivery.
 - HTTP/SSE server transports are reserved but not implemented. Selecting either fails before daemon startup and emits a structured error in JSON mode.
 - The MCP process owns its stdio lifecycle and never hosts a Bridge listener. Support stays process-local by default;
   an explicit `--bridge-socket <path>` uses that existing Bridge host and skips the embedded daemon.
@@ -76,6 +88,9 @@ peekaboo mcp serve --transport stdio
 
 # Explicitly authorize this server to connect its own scoped browser child
 peekaboo mcp serve --allow-foreground
+
+# Permit bounded temporary rich paste while leaving UI automation background-only
+peekaboo mcp serve --allow-temporary-clipboard
 
 # Route MCP tools through an existing Bridge host
 peekaboo mcp serve --bridge-socket "$HOME/Library/Application Support/Peekaboo/bridge.sock"

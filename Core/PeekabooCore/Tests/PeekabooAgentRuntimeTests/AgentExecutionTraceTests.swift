@@ -27,7 +27,7 @@ struct AgentExecutionTraceTests {
             tools: tools,
             eventHandler: nil,
             sessionId: "trace-test",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         var messages: [ModelMessage] = []
 
         _ = try await service.handleToolCalls(

@@ -123,7 +123,7 @@ struct AgentToolImageLifecycleTests {
             sessionId: "image-lifecycle-tests",
             eventHandler: eventHandler,
             enhancementOptions: nil,
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
     }
 
     private func expectReleased(

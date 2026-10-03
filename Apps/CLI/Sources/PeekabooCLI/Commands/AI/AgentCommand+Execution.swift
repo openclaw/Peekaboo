@@ -47,12 +47,13 @@ extension AgentCommand {
     }
 
     func dryRunHumanLines(instruction: String) -> [String] {
-        let policy = self.newSessionToolExecutionPolicy
+        let policy = self.toolExecutionAuthority.basePolicy
         return [
             "Dry run preview",
             "Instruction: \(instruction)",
             "Requested foreground UI: \(self.allowForeground ? "yes" : "no")",
             "Effective UI authority: \(policy.rawValue)",
+            "Temporary clipboard paste: \(self.toolExecutionAuthority.permitsTemporaryClipboardPaste ? "yes" : "no")",
             "Automatic desktop context: \(self.enhancementOptions.contextAware ? "yes" : "no")",
             "Model execution: skipped",
             "Tool calls: 0",
@@ -81,11 +82,13 @@ extension AgentCommand {
         payload["instruction"] = instruction
         payload["modelExecution"] = "skipped"
         payload["automaticDesktopContext"] = self.enhancementOptions.contextAware
-        let policy = self.newSessionToolExecutionPolicy
+        let policy = self.toolExecutionAuthority.basePolicy
         payload["uiAuthority"] = [
             "requestedForeground": self.allowForeground,
             "effectivePolicy": policy.rawValue,
             "backgroundOnly": policy == .backgroundOnly,
+            "requestedTemporaryClipboard": self.allowTemporaryClipboard,
+            "temporaryClipboardPaste": self.toolExecutionAuthority.permitsTemporaryClipboardPaste,
         ]
         response["result"] = payload
         return response
@@ -322,7 +325,7 @@ extension AgentCommand {
                 verbose: self.verbose,
                 enhancementOptions: self.enhancementOptions,
                 persistSession: !self.noCache,
-                toolExecutionPolicy: self.newSessionToolExecutionPolicy
+                toolExecutionAuthority: self.toolExecutionAuthority
             )
             self.displayResult(result, delegate: outputDelegate)
             Self.logAgentAutomationResult(result, task: task, dryRun: self.dryRun)

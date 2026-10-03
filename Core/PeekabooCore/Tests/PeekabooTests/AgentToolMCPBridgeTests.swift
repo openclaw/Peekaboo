@@ -98,16 +98,17 @@ struct AgentToolMCPBridgeTests {
                     "success": .bool(true),
                 ])))
         let service = try PeekabooAgentService(services: PeekabooServices())
-        let agentTool = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
-            service.makeAgentTool(from: mcpTool)
-        }
+        let agentTool = PeekabooAgentService.$toolConstructionExecutionAuthority
+            .withValue(.init(basePolicy: .unrestricted)) {
+                service.makeAgentTool(from: mcpTool)
+            }
         let call = AgentToolCall(id: "pre-dispatch-click", name: mcpTool.name, arguments: [:])
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .anthropic(.sonnet45),
             tools: [agentTool],
             eventHandler: nil,
             sessionId: "bridge-error-trace",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         var messages: [ModelMessage] = []
 
         let step = try await service.handleToolCalls(
@@ -170,16 +171,17 @@ struct AgentToolMCPBridgeTests {
     func `Successful MCP mutation without dispatch metadata remains possibly dispatched`() async throws {
         let mcpTool = BridgeProbeTool(name: "click", response: .text("Clicked target"))
         let service = try PeekabooAgentService(services: PeekabooServices())
-        let agentTool = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
-            service.makeAgentTool(from: mcpTool)
-        }
+        let agentTool = PeekabooAgentService.$toolConstructionExecutionAuthority
+            .withValue(.init(basePolicy: .unrestricted)) {
+                service.makeAgentTool(from: mcpTool)
+            }
         let call = AgentToolCall(id: "successful-click", name: mcpTool.name, arguments: [:])
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .anthropic(.sonnet45),
             tools: [agentTool],
             eventHandler: nil,
             sessionId: "bridge-success-trace",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         var messages: [ModelMessage] = []
 
         let step = try await service.handleToolCalls(
@@ -349,16 +351,17 @@ struct AgentToolMCPBridgeTests {
             .image(data: imageData.base64EncodedString(), mimeType: "image/png", annotations: nil, _meta: nil),
         ]))
         let service = try PeekabooAgentService(services: PeekabooServices())
-        let agentTool = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
-            service.makeAgentTool(from: mcpTool)
-        }
+        let agentTool = PeekabooAgentService.$toolConstructionExecutionAuthority
+            .withValue(.init(basePolicy: .unrestricted)) {
+                service.makeAgentTool(from: mcpTool)
+            }
         let call = AgentToolCall(id: "probe-call", name: mcpTool.name, arguments: [:])
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .anthropic(.sonnet45),
             tools: [agentTool],
             eventHandler: nil,
             sessionId: "multimodal-test",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         var messages: [ModelMessage] = []
         #expect(await AgentToolMCPImageStore.shared.register(executionID: context.imageContextID))
 
@@ -454,8 +457,8 @@ struct AgentToolMCPBridgeTests {
                 selection: nil,
                 endpointIdentity: nil,
                 providerIdentity: nil),
-            storedToolExecutionPolicy: .backgroundOnly,
-            toolExecutionPolicy: .backgroundOnly,
+            storedToolExecutionAuthority: .backgroundOnly,
+            toolExecutionAuthority: .backgroundOnly,
             provider: nil,
             executionGeneration: nil)
         try service.saveExecutionSession(
@@ -645,7 +648,7 @@ struct AgentToolMCPBridgeTests {
             tools: [],
             eventHandler: nil,
             sessionId: "three-image-calls",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         let calls = [
             AgentToolCall(id: "see-1", name: "see", arguments: [:]),
             AgentToolCall(id: "image-2", name: "image", arguments: [:]),
@@ -713,7 +716,7 @@ struct AgentToolMCPBridgeTests {
             tools: [],
             eventHandler: nil,
             sessionId: "provider-wide-vision",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         let toolCall = AgentToolCall(id: "see-call", name: "see", arguments: [:])
         let image = ModelMessage.ContentPart.ImageContent(data: "pixels", mimeType: "image/png")
         let key = AgentToolMCPImageStore.Key(
@@ -747,9 +750,10 @@ struct AgentToolMCPBridgeTests {
             .image(data: imageData.base64EncodedString(), mimeType: "image/png", annotations: nil, _meta: nil),
         ]))
         let service = try PeekabooAgentService(services: PeekabooServices())
-        let agentTool = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
-            service.makeAgentTool(from: mcpTool)
-        }
+        let agentTool = PeekabooAgentService.$toolConstructionExecutionAuthority
+            .withValue(.init(basePolicy: .unrestricted)) {
+                service.makeAgentTool(from: mcpTool)
+            }
         let call = AgentToolCall(id: "text-only-probe", name: mcpTool.name, arguments: [:])
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .openRouter(modelId: "text-only-model"),
@@ -757,7 +761,7 @@ struct AgentToolMCPBridgeTests {
             tools: [agentTool],
             eventHandler: nil,
             sessionId: "text-only-tool-test",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         var messages: [ModelMessage] = []
 
         let step = try await service.handleToolCalls(

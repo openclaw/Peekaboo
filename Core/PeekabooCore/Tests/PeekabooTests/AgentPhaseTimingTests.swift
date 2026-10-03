@@ -104,7 +104,7 @@ struct AgentPhaseTimingTests {
             tools: [],
             eventHandler: nil,
             sessionId: "PRIVATE_TIMING_SESSION",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         var messages: [ModelMessage] = []
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -209,7 +209,7 @@ struct AgentPhaseTimingTests {
             tools: [tool],
             eventHandler: nil,
             sessionId: "PRIVATE_TIMING_SESSION",
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         var messages: [ModelMessage] = []
         do {
             let step = try await service.handleToolCalls(
@@ -263,7 +263,7 @@ struct AgentPhaseTimingTests {
             sessionId: "PRIVATE_TIMING_SESSION",
             eventHandler: eventHandler,
             enhancementOptions: nil,
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
         let messages: [ModelMessage] = [.user("PRIVATE_TIMING_PROMPT /Users/example/private")]
         return if streaming {
             try await service.runStreamingLoop(configuration: configuration, maxSteps: 1, initialMessages: messages)

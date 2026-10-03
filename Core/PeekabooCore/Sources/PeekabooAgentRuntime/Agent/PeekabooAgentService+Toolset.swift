@@ -14,13 +14,13 @@ extension PeekabooAgentService {
         snapshotOwner: MCPToolSnapshotOwner = MCPToolSnapshotOwner(),
         browserClient: (any BrowserMCPClientProviding)? = nil,
         browserCapabilities: BrowserToolCapabilitySession? = nil,
-        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async -> [AgentTool]
+        executionAuthority: MCPToolExecutionAuthority = .backgroundOnly) async -> [AgentTool]
     {
         let filtered = self.filteredAgentTools(
             snapshotOwner: snapshotOwner,
             browserClient: browserClient,
             browserCapabilities: browserCapabilities,
-            executionPolicy: executionPolicy)
+            executionAuthority: executionAuthority)
 
         self.logToolsetDetails(filtered, model: model)
         return filtered
@@ -35,13 +35,13 @@ extension PeekabooAgentService {
         agentSessionID: String,
         agentExecutionGeneration: UUID? = nil,
         snapshotOwner: MCPToolSnapshotOwner,
-        executionPolicy: MCPToolExecutionPolicy,
+        executionAuthority: MCPToolExecutionAuthority,
         filters: ToolFilters? = nil,
         onBrowserAcquisitionStarted: (@MainActor () -> Void)? = nil) async throws -> [AgentTool]
     {
         var filtered = self.filteredAgentTools(
             snapshotOwner: snapshotOwner,
-            executionPolicy: executionPolicy,
+            executionAuthority: executionAuthority,
             filters: filters)
         guard let browserIndex = filtered.firstIndex(where: { $0.name == "browser" }) else {
             self.logToolsetDetails(filtered, model: model)
@@ -54,7 +54,7 @@ extension PeekabooAgentService {
             executionGeneration: agentExecutionGeneration)
         let browserCapabilities = self.remoteBrowserCapabilities[agentSessionID]
         let scopedBrowserTool = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
-            Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
+            Self.$toolConstructionExecutionAuthority.withValue(executionAuthority) {
                 Self.$toolConstructionBrowserClient.withValue(browserClient) {
                     AgentToolConstructionContext.$browserCapabilities.withValue(browserCapabilities) {
                         self.createBrowserTool()
@@ -74,18 +74,18 @@ extension PeekabooAgentService {
     {
         self.filteredAgentTools(
             snapshotOwner: snapshotOwner,
-            executionPolicy: .backgroundOnly)
+            executionAuthority: .backgroundOnly)
     }
 
     private func filteredAgentTools(
         snapshotOwner: MCPToolSnapshotOwner,
         browserClient: (any BrowserMCPClientProviding)? = nil,
         browserCapabilities: BrowserToolCapabilitySession? = nil,
-        executionPolicy: MCPToolExecutionPolicy,
+        executionAuthority: MCPToolExecutionAuthority,
         filters: ToolFilters? = nil) -> [AgentTool]
     {
         let tools = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
-            Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
+            Self.$toolConstructionExecutionAuthority.withValue(executionAuthority) {
                 Self.$toolConstructionBrowserClient.withValue(browserClient) {
                     AgentToolConstructionContext.$browserCapabilities.withValue(browserCapabilities) {
                         self.createAgentTools()
@@ -93,7 +93,7 @@ extension PeekabooAgentService {
                 }
             }
         }
-        let authorityFiltered = tools.filter { executionPolicy.exposesToolInCatalog(named: $0.name) }
+        let authorityFiltered = tools.filter { executionAuthority.basePolicy.exposesToolInCatalog(named: $0.name) }
 
         let filters = filters ?? ToolFiltering.currentFilters()
         return ToolFiltering.applyInputStrategyAvailability(

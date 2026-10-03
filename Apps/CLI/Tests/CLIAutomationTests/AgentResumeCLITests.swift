@@ -58,7 +58,8 @@ struct AgentResumeCLITests {
             lastModified: Date(timeIntervalSince1970: 1_700_000_060),
             messageCount: 4,
             status: "active",
-            toolExecutionPolicy: "background_only"
+            toolExecutionPolicy: "background_only",
+            temporaryClipboardPasteMaximum: nil
         )
         let data = try JSONSerialization.data(withJSONObject: command.sessionJSONObject(session))
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])

@@ -358,7 +358,7 @@ struct AgentEventRenderingTests {
                 eventHandler: handler,
                 textHandler: textHandler,
                 enhancementOptions: nil,
-                executionPolicy: .unrestricted)
+                executionAuthority: .init(basePolicy: .unrestricted))
             let messages: [ModelMessage] = [.user("Use the synthetic fixture once.")]
             transcript = if streaming {
                 try await service.runStreamingLoop(configuration: configuration, maxSteps: 2, initialMessages: messages)

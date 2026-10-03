@@ -18,13 +18,23 @@ public struct PasteTool: MCPTool {
 
     public var description: String {
         if self.context.executionPolicy == .backgroundOnly {
+            let clipboardGuidance = self.context.executionAuthority.temporaryClipboardPasteGranted
+                ? """
+                This invocation also permits one bounded temporary dataBase64+uti payload (optional alsoText and
+                restore_delay_ms) to a fresh exact non-dialog snapshot. Use snapshot alone, with no app/PID/window
+                selectors. This briefly changes the General clipboard and restores it only while still owned;
+                newer clipboard contents are preserved. Prepared Cmd+V delivery remains unverified and retry-unsafe:
+                observe the exact target before continuing and never blindly replay the paste.
+                """
+                : "Clipboard-backed payloads are unavailable without trusted temporary-clipboard permission."
             return """
             Deliver one direct text payload to an explicit app or PID UI target, optionally pinned to one exact
             window, under immutable background-only authority. This route does not touch the shared clipboard.
             Provide exactly one of app or pid and at most one of window_id, window_title, or window_index.
-            Current-clipboard, binary/file/image payloads, targetless input, and foreground delivery are unavailable.
+            Current-clipboard, file/image paths, targetless input, and foreground delivery are unavailable.
             If delivery fails after it begins, a prefix may already be present; observe the exact target before
             retrying.
+            \(clipboardGuidance)
             """
         }
 
@@ -59,6 +69,7 @@ public struct PasteTool: MCPTool {
 
     public var inputSchema: Value {
         let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let temporaryClipboardGranted = self.context.executionAuthority.temporaryClipboardPasteGranted
         var properties: [String: Value] = [
             "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
             "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
@@ -81,26 +92,32 @@ public struct PasteTool: MCPTool {
                 description: "Path to a file to paste (file bytes placed on clipboard).")
             properties["imagePath"] = SchemaBuilder
                 .string(description: "Path to an image to paste (alias of filePath).")
-            properties["dataBase64"] = SchemaBuilder.string(description: "Base64-encoded payload to paste.")
-            properties["uti"] = SchemaBuilder.string(
-                description: "UTI for dataBase64, or to force type when pasting a file.")
-            properties["alsoText"] = SchemaBuilder.string(
-                description: "Optional plain-text companion when pasting binary.")
             properties["allowLarge"] = SchemaBuilder.boolean(
                 description: "Allow payloads larger than 10 MB.",
                 default: false)
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
+                default: false)
+        }
+        if foregroundCapable || temporaryClipboardGranted {
+            properties["dataBase64"] = SchemaBuilder.string(
+                description: "Base64-encoded payload to paste; limited to 10 MB without foreground authority.")
+            properties["uti"] = SchemaBuilder
+                .string(description: "UTI for dataBase64, or a foreground-authorized file.")
+            properties["alsoText"] = SchemaBuilder.string(description: "Optional plain-text companion for dataBase64.")
             properties["restore_delay_ms"] = SchemaBuilder.integer(
                 description: "Delay before restoring the previous clipboard (ms). Default: 150. Maximum: 10000.",
                 minimum: 0,
                 maximum: 10000,
                 default: 150)
-            properties["foreground"] = SchemaBuilder.boolean(
-                description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
-                default: false)
+        }
+        if !foregroundCapable, temporaryClipboardGranted {
+            properties["snapshot"] = SchemaBuilder.string(
+                description: "Fresh exact non-dialog snapshot for dataBase64+uti; no app/PID/window selectors.")
         }
         return SchemaBuilder.object(
             properties: properties,
-            required: foregroundCapable ? [] : ["text"])
+            required: foregroundCapable || temporaryClipboardGranted ? [] : ["text"])
     }
 
     public init(context: MCPToolContext = .shared) {
@@ -120,6 +137,7 @@ public struct PasteTool: MCPTool {
             windowIndex: arguments.validatedInt("window_index"),
             windowId: arguments.validatedInt("window_id"))
         try Self.validatePayloadShape(arguments)
+        try self.validateTemporaryPayloadBounds(arguments)
         _ = try Self.restoreDelayMilliseconds(arguments)
     }
 
@@ -138,6 +156,7 @@ public struct PasteTool: MCPTool {
                 windowId: arguments.validatedInt("window_id"))
 
             let foreground = arguments.getBool("foreground") ?? false
+            let snapshotID = arguments.getString("snapshot")
             let expectedPIDIdentity = try self.explicitPIDIdentity(target: target)
             let restoreDelayMs = try Self.restoreDelayMilliseconds(arguments)
             let payload = try self.makePayload(arguments: arguments)
@@ -146,7 +165,8 @@ public struct PasteTool: MCPTool {
                 let destination = try await self.resolveDeliveryDestination(
                     target: target,
                     foreground: false,
-                    expectedPIDIdentity: expectedPIDIdentity)
+                    expectedPIDIdentity: expectedPIDIdentity,
+                    snapshotID: snapshotID)
                 guard destination.processIdentifier != nil else {
                     throw PasteToolError(
                         "Background text paste requires an app or pid target.",
@@ -204,6 +224,7 @@ public struct PasteTool: MCPTool {
                     target: target,
                     foreground: foreground,
                     expectedPIDIdentity: expectedPIDIdentity,
+                    snapshotID: snapshotID,
                     requiresClipboardClaim: true)
                 if destination.processIdentifier == nil {
                     setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
@@ -1061,15 +1082,27 @@ public struct PasteTool: MCPTool {
         target: MCPInteractionTarget,
         foreground: Bool,
         expectedPIDIdentity: UInt64?,
+        snapshotID: String? = nil,
         requiresClipboardClaim: Bool = false) async throws -> UIAutomationTarget
     {
         if foreground {
             try Self.validateExplicitPIDIdentity(target: target, expectedPIDIdentity: expectedPIDIdentity)
             return .foreground
         }
-        let plannedTarget = try await target.requireBackgroundKeyboardTarget(
-            applications: self.context.applications,
-            windows: self.context.windows)
+        let plannedTarget: UIAutomationTarget
+        if snapshotID != nil {
+            guard let plan = try self.context.authorizedDesktopTargetPlan(operation: "Snapshot paste") else {
+                throw PasteToolError(
+                    "Snapshot paste requires background target authority.",
+                    refusalReason: .invalidRequest)
+            }
+            _ = try plan.requireExactWindow(operation: "Snapshot paste")
+            plannedTarget = plan.targetIdentity.target
+        } else {
+            plannedTarget = try await target.requireBackgroundKeyboardTarget(
+                applications: self.context.applications,
+                windows: self.context.windows)
+        }
         let authorizedTarget = try self.authorizedBackgroundDestination(plannedTarget)
         guard let processIdentifier = authorizedTarget.processIdentifier else {
             throw PasteToolError("Background paste requires a resolved target process.")
@@ -1153,7 +1186,7 @@ public struct PasteTool: MCPTool {
 
     private static func validatePayloadShape(_ arguments: ToolArguments) throws {
         let stringKeys = [
-            "app", "window_title", "text", "filePath", "imagePath", "dataBase64", "uti", "alsoText",
+            "app", "window_title", "text", "filePath", "imagePath", "dataBase64", "uti", "alsoText", "snapshot",
         ]
         for key in stringKeys {
             guard let value = arguments.getValue(for: key) else { continue }
@@ -1217,11 +1250,21 @@ public struct PasteTool: MCPTool {
         }
 
         if let b64 = arguments.getString("dataBase64"), let utiId = arguments.getString("uti") {
+            try self.validateTemporaryPayloadBounds(arguments)
             let request = try ClipboardPayloadBuilder.base64Request(
                 base64: b64,
                 utiIdentifier: utiId,
                 alsoText: arguments.getString("alsoText"),
                 allowLarge: arguments.getBool("allowLarge") ?? false)
+            if self.context.executionPolicy == .backgroundOnly,
+               self.context.executionAuthority.temporaryClipboardPasteGranted
+            {
+                let size = request.representations.reduce(0) { $0 + $1.data.count } +
+                    (request.alsoText?.utf8.count ?? 0)
+                guard size <= ClipboardPayloadBuilder.defaultSizeLimit else {
+                    throw PasteToolError("Temporary clipboard payload exceeds 10 MB.", refusalReason: .invalidRequest)
+                }
+            }
             return .explicit(request: request, text: Self.backgroundPlainText(from: request))
         }
 
@@ -1233,6 +1276,20 @@ public struct PasteTool: MCPTool {
                 "Provide text, filePath/imagePath, or dataBase64+uti.")
         }
         return .current
+    }
+
+    private func validateTemporaryPayloadBounds(_ arguments: ToolArguments) throws {
+        guard self.context.executionPolicy == .backgroundOnly,
+              self.context.executionAuthority.temporaryClipboardPasteGranted,
+              let base64 = arguments.getString("dataBase64")
+        else { return }
+        let limit = ClipboardPayloadBuilder.defaultSizeLimit
+        let companionSize = arguments.getString("alsoText")?.utf8.count ?? 0
+        guard companionSize <= limit,
+              base64.utf8.count <= ((limit - companionSize + 2) / 3) * 4
+        else {
+            throw PasteToolError("Temporary clipboard payload exceeds 10 MB.", refusalReason: .invalidRequest)
+        }
     }
 
     private func authorizedBackgroundDestination(_ candidate: UIAutomationTarget) throws -> UIAutomationTarget {

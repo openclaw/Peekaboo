@@ -20,6 +20,8 @@ extension MCPCommand {
             Model Context Protocol. This allows AI clients like Claude to use
             Peekaboo's automation capabilities. The server is background-only by default;
             pass --allow-foreground to authorize foreground actions and browser user activation for this server process.
+            --allow-temporary-clipboard separately permits bounded temporary paste to exact snapshots without
+            authorizing foreground UI or persistent clipboard writes.
 
             USAGE WITH CLAUDE CODE:
               claude mcp add peekaboo -- peekaboo mcp
@@ -40,6 +42,12 @@ extension MCPCommand {
             help: "Authorize foreground/global UI and browser user activation for this MCP server"
         )
         var allowForeground = false
+
+        @Flag(
+            name: .customLong("allow-temporary-clipboard"),
+            help: "Allow bounded temporary clipboard paste to exact snapshots; UI remains background-only"
+        )
+        var allowTemporaryClipboard = false
 
         var browserHandoff: String?
         var runtimeOptions = CommandRuntimeOptions()
@@ -82,7 +90,10 @@ extension MCPCommand {
                 let toolContext = Self.makeToolContext(
                     services: runtime.services,
                     snapshotMutationCoordinator: mutationCoordinator,
-                    executionPolicy: self.allowForeground ? .foregroundAllowed : .backgroundOnly,
+                    executionAuthority: MCPToolExecutionAuthority(
+                        basePolicy: self.allowForeground ? .foregroundAllowed : .backgroundOnly,
+                        temporaryClipboardPasteGranted: self.allowTemporaryClipboard
+                    ),
                     capturePreflightRefusal: runtime.toolCapturePreflightRefusal
                 )
                 let browserHandoff = runtime.browserHandoffReceiptBundleData.map {
@@ -127,7 +138,7 @@ extension MCPCommand {
         static func makeToolContext(
             services: any PeekabooServiceProviding,
             snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?,
-            executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+            executionAuthority: MCPToolExecutionAuthority = .backgroundOnly,
             capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil
         ) -> MCPToolContext {
             let snapshotExecutionGate: MCPToolSnapshotExecutionGate
@@ -143,7 +154,7 @@ extension MCPCommand {
                 services: services,
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
                 snapshotExecutionGate: snapshotExecutionGate,
-                executionPolicy: executionPolicy,
+                executionAuthority: executionAuthority,
                 capturePreflightRefusal: capturePreflightRefusal
             )
         }
@@ -174,6 +185,7 @@ extension MCPCommand.Serve: CommanderBindableCommand {
             self.port = portOption
         }
         self.allowForeground = values.flag("allowForeground")
+        self.allowTemporaryClipboard = values.flag("allowTemporaryClipboard")
         self.browserHandoff = values.singleOption("browserHandoff")
     }
 }

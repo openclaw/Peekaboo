@@ -22,6 +22,7 @@ read_when:
 | `--no-cache` | Run ephemerally without saving a resumable session. Cannot be combined with resume/list flags. |
 | `--no-desktop-context` | Skip new automatic desktop-context collection for this run, chat, or resume invocation. Saved conversation history, tool access, and UI authority are unchanged. |
 | `--allow-foreground` | Human opt-in for this invocation to use foreground/global UI routes. New sessions persist it as an immutable maximum; each later resume must opt in again. It never exposes the Shell tool. |
+| `--allow-temporary-clipboard` | Human opt-in for bounded temporary base64 paste to a fresh exact snapshot, without granting foreground UI. New sessions store a maximum; every resume needs the flag again. |
 | `--quiet` / `--simple` / `--no-color` / `--debug-terminal` | Control output mode; the command auto-detects terminal capabilities when you don’t override it. |
 | `--audio` / `--audio-file <path>` | Use microphone input or pipe audio from disk. |
 
@@ -78,7 +79,23 @@ read_when:
 - Background-only Agent typing requires an explicit fresh exact non-dialog snapshot; an optional element ID must come
   from that snapshot. Snapshot typing cannot include competing app/PID/window selectors. Direct-text paste
   remains available through a generation-pinned app/PID/window authorization with a canonical background result.
-  Targetless, foreground, current-clipboard, and binary paste remain refused.
+  Targetless, foreground, current-clipboard, and binary paste remain refused by default.
+- `--allow-temporary-clipboard` independently admits `paste` with `dataBase64` + `uti`, a fresh exact non-dialog,
+  non-system-UI `snapshot`, and optional `alsoText` and `restore_delay_ms` (`0...10000`, default `150`). The data and
+  text companion together are limited to 10 MB. This form rejects app/PID/window selectors, file/image paths,
+  `allowLarge`, ambient current-clipboard paste, persistent clipboard writes, and foreground UI. Direct-text paste
+  keeps its existing app/PID/window route and does not use the clipboard. A remote rich-paste host must negotiate
+  protocol 1.41 and prepared clipboard-guarded delivery; there is no fallback to a weaker route.
+- Temporary clipboard permission briefly changes the General clipboard and requires silent read permission and a
+  complete prior snapshot. Cleanup restores only while Peekaboo still owns the write generation and preserves a
+  newer copy. Prepared input remains unverified and retry-unsafe, even after cleanup; observe the exact receiver
+  before continuing and never blindly replay it. A failure after claiming the clipboard may truthfully retain a
+  global/foreground-mode `clipboard_transaction` outcome without any input target or count. The UI authority remains
+  background-only; the grant never permits accepted foreground input.
+- Saved clipboard maxima are optional additive session data (missing means false), not signed permission. A normal
+  resume grants nothing regardless of stored prompts, metadata, or edited JSON. A fresh flag cannot exceed the saved
+  maximum. Legacy foreground maxima already include clipboard capability. Nested Agent and protocol-1.31 managed
+  Agent launches continue to use background-only authority without this grant.
 - Foreground permission never exposes the Shell tool. Normal Agent toolsets omit `shell`, and the execution boundary
   still refuses it after `--allow-foreground`. Foreground UI authority is not a process sandbox: a trusted prompt can
   operate terminal or scripting apps through their UI, so grant `--allow-foreground` only to trusted prompts. Use

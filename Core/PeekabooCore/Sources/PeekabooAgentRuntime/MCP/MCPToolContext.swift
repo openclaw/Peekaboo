@@ -58,7 +58,11 @@ public struct MCPToolContext: @unchecked Sendable {
     public let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let browserMutationExecutionGate: MCPToolSnapshotExecutionGate
-    public let executionPolicy: MCPToolExecutionPolicy
+    public let executionAuthority: MCPToolExecutionAuthority
+    public var executionPolicy: MCPToolExecutionPolicy {
+        self.executionAuthority.basePolicy
+    }
+
     let capturePreflightRefusal: MCPToolCapturePreflightRefusal?
     let uiSnapshots: MCPToolUISnapshotStore
 
@@ -180,6 +184,57 @@ public struct MCPToolContext: @unchecked Sendable {
         executionHost: PeekabooServiceExecutionHost = .local,
         capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
     {
+        self.init(
+            automation: automation,
+            menu: menu,
+            windows: windows,
+            applications: applications,
+            dialogs: dialogs,
+            dock: dock,
+            screenCapture: screenCapture,
+            desktopObservation: desktopObservation,
+            snapshots: snapshots,
+            screens: screens,
+            agent: agent,
+            permissions: permissions,
+            clipboard: clipboard,
+            browser: browser,
+            permissionsStatusProvider: permissionsStatusProvider,
+            snapshotMutationCoordinator: snapshotMutationCoordinator,
+            snapshotExecutionGate: snapshotExecutionGate,
+            browserMutationExecutionGate: browserMutationExecutionGate,
+            browserCleanupOwner: browserCleanupOwner,
+            snapshotOwner: snapshotOwner,
+            executionAuthority: MCPToolExecutionAuthority(basePolicy: executionPolicy),
+            executionHost: executionHost,
+            capturePreflightRefusal: capturePreflightRefusal)
+    }
+
+    public init(
+        automation: any UIAutomationServiceProtocol,
+        menu: any MenuServiceProtocol,
+        windows: any WindowManagementServiceProtocol,
+        applications: any ApplicationServiceProtocol,
+        dialogs: any DialogServiceProtocol,
+        dock: any DockServiceProtocol,
+        screenCapture: any ScreenCaptureServiceProtocol,
+        desktopObservation: any DesktopObservationServiceProtocol,
+        snapshots: any SnapshotManagerProtocol,
+        screens: any ScreenServiceProtocol,
+        agent: (any AgentServiceProtocol)?,
+        permissions: PermissionsService,
+        clipboard: any ClipboardServiceProtocol,
+        browser: any BrowserMCPClientProviding,
+        permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        browserMutationExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        browserCleanupOwner: BrowserMCPService? = nil,
+        snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
+        executionAuthority: MCPToolExecutionAuthority,
+        executionHost: PeekabooServiceExecutionHost = .local,
+        capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
+    {
         self.executionHost = executionHost
         self.automation = automation
         self.menu = menu
@@ -208,7 +263,7 @@ public struct MCPToolContext: @unchecked Sendable {
             ?? (browser as? BrowserMCPService)?.browserMutationExecutionGate
             ?? self.snapshotExecutionGate
         self.uiSnapshots = MCPToolUISnapshotStore(owner: snapshotOwner)
-        self.executionPolicy = executionPolicy
+        self.executionAuthority = executionAuthority
         self.capturePreflightRefusal = capturePreflightRefusal
     }
 
@@ -221,6 +276,28 @@ public struct MCPToolContext: @unchecked Sendable {
         browserMutationExecutionGate: MCPToolSnapshotExecutionGate? = nil,
         snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
+    {
+        self.init(
+            services: services,
+            browser: browser,
+            snapshotMutationCoordinator: snapshotMutationCoordinator,
+            snapshotExecutionGate: snapshotExecutionGate,
+            browserMutationExecutionGate: browserMutationExecutionGate,
+            snapshotOwner: snapshotOwner,
+            executionAuthority: MCPToolExecutionAuthority(basePolicy: executionPolicy),
+            capturePreflightRefusal: capturePreflightRefusal)
+    }
+
+    @MainActor
+    public init(
+        services: any PeekabooServiceProviding,
+        browser: (any BrowserMCPClientProviding)? = nil,
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        browserMutationExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        snapshotOwner: MCPToolSnapshotOwner = .legacyProcess,
+        executionAuthority: MCPToolExecutionAuthority,
         capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil)
     {
         let resolvedSnapshotExecutionGate = snapshotExecutionGate
@@ -247,7 +324,7 @@ public struct MCPToolContext: @unchecked Sendable {
             browserMutationExecutionGate: browserMutationExecutionGate,
             browserCleanupOwner: services.browser as? BrowserMCPService,
             snapshotOwner: snapshotOwner,
-            executionPolicy: executionPolicy,
+            executionAuthority: executionAuthority,
             executionHost: services.executionHost,
             capturePreflightRefusal: capturePreflightRefusal)
     }
@@ -460,7 +537,7 @@ extension MCPToolContext {
         {
             return rejection
         }
-        if let rejection = self.executionPolicy.rejection(toolName: tool.name, arguments: arguments) {
+        if let rejection = self.executionAuthority.rejection(toolName: tool.name, arguments: arguments) {
             return rejection
         }
         return self.capturePreflightResponse(tool: tool, arguments: arguments)
@@ -765,7 +842,7 @@ extension MCPToolContext {
             browserMutationExecutionGate: self.browserMutationExecutionGate,
             browserCleanupOwner: self.browserCleanupOwner,
             snapshotOwner: owner,
-            executionPolicy: self.executionPolicy,
+            executionAuthority: self.executionAuthority,
             executionHost: self.executionHost,
             capturePreflightRefusal: self.capturePreflightRefusal)
     }
@@ -793,7 +870,7 @@ extension MCPToolContext {
 
         guard self.executionPolicy == .backgroundOnly else { return permitted(arguments) }
         let usesSnapshotTarget = ["action", "click", "scroll", "set_value"].contains(toolName) ||
-            (["type", "press"].contains(toolName) &&
+            (["type", "press", "paste"].contains(toolName) &&
                 (arguments.getValue(for: "on") != nil || arguments.getValue(for: "snapshot") != nil))
         guard usesSnapshotTarget else {
             // BrowserTool mutates DevTools page targets rather than macOS desktop targets. Its policy separately
@@ -811,7 +888,7 @@ extension MCPToolContext {
                 toolName: toolName,
                 arguments: arguments)
         }
-        if ["type", "press"].contains(toolName),
+        if ["type", "press", "paste"].contains(toolName),
            ["app", "pid", "window_id", "window_title", "window_index"].contains(where: {
                arguments.getValue(for: $0) != nil
            })

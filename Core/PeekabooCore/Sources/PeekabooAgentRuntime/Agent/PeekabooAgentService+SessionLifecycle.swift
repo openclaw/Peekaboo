@@ -202,6 +202,32 @@ extension PeekabooAgentService {
         enhancementOptions: AgentEnhancementOptions? = .default,
         requestedToolExecutionPolicy: MCPToolExecutionPolicy? = nil) async throws -> AgentExecutionResult
     {
+        try await self.continueSession(
+            sessionId: sessionId,
+            userMessage: userMessage,
+            model: model,
+            maxSteps: maxSteps,
+            dryRun: dryRun,
+            queueMode: queueMode,
+            eventDelegate: eventDelegate,
+            verbose: verbose,
+            enhancementOptions: enhancementOptions,
+            requestedToolExecutionAuthority: MCPToolExecutionAuthority(
+                basePolicy: requestedToolExecutionPolicy ?? .backgroundOnly))
+    }
+
+    public func continueSession(
+        sessionId: String,
+        userMessage: String,
+        model: LanguageModel? = nil,
+        maxSteps: Int = 20,
+        dryRun: Bool = false,
+        queueMode: QueueMode = .oneAtATime,
+        eventDelegate: (any AgentEventDelegate)? = nil,
+        verbose: Bool = false,
+        enhancementOptions: AgentEnhancementOptions? = .default,
+        requestedToolExecutionAuthority: MCPToolExecutionAuthority) async throws -> AgentExecutionResult
+    {
         try await self.continueSessionInternal(
             sessionId: sessionId,
             userMessage: userMessage,
@@ -212,7 +238,7 @@ extension PeekabooAgentService {
             eventDelegate: eventDelegate,
             verbose: verbose,
             enhancementOptions: enhancementOptions,
-            requestedToolExecutionPolicy: requestedToolExecutionPolicy)
+            requestedToolExecutionAuthority: requestedToolExecutionAuthority)
     }
 
     // swiftlint:disable:next function_parameter_count
@@ -226,7 +252,7 @@ extension PeekabooAgentService {
         eventDelegate: (any AgentEventDelegate)?,
         verbose: Bool,
         enhancementOptions: AgentEnhancementOptions?,
-        requestedToolExecutionPolicy: MCPToolExecutionPolicy?) async throws -> AgentExecutionResult
+        requestedToolExecutionAuthority: MCPToolExecutionAuthority) async throws -> AgentExecutionResult
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         self.isVerbose = verbose
@@ -245,9 +271,9 @@ extension PeekabooAgentService {
         try self.requireCurrentAgentSessionExecution(
             sessionID: sessionId,
             executionGeneration: executionGeneration)
-        let executionPolicy = try Self.resolveToolExecutionPolicy(
+        let executionAuthority = try Self.resolveToolExecutionAuthority(
             for: existingSession,
-            requested: requestedToolExecutionPolicy)
+            requested: requestedToolExecutionAuthority)
         let taskDescription = userMessage ?? "Resume session \(sessionId)"
 
         if dryRun {
@@ -280,7 +306,7 @@ extension PeekabooAgentService {
             model: selectedModel,
             provider: resolvedModel.provider,
             modelIdentity: resolvedModel.identity,
-            toolExecutionPolicy: executionPolicy,
+            toolExecutionAuthority: executionAuthority,
             executionGeneration: executionGeneration)
 
         if let eventDelegate {
@@ -321,6 +347,24 @@ extension PeekabooAgentService {
         enhancementOptions: AgentEnhancementOptions? = .default,
         requestedToolExecutionPolicy: MCPToolExecutionPolicy? = nil) async throws -> AgentExecutionResult
     {
+        try await self.resumeSession(
+            sessionId: sessionId,
+            model: model,
+            maxSteps: maxSteps,
+            eventDelegate: eventDelegate,
+            enhancementOptions: enhancementOptions,
+            requestedToolExecutionAuthority: MCPToolExecutionAuthority(
+                basePolicy: requestedToolExecutionPolicy ?? .backgroundOnly))
+    }
+
+    public func resumeSession(
+        sessionId: String,
+        model: LanguageModel? = nil,
+        maxSteps: Int = 20,
+        eventDelegate: (any AgentEventDelegate)? = nil,
+        enhancementOptions: AgentEnhancementOptions? = .default,
+        requestedToolExecutionAuthority: MCPToolExecutionAuthority) async throws -> AgentExecutionResult
+    {
         try await self.continueSessionInternal(
             sessionId: sessionId,
             userMessage: nil,
@@ -331,23 +375,23 @@ extension PeekabooAgentService {
             eventDelegate: eventDelegate,
             verbose: self.isVerbose,
             enhancementOptions: enhancementOptions,
-            requestedToolExecutionPolicy: requestedToolExecutionPolicy)
+            requestedToolExecutionAuthority: requestedToolExecutionAuthority)
     }
 
-    static func resolveToolExecutionPolicy(
+    static func resolveToolExecutionAuthority(
         for session: AgentSession,
-        requested: MCPToolExecutionPolicy?) throws -> MCPToolExecutionPolicy
+        requested: MCPToolExecutionAuthority?) throws -> MCPToolExecutionAuthority
     {
-        let storedMaximum = session.effectiveToolExecutionPolicy
+        let storedMaximum = session.maximumToolExecutionAuthority
         let requestedInvocation = requested ?? .backgroundOnly
-        guard requestedInvocation != .unrestricted else {
+        guard requestedInvocation.basePolicy != .unrestricted else {
             throw PeekabooError.invalidInput("Agent sessions cannot request unrestricted tool execution authority.")
         }
-        guard requestedInvocation != .foregroundAllowed || storedMaximum == .foregroundAllowed else {
+        guard storedMaximum.permits(requestedInvocation) else {
             throw PeekabooError.invalidInput(
-                "Session \(session.id) has immutable tool execution policy '\(storedMaximum.rawValue)' and cannot be " +
-                    "broadened while resuming. Start a new session with --allow-foreground when " +
-                    "foreground interaction is intentionally authorized.")
+                "Session \(session.id) has immutable tool execution policy '\(storedMaximum.basePolicy.rawValue)' " +
+                    "and cannot be broadened while resuming. Start a new session with --allow-foreground or " +
+                    "--allow-temporary-clipboard only when that additional authority is intentionally authorized.")
         }
         return requestedInvocation
     }

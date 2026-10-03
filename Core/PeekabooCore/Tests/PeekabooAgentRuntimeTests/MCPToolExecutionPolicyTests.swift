@@ -1,4 +1,5 @@
 import MCP
+import PeekabooAgentRuntimeTestSupport
 import PeekabooAutomationKit
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
@@ -9,7 +10,12 @@ import Testing
 @testable import PeekabooCore
 
 @Suite(.serialized)
+@MainActor
 struct MCPToolExecutionPolicyTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
     @Test
     @MainActor
     func `Tool handling context defaults to background only`() {
@@ -19,7 +25,7 @@ struct MCPToolExecutionPolicyTests {
             eventHandler: nil,
             sessionId: "default-background-policy")
 
-        #expect(context.executionPolicy == .backgroundOnly)
+        #expect(context.executionAuthority == .backgroundOnly)
     }
 
     private struct PolicyCase {
@@ -330,13 +336,13 @@ struct MCPToolExecutionPolicyTests {
         let arguments = ToolArguments(raw: ["command": "/usr/bin/osascript -e ignored"])
 
         for policy in [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed] {
-            let context = MCPToolContext(services: PeekabooServices(), executionPolicy: policy)
+            let context = MCPToolContext(services: AuthorityTestSupport.services(), executionPolicy: policy)
             let response = try await context.execute(tool: shell, arguments: arguments)
             #expect(response.isError)
             #expect(await counter.value == 0)
         }
 
-        let directContext = MCPToolContext(services: PeekabooServices(), executionPolicy: .unrestricted)
+        let directContext = MCPToolContext(services: AuthorityTestSupport.services(), executionPolicy: .unrestricted)
         let directResponse = try await directContext.execute(tool: shell, arguments: arguments)
         #expect(!directResponse.isError)
         #expect(await counter.value == 1)
@@ -345,7 +351,7 @@ struct MCPToolExecutionPolicyTests {
     @Test
     @MainActor
     func `public Agent tool factory defaults executable tools to background-only`() async throws {
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let tools = service.createAgentTools()
         let shell = try #require(tools.first { $0.name == "shell" })
         let move = try #require(tools.first { $0.name == "move" })
@@ -424,7 +430,7 @@ struct MCPToolExecutionPolicyTests {
                 method: "test",
                 windowContext: windowContext))
         let snapshots = try await InMemorySnapshotManager.containing(detectionResult)
-        let services = PeekabooServices(snapshotManager: snapshots)
+        let services = AuthorityTestSupport.services(snapshotManager: snapshots)
         let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
         let pressCapture = PolicySnapshotArgumentCapture()
 
@@ -678,7 +684,7 @@ struct MCPToolExecutionPolicyTests {
         desktopTarget: LinkedDesktopTargetFixture) throws -> MCPToolContext
     {
         let graph = try LinkedApplicationInventoryGraph(linkedTargets: [desktopTarget])
-        let base = PeekabooServices(snapshotManager: snapshots)
+        let base = AuthorityTestSupport.services(snapshotManager: snapshots)
         return MCPToolContext(
             automation: base.automation,
             menu: base.menu,
@@ -712,13 +718,13 @@ struct MCPToolExecutionPolicyTests {
                     return AnyAgentToolValue(object: ["success": AnyAgentToolValue(bool: true)])
                 })
         }
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .anthropic(.sonnet45),
             tools: tools,
             eventHandler: nil,
             sessionId: "policy-loop",
-            executionPolicy: .backgroundOnly)
+            executionAuthority: .backgroundOnly)
         var messages: [ModelMessage] = []
 
         let step = try await service.handleToolCalls(
@@ -754,7 +760,7 @@ struct MCPToolExecutionPolicyTests {
     func `cancellation after policy refusal cancels every remaining call before execution`() async throws {
         let counter = PolicyInvocationCounter()
         let capture = PolicyCancellationCapture()
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let tools = [
             AgentTool(
                 name: "see",
@@ -775,7 +781,7 @@ struct MCPToolExecutionPolicyTests {
             tools: tools,
             eventHandler: eventHandler,
             sessionId: "policy-cancellation",
-            executionPolicy: .backgroundOnly)
+            executionAuthority: .backgroundOnly)
         let toolCalls = [
             AgentToolCall(id: "policy-refusal", name: "shell", arguments: [:]),
             AgentToolCall(id: "must-not-run", name: "see", arguments: [:]),

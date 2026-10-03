@@ -809,7 +809,7 @@ struct AgentRuntimeBoundaryRegressionTests {
             sessionId: "runtime-boundary-test",
             eventHandler: eventHandler,
             enhancementOptions: nil,
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
     }
 
     private func tool(named name: String, counter: RuntimeBoundaryCounter? = nil) -> AgentTool {

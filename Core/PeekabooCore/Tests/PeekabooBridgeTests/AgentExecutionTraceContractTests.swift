@@ -342,6 +342,7 @@ struct AgentExecutionTraceContractTests {
         ])
         #expect(fixture.response.backgroundOnly)
         #expect(!fixture.response.allowForeground)
+        #expect(!fixture.response.arguments.contains("--allow-temporary-clipboard"))
         #expect(!fixture.response.shellAvailable)
         #expect(fixture.response.executionTrace == .object([
             "entries": .array([]),
@@ -359,6 +360,22 @@ struct AgentExecutionTraceContractTests {
             environmentKeys: ["PATH", "PEEKABOO_OPERATION_RECEIPT_DIRECTORY"])
         #expect(throws: PeekabooBridgeAgentExecutionResponseValidationError.self) {
             try ungated.validate(request: fixture.request)
+        }
+    }
+
+    @Test
+    func `Managed Agent argv cannot acquire temporary clipboard permission`() throws {
+        let fixture = try Self.fixture()
+        let arguments = fixture.response.arguments + ["--allow-temporary-clipboard"]
+        var object = try #require(JSONSerialization.jsonObject(
+            with: JSONEncoder.peekabooBridgeEncoder().encode(fixture.response)) as? [String: Any])
+        object["arguments"] = arguments
+        object["argumentsSHA256"] = try Self.sha256(Self.canonical(arguments))
+        let forged = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeAgentExecutionTraceResponse.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        #expect(throws: PeekabooBridgeAgentExecutionResponseValidationError.self) {
+            try forged.validate(request: fixture.request)
         }
     }
 

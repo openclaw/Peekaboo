@@ -114,6 +114,12 @@ struct AgentCommand: RuntimeBackedCommand {
     )
     var allowForeground = false
 
+    @Flag(
+        name: .customLong("allow-temporary-clipboard"),
+        help: "Allow bounded temporary clipboard paste to exact snapshots; UI remains background-only"
+    )
+    var allowTemporaryClipboard = false
+
     @Flag(name: .long, help: "Enable audio input mode (record from microphone)")
     var audio = false
 
@@ -168,12 +174,11 @@ struct AgentCommand: RuntimeBackedCommand {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose
     }
 
-    var newSessionToolExecutionPolicy: MCPToolExecutionPolicy {
-        self.allowForeground ? .foregroundAllowed : .backgroundOnly
-    }
-
-    var requestedResumeToolExecutionPolicy: MCPToolExecutionPolicy {
-        self.allowForeground ? .foregroundAllowed : .backgroundOnly
+    var toolExecutionAuthority: MCPToolExecutionAuthority {
+        MCPToolExecutionAuthority(
+            basePolicy: self.allowForeground ? .foregroundAllowed : .backgroundOnly,
+            temporaryClipboardPasteGranted: self.allowTemporaryClipboard
+        )
     }
 
     var enhancementOptions: AgentEnhancementOptions {

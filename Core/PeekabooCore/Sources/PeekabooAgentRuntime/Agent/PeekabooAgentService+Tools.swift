@@ -25,7 +25,7 @@ extension PeekabooAgentService {
         {
             return Self.preflightResult(for: toolCall, response: rejection)
         }
-        if let refusal = context.executionPolicy.rejection(
+        if let refusal = context.executionAuthority.rejection(
             toolName: toolCall.name,
             agentArguments: toolCall.arguments)
         {
@@ -69,7 +69,7 @@ extension PeekabooAgentService {
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
             snapshotOwner: Self.toolConstructionSnapshotOwner,
-            executionPolicy: Self.toolConstructionExecutionPolicy,
+            executionAuthority: Self.toolConstructionExecutionAuthority,
             capturePreflightRefusal: self.capturePreflightRefusal)
     }
 

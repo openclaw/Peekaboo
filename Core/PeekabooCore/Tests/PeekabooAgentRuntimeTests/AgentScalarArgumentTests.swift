@@ -198,7 +198,7 @@ struct AgentScalarArgumentTests {
             tools: [tool],
             eventHandler: nil,
             sessionId: "scalar-schema-test",
-            executionPolicy: .backgroundOnly)
+            executionAuthority: .backgroundOnly)
     }
 
     private func execute(

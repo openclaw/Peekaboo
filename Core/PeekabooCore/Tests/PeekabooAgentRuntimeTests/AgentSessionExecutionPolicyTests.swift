@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooAgentRuntimeTestSupport
 import PeekabooFoundation
 import Tachikoma
 import Testing
@@ -6,7 +7,79 @@ import Testing
 @testable import PeekabooCore
 
 @Suite(.serialized)
+@MainActor
 struct AgentSessionExecutionPolicyTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
+    @Test
+    @MainActor
+    func `temporary clipboard saved maximum is additive and never an invocation grant`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-clipboard-policy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = try AgentSessionManager(sessionDirectory: directory)
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services(), sessionManager: manager)
+        let grant = MCPToolExecutionAuthority(temporaryClipboardPasteGranted: true)
+        let session = Self.session(id: "clipboard-maximum", policy: .backgroundOnly, clipboardMaximum: true)
+        try manager.saveSession(session)
+        let loaded = try #require(try await manager.loadSession(id: session.id))
+        let data = try JSONEncoder().encode(loaded)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["toolExecutionPolicy"] as? String == "background_only")
+        #expect(object["temporaryClipboardPasteMaximum"] as? Bool == true)
+        #expect(manager.listSessions().first?.temporaryClipboardPasteMaximum == true)
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(for: loaded, requested: nil) == .backgroundOnly)
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(for: loaded, requested: grant) == grant)
+        #expect(throws: PeekabooError.self) {
+            try PeekabooAgentService.resolveToolExecutionAuthority(
+                for: loaded,
+                requested: .init(basePolicy: .foregroundAllowed))
+        }
+
+        let resumed = service.makeContinuationContext(from: loaded, userMessage: nil, model: .ollama(.llama33))
+        #expect(resumed.toolExecutionAuthority == .backgroundOnly)
+        #expect(resumed.storedToolExecutionAuthority == grant)
+        let prompt = resumed.messages.first?.content.compactMap { part -> String? in
+            guard case let .text(text) = part else { return nil }
+            return text
+        }.joined()
+        #expect(prompt?.contains("explicit temporary-clipboard permission") == false)
+        try service.saveExecutionSession(
+            context: resumed,
+            model: .ollama(.llama33),
+            finalMessages: resumed.messages,
+            endTime: Date(),
+            toolCallCount: 0,
+            usage: nil,
+            status: "completed")
+        #expect(try await manager.loadSession(id: session.id)?.temporaryClipboardPasteMaximum == true)
+    }
+
+    @Test
+    @MainActor
+    func `legacy and forged saved clipboard data cannot supply fresh permission`() throws {
+        let legacy = Self.session(id: "legacy-clipboard", policy: .backgroundOnly)
+        #expect(legacy.temporaryClipboardPasteMaximum == nil)
+        #expect(legacy.maximumToolExecutionAuthority == .backgroundOnly)
+        #expect(throws: PeekabooError.self) {
+            try PeekabooAgentService.resolveToolExecutionAuthority(
+                for: legacy, requested: .init(temporaryClipboardPasteGranted: true))
+        }
+        let encoded = try JSONEncoder().encode(legacy)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["temporaryClipboardPasteMaximum"] = true
+        object["toolExecutionPolicy"] = "foreground_allowed"
+        let forged = try JSONDecoder().decode(AgentSession.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(for: forged, requested: nil) == .backgroundOnly)
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(for: forged, requested: nil)
+            .basePolicy == .backgroundOnly)
+        let foreground = Self.session(id: "legacy-foreground", policy: .foregroundAllowed)
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
+            for: foreground, requested: .init(temporaryClipboardPasteGranted: true)).temporaryClipboardPasteGranted)
+    }
+
     @Test
     @MainActor
     func `new policy persists and reloads exactly`() async throws {
@@ -85,32 +158,32 @@ struct AgentSessionExecutionPolicyTests {
     @MainActor
     func `resume defaults each invocation to background and refuses broadening`() throws {
         let background = Self.session(id: "background", policy: .backgroundOnly)
-        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: background,
-            requested: nil) == .backgroundOnly)
-        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+            requested: nil).basePolicy == .backgroundOnly)
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: background,
-            requested: .backgroundOnly) == .backgroundOnly)
+            requested: .backgroundOnly).basePolicy == .backgroundOnly)
         #expect(throws: PeekabooError.self) {
-            try PeekabooAgentService.resolveToolExecutionPolicy(
+            try PeekabooAgentService.resolveToolExecutionAuthority(
                 for: background,
-                requested: .foregroundAllowed)
+                requested: .init(basePolicy: .foregroundAllowed))
         }
 
         let foreground = Self.session(id: "foreground", policy: .foregroundAllowed)
-        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: foreground,
-            requested: nil) == .backgroundOnly)
-        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+            requested: nil).basePolicy == .backgroundOnly)
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: foreground,
-            requested: .backgroundOnly) == .backgroundOnly)
-        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+            requested: .backgroundOnly).basePolicy == .backgroundOnly)
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: foreground,
-            requested: .foregroundAllowed) == .foregroundAllowed)
+            requested: .init(basePolicy: .foregroundAllowed)).basePolicy == .foregroundAllowed)
         #expect(throws: PeekabooError.self) {
-            try PeekabooAgentService.resolveToolExecutionPolicy(
+            try PeekabooAgentService.resolveToolExecutionAuthority(
                 for: foreground,
-                requested: .unrestricted)
+                requested: .init(basePolicy: .unrestricted))
         }
     }
 
@@ -118,9 +191,9 @@ struct AgentSessionExecutionPolicyTests {
     @MainActor
     func `forged persisted foreground value cannot elevate a default resume`() throws {
         let forged = Self.session(id: "forged", policy: .foregroundAllowed)
-        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: forged,
-            requested: nil) == .backgroundOnly)
+            requested: nil).basePolicy == .backgroundOnly)
     }
 
     @Test
@@ -130,7 +203,7 @@ struct AgentSessionExecutionPolicyTests {
             .appendingPathComponent("agent-policy-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let manager = try AgentSessionManager(sessionDirectory: directory)
-        let service = try PeekabooAgentService(services: PeekabooServices(), sessionManager: manager)
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services(), sessionManager: manager)
         let session = Self.session(id: "foreground-maximum", policy: .foregroundAllowed)
         try manager.saveSession(session)
 
@@ -138,7 +211,7 @@ struct AgentSessionExecutionPolicyTests {
             from: session,
             userMessage: "background turn",
             model: .ollama(.llama33),
-            toolExecutionPolicy: .backgroundOnly)
+            toolExecutionAuthority: .backgroundOnly)
         try service.saveExecutionSession(
             context: context,
             model: .ollama(.llama33),
@@ -149,12 +222,12 @@ struct AgentSessionExecutionPolicyTests {
             status: SessionStatus.completed.rawValue)
 
         let loaded = try #require(try await manager.loadSession(id: session.id))
-        #expect(context.toolExecutionPolicy == .backgroundOnly)
-        #expect(context.storedToolExecutionPolicy == .foregroundAllowed)
+        #expect(context.toolExecutionAuthority == .backgroundOnly)
+        #expect(context.storedToolExecutionAuthority.basePolicy == .foregroundAllowed)
         #expect(loaded.effectiveToolExecutionPolicy == .foregroundAllowed)
-        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+        #expect(try PeekabooAgentService.resolveToolExecutionAuthority(
             for: loaded,
-            requested: .foregroundAllowed) == .foregroundAllowed)
+            requested: .init(basePolicy: .foregroundAllowed)).basePolicy == .foregroundAllowed)
     }
 
     @Test
@@ -184,12 +257,15 @@ struct AgentSessionExecutionPolicyTests {
         #expect(summary.status == .completed)
     }
 
-    private static func session(id: String, policy: MCPToolExecutionPolicy) -> AgentSession {
+    private static func session(
+        id: String, policy: MCPToolExecutionPolicy, clipboardMaximum: Bool? = nil) -> AgentSession
+    {
         let now = Date()
         return AgentSession(
             id: id,
             modelName: "test-model",
             toolExecutionPolicy: policy,
+            temporaryClipboardPasteMaximum: clipboardMaximum,
             messages: [.system("system"), .user("task")],
             metadata: SessionMetadata(),
             createdAt: now,

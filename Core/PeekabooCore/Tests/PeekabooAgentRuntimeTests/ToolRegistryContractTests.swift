@@ -38,7 +38,7 @@ struct ToolRegistryContractTests {
 
         let foregroundNames = await Set(agent.buildToolset(
             for: .anthropic(.sonnet45),
-            executionPolicy: .foregroundAllowed).map(\.name))
+            executionAuthority: .init(basePolicy: .foregroundAllowed)).map(\.name))
         #expect(foregroundNames.isSuperset(of: ["drag", "move"]))
         #expect(!foregroundNames.contains("shell"))
     }

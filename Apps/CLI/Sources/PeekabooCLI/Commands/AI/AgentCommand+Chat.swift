@@ -316,7 +316,7 @@ extension AgentCommand {
                 eventDelegate: delegate,
                 verbose: self.verbose,
                 enhancementOptions: self.enhancementOptions,
-                requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
+                requestedToolExecutionAuthority: self.toolExecutionAuthority
             )
         }
 
@@ -331,7 +331,7 @@ extension AgentCommand {
             verbose: self.verbose,
             enhancementOptions: self.enhancementOptions,
             persistSession: !self.noCache,
-            toolExecutionPolicy: self.newSessionToolExecutionPolicy
+            toolExecutionAuthority: self.toolExecutionAuthority
         )
     }
 
@@ -409,7 +409,7 @@ extension AgentCommand {
                         eventDelegate: streamingDelegate,
                         verbose: self.verbose,
                         enhancementOptions: self.enhancementOptions,
-                        requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
+                        requestedToolExecutionAuthority: self.toolExecutionAuthority
                     )
                     self.displayResult(result, delegate: outputDelegate)
                     return result

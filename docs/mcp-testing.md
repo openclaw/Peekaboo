@@ -165,3 +165,25 @@ Provider-backed `agent` and `analyze` calls require configuration at server star
 3. Use deterministic Playground fixtures for UI mutations.
 4. Keep provider credentials and captured desktop data out of committed artifacts.
 5. Run the repository's focused unit tests alongside live MCP smoke tests.
+
+## Synthetic authority regression tests
+
+Run the temporary-clipboard authority, session-policy, context, paste, and browser-lifecycle regression suites serially
+with `--no-parallel`, with provider API-key/OAuth variables and `PEEKABOO_AI_PROVIDERS` absent from the test process.
+Do not change `HOME`. The selected suites initialize `AuthorityTestSupport` from the test-only
+`PeekabooAgentRuntimeTestSupport` module before constructing services. Its shared
+test-only storage owner creates a private process configuration directory with empty config and credentials files,
+disables legacy configuration migration, and installs `TachikomaConfiguration(loadFromEnvironment: false)` without
+touching `.current`. The empty primary credentials file also closes Tachikoma's legacy-file fallback. A provider
+factory override admits only the explicitly supplied custom fixture providers, not built-in remote/local providers.
+The two nested Agent attenuation cases temporarily replace that already-synthetic default with the existing fixture
+provider so public MCP can resolve a model string for a real continuation; they restore `.default` with `defer` and
+never read `.current` to save it. This scoped exception also requires serial execution.
+
+Base services skip automatic Agent creation and use in-memory snapshots. Every explicit fixture Agent receives a
+private session manager. Browser-lifecycle calls use `.minimal` enhancements so they do not collect frontmost-window,
+cursor, application-list, or General-clipboard context. Paste tests inject their scripted clipboard and native-input
+services. The process logs its owned storage directory once; retain it for diagnosis, then remove that exact directory
+after the test process and its asynchronous cleanup have finished. Do not run unrelated configuration-mutating suites
+concurrently and do not treat `PEEKABOO_CONFIG_DIR` alone as credential isolation. This is bounded fixture isolation,
+not a claim that the entire repository's test suite is hermetic.

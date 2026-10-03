@@ -1,5 +1,6 @@
 import Commander
 import Foundation
+import PeekabooAgentRuntimeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -8,6 +9,10 @@ import Testing
 @Suite(.tags(.safe))
 @MainActor
 struct AgentDryRunTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
     @Test(arguments: [false, true])
     func `preview normalizes instruction and exposes background authority with zero execution`(
         noDesktopContext: Bool
@@ -31,6 +36,7 @@ struct AgentDryRunTests {
                 "Instruction: Inspect TextEdit",
                 "Requested foreground UI: \(testCase.requestedForeground ? "yes" : "no")",
                 "Effective UI authority: \(testCase.policy)",
+                "Temporary clipboard paste: \(testCase.requestedForeground ? "yes" : "no")",
                 "Automatic desktop context: \(noDesktopContext ? "no" : "yes")",
                 "Model execution: skipped",
                 "Tool calls: 0",
@@ -53,12 +59,28 @@ struct AgentDryRunTests {
             #expect(authority["requestedForeground"] as? Bool == testCase.requestedForeground)
             #expect(authority["effectivePolicy"] as? String == testCase.policy)
             #expect(authority["backgroundOnly"] as? Bool == !testCase.requestedForeground)
+            #expect(authority["requestedTemporaryClipboard"] as? Bool == false)
+            #expect(authority["temporaryClipboardPaste"] as? Bool == testCase.requestedForeground)
             #expect(metadata["toolCallCount"] as? Int == 0)
             #expect(metadata["modelName"] as? String == "not_invoked")
             #expect((trace["entries"] as? [Any])?.isEmpty == true)
             #expect(trace["totalCallCount"] as? Int == 0)
             #expect(trace["truncated"] as? Bool == false)
         }
+    }
+
+    @Test
+    func `temporary clipboard dry run reports the grant without foreground permission or execution`() throws {
+        let command = try AgentCommand.parse(["Paste synthetic data", "--dry-run", "--allow-temporary-clipboard"])
+        let result = try #require(command
+            .makeDryRunJSONResponse(instruction: "Paste synthetic data")["result"] as? [String: Any])
+        let authority = try #require(result["uiAuthority"] as? [String: Any])
+        #expect(authority["requestedTemporaryClipboard"] as? Bool == true)
+        #expect(authority["temporaryClipboardPaste"] as? Bool == true)
+        #expect(authority["requestedForeground"] as? Bool == false)
+        #expect(authority["backgroundOnly"] as? Bool == true)
+        #expect(result["modelExecution"] as? String == "skipped")
+        #expect(result["sessionId"] is NSNull)
     }
 
     @Test

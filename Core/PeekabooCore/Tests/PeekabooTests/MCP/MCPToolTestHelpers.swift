@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooAgentRuntimeTestSupport
 import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
@@ -92,12 +93,13 @@ enum MCPToolTestHelpers {
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
         snapshotOwner: MCPToolSnapshotOwner = MCPToolSnapshotOwner(),
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        temporaryClipboardPasteGranted: Bool = false,
         exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider(),
         capturePreflightRefusal: MCPToolCapturePreflightRefusal? = nil) async
         -> MCPToolContext
     {
         await MainActor.run {
-            let services = PeekabooServices()
+            let services = AuthorityTestSupport.services()
             let resolvedWindows: any WindowManagementServiceProtocol = if let windows {
                 windows
             } else if applications != nil {
@@ -132,7 +134,9 @@ enum MCPToolTestHelpers {
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
                 snapshotExecutionGate: snapshotExecutionGate,
                 snapshotOwner: snapshotOwner,
-                executionPolicy: executionPolicy,
+                executionAuthority: .init(
+                    basePolicy: executionPolicy,
+                    temporaryClipboardPasteGranted: temporaryClipboardPasteGranted),
                 capturePreflightRefusal: capturePreflightRefusal)
         }
     }

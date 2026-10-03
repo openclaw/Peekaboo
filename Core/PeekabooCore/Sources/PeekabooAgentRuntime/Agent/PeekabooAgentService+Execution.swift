@@ -271,7 +271,7 @@ extension PeekabooAgentService {
                 agentSessionID: context.id,
                 agentExecutionGeneration: context.executionGeneration,
                 snapshotOwner: snapshotOwner,
-                executionPolicy: context.toolExecutionPolicy,
+                executionAuthority: context.toolExecutionAuthority,
                 onBrowserAcquisitionStarted: {
                     browserAcquisitionStarted = true
                     self.beginAgentSessionBrowserExecution(
@@ -338,7 +338,7 @@ extension PeekabooAgentService {
             eventHandler: eventHandler,
             textHandler: textHandler,
             enhancementOptions: enhancementOptions,
-            executionPolicy: context.toolExecutionPolicy)
+            executionAuthority: context.toolExecutionAuthority)
 
         var latestCheckpoint = self.makeLoopOutcome(
             state: StreamingLoopState(messages: context.messages),
@@ -441,7 +441,7 @@ extension PeekabooAgentService {
             sessionId: context.id,
             eventHandler: eventHandler,
             enhancementOptions: enhancementOptions,
-            executionPolicy: context.toolExecutionPolicy)
+            executionAuthority: context.toolExecutionAuthority)
 
         var latestCheckpoint = self.makeLoopOutcome(
             state: StreamingLoopState(messages: context.messages),
@@ -525,7 +525,7 @@ extension PeekabooAgentService {
             imageContextID: imageContextID,
             initialMessages: initialMessages,
             enhancementOptions: configuration.enhancementOptions,
-            executionPolicy: configuration.executionPolicy)
+            executionAuthority: configuration.executionAuthority)
         return try await self.withAgentToolImageLifecycle(
             executionID: imageContextID,
             imageStore: imageStore)

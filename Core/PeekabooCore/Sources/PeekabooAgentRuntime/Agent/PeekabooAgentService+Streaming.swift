@@ -53,7 +53,7 @@ extension PeekabooAgentService {
         let eventHandler: EventHandler?
         let textHandler: TextStreamHandler?
         let enhancementOptions: AgentEnhancementOptions?
-        let executionPolicy: MCPToolExecutionPolicy
+        let executionAuthority: MCPToolExecutionAuthority
 
         init(
             model: LanguageModel,
@@ -63,7 +63,7 @@ extension PeekabooAgentService {
             eventHandler: EventHandler?,
             textHandler: TextStreamHandler? = nil,
             enhancementOptions: AgentEnhancementOptions?,
-            executionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
+            executionAuthority: MCPToolExecutionAuthority = .backgroundOnly)
         {
             self.model = model
             self.provider = provider
@@ -72,7 +72,7 @@ extension PeekabooAgentService {
             self.eventHandler = eventHandler
             self.textHandler = textHandler
             self.enhancementOptions = enhancementOptions
-            self.executionPolicy = executionPolicy
+            self.executionAuthority = executionAuthority
         }
     }
 
@@ -86,7 +86,7 @@ extension PeekabooAgentService {
         let imageContextID: String
         let turnBoundary: AgentTurnBoundary
         let enhancementOptions: AgentEnhancementOptions?
-        let executionPolicy: MCPToolExecutionPolicy
+        let executionAuthority: MCPToolExecutionAuthority
 
         init(
             model: LanguageModel,
@@ -97,7 +97,7 @@ extension PeekabooAgentService {
             imageContextID: String = UUID().uuidString,
             initialMessages: [ModelMessage] = [],
             enhancementOptions: AgentEnhancementOptions? = nil,
-            executionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
+            executionAuthority: MCPToolExecutionAuthority = .backgroundOnly)
         {
             self.model = model
             self.supportsVision = model.supportsVision && (providerSupportsVision ?? true)
@@ -107,7 +107,7 @@ extension PeekabooAgentService {
             self.imageContextID = imageContextID
             self.turnBoundary = PeekabooAgentService.restoredTurnBoundary(from: initialMessages)
             self.enhancementOptions = enhancementOptions
-            self.executionPolicy = executionPolicy
+            self.executionAuthority = executionAuthority
         }
 
         func tool(named name: String) -> AgentTool? {
@@ -181,7 +181,7 @@ extension PeekabooAgentService {
             imageContextID: imageContextID,
             initialMessages: initialMessages,
             enhancementOptions: configuration.enhancementOptions,
-            executionPolicy: configuration.executionPolicy)
+            executionAuthority: configuration.executionAuthority)
         return try await self.withAgentToolImageLifecycle(
             executionID: imageContextID,
             imageStore: imageStore)

@@ -86,6 +86,11 @@ Declare the HTML charset; numeric character references also keep the payload ASC
 In a manual Notes test with Peekaboo 4.5.0 on macOS 26.7, an inserted HTML fragment preserved bold, italic, a local-file hyperlink, and existing checked/unchecked items. This tests insertion into an existing note, not reconstruction of native checklists from HTML. The command still returned `INTERACTION_FAILED` even though independent UI inspection confirmed the inserted fragment.
 
 ## Notes
+- Built-in Agent and public MCP remain direct-text-only by default. Their trusted `--allow-temporary-clipboard` flag
+  additionally exposes bounded `dataBase64` + `uti` paste with a fresh exact non-dialog/non-system-UI `snapshot`,
+  optional `alsoText`, and a bounded restore delay. That model-facing form rejects app/PID/window selectors,
+  file/image paths, `allowLarge`, current-clipboard paste, and foreground input. It uses this command's existing
+  ownership-aware transaction and prepared exact-window route; it does not change standalone CLI authorization.
 - Restore delays must be between `0` and `10000ms`, inclusive. Existing CLI scripts or MCP callers using longer delays must reduce them; invalid values fail before clipboard access or input delivery. Direct calls to the shared consumption-wait helper are capped at 10 seconds as a backstop.
 - File paths for `--file-path` accept `~/...`.
 - Successful background text JSON reports delivery mode and target PID. Clipboard-backed background delivery returns `INTERACTION_FAILED` with the explicit retry-unsafe message instead of a success payload.

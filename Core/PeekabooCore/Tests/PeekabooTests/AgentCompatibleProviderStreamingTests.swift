@@ -47,7 +47,7 @@ struct AgentCompatibleProviderStreamingTests {
             sessionId: "synthetic-wire-fixture",
             eventHandler: nil,
             enhancementOptions: nil,
-            executionPolicy: .unrestricted)
+            executionAuthority: .init(basePolicy: .unrestricted))
 
         if mode == .incomplete || mode == .malformed {
             await #expect(throws: (any Error).self) {

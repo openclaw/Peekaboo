@@ -1,10 +1,31 @@
 import Commander
+import PeekabooAgentRuntimeTestSupport
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCLI
 @testable import PeekabooCore
 
+@MainActor
 struct MCPWrapperCommandBindingTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
+    @Test
+    func `MCP temporary clipboard opt in is explicit and does not enable foreground`() throws {
+        let flag = try #require(MCPCommand.Serve.commanderSignature().flags.first {
+            $0.label == "allowTemporaryClipboard"
+        })
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: MCPCommand.Serve.self,
+            parsedValues: ParsedValues(positional: [], options: [:], flags: ["allowTemporaryClipboard"])
+        )
+        #expect(flag.names.contains(.long("allow-temporary-clipboard")))
+        #expect(command.allowTemporaryClipboard)
+        #expect(!command.allowForeground)
+        #expect(!MCPCommand.Serve().allowTemporaryClipboard)
+    }
+
     @Test
     func `MCP server runtime binding exposes foreground opt in`() throws {
         let flag = try #require(MCPCommand.Serve.commanderSignature().flags.first {
@@ -230,13 +251,13 @@ struct MCPWrapperCommandBindingTests {
     @Test
     @MainActor
     func `MCP server context shares capture refusal and execution gate with nested agent`() throws {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
         let gate = MCPToolSnapshotExecutionGate()
         let refusal = MCPToolCapturePreflightRefusal(
             message: "fixture capture refusal",
             hint: "start a fresh MCP session"
         )
-        let agent = try PeekabooAgentService(
+        let agent = try AuthorityTestSupport.agent(
             services: services,
             snapshotExecutionGate: gate
         )
@@ -259,8 +280,16 @@ struct MCPWrapperCommandBindingTests {
         let foregroundContext = MCPCommand.Serve.makeToolContext(
             services: services,
             snapshotMutationCoordinator: nil,
-            executionPolicy: .foregroundAllowed
+            executionAuthority: .init(basePolicy: .foregroundAllowed)
         )
         #expect(foregroundContext.executionPolicy == .foregroundAllowed)
+        let grantedContext = MCPCommand.Serve.makeToolContext(
+            services: services,
+            snapshotMutationCoordinator: nil,
+            executionAuthority: .init(temporaryClipboardPasteGranted: true)
+        )
+        #expect(grantedContext.executionAuthority.temporaryClipboardPasteGranted)
+        #expect(grantedContext.executionPolicy == .backgroundOnly)
+        #expect(agent.makeToolContext().executionAuthority == .backgroundOnly)
     }
 }

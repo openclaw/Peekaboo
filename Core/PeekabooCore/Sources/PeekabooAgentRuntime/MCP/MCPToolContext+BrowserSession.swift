@@ -63,7 +63,7 @@ extension MCPToolContext {
             snapshotExecutionGate: self.snapshotExecutionGate,
             browserCleanupOwner: self.browserCleanupOwner,
             snapshotOwner: self.uiSnapshots.owner,
-            executionPolicy: self.executionPolicy,
+            executionAuthority: self.executionAuthority,
             executionHost: self.executionHost,
             capturePreflightRefusal: self.capturePreflightRefusal)
     }

@@ -42,6 +42,12 @@ struct AgentExecutionOptions: CommanderParsable {
     )
     var allowForeground = false
 
+    @Flag(
+        name: .customLong("allow-temporary-clipboard"),
+        help: "Allow bounded temporary clipboard paste to exact snapshots; UI remains background-only"
+    )
+    var allowTemporaryClipboard = false
+
     @Flag(name: .long, help: "Enable audio input mode (record from microphone)")
     var audio = false
 
@@ -66,6 +72,7 @@ struct AgentExecutionOptions: CommanderParsable {
         self.noCache = values.flag("noCache")
         self.noDesktopContext = values.flag("noDesktopContext")
         self.allowForeground = values.flag("allowForeground")
+        self.allowTemporaryClipboard = values.flag("allowTemporaryClipboard")
         self.audio = values.flag("audio")
         self.audioFile = values.singleOption("audioFile")
         self.simple = values.flag("simple")
@@ -82,6 +89,7 @@ struct AgentExecutionOptions: CommanderParsable {
         command.noCache = self.noCache
         command.noDesktopContext = self.noDesktopContext
         command.allowForeground = self.allowForeground
+        command.allowTemporaryClipboard = self.allowTemporaryClipboard
         command.audio = self.audio
         command.audioFile = self.audioFile
         command.simple = self.simple
@@ -98,6 +106,7 @@ struct AgentRootCommand: ParsableCommand {
         Run a one-shot task, resume a saved session, list sessions, or start interactive chat.
         `peekaboo agent \"task\"` is shorthand for `peekaboo agent run \"task\"`.
         Agent UI authority is background-only unless the human passes `--allow-foreground` for that invocation.
+        `--allow-temporary-clipboard` separately permits bounded temporary paste without foreground UI authority.
         `--no-desktop-context` skips new automatic context collection without changing saved history or tool access.
         """,
         subcommands: [
@@ -118,6 +127,8 @@ struct AgentRunSubcommand: RuntimeBackedCommand {
         discussion: """
         New sessions are background-only by default. `--allow-foreground` authorizes foreground/global UI for this
         invocation and stores it only as the session's immutable maximum; it never exposes the Shell tool.
+        `--allow-temporary-clipboard` permits bounded temporary clipboard paste to exact snapshots, while retaining
+        background-only UI. Each resume needs a fresh opt-in within the saved maximum.
         """
     )
 
@@ -166,7 +177,8 @@ struct AgentResumeSubcommand: RuntimeBackedCommand {
         abstract: "Resume the most recent or a specified session",
         discussion: """
         Copy the exact full ID from `peekaboo agent sessions`. Every resumed process invocation defaults to
-        background-only; pass `--allow-foreground` again only when the stored maximum permits it. Use one process per
+        background-only with no temporary clipboard permission; pass `--allow-foreground` or
+        `--allow-temporary-clipboard` again only when the stored maximum permits it. Use one process per
         session: if another run is using the session, wait for it to finish and retry the same full ID.
         """
     )

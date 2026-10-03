@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooAgentRuntimeTestSupport
 import PeekabooAutomationKit
 import PeekabooFoundation
 import Tachikoma
@@ -11,6 +12,10 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MCPToolSnapshotMutationTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
     private let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
 
     @Test
@@ -53,7 +58,7 @@ struct MCPToolSnapshotMutationTests {
 
     @Test
     func `Every cataloged MCP tool has an explicit snapshot effect classification`() {
-        let context = MCPToolContext(services: PeekabooServices())
+        let context = MCPToolContext(services: AuthorityTestSupport.services())
         let tools = MCPToolCatalog.unfilteredTools(context: context)
 
         for tool in tools {
@@ -66,9 +71,9 @@ struct MCPToolSnapshotMutationTests {
 
     @Test
     func `Service context inherits its concrete agent gate unless explicitly overridden`() throws {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
         let agentGate = MCPToolSnapshotExecutionGate()
-        let agent = try PeekabooAgentService(
+        let agent = try AuthorityTestSupport.agent(
             services: services,
             snapshotExecutionGate: agentGate)
         services.agent = agent
@@ -348,14 +353,16 @@ struct MCPToolSnapshotMutationTests {
     func `Direct observation cannot overlap a nested agent mutation`() async throws {
         let log = ToolExecutionLog()
         let gate = MCPToolSnapshotExecutionGate()
-        let services = PeekabooServices()
-        let agent = try PeekabooAgentService(
+        let services = AuthorityTestSupport.services()
+        let agent = try AuthorityTestSupport.agent(
             services: services,
             snapshotExecutionGate: gate)
         let directContext = MCPToolContext(
             services: services,
             snapshotExecutionGate: gate)
-        let nestedAgentContext = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.unrestricted) {
+        let nestedAgentContext = PeekabooAgentService.$toolConstructionExecutionAuthority.withValue(
+            .init(basePolicy: .unrestricted))
+        {
             agent.makeToolContext()
         }
         let directObservation = StubMCPTool(
@@ -667,8 +674,11 @@ struct MCPToolSnapshotMutationTests {
         #expect(coordinator.completions.map(\.succeeded) == [false])
     }
 
-    @Test
-    func `Background mutation converts a reported foreground success into a retry-unsafe error`() async throws {
+    @Test(arguments: [false, true], [false, true])
+    func `Background mutation rejects accepted foreground delivery even with clipboard permission and error status`(
+        temporaryClipboardGranted: Bool,
+        providerError: Bool) async throws
+    {
         let targetReceipt = DesktopActionTargetReceipt(
             processIdentifier: 42,
             processStartIdentity: 420,
@@ -690,14 +700,15 @@ struct MCPToolSnapshotMutationTests {
             let context = await MCPToolTestHelpers.makeContext(
                 snapshotMutationCoordinator: coordinator,
                 snapshotOwner: self.uiSnapshots.owner,
-                executionPolicy: .backgroundOnly)
+                executionPolicy: .backgroundOnly,
+                temporaryClipboardPasteGranted: temporaryClipboardGranted)
             var metadata = try #require(
                 MCPToolResponseMetadataProjector.metadata(outcome: outcome)?.objectValue)
             let targetReceiptValue = try Value(targetReceipt)
             metadata["target_receipt"] = targetReceiptValue
-            let providerResponse = ToolResponse.text(
-                "foreground provider success",
-                meta: .object(metadata))
+            let providerResponse = providerError
+                ? ToolResponse.error("foreground provider error", meta: .object(metadata))
+                : ToolResponse.text("foreground provider success", meta: .object(metadata))
 
             let response = try await context.execute(
                 tool: StubMCPTool(name: "browser", providedResponse: providerResponse),

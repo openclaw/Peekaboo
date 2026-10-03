@@ -26,6 +26,11 @@ extension MCPCommand.Serve: CommanderSignatureProviding {
                     help: "Authorize foreground/global UI and browser user activation for this MCP server",
                     long: "allow-foreground"
                 ),
+                .commandFlag(
+                    "allowTemporaryClipboard",
+                    help: "Allow bounded temporary clipboard paste to exact snapshots; UI remains background-only",
+                    long: "allow-temporary-clipboard"
+                ),
             ]
         )
     }

@@ -14,6 +14,12 @@ struct AgentSessionInfo: Codable {
     let messageCount: Int
     let status: String
     let toolExecutionPolicy: String
+    let temporaryClipboardPasteMaximum: Bool?
+
+    var permitsTemporaryClipboardPaste: Bool {
+        self.toolExecutionPolicy == MCPToolExecutionPolicy.foregroundAllowed.rawValue ||
+            self.temporaryClipboardPasteMaximum == true
+    }
 }
 
 @available(macOS 14.0, *)
@@ -24,7 +30,7 @@ extension AgentCommand {
         let requestedModel: LanguageModel?
         let maxSteps: Int
         let queueMode: QueueMode
-        let requestedToolExecutionPolicy: MCPToolExecutionPolicy?
+        let requestedToolExecutionAuthority: MCPToolExecutionAuthority
     }
 
     func validateSessionOptions() throws {
@@ -82,7 +88,7 @@ extension AgentCommand {
                     requestedModel: requestedModel,
                     maxSteps: maxSteps,
                     queueMode: queueMode,
-                    requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
+                    requestedToolExecutionAuthority: self.toolExecutionAuthority
                 )
             )
             return true
@@ -108,7 +114,7 @@ extension AgentCommand {
                         requestedModel: requestedModel,
                         maxSteps: maxSteps,
                         queueMode: queueMode,
-                        requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
+                        requestedToolExecutionAuthority: self.toolExecutionAuthority
                     )
                 )
             } else {
@@ -139,7 +145,8 @@ extension AgentCommand {
                 lastModified: summary.lastAccessedAt,
                 messageCount: summary.messageCount,
                 status: summary.status.rawValue,
-                toolExecutionPolicy: summary.toolExecutionPolicy.rawValue
+                toolExecutionPolicy: summary.toolExecutionPolicy.rawValue,
+                temporaryClipboardPasteMaximum: summary.temporaryClipboardPasteMaximum
             )
         }
 
@@ -182,6 +189,7 @@ extension AgentCommand {
             "messageCount": session.messageCount,
             "status": session.status,
             "toolExecutionPolicy": session.toolExecutionPolicy,
+            "temporaryClipboardPasteMaximum": session.permitsTemporaryClipboardPaste,
         ]
     }
 
@@ -234,6 +242,7 @@ extension AgentCommand {
             "   ID: \(session.id)",
             "   Status: \(status)",
             "   Stored policy maximum: \(session.toolExecutionPolicy)",
+            "   Temporary clipboard maximum: \(session.permitsTemporaryClipboardPaste ? "yes" : "no")",
             "   Next resume default: background_only",
             "   Messages: \(session.messageCount)",
             "   Last activity: \(timeAgo)",
@@ -296,7 +305,7 @@ extension AgentCommand {
                 queueMode: request.queueMode,
                 eventDelegate: streamingDelegate,
                 enhancementOptions: self.enhancementOptions,
-                requestedToolExecutionPolicy: request.requestedToolExecutionPolicy
+                requestedToolExecutionAuthority: request.requestedToolExecutionAuthority
             )
             self.displayResult(result, delegate: outputDelegate)
         } catch let error as PeekabooError {
@@ -319,15 +328,11 @@ extension AgentCommand {
     }
 
     private func validateRequestedResumePolicy(_ session: AgentSession) throws {
-        guard self.requestedResumeToolExecutionPolicy == .foregroundAllowed,
-              session.effectiveToolExecutionPolicy != .foregroundAllowed
-        else {
-            return
-        }
+        guard !session.maximumToolExecutionAuthority.permits(self.toolExecutionAuthority) else { return }
         try self.failAgentCommand(
-            message: "Session \(session.id) is background-only and cannot be broadened while resuming.",
+            message: "Session \(session.id) cannot exceed its saved UI and temporary clipboard maximum while resuming.",
             code: .VALIDATION_ERROR,
-            hint: "Start a new session with --allow-foreground when foreground interaction is intentionally authorized."
+            hint: "Start a new session with --allow-foreground or --allow-temporary-clipboard only when intended."
         )
     }
 }

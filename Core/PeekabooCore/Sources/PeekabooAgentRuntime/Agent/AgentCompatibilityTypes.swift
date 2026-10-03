@@ -134,6 +134,9 @@ public struct SessionSummary: Sendable, Codable {
     /// Immutable maximum tool authority retained by the session.
     public let toolExecutionPolicy: MCPToolExecutionPolicy
 
+    /// Saved ceiling only; each invocation still needs a trusted opt-in.
+    public let temporaryClipboardPasteMaximum: Bool?
+
     public init(
         id: String,
         modelName: String,
@@ -142,7 +145,8 @@ public struct SessionSummary: Sendable, Codable {
         messageCount: Int,
         status: SessionStatus,
         summary: String? = nil,
-        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        temporaryClipboardPasteMaximum: Bool? = nil)
     {
         self.id = id
         self.modelName = modelName
@@ -152,6 +156,7 @@ public struct SessionSummary: Sendable, Codable {
         self.status = status
         self.summary = summary
         self.toolExecutionPolicy = toolExecutionPolicy
+        self.temporaryClipboardPasteMaximum = temporaryClipboardPasteMaximum
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -163,6 +168,7 @@ public struct SessionSummary: Sendable, Codable {
         case status
         case summary
         case toolExecutionPolicy
+        case temporaryClipboardPasteMaximum
     }
 
     public init(from decoder: any Decoder) throws {
@@ -177,6 +183,9 @@ public struct SessionSummary: Sendable, Codable {
         self.toolExecutionPolicy = try container.decodeIfPresent(
             MCPToolExecutionPolicy.self,
             forKey: .toolExecutionPolicy) ?? .backgroundOnly
+        self.temporaryClipboardPasteMaximum = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .temporaryClipboardPasteMaximum)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -189,6 +198,7 @@ public struct SessionSummary: Sendable, Codable {
         try container.encode(self.status, forKey: .status)
         try container.encodeIfPresent(self.summary, forKey: .summary)
         try container.encode(self.toolExecutionPolicy, forKey: .toolExecutionPolicy)
+        try container.encodeIfPresent(self.temporaryClipboardPasteMaximum, forKey: .temporaryClipboardPasteMaximum)
     }
 }
 
@@ -222,6 +232,9 @@ public struct AgentSession: Sendable, Codable {
     /// Older session files omit this field and are interpreted conservatively as background-only.
     public let toolExecutionPolicy: MCPToolExecutionPolicy?
 
+    /// Additive stored ceiling. Missing means false, and never supplies fresh invocation authority.
+    public let temporaryClipboardPasteMaximum: Bool?
+
     /// Complete conversation history
     public let messages: [ModelMessage]
 
@@ -241,6 +254,7 @@ public struct AgentSession: Sendable, Codable {
         modelEndpointIdentity: String? = nil,
         modelProviderIdentity: String? = nil,
         toolExecutionPolicy: MCPToolExecutionPolicy? = .backgroundOnly,
+        temporaryClipboardPasteMaximum: Bool? = nil,
         messages: [ModelMessage],
         metadata: SessionMetadata,
         createdAt: Date,
@@ -252,6 +266,7 @@ public struct AgentSession: Sendable, Codable {
         self.modelEndpointIdentity = modelEndpointIdentity
         self.modelProviderIdentity = modelProviderIdentity
         self.toolExecutionPolicy = toolExecutionPolicy
+        self.temporaryClipboardPasteMaximum = temporaryClipboardPasteMaximum
         self.messages = messages
         self.metadata = metadata
         self.createdAt = createdAt
@@ -265,6 +280,12 @@ public struct AgentSession: Sendable, Codable {
         case .backgroundOnly, .unrestricted, nil:
             .backgroundOnly
         }
+    }
+
+    public var maximumToolExecutionAuthority: MCPToolExecutionAuthority {
+        MCPToolExecutionAuthority(
+            basePolicy: self.effectiveToolExecutionPolicy,
+            temporaryClipboardPasteGranted: self.temporaryClipboardPasteMaximum == true)
     }
 }
 
@@ -364,7 +385,8 @@ public final class AgentSessionManager: @unchecked Sendable {
                         messageCount: session.messages.count,
                         status: self.sessionStatus(for: session, lastAccessedAt: session.updatedAt),
                         summary: self.generateSessionSummary(from: session.messages),
-                        toolExecutionPolicy: session.effectiveToolExecutionPolicy)
+                        toolExecutionPolicy: session.effectiveToolExecutionPolicy,
+                        temporaryClipboardPasteMaximum: session.temporaryClipboardPasteMaximum)
                 } catch {
                     return nil
                 }

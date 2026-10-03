@@ -186,7 +186,7 @@ struct AgentDesktopContextPolicyTests {
 
 /// Only the five automatic context reads are available; all other service access fails without native work.
 @MainActor
-private final class DesktopContextPolicyServices: PeekabooServiceProviding {
+final class DesktopContextPolicyServices: PeekabooServiceProviding {
     let applicationStub = ScriptedApplicationInventoryService(applications: [
         ServiceApplicationInfo(
             processIdentifier: 41,
@@ -292,7 +292,7 @@ private final class DesktopContextPolicyServices: PeekabooServiceProviding {
 }
 
 @MainActor
-private final class DesktopContextClipboardStub: ClipboardServiceProtocol {
+final class DesktopContextClipboardStub: ClipboardServiceProtocol {
     private(set) var readCount = 0
 
     func get(prefer uti: UTType?) throws -> ClipboardReadResult? {
@@ -322,7 +322,7 @@ private final class DesktopContextClipboardStub: ClipboardServiceProtocol {
 }
 
 @MainActor
-private final class DesktopContextCursorStub: UIAutomationServiceProtocol {
+final class DesktopContextCursorStub: UIAutomationServiceProtocol {
     private(set) var cursorReadCount = 0
 
     func currentMouseLocation() -> CGPoint? {

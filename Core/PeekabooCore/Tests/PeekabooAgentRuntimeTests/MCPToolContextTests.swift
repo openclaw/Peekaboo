@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooAgentRuntimeTestSupport
 import Tachikoma
 import TachikomaMCP
 import Testing
@@ -9,11 +10,16 @@ import Testing
 @testable import PeekabooFoundation
 
 @Suite(.serialized)
+@MainActor
 struct MCPToolContextTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
     @Test
     @MainActor
     func `shared resolves the configured services`() async {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
 
         await MCPToolContext.withDefaultContextFactoryForTesting {
             MainActor.preconditionIsolated()
@@ -31,7 +37,7 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `context uses injected services and defaults to background only`() {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
         let context = MCPToolContext(services: services)
 
         #expect(ObjectIdentifier(context.menu as AnyObject) ==
@@ -39,13 +45,38 @@ struct MCPToolContextTests {
         #expect(ObjectIdentifier(context.automation as AnyObject) ==
             ObjectIdentifier(services.automation as AnyObject))
         #expect(context.executionPolicy == .backgroundOnly)
+        #expect(context.executionAuthority == .backgroundOnly)
         #expect(context.executionHost == .local)
     }
 
     @Test
     @MainActor
+    func `explicit clipboard authority survives snapshot owner replacement without foreground permission`() {
+        let authority = MCPToolExecutionAuthority(temporaryClipboardPasteGranted: true)
+        let context = MCPToolContext(services: AuthorityTestSupport.services(), executionAuthority: authority)
+        let owner = MCPToolSnapshotOwner(sessionID: "temporary-clipboard-owner")
+        let scoped = context.replacingSnapshotOwner(with: owner)
+
+        #expect(context.executionPolicy == .backgroundOnly)
+        #expect(scoped.executionPolicy == .backgroundOnly)
+        #expect(scoped.executionAuthority == authority)
+        #expect(scoped.uiSnapshots.owner == owner)
+    }
+
+    @Test
+    @MainActor
+    func `legacy policy initializer does not create an explicit clipboard grant`() {
+        let context = MCPToolContext(services: AuthorityTestSupport.services(), executionPolicy: .foregroundAllowed)
+
+        #expect(context.executionPolicy == .foregroundAllowed)
+        #expect(!context.executionAuthority.temporaryClipboardPasteGranted)
+        #expect(context.executionAuthority.permitsTemporaryClipboardPaste)
+    }
+
+    @Test
+    @MainActor
     func `low level context initializer defaults to background only`() {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
         let context = MCPToolContext(
             automation: services.automation,
             menu: services.menu,
@@ -68,15 +99,17 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `Agent tool construction captures task-local immutable policy`() throws {
-        let agent = try PeekabooAgentService(services: PeekabooServices())
+        let agent = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let owner = MCPToolSnapshotOwner(sessionID: "durable-agent-session")
 
         let background = PeekabooAgentService.$toolConstructionSnapshotOwner.withValue(owner) {
-            PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.backgroundOnly) {
+            PeekabooAgentService.$toolConstructionExecutionAuthority.withValue(.backgroundOnly) {
                 agent.makeToolContext()
             }
         }
-        let foreground = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.foregroundAllowed) {
+        let foreground = PeekabooAgentService.$toolConstructionExecutionAuthority.withValue(
+            .init(basePolicy: .foregroundAllowed))
+        {
             agent.makeToolContext()
         }
 
@@ -90,7 +123,7 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `capture preflight blocks pixel tools but permits AX and video ingest`() async throws {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
         let refusal = MCPToolCapturePreflightRefusal(
             message: "Legacy ScreenCaptureKit owner is live. No capture was dispatched.",
             hint: "Relaunch that exact owner before retrying.")
@@ -156,7 +189,7 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `Agent contexts inherit immutable capture preflight`() throws {
-        let agent = try PeekabooAgentService(services: PeekabooServices())
+        let agent = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let refusal = MCPToolCapturePreflightRefusal(message: "fixture capture refusal")
 
         agent.configureCapturePreflightRefusal(refusal)
@@ -186,7 +219,7 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `legacy contexts share process owner while explicit contexts isolate`() {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
         let first = MCPToolContext(services: services)
         let second = MCPToolContext(services: services)
         let isolated = MCPToolContext(
@@ -229,7 +262,7 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `local MCP refuses an unsupported browser root but browser filtering skips session opening`() async throws {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
         let root = UnsupportedBrowserRoot()
         let context = MCPToolContext(services: services, browser: root)
 
@@ -262,15 +295,16 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `Agent foreground opt-in cannot execute the real shell tool`() async throws {
-        let agent = try PeekabooAgentService(services: PeekabooServices())
+        let agent = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-agent-shell-policy-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: marker) }
 
         for policy in [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed] {
-            let tools = await agent.buildToolset(for: .anthropic(.sonnet45), executionPolicy: policy)
+            let tools = await agent.buildToolset(
+                for: .anthropic(.sonnet45), executionAuthority: .init(basePolicy: policy))
             #expect(!tools.contains(where: { $0.name == "shell" }))
-            let shell = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(policy) {
+            let shell = PeekabooAgentService.$toolConstructionExecutionAuthority.withValue(.init(basePolicy: policy)) {
                 agent.createShellTool()
             }
             do {
@@ -290,13 +324,13 @@ struct MCPToolContextTests {
     @Test
     @MainActor
     func `task local override restores shared value`() async {
-        let services = PeekabooServices()
+        let services = AuthorityTestSupport.services()
 
         await MCPToolContext.withDefaultContextFactoryForTesting {
             MCPToolContext(services: services)
         } perform: {
             let baselineContext = MCPToolContext.shared
-            let overrideContext = MCPToolContext(services: PeekabooServices())
+            let overrideContext = MCPToolContext(services: AuthorityTestSupport.services())
 
             await MCPToolContext.withContext(overrideContext) {
                 let inside = MCPToolContext.shared
@@ -313,7 +347,7 @@ struct MCPToolContextTests {
     @Test
     func `sharedOnMainActor resolves from a detached task`() async {
         await MCPToolContext.withDefaultContextFactoryForTesting(nil) {
-            let services = PeekabooServices()
+            let services = AuthorityTestSupport.services()
             MCPToolContext.configureDefaultContext {
                 MainActor.preconditionIsolated()
                 return MCPToolContext(services: services)
