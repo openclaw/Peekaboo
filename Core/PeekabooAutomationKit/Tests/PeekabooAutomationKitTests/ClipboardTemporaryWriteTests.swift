@@ -6,6 +6,81 @@ import XCTest
 
 @MainActor
 final class ClipboardTemporaryWriteTests: XCTestCase {
+    func testGeneralClaimIsTheRetainedDeclarationNotASampledNewOwner() throws {
+        let fixture = Fixture(prior: Self.payload("prior"))
+        fixture.externalWriteAfterFinalOwnershipRead = Self.payload("temporary")
+        let transaction = fixture.transaction(isGeneralPasteboard: true)
+        let write = try transaction.writeWithClaim(Self.request("temporary"))
+
+        XCTAssertEqual(write.result.data, Data("temporary".utf8))
+        XCTAssertEqual(write.claim.changeCount, 11)
+        XCTAssertEqual(fixture.generation, 12)
+        XCTAssertEqual(fixture.generationReads, 2)
+        guard case .preservedNewerContents = try transaction.cleanup() else {
+            return XCTFail("A same-byte newer copy must survive")
+        }
+        XCTAssertEqual(fixture.restoreCalls, 0)
+    }
+
+    func testClaimedWriteUsesTheExistingSingleWriteAndCleanupOwner() throws {
+        let fixture = Fixture(prior: nil)
+        let transaction = fixture.transaction(isGeneralPasteboard: true)
+        let write = try transaction.writeWithClaim(Self.request("temporary"))
+        XCTAssertEqual(write.claim.changeCount, 11)
+        XCTAssertTrue(transaction.didMutate)
+        XCTAssertEqual(fixture.writeCalls, 1)
+        XCTAssertThrowsError(try transaction.writeWithClaim(Self.request("replay")))
+        XCTAssertThrowsError(try transaction.write(Self.request("legacy replay")))
+        guard case .restored = try transaction.cleanup() else { return XCTFail("Expected restoration") }
+        _ = try transaction.cleanup()
+        XCTAssertEqual(fixture.writeCalls, 1)
+        XCTAssertEqual(fixture.restoreCalls, 1)
+    }
+
+    func testPartialClaimedWriteReturnsNoInputClaimButRetainsCleanup() throws {
+        let fixture = Fixture(prior: Self.payload("prior"))
+        fixture.failAfterClaim = true
+        let transaction = fixture.transaction(isGeneralPasteboard: true)
+        XCTAssertThrowsError(try transaction.writeWithClaim(Self.request("temporary")))
+        XCTAssertTrue(transaction.didMutate)
+        guard case .restored = try transaction.cleanup() else { return XCTFail("Expected partial-write cleanup") }
+        XCTAssertEqual(fixture.current?.data, Data("prior".utf8))
+        XCTAssertEqual(fixture.restoreCalls, 1)
+    }
+
+    func testNativeNamedPasteboardRefusesGeneralClaimBeforeMutation() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let service = ClipboardService(pasteboard: pasteboard)
+        _ = try service.set(Self.request("prior"))
+        let generation = pasteboard.changeCount
+        let transaction = try XCTUnwrap(
+            service.prepareTemporaryWrite() as? any ClipboardTemporaryWriteClaimProviding)
+
+        XCTAssertThrowsError(try transaction.writeWithClaim(Self.request("temporary"))) { error in
+            guard case ClipboardTemporaryWriteError.generalPasteboardClaimUnavailable = error else {
+                return XCTFail("Expected a pre-write board refusal, got \(error)")
+            }
+        }
+        XCTAssertFalse(transaction.didMutate)
+        XCTAssertEqual(pasteboard.changeCount, generation)
+        XCTAssertEqual(try service.get(prefer: nil)?.data, Data("prior".utf8))
+        guard case .notNeeded = try transaction.cleanup() else { return XCTFail("Expected no cleanup") }
+    }
+
+    func testGeneralClaimCodingRejectsInvalidCountsWithoutNarrowingValidCounts() throws {
+        for count in [0, 1, Int.max] {
+            let claim = try XCTUnwrap(GeneralPasteboardWriteClaim(changeCount: count))
+            XCTAssertEqual(try JSONDecoder().decode(
+                GeneralPasteboardWriteClaim.self,
+                from: JSONEncoder().encode(claim)), claim)
+        }
+        XCTAssertNil(GeneralPasteboardWriteClaim(changeCount: -1))
+        XCTAssertThrowsError(try JSONDecoder().decode(
+            GeneralPasteboardWriteClaim.self,
+            from: Data("{\"changeCount\":-1}".utf8)))
+    }
+
     func testClaimedSetupFailureIsLocalRetryUnsafeAndKeepsItsErrorCode() {
         let refusal = DesktopActionFailure.preDispatchRefusal(
             route: .bridge,
@@ -435,6 +510,8 @@ final class ClipboardTemporaryWriteTests: XCTestCase {
         var failRestore = false
         var externalWriteAfterClaim: ClipboardReadResult?
         var externalWriteDuringRestore: ClipboardReadResult?
+        var externalWriteAfterFinalOwnershipRead: ClipboardReadResult?
+        private(set) var generationReads = 0
         private(set) var writeCalls = 0
         private(set) var restoreCalls = 0
 
@@ -443,12 +520,20 @@ final class ClipboardTemporaryWriteTests: XCTestCase {
             self.current = prior
         }
 
-        func transaction() -> OwnedClipboardTemporaryWriteTransaction {
+        func transaction(isGeneralPasteboard: Bool = false) -> OwnedClipboardTemporaryWriteTransaction {
             OwnedClipboardTemporaryWriteTransaction(
                 priorClipboardPresent: self.prior != nil,
                 originalChangeCount: self.generation,
+                isGeneralPasteboard: isGeneralPasteboard,
                 access: ClipboardTemporaryWriteAccess(
-                    changeCount: { self.generation },
+                    changeCount: {
+                        self.generationReads += 1
+                        let observed = self.generation
+                        if self.generationReads == 2, let newer = self.externalWriteAfterFinalOwnershipRead {
+                            self.externalWrite(newer)
+                        }
+                        return observed
+                    },
                     write: { request, expected, didClaim in
                         self.writeCalls += 1
                         if self.failBeforeClaim {

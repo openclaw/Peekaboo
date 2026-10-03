@@ -298,6 +298,7 @@ ClipboardReadAccessProviding {
         return OwnedClipboardTemporaryWriteTransaction(
             priorClipboardPresent: !items.isEmpty,
             originalChangeCount: originalChangeCount,
+            isGeneralPasteboard: self.pasteboard.name == .general,
             access: ClipboardTemporaryWriteAccess(
                 changeCount: { self.pasteboard.changeCount },
                 write: { request, expectedChangeCount, didClaim in

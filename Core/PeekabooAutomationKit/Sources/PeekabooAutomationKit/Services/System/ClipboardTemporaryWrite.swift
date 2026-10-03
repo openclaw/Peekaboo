@@ -31,6 +31,44 @@ public protocol ClipboardTemporaryWriteTransaction: AnyObject, Sendable {
     func cleanup() throws -> ClipboardTemporaryCleanupResult
 }
 
+/// A content-free input precondition, not authority to read or restore the clipboard.
+public struct GeneralPasteboardWriteClaim: Codable, Equatable, Sendable {
+    public let changeCount: Int
+
+    public init?(changeCount: Int) {
+        guard changeCount >= 0 else { return nil }
+        self.changeCount = changeCount
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let changeCount = try container.decode(Int.self, forKey: .changeCount)
+        guard let claim = Self(changeCount: changeCount) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .changeCount,
+                in: container,
+                debugDescription: "General pasteboard change count must be nonnegative")
+        }
+        self = claim
+    }
+}
+
+public struct ClaimedClipboardWrite: Sendable {
+    public let result: ClipboardReadResult
+    public let claim: GeneralPasteboardWriteClaim
+
+    public init(result: ClipboardReadResult, claim: GeneralPasteboardWriteClaim) {
+        self.result = result
+        self.claim = claim
+    }
+}
+
+/// A guarded paste must require this capability before mutating its temporary payload.
+@MainActor
+public protocol ClipboardTemporaryWriteClaimProviding: ClipboardTemporaryWriteTransaction {
+    func writeWithClaim(_ request: ClipboardWriteRequest) throws -> ClaimedClipboardWrite
+}
+
 /// Providers without this capability must refuse automatic temporary clipboard writes.
 @MainActor
 public protocol ClipboardTemporaryWriteProviding: ClipboardServiceProtocol {
@@ -101,6 +139,7 @@ public enum ClipboardTemporaryWriteError: LocalizedError, Sendable {
     case ownershipChanged
     case transactionAlreadyUsed
     case mutationUnproven
+    case generalPasteboardClaimUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -114,6 +153,8 @@ public enum ClipboardTemporaryWriteError: LocalizedError, Sendable {
             "This temporary clipboard transaction has already been used."
         case .mutationUnproven:
             "The temporary clipboard write returned without an ownership receipt."
+        case .generalPasteboardClaimUnavailable:
+            "This transaction cannot provide a General pasteboard input claim; no temporary payload was written."
         }
     }
 }
@@ -146,12 +187,13 @@ public enum ClipboardTemporaryWriteTesting {
 /// Local generation checks preserve observed newer writes. NSPasteboard has no atomic compare-and-swap;
 /// the check and subsequent declaration cannot exclude every concurrent cross-process write.
 @MainActor
-final class OwnedClipboardTemporaryWriteTransaction: ClipboardTemporaryWriteTransaction {
+final class OwnedClipboardTemporaryWriteTransaction: ClipboardTemporaryWriteClaimProviding {
     let priorClipboardPresent: Bool
     private(set) var didMutate = false
 
     private let originalChangeCount: Int
     private let access: ClipboardTemporaryWriteAccess
+    private let isGeneralPasteboard: Bool
     private var claimedChangeCount: Int?
     private var writeAttempted = false
     private var cleanupResult: Result<ClipboardTemporaryCleanupResult, any Error>?
@@ -159,10 +201,12 @@ final class OwnedClipboardTemporaryWriteTransaction: ClipboardTemporaryWriteTran
     init(
         priorClipboardPresent: Bool,
         originalChangeCount: Int,
+        isGeneralPasteboard: Bool = false,
         access: ClipboardTemporaryWriteAccess)
     {
         self.priorClipboardPresent = priorClipboardPresent
         self.originalChangeCount = originalChangeCount
+        self.isGeneralPasteboard = isGeneralPasteboard
         self.access = access
     }
 
@@ -185,6 +229,19 @@ final class OwnedClipboardTemporaryWriteTransaction: ClipboardTemporaryWriteTran
             throw ClipboardTemporaryWriteError.ownershipChanged
         }
         return result
+    }
+
+    func writeWithClaim(_ request: ClipboardWriteRequest) throws -> ClaimedClipboardWrite {
+        guard self.isGeneralPasteboard else {
+            throw ClipboardTemporaryWriteError.generalPasteboardClaimUnavailable
+        }
+        let result = try self.write(request)
+        guard let claimedChangeCount = self.claimedChangeCount,
+              let claim = GeneralPasteboardWriteClaim(changeCount: claimedChangeCount)
+        else {
+            throw ClipboardTemporaryWriteError.mutationUnproven
+        }
+        return ClaimedClipboardWrite(result: result, claim: claim)
     }
 
     /// Cleanup deliberately ignores task cancellation and never repeats a failed native restoration.
