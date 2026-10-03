@@ -17,6 +17,11 @@ The error handling system has three main pieces:
 2. **`StandardErrorCode`** — stable codes exposed by `StandardizedError`.
 3. **CLI mapping** — `ErrorHandlingCommand` maps service errors to the CLI's JSON `ErrorCode` values.
 
+For desktop mutations, `DesktopActionFailure` owns the canonical outcome, execution route, reported target receipt,
+hint, and cause. Snapshot mutation coordination passes these typed failures through unchanged. The shared CLI renderer
+already maps standardized codes such as `snapshotStale` to `SNAPSHOT_STALE`; rebuilding a local error solely to select
+that code would discard the original Bridge provenance.
+
 ## Error Types
 
 ### Standard Error Codes

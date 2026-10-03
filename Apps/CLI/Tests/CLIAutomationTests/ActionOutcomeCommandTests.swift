@@ -874,7 +874,7 @@ extension ActionOutcomeCommandTests {
             outcome: { _ in nil }
         )
 
-        await #expect(throws: PreDispatchActionError.self) {
+        let refusal = await #expect(throws: DesktopActionFailure.self) {
             _ = try await SnapshotMutationCoordinator.perform(
                 snapshotId: snapshotID,
                 snapshots: snapshots,
@@ -885,6 +885,9 @@ extension ActionOutcomeCommandTests {
                 outcome: { _ in nil }
             )
         }
+        #expect(refusal?.standardErrorCode == .snapshotStale)
+        #expect(refusal?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(refusal?.outcome.retrySafety == .safe)
         #expect(dispatchCount == 1)
         #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
     }
@@ -938,7 +941,7 @@ extension ActionOutcomeCommandTests {
         #expect(failure?.hint?.contains("do not reuse this snapshot") == true)
         #expect(failure?.causeDescription == finalizationError.localizedDescription)
         #expect(dispatchCount == 1)
-        await #expect(throws: PreDispatchActionError.self) {
+        let refusal = await #expect(throws: DesktopActionFailure.self) {
             _ = try await SnapshotMutationCoordinator.perform(
                 snapshotId: snapshotID,
                 snapshots: snapshots,
@@ -949,6 +952,9 @@ extension ActionOutcomeCommandTests {
                 outcome: { _ in expectedOutcome }
             )
         }
+        #expect(refusal?.standardErrorCode == .snapshotStale)
+        #expect(refusal?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(refusal?.outcome.retrySafety == .safe)
         #expect(dispatchCount == 1)
         #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
     }
