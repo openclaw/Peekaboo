@@ -156,7 +156,7 @@ if [[ -f "$ENTITLEMENTS_PATH" ]]; then
     "$PROJECT_ROOT/scripts/codesign-with-retry.sh" --force --sign "$SIGN_IDENTITY" \
         --options runtime \
         $TIMESTAMP_ARG \
-        --identifier "boo.peekaboo" \
+        --identifier "boo.peekaboo.peekaboo" \
         --entitlements "$ENTITLEMENTS_PATH" \
         "$DEBUG_BINARY_PATH"
     echo "✅ Debug binary signed with entitlements"
@@ -165,7 +165,7 @@ else
     "$PROJECT_ROOT/scripts/codesign-with-retry.sh" --force --sign "$SIGN_IDENTITY" \
         --options runtime \
         $TIMESTAMP_ARG \
-        --identifier "boo.peekaboo" \
+        --identifier "boo.peekaboo.peekaboo" \
         "$DEBUG_BINARY_PATH"
 fi
 

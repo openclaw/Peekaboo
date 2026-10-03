@@ -156,6 +156,17 @@ for release_build in \
   fi
 done
 rg -Fq -- '--entitlements "$ENTITLEMENTS_PATH"' "$ROOT_DIR/scripts/build-swift-debug.sh"
+debug_cli_identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+  "$ROOT_DIR/Apps/CLI/Sources/Resources/Info.plist")
+debug_signing_calls=$(rg -Fc \
+  '"$PROJECT_ROOT/scripts/codesign-with-retry.sh" --force --sign "$SIGN_IDENTITY"' \
+  "$ROOT_DIR/scripts/build-swift-debug.sh" || true)
+debug_signing_identifiers=$(rg -Fc -- "--identifier \"$debug_cli_identifier\"" \
+  "$ROOT_DIR/scripts/build-swift-debug.sh" || true)
+if [[ ${debug_signing_calls:-0} -eq 0 || ${debug_signing_identifiers:-0} -ne $debug_signing_calls ]]; then
+  printf 'Every debug CLI signing path must use the canonical plist identifier\n' >&2
+  exit 1
+fi
 rg -Fq 'unexpectedly retains the AppleEvents entitlement' "$ROOT_DIR/scripts/release-macos-app.sh"
 
 while IFS= read -r native_only_surface; do

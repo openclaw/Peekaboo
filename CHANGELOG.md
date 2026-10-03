@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Sign debug CLI builds with the canonical Peekaboo CLI identifier so they satisfy existing GUI Bridge and deployment healthcheck identity checks.
 - Preserve native Accessibility date values as ISO-8601 UTC timestamps in UI observations instead of silently omitting them, including Calendar's date-valued controls.
 - Explain that exact-window paste capability refusals can result from custom-socket Bridge trust limits, not only an outdated host, without changing trust or retry behavior.
 - Prepare exact standard background windows for temporary rich/binary paste using observed blank chrome and retained editor state, preserving clipboard ownership, foreground isolation, owed releases, and truthful composite receipts through Bridge protocol 1.41. #877.
