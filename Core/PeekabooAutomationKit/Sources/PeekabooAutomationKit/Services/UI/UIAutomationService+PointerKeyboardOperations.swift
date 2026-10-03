@@ -192,20 +192,10 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
-        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
-            identity: expectedWindowIdentity,
-            bounds: expectedWindowBounds))
-        let validator: @MainActor @Sendable () async throws -> Void = {
-            try await self.requireExactWindowKeyboardFocus(
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)
-        }
-        let result = try await self.hotkeyService.hotkey(
+        try await self.exactWindowHotkeyWithOutcome(
             keys: keys,
             holdDuration: holdDuration,
-            automationTarget: automationTarget,
-            deliveryValidator: validator)
-        return UIAutomationActionResult(payload: (), outcome: result.outcome, targetIdentity: result.targetIdentity)
+            target: .init(identity: expectedWindowIdentity, bounds: expectedWindowBounds))
     }
 
     public func hotkey(
@@ -224,20 +214,50 @@ extension UIAutomationService {
         holdDuration: Int,
         target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<Void>
     {
-        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
-            identity: target.windowIdentity,
-            bounds: target.windowBounds,
-            focusedElement: target.focusedElement))
+        try await self.exactWindowHotkeyWithOutcome(
+            keys: keys,
+            holdDuration: holdDuration,
+            target: .init(
+                identity: target.windowIdentity,
+                bounds: target.windowBounds,
+                focusedElement: target.focusedElement))
+    }
+
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim) async throws -> UIAutomationActionResult<Void>
+    {
+        guard target.focusedElement != nil else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Clipboard-guarded paste requires a retained focused-element receipt.")
+        }
+        return try await self.exactWindowHotkeyWithOutcome(
+            keys: keys,
+            holdDuration: holdDuration,
+            target: .init(identity: target.identity, bounds: target.bounds, focusedElement: target.focusedElement),
+            clipboardClaim: clipboardClaim)
+    }
+
+    private func exactWindowHotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim? = nil) async throws -> UIAutomationActionResult<Void>
+    {
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
-                expectedWindowIdentity: target.windowIdentity,
-                expectedWindowBounds: target.windowBounds,
+                expectedWindowIdentity: target.identity,
+                expectedWindowBounds: target.bounds,
                 expectedFocusedElement: target.focusedElement)
         }
         let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
-            automationTarget: automationTarget,
+            automationTarget: .exactWindow(target),
+            clipboardClaim: clipboardClaim,
             deliveryValidator: validator)
         return UIAutomationActionResult(payload: (), outcome: result.outcome, targetIdentity: result.targetIdentity)
     }

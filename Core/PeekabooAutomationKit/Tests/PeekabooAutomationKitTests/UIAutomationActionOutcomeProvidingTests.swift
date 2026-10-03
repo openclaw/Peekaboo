@@ -250,6 +250,46 @@ struct UIAutomationActionOutcomeProvidingTests {
         #expect(legacyDriver.performActionCount == 1)
     }
 
+    @Test(arguments: [false, true], [11, 12])
+    func `public guarded paste binds the retained receiver and forwards its claim`(
+        retainsFocusedElement: Bool,
+        clipboardGeneration: Int) async throws
+    {
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let identity = WindowMutationIdentity(
+            windowID: 308, ownerProcessIdentifier: getpid(), ownerProcessStartIdentity: 72, capturedBounds: bounds)
+        let focused = FocusedElementIdentity(
+            processIdentifier: getpid(), windowID: identity.windowID,
+            role: "AXTextField", title: "Editor", identifier: "editor",
+            frame: CGRect(x: 150, y: 150, width: 200, height: 30))
+        var events: [CGEventType] = []
+        var clipboardReads = 0
+        let service = try await self.makeTargetedService(
+            synthetic: OutcomeSyntheticInputDriver(clickOutcome: Self.backgroundOutcome),
+            generation: 72, windowIdentity: identity, focused: focused,
+            eventPoster: { event, _ in events.append(event.type) },
+            clipboardChangeCountProvider: { clipboardReads += 1; return clipboardGeneration })
+        let capability: any ClipboardGuardedExactWindowHotkeyServiceProtocol = service
+        #expect(capability.supportsClipboardGuardedExactWindowHotkeys)
+        let target = try UIAutomationTarget.ExactWindow(
+            identity: identity, bounds: bounds, focusedElement: retainsFocusedElement ? focused : nil)
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+
+        do {
+            let result = try await capability.hotkeyWithOutcome(
+                keys: "cmd,v", holdDuration: 50, target: target, clipboardClaim: claim)
+            #expect(retainsFocusedElement && clipboardGeneration == claim.changeCount)
+            #expect(events == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+            #expect(result.outcome?.dispatchState.unitCount?.rawValue == 4)
+            #expect(result.targetIdentity?.exactWindow?.identity == identity)
+        } catch let failure as DesktopActionFailure {
+            #expect(!retainsFocusedElement || clipboardGeneration != claim.changeCount)
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(events.isEmpty)
+        }
+        #expect(retainsFocusedElement ? clipboardReads > 0 : clipboardReads == 0)
+    }
+
     @Test
     func `targeted result overloads return exact background executor outcomes`() async throws {
         let generation: UInt64 = 71
@@ -453,7 +493,10 @@ struct UIAutomationActionOutcomeProvidingTests {
         synthetic: OutcomeSyntheticInputDriver,
         generation: UInt64,
         windowIdentity: WindowMutationIdentity,
-        focused: FocusedElementIdentity) async throws -> UIAutomationService
+        focused: FocusedElementIdentity,
+        eventPoster: @escaping @MainActor @Sendable (CGEvent, pid_t) -> Void = { _, _ in },
+        clipboardChangeCountProvider: @escaping @MainActor @Sendable () -> Int = { 0 }) async throws
+        -> UIAutomationService
     {
         let detected = AutomationTestFixtures.detectedElement(
             id: "B1",
@@ -482,11 +525,12 @@ struct UIAutomationActionOutcomeProvidingTests {
                 HotkeyService(
                     inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
                     postEventAccessEvaluator: { true },
-                    eventPoster: { _, _ in },
+                    eventPoster: eventPoster,
                     runningApplicationResolver: {
                         NSRunningApplication(processIdentifier: $0)
                     },
                     processStartIdentityProvider: context.processStartIdentityProvider,
+                    clipboardChangeCountProvider: clipboardChangeCountProvider,
                     desktopOperationExecutor: context.desktopOperationExecutor,
                     operationFinalizer: context.operationFinalizer)
             },

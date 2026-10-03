@@ -9,6 +9,126 @@ import Testing
 
 @MainActor
 struct HotkeyServiceTargetingTests {
+    @Test func `clipboard claim loss refuses before the first key`() async throws {
+        var events: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in events.append(event.type) },
+            processStartIdentityProvider: { _ in 740 },
+            clipboardChangeCountProvider: { 12 },
+            holdSleeper: { _ in })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,v", holdDuration: 50,
+                automationTarget: self.heldHotkeyTarget(generation: 740),
+                clipboardClaim: claim)
+            Issue.record("Expected ownership-loss refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(events.isEmpty)
+    }
+
+    @Test func `clipboard claim loss after modifier down releases without typing V`() async throws {
+        var events: [CGEventType] = []
+        var clipboardGeneration = 11
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                events.append(event.type)
+                clipboardGeneration = 12
+            },
+            processStartIdentityProvider: { _ in 741 },
+            clipboardChangeCountProvider: { clipboardGeneration },
+            holdSleeper: { _ in })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,v", holdDuration: 50,
+                automationTarget: self.heldHotkeyTarget(generation: 741),
+                clipboardClaim: claim)
+            Issue.record("Expected a released, retry-unsafe prefix")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 2)
+            #expect(error.causeDescription?.contains("superseded") == true)
+        }
+        #expect(events == [.flagsChanged, .flagsChanged])
+    }
+
+    @Test func `clipboard change after V down does not suppress required key releases`() async throws {
+        var events: [CGEventType] = []
+        var clipboardGeneration = 11
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                events.append(event.type)
+                if event.type == .keyDown {
+                    clipboardGeneration = 12
+                }
+            },
+            processStartIdentityProvider: { _ in 742 },
+            clipboardChangeCountProvider: { clipboardGeneration },
+            holdSleeper: { _ in })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+        let result = try await service.hotkey(
+            keys: "command+v", holdDuration: 50,
+            automationTarget: self.heldHotkeyTarget(generation: 742),
+            clipboardClaim: claim)
+        #expect(events == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(result.outcome?.dispatchState.unitCount?.rawValue == 4)
+        #expect(result.outcome?.state == .dispatchedUnverified)
+    }
+
+    @Test(arguments: ["cmd,c", "cmd,shift,v", "v"])
+    func `clipboard claims do not authorize another chord`(_ keys: String) async throws {
+        var events = 0
+        var clipboardReads = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in events += 1 },
+            processStartIdentityProvider: { _ in 743 },
+            clipboardChangeCountProvider: { clipboardReads += 1; return 11 })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+        await #expect(throws: DesktopActionFailure.self) {
+            try await service.hotkey(
+                keys: keys, holdDuration: 50,
+                automationTarget: self.heldHotkeyTarget(generation: 743),
+                clipboardClaim: claim)
+        }
+        #expect(events == 0)
+        #expect(clipboardReads == 0)
+    }
+
+    @Test(arguments: [(exact: false, hold: 0), (exact: false, hold: 50), (exact: true, hold: 0)])
+    func `clipboard claims require exact targeting and a held chord`(input: (exact: Bool, hold: Int)) async throws {
+        var events = 0
+        var clipboardReads = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in events += 1 },
+            processStartIdentityProvider: { _ in 744 },
+            clipboardChangeCountProvider: { clipboardReads += 1; return 11 })
+        let target: UIAutomationTarget = try input.exact
+            ? self.heldHotkeyTarget(generation: 744)
+            : .process(.init(processIdentifier: getpid()))
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+        await #expect(throws: DesktopActionFailure.self) {
+            try await service.hotkey(
+                keys: "cmd,v", holdDuration: input.hold, automationTarget: target, clipboardClaim: claim)
+        }
+        #expect(events == 0)
+        #expect(clipboardReads == 0)
+    }
+
     @Test func `targeted hotkey planner accepts one primary key with modifiers`() throws {
         let service = HotkeyService()
 

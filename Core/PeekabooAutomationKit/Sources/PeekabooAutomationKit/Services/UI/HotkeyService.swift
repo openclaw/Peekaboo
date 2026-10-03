@@ -22,6 +22,7 @@ public final class HotkeyService {
     private let frontmostApplicationResolver: @MainActor @Sendable () -> NSRunningApplication?
     private let runningApplicationResolver: @MainActor @Sendable (pid_t) -> NSRunningApplication?
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
+    private let clipboardChangeCountProvider: @MainActor @Sendable () -> Int
     private let holdSleeper: @MainActor @Sendable (UInt64) async throws -> Void
     private let heldInterEventDelay: @MainActor @Sendable () -> Void
     let inputPolicy: UIInputPolicy
@@ -74,6 +75,9 @@ public final class HotkeyService {
         },
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
+        clipboardChangeCountProvider: @escaping @MainActor @Sendable () -> Int = {
+            NSPasteboard.general.changeCount
+        },
         holdSleeper: @escaping @MainActor @Sendable (UInt64) async throws -> Void = {
             try await Task.sleep(nanoseconds: $0)
         },
@@ -90,6 +94,7 @@ public final class HotkeyService {
         self.frontmostApplicationResolver = frontmostApplicationResolver
         self.runningApplicationResolver = runningApplicationResolver
         self.processStartIdentityProvider = processStartIdentityProvider
+        self.clipboardChangeCountProvider = clipboardChangeCountProvider
         self.holdSleeper = holdSleeper
         self.heldInterEventDelay = heldInterEventDelay
         self.desktopOperationExecutor = desktopOperationExecutor
@@ -182,6 +187,7 @@ public final class HotkeyService {
         keys: String,
         holdDuration: Int,
         automationTarget: UIAutomationTarget,
+        clipboardClaim: GeneralPasteboardWriteClaim? = nil,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
         -> UIAutomationActionResult<UIInputExecutionResult>
     {
@@ -194,6 +200,15 @@ public final class HotkeyService {
         try BackgroundHotkeyPolicy.validate(keys: keys)
         let parsedKeys = try Self.parsedKeys(keys)
         let plannedChord = try? self.makeHotkeyPlan(parsedKeys)
+        if clipboardClaim != nil {
+            guard automationTarget.exactWindow != nil, holdDuration > 0,
+                  plannedChord?.primaryKey == "v", plannedChord?.modifierFlags == .maskCommand
+            else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .invalidRequest,
+                    message: "A temporary clipboard claim requires an exact-window Cmd+V chord with a positive hold.")
+            }
+        }
         let isSelectAll = plannedChord.map {
             Self.isSelectAllShortcut(primaryKey: $0.primaryKey, flags: $0.modifierFlags)
         } ?? false
@@ -207,6 +222,14 @@ public final class HotkeyService {
                     "Background hotkey target process exited or changed process generation")
             }
             try await deliveryValidator?()
+            if let clipboardClaim,
+               self.clipboardChangeCountProvider() != clipboardClaim.changeCount
+            {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .invalidRequest,
+                    message: "The temporary clipboard write was superseded; no new key input was sent.",
+                    hint: "Preserve the newer clipboard contents and observe before attempting another paste.")
+            }
         }
         var application: NSRunningApplication?
         var bundleIdentifier: String?

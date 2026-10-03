@@ -399,6 +399,18 @@ public protocol UIAutomationActionOutcomeProviding: UIAutomationServiceProtocol 
         snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
 }
 
+/// Exact-window paste that checks a retained caller-local clipboard claim without reading its contents.
+@MainActor
+public protocol ClipboardGuardedExactWindowHotkeyServiceProtocol: UIAutomationActionOutcomeProviding {
+    var supportsClipboardGuardedExactWindowHotkeys: Bool { get }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim) async throws -> UIAutomationActionResult<Void>
+}
+
 extension UIAutomationActionOutcomeProviding {
     public func clickWithOutcome(
         target: ClickTarget,
