@@ -42,7 +42,8 @@ extension MenuService {
     {
         let children = currentElement.children() ?? []
         let candidateTitles = children.map { element in
-            [element.title(), (element.value() as? NSAttributedString)?.string].compactMap(\.self)
+            [element.title(), element.attribute(Attribute<String>(AXAttributeNames.kAXValueAttribute))]
+                .compactMap(\.self)
         }
         let matchingIndexes = Self.menuItemMatchIndexes(
             named: component,

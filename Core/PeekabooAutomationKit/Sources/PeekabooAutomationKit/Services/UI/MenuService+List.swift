@@ -152,7 +152,7 @@ extension MenuService {
                 path: "\(parentPath) > ---")
         }
 
-        let title = element.title() ?? self.attributedTitle(for: element)?.string ?? ""
+        let title = element.title() ?? element.attribute(Attribute<String>(AXAttributeNames.kAXValueAttribute)) ?? ""
         guard !title.isEmpty else { return nil }
 
         let path = "\(parentPath) > \(title)"
@@ -184,13 +184,6 @@ extension MenuService {
             isSeparator: false,
             submenu: submenuItems,
             path: path)
-    }
-
-    private func attributedTitle(for element: Element) -> NSAttributedString? {
-        if let attrTitle = element.value() as? NSAttributedString {
-            return attrTitle
-        }
-        return nil
     }
 
     private func extractKeyboardShortcut(from element: Element) -> KeyboardShortcut? {

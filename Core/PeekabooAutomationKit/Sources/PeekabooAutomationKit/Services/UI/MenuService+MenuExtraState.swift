@@ -252,7 +252,7 @@ extension MenuService {
         let candidates: [String?] = [
             element.title(),
             element.descriptionText(),
-            (element.value() as? NSAttributedString)?.string,
+            element.attribute(Attribute<String>(AXAttributeNames.kAXValueAttribute)),
         ]
         return menuTitleCandidatesContainNormalized(candidates, normalizedTarget: normalizedTarget)
     }
