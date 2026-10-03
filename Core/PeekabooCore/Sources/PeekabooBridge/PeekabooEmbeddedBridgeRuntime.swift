@@ -183,7 +183,7 @@ public actor PeekabooEmbeddedBridgeRuntime {
                     try ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
                 },
                 screenCaptureKitOwnershipPreparer: {
-                    try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
+                    try await ScreenCaptureKitOwnerLease.awaitCurrentProcessCapabilityPreparation()
                 })
         }
 

@@ -16,12 +16,11 @@ struct AutoScreenCaptureConcurrencyTests {
         hostname: nil)
 
     @Test
-    func `Bridge publication deadline reserves the process preparation boundary`() {
+    func `Bridge preserves its preparation publication envelope`() {
         let processPreparation = ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds
         let bridgePublication = PeekabooBridgeServer.defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds
 
-        #expect(bridgePublication >= processPreparation + 1)
-        #expect(bridgePublication < processPreparation + 2)
+        #expect(bridgePublication == processPreparation + 1)
     }
 
     @Test
@@ -151,9 +150,11 @@ struct AutoScreenCaptureConcurrencyTests {
         await host.stop()
     }
 
-    @Test
-    func `Bridge preparation failure suppresses screen ownership capability`() async throws {
+    @Test(arguments: [true, false])
+    func `Bridge preparation timeout stays closed until the shared scan settles`(succeeds: Bool) async throws {
         let socketPath = Self.fixtureSocketPath()
+        let ownerReceipt = try #require(Self.currentProcessOwnerReceipt())
+        let claimCounter = BridgeOwnerClaimCounter()
         let preparation = BridgeOwnerPreparationGate()
         let observation = BridgeAutoScreenObservationService(failSlowAutomaticCapture: false)
         let services = StubServices(
@@ -171,10 +172,13 @@ struct AutoScreenCaptureConcurrencyTests {
             screenCaptureKitProcessCapabilityRegistrar: {},
             screenCaptureKitOwnershipPreparer: {
                 await preparation.prepare()
+                if !succeeds {
+                    throw OperationError.captureFailed(reason: "Fixture late preparation failure")
+                }
             },
             screenCaptureKitOwnerClaimProvider: {
-                Issue.record("Preparation must not claim an owner")
-                throw ScreenCaptureKitOwnerLease.LeaseError.invalidOwnerIdentity("unexpected fixture claim")
+                claimCounter.record()
+                return ownerReceipt
             },
             screenCaptureKitOwnershipPreparationTimeoutSeconds: 0.02,
             postEventAccessEvaluator: { true },
@@ -191,7 +195,6 @@ struct AutoScreenCaptureConcurrencyTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 0.5)
         try await host.startChecked()
-        await preparation.release()
         defer { Task { await host.stop() } }
         let client = try await self.makeNegotiatedClient(
             socketPath: socketPath,
@@ -203,6 +206,32 @@ struct AutoScreenCaptureConcurrencyTests {
         #expect(error?.screenCaptureKitOwnershipDiagnostic?.kind == .timedOut)
         #expect(error?.screenCaptureKitOwnershipDiagnostic?.timeoutSeconds == 0.02)
         #expect(observation.requests.isEmpty)
+        #expect(!claimCounter.didRecord)
+
+        await preparation.release()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while server.screenCaptureKitReadiness?.failure?.kind == .timedOut, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(await preparation.count == 1)
+        #expect(server.screenCaptureKitReadiness?.permitsAttempt == succeeds)
+        let handshake = try await client.handshake(client: Self.clientIdentity)
+        #expect(handshake.screenCaptureKitReadiness?.permitsAttempt == succeeds)
+        #expect(handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
+            == succeeds)
+        if succeeds {
+            _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
+            #expect(observation.requests.count == 1)
+            #expect(claimCounter.count == 1)
+        } else {
+            let lateError = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await client.desktopObservation(Self.backgroundAutoScreenRequest)
+            }
+            #expect(lateError?.screenCaptureKitOwnershipDiagnostic?.message
+                .contains("Fixture late preparation failure") == true)
+            #expect(observation.requests.isEmpty)
+            #expect(!claimCounter.didRecord)
+        }
         await host.stop()
     }
 
@@ -711,12 +740,14 @@ private final class BridgeAutoScreenObservationService: DesktopObservationServic
 }
 
 private actor BridgeOwnerPreparationGate {
+    private(set) var count = 0
     private var didStart = false
     private var didRelease = false
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     func prepare() async {
+        self.count += 1
         self.didStart = true
         self.startWaiters.forEach { $0.resume() }
         self.startWaiters.removeAll()

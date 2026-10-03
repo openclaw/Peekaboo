@@ -52,7 +52,7 @@ public enum PeekabooBridgeBootstrap {
                 requestTimeoutSec: requestTimeoutSec,
                 requestDrainTimeoutSec: 1.0,
                 screenCaptureKitOwnershipPreparer: {
-                    try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
+                    try await ScreenCaptureKitOwnerLease.awaitCurrentProcessCapabilityPreparation()
                 })).host
         Task {
             await host.start()
@@ -92,7 +92,7 @@ public enum PeekabooBridgeBootstrap {
                 requestTimeoutSec: requestTimeoutSec,
                 requestDrainTimeoutSec: 1.0,
                 screenCaptureKitOwnershipPreparer: {
-                    try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
+                    try await ScreenCaptureKitOwnerLease.awaitCurrentProcessCapabilityPreparation()
                 })).host
         try await host.startChecked()
         return host

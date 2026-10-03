@@ -320,8 +320,8 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
         _ = try? self.currentProcessCapabilityPreparationTask()
     }
 
-    /// Waits a bounded amount of time for the first owner-safety scan. A Bridge host must suppress
-    /// ScreenCaptureKit ownership capability publication if this throws. The single detached scan may
+    /// Waits a bounded amount of time for the first owner-safety scan. Callers must withhold
+    /// ScreenCaptureKit authority if this throws. The single detached scan may
     /// finish warming its cache after a caller timeout, but it never acquires the owner lease or enters SCK.
     public static func prepareCurrentProcessCapability(
         timeoutSeconds: TimeInterval = ScreenCaptureKitOwnerLease
@@ -329,6 +329,12 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
     {
         let task = try self.currentProcessCapabilityPreparationTask()
         try await self.waitForProcessCapabilityPreparation(task, timeoutSeconds: timeoutSeconds)
+    }
+
+    /// Observes the same shared scan for an owner that supplies its own publication deadline.
+    /// Neither a shorter caller wait nor cancellation of that wait cancels the safety scan.
+    public static func awaitCurrentProcessCapabilityPreparation() async throws {
+        try await self.currentProcessCapabilityPreparationTask().value
     }
 
     static func waitForProcessCapabilityPreparation(
