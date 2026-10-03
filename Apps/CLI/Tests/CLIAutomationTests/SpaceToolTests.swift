@@ -16,6 +16,47 @@ import Testing
 )
 struct SpaceToolExecutionHostTests {
     @Test
+    func `Space switch missing outcome retains uncertain dispatch and diagnostic`() async throws {
+        let testContext = self.makeTestContext()
+        let context = self.makeToolContext(
+            services: testContext.services,
+            executionHost: .local,
+            executionPolicy: .foregroundAllowed
+        )
+        let service = SpaceToolStubSpaceService(spaces: [
+            SpaceInfo(id: 7, type: .user, isActive: false, displayID: 1, name: "Desktop 2", ownerPIDs: []),
+        ])
+        service.switchOutcome = nil
+
+        let response = try await context.execute(
+            tool: SpaceTool(testingSpaceService: service, context: context),
+            arguments: self.makeArguments([
+                "action": .string("switch"),
+                "to": .int(1),
+                "foreground": .bool(true),
+            ])
+        )
+
+        #expect(response.isError)
+        #expect(service.switchCalls == [7])
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["state"] == .string("indeterminate"))
+        #expect(metadata["route"] == .string("local"))
+        #expect(metadata["evidence"] == .string("completion_unknown"))
+        #expect(metadata["dispatch_state"] == .string("may_have_dispatched"))
+        #expect(metadata["dispatched_unit_count"] == nil)
+        #expect(metadata["retry_safe"] == .bool(false))
+        let text = response.content.compactMap { content -> String? in
+            if case let .text(text, _, _) = content {
+                return text
+            }
+            return nil
+        }.joined(separator: "\n")
+        #expect(text.contains("Space switch returned without a canonical action outcome."))
+        #expect(text.contains("Observe the active Space before retrying and update the runtime host."))
+    }
+
+    @Test
     func `foreground Space switch returns canonical native dispatch metadata`() async throws {
         let testContext = self.makeTestContext()
         let context = self.makeToolContext(
@@ -810,7 +851,7 @@ final class SpaceToolStubSpaceService: SpaceManaging {
     var moveToCurrentCalls: [CGWindowID] = []
     var moveWindowCalls: [(windowID: CGWindowID, spaceID: CGSSpaceID)] = []
     var switchCalls: [CGSSpaceID] = []
-    var switchOutcome: DesktopActionOutcome = .dispatchedUnverified(
+    var switchOutcome: DesktopActionOutcome? = .dispatchedUnverified(
         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
         evidence: .deliveryAccepted,
         unitCount: .one

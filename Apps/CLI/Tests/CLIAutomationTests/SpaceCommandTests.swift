@@ -412,6 +412,29 @@ struct SpaceCommandActionTests {
     }
 
     @Test
+    func `space move-window follow missing outcome preserves earlier dispatch`() async throws {
+        let context = await self.makeSpaceContext()
+        await MainActor.run { context.spaceService.switchOutcome = nil }
+
+        let result = try await self.runSpaceCommand([
+            "space", "move-window", "--app", "TextEdit", "--to", "1", "--follow", "--foreground", "--json",
+        ], context: context)
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(JSONResponse.self, from: Data(self.output(from: result).utf8))
+        #expect(!response.success)
+        #expect(response.outcome?.state == .indeterminate)
+        #expect(response.outcome?.dispatchedUnitCount == nil)
+        #expect(response.error?.message == "Space move-window follow failed after moving the window.")
+        #expect(response.error?.hint == "Observe both the exact window and active Space before retrying.")
+        #expect(response.error?.mutation_dispatched == true)
+        #expect(response.error?.retry_safe == false)
+        #expect(response.target_receipt == nil)
+        #expect(await self.spaceState(context) { $0.moveWindowCalls.count } == 1)
+        #expect(await self.spaceState(context) { $0.switchCalls } == [1])
+    }
+
+    @Test
     func `space move-window follow rejects a returned non-success switch outcome`() async throws {
         let context = await self.makeSpaceContext()
         await MainActor.run {

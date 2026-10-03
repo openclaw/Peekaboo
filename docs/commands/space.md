@@ -22,6 +22,7 @@ read_when:
 - `move-window` reuses `WindowIdentificationOptions`, so apps can be resolved via names or `PID:1234`, and you can specify a particular window by title or index.
 - Plain window placement stays in the background. `switch` and `move-window --follow` refuse before inventory lookup or mutation unless `--foreground` is explicit, because both replace the user's visible Space. MCP callers use the equivalent `foreground: true` consent.
 - A followed move composes the native move and switch receipts. Confirmed no-change, confirmed change, partial, and indeterminate switch results retain their real dispatch counts and retry semantics instead of being rewritten as a synthetic success.
+- CLI and MCP switch-result adapters use the shared canonical outcome validator; Space-specific diagnostics and the separate move/follow sequence accounting remain unchanged.
 - JSON output from `list` is a compact `{spaces:[{id,type,is_active,display_id}]}` structure; action subcommands return `{action,success,...}` payloads that match the arguments you passed (space number, window title, follow flag, etc.).
 
 ## Examples

@@ -1376,7 +1376,7 @@ final class StubSpaceService: SpaceCommandSpaceService {
     let spaces: [SpaceInfo]
     let windowSpaces: [Int: [SpaceInfo]]
     var switchCalls: [CGSSpaceID] = []
-    var switchOutcome: DesktopActionOutcome = .dispatchedUnverified(
+    var switchOutcome: DesktopActionOutcome? = .dispatchedUnverified(
         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
         evidence: .deliveryAccepted,
         unitCount: .one

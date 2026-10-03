@@ -5,6 +5,51 @@ import Testing
 @testable import PeekabooAutomationKit
 
 struct UIAutomationActionResultSemanticsTests {
+    @Test
+    func `optional outcome policy preserves every canonical state and caller diagnostics`() throws {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .nativeFramework, mode: .foreground)
+        let cases: [(DesktopActionOutcome, Bool)] = [
+            (.confirmedNoChange(), true),
+            (.confirmedChange(delivery: delivery, unitCount: .one), true),
+            (.dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted, unitCount: .one), true),
+            (.partial(delivery: delivery, unitCount: .one), false),
+            (.suspectedNoop(delivery: delivery, unitCount: .one), false),
+            (.refused(reason: .targetUnavailable), false),
+            (.indeterminate(delivery: delivery, evidence: .completionUnknown, unitCount: .one), false),
+        ]
+        for (outcome, accepted) in cases {
+            do {
+                let result = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                    outcome,
+                    policy: .confirmedOrDispatched,
+                    operation: "Fixture switch",
+                    rejectedOutcomeMessage: "Switch rejected.")
+                #expect(accepted)
+                #expect(result == outcome)
+            } catch let failure as DesktopActionFailure {
+                #expect(!accepted)
+                #expect(failure.outcome == outcome)
+                #expect(failure.message == "Switch rejected.")
+                #expect(failure.hint == "Follow the canonical escalation metadata before deciding whether to retry.")
+                #expect(failure.targetReceipt == nil)
+            }
+        }
+        do {
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                nil,
+                policy: .confirmedOrDispatched,
+                operation: "Fixture switch",
+                missingOutcomeMessage: "Switch outcome missing.",
+                missingOutcomeHint: "Observe the active Space.")
+            Issue.record("Missing outcome must fail closed")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == .indeterminate(evidence: .completionUnknown))
+            #expect(failure.message == "Switch outcome missing.")
+            #expect(failure.hint == "Observe the active Space.")
+            #expect(failure.targetReceipt == nil)
+        }
+    }
+
     private static let windowBounds = CGRect(x: 10, y: 20, width: 300, height: 200)
 
     private let backgroundDelivery = DesktopActionOutcome.Delivery(

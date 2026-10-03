@@ -411,19 +411,13 @@ extension SpaceTool {
     private static func requireSuccessfulSwitchResult(
         _ result: DesktopActionResult<Void>) throws -> DesktopActionOutcome
     {
-        guard let outcome = result.outcome else {
-            throw DesktopActionFailure.indeterminate(
-                evidence: .completionUnknown,
-                message: "Space switch returned without a canonical action outcome.",
-                hint: "Observe the active Space before retrying and update the runtime host.")
-        }
-        guard !outcome.isAccepted(by: .confirmedOrDispatched) else { return outcome }
-        guard let failure = DesktopActionFailure(
-            outcome: outcome,
-            message: "Space switch did not return a successful outcome.",
-            hint: "Follow the canonical escalation metadata before deciding whether to retry.")
-        else { preconditionFailure("A non-success Space switch outcome must construct a failure") }
-        throw failure
+        try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result.outcome,
+            policy: .confirmedOrDispatched,
+            operation: "Space switch",
+            missingOutcomeMessage: "Space switch returned without a canonical action outcome.",
+            rejectedOutcomeMessage: "Space switch did not return a successful outcome.",
+            missingOutcomeHint: "Observe the active Space before retrying and update the runtime host.")
     }
 
     private static func expectedTargetIdentity(

@@ -297,21 +297,14 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
     private static func validateSwitchResult(
         _ result: DesktopActionResult<Void>
     ) throws -> DesktopActionOutcome {
-        guard let outcome = result.outcome else {
-            throw DesktopActionFailure.indeterminate(
-                evidence: .completionUnknown,
-                message: "Space move-window follow returned without a canonical switch outcome.",
-                hint: "Observe the active Space before retrying and update the runtime host."
-            )
-        }
-        guard !outcome.isAccepted(by: .confirmedOrDispatched) else { return outcome }
-        guard let failure = DesktopActionFailure(
-            outcome: outcome,
-            message: "Space move-window follow did not return a successful switch outcome.",
-            hint: "Follow the canonical escalation metadata before deciding whether to retry."
+        try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result.outcome,
+            policy: .confirmedOrDispatched,
+            operation: "Space move-window follow",
+            missingOutcomeMessage: "Space move-window follow returned without a canonical switch outcome.",
+            rejectedOutcomeMessage: "Space move-window follow did not return a successful switch outcome.",
+            missingOutcomeHint: "Observe the active Space before retrying and update the runtime host."
         )
-        else { preconditionFailure("A non-success Space switch outcome must construct a failure") }
-        throw failure
     }
 }
 
