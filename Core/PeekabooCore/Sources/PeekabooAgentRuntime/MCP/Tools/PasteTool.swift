@@ -203,7 +203,8 @@ public struct PasteTool: MCPTool {
                 let destination = try await self.resolveDeliveryDestination(
                     target: target,
                     foreground: foreground,
-                    expectedPIDIdentity: expectedPIDIdentity)
+                    expectedPIDIdentity: expectedPIDIdentity,
+                    requiresClipboardClaim: true)
                 if destination.processIdentifier == nil {
                     setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
                 }
@@ -458,9 +459,17 @@ public struct PasteTool: MCPTool {
     }
 
     @MainActor
-    private func pasteHotkeyRoute(for destination: UIAutomationTarget) throws -> PasteHotkeyRoute {
+    private func pasteHotkeyRoute(
+        for destination: UIAutomationTarget,
+        requiresClipboardClaim: Bool = false) throws -> PasteHotkeyRoute
+    {
         if destination.exactWindow != nil {
             do {
+                if requiresClipboardClaim {
+                    return try .guardedExact(ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+                        automation: self.context.automation,
+                        operation: "Exact-window paste"))
+                }
                 return try .exact(ExactWindowKeyboardRuntime.requireOutcomeProvider(
                     automation: self.context.automation,
                     operation: "Exact-window paste"))
@@ -487,9 +496,28 @@ public struct PasteTool: MCPTool {
     @MainActor
     private func dispatchPasteHotkey(
         route: PasteHotkeyRoute,
-        destination: UIAutomationTarget) async throws -> UIAutomationActionResult<Void>
+        destination: UIAutomationTarget,
+        clipboardClaim: GeneralPasteboardWriteClaim? = nil) async throws -> UIAutomationActionResult<Void>
     {
+        if clipboardClaim != nil {
+            guard case .guardedExact = route else {
+                throw PasteToolError("A retained clipboard claim cannot use an unguarded hotkey route.")
+            }
+        }
         switch route {
+        case let .guardedExact(automation):
+            guard let exactWindow = destination.exactWindow,
+                  exactWindow.focusedElement != nil,
+                  let clipboardClaim
+            else {
+                throw PasteToolError("Guarded paste requires exact focus and a retained clipboard write claim.")
+            }
+            let result = try await automation.hotkeyWithOutcome(
+                keys: "cmd,v",
+                holdDuration: 50,
+                target: exactWindow,
+                clipboardClaim: clipboardClaim)
+            return try self.validatedExactPasteResult(result)
         case let .exact(automation):
             guard let exactWindow = destination.exactWindow,
                   let focusedElement = exactWindow.focusedElement
@@ -503,17 +531,7 @@ public struct PasteTool: MCPTool {
                     windowIdentity: exactWindow.identity,
                     windowBounds: exactWindow.bounds,
                     focusedElement: focusedElement))
-            let validated = try ExactWindowKeyboardRuntime.validateRouteReceipt(
-                result,
-                operation: "Exact-window paste")
-            if validated.outcome != nil {
-                _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-                    validated,
-                    policy: .confirmed,
-                    operation: "Paste hotkey",
-                    rejectedOutcomeMessage: "Paste hotkey did not return a confirmed outcome.")
-            }
-            return validated
+            return try self.validatedExactPasteResult(result)
         case let .process(automation):
             guard let processIdentity = destination.processIdentity else {
                 throw PasteToolError("Background paste requires a process-generation receipt.")
@@ -548,6 +566,19 @@ public struct PasteTool: MCPTool {
     }
 
     @MainActor
+    private func validatedExactPasteResult(
+        _ result: UIAutomationActionResult<Void>) throws -> UIAutomationActionResult<Void>
+    {
+        let validated = try ExactWindowKeyboardRuntime.validateRouteReceipt(result, operation: "Exact-window paste")
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            validated,
+            policy: .confirmed,
+            operation: "Paste hotkey",
+            rejectedOutcomeMessage: "Paste hotkey did not return a confirmed outcome.")
+        return validated
+    }
+
+    @MainActor
     private func performClipboardPasteTransaction(
         request: ClipboardWriteRequest,
         clipboardProvider: any ClipboardTemporaryWriteProviding,
@@ -555,7 +586,7 @@ public struct PasteTool: MCPTool {
         destination: UIAutomationTarget,
         restoreDelayMs: Int) async throws -> ClipboardPasteTransactionOutcome
     {
-        let hotkeyRoute = try self.pasteHotkeyRoute(for: destination)
+        let hotkeyRoute = try self.pasteHotkeyRoute(for: destination, requiresClipboardClaim: true)
 
         try Task.checkCancellation()
         let transaction: any ClipboardTemporaryWriteTransaction
@@ -570,6 +601,17 @@ public struct PasteTool: MCPTool {
         }
         try Task.checkCancellation()
 
+        let claimProvider: (any ClipboardTemporaryWriteClaimProviding)?
+        if case .guardedExact = hotkeyRoute {
+            guard let provider = transaction as? any ClipboardTemporaryWriteClaimProviding else {
+                throw PasteToolError(
+                    "This clipboard transaction cannot retain a General pasteboard write claim.",
+                    refusalReason: .runtimeIncompatible)
+            }
+            claimProvider = provider
+        } else {
+            claimProvider = nil
+        }
         var restorePending = false
         func restoreBeforeDispatchFailure(_ primaryError: any Error) throws -> Never {
             var cleanupErrorDescription: String?
@@ -598,8 +640,16 @@ public struct PasteTool: MCPTool {
 
         restorePending = true
         let setResult: ClipboardReadResult
+        let clipboardClaim: GeneralPasteboardWriteClaim?
         do {
-            setResult = try transaction.write(request)
+            if let claimProvider {
+                let write = try claimProvider.writeWithClaim(request)
+                setResult = write.result
+                clipboardClaim = write.claim
+            } else {
+                setResult = try transaction.write(request)
+                clipboardClaim = nil
+            }
             try Task.checkCancellation()
         } catch {
             try restoreBeforeDispatchFailure(error)
@@ -609,7 +659,10 @@ public struct PasteTool: MCPTool {
         let dispatchErrorDescription: String?
         let actionResult: UIAutomationActionResult<Void>?
         do {
-            actionResult = try await self.dispatchPasteHotkey(route: hotkeyRoute, destination: destination)
+            actionResult = try await self.dispatchPasteHotkey(
+                route: hotkeyRoute,
+                destination: destination,
+                clipboardClaim: clipboardClaim)
             dispatchFailure = nil
             dispatchErrorDescription = nil
         } catch let failure as DesktopActionFailure {
@@ -1010,7 +1063,8 @@ public struct PasteTool: MCPTool {
     private func resolveDeliveryDestination(
         target: MCPInteractionTarget,
         foreground: Bool,
-        expectedPIDIdentity: UInt64?) async throws -> UIAutomationTarget
+        expectedPIDIdentity: UInt64?,
+        requiresClipboardClaim: Bool = false) async throws -> UIAutomationTarget
     {
         if foreground {
             try Self.validateExplicitPIDIdentity(target: target, expectedPIDIdentity: expectedPIDIdentity)
@@ -1032,9 +1086,15 @@ public struct PasteTool: MCPTool {
         }
         guard authorizedTarget.exactWindow != nil else { return authorizedTarget }
         do {
-            _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
-                automation: self.context.automation,
-                operation: "Exact-window paste")
+            if requiresClipboardClaim {
+                _ = try ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+                    automation: self.context.automation,
+                    operation: "Exact-window paste")
+            } else {
+                _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                    automation: self.context.automation,
+                    operation: "Exact-window paste")
+            }
         } catch {
             throw PasteToolError(
                 error.localizedDescription,
@@ -1236,6 +1296,7 @@ private enum PasteHotkeyRoute {
     case foreground
     case process(any TargetedHotkeyServiceProtocol)
     case exact(any UIAutomationActionOutcomeProviding)
+    case guardedExact(any ClipboardGuardedExactWindowHotkeyServiceProtocol)
 }
 
 private struct ClipboardPasteTransactionOutcome: Sendable {

@@ -358,6 +358,21 @@ public enum ExactWindowKeyboardRuntime {
         return outcomeProvider
     }
 
+    public static func requireClipboardGuardedPasteProvider(
+        automation: any UIAutomationServiceProtocol,
+        operation: String) throws -> any ClipboardGuardedExactWindowHotkeyServiceProtocol
+    {
+        guard let provider = automation as? any ClipboardGuardedExactWindowHotkeyServiceProtocol,
+              provider.supportsClipboardGuardedExactWindowHotkeys
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "\(operation) requires clipboard-guarded exact-window hotkey delivery.",
+                hint: "Update the selected Peekaboo host before writing a temporary clipboard payload.")
+        }
+        return provider
+    }
+
     public static func requireTypeOutcomeProvider(
         automation: any UIAutomationServiceProtocol,
         operation: String) throws -> any UIAutomationActionOutcomeProviding

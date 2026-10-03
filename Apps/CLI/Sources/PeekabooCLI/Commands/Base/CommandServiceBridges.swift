@@ -362,8 +362,30 @@ enum AutomationServiceBridge {
         automation: any UIAutomationServiceProtocol,
         keys: String,
         holdDuration: Int,
-        target: UIAutomationTarget
+        target: UIAutomationTarget,
+        clipboardClaim: GeneralPasteboardWriteClaim? = nil
     ) async throws -> UIAutomationActionResult<Void> {
+        if let clipboardClaim {
+            guard let exactWindow = target.exactWindow, exactWindow.focusedElement != nil else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .invalidRequest,
+                    message: "Clipboard-guarded paste requires an exact-window focused-element receipt."
+                )
+            }
+            let provider = try ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+                automation: automation,
+                operation: "Background paste"
+            )
+            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+                provider.hotkeyWithOutcome(
+                    keys: keys,
+                    holdDuration: holdDuration,
+                    target: exactWindow,
+                    clipboardClaim: clipboardClaim
+                ),
+                operation: "Background paste"
+            )
+        }
         switch target {
         case .foreground:
             return try await self.hotkey(automation: automation, keys: keys, holdDuration: holdDuration)

@@ -125,6 +125,7 @@ struct PasteToolExactWindowTests {
         #expect(metadata["retry_safe"] == .bool(false))
         #expect(metadata["clipboard_cleanup_status"] == (explicitPayload ? .string("restored") : nil))
         #expect(automation.exactHotkeyCalls.count == 1)
+        #expect(automation.guardedHotkeyClaims.map(\.changeCount) == (explicitPayload ? [1] : []))
         #expect(automation.exactHotkeyCalls.first?.targetWindowID == self.secondWindow.windowID)
         #expect(automation.targetedHotkeyCalls.isEmpty)
         #expect(automation.lastHotkeyKeys == nil)
@@ -146,11 +147,121 @@ struct PasteToolExactWindowTests {
         ]))
 
         #expect(response.isError)
-        #expect(self.responseText(response).contains("requires atomic exact-window keyboard delivery"))
+        #expect(self.responseText(response).contains("requires clipboard-guarded exact-window hotkey delivery"))
         #expect(await MainActor.run { fixture.clipboard.saveCallCount } == 0)
         #expect(await MainActor.run { fixture.clipboard.setCallCount } == 0)
         #expect(await MainActor.run { fixture.automation.targetedHotkeyCalls.isEmpty })
         #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    @MainActor
+    func `temporary exact paste preflights guard and claim support before write`(
+        hostSupportsGuard: Bool,
+        transactionRetainsClaim: Bool) async throws
+    {
+        let fixture = await self.makeFixture(exactKeyboardSupported: true)
+        let automation = try #require(fixture.exactAutomation)
+        automation.supportsClipboardGuardedExactWindowHotkeys = hostSupportsGuard
+        automation.supportsExactWindowTargetedKeyboard = !hostSupportsGuard
+        fixture.clipboard.retainsTemporaryWriteClaims = transactionRetainsClaim
+        let response = try await fixture.tool.execute(arguments: ToolArguments(raw: [
+            "window_id": self.secondWindow.windowID,
+            "dataBase64": Data("{\\rtf1 exact}".utf8).base64EncodedString(),
+            "uti": UTType.rtf.identifier,
+            "restore_delay_ms": 0,
+        ]))
+        let dispatched = hostSupportsGuard && transactionRetainsClaim
+        #expect(response.isError)
+        #expect(fixture.clipboard.getCallCount == (hostSupportsGuard ? 1 : 0))
+        #expect(fixture.clipboard.setCallCount == (dispatched ? 1 : 0))
+        #expect(fixture.clipboard.restoreCallCount == (dispatched ? 1 : 0))
+        #expect(fixture.clipboard.current?.data == Data("before".utf8))
+        #expect(automation.guardedHotkeyClaims.map(\.changeCount) == (dispatched ? [1] : []))
+        #expect(automation.exactHotkeyCalls.count == (dispatched ? 1 : 0))
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(automation.lastHotkeyKeys == nil)
+    }
+
+    @Test
+    @MainActor
+    func `guarded paste retains its declaration claim and preserves a newer copy after refusal`() async throws {
+        let fixture = await self.makeFixture(exactKeyboardSupported: true)
+        let automation = try #require(fixture.exactAutomation)
+        let newer = ClipboardReadResult(
+            utiIdentifier: UTType.plainText.identifier,
+            data: Data("newer".utf8),
+            textPreview: "newer")
+        automation.beforeGuardedHotkey = {
+            fixture.clipboard.current = newer
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Synthetic clipboard claim was superseded")
+        }
+        let response = try await fixture.tool.execute(arguments: ToolArguments(raw: [
+            "window_id": self.secondWindow.windowID,
+            "dataBase64": Data("{\\rtf1 exact}".utf8).base64EncodedString(),
+            "uti": UTType.rtf.identifier,
+            "restore_delay_ms": 0,
+        ]))
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["clipboard_cleanup_status"] == .string("preserved_newer_contents"))
+        #expect(automation.guardedHotkeyClaims.map(\.changeCount) == [1])
+        #expect(automation.exactHotkeyCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(fixture.clipboard.current?.data == newer.data)
+        #expect(fixture.clipboard.restoreCallCount == 0)
+        #expect(fixture.clipboard.clearCallCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `cancellation after a claimed temporary write restores once without hotkey delivery`() async throws {
+        let fixture = await self.makeFixture(exactKeyboardSupported: true)
+        let automation = try #require(fixture.exactAutomation)
+        fixture.clipboard.afterSet = { withUnsafeCurrentTask { $0?.cancel() } }
+        let command = Task { @MainActor in
+            try await fixture.tool.execute(arguments: ToolArguments(raw: [
+                "window_id": self.secondWindow.windowID,
+                "dataBase64": Data("{\\rtf1 exact}".utf8).base64EncodedString(),
+                "uti": UTType.rtf.identifier,
+                "restore_delay_ms": 0,
+            ]))
+        }
+        let response = try await command.value
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["retry_safe"] == .bool(false))
+        #expect(metadata["clipboard_cleanup_status"] == .string("restored"))
+        #expect(automation.guardedHotkeyClaims.isEmpty)
+        #expect(automation.exactHotkeyCalls.isEmpty)
+        #expect(fixture.clipboard.setCallCount == 1)
+        #expect(fixture.clipboard.restoreCallCount == 1)
+        #expect(fixture.clipboard.clearCallCount == 0)
+        #expect(fixture.clipboard.current?.data == Data("before".utf8))
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `foreground temporary and current clipboard paths remain claimless`(foreground: Bool) async throws {
+        let fixture = await self.makeFixture(exactKeyboardSupported: true)
+        let automation = try #require(fixture.exactAutomation)
+        automation.supportsClipboardGuardedExactWindowHotkeys = false
+        fixture.clipboard.retainsTemporaryWriteClaims = false
+        var arguments: [String: Any] = ["restore_delay_ms": 0]
+        if foreground {
+            arguments["foreground"] = true
+            arguments["dataBase64"] = Data("{\\rtf1 exact}".utf8).base64EncodedString()
+            arguments["uti"] = UTType.rtf.identifier
+        } else {
+            arguments["window_id"] = self.secondWindow.windowID
+        }
+        _ = try await fixture.tool.execute(arguments: ToolArguments(raw: arguments))
+        #expect(automation.guardedHotkeyClaims.isEmpty)
+        #expect(automation.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
+        #expect(fixture.clipboard.setCallCount == (foreground ? 1 : 0))
+        #expect(fixture.clipboard.restoreCallCount == (foreground ? 1 : 0))
+        #expect(fixture.clipboard.current?.data == Data("before".utf8))
     }
 
     @Test
@@ -447,6 +558,7 @@ private struct PasteExactWindowFixture {
 @MainActor
 private final class ExactPasteAutomationService: MockAutomationService,
     ExactWindowTargetedKeyboardServiceProtocol,
+    ClipboardGuardedExactWindowHotkeyServiceProtocol,
     ScriptedUIAutomationActionOutcomeProviding,
     TargetedFocusedElementServiceProtocol
 {
@@ -463,7 +575,8 @@ private final class ExactPasteAutomationService: MockAutomationService,
         let expectedWindowBounds: CGRect
     }
 
-    let supportsExactWindowTargetedKeyboard = true
+    var supportsExactWindowTargetedKeyboard = true
+    var supportsClipboardGuardedExactWindowHotkeys = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript(defaultResponse: .outcome(
         .confirmedChange(delivery: .init(
@@ -471,6 +584,8 @@ private final class ExactPasteAutomationService: MockAutomationService,
             mode: .background))))
     private(set) var exactTypeCalls: [TypeCall] = []
     private(set) var exactHotkeyCalls: [HotkeyCall] = []
+    private(set) var guardedHotkeyClaims: [GeneralPasteboardWriteClaim] = []
+    var beforeGuardedHotkey: (() throws -> Void)?
     var typeErrorAfterPrefix: String?
     private(set) var deliveredText: String?
 
@@ -550,6 +665,29 @@ private final class ExactPasteAutomationService: MockAutomationService,
             processId: Int(targetProcessIdentifier),
             windowID: 42,
             identifier: "editor")
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim) async throws -> UIAutomationActionResult<Void>
+    {
+        self.guardedHotkeyClaims.append(clipboardClaim)
+        try self.beforeGuardedHotkey?()
+        guard let focused = target.focusedElement else {
+            throw PeekabooError.invalidInput("Missing retained focus")
+        }
+        let keyboardTarget = ExactWindowKeyboardTarget(
+            windowIdentity: target.identity,
+            windowBounds: target.bounds,
+            focusedElement: focused)
+        let result = try self.scriptedExactHotkeyResult(target: keyboardTarget)
+        try await self.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            target: keyboardTarget)
+        return result
     }
 }
 

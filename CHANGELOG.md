@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fence temporary exact-window background paste with the retained clipboard write generation, refusing unsupported hosts before writing and stopping new key-downs after another copy while preserving owed key releases and newer clipboard contents.
 - Clarify that deprecated `app launch --no-focus` is a compatibility no-op: default launch only verifies an already-running app, while cold launch still requires explicit foreground consent.
 - Remove idle certification-coordinator exit delays by clearing completed child-wait timers and their listeners, preserving normal output draining and bounded TERM/KILL cleanup.
 - Repair first-party GUI qualification by admitting the signed controller and validating canonical global/window receipt scopes; preserve exact authenticated inventory binding and avoid repeating an acknowledged owner disconnect after an evidence error.

@@ -59,6 +59,8 @@ extension PasteCommandTests {
             #expect(response.target_receipt?.windowID == (exactWindow ? ExactBackgroundTextPasteFixture.windowID : nil))
             #expect(fixture.automation.outcomeHotkeyCallCount == 1)
             #expect(fixture.automation.exactHotkeyCalls.count == (exactWindow ? 1 : 0))
+            #expect(fixture.automation.guardedHotkeyClaims.map(\.changeCount) ==
+                (exactWindow && temporaryPayload ? [1] : []))
             #expect(fixture.automation.targetedHotkeyCalls.count == (exactWindow ? 0 : 1))
             #expect(fixture.automation.hotkeyCalls.isEmpty)
             #expect(clipboard.current?.textPreview == "prior")

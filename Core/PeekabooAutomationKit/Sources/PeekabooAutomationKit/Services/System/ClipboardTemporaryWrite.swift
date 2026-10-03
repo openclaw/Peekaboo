@@ -173,6 +173,7 @@ public enum ClipboardTemporaryWriteTesting {
     public static func transaction(
         priorClipboardPresent: Bool,
         originalChangeCount: Int,
+        isGeneralPasteboard: Bool = false,
         changeCount: @escaping () -> Int,
         write: @escaping (ClipboardWriteRequest, Int, (Int) -> Void) throws -> ClipboardReadResult,
         restore: @escaping (Int) throws -> ClipboardReadResult?) -> any ClipboardTemporaryWriteTransaction
@@ -180,6 +181,7 @@ public enum ClipboardTemporaryWriteTesting {
         OwnedClipboardTemporaryWriteTransaction(
             priorClipboardPresent: priorClipboardPresent,
             originalChangeCount: originalChangeCount,
+            isGeneralPasteboard: isGeneralPasteboard,
             access: ClipboardTemporaryWriteAccess(changeCount: changeCount, write: write, restore: restore))
     }
 }

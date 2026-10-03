@@ -28,6 +28,7 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 - **Foreground** (`--foreground`) requires a supplied target to return a confirmed exact-window focus receipt before Cmd+V. A genuinely targetless foreground call remains intentionally global. `--no-auto-focus` cannot be combined with a target because Peekaboo will not guess that the requested window already owns keyboard focus.
 - Without an app/PID target, `paste` fails before mutating the clipboard. Add `--foreground` only when global delivery is intentional.
 - Exact window selectors stay exact through text or Cmd+V dispatch; focus, owner, generation, or bounds drift fails before clipboard access whenever no event has begun. Exact-window remote delivery requires Bridge protocol 1.24.
+- Temporary rich/binary paste to an exact background window additionally requires Bridge protocol 1.40 and clipboard-guarded hotkey support before writing. The transaction passes its retained native General-pasteboard write generation to the host, which checks it before each new key-down. An intervening copy, including identical bytes, stops new paste input; any keys already down still receive their owed releases. The check does not prove app consumption or exclude a clipboard change after the last check. Current-clipboard, foreground, direct-text and legacy process-only routes retain their existing contracts.
 - Process-targeted text and Cmd+V delivery retain the resolved app's process-generation receipt. Plain text revalidates before every emitted character, while clipboard-backed paste uses generation-pinned hotkey delivery. A target exit or relaunch never silently retargets the reusable PID. Remote background paste requires Bridge protocol 1.22 or newer.
 - Clipboard-backed transactions are serialized across CLI, daemon, and GUI processes with a private per-user lock under `~/Library/Application Support/Peekaboo`, independent of each process's temporary directory.
 - Admission shares one 15-second monotonic deadline across the in-process queue and file-lock acquisition. If either wait ends at or after that deadline, even with successful acquisition, Peekaboo refuses before running the transaction body. The canonical `TIMEOUT` is a retry-safe pre-dispatch refusal: this transaction has not changed the clipboard or dispatched paste input, and the timeout alone does not require a fresh observation.
@@ -106,6 +107,12 @@ func prepareTemporaryWrite() throws -> any ClipboardTemporaryWriteTransaction {
 ```
 
 A custom backend must return a transaction that records the actual write claim even on partial failure, fences complete prior contents, preserves newer ownership, and performs one-shot cleanup independently of task cancellation. Do not implement this by wrapping the old unconditional restore sequence. Unsupported-provider refusals occur before clipboard reads, focus setup, or paste input; they are not a reason to retry with foreground authority.
+
+Temporary exact-window background paste also requires that transaction to conform to `ClipboardTemporaryWriteClaimProviding`.
+Its `writeWithClaim` returns both the write result and the General pasteboard generation retained at native declaration.
+Do not resample the clipboard after writing to construct this claim: another writer may already own that generation.
+Named-pasteboard transactions cannot provide a General-pasteboard claim. A transaction without the refinement refuses
+before its write; the capability does not grant clipboard-reading permission or move restoration to the Bridge host.
 
 ## Troubleshooting
 - `Paste hotkey did not return a confirmed outcome.` does not prove that nothing was pasted, including with `--foreground`. Inspect `mutation_dispatched`, `retry_safe`, and `requires_fresh_observation`, then inspect the exact target's current contents before deciding what to do next. Do not automatically replay a retry-unsafe paste: the fragment may already be present. Foreground focus confirmation and receiver consumption are separate facts.

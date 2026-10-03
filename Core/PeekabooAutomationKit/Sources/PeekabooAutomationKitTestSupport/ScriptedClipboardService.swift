@@ -28,6 +28,7 @@ open class ScriptedClipboardService: ClipboardTemporaryWriteProviding, Clipboard
     public private(set) var clearCallCount = 0
     public private(set) var saveCallCount = 0
     public private(set) var restoreCallCount = 0
+    public var retainsTemporaryWriteClaims = true
 
     private var generation = 0
 
@@ -128,9 +129,10 @@ open class ScriptedClipboardService: ClipboardTemporaryWriteProviding, Clipboard
         if prior != nil {
             try self.save(slot: slot)
         }
-        return ClipboardTemporaryWriteTesting.transaction(
+        let transaction = ClipboardTemporaryWriteTesting.transaction(
             priorClipboardPresent: prior != nil,
             originalChangeCount: originalGeneration,
+            isGeneralPasteboard: true,
             changeCount: { self.generation },
             write: { request, expected, didClaim in
                 guard self.generation == expected else { throw ClipboardTemporaryWriteError.ownershipChanged }
@@ -144,9 +146,34 @@ open class ScriptedClipboardService: ClipboardTemporaryWriteProviding, Clipboard
                 self.clear()
                 return nil
             })
+        return self.retainsTemporaryWriteClaims ? transaction : ClaimlessTemporaryWriteTransaction(transaction)
     }
 
     public func listSlots() -> [String] {
         Array(self.slots.keys)
+    }
+}
+
+@MainActor
+private final class ClaimlessTemporaryWriteTransaction: ClipboardTemporaryWriteTransaction {
+    private let transaction: any ClipboardTemporaryWriteTransaction
+    var priorClipboardPresent: Bool {
+        self.transaction.priorClipboardPresent
+    }
+
+    var didMutate: Bool {
+        self.transaction.didMutate
+    }
+
+    init(_ transaction: any ClipboardTemporaryWriteTransaction) {
+        self.transaction = transaction
+    }
+
+    func write(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        try self.transaction.write(request)
+    }
+
+    func cleanup() throws -> ClipboardTemporaryCleanupResult {
+        try self.transaction.cleanup()
     }
 }

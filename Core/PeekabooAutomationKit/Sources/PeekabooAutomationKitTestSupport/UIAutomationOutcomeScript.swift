@@ -520,9 +520,17 @@ extension ScriptedUIAutomationActionOutcomeProviding {
         target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<Void>
     {
         let service = try self.exactWindowKeyboardService(for: "hotkeys")
+        let result = try self.scriptedExactHotkeyResult(target: target)
+        try await service.hotkey(keys: keys, holdDuration: holdDuration, target: target)
+        return result
+    }
+
+    /// Shares scripted outcomes without requiring the unrelated legacy typing capability.
+    public func scriptedExactHotkeyResult(
+        target: ExactWindowKeyboardTarget) throws -> UIAutomationActionResult<Void>
+    {
         let targetIdentity = try self.outcomeTargetIdentity(target: target)
         let outcome = try self.uiAutomationOutcomeScript.nextOutcome(for: .hotkey)
-        try await service.hotkey(keys: keys, holdDuration: holdDuration, target: target)
         return UIAutomationActionResult(
             payload: (),
             outcome: outcome,
