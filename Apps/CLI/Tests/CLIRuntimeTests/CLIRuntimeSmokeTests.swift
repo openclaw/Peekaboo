@@ -546,6 +546,11 @@ struct CLIRuntimeSmokeTests {
                 requestedForeground: true,
                 policy: "foreground_allowed"
             ),
+            (
+                arguments: ["--allow-temporary-clipboard"],
+                requestedForeground: false,
+                policy: "background_only"
+            ),
         ]
         for prefix in [["agent"], ["agent", "run"]] {
             for authorityCase in authorityCases {
@@ -577,6 +582,10 @@ struct CLIRuntimeSmokeTests {
                 #expect(authority["requestedForeground"] as? Bool == authorityCase.requestedForeground)
                 #expect(authority["effectivePolicy"] as? String == authorityCase.policy)
                 #expect(authority["backgroundOnly"] as? Bool == !authorityCase.requestedForeground)
+                let requestedClipboard = authorityCase.arguments.contains("--allow-temporary-clipboard")
+                #expect(authority["requestedTemporaryClipboard"] as? Bool == requestedClipboard)
+                #expect(authority["temporaryClipboardPaste"] as? Bool ==
+                    (requestedClipboard || authorityCase.requestedForeground))
             }
         }
     }
@@ -588,9 +597,12 @@ struct CLIRuntimeSmokeTests {
         let authorityCases: [(arguments: [String], requested: String, policy: String)] = [
             (arguments: [], requested: "no", policy: "background_only"),
             (arguments: ["--allow-foreground"], requested: "yes", policy: "foreground_allowed"),
+            (arguments: ["--allow-temporary-clipboard"], requested: "no", policy: "background_only"),
         ]
         for prefix in [["agent"], ["agent", "run"]] {
             for authorityCase in authorityCases {
+                let clipboardPermitted = authorityCase.requested == "yes" ||
+                    authorityCase.arguments.contains("--allow-temporary-clipboard")
                 let result = try await TestChildProcess.runPeekaboo(
                     prefix + ["  Inspect TextEdit  ", "--dry-run", "--simple", "--no-remote"] +
                         authorityCase.arguments + (noDesktopContext ? ["--no-desktop-context"] : [])
@@ -602,6 +614,7 @@ struct CLIRuntimeSmokeTests {
                 Instruction: Inspect TextEdit
                 Requested foreground UI: \(authorityCase.requested)
                 Effective UI authority: \(authorityCase.policy)
+                Temporary clipboard paste: \(clipboardPermitted ? "yes" : "no")
                 Automatic desktop context: \(noDesktopContext ? "no" : "yes")
                 Model execution: skipped
                 Tool calls: 0

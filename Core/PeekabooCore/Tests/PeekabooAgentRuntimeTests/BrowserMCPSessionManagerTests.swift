@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import MCP
 import PeekabooAgentRuntimeTestSupport
+import PeekabooAutomationKitTestSupport
 import PeekabooBridge
 import PeekabooFoundation
 import PeekabooFoundationTestSupport
@@ -23,6 +24,124 @@ private final class BrowserFixtureAgentEventDelegate: AgentEventDelegate {
 struct BrowserMCPSessionManagerTests {
     init() throws {
         try AuthorityTestSupport.prepare()
+    }
+
+    @Test(arguments: [nil, "background_only", "foreground_allowed"] as [String?])
+    func `legacy disk sessions resume without clipboard permission and resave compatibly`(
+        legacyPolicy: String?) async throws
+    {
+        let directory = try AgentTestStorage.sessionDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var removeDirectory = true
+        defer {
+            if removeDirectory {
+                try? FileManager.default.removeItem(at: directory)
+            }
+        }
+        let sessionID = "legacy-compatibility"
+        let file = directory.appendingPathComponent("\(sessionID).json")
+        let expectedPolicy = legacyPolicy.flatMap(MCPToolExecutionPolicy.init(rawValue:)) ?? .backgroundOnly
+        let history: [ModelMessage] = [
+            .system(AgentSystemPrompt.generate(executionPolicy: expectedPolicy)),
+            .user("legacy original task"),
+            .assistant("legacy prior response"),
+        ]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let seed = AgentSession(
+            id: sessionID,
+            modelName: "legacy-fixture",
+            toolExecutionPolicy: expectedPolicy,
+            temporaryClipboardPasteMaximum: true,
+            messages: history,
+            metadata: SessionMetadata(customData: ["legacy-marker": "preserved"]),
+            createdAt: Date(),
+            updatedAt: Date())
+        var legacy = try #require(JSONSerialization.jsonObject(with: encoder.encode(seed)) as? [String: Any])
+        legacy.removeValue(forKey: "temporaryClipboardPasteMaximum")
+        if let legacyPolicy {
+            legacy["toolExecutionPolicy"] = legacyPolicy
+        } else {
+            legacy.removeValue(forKey: "toolExecutionPolicy")
+        }
+        try JSONSerialization.data(withJSONObject: legacy, options: [.sortedKeys]).write(to: file, options: .atomic)
+        let onDisk = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(onDisk["temporaryClipboardPasteMaximum"] == nil)
+        #expect(onDisk["toolExecutionPolicy"] as? String == legacyPolicy)
+
+        let provider = AgentRemoteBrowserStatusProvider(
+            supportsStreaming: false,
+            requestedToolCall: AgentToolCall(id: "legacy-rich-paste", name: "paste", arguments: [
+                "dataBase64": AnyAgentToolValue(string: "eA=="),
+                "uti": AnyAgentToolValue(string: "public.data"),
+                "snapshot": AnyAgentToolValue(string: "synthetic-snapshot"),
+            ]))
+        let desktop = DesktopContextPolicyServices()
+        let clipboard = ScriptedClipboardService()
+        let services = Self.services(browser: AgentRemoteBrowserRoot(), desktop: desktop, clipboard: clipboard)
+        let manager = try AgentSessionManager(sessionDirectory: directory)
+        let agent = try AuthorityTestSupport.agent(services: services, sessionManager: manager)
+        removeDirectory = false
+        do {
+            // A fresh manager loads the legacy file through public continuation, not a seeded cache.
+            let result = try await agent.continueSession(
+                sessionId: sessionID,
+                userMessage: "continue the legacy task",
+                model: .custom(provider: provider),
+                maxSteps: 2,
+                enhancementOptions: .minimal)
+
+            #expect(result.content == "remote browser execution completed")
+            #expect(result.sessionId == sessionID)
+            #expect(provider.requestCount == 2)
+            #expect(provider.pasteParameterKeys.count == 2)
+            #expect(provider.pasteParameterKeys.allSatisfy {
+                $0.contains("text") && !$0.contains("dataBase64") && !$0.contains("snapshot")
+            })
+            #expect(provider.systemPrompts.allSatisfy {
+                $0.contains("immutable background-only authority") &&
+                    !$0.contains("explicit temporary-clipboard permission") &&
+                    !$0.contains("explicit foreground UI authority")
+            })
+            let trace = result.executionTrace()
+            #expect(trace.entries.count == 1)
+            let entry = try #require(trace.entries.first)
+            #expect(entry.id == "legacy-rich-paste")
+            #expect(entry.disposition == .skippedBeforeDispatch)
+            #expect(entry.mutationDispatch == .notDispatched)
+            #expect(entry.isError == true)
+            #expect(entry.result?.objectValue?["mutation_dispatched"]?.boolValue == false)
+            #expect(clipboard.readAccessStatusCallCount == 0)
+            #expect(clipboard.getCallCount == 0)
+            #expect(clipboard.setCallCount == 0)
+            #expect(clipboard.saveCallCount == 0)
+            #expect(clipboard.restoreCallCount == 0)
+            #expect(clipboard.clearCallCount == 0)
+            #expect(desktop.automationStub.cursorReadCount == 0)
+            #expect(desktop.applicationStub.activationIdentifiers.isEmpty)
+            #expect(desktop.windowStub.focusRequests.isEmpty)
+
+            let reloadedManager = try AgentSessionManager(sessionDirectory: directory)
+            let reloaded = try #require(try await reloadedManager.loadSession(id: sessionID))
+            #expect(reloaded.effectiveToolExecutionPolicy == expectedPolicy)
+            #expect(reloaded.temporaryClipboardPasteMaximum == nil)
+            #expect(reloaded.maximumToolExecutionAuthority == .init(basePolicy: expectedPolicy))
+            #expect(reloaded.metadata.customData["legacy-marker"] == "preserved")
+            for previous in history.dropFirst() {
+                let retained = try #require(reloaded.messages.first { $0.id == previous.id })
+                #expect(try encoder.encode(retained) == encoder.encode(previous))
+            }
+            let resaved = try #require(
+                JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+            #expect(resaved["temporaryClipboardPasteMaximum"] == nil)
+            #expect(resaved["toolExecutionPolicy"] as? String == expectedPolicy.rawValue)
+
+            removeDirectory = await agent.endBrowserClient(forAgentSessionID: sessionID)
+            #expect(removeDirectory)
+        } catch {
+            removeDirectory = await agent.endBrowserClient(forAgentSessionID: sessionID)
+            throw error
+        }
     }
 
     @Test(arguments: [false, true])
@@ -5488,7 +5607,8 @@ extension BrowserMCPSessionManagerTests {
 
     private static func services(
         browser: any BrowserMCPClientProviding,
-        desktop: DesktopContextPolicyServices? = nil) -> PeekabooServices
+        desktop: DesktopContextPolicyServices? = nil,
+        clipboard: (any ClipboardServiceProtocol)? = nil) -> PeekabooServices
     {
         let base = AuthorityTestSupport.services()
         return PeekabooServices(
@@ -5502,7 +5622,8 @@ extension BrowserMCPSessionManagerTests {
             dialogs: base.dialogs,
             snapshots: base.snapshots,
             files: base.files,
-            clipboard: desktop.map { $0.clipboardStub as any ClipboardServiceProtocol } ?? base.clipboard,
+            clipboard: clipboard ??
+                desktop.map { $0.clipboardStub as any ClipboardServiceProtocol } ?? base.clipboard,
             permissions: base.permissions,
             audioInput: base.audioInput,
             browser: browser,
