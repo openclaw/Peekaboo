@@ -9,6 +9,45 @@ import Testing
 @Suite(.serialized)
 struct PeekabooBridgeClientConcurrencyTests {
     @Test
+    func `input capability reset revokes the whole snapshot and retains non input negotiation`() async throws {
+        let root = Self.temporaryRoot("input-capability-reset")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try PeekabooBridgeOperationReceiptAuthority(
+            socketPath: root.appendingPathComponent("authority.sock").path)
+        let clientInstanceID = UUID()
+        let session = try await OperationReceiptSessionFixture.make(
+            authority: authority,
+            clientInstanceID: clientInstanceID)
+        let peer = try ConcurrentGatedBridgePeer()
+        let client = TrustedBridgeClientFixture.make(
+            socketPath: peer.socketPath,
+            requestTimeoutSec: 10,
+            operationClientInstanceID: clientInstanceID)
+
+        do {
+            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 19))
+            let negotiation = Task { try await client.handshake(client: Self.clientIdentity) }
+            let request = try await peer.nextRequest()
+            try Self.requireHandshake(request)
+            try await peer.respond(
+                .handshake(Self.handshake(authority: authority, session: session.attestation, allInputs: true)),
+                to: request)
+            _ = try await negotiation.value
+            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 19))
+            #expect(await Self.retainedFlags(client) == Array(repeating: true, count: 6))
+
+            await client.clearNegotiatedInputCapabilities()
+
+            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 19))
+            #expect(await Self.retainedFlags(client) == Array(repeating: true, count: 6))
+        } catch {
+            await peer.stop()
+            throw error
+        }
+        await peer.stop()
+    }
+
+    @Test
     func `initial negotiation reentrancy refuses an unreceipted request`() async throws {
         let root = Self.temporaryRoot("initial-negotiation")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -85,10 +124,10 @@ struct PeekabooBridgeClientConcurrencyTests {
 
             try await peer.respond(
                 .handshake(Self.handshake(
-                    authority: authority, session: newerSession.attestation, clipboardGuard: true)),
+                    authority: authority, session: newerSession.attestation, allInputs: true)),
                 to: newerRequest)
             #expect(try await newer.value.operationSessionAttestation?.sessionID == newerSession.attestation.sessionID)
-            #expect(await client.clipboardGuardedExactWindowHotkeysEnabled)
+            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 19))
 
             try await peer.respond(
                 .handshake(Self.legacyHandshake()),
@@ -103,7 +142,7 @@ struct PeekabooBridgeClientConcurrencyTests {
             let reservation = try #require(try await client.reserveOperationSession())
             #expect(reservation.sessionAttestation.sessionID == newerSession.attestation.sessionID)
             #expect(reservation.sequence.value == 0)
-            #expect(await client.clipboardGuardedExactWindowHotkeysEnabled)
+            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 19))
         } catch {
             await peer.stop()
             throw error
@@ -147,7 +186,7 @@ struct PeekabooBridgeClientConcurrencyTests {
 
             try await peer.respond(
                 .handshake(Self.handshake(
-                    authority: authority, session: olderSession.attestation, clipboardGuard: true)),
+                    authority: authority, session: olderSession.attestation, allInputs: true)),
                 to: olderRequest)
             do {
                 _ = try await older.value
@@ -157,7 +196,7 @@ struct PeekabooBridgeClientConcurrencyTests {
             }
 
             #expect(try await client.reserveOperationSession()?.requestID == nil)
-            #expect(await !client.clipboardGuardedExactWindowHotkeysEnabled)
+            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 19))
             #expect(await peer.acceptedConnectionCount == 2)
         } catch {
             await peer.stop()
@@ -1441,32 +1480,32 @@ extension PeekabooBridgeClientConcurrencyTests {
     private static func handshake(
         authority: PeekabooBridgeOperationReceiptAuthority,
         session: PeekabooBridgeOperationSessionAttestation,
-        clipboardGuard: Bool = false) -> PeekabooBridgeHandshakeResponse
+        allInputs: Bool = false) -> PeekabooBridgeHandshakeResponse
     {
         let listener = authority.attestation
         return BridgeTestFixtures.handshake(
-            negotiatedVersion: clipboardGuard
-                ? PeekabooBridgeConstants.clipboardGuardedExactWindowHotkeyVersion
+            negotiatedVersion: allInputs
+                ? PeekabooBridgeConstants.protocolVersion
                 : PeekabooBridgeConstants.attestedOperationReceiptVersion,
             hostKind: .gui,
             build: "client-concurrency-test",
-            supportedOperations: [
+            supportedOperations: allInputs ? PeekabooBridgeOperation.allCases : [
                 .permissionsStatus,
                 .requestPostEventPermission,
                 .findApplication,
                 .hideApplication,
                 .browserStatus,
                 .browserExecute,
-            ] + (clipboardGuard ? [.exactWindowTargetedHotkey] : []),
+            ],
             permissions: .init(screenRecording: true, accessibility: true, postEvent: true),
-            enabledOperations: [
+            enabledOperations: allInputs ? PeekabooBridgeOperation.allCases : [
                 .permissionsStatus,
                 .requestPostEventPermission,
                 .findApplication,
                 .hideApplication,
                 .browserStatus,
                 .browserExecute,
-            ] + (clipboardGuard ? [.exactWindowTargetedHotkey] : []),
+            ],
             hostIdentity: .init(
                 processIdentifier: listener.host.processIdentifier,
                 processStartIdentity: listener.host.processStartIdentity,
@@ -1477,9 +1516,69 @@ extension PeekabooBridgeClientConcurrencyTests {
             hostCapabilities: [
                 PeekabooBridgeHostCapability.attestedOperationReceipts,
                 PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
-            ] + (clipboardGuard ? [PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys] : []),
+            ] + (allInputs ? Self.fullCapabilityProfile : []),
             operationAttestation: listener,
             operationSessionAttestation: session)
+    }
+
+    /// Projection-only handshake fixture; the gated peer never executes these advertised operations.
+    private static let fullCapabilityProfile = [
+        PeekabooBridgeHostCapability.exactDialogInputExecution,
+        PeekabooBridgeHostCapability.exactForcedDialogDismissExecution,
+        PeekabooBridgeHostCapability.dialogInputFocusPolicy,
+        PeekabooBridgeHostCapability.plannerInventoryTransport,
+        PeekabooBridgeHostCapability.exactWindowHeldPointerLifecycle,
+        PeekabooBridgeHostCapability.exactWindowDrag,
+        PeekabooBridgeHostCapability.statelessClickVariants,
+        PeekabooBridgeHostCapability.agentExecutionTrace,
+        PeekabooBridgeHostCapability.processGenerationObservation,
+        PeekabooBridgeHostCapability.certificationProducerAttestation,
+        PeekabooBridgeHostCapability.setValueResultTargetBinding,
+        PeekabooBridgeHostCapability.processGenerationBoundElementMutations,
+        PeekabooBridgeHostCapability.foregroundModifierClickSnapshotLease,
+        PeekabooBridgeHostCapability.nativeBrowserConnectionBinding,
+        PeekabooBridgeHostCapability.browserConnectionHandoff,
+        PeekabooBridgeHostCapability.producerBoundSnapshotReferences,
+        PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery,
+        PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt,
+        PeekabooBridgeHostCapability.compositeTypeDelivery,
+        PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys,
+        PeekabooBridgeHostCapability.desktopObservationInlinePixels,
+    ]
+
+    private static func inputFlags(_ client: PeekabooBridgeClient) async -> [Bool] {
+        await [
+            client.exactWindowHeldPointerLifecycleEnabled,
+            client.exactWindowDragEnabled,
+            client.exactWindowHeldPointerTerminalCleanupEnabled,
+            client.statelessClickVariantPayloadsEnabled,
+            client.statelessClickVariantsEnabled,
+            client.agentExecutionTraceEnabled,
+            client.processGenerationObservationEnabled,
+            client.certificationProducerAttestationEnabled,
+            client.setValueResultTargetBindingEnabled,
+            client.processGenerationBoundElementMutationsEnabled,
+            client.foregroundModifierClickSnapshotLeaseEnabled,
+            client.nativeBrowserConnectionBindingEnabled,
+            client.browserConnectionHandoffEnabled,
+            client.producerBoundSnapshotReferencesEnabled,
+            client.targetedClickAccessibilityValueDeliveryEnabled,
+            client.requestPinnedExactWindowScrollReceiptEnabled,
+            client.compositeTypeDeliveryEnabled,
+            client.clipboardGuardedExactWindowHotkeysEnabled,
+            client.desktopObservationInlinePixelsEnabled,
+        ]
+    }
+
+    private static func retainedFlags(_ client: PeekabooBridgeClient) async -> [Bool] {
+        await [
+            client.actionProjectionEnabled,
+            client.exactDialogInputExecutionEnabled,
+            client.exactDialogForceDismissExecutionEnabled,
+            client.dialogInputFocusPolicyEnabled,
+            client.applicationMutationInventoryTransportEnabled,
+            client.windowMutationInventoryTransportEnabled,
+        ]
     }
 
     private static func legacyHandshake() -> PeekabooBridgeHandshakeResponse {
