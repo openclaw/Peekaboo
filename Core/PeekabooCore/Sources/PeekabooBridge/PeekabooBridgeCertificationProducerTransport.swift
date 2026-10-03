@@ -139,8 +139,11 @@ enum PeekabooBridgeCertificationProducerTransport {
         executableSHA256Provider: (String) throws -> String = {
             try PeekabooBridgeAgentExecutionExecutable.stableExecutableSHA256($0)
         },
-        staticCodeSignatureHashProvider: (String) -> String? = {
-            PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(executablePath: $0)
+        validatedCodeSignatureHashProvider: (PeekabooBridgePeerAuditIdentity, UInt64, String) -> String? = {
+            PeekabooBridgeCodeSignatureIdentity.validatedCodeSignatureHash(
+                auditIdentity: $0,
+                expectedProcessStartIdentity: $1,
+                executablePath: $2)
         }) throws -> ExecutableIdentity
     {
         guard liveIdentity.effectiveUserIdentifier == geteuid(),
@@ -160,7 +163,10 @@ enum PeekabooBridgeCertificationProducerTransport {
               let canonicalPath = canonicalPathProvider(executableURL.path),
               processPathProvider(liveIdentity.processIdentifier) == canonicalPath,
               let executableSHA256 = try? executableSHA256Provider(canonicalPath),
-              staticCodeSignatureHashProvider(canonicalPath) == expected.codeSignatureHash
+              validatedCodeSignatureHashProvider(
+                  auditIdentity,
+                  liveIdentity.processStartIdentity,
+                  canonicalPath) == expected.codeSignatureHash
         else {
             throw self.invalidEvidence("Certification producer identity is not authorized")
         }

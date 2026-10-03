@@ -630,7 +630,13 @@ struct PeekabooBridgeAgentExecutionExecutable: Equatable, Sendable {
         return try self.capture(
             processIdentifier: peer.processIdentifier,
             expectedGeneration: liveIdentity.processStartIdentity,
-            expectedCDHash: expectedCDHash)
+            expectedCDHash: expectedCDHash,
+            validatedSignature: { generation, path in
+                PeekabooBridgeCodeSignatureIdentity.validatedCodeSignatureHash(
+                    auditIdentity: auditIdentity,
+                    expectedProcessStartIdentity: generation,
+                    executablePath: path)
+            })
     }
 
     static func revalidatePeer(_ peer: PeekabooBridgePeer, expected: Self) throws {
@@ -643,7 +649,13 @@ struct PeekabooBridgeAgentExecutionExecutable: Equatable, Sendable {
         let child = try self.capture(
             processIdentifier: processIdentifier,
             expectedGeneration: nil,
-            expectedCDHash: expected.codeSignatureHash)
+            expectedCDHash: expected.codeSignatureHash,
+            validatedSignature: { generation, path in
+                PeekabooBridgeCodeSignatureIdentity.validatedCodeSignatureHash(
+                    unreapedChildProcessIdentifier: processIdentifier,
+                    expectedProcessStartIdentity: generation,
+                    executablePath: path)
+            })
         guard child.path == expected.path,
               child.sha256 == expected.sha256,
               child.codeSignatureHash == expected.codeSignatureHash
@@ -665,25 +677,29 @@ struct PeekabooBridgeAgentExecutionExecutable: Equatable, Sendable {
         return try self.capture(
             processIdentifier: processIdentifier,
             expectedGeneration: processStartIdentity,
-            expectedCDHash: codeSignatureHash)
+            expectedCDHash: codeSignatureHash,
+            validatedSignature: { generation, path in
+                PeekabooBridgeCodeSignatureIdentity.validatedCodeSignatureHash(
+                    unreapedChildProcessIdentifier: processIdentifier,
+                    expectedProcessStartIdentity: generation,
+                    executablePath: path)
+            })
     }
     #endif
 
     private static func capture(
         processIdentifier: pid_t,
         expectedGeneration: UInt64?,
-        expectedCDHash: String) throws -> Self
+        expectedCDHash: String,
+        validatedSignature: (UInt64, String) -> String?) throws -> Self
     {
         guard processIdentifier > 0,
               let generationBefore = SystemIdentityResolver.processStartIdentity(processIdentifier),
               expectedGeneration == nil || expectedGeneration == generationBefore,
               let pathBefore = self.canonicalProcessPath(processIdentifier),
               let digest = try? self.stableExecutableSHA256(pathBefore),
-              let liveCDHash = PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(
-                  processIdentifier: processIdentifier,
-                  expectedProcessStartIdentity: generationBefore),
+              let liveCDHash = validatedSignature(generationBefore, pathBefore),
               liveCDHash == expectedCDHash,
-              PeekabooBridgeCodeSignatureIdentity.codeSignatureHash(executablePath: pathBefore) == expectedCDHash,
               let pathAfter = self.canonicalProcessPath(processIdentifier),
               pathAfter == pathBefore,
               SystemIdentityResolver.processStartIdentity(processIdentifier) == generationBefore

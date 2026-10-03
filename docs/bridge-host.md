@@ -364,6 +364,14 @@ accepts canonical `X_AI_API_KEY` as well as the `XAI_API_KEY` and `GROK_API_KEY`
 to background-only `agent run --no-cache --bridge-socket
 <serving-host> --json`; there is no foreground-authority flag, session resume, or cache write.
 
+Executable validation uses the signed architecture selected for the live process, which can differ from a universal
+binary's default path-based architecture. Peer lookups retain their socket audit token; newly spawned, unreaped children
+use the parent's retained PID generation. The selected static signature must be valid and match the live kernel CDHash,
+canonical executable path, and process generation before and after validation. Whole-file SHA-256 and safe file-metadata
+checks remain required, and the child must still match the authenticated peer's exact executable identity. Live
+certification producer authentication uses the same audit-bound slice check, including its post-challenge identity
+revalidation.
+
 The host creates bounded anonymous stdout and stderr pipes plus separate anonymous lockdown-readiness and release
 pipes. It spawns the exact CLI with `START_SUSPENDED | SETSID`, then sends `SIGCONT` only to enter the CLI's trusted
 earliest gate. Before command routing, that gate requires an untainted non-root process with equal real and effective

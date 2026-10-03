@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Validate Bridge Agent and live certification-producer executables against the running universal-binary slice, avoiding false identity refusals while preserving exact code, path, process-generation, file, and peer-trust checks.
 - Report failed background rich-paste preparation observations as no-input refusals, preserving earlier clipboard/preparation effects and avoiding misleading claims that a focus request was sent.
 - Preserve plain and attributed Accessibility value labels in menu listing, path selection, and menu-extra matching, keeping title precedence and ambiguous-name refusals unchanged.
 - Redact inline base64 payloads from Agent live tool-call previews, including nested and partially streamed values, without changing authorized tool input.

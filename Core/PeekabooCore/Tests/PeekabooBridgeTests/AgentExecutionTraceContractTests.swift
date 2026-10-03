@@ -497,6 +497,7 @@ struct AgentExecutionTraceContractTests {
         let challenge = String(repeating: "a", count: 64)
         let pipes = try PeekabooBridgeAgentExecutionPipes()
         let gate = try Self.releaseGate(for: pipes)
+        defer { gate.closeAll() }
         let script = """
         token=$(/bin/dd bs=64 count=1 2>/dev/null <&\(gate.childDescriptor))
         [ "$token" = "\(challenge)" ] || exit 71
@@ -575,6 +576,7 @@ struct AgentExecutionTraceContractTests {
         let challenge = String(repeating: "b", count: 64)
         let pipes = try PeekabooBridgeAgentExecutionPipes()
         let gate = try Self.releaseGate(for: pipes)
+        defer { gate.closeAll() }
         let pid = try PeekabooBridgeAgentExecutionSpawn.spawnSuspended(
             executablePath: "/usr/bin/false",
             arguments: [],
@@ -720,6 +722,46 @@ struct AgentExecutionTraceContractTests {
                 replacementPID,
                 expected: expected)
         }
+    }
+
+    @Test(arguments: [false, true])
+    func `Fixture setup failures reap the owned suspended child`(failDuringCustodyCapture: Bool) async throws {
+        let pipes = try PeekabooBridgeAgentExecutionPipes()
+        let gate = try Self.releaseGate(for: pipes)
+        defer { gate.closeAll() }
+        let pid = try PeekabooBridgeAgentExecutionSpawn.spawnSuspended(
+            executablePath: "/bin/sleep",
+            arguments: ["30"],
+            environment: ["PATH": "/usr/bin:/bin"],
+            pipes: pipes,
+            releaseGate: gate)
+        do {
+            let execution = try Self.capture(
+                pid: pid,
+                pipes: pipes,
+                captureExecutable: { processIdentifier in
+                    guard failDuringCustodyCapture else { throw FixtureSetupFailure.injected }
+                    return try PeekabooBridgeAgentExecutionExecutable.captureProcessForTesting(processIdentifier)
+                },
+                captureCustody: { _ in throw FixtureSetupFailure.injected })
+            PeekabooBridgeAgentExecutionProcessWait.killSuspendedAndReap(pid)
+            _ = await Self.finish(execution)
+            Issue.record("Expected fixture setup to fail before pipe readers start")
+        } catch {
+            #expect(error is FixtureSetupFailure)
+        }
+        var info = siginfo_t()
+        errno = 0
+        let observation = Darwin.waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT)
+        let observationError = errno
+        // Retain safe test cleanup if this regression returns an unreaped child again.
+        if observation == 0 {
+            PeekabooBridgeAgentExecutionProcessWait.killSuspendedAndReap(pid)
+            pipes.closeAll()
+        }
+        #expect(observation == -1)
+        #expect(observationError == ECHILD)
+        Self.expectReaped(pid)
     }
 
     private static func request(
@@ -915,19 +957,29 @@ struct AgentExecutionTraceContractTests {
         let stderr: Task<PeekabooBridgeAgentExecutionPipeCapture, Never>
     }
 
+    private enum FixtureSetupFailure: Error {
+        case injected
+    }
+
     private static func spawnSuspended(
         executable: String,
         arguments: [String]) throws -> SuspendedExecution
     {
         let pipes = try PeekabooBridgeAgentExecutionPipes()
         let gate = try Self.releaseGate(for: pipes)
-        let pid = try PeekabooBridgeAgentExecutionSpawn.spawnSuspended(
-            executablePath: executable,
-            arguments: arguments,
-            environment: ["PATH": "/usr/bin:/bin"],
-            pipes: pipes,
-            releaseGate: gate)
-        gate.closeAll()
+        defer { gate.closeAll() }
+        let pid: pid_t
+        do {
+            pid = try PeekabooBridgeAgentExecutionSpawn.spawnSuspended(
+                executablePath: executable,
+                arguments: arguments,
+                environment: ["PATH": "/usr/bin:/bin"],
+                pipes: pipes,
+                releaseGate: gate)
+        } catch {
+            pipes.closeAll()
+            throw error
+        }
         return try Self.capture(pid: pid, pipes: pipes)
     }
 
@@ -992,15 +1044,25 @@ struct AgentExecutionTraceContractTests {
 
     private static func capture(
         pid: pid_t,
-        pipes: PeekabooBridgeAgentExecutionPipes) throws -> SuspendedExecution
+        pipes: PeekabooBridgeAgentExecutionPipes,
+        captureExecutable: (pid_t) throws -> PeekabooBridgeAgentExecutionExecutable =
+            PeekabooBridgeAgentExecutionExecutable.captureProcessForTesting,
+        captureCustody: (PeekabooBridgeOperationProcessIdentity) throws -> PeekabooBridgeAgentExecutionProcessCustody =
+            PeekabooBridgeAgentExecutionProcessWait.captureProcessCustody) throws -> SuspendedExecution
     {
-        let executable = try PeekabooBridgeAgentExecutionExecutable.captureProcessForTesting(pid)
-        let processIdentity = PeekabooBridgeOperationProcessIdentity(
-            processIdentifier: pid,
-            processStartIdentity: executable.processStartIdentity,
-            codeSignatureHash: executable.codeSignatureHash)
-        let processCustody = try PeekabooBridgeAgentExecutionProcessWait.captureProcessCustody(
-            processIdentity: processIdentity)
+        let processCustody: PeekabooBridgeAgentExecutionProcessCustody
+        do {
+            let executable = try captureExecutable(pid)
+            let processIdentity = PeekabooBridgeOperationProcessIdentity(
+                processIdentifier: pid,
+                processStartIdentity: executable.processStartIdentity,
+                codeSignatureHash: executable.codeSignatureHash)
+            processCustody = try captureCustody(processIdentity)
+        } catch {
+            PeekabooBridgeAgentExecutionProcessWait.killSuspendedAndReap(pid)
+            pipes.closeAll()
+            throw error
+        }
         let control = PeekabooBridgeAgentExecutionPipeControl(maximumCombinedBytes: 256 * 1024)
         let stdout = Task.detached {
             PeekabooBridgeAgentExecutionPipeReader.read(pipes.stdoutRead, control: control)
@@ -1019,12 +1081,17 @@ struct AgentExecutionTraceContractTests {
     private static func releaseGate(
         for pipes: PeekabooBridgeAgentExecutionPipes) throws -> PeekabooBridgeAgentExecutionReleaseGate
     {
-        try PeekabooBridgeAgentExecutionReleaseGate(excludingDescriptors: [
-            pipes.stdoutRead,
-            pipes.stdoutWrite,
-            pipes.stderrRead,
-            pipes.stderrWrite,
-        ])
+        do {
+            return try PeekabooBridgeAgentExecutionReleaseGate(excludingDescriptors: [
+                pipes.stdoutRead,
+                pipes.stdoutWrite,
+                pipes.stderrRead,
+                pipes.stderrWrite,
+            ])
+        } catch {
+            pipes.closeAll()
+            throw error
+        }
     }
 
     private static func finish(_ execution: SuspendedExecution) async -> (

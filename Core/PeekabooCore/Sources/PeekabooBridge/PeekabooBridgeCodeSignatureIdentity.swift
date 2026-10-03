@@ -125,20 +125,63 @@ enum PeekabooBridgeCodeSignatureIdentity {
         return self.hexString(for: Data(hash))
     }
 
-    /// Returns the validated static CDHash of one exact signed executable path.
-    static func codeSignatureHash(executablePath: String) -> String? {
-        var staticCode: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(
-            URL(fileURLWithPath: executablePath) as CFURL,
-            SecCSFlags(),
-            &staticCode) == errSecSuccess,
-            let staticCode,
-            SecStaticCodeCheckValidity(staticCode, SecCSFlags(), nil) == errSecSuccess,
-            let information = self.signingInformation(staticCode),
-            let hash = information[kSecCodeInfoUnique as String] as? Data,
-            hash.count == self.codeDirectoryHashByteCount
+    /// Validates the executable slice selected by one audit-token-bound peer, not the path's default architecture.
+    static func validatedCodeSignatureHash(
+        auditIdentity: PeekabooBridgePeerAuditIdentity,
+        expectedProcessStartIdentity: UInt64,
+        executablePath: String) -> String?
+    {
+        self.validatedLiveCodeSignatureHash(
+            processIdentifier: auditIdentity.processIdentifier,
+            expectedProcessStartIdentity: expectedProcessStartIdentity,
+            executablePath: executablePath,
+            liveHash: { self.codeSignatureHash(auditIdentity: auditIdentity) },
+            selectedCode: { self.codePair(auditIdentity: auditIdentity) })
+    }
+
+    /// PID selection is only for caller-owned children whose unreaped generation remains allocated.
+    /// Socket peers must use the audit-token overload, even when their numeric PID is known.
+    static func validatedCodeSignatureHash(
+        unreapedChildProcessIdentifier: pid_t,
+        expectedProcessStartIdentity: UInt64,
+        executablePath: String) -> String?
+    {
+        self.validatedLiveCodeSignatureHash(
+            processIdentifier: unreapedChildProcessIdentifier,
+            expectedProcessStartIdentity: expectedProcessStartIdentity,
+            executablePath: executablePath,
+            liveHash: {
+                self.codeSignatureHash(
+                    processIdentifier: unreapedChildProcessIdentifier,
+                    expectedProcessStartIdentity: expectedProcessStartIdentity)
+            },
+            selectedCode: {
+                self.codePair(attributes: [kSecGuestAttributePid: unreapedChildProcessIdentifier])
+            })
+    }
+
+    private static func validatedLiveCodeSignatureHash(
+        processIdentifier: pid_t,
+        expectedProcessStartIdentity: UInt64,
+        executablePath: String,
+        liveHash: () -> String?,
+        selectedCode: () -> (SecCode, SecStaticCode)?) -> String?
+    {
+        guard processIdentifier > 0,
+              SystemIdentityResolver.processStartIdentity(processIdentifier) == expectedProcessStartIdentity,
+              let hashBefore = liveHash(),
+              let (_, staticCode) = selectedCode(),
+              SecStaticCodeCheckValidity(staticCode, SecCSFlags(), nil) == errSecSuccess,
+              let information = self.signingInformation(staticCode),
+              let executableURL = information[kSecCodeInfoMainExecutable as String] as? URL,
+              executableURL.resolvingSymlinksInPath().path == executablePath,
+              let staticHash = information[kSecCodeInfoUnique as String] as? Data,
+              staticHash.count == self.codeDirectoryHashByteCount,
+              self.hexString(for: staticHash) == hashBefore,
+              liveHash() == hashBefore,
+              SystemIdentityResolver.processStartIdentity(processIdentifier) == expectedProcessStartIdentity
         else { return nil }
-        return self.hexString(for: hash)
+        return hashBefore
     }
 
     /// Returns the kernel's code-directory hash for the exact process generation named by a socket peer audit token.
@@ -282,7 +325,10 @@ enum PeekabooBridgeCodeSignatureIdentity {
     private static func codePair(
         auditIdentity: PeekabooBridgePeerAuditIdentity) -> (SecCode, SecStaticCode)?
     {
-        let attributes: NSDictionary = [kSecGuestAttributeAudit: auditIdentity.tokenData]
+        self.codePair(attributes: [kSecGuestAttributeAudit: auditIdentity.tokenData])
+    }
+
+    private static func codePair(attributes: NSDictionary) -> (SecCode, SecStaticCode)? {
         var code: SecCode?
         guard SecCodeCopyGuestWithAttributes(nil, attributes, SecCSFlags(), &code) == errSecSuccess,
               let code

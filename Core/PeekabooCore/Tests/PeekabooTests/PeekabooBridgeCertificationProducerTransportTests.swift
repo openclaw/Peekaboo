@@ -10,7 +10,7 @@ import Testing
 @Suite("Bridge certification producer transport", .serialized)
 struct PeekabooBridgeCertificationProducerTransportTests {
     @Test
-    func `Producer authorization rejects identifier team generation and source drift`() throws {
+    func `Producer authorization binds the selected signature and rejects identity drift`() throws {
         let live = try #require(OperationReceiptSessionFixture.currentPeer().liveIdentity)
         let expected = try PeekabooBridgeCertificationProducerExpectation(
             processIdentifier: live.processIdentifier,
@@ -19,6 +19,7 @@ struct PeekabooBridgeCertificationProducerTransportTests {
         let executablePath = "/private/tmp/peekaboo-certification-producer"
         let executableSHA256 = String(repeating: "b", count: 64)
         let sourceCommit = String(repeating: "c", count: 40)
+        var selectedSignatureValidations = 0
 
         func information(identifier: String, team: String, source: String) -> [String: Any] {
             [
@@ -35,6 +36,7 @@ struct PeekabooBridgeCertificationProducerTransportTests {
             team: String = PeekabooBridgeCertificationValidation.foundationTeamIdentifier,
             source: String = sourceCommit,
             processPath: String = executablePath,
+            selectedHash: String? = expected.codeSignatureHash,
             identity: PeekabooBridgeLivePeerIdentity? = nil,
             expectation: PeekabooBridgeCertificationProducerExpectation? = nil) throws
             -> PeekabooBridgeCertificationProducerTransport.ExecutableIdentity
@@ -49,7 +51,16 @@ struct PeekabooBridgeCertificationProducerTransportTests {
                 processPathProvider: { _ in processPath },
                 canonicalPathProvider: { $0 },
                 executableSHA256Provider: { _ in executableSHA256 },
-                staticCodeSignatureHashProvider: { _ in expected.codeSignatureHash })
+                validatedCodeSignatureHashProvider: { auditIdentity, generation, path in
+                    selectedSignatureValidations += 1
+                    #expect(auditIdentity.tokenData == live.auditToken)
+                    #expect(auditIdentity.processIdentifier == live.processIdentifier)
+                    #expect(auditIdentity.processIdentifierVersion == live.processIdentifierVersion)
+                    #expect(auditIdentity.effectiveUserIdentifier == live.effectiveUserIdentifier)
+                    #expect(generation == live.processStartIdentity)
+                    #expect(path == executablePath)
+                    return selectedHash
+                })
         }
 
         let accepted = try authorize()
@@ -58,6 +69,7 @@ struct PeekabooBridgeCertificationProducerTransportTests {
         #expect(accepted.teamIdentifier == PeekabooBridgeCertificationValidation.foundationTeamIdentifier)
         #expect(accepted.sourceCommit == sourceCommit)
         #expect(accepted.sha256 == executableSHA256)
+        #expect(selectedSignatureValidations == 1)
 
         #expect(throws: PeekabooBridgeErrorEnvelope.self) {
             _ = try authorize(identifier: "boo.peekaboo.same-team-impostor")
@@ -83,6 +95,14 @@ struct PeekabooBridgeCertificationProducerTransportTests {
                 processStartIdentity: expected.processStartIdentity,
                 codeSignatureHash: String(repeating: "d", count: 40)))
         }
+        #expect(selectedSignatureValidations == 1)
+        #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try authorize(selectedHash: nil)
+        }
+        #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try authorize(selectedHash: String(repeating: "0", count: 40))
+        }
+        #expect(selectedSignatureValidations == 3)
     }
 
     @Test
