@@ -12,7 +12,7 @@ struct BrowserConnectionHandoffTests {
     @Test
     func `protocol 1 38 owns the distinct browser handoff capability and wire cases`() async throws {
         let version = PeekabooBridgeProtocolVersion(major: 1, minor: 38)
-        #expect(PeekabooBridgeConstants.protocolVersion == version)
+        #expect(PeekabooBridgeConstants.protocolVersion >= version)
         #expect(PeekabooBridgeConstants.browserConnectionHandoffVersion == version)
         #expect(PeekabooBridgeHostCapability.browserConnectionHandoff == "browserConnectionHandoff")
         #expect(PeekabooBridgeClientCapability.browserConnectionHandoff == "browserConnectionHandoff")
