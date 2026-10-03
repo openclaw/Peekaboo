@@ -678,12 +678,54 @@ extension PeekabooBridgeServer {
         _ payload: PeekabooBridgeExactWindowHotkeyRequest) async throws
         -> PeekabooBridgeHandledResponse
     {
+        if let clipboardClaim = payload.clipboardClaim {
+            guard payload.holdDuration > 0, HotkeyService.isPasteShortcut(payload.keys) else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    actionFailure: .preDispatchRefusal(
+                        route: .bridge,
+                        reason: .invalidRequest,
+                        message: "A temporary clipboard claim requires Cmd+V with a positive hold."))
+            }
+            guard let service = self.services.automation as? any ClipboardGuardedExactWindowHotkeyServiceProtocol,
+                  service.supportsClipboardGuardedExactWindowHotkeys
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    actionFailure: .preDispatchRefusal(
+                        route: .bridge,
+                        reason: .runtimeIncompatible,
+                        message: "Clipboard-guarded exact-window paste is not supported by this bridge host"))
+            }
+            guard let focusedElement = payload.expectedFocusedElement else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    actionFailure: .preDispatchRefusal(
+                        route: .bridge,
+                        reason: .invalidRequest,
+                        message: "Clipboard-guarded paste requires a retained focused-element receipt"))
+            }
+            let target = try UIAutomationTarget.ExactWindow(
+                identity: payload.expectedWindowIdentity,
+                bounds: payload.expectedWindowBounds,
+                focusedElement: focusedElement)
+            self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
+            let result = try await service.hotkeyWithOutcome(
+                keys: payload.keys,
+                holdDuration: payload.holdDuration,
+                target: target,
+                clipboardClaim: clipboardClaim)
+            return try Self.handledActionResponse(response: .ok, result: result, fallbackTarget: .requestPinned)
+        }
         guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
               service.supportsExactWindowTargetedKeyboard
         else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
-                message: "Atomic exact-window background hotkeys are not supported by this bridge host")
+                actionFailure: .preDispatchRefusal(
+                    route: .bridge,
+                    reason: .runtimeIncompatible,
+                    message: "Atomic exact-window background hotkeys are not supported by this bridge host"))
         }
         self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
         if let outcomeService = try self.automationOutcomeService() {

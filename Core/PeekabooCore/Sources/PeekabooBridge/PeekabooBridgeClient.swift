@@ -71,6 +71,7 @@ public actor PeekabooBridgeClient {
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
     var compositeTypeDeliveryEnabled = false
+    var clipboardGuardedExactWindowHotkeysEnabled = false
     var desktopObservationInlinePixelsEnabled = false
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
@@ -483,6 +484,7 @@ public actor PeekabooBridgeClient {
         self.targetedClickAccessibilityValueDeliveryEnabled = false
         self.requestPinnedExactWindowScrollReceiptEnabled = false
         self.compositeTypeDeliveryEnabled = false
+        self.clipboardGuardedExactWindowHotkeysEnabled = false
         self.desktopObservationInlinePixelsEnabled = false
     }
 
@@ -884,6 +886,7 @@ public actor PeekabooBridgeClient {
             requestPinnedExactWindowScrollReceiptEnabled:
             Self.supportsRequestPinnedExactWindowScrollReceipt(handshake),
             compositeTypeDeliveryEnabled: Self.supportsCompositeTypeDelivery(handshake),
+            clipboardGuardedExactWindowHotkeysEnabled: handshake.supportsClipboardGuardedExactWindowHotkeys,
             desktopObservationInlinePixelsEnabled: handshake.supportedOperations.contains(.desktopObservation) &&
                 handshake.hostCapabilities?
                 .contains(PeekabooBridgeHostCapability.desktopObservationInlinePixels) == true,
@@ -1205,6 +1208,7 @@ public actor PeekabooBridgeClient {
         self.requestPinnedExactWindowScrollReceiptEnabled =
             candidate.requestPinnedExactWindowScrollReceiptEnabled
         self.compositeTypeDeliveryEnabled = candidate.compositeTypeDeliveryEnabled
+        self.clipboardGuardedExactWindowHotkeysEnabled = candidate.clipboardGuardedExactWindowHotkeysEnabled
         self.desktopObservationInlinePixelsEnabled = candidate.desktopObservationInlinePixelsEnabled
         self.operationAttestation = candidate.listenerAttestation
         self.installReceiptlessAuthenticatedHost(candidate.receiptlessAuthenticatedHost)
@@ -1512,6 +1516,7 @@ private struct PeekabooBridgeClientHandshakeCandidate: Sendable {
     let targetedClickAccessibilityValueDeliveryEnabled: Bool
     let requestPinnedExactWindowScrollReceiptEnabled: Bool
     let compositeTypeDeliveryEnabled: Bool
+    let clipboardGuardedExactWindowHotkeysEnabled: Bool
     let desktopObservationInlinePixelsEnabled: Bool
     let listenerAttestation: PeekabooBridgeListenerAttestation?
     let listenerLiveIdentity: PeekabooBridgeLivePeerIdentity?

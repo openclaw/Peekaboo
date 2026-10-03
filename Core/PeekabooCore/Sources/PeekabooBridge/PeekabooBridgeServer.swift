@@ -1146,6 +1146,8 @@ public final class PeekabooBridgeServer {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
             let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
             guard (negotiatedVersion ?? .init(major: 0, minor: 0)) >= minimumVersion,
+                  !request.requiresClipboardGuardedExactWindowHotkey ||
+                  session?.clipboardGuardedExactWindowHotkeys == true,
                   !request.requiresNativeBrowserConnectionBinding ||
                   session?.nativeBrowserConnectionBinding == true,
                   !request.requiresProducerBoundSnapshotReferences ||
@@ -1157,6 +1159,15 @@ public final class PeekabooBridgeServer {
                   session?.exactWindowHeldPointerLifecycle == true,
                   op != .exactWindowDrag || session?.exactWindowDrag == true
             else {
+                if request.requiresClipboardGuardedExactWindowHotkey {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .operationNotSupported,
+                        actionFailure: .preDispatchRefusal(
+                            route: .bridge,
+                            reason: .runtimeIncompatible,
+                            message: "This Bridge session did not negotiate clipboard-guarded exact-window paste.",
+                            hint: "Update and relaunch the selected Peekaboo host before writing a temporary payload."))
+                }
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
                     message:
@@ -1358,6 +1369,9 @@ private func protocolHostCapabilities(
     if supportedVersions.upperBound >= PeekabooBridgeConstants.compositeTypeDeliveryVersion {
         capabilities.insert(PeekabooBridgeHostCapability.compositeTypeDelivery)
     }
+    if supportedVersions.upperBound >= PeekabooBridgeConstants.clipboardGuardedExactWindowHotkeyVersion {
+        capabilities.insert(PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys)
+    }
     if supportedVersions.upperBound >= PeekabooBridgeConstants.browserConnectionHandoffVersion {
         capabilities.insert(PeekabooBridgeHostCapability.browserConnectionHandoff)
     }
@@ -1461,6 +1475,15 @@ extension PeekabooBridgeServer {
         supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
         allowedOperations: Set<PeekabooBridgeOperation>)
     {
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.clipboardGuardedExactWindowHotkeyVersion,
+           allowedOperations.contains(.exactWindowTargetedHotkey),
+           (services.automation as? any ClipboardGuardedExactWindowHotkeyServiceProtocol)?
+               .supportsClipboardGuardedExactWindowHotkeys == true
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys)
+        }
         let compositeTypeOperations: Set<PeekabooBridgeOperation> = [
             .targetedTypeActions,
             .exactWindowTargetedTypeActions,

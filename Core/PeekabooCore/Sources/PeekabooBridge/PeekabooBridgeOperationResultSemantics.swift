@@ -582,6 +582,9 @@ extension PeekabooBridgeOperationResultSemantics {
         completion: Completion) -> [DesktopActionOutcome.State]
     {
         guard completion.mutatesDesktop else { return [] }
+        if request.requiresClipboardGuardedExactWindowHotkey {
+            return [.dispatchedUnverified]
+        }
         let verifiedOrAccepted: [DesktopActionOutcome.State] = [
             .confirmedChange,
             .confirmedNoChange,
@@ -787,6 +790,9 @@ extension PeekabooBridgeOperationResultSemantics {
             }
             return rules
         case let .exactWindowTargetedHotkey(payload):
+            if payload.clipboardClaim != nil {
+                return [rule(windowBackground, .exact(4))]
+            }
             var rules = [
                 rule(axBackground, .variable),
                 rule(windowBackground, .variable),
@@ -1143,7 +1149,7 @@ extension PeekabooBridgeOperationResultSemantics {
         plan: PeekabooBridgeRequestPlan) -> Bool
     {
         guard outcome.route == .bridge, !outcome.isConfirmed else { return false }
-        if plan.operation == .exactWindowDrag,
+        if plan.operation == .exactWindowDrag || plan.request.requiresClipboardGuardedExactWindowHotkey,
            ![.refused, .dispatchedUnverified, .indeterminate].contains(outcome.state)
         {
             return false

@@ -202,7 +202,8 @@ public final class HotkeyService {
         let plannedChord = try? self.makeHotkeyPlan(parsedKeys)
         if clipboardClaim != nil {
             guard automationTarget.exactWindow != nil, holdDuration > 0,
-                  plannedChord?.primaryKey == "v", plannedChord?.modifierFlags == .maskCommand
+                  let plannedChord,
+                  Self.isPasteShortcut(primaryKey: plannedChord.primaryKey, flags: plannedChord.modifierFlags)
             else {
                 throw DesktopActionFailure.preDispatchRefusal(
                     reason: .invalidRequest,

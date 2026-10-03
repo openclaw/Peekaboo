@@ -645,6 +645,10 @@ enum BridgeCapabilityPolicy {
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.compositeTypeDelivery) == true
     }
 
+    static func supportsClipboardGuardedExactWindowHotkeys(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.supportsClipboardGuardedExactWindowHotkeys
+    }
+
     static func supportsPinnedWindowMutations(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 18)
     }

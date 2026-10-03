@@ -189,6 +189,13 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.requiresClipboardGuardedExactWindowHotkey, !self.clipboardGuardedExactWindowHotkeysEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "The selected Bridge session cannot fence exact-window paste with a retained clipboard claim.",
+                hint: "Update and relaunch Peekaboo on the selected host before writing a temporary clipboard payload.")
+        }
         if case let .desktopObservation(observation) = request.unwrappedOperationRequest,
            observation.output.includeImageData, !self.desktopObservationInlinePixelsEnabled
         {

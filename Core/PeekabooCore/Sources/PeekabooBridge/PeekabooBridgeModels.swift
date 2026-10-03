@@ -415,6 +415,7 @@ public enum PeekabooBridgeHostCapability {
     public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
     public static let requestPinnedExactWindowScrollReceipt = "requestPinnedExactWindowScrollReceipt"
     public static let compositeTypeDelivery = "compositeTypeDelivery"
+    public static let clipboardGuardedExactWindowHotkeys = "clipboardGuardedExactWindowHotkeys"
 }
 
 /// Stable raw capabilities a client may offer during handshake. Raw strings keep additions
@@ -456,6 +457,14 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
             self.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
             self.supportedOperations.contains(.exactWindowDrag) &&
             (self.enabledOperations ?? self.supportedOperations).contains(.exactWindowDrag)
+    }
+
+    public var supportsClipboardGuardedExactWindowHotkeys: Bool {
+        self.negotiatedVersion >= PeekabooBridgeConstants.clipboardGuardedExactWindowHotkeyVersion &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys) == true &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            self.supportedOperations.contains(.exactWindowTargetedHotkey) &&
+            (self.enabledOperations ?? self.supportedOperations).contains(.exactWindowTargetedHotkey)
     }
 
     public init(

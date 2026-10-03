@@ -207,6 +207,16 @@ host, then dispatches type or hotkey input while the Bridge mutation gate remain
 every character or key boundary. Exact clicks likewise retain the capture-time receipt through final native dispatch
 and completion validation. New clients reject older hosts for these exact-input operations.
 
+Protocol `1.40` adds `clipboardGuardedExactWindowHotkeys`. A claim-bearing exact-window Cmd+V request requires
+this negotiated capability, authenticated operation receipts, an enabled exact-window hotkey operation, and retained
+focused-element evidence. Typing support is not a prerequisite. The optional claim is the General pasteboard generation
+retained by the caller's temporary-write transaction, not a count sampled after writing or authority to read clipboard
+contents. The host checks it before each new key-down; losing the claim does not suppress releases already owed to the
+original process generation. Clipboard access and ownership-aware cleanup remain caller-local. Unsupported sessions
+refuse without dropping the claim or falling back to ordinary hotkeys. Claimless keyboard contracts are unchanged.
+Completed guarded delivery reports four window-targeted event units and remains unverified and retry-unsafe; checks
+themselves add no units, and neither the claim nor accepted delivery proves that the application consumed the paste.
+
 Protocol `1.36` adds `compositeTypeDelivery` for background type requests that may use AXValue delivery: non-empty text,
 clear, and editable focused-text keys. Each direct AX mutation counts as one dispatch and zero key presses; event fallback
 counts its posted key events, and mixed requests report composite delivery. Event-only special keys retain their earlier

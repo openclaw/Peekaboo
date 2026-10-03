@@ -255,19 +255,22 @@ public struct PeekabooBridgeExactWindowHotkeyRequest: Codable, Sendable {
     public let expectedWindowIdentity: WindowMutationIdentity
     public let expectedWindowBounds: CGRect
     public let expectedFocusedElement: FocusedElementIdentity?
+    public let clipboardClaim: GeneralPasteboardWriteClaim?
 
     public init(
         keys: String,
         holdDuration: Int,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect,
-        expectedFocusedElement: FocusedElementIdentity? = nil)
+        expectedFocusedElement: FocusedElementIdentity? = nil,
+        clipboardClaim: GeneralPasteboardWriteClaim? = nil)
     {
         self.keys = keys
         self.holdDuration = holdDuration
         self.expectedWindowIdentity = expectedWindowIdentity
         self.expectedWindowBounds = expectedWindowBounds
         self.expectedFocusedElement = expectedFocusedElement
+        self.clipboardClaim = clipboardClaim
     }
 }
 

@@ -2500,7 +2500,7 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
     let supportsProcessGenerationPinnedTypeActions = true
     let supportsProcessGenerationPinnedClicks = true
     let supportsStatelessClickVariants = true
-    let supportsExactWindowTargetedKeyboard = true
+    var supportsExactWindowTargetedKeyboard = true
     var supportsExactWindowCompositeTypeDelivery: Bool {
         true
     }

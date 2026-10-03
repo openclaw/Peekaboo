@@ -36,6 +36,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsInspectAccessibilityTree: Bool
     public let inspectAccessibilityTreeUnavailableReason: String?
     public let supportsExactWindowTargetedKeyboard: Bool
+    public let supportsClipboardGuardedExactWindowHotkeys: Bool
     public let exactWindowTargetedKeyboardUnavailableReason: String?
     public let supportsExactWindowCompositeTypeDelivery: Bool
     public let exactWindowCompositeTypeDeliveryUnavailableReason: String?
@@ -48,7 +49,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsExactWindowDrag: Bool
     public let supportsSetValueResultTargetBinding: Bool
 
-    public init(
+    public required init(
         client: PeekabooBridgeClient,
         supportsTargetedHotkeys: Bool = false,
         supportsProcessGenerationPinnedHotkeys: Bool = false,
@@ -70,6 +71,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
+        supportsClipboardGuardedExactWindowHotkeys: Bool = false,
         exactWindowTargetedKeyboardUnavailableReason: String? = nil,
         supportsExactWindowCompositeTypeDelivery: Bool = false,
         exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil,
@@ -102,6 +104,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsInspectAccessibilityTree = supportsInspectAccessibilityTree
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
         self.supportsExactWindowTargetedKeyboard = supportsExactWindowTargetedKeyboard
+        self.supportsClipboardGuardedExactWindowHotkeys = supportsClipboardGuardedExactWindowHotkeys
         self.exactWindowTargetedKeyboardUnavailableReason = exactWindowTargetedKeyboardUnavailableReason
         self.supportsExactWindowCompositeTypeDelivery = supportsExactWindowCompositeTypeDelivery
         self.exactWindowCompositeTypeDeliveryUnavailableReason = exactWindowCompositeTypeDeliveryUnavailableReason

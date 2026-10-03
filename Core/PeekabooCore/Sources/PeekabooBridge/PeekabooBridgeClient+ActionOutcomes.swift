@@ -370,6 +370,29 @@ extension PeekabooBridgeClient {
             expectedResponse: "focused exact-window hotkey")
     }
 
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.actionResult(
+            for: .exactWindowTargetedHotkey(.init(
+                keys: keys,
+                holdDuration: holdDuration,
+                expectedWindowIdentity: target.identity,
+                expectedWindowBounds: target.bounds,
+                expectedFocusedElement: target.focusedElement,
+                clipboardClaim: clipboardClaim)),
+            expectedResponse: "clipboard-guarded exact-window paste",
+            requiresTargetIdentity: true,
+            operationReceiptRequirement: .required)
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
+    }
+
     public func setValueWithOutcome(
         target: String,
         value: UIElementValue,

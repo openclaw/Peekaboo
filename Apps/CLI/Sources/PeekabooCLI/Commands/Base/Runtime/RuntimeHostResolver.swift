@@ -950,6 +950,8 @@ extension RuntimeHostResolver {
             BridgeCapabilityPolicy.supportsRequestPinnedExactWindowScrollReceipt(for: handshake),
             supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(for: handshake),
             supportsExactWindowTargetedKeyboard: supportsExactKeyboard,
+            supportsClipboardGuardedExactWindowHotkeys:
+            BridgeCapabilityPolicy.supportsClipboardGuardedExactWindowHotkeys(for: handshake),
             exactWindowTargetedKeyboardUnavailableReason: supportsExactKeyboard
                 ? nil
                 : "Bridge host lacks atomic exact-window keyboard delivery",

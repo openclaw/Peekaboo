@@ -8,6 +8,48 @@ import Testing
 @Suite(.tags(.safe))
 @MainActor
 struct RuntimeHostResolverTests {
+    @Test(arguments: 0..<32, [false, true])
+    func `remote factory preserves guarded paste negotiation across automation variants`(
+        flags: Int, elementActions: Bool
+    ) throws {
+        let current = flags & 1 != 0
+        let capability = flags & 2 != 0
+        let receipts = flags & 4 != 0
+        let supported = flags & 8 != 0
+        let enabled = flags & 16 != 0
+        var capabilities: [String] = []
+        if capability {
+            capabilities.append(PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys)
+        }
+        if receipts {
+            capabilities.append(PeekabooBridgeHostCapability.attestedOperationReceipts)
+        }
+        var operations: [PeekabooBridgeOperation] = supported ? [.exactWindowTargetedHotkey] : []
+        var enabledOperations: [PeekabooBridgeOperation] = enabled && supported ? [.exactWindowTargetedHotkey] : []
+        if elementActions {
+            operations.append(.performAction)
+            enabledOperations.append(.performAction)
+            capabilities.append(PeekabooBridgeHostCapability.processGenerationBoundElementMutations)
+        }
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: current ? 40 : 39),
+            supportedOperations: operations,
+            enabledOperations: enabledOperations,
+            hostCapabilities: capabilities
+        )
+        let services = RuntimeHostResolver.remoteServices(
+            client: PeekabooBridgeClient(socketPath: "/tmp/unused-guarded-paste-factory.sock"),
+            handshake: handshake,
+            options: CommandRuntimeOptions()
+        )
+        let provider = try #require(services.automation as? any ClipboardGuardedExactWindowHotkeyServiceProtocol)
+        let expected = current && capability && receipts && supported && enabled
+        #expect(BridgeCapabilityPolicy.supportsClipboardGuardedExactWindowHotkeys(for: handshake) == expected)
+        #expect(provider.supportsClipboardGuardedExactWindowHotkeys == expected)
+        #expect((services.automation is any ElementActionAutomationServiceProtocol) == (elementActions && receipts))
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowTargetedKeyboard(for: handshake))
+    }
+
     @Test
     func `only mutation barriers prevalidate historical daemon inventory`() {
         #expect(!RuntimeHostResolver.requiresValidatedHistoricalDaemonInventory(

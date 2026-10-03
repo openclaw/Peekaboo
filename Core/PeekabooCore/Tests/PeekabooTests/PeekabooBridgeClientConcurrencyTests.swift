@@ -84,9 +84,11 @@ struct PeekabooBridgeClientConcurrencyTests {
             try Self.requireHandshake(newerRequest)
 
             try await peer.respond(
-                .handshake(Self.handshake(authority: authority, session: newerSession.attestation)),
+                .handshake(Self.handshake(
+                    authority: authority, session: newerSession.attestation, clipboardGuard: true)),
                 to: newerRequest)
             #expect(try await newer.value.operationSessionAttestation?.sessionID == newerSession.attestation.sessionID)
+            #expect(await client.clipboardGuardedExactWindowHotkeysEnabled)
 
             try await peer.respond(
                 .handshake(Self.legacyHandshake()),
@@ -101,6 +103,7 @@ struct PeekabooBridgeClientConcurrencyTests {
             let reservation = try #require(try await client.reserveOperationSession())
             #expect(reservation.sessionAttestation.sessionID == newerSession.attestation.sessionID)
             #expect(reservation.sequence.value == 0)
+            #expect(await client.clipboardGuardedExactWindowHotkeysEnabled)
         } catch {
             await peer.stop()
             throw error
@@ -143,7 +146,8 @@ struct PeekabooBridgeClientConcurrencyTests {
             #expect(latest.operationSessionAttestation == nil)
 
             try await peer.respond(
-                .handshake(Self.handshake(authority: authority, session: olderSession.attestation)),
+                .handshake(Self.handshake(
+                    authority: authority, session: olderSession.attestation, clipboardGuard: true)),
                 to: olderRequest)
             do {
                 _ = try await older.value
@@ -153,6 +157,7 @@ struct PeekabooBridgeClientConcurrencyTests {
             }
 
             #expect(try await client.reserveOperationSession()?.requestID == nil)
+            #expect(await !client.clipboardGuardedExactWindowHotkeysEnabled)
             #expect(await peer.acceptedConnectionCount == 2)
         } catch {
             await peer.stop()
@@ -1435,11 +1440,14 @@ extension PeekabooBridgeClientConcurrencyTests {
 
     private static func handshake(
         authority: PeekabooBridgeOperationReceiptAuthority,
-        session: PeekabooBridgeOperationSessionAttestation) -> PeekabooBridgeHandshakeResponse
+        session: PeekabooBridgeOperationSessionAttestation,
+        clipboardGuard: Bool = false) -> PeekabooBridgeHandshakeResponse
     {
         let listener = authority.attestation
         return BridgeTestFixtures.handshake(
-            negotiatedVersion: PeekabooBridgeConstants.attestedOperationReceiptVersion,
+            negotiatedVersion: clipboardGuard
+                ? PeekabooBridgeConstants.clipboardGuardedExactWindowHotkeyVersion
+                : PeekabooBridgeConstants.attestedOperationReceiptVersion,
             hostKind: .gui,
             build: "client-concurrency-test",
             supportedOperations: [
@@ -1449,7 +1457,7 @@ extension PeekabooBridgeClientConcurrencyTests {
                 .hideApplication,
                 .browserStatus,
                 .browserExecute,
-            ],
+            ] + (clipboardGuard ? [.exactWindowTargetedHotkey] : []),
             permissions: .init(screenRecording: true, accessibility: true, postEvent: true),
             enabledOperations: [
                 .permissionsStatus,
@@ -1458,7 +1466,7 @@ extension PeekabooBridgeClientConcurrencyTests {
                 .hideApplication,
                 .browserStatus,
                 .browserExecute,
-            ],
+            ] + (clipboardGuard ? [.exactWindowTargetedHotkey] : []),
             hostIdentity: .init(
                 processIdentifier: listener.host.processIdentifier,
                 processStartIdentity: listener.host.processStartIdentity,
@@ -1469,7 +1477,7 @@ extension PeekabooBridgeClientConcurrencyTests {
             hostCapabilities: [
                 PeekabooBridgeHostCapability.attestedOperationReceipts,
                 PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
-            ],
+            ] + (clipboardGuard ? [PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys] : []),
             operationAttestation: listener,
             operationSessionAttestation: session)
     }

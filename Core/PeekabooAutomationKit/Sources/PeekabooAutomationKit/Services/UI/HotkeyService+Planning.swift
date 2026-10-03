@@ -3,6 +3,15 @@ import Foundation
 import PeekabooFoundation
 
 extension HotkeyService {
+    public nonisolated static func isPasteShortcut(_ keys: String) -> Bool {
+        guard let chord = try? HotkeyChord(keys: self.parsedKeys(keys)) else { return false }
+        return self.isPasteShortcut(primaryKey: chord.plan.primaryKey, flags: chord.plan.modifierFlags)
+    }
+
+    nonisolated static func isPasteShortcut(primaryKey: String, flags: CGEventFlags) -> Bool {
+        primaryKey == "v" && flags == .maskCommand
+    }
+
     public nonisolated static func isSelectAllShortcut(_ keys: String) -> Bool {
         guard let chord = try? HotkeyChord(keys: self.parsedKeys(keys)) else { return false }
         return self.isSelectAllShortcut(primaryKey: chord.plan.primaryKey, flags: chord.plan.modifierFlags)

@@ -4,7 +4,7 @@ import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
 
-extension RemoteUIAutomationService: UIAutomationActionOutcomeProviding,
+extension RemoteUIAutomationService: ClipboardGuardedExactWindowHotkeyServiceProtocol,
 UIAutomationGlobalPointerActionResultProviding {
     public func foregroundModifierClickWithOutcome(
         _ request: ForegroundModifierClickRequest) async throws
@@ -347,6 +347,25 @@ UIAutomationGlobalPointerActionResultProviding {
         try self.requireExactWindowKeyboard()
         return try await self.remoteAction(snapshotId: nil) {
             try await self.client.hotkeyWithOutcome(keys: keys, holdDuration: holdDuration, target: target)
+        }
+    }
+
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim) async throws -> UIAutomationActionResult<Void>
+    {
+        guard self.supportsClipboardGuardedExactWindowHotkeys else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "The selected host does not support clipboard-guarded exact-window paste.",
+                hint: "Update and relaunch Peekaboo on the selected host before writing a temporary clipboard payload.")
+        }
+        return try await self.remoteAction(snapshotId: nil) {
+            try await self.client.hotkeyWithOutcome(
+                keys: keys, holdDuration: holdDuration, target: target, clipboardClaim: clipboardClaim)
         }
     }
 

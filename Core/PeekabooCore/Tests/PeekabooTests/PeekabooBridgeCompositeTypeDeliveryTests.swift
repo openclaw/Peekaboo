@@ -85,7 +85,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
             unitCount: .one)
         automation.uiAutomationOutcomeTargetIdentity = try DesktopTargetIdentity(
             processIdentity: identity)
-        let fixture = try await self.startHost(
+        let fixture = try await BridgeInputCapabilityFixture.startHost(
             services: services,
             supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.targetedTypeActions])
@@ -238,7 +238,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         let identity = try ApplicationProcessIdentity(
             processIdentifier: getpid(),
             processStartIdentity: #require(SystemIdentityResolver.processStartIdentity(getpid())))
-        let fixture = try await self.startHost(
+        let fixture = try await BridgeInputCapabilityFixture.startHost(
             services: services,
             supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.targetedTypeActions])
@@ -262,7 +262,7 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
     func `current host omits type delivery capability without an outcome provider`() async throws {
         let automation = NonOutcomeCompositeTypeAutomationService()
         let services = StubServices(automation: automation)
-        let fixture = try await self.startHost(
+        let fixture = try await BridgeInputCapabilityFixture.startHost(
             services: services,
             supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.exactWindowTargetedTypeActions])
@@ -278,8 +278,8 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
     func `protocol 1 36 signs exact AX clear composite typing and keyboard fallback counts`() async throws {
         let automation = CompositeTypeAutomationService()
         let services = StubServices(automation: automation)
-        let target = try self.exactTarget()
-        let fixture = try await self.startHost(
+        let target = try BridgeInputCapabilityFixture.exactTarget()
+        let fixture = try await BridgeInputCapabilityFixture.startHost(
             services: services,
             supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
             allowedOperations: [.exactWindowTargetedTypeActions])
@@ -335,61 +335,6 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
         #expect(fallback.outcome?.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(3))
         #expect(automation.exactTypeCallCount == 3)
         await fixture.host.stop()
-    }
-
-    private func startHost(
-        services: StubServices,
-        supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
-        allowedOperations: Set<PeekabooBridgeOperation>) async throws
-        -> (host: PeekabooBridgeHost, client: PeekabooBridgeClient)
-    {
-        let socketPath = "/tmp/peekaboo-composite-type-\(UUID().uuidString).sock"
-        let server = PeekabooBridgeServer(
-            services: services,
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            supportedVersions: supportedVersions,
-            allowedOperations: allowedOperations,
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true)
-            })
-        let host = PeekabooBridgeHost(
-            socketPath: socketPath,
-            server: server,
-            allowedTeamIDs: [],
-            requestTimeoutSec: 2)
-        try await host.startChecked()
-        return (
-            host,
-            TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2))
-    }
-
-    private func exactTarget() throws -> (
-        exactWindow: UIAutomationTarget.ExactWindow,
-        keyboardTarget: ExactWindowKeyboardTarget)
-    {
-        let generation = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
-        let bounds = CGRect(x: 10, y: 20, width: 300, height: 200)
-        let identity = WindowMutationIdentity(
-            windowID: 999_999,
-            ownerProcessIdentifier: getpid(),
-            ownerProcessStartIdentity: generation,
-            capturedBounds: bounds)
-        let focused = FocusedElementIdentity(
-            processIdentifier: getpid(),
-            windowID: identity.windowID,
-            role: "AXTextField",
-            identifier: "editor",
-            frame: CGRect(x: 30, y: 40, width: 120, height: 30))
-        return try (
-            UIAutomationTarget.ExactWindow(
-                identity: identity,
-                bounds: bounds,
-                focusedElement: focused),
-            ExactWindowKeyboardTarget(
-                windowIdentity: identity,
-                windowBounds: bounds,
-                focusedElement: focused))
     }
 }
 
