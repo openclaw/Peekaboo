@@ -467,17 +467,29 @@ function spawnOwned(executable, args, label) {
   return child;
 }
 
+function waitForChildEvent(child, event, timeoutMilliseconds, watchErrors = false) {
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      clearTimeout(timer);
+      child.off(event, onEvent);
+      if (watchErrors) child.off('error', onError);
+      resolve(result);
+    };
+    const onEvent = (code, signal) => finish({ code, signal });
+    const onError = (error) => finish({ error });
+    const timer = setTimeout(() => finish({ timeout: true }), timeoutMilliseconds);
+    child.once(event, onEvent);
+    if (watchErrors) child.once('error', onError);
+  });
+}
+
 async function waitForExit(child, label, timeoutMilliseconds) {
   if (child.spawnError) throw new CoordinatorError(`${label} failed to spawn: ${child.spawnError.message}`);
   if (child.ownerClosed) {
     if (child.exitCode !== 0) throw new CoordinatorError(`${label} exited with status ${child.exitCode}`);
     return;
   }
-  const result = await Promise.race([
-    new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal }))),
-    new Promise((resolve) => child.once('error', (error) => resolve({ error }))),
-    sleep(timeoutMilliseconds).then(() => ({ timeout: true })),
-  ]);
+  const result = await waitForChildEvent(child, 'close', timeoutMilliseconds, true);
   if (result.timeout) throw new CoordinatorError(`${label} did not exit after release`);
   if (result.error) throw new CoordinatorError(`${label} failed: ${result.error.message}`);
   if (result.code !== 0) {
@@ -490,13 +502,10 @@ async function waitForExit(child, label, timeoutMilliseconds) {
 async function terminateChild(child, label) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGTERM');
-  const result = await Promise.race([
-    new Promise((resolve) => child.once('exit', resolve)),
-    sleep(1000).then(() => 'timeout'),
-  ]);
-  if (result === 'timeout' && child.exitCode === null && child.signalCode === null) {
+  const result = await waitForChildEvent(child, 'exit', 1000);
+  if (result.timeout && child.exitCode === null && child.signalCode === null) {
     child.kill('SIGKILL');
-    await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(1000)]);
+    await waitForChildEvent(child, 'exit', 1000);
   }
   if (child.exitCode === null && child.signalCode === null) {
     throw new CoordinatorError(`${label} survived bounded TERM/KILL cleanup`);

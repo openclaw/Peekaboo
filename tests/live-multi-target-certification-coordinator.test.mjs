@@ -343,6 +343,13 @@ if (args[0] === '--attest-monitor') {
   });
 } else if (args[0] === '--plan') {
   const plan = read(args[1]);
+  const releaseTestTarget = process.env.FAKE_RELEASE_TEST_TARGET === plan.controller_id;
+  if (releaseTestTarget && process.env.FAKE_IGNORE_TERM === '1') {
+    process.on('SIGTERM', () => {
+      fs.appendFileSync(process.env.FAKE_RELEASE_TEST_LOG,
+        JSON.stringify({ event: 'term', pid: process.pid }) + '\n');
+    });
+  }
   const root = plan.artifacts_directory;
   fs.mkdirSync(root + '/bundles', { mode: 0o700 });
   fs.mkdirSync(root + '/observations', { mode: 0o700 });
@@ -453,6 +460,15 @@ if (args[0] === '--attest-monitor') {
     slots: slots.map((slot) => ({ slot_id: plan.controller_id + '-' + slot })),
   });
   await wait(plan.release_path);
+  if (releaseTestTarget) {
+    if (process.env.FAKE_RELEASE_TEST_LOG) {
+      fs.appendFileSync(process.env.FAKE_RELEASE_TEST_LOG,
+        JSON.stringify({ event: 'released', pid: process.pid }) + '\n');
+    }
+    const releaseDelay = Number(process.env.FAKE_RELEASE_DELAY_MILLISECONDS ?? 0);
+    if (releaseDelay > 0) await new Promise((resolve) => setTimeout(resolve, releaseDelay));
+    if (process.env.FAKE_RELEASE_EXIT_CODE) process.exit(Number(process.env.FAKE_RELEASE_EXIT_CODE));
+  }
   process.stdout.write(JSON.stringify({ result: 'passed', receipt: root + '/' + plan.controller_id + '-receipt.json' }) + '\n');
   process.exit(0);
 } else if (args[0] === '--observe-only-plan') {
@@ -1173,11 +1189,18 @@ test('semantic discriminator rejects empty, oversized, and NUL values before lau
 test('sorted-key fake lifecycle reaches ineligible test completion with bounded typing', async () => {
   const fix = fixture();
   try {
+    let completedAt;
     const run = await runInteractive(fix, {
       // Exceed the former 900 ms fake mutation lifetime before operations-complete.
       env: { FAKE_OBSERVER_READBACK_DELAY_MILLISECONDS: '1000' },
+      onEvent: (event) => {
+        if (event.event === 'test-runtime-complete') completedAt = performance.now();
+      },
     });
     assert.equal(run.code, 0, run.stderr);
+    assert.ok(Number.isFinite(completedAt));
+    const completionToClose = performance.now() - completedAt;
+    assert.ok(completionToClose < 2000, `coordinator retained idle handles for ${completionToClose} ms`);
     assert.deepEqual(run.events.filter((event) => event.event === 'external-foreground-window')
       .map((event) => event.phase), ['perform', 'restore']);
     const completion = run.events.at(-1);
@@ -1408,6 +1431,58 @@ test('controller exit before owner release aborts the live run', async () => {
     assert.notEqual(run.code, 0);
     assert.match(run.stderr, /controller-a exited before its owner release/);
     assert.equal(fs.readFileSync(fix.finalizerLog, 'utf8'), '');
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('release cleanup waits for a delayed successful child close', async () => {
+  const fix = fixture();
+  try {
+    const log = path.join(fix.root, 'release-test.jsonl');
+    const run = await runInteractive(fix, { env: {
+      FAKE_RELEASE_TEST_TARGET: 'controller-a',
+      FAKE_RELEASE_DELAY_MILLISECONDS: '300',
+      FAKE_RELEASE_TEST_LOG: log,
+    } });
+    assert.equal(run.code, 0, run.stderr);
+    assert.equal(run.events.at(-1).event, 'test-runtime-complete');
+    assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse).map((x) => x.event),
+      ['released']);
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('release cleanup retains nonzero child status failure', async () => {
+  const fix = fixture();
+  try {
+    const run = await runInteractive(fix, { env: {
+      FAKE_RELEASE_TEST_TARGET: 'controller-a', FAKE_RELEASE_EXIT_CODE: '9',
+    } });
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /controller-a exited with status 9/);
+    assert.equal(run.events.at(-1).event, 'failed');
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('release cleanup keeps the timeout and TERM to KILL escalation', async () => {
+  const fix = fixture();
+  try {
+    const log = path.join(fix.root, 'release-test.jsonl');
+    const run = await runInteractive(fix, { env: {
+      FAKE_RELEASE_TEST_TARGET: 'controller-a', FAKE_RELEASE_DELAY_MILLISECONDS: '30000',
+      FAKE_IGNORE_TERM: '1', FAKE_RELEASE_TEST_LOG: log,
+    } });
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /controller-a did not exit after release/);
+    assert.equal(run.events.at(-1).event, 'failed');
+    const events = fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(events.map((x) => x.event), ['released', 'term']);
+    assert.equal(events[0].pid, events[1].pid);
+    assert.throws(() => process.kill(events[0].pid, 0), { code: 'ESRCH' });
   } finally {
     fs.rmSync(fix.root, { recursive: true, force: true });
   }

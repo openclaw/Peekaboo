@@ -48,6 +48,7 @@ persisted summary is never itself certification authority; only the final live f
   grants `prepare` exclusive ownership of a previously absent artifact root, and derives its outer deadline from all
   eight bounded bundle validations plus identity/runtime overhead for each of the two serialized invocations.
 - Failure performs bounded release/TERM/KILL cleanup while preserving the private run root for diagnosis.
+- Completed child waits remove only their own deadline timers and listeners; terminal completion must not retain an idle five-second exit delay. Successful release still waits for child closure and drained output; nonzero/error/timeout outcomes and TERM/KILL grace periods remain unchanged.
 - Test-runtime completion is reported as `test-runtime-complete` with `certification_eligible: false`.
 
 ## Anti-Cheat Probes
