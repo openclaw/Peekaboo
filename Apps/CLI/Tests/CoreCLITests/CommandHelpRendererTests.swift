@@ -39,6 +39,20 @@ struct CommandHelpRendererTests {
     }
 
     @Test
+    func `deprecated no focus help does not promise a background launch`() {
+        let expected = "Deprecated no-op compatibility flag; default only verifies an already-running app"
+        let help = AppCommand.LaunchSubcommand.helpMessage()
+        let explicit = AppCommand.LaunchSubcommand.commanderSignature()
+        let reflected = CommandSignature.describe(AppCommand.LaunchSubcommand()).flattened()
+
+        #expect(help.contains("--no-focus"))
+        #expect(help.contains(expected))
+        #expect(!help.contains("background launch is now the default"))
+        #expect(explicit.flags.first { $0.label == "noFocus" }?.help == expected)
+        #expect(reflected.flags.first { $0.label == "noFocus" }?.help == expected)
+    }
+
+    @Test
     func `learn drag guidance carries explicit foreground consent`() {
         #expect(
             LearnCommand.foregroundDragExample ==

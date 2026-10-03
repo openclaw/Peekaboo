@@ -46,7 +46,7 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "noFocus",
-                    help: "Deprecated compatibility flag; background launch is now the default",
+                    help: noFocusHelp,
                     long: "no-focus"
                 ),
             ]

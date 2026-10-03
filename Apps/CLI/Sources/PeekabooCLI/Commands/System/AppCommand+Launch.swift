@@ -9,6 +9,8 @@ extension AppCommand {
 
     @MainActor
     struct LaunchSubcommand: InjectedRuntimeBackedCommand {
+        static let noFocusHelp = "Deprecated no-op compatibility flag; default only verifies an already-running app"
+
         static let commandDescription = CommandDescription(
             commandName: "launch",
             abstract: "Verify a running app or explicitly launch it in the foreground",
@@ -53,7 +55,7 @@ extension AppCommand {
         @Flag(help: "Required for cold launch, open targets, or a new instance")
         var foreground = false
 
-        @Flag(help: "Deprecated compatibility flag; background launch is now the default")
+        @Flag(help: AppCommand.LaunchSubcommand.noFocusHelp)
         var noFocus = false
 
         @Option(
@@ -80,7 +82,10 @@ extension AppCommand {
                         : "Verifying already-running application: \(self.requestedAppIdentifier)"
                 )
                 if self.noFocus {
-                    self.logger.warn("--no-focus is deprecated because app launch is background by default")
+                    self.logger.warn(
+                        "--no-focus is deprecated and has no effect; without --foreground, " +
+                            "app launch only verifies an already-running app"
+                    )
                 }
                 if self.foreground {
                     self.resolvedRuntime.beginInteractionMutation()

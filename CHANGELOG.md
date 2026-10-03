@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Clarify that deprecated `app launch --no-focus` is a compatibility no-op: default launch only verifies an already-running app, while cold launch still requires explicit foreground consent.
 - Remove idle certification-coordinator exit delays by clearing completed child-wait timers and their listeners, preserving normal output draining and bounded TERM/KILL cleanup.
 - Repair first-party GUI qualification by admitting the signed controller and validating canonical global/window receipt scopes; preserve exact authenticated inventory binding and avoid repeating an acknowledged owner disconnect after an evidence error.
 - Report missing background-drag source and destination IDs as explicit retry-safe, zero-dispatch `ELEMENT_NOT_FOUND` refusals without inventing receiver receipts or changing foreground error semantics.
