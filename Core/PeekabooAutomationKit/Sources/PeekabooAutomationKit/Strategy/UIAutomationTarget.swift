@@ -325,12 +325,17 @@ public enum ExactWindowKeyboardRuntime {
         case keyboardEvents
         case compositeType
         case focusedTextSelectAll
+        case preparedPaste
 
         func permits(_ mechanism: DesktopActionOutcome.Delivery.Mechanism) -> Bool {
             switch (self, mechanism) {
-            case (_, .windowTargetedEvents),
+            case (.keyboardEvents, .windowTargetedEvents),
+                 (.compositeType, .windowTargetedEvents),
+                 (.focusedTextSelectAll, .windowTargetedEvents),
                  (.compositeType, .accessibilityValue),
                  (.compositeType, .composite),
+                 (.preparedPaste, .nativeFramework),
+                 (.preparedPaste, .composite),
                  (.focusedTextSelectAll, .accessibilityValue):
                 true
             default:
@@ -369,6 +374,22 @@ public enum ExactWindowKeyboardRuntime {
                 reason: .runtimeIncompatible,
                 message: "\(operation) requires clipboard-guarded exact-window hotkey delivery.",
                 hint: "Update the selected Peekaboo host before writing a temporary clipboard payload.")
+        }
+        return provider
+    }
+
+    public static func requirePreparedClipboardGuardedPasteProvider(
+        automation: any UIAutomationServiceProtocol,
+        operation: String) throws -> any PreparedClipboardGuardedExactWindowHotkeyServiceProtocol
+    {
+        let guarded = try self.requireClipboardGuardedPasteProvider(automation: automation, operation: operation)
+        guard let provider = guarded as? any PreparedClipboardGuardedExactWindowHotkeyServiceProtocol,
+              provider.supportsPreparedClipboardGuardedExactWindowHotkeys
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "\(operation) requires prepared clipboard-guarded exact-window delivery.",
+                hint: "Update the selected host before writing a temporary clipboard payload.")
         }
         return provider
     }
@@ -419,6 +440,13 @@ public enum ExactWindowKeyboardRuntime {
             policy: allowsCompositeTypeDelivery ? .compositeType : .keyboardEvents)
     }
 
+    public static func validatePreparedPasteReceipt<Payload>(
+        _ result: UIAutomationActionResult<Payload>,
+        operation: String) throws -> UIAutomationActionResult<Payload>
+    {
+        try self.validateRouteReceipt(result, operation: operation, policy: .preparedPaste)
+    }
+
     private static func validateRouteReceipt<Payload>(
         _ result: UIAutomationActionResult<Payload>,
         operation: String,
@@ -431,10 +459,19 @@ public enum ExactWindowKeyboardRuntime {
                 message: "\(operation) returned without its required exact-window route receipt.",
                 hint: "Observe the target before any retry and update the runtime host.")
         }
-        let deliveryIsValid: Bool = if let delivery = outcome.delivery, delivery.mode == .background {
+        var deliveryIsValid: Bool = if let delivery = outcome.delivery, delivery.mode == .background {
             policy.permits(delivery.mechanism)
         } else {
             false
+        }
+        if case .preparedPaste = policy, outcome.dispatchState.mutationDispatched {
+            let count = outcome.dispatchState.unitCount?.rawValue
+            let countIsValid = outcome.delivery?.mechanism == .nativeFramework
+                ? count.map { $0 == 1 } ?? true
+                : count.map { (2...8).contains($0) } ?? true
+            // Returned failure prefixes are still useful receipts, not completed-paste claims.
+            deliveryIsValid = deliveryIsValid && countIsValid &&
+                [.dispatchedUnverified, .indeterminate].contains(outcome.state)
         }
         guard !outcome.dispatchState.mutationDispatched || deliveryIsValid else {
             throw DesktopActionFailure.indeterminate(

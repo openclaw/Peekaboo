@@ -952,6 +952,8 @@ extension RuntimeHostResolver {
             supportsExactWindowTargetedKeyboard: supportsExactKeyboard,
             supportsClipboardGuardedExactWindowHotkeys:
             BridgeCapabilityPolicy.supportsClipboardGuardedExactWindowHotkeys(for: handshake),
+            supportsPreparedClipboardGuardedExactWindowHotkeys:
+            handshake.supportsPreparedClipboardGuardedExactWindowHotkeys,
             exactWindowTargetedKeyboardUnavailableReason: supportsExactKeyboard
                 ? nil
                 : "Bridge host lacks atomic exact-window keyboard delivery",

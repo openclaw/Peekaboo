@@ -374,7 +374,8 @@ extension PeekabooBridgeClient {
         keys: String,
         holdDuration: Int,
         target: UIAutomationTarget.ExactWindow,
-        clipboardClaim: GeneralPasteboardWriteClaim) async throws -> UIAutomationActionResult<Void>
+        clipboardClaim: GeneralPasteboardWriteClaim,
+        preparation: BackgroundWindowKeyboardPreparationMode? = nil) async throws -> UIAutomationActionResult<Void>
     {
         try await self.actionResult(
             for: .exactWindowTargetedHotkey(.init(
@@ -383,7 +384,8 @@ extension PeekabooBridgeClient {
                 expectedWindowIdentity: target.identity,
                 expectedWindowBounds: target.bounds,
                 expectedFocusedElement: target.focusedElement,
-                clipboardClaim: clipboardClaim)),
+                clipboardClaim: clipboardClaim,
+                backgroundPreparation: preparation)),
             expectedResponse: "clipboard-guarded exact-window paste",
             requiresTargetIdentity: true,
             operationReceiptRequirement: .required)

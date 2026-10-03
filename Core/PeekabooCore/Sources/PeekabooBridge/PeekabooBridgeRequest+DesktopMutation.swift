@@ -29,6 +29,9 @@ extension PeekabooBridgeRequest {
     }
 
     var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
+        if self.requiresPreparedClipboardGuardedExactWindowHotkey {
+            return PeekabooBridgeConstants.preparedClipboardGuardedExactWindowHotkeyVersion
+        }
         if self.requiresClipboardGuardedExactWindowHotkey {
             return PeekabooBridgeConstants.clipboardGuardedExactWindowHotkeyVersion
         }
@@ -78,6 +81,11 @@ extension PeekabooBridgeRequest {
     var requiresClipboardGuardedExactWindowHotkey: Bool {
         guard case let .exactWindowTargetedHotkey(payload) = self.unwrappedOperationRequest else { return false }
         return payload.clipboardClaim != nil
+    }
+
+    var requiresPreparedClipboardGuardedExactWindowHotkey: Bool {
+        guard case let .exactWindowTargetedHotkey(payload) = self.unwrappedOperationRequest else { return false }
+        return payload.backgroundPreparation != nil
     }
 
     /// Current clients must not create or publish snapshot state through a host that did not

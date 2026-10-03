@@ -678,6 +678,13 @@ extension PeekabooBridgeServer {
         _ payload: PeekabooBridgeExactWindowHotkeyRequest) async throws
         -> PeekabooBridgeHandledResponse
     {
+        guard payload.backgroundPreparation == nil || payload.clipboardClaim != nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                actionFailure: .preDispatchRefusal(
+                    route: .bridge, reason: .invalidRequest,
+                    message: "Prepared background paste requires a retained temporary clipboard claim."))
+        }
         if let clipboardClaim = payload.clipboardClaim {
             guard payload.holdDuration > 0, HotkeyService.isPasteShortcut(payload.keys) else {
                 throw PeekabooBridgeErrorEnvelope(
@@ -710,11 +717,25 @@ extension PeekabooBridgeServer {
                 bounds: payload.expectedWindowBounds,
                 focusedElement: focusedElement)
             self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
-            let result = try await service.hotkeyWithOutcome(
-                keys: payload.keys,
-                holdDuration: payload.holdDuration,
-                target: target,
-                clipboardClaim: clipboardClaim)
+            let result: UIAutomationActionResult<Void>
+            if let preparation = payload.backgroundPreparation {
+                guard let prepared = service as? any PreparedClipboardGuardedExactWindowHotkeyServiceProtocol,
+                      prepared.supportsPreparedClipboardGuardedExactWindowHotkeys
+                else {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .operationNotSupported,
+                        actionFailure: .preDispatchRefusal(
+                            route: .bridge, reason: .runtimeIncompatible,
+                            message: "Prepared background clipboard paste is not supported by this host."))
+                }
+                result = try await prepared.hotkeyWithOutcome(
+                    keys: payload.keys, holdDuration: payload.holdDuration, target: target,
+                    clipboardClaim: clipboardClaim, preparation: preparation)
+            } else {
+                result = try await service.hotkeyWithOutcome(
+                    keys: payload.keys, holdDuration: payload.holdDuration,
+                    target: target, clipboardClaim: clipboardClaim)
+            }
             return try Self.handledActionResponse(response: .ok, result: result, fallbackTarget: .requestPinned)
         }
         guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,

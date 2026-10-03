@@ -154,7 +154,8 @@ struct WindowRoutedPointerDriver {
         targetWindowID: CGWindowID,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
         expectedWindowBounds: CGRect? = nil,
-        allowedWindowLayers: Set<Int> = [Int(CGWindowLevelForKey(.normalWindow))]) async throws
+        allowedWindowLayers: Set<Int> = [Int(CGWindowLevelForKey(.normalWindow))],
+        beforeButtonDown: (@MainActor () async throws -> Void)? = nil) async throws
         -> DesktopActionOutcome
     {
         guard button == .left || button == .right || button == .middle else {
@@ -199,6 +200,16 @@ struct WindowRoutedPointerDriver {
 
         for pairIndex in 0..<count {
             try Self.checkCancellation(afterPosting: postedEventCount)
+            do {
+                try await beforeButtonDown?()
+                try Self.checkCancellation(afterPosting: postedEventCount)
+            } catch {
+                throw InputDeliveryIndeterminateError(
+                    operation: .click,
+                    emittedUnitCount: postedEventCount,
+                    causeDescription: error.localizedDescription,
+                    delivery: .init(mechanism: .windowTargetedEvents, mode: .background))
+            }
             let clickState = Int64(pairIndex + 1)
             let eventKinds = Self.eventKinds(for: button)
             let down = EventSpecification(

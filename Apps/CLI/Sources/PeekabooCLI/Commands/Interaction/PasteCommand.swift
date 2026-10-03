@@ -211,7 +211,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
     private func requireClipboardPasteRoute(for target: UIAutomationTarget) throws {
         if target.exactWindow != nil {
-            _ = try ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+            _ = try ExactWindowKeyboardRuntime.requirePreparedClipboardGuardedPasteProvider(
                 automation: self.services.automation,
                 operation: "Exact-window paste"
             )
@@ -848,7 +848,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         if plannedTarget.exactWindow != nil {
             do {
                 if requiresClipboardClaim {
-                    _ = try ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+                    _ = try ExactWindowKeyboardRuntime.requirePreparedClipboardGuardedPasteProvider(
                         automation: self.services.automation,
                         operation: "Exact-window paste"
                     )

@@ -582,7 +582,9 @@ extension PeekabooBridgeOperationResultSemantics {
         completion: Completion) -> [DesktopActionOutcome.State]
     {
         guard completion.mutatesDesktop else { return [] }
-        if request.requiresClipboardGuardedExactWindowHotkey {
+        if request.requiresClipboardGuardedExactWindowHotkey || request
+            .requiresPreparedClipboardGuardedExactWindowHotkey
+        {
             return [.dispatchedUnverified]
         }
         let verifiedOrAccepted: [DesktopActionOutcome.State] = [
@@ -790,6 +792,15 @@ extension PeekabooBridgeOperationResultSemantics {
             }
             return rules
         case let .exactWindowTargetedHotkey(payload):
+            if payload.backgroundPreparation != nil {
+                guard payload.clipboardClaim != nil, payload.expectedFocusedElement != nil,
+                      payload.holdDuration > 0, HotkeyService.isPasteShortcut(payload.keys)
+                else { return [] }
+                return [
+                    DeliveryRule(delivery: nativeBackground, units: .exact(1), allowsSuccessfulOutcome: false),
+                    rule(compositeBackground, .exact(8)),
+                ]
+            }
             if payload.clipboardClaim != nil {
                 return [rule(windowBackground, .exact(4))]
             }
@@ -1149,8 +1160,9 @@ extension PeekabooBridgeOperationResultSemantics {
         plan: PeekabooBridgeRequestPlan) -> Bool
     {
         guard outcome.route == .bridge, !outcome.isConfirmed else { return false }
-        if plan.operation == .exactWindowDrag || plan.request.requiresClipboardGuardedExactWindowHotkey,
-           ![.refused, .dispatchedUnverified, .indeterminate].contains(outcome.state)
+        if plan.operation == .exactWindowDrag || plan.request.requiresClipboardGuardedExactWindowHotkey ||
+            plan.request.requiresPreparedClipboardGuardedExactWindowHotkey,
+            ![.refused, .dispatchedUnverified, .indeterminate].contains(outcome.state)
         {
             return false
         }
@@ -1163,6 +1175,12 @@ extension PeekabooBridgeOperationResultSemantics {
             return plan.deliveryAgnosticFailureUnits?.acceptsSuccessful(unitCount) == true
         }
         guard let rule = plan.deliveryRule(for: delivery) else { return false }
+        if plan.request.requiresPreparedClipboardGuardedExactWindowHotkey,
+           delivery.mechanism == .composite, let count = outcome.dispatchState.unitCount,
+           !(2...8).contains(count.rawValue)
+        {
+            return false
+        }
         if let units = plan.typedResponseRule.typeActionDispatchUnits {
             return units.acceptsFailureProgress(outcome.dispatchState.unitCount)
         }

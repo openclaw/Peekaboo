@@ -314,6 +314,13 @@ extension PeekabooBridgeServer {
         if supportsAttestedOperationReceipts {
             advertisedCapabilities.insert(PeekabooBridgeHostCapability.attestedOperationReceipts)
         }
+        if !advertisedCapabilities.contains(PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys) ||
+            negotiated < PeekabooBridgeConstants.preparedClipboardGuardedExactWindowHotkeyVersion ||
+            (self.services.automation as? any PreparedClipboardGuardedExactWindowHotkeyServiceProtocol)?
+            .supportsPreparedClipboardGuardedExactWindowHotkeys != true
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.preparedClipboardGuardedExactWindowHotkeys)
+        }
         let operationSessionAttestation: PeekabooBridgeOperationSessionAttestation?
         if supportsAttestedOperationReceipts {
             guard let peer,
@@ -348,6 +355,8 @@ extension PeekabooBridgeServer {
                             PeekabooBridgeHostCapability.compositeTypeDelivery),
                         clipboardGuardedExactWindowHotkeys: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys),
+                        preparedClipboardGuardedExactWindowHotkeys: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.preparedClipboardGuardedExactWindowHotkeys),
                         processGenerationBoundElementMutations: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.processGenerationBoundElementMutations),
                         setValueVerification: PeekabooBridgeNegotiatedSessionCapabilities.offersSetValueVerification(

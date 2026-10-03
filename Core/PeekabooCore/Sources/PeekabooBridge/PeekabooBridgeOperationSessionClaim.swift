@@ -13,6 +13,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let requestPinnedExactWindowScrollReceipt: Bool
     let compositeTypeDelivery: Bool
     let clipboardGuardedExactWindowHotkeys: Bool
+    let preparedClipboardGuardedExactWindowHotkeys: Bool
     let processGenerationBoundElementMutations: Bool
     let setValueVerification: Bool
 
@@ -36,6 +37,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         requestPinnedExactWindowScrollReceipt: true,
         compositeTypeDelivery: true,
         clipboardGuardedExactWindowHotkeys: true,
+        preparedClipboardGuardedExactWindowHotkeys: true,
         processGenerationBoundElementMutations: true,
         setValueVerification: true,
         screenCaptureKitOwnershipDiagnostics: true)
@@ -52,6 +54,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         requestPinnedExactWindowScrollReceipt: Bool = false,
         compositeTypeDelivery: Bool = false,
         clipboardGuardedExactWindowHotkeys: Bool = false,
+        preparedClipboardGuardedExactWindowHotkeys: Bool = false,
         processGenerationBoundElementMutations: Bool = false,
         setValueVerification: Bool = false,
         screenCaptureKitOwnershipDiagnostics: Bool = false)
@@ -68,6 +71,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.requestPinnedExactWindowScrollReceipt = requestPinnedExactWindowScrollReceipt
         self.compositeTypeDelivery = compositeTypeDelivery
         self.clipboardGuardedExactWindowHotkeys = clipboardGuardedExactWindowHotkeys
+        self.preparedClipboardGuardedExactWindowHotkeys = preparedClipboardGuardedExactWindowHotkeys
         self.processGenerationBoundElementMutations = processGenerationBoundElementMutations
         self.setValueVerification = setValueVerification
     }

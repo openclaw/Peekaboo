@@ -217,6 +217,16 @@ refuse without dropping the claim or falling back to ordinary hotkeys. Claimless
 Completed guarded delivery reports four window-targeted event units and remains unverified and retry-unsafe; checks
 themselves add no units, and neither the claim nor accepted delivery proves that the application consumed the paste.
 
+Protocol `1.41` adds `preparedClipboardGuardedExactWindowHotkeys`, refining the guarded capability above. The explicit
+`backgroundPreparation: "blankWindowChrome"` mode requires the new negotiated capability even in malformed requests
+that omit a claim; it is never silently dropped by compatibility fallback. CLI and MCP temporary exact-window rich/binary
+paste require this capability before clipboard preparation. Omitted mode preserves the original four-unit contract.
+The native host keeps target-only activation, observed blank-chrome pointer delivery, and Cmd+V under the existing
+process lane. It retains the exact editor, UTF-16 text, and selection across preparation and then applies normal exact
+key-window validation before keys. Complete preparation and delivery report eight composite/background units; native-only
+and mixed failure prefixes remain separately accounted, unverified, and retry-unsafe. It does not invoke foreground
+activation, restore prior focus/selection, retry uncertain input, or create a second pointer owner.
+
 Protocol `1.36` adds `compositeTypeDelivery` for background type requests that may use AXValue delivery: non-empty text,
 clear, and editable focused-text keys. Each direct AX mutation counts as one dispatch and zero key presses; event fallback
 counts its posted key events, and mixed requests report composite delivery. Event-only special keys retain their earlier

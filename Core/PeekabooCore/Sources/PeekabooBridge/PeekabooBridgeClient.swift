@@ -127,6 +127,10 @@ public actor PeekabooBridgeClient {
         self.inputCapabilities.clipboardGuardedExactWindowHotkeysEnabled
     }
 
+    var preparedClipboardGuardedExactWindowHotkeysEnabled: Bool {
+        self.inputCapabilities.preparedClipboardGuardedExactWindowHotkeysEnabled
+    }
+
     var desktopObservationInlinePixelsEnabled: Bool {
         self.inputCapabilities.desktopObservationInlinePixelsEnabled
     }
@@ -928,6 +932,8 @@ public actor PeekabooBridgeClient {
                 Self.supportsRequestPinnedExactWindowScrollReceipt(handshake),
                 compositeTypeDeliveryEnabled: Self.supportsCompositeTypeDelivery(handshake),
                 clipboardGuardedExactWindowHotkeysEnabled: handshake.supportsClipboardGuardedExactWindowHotkeys,
+                preparedClipboardGuardedExactWindowHotkeysEnabled: handshake
+                    .supportsPreparedClipboardGuardedExactWindowHotkeys,
                 desktopObservationInlinePixelsEnabled: handshake.supportedOperations.contains(.desktopObservation) &&
                     handshake.hostCapabilities?
                     .contains(PeekabooBridgeHostCapability.desktopObservationInlinePixels) == true),
@@ -1530,6 +1536,7 @@ private struct PeekabooBridgeClientInputCapabilities: Sendable {
     var requestPinnedExactWindowScrollReceiptEnabled = false
     var compositeTypeDeliveryEnabled = false
     var clipboardGuardedExactWindowHotkeysEnabled = false
+    var preparedClipboardGuardedExactWindowHotkeysEnabled = false
     var desktopObservationInlinePixelsEnabled = false
 }
 

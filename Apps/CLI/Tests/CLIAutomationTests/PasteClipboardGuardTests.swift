@@ -7,29 +7,32 @@ import Testing
 @Suite(.tags(.safe), .serialized)
 @MainActor
 struct PasteClipboardGuardTests {
-    @Test(arguments: [false, true], [false, true])
-    func `temporary exact paste requires host and retained claim before writing`(
-        hostSupportsGuard: Bool,
-        transactionRetainsClaim: Bool
-    ) async throws {
+    @Test(arguments: 0..<8)
+    func `temporary exact paste requires prepared host and retained claim before writing`(flags: Int) async throws {
+        let hostSupportsGuard = flags & 1 != 0
+        let hostSupportsPreparation = flags & 2 != 0
+        let transactionRetainsClaim = flags & 4 != 0
         let clipboard = StubClipboardService(current: Self.prior)
         clipboard.retainsTemporaryWriteClaims = transactionRetainsClaim
         let fixture = ExactBackgroundTextPasteFixture(clipboard: clipboard)
         fixture.automation.supportsClipboardGuardedExactWindowHotkeys = hostSupportsGuard
+        fixture.automation.supportsPreparedClipboardGuardedExactWindowHotkeys = hostSupportsPreparation
         fixture.automation.supportsExactWindowTargetedKeyboard = !hostSupportsGuard
         fixture.automation.actionOutcome = Self.dispatched
 
         let result = try await self.run(fixture)
         let response = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
-        let dispatched = hostSupportsGuard && transactionRetainsClaim
+        let hostSupportsPaste = hostSupportsGuard && hostSupportsPreparation
+        let dispatched = hostSupportsPaste && transactionRetainsClaim
         #expect(result.exitStatus == 1)
         #expect(response.error?.mutation_dispatched == dispatched)
         #expect(response.error?.retry_safe == !dispatched)
         #expect(clipboard.setCallCount == (dispatched ? 1 : 0))
-        #expect(clipboard.getCallCount == (hostSupportsGuard ? 1 : 0))
+        #expect(clipboard.getCallCount == (hostSupportsPaste ? 1 : 0))
         #expect(clipboard.restoreCallCount == (dispatched ? 1 : 0))
         #expect(clipboard.current?.data == Self.prior.data)
         #expect(fixture.automation.guardedHotkeyClaims.map(\.changeCount) == (dispatched ? [1] : []))
+        #expect(fixture.automation.backgroundPreparations == (dispatched ? [.blankWindowChrome] : []))
         #expect(fixture.automation.exactHotkeyCalls.count == (dispatched ? 1 : 0))
         #expect(fixture.automation.targetedHotkeyCalls.isEmpty)
         #expect(fixture.automation.hotkeyCalls.isEmpty)
@@ -140,8 +143,8 @@ struct PasteClipboardGuardTests {
         utiIdentifier: "public.utf8-plain-text", data: Data("newer".utf8), textPreview: "newer"
     )
     private static let dispatched = DesktopActionOutcome.dispatchedUnverified(
-        delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+        delivery: .init(mechanism: .composite, mode: .background),
         evidence: .deliveryAccepted,
-        unitCount: .init(4)
+        unitCount: .init(8)
     )
 }

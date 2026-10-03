@@ -55,7 +55,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     ExactWindowTargetedKeyboardServiceProtocol, ExactWindowFocusedElementServiceProtocol,
     ExactWindowPixelFocusTypingServiceProtocol,
     ForegroundModifierClickServiceProtocol,
-    ClipboardGuardedExactWindowHotkeyServiceProtocol, UIAutomationGlobalPointerActionResultProviding
+    PreparedClipboardGuardedExactWindowHotkeyServiceProtocol, UIAutomationGlobalPointerActionResultProviding
 {
     public let supportsProcessGenerationPinnedHotkeys = true
     public let supportsProcessGenerationPinnedTypeActions = true
@@ -64,6 +64,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     public let supportsTargetedClickAccessibilityValueDelivery = true
     public let supportsExactWindowTargetedKeyboard = true
     public let supportsClipboardGuardedExactWindowHotkeys = true
+    public let supportsPreparedClipboardGuardedExactWindowHotkeys = true
     public let supportsExactWindowCompositeTypeDelivery = true
     public let supportsExactWindowFocusedElementFocus = true
     public let supportsExactWindowPixelFocusTyping = true

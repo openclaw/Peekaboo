@@ -372,16 +372,17 @@ enum AutomationServiceBridge {
                     message: "Clipboard-guarded paste requires an exact-window focused-element receipt."
                 )
             }
-            let provider = try ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+            let provider = try ExactWindowKeyboardRuntime.requirePreparedClipboardGuardedPasteProvider(
                 automation: automation,
                 operation: "Background paste"
             )
-            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+            return try await ExactWindowKeyboardRuntime.validatePreparedPasteReceipt(
                 provider.hotkeyWithOutcome(
                     keys: keys,
                     holdDuration: holdDuration,
                     target: exactWindow,
-                    clipboardClaim: clipboardClaim
+                    clipboardClaim: clipboardClaim,
+                    preparation: .blankWindowChrome
                 ),
                 operation: "Background paste"
             )

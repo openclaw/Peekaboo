@@ -411,6 +411,25 @@ public protocol ClipboardGuardedExactWindowHotkeyServiceProtocol: UIAutomationAc
         clipboardClaim: GeneralPasteboardWriteClaim) async throws -> UIAutomationActionResult<Void>
 }
 
+public enum BackgroundWindowKeyboardPreparationMode: String, Codable, Sendable {
+    case blankWindowChrome
+}
+
+/// Explicitly negotiated preparation; the original guarded hotkey contract remains preparation-free.
+@MainActor
+public protocol PreparedClipboardGuardedExactWindowHotkeyServiceProtocol:
+    ClipboardGuardedExactWindowHotkeyServiceProtocol
+{
+    var supportsPreparedClipboardGuardedExactWindowHotkeys: Bool { get }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim,
+        preparation: BackgroundWindowKeyboardPreparationMode) async throws -> UIAutomationActionResult<Void>
+}
+
 extension UIAutomationActionOutcomeProviding {
     public func clickWithOutcome(
         target: ClickTarget,

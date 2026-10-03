@@ -77,7 +77,12 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 40)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 41)
+
+    /// Explicit target-only preparation before a clipboard-guarded exact-window paste.
+    public static let preparedClipboardGuardedExactWindowHotkeyVersion = PeekabooBridgeProtocolVersion(
+        major: 1,
+        minor: 41)
 
     /// First protocol that fences exact-window paste with the caller's retained clipboard write claim.
     public static let clipboardGuardedExactWindowHotkeyVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 40)

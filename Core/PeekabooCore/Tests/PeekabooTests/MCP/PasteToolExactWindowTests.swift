@@ -82,8 +82,9 @@ struct PasteToolExactWindowTests {
             Issue.record("Expected retry-safety metadata")
             return
         }
-        #expect(meta["paste_outcome"] == .string("unverified"))
-        #expect(meta["may_have_pasted"] == .bool(true))
+        let preparedOutcome = try #require(await MainActor.run { fixture.exactAutomation?.preparedOutcome })
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(preparedOutcome, in: response)
+        #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
     }
 
@@ -95,15 +96,21 @@ struct PasteToolExactWindowTests {
     {
         let fixture = await self.makeFixture(exactKeyboardSupported: true)
         let automation = try #require(fixture.exactAutomation)
-        let delivery = DesktopActionOutcome.Delivery(mechanism: .windowTargetedEvents, mode: .background)
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: explicitPayload ? .composite : .windowTargetedEvents, mode: .background)
         let outcome: DesktopActionOutcome = indeterminate
-            ? .indeterminate(route: .bridge, delivery: delivery, evidence: .completionUnknown, unitCount: .init(3))
+            ? .indeterminate(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .completionUnknown,
+                unitCount: .init(explicitPayload ? 7 : 3))
             : .dispatchedUnverified(
                 route: .bridge,
                 delivery: delivery,
                 evidence: .deliveryAccepted,
-                unitCount: .init(4))
+                unitCount: .init(explicitPayload ? 8 : 4))
         automation.uiAutomationOutcomeScript.setDefaultOutcome(outcome)
+        automation.preparedOutcome = outcome
         var arguments: [String: Any] = [
             "window_id": self.secondWindow.windowID,
             "restore_delay_ms": 0,
@@ -154,15 +161,16 @@ struct PasteToolExactWindowTests {
         #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
     }
 
-    @Test(arguments: [false, true], [false, true])
+    @Test(arguments: 0..<8)
     @MainActor
-    func `temporary exact paste preflights guard and claim support before write`(
-        hostSupportsGuard: Bool,
-        transactionRetainsClaim: Bool) async throws
-    {
+    func `temporary exact paste preflights prepared guard and claim support before write`(flags: Int) async throws {
+        let hostSupportsGuard = flags & 1 != 0
+        let hostSupportsPreparation = flags & 2 != 0
+        let transactionRetainsClaim = flags & 4 != 0
         let fixture = await self.makeFixture(exactKeyboardSupported: true)
         let automation = try #require(fixture.exactAutomation)
         automation.supportsClipboardGuardedExactWindowHotkeys = hostSupportsGuard
+        automation.supportsPreparedClipboardGuardedExactWindowHotkeys = hostSupportsPreparation
         automation.supportsExactWindowTargetedKeyboard = !hostSupportsGuard
         fixture.clipboard.retainsTemporaryWriteClaims = transactionRetainsClaim
         let response = try await fixture.tool.execute(arguments: ToolArguments(raw: [
@@ -171,13 +179,15 @@ struct PasteToolExactWindowTests {
             "uti": UTType.rtf.identifier,
             "restore_delay_ms": 0,
         ]))
-        let dispatched = hostSupportsGuard && transactionRetainsClaim
+        let hostSupportsPaste = hostSupportsGuard && hostSupportsPreparation
+        let dispatched = hostSupportsPaste && transactionRetainsClaim
         #expect(response.isError)
-        #expect(fixture.clipboard.getCallCount == (hostSupportsGuard ? 1 : 0))
+        #expect(fixture.clipboard.getCallCount == (hostSupportsPaste ? 1 : 0))
         #expect(fixture.clipboard.setCallCount == (dispatched ? 1 : 0))
         #expect(fixture.clipboard.restoreCallCount == (dispatched ? 1 : 0))
         #expect(fixture.clipboard.current?.data == Data("before".utf8))
         #expect(automation.guardedHotkeyClaims.map(\.changeCount) == (dispatched ? [1] : []))
+        #expect(automation.backgroundPreparations == (dispatched ? [.blankWindowChrome] : []))
         #expect(automation.exactHotkeyCalls.count == (dispatched ? 1 : 0))
         #expect(automation.targetedHotkeyCalls.isEmpty)
         #expect(automation.lastHotkeyKeys == nil)
@@ -558,7 +568,7 @@ private struct PasteExactWindowFixture {
 @MainActor
 private final class ExactPasteAutomationService: MockAutomationService,
     ExactWindowTargetedKeyboardServiceProtocol,
-    ClipboardGuardedExactWindowHotkeyServiceProtocol,
+    PreparedClipboardGuardedExactWindowHotkeyServiceProtocol,
     ScriptedUIAutomationActionOutcomeProviding,
     TargetedFocusedElementServiceProtocol
 {
@@ -577,6 +587,10 @@ private final class ExactPasteAutomationService: MockAutomationService,
 
     var supportsExactWindowTargetedKeyboard = true
     var supportsClipboardGuardedExactWindowHotkeys = true
+    var supportsPreparedClipboardGuardedExactWindowHotkeys = true
+    var backgroundPreparations: [BackgroundWindowKeyboardPreparationMode] = []
+    var preparedOutcome = DesktopActionOutcome.dispatchedUnverified(
+        delivery: .init(mechanism: .composite, mode: .background), evidence: .deliveryAccepted, unitCount: .init(8))
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript(defaultResponse: .outcome(
         .confirmedChange(delivery: .init(
@@ -688,6 +702,22 @@ private final class ExactPasteAutomationService: MockAutomationService,
             holdDuration: holdDuration,
             target: keyboardTarget)
         return result
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim,
+        preparation: BackgroundWindowKeyboardPreparationMode) async throws -> UIAutomationActionResult<Void>
+    {
+        self.backgroundPreparations.append(preparation)
+        let result = try await self.hotkeyWithOutcome(
+            keys: keys, holdDuration: holdDuration, target: target, clipboardClaim: clipboardClaim)
+        return UIAutomationActionResult(
+            payload: (),
+            outcome: self.preparedOutcome,
+            targetIdentity: result.targetIdentity)
     }
 }
 

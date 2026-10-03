@@ -7,7 +7,7 @@ import PeekabooFoundation
 @MainActor
 final class OutcomeStubAutomationService: StubAutomationService, ScriptedUIAutomationActionOutcomeProviding,
     ExactWindowTargetedKeyboardServiceProtocol, TargetedFocusedElementServiceProtocol,
-    ClipboardGuardedExactWindowHotkeyServiceProtocol,
+    PreparedClipboardGuardedExactWindowHotkeyServiceProtocol,
     UIAutomationGlobalPointerActionResultProviding {
     struct ExactTypeActionsCall {
         let actions: [TypeAction]
@@ -31,6 +31,8 @@ final class OutcomeStubAutomationService: StubAutomationService, ScriptedUIAutom
 
     var supportsExactWindowTargetedKeyboard = true
     var supportsClipboardGuardedExactWindowHotkeys = true
+    var supportsPreparedClipboardGuardedExactWindowHotkeys = true
+    var backgroundPreparations: [BackgroundWindowKeyboardPreparationMode] = []
     let supportsExactWindowCompositeTypeDelivery = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil
@@ -110,6 +112,19 @@ final class OutcomeStubAutomationService: StubAutomationService, ScriptedUIAutom
             target: keyboardTarget
         )
         return result
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim,
+        preparation: BackgroundWindowKeyboardPreparationMode
+    ) async throws -> UIAutomationActionResult<Void> {
+        self.backgroundPreparations.append(preparation)
+        return try await self.hotkeyWithOutcome(
+            keys: keys, holdDuration: holdDuration, target: target, clipboardClaim: clipboardClaim
+        )
     }
 
     func dragWithOutcome(_ request: DragOperationRequest) async throws -> UIAutomationActionResult<Void> {

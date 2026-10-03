@@ -189,6 +189,14 @@ extension PeekabooBridgeClient {
     }
 
     private func requireNegotiatedInputCapabilities(for request: PeekabooBridgeRequest) throws {
+        if request.requiresPreparedClipboardGuardedExactWindowHotkey,
+           !self.preparedClipboardGuardedExactWindowHotkeysEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge, reason: .runtimeIncompatible,
+                message: "The selected Bridge session cannot prepare a background window for clipboard-guarded paste.",
+                hint: "Update and relaunch the selected host before writing a temporary clipboard payload.")
+        }
         if request.requiresClipboardGuardedExactWindowHotkey, !self.clipboardGuardedExactWindowHotkeysEnabled {
             throw DesktopActionFailure.preDispatchRefusal(
                 route: .bridge,

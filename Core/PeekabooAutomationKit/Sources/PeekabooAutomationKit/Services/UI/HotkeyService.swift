@@ -25,6 +25,8 @@ public final class HotkeyService {
     private let clipboardChangeCountProvider: @MainActor @Sendable () -> Int
     private let holdSleeper: @MainActor @Sendable (UInt64) async throws -> Void
     private let heldInterEventDelay: @MainActor @Sendable () -> Void
+    private let backgroundWindowPreparer: @MainActor (
+        UIAutomationTarget.ExactWindow, @escaping @MainActor () throws -> Void) async throws -> DesktopActionOutcome
     let inputPolicy: UIInputPolicy
     private let actionInputDriver: any ActionInputDriving
     private let focusedTextHotkey: @MainActor (
@@ -82,6 +84,11 @@ public final class HotkeyService {
             try await Task.sleep(nanoseconds: $0)
         },
         heldInterEventDelay: @escaping @MainActor @Sendable () -> Void = { usleep(1000) },
+        backgroundWindowPreparer: @escaping @MainActor (
+            UIAutomationTarget.ExactWindow, @escaping @MainActor () throws -> Void) async throws
+            -> DesktopActionOutcome = {
+                try await BackgroundWindowKeyboardPreparation.perform(target: $0, validateOwnership: $1)
+            },
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {})
     {
@@ -97,6 +104,7 @@ public final class HotkeyService {
         self.clipboardChangeCountProvider = clipboardChangeCountProvider
         self.holdSleeper = holdSleeper
         self.heldInterEventDelay = heldInterEventDelay
+        self.backgroundWindowPreparer = backgroundWindowPreparer
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
     }
@@ -188,6 +196,7 @@ public final class HotkeyService {
         holdDuration: Int,
         automationTarget: UIAutomationTarget,
         clipboardClaim: GeneralPasteboardWriteClaim? = nil,
+        prepareBackgroundWindow: Bool = false,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
         -> UIAutomationActionResult<UIInputExecutionResult>
     {
@@ -200,8 +209,10 @@ public final class HotkeyService {
         try BackgroundHotkeyPolicy.validate(keys: keys)
         let parsedKeys = try Self.parsedKeys(keys)
         let plannedChord = try? self.makeHotkeyPlan(parsedKeys)
-        if clipboardClaim != nil {
+        if clipboardClaim != nil || prepareBackgroundWindow {
             guard automationTarget.exactWindow != nil, holdDuration > 0,
+                  !prepareBackgroundWindow ||
+                  (clipboardClaim != nil && automationTarget.exactWindow?.focusedElement != nil),
                   let plannedChord,
                   Self.isPasteShortcut(primaryKey: plannedChord.primaryKey, flags: plannedChord.modifierFlags)
             else {
@@ -214,6 +225,17 @@ public final class HotkeyService {
             Self.isSelectAllShortcut(primaryKey: $0.primaryKey, flags: $0.modifierFlags)
         } ?? false
         var strategy = self.inputPolicy.resolvedBackgroundHotkeyStrategy(isSelectAll: isSelectAll)
+        let preparationOwnershipValidator: @MainActor () throws -> Void = {
+            try Task.checkCancellation()
+            guard let identity = automationTarget.processIdentity,
+                  self.processStartIdentityProvider(targetProcessIdentifier) == identity.processStartIdentity,
+                  let clipboardClaim, self.clipboardChangeCountProvider() == clipboardClaim.changeCount
+            else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Background preparation lost its original process or temporary clipboard owner.")
+            }
+        }
         let targetValidator: @MainActor @Sendable () async throws -> Void = {
             if let expectedProcessIdentity = automationTarget.processIdentity,
                self.processStartIdentityProvider(targetProcessIdentifier) !=
@@ -293,41 +315,34 @@ public final class HotkeyService {
                 return actionResult
             },
             synthesis: DesktopOperationPlan.SynthesisRoute {
-                try await self.validateDelivery(
-                    targetValidator,
-                    emittedUnitCount: 0)
-                try Self.validateTargetProcess(targetProcessIdentifier)
-                let plan = try plannedChord ?? self.makeHotkeyPlan(parsedKeys)
                 let holdNanoseconds = try Self.holdNanoseconds(for: holdDuration)
-                let emittedUnitCount = try await self.postHotkey(
-                    plan,
-                    holdNanoseconds: holdNanoseconds,
-                    targetProcessIdentifier: targetProcessIdentifier,
-                    deliveryValidator: targetValidator,
-                    cleanupProcessIdentity: automationTarget.exactWindow?.identity.processIdentity)
-
+                var preparation = DesktopActionSequenceAccumulator()
                 do {
-                    if holdDuration <= 0 {
-                        try await Task.sleep(nanoseconds: 10_000_000)
+                    if prepareBackgroundWindow, let exactWindow = automationTarget.exactWindow {
+                        guard self.postEventAccessEvaluator() else {
+                            throw PeekabooError.permissionDeniedEventSynthesizing
+                        }
+                        try preparationOwnershipValidator()
+                        try await preparation.record(.outcome(self.backgroundWindowPreparer(
+                            exactWindow, preparationOwnershipValidator)))
                     }
-                    // The chord's effect can change focus; exact destination proof belongs before delivery.
-                    if automationTarget.exactWindow == nil {
-                        try await self.validateDelivery(targetValidator, emittedUnitCount: emittedUnitCount)
+                    let outcome = try await self.performTargetedHotkey(
+                        parsedKeys: parsedKeys, plannedChord: plannedChord, holdDuration: holdDuration,
+                        holdNanoseconds: holdNanoseconds,
+                        automationTarget: automationTarget, targetValidator: targetValidator)
+                    guard prepareBackgroundWindow else { return outcome }
+                    preparation.record(.outcome(outcome))
+                    guard let result = preparation.successResolution().outcome else {
+                        throw PeekabooError.operationError(message: "Prepared hotkey outcomes could not be composed")
                     }
-                } catch let error as InputDeliveryIndeterminateError {
-                    throw error
+                    return result
                 } catch {
-                    throw InputDeliveryIndeterminateError(
-                        operation: .hotkey,
-                        emittedUnitCount: emittedUnitCount,
-                        causeDescription: error.localizedDescription)
+                    guard preparation.mutationDisposition.mutationDispatched else { throw error }
+                    throw preparation.failure(
+                        combining: BackgroundWindowKeyboardPreparation.leafFailure(
+                            error, delivery: automationTarget.keyboardDelivery),
+                        message: "Prepared background hotkey did not finish; observe before another input.")
                 }
-                return .dispatchedUnverified(
-                    delivery: automationTarget.keyboardDelivery,
-                    evidence: .deliveryAccepted,
-                    unitCount: holdNanoseconds > 0 && automationTarget.exactWindow != nil
-                        ? DesktopActionOutcome.DispatchUnitCount(emittedUnitCount)
-                        : nil)
             },
             finalize: self.operationFinalizer)
         let result: UIAutomationActionResult<UIInputExecutionResult>
@@ -345,6 +360,53 @@ public final class HotkeyService {
 
         self.logger.debug("Targeted hotkey completed via \(result.payload.path.rawValue, privacy: .public)")
         return result
+    }
+
+    private func performTargetedHotkey(
+        parsedKeys: [String],
+        plannedChord: HotkeyPlan?,
+        holdDuration: Int,
+        holdNanoseconds: UInt64,
+        automationTarget: UIAutomationTarget,
+        targetValidator: @escaping @MainActor @Sendable () async throws -> Void) async throws -> DesktopActionOutcome
+    {
+        guard let targetProcessIdentifier = automationTarget.processIdentifier else {
+            throw PeekabooError.invalidInput("Targeted hotkey requires a process target")
+        }
+        try await self.validateDelivery(
+            targetValidator,
+            emittedUnitCount: 0)
+        try Self.validateTargetProcess(targetProcessIdentifier)
+        let plan = try plannedChord ?? self.makeHotkeyPlan(parsedKeys)
+        let emittedUnitCount = try await self.postHotkey(
+            plan,
+            holdNanoseconds: holdNanoseconds,
+            targetProcessIdentifier: targetProcessIdentifier,
+            deliveryValidator: targetValidator,
+            cleanupProcessIdentity: automationTarget.exactWindow?.identity.processIdentity)
+
+        do {
+            if holdDuration <= 0 {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            // The chord's effect can change focus; exact destination proof belongs before delivery.
+            if automationTarget.exactWindow == nil {
+                try await self.validateDelivery(targetValidator, emittedUnitCount: emittedUnitCount)
+            }
+        } catch let error as InputDeliveryIndeterminateError {
+            throw error
+        } catch {
+            throw InputDeliveryIndeterminateError(
+                operation: .hotkey,
+                emittedUnitCount: emittedUnitCount,
+                causeDescription: error.localizedDescription)
+        }
+        return .dispatchedUnverified(
+            delivery: automationTarget.keyboardDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: holdNanoseconds > 0 && automationTarget.exactWindow != nil
+                ? DesktopActionOutcome.DispatchUnitCount(emittedUnitCount)
+                : nil)
     }
 
     private func performSyntheticHotkey(keys: [String], holdDuration: Int) async throws {

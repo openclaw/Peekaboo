@@ -241,11 +241,27 @@ extension UIAutomationService {
             clipboardClaim: clipboardClaim)
     }
 
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget.ExactWindow,
+        clipboardClaim: GeneralPasteboardWriteClaim,
+        preparation: BackgroundWindowKeyboardPreparationMode) async throws -> UIAutomationActionResult<Void>
+    {
+        switch preparation {
+        case .blankWindowChrome:
+            try await self.exactWindowHotkeyWithOutcome(
+                keys: keys, holdDuration: holdDuration, target: target,
+                clipboardClaim: clipboardClaim, prepareBackgroundWindow: true)
+        }
+    }
+
     private func exactWindowHotkeyWithOutcome(
         keys: String,
         holdDuration: Int,
         target: UIAutomationTarget.ExactWindow,
-        clipboardClaim: GeneralPasteboardWriteClaim? = nil) async throws -> UIAutomationActionResult<Void>
+        clipboardClaim: GeneralPasteboardWriteClaim? = nil,
+        prepareBackgroundWindow: Bool = false) async throws -> UIAutomationActionResult<Void>
     {
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
@@ -258,6 +274,7 @@ extension UIAutomationService {
             holdDuration: holdDuration,
             automationTarget: .exactWindow(target),
             clipboardClaim: clipboardClaim,
+            prepareBackgroundWindow: prepareBackgroundWindow,
             deliveryValidator: validator)
         return UIAutomationActionResult(payload: (), outcome: result.outcome, targetIdentity: result.targetIdentity)
     }

@@ -25,7 +25,7 @@ struct PeekabooBridgeClientConcurrencyTests {
             operationClientInstanceID: clientInstanceID)
 
         do {
-            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 19))
+            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 20))
             let negotiation = Task { try await client.handshake(client: Self.clientIdentity) }
             let request = try await peer.nextRequest()
             try Self.requireHandshake(request)
@@ -33,12 +33,12 @@ struct PeekabooBridgeClientConcurrencyTests {
                 .handshake(Self.handshake(authority: authority, session: session.attestation, allInputs: true)),
                 to: request)
             _ = try await negotiation.value
-            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 19))
+            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 20))
             #expect(await Self.retainedFlags(client) == Array(repeating: true, count: 6))
 
             await client.clearNegotiatedInputCapabilities()
 
-            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 19))
+            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 20))
             #expect(await Self.retainedFlags(client) == Array(repeating: true, count: 6))
         } catch {
             await peer.stop()
@@ -127,7 +127,7 @@ struct PeekabooBridgeClientConcurrencyTests {
                     authority: authority, session: newerSession.attestation, allInputs: true)),
                 to: newerRequest)
             #expect(try await newer.value.operationSessionAttestation?.sessionID == newerSession.attestation.sessionID)
-            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 19))
+            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 20))
 
             try await peer.respond(
                 .handshake(Self.legacyHandshake()),
@@ -142,7 +142,7 @@ struct PeekabooBridgeClientConcurrencyTests {
             let reservation = try #require(try await client.reserveOperationSession())
             #expect(reservation.sessionAttestation.sessionID == newerSession.attestation.sessionID)
             #expect(reservation.sequence.value == 0)
-            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 19))
+            #expect(await Self.inputFlags(client) == Array(repeating: true, count: 20))
         } catch {
             await peer.stop()
             throw error
@@ -196,7 +196,7 @@ struct PeekabooBridgeClientConcurrencyTests {
             }
 
             #expect(try await client.reserveOperationSession()?.requestID == nil)
-            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 19))
+            #expect(await Self.inputFlags(client) == Array(repeating: false, count: 20))
             #expect(await peer.acceptedConnectionCount == 2)
         } catch {
             await peer.stop()
@@ -1543,6 +1543,7 @@ extension PeekabooBridgeClientConcurrencyTests {
         PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt,
         PeekabooBridgeHostCapability.compositeTypeDelivery,
         PeekabooBridgeHostCapability.clipboardGuardedExactWindowHotkeys,
+        PeekabooBridgeHostCapability.preparedClipboardGuardedExactWindowHotkeys,
         PeekabooBridgeHostCapability.desktopObservationInlinePixels,
     ]
 
@@ -1566,6 +1567,7 @@ extension PeekabooBridgeClientConcurrencyTests {
             client.requestPinnedExactWindowScrollReceiptEnabled,
             client.compositeTypeDeliveryEnabled,
             client.clipboardGuardedExactWindowHotkeysEnabled,
+            client.preparedClipboardGuardedExactWindowHotkeysEnabled,
             client.desktopObservationInlinePixelsEnabled,
         ]
     }

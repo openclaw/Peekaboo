@@ -466,7 +466,7 @@ public struct PasteTool: MCPTool {
         if destination.exactWindow != nil {
             do {
                 if requiresClipboardClaim {
-                    return try .guardedExact(ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+                    return try .guardedExact(ExactWindowKeyboardRuntime.requirePreparedClipboardGuardedPasteProvider(
                         automation: self.context.automation,
                         operation: "Exact-window paste"))
                 }
@@ -516,8 +516,9 @@ public struct PasteTool: MCPTool {
                 keys: "cmd,v",
                 holdDuration: 50,
                 target: exactWindow,
-                clipboardClaim: clipboardClaim)
-            return try self.validatedExactPasteResult(result)
+                clipboardClaim: clipboardClaim,
+                preparation: .blankWindowChrome)
+            return try self.validatedExactPasteResult(result, prepared: true)
         case let .exact(automation):
             guard let exactWindow = destination.exactWindow,
                   let focusedElement = exactWindow.focusedElement
@@ -567,9 +568,11 @@ public struct PasteTool: MCPTool {
 
     @MainActor
     private func validatedExactPasteResult(
-        _ result: UIAutomationActionResult<Void>) throws -> UIAutomationActionResult<Void>
+        _ result: UIAutomationActionResult<Void>, prepared: Bool = false) throws -> UIAutomationActionResult<Void>
     {
-        let validated = try ExactWindowKeyboardRuntime.validateRouteReceipt(result, operation: "Exact-window paste")
+        let validated = try prepared
+            ? ExactWindowKeyboardRuntime.validatePreparedPasteReceipt(result, operation: "Exact-window paste")
+            : ExactWindowKeyboardRuntime.validateRouteReceipt(result, operation: "Exact-window paste")
         _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
             validated,
             policy: .confirmed,
@@ -1087,7 +1090,7 @@ public struct PasteTool: MCPTool {
         guard authorizedTarget.exactWindow != nil else { return authorizedTarget }
         do {
             if requiresClipboardClaim {
-                _ = try ExactWindowKeyboardRuntime.requireClipboardGuardedPasteProvider(
+                _ = try ExactWindowKeyboardRuntime.requirePreparedClipboardGuardedPasteProvider(
                     automation: self.context.automation,
                     operation: "Exact-window paste")
             } else {
@@ -1296,7 +1299,7 @@ private enum PasteHotkeyRoute {
     case foreground
     case process(any TargetedHotkeyServiceProtocol)
     case exact(any UIAutomationActionOutcomeProviding)
-    case guardedExact(any ClipboardGuardedExactWindowHotkeyServiceProtocol)
+    case guardedExact(any PreparedClipboardGuardedExactWindowHotkeyServiceProtocol)
 }
 
 private struct ClipboardPasteTransactionOutcome: Sendable {

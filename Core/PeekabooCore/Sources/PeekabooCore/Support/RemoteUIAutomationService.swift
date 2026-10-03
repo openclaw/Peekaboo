@@ -37,6 +37,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let inspectAccessibilityTreeUnavailableReason: String?
     public let supportsExactWindowTargetedKeyboard: Bool
     public let supportsClipboardGuardedExactWindowHotkeys: Bool
+    public let supportsPreparedClipboardGuardedExactWindowHotkeys: Bool
     public let exactWindowTargetedKeyboardUnavailableReason: String?
     public let supportsExactWindowCompositeTypeDelivery: Bool
     public let exactWindowCompositeTypeDeliveryUnavailableReason: String?
@@ -72,6 +73,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
         supportsClipboardGuardedExactWindowHotkeys: Bool = false,
+        supportsPreparedClipboardGuardedExactWindowHotkeys: Bool = false,
         exactWindowTargetedKeyboardUnavailableReason: String? = nil,
         supportsExactWindowCompositeTypeDelivery: Bool = false,
         exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil,
@@ -105,6 +107,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
         self.supportsExactWindowTargetedKeyboard = supportsExactWindowTargetedKeyboard
         self.supportsClipboardGuardedExactWindowHotkeys = supportsClipboardGuardedExactWindowHotkeys
+        self.supportsPreparedClipboardGuardedExactWindowHotkeys = supportsPreparedClipboardGuardedExactWindowHotkeys &&
+            supportsClipboardGuardedExactWindowHotkeys
         self.exactWindowTargetedKeyboardUnavailableReason = exactWindowTargetedKeyboardUnavailableReason
         self.supportsExactWindowCompositeTypeDelivery = supportsExactWindowCompositeTypeDelivery
         self.exactWindowCompositeTypeDeliveryUnavailableReason = exactWindowCompositeTypeDeliveryUnavailableReason

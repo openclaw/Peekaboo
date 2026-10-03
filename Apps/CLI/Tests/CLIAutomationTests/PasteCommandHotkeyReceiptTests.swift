@@ -12,11 +12,12 @@ extension PasteCommandTests {
         exactWindow: Bool,
         temporaryPayload: Bool
     ) async throws {
+        let prepared = exactWindow && temporaryPayload
         let delivery = DesktopActionOutcome.Delivery(
-            mechanism: exactWindow ? .windowTargetedEvents : .processTargetedEvents,
+            mechanism: prepared ? .composite : (exactWindow ? .windowTargetedEvents : .processTargetedEvents),
             mode: .background
         )
-        let unitCount = DesktopActionOutcome.DispatchUnitCount(4)
+        let unitCount = DesktopActionOutcome.DispatchUnitCount(prepared ? 8 : 4)
         let outcomes: [DesktopActionOutcome] = [
             .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted, unitCount: unitCount),
             .indeterminate(delivery: delivery, evidence: .completionUnknown, unitCount: unitCount),
@@ -61,6 +62,7 @@ extension PasteCommandTests {
             #expect(fixture.automation.exactHotkeyCalls.count == (exactWindow ? 1 : 0))
             #expect(fixture.automation.guardedHotkeyClaims.map(\.changeCount) ==
                 (exactWindow && temporaryPayload ? [1] : []))
+            #expect(fixture.automation.backgroundPreparations == (prepared ? [.blankWindowChrome] : []))
             #expect(fixture.automation.targetedHotkeyCalls.count == (exactWindow ? 0 : 1))
             #expect(fixture.automation.hotkeyCalls.isEmpty)
             #expect(clipboard.current?.textPreview == "prior")
