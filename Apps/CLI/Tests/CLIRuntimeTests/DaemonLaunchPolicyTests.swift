@@ -7,7 +7,7 @@ import Testing
 
 struct DaemonLaunchPolicyTests {
     @Test
-    func `daemon readiness reserves both ScreenCaptureKit preparation boundaries`() {
+    func `daemon launch reserves the single ScreenCaptureKit publication boundary`() {
         #expect(
             PeekabooBridgeServer.defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds >=
                 ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1

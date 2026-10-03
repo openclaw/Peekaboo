@@ -16,11 +16,11 @@ struct AutoScreenCaptureConcurrencyTests {
         hostname: nil)
 
     @Test
-    func `Bridge owns the bounded preparation publication deadline`() {
+    func `Bridge preserves its preparation publication envelope`() {
         let processPreparation = ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds
         let bridgePublication = PeekabooBridgeServer.defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds
 
-        #expect(bridgePublication == processPreparation)
+        #expect(bridgePublication == processPreparation + 1)
     }
 
     @Test

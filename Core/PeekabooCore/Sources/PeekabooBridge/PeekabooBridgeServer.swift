@@ -65,9 +65,9 @@ struct PeekabooBridgeReceiptlessNegotiation {
 @MainActor
 // swiftlint:disable:next type_body_length
 public final class PeekabooBridgeServer {
-    /// The Bridge owns one bounded publication wait while the shared safety scan may finish later.
+    /// Preserve the Bridge startup envelope, now owned by one publication wait rather than nested waits.
     public static let defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds =
-        ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds
+        ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1
 
     private typealias ScreenCaptureKitOwnershipPreparationOutcome = ScreenCaptureKitReadiness
 
