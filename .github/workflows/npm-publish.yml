@@ -1,0 +1,128 @@
+name: Publish npm release tarball
+
+# Publishes the exact npm tarball that the release driver built, verified, and uploaded
+# to the GitHub release, through npm trusted publishing. The workflow never packs or
+# builds: it only re-verifies and publishes the frozen asset. npm accepts this
+# workflow's OIDC identity for @steipete/peekaboo, so no token or one-time password is
+# involved and the large upload runs from GitHub's network.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version whose uploaded npm tarball to publish (e.g., 4.7.0)'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Draft releases are visible only to tokens with write access; nothing is written.
+      contents: write
+      # npm trusted publishing exchanges this workflow's OIDC token for publish rights.
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      PACKAGE_NAME: '@steipete/peekaboo'
+      NPM_REGISTRY: https://registry.npmjs.org/
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26.9.0"
+
+      - name: Validate request and npm client
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::version must look like 4.7.0 or 4.8.0-beta.1"
+            exit 1
+          fi
+          npm_version=$(npm --version)
+          if ! node -e '
+            const [a, b, c] = process.argv[1].split(".").map(Number);
+            process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1);
+          ' "$npm_version"; then
+            echo "::error::npm $npm_version is too old for trusted publishing (need 11.5.1+)"
+            exit 1
+          fi
+          echo "npm $npm_version"
+
+      - name: Download frozen release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir dist
+          gh release download "v${VERSION}" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern "steipete-peekaboo-${VERSION}.tgz" --pattern checksums.txt
+          ls -l dist
+
+      - name: Verify tarball against release checksums and metadata
+        run: |
+          set -euo pipefail
+          tarball="steipete-peekaboo-${VERSION}.tgz"
+          cd dist
+          expected=$(awk -v name="$tarball" '$2 == name || $2 == "*" name { print $1 }' checksums.txt)
+          if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::checksums.txt has no unique SHA-256 entry for $tarball"
+            exit 1
+          fi
+          actual=$(sha256sum "$tarball" | awk '{ print $1 }')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$tarball SHA-256 $actual does not match the release checksum $expected"
+            exit 1
+          fi
+          # shellcheck disable=SC2016 # single-quoted JavaScript, expanded by node
+          tar -xzOf "$tarball" package/package.json | node -e '
+            let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+              const pkg = JSON.parse(s);
+              if (pkg.name !== process.env.PACKAGE_NAME || pkg.version !== process.env.VERSION) {
+                console.error(`::error::tarball is ${pkg.name}@${pkg.version}, expected ${process.env.PACKAGE_NAME}@${process.env.VERSION}`);
+                process.exit(1);
+              }
+            });'
+          integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+          echo "LOCAL_INTEGRITY=$integrity" >> "$GITHUB_ENV"
+          echo "verified $tarball sha256=$actual integrity=$integrity"
+
+      - name: Publish through trusted publishing
+        run: |
+          set -euo pipefail
+          published=$(npm view "${PACKAGE_NAME}@${VERSION}" dist.integrity --registry "$NPM_REGISTRY" 2>/dev/null || true)
+          if [ -n "$published" ]; then
+            if [ "$published" != "$LOCAL_INTEGRITY" ]; then
+              echo "::error::${PACKAGE_NAME}@${VERSION} is already published with different integrity $published"
+              exit 1
+            fi
+            echo "${PACKAGE_NAME}@${VERSION} is already published with the identical tarball"
+            exit 0
+          fi
+          tag=latest
+          if [[ "$VERSION" == *-* ]]; then
+            tag=beta
+          fi
+          npm publish "dist/steipete-peekaboo-${VERSION}.tgz" \
+            --access public --tag "$tag" --registry "$NPM_REGISTRY"
+
+      - name: Verify registry integrity
+        run: |
+          set -euo pipefail
+          for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            published=$(npm view "${PACKAGE_NAME}@${VERSION}" dist.integrity --registry "$NPM_REGISTRY" 2>/dev/null || true)
+            if [ -n "$published" ]; then
+              break
+            fi
+            sleep 10
+          done
+          if [ "$published" != "$LOCAL_INTEGRITY" ]; then
+            echo "::error::registry integrity '${published:-missing}' does not match $LOCAL_INTEGRITY"
+            exit 1
+          fi
+          npm view "${PACKAGE_NAME}@${VERSION}" version dist-tags dist.tarball dist.integrity --registry "$NPM_REGISTRY"

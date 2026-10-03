@@ -121,7 +121,7 @@ op run --env-file "$ENVFILE" -- \
 The script builds universal CLI, npm package, signed/notarized app zip and branded DMG, appcast, checksums, draft GitHub release, and npm publish.
 Use a non-login shell: profile exports can replace current 1Password ASC IDs with stale values while leaving the current `.p8`, producing a misleading `401`.
 The piped `y` (and any `| tee`) makes pnpm non-interactive, so with npm 2FA enforced the npm step stops with
-`ERR_PNPM_OTP_NON_INTERACTIVE` after the draft exists; finish with the npm 2FA path below.
+`ERR_PNPM_OTP_NON_INTERACTIVE` after the draft exists; finish with the trusted-publishing workflow below.
 The driver passes `MAC_RELEASE_CALLER_PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` to the CLI build's
 `codesign-run`. Publication commits that predate that default (4.7.0 and earlier) need it exported, or `pnpm` is not
 found because `scripts/mac-release` narrows `PATH` before the helper records it.
@@ -146,14 +146,19 @@ on local-only or reduced-check builds, preventing `--resume-publication` from pr
 Every notarized release payload must sign with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`, not a personal or development identity. This includes Peekaboo.app, nested helpers and frameworks, the standalone and npm CLIs, and the DMG. The tracked release manifest and shared credential helper resolve the shared passwordless signing keychain; never copy its machine-specific path or signing material into the repository. Peekaboo 3.8+ bridge hosts keep accepting transition-era personal-team clients for staged upgrades, but Foundation-signed 3.9.6+ CLIs require a 3.8+ host.
 
 npm 2FA: the ~32 MB upload outlives any TOTP. Codes from `--otp`/`NPM_CONFIG_OTP` fail with `EOTP`, even from a faster
-fleet Mac, and driver retries (`--retry-npm-publish`, longer fetch timeouts) hit the same wall. Publish the exact retained
-tarball from an interactive terminal (no pipes) authenticated as `steipete`, using the stored npm token through a temp
-npmrc or an existing login, and complete npm's browser auth with the configured TOTP as soon as npm prints the URL:
+fleet Mac, and driver retries (`--retry-npm-publish`, longer fetch timeouts) hit the same wall. Publish npm through the
+trusted-publishing workflow instead: it downloads the exact retained tarball from the draft, verifies it against the
+release `checksums.txt` and its embedded name/version, publishes with GitHub OIDC (no token, no OTP), and verifies the
+registry integrity:
 
 ```bash
-npm publish "$PWD/build/release/steipete-peekaboo-<version>.tgz" \
-  --registry https://registry.npmjs.org --access public --tag latest   # --tag beta for prereleases
+gh workflow run npm-publish.yml --repo openclaw/Peekaboo --ref main -f version=<version>
 ```
+
+Fallback only if the workflow is unavailable: publish the same retained tarball from an interactive terminal (no pipes)
+authenticated as `steipete` and complete npm's browser auth with the configured TOTP as soon as npm prints the URL
+(`npm publish "$PWD/build/release/steipete-peekaboo-<version>.tgz" --registry https://registry.npmjs.org --access public
+--tag latest`, `--tag beta` for prereleases).
 
 Then rerun `./scripts/release-binaries.sh --resume-publication`. It accepts the already-published version only if the
 registry integrity equals the retained tarball, and it finishes the draft body. Do not create granular bypass tokens for

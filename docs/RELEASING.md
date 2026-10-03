@@ -397,18 +397,26 @@ front does not survive the upload either. During 4.7.0, codes passed through `NP
 three-minute upload and npm answered `EOTP`, from a faster fleet Mac as well. Retrying through the driver with
 `--retry-npm-publish` or longer fetch timeouts hits the same wall.
 
-Finish npm publication interactively instead. In a real terminal authenticated to npmjs as `steipete`, publish the
-exact retained tarball (never a fresh pack) and complete npm's browser authentication with the npmjs TOTP as soon as
-npm prints the URL:
+Publish npm through the `Publish npm release tarball` workflow (`.github/workflows/npm-publish.yml`) instead. It is
+registered as the npm trusted publisher for `@steipete/peekaboo`, so npm accepts its GitHub OIDC identity without a
+token or one-time password, and the upload runs from GitHub's network. After the driver has created the draft and
+uploaded its assets, dispatch it for the release version:
 
 ```bash
-npm whoami --registry https://registry.npmjs.org
-npm publish "$PWD/build/release/steipete-peekaboo-<version>.tgz" \
-  --registry https://registry.npmjs.org --access public --tag latest
+gh workflow run npm-publish.yml --repo openclaw/Peekaboo --ref main -f version=<version>
 ```
 
-Use `--tag beta` for prerelease versions, matching the driver. Then rerun `./scripts/release-binaries.sh
---resume-publication` from the same checkout and credentialed shell. Resume finds the published version, verifies that
+The workflow never packs or builds. It downloads the exact `steipete-peekaboo-<version>.tgz` asset from the draft or
+published release, requires its SHA-256 to match the release's `checksums.txt` and its embedded package name/version to
+match, publishes with `--tag latest` (`beta` for prerelease versions), and fails unless the registry integrity equals
+the asset's SHA-512. A version already published with the identical tarball is a no-op; different bytes fail closed.
+
+If the workflow is unavailable, the interactive fallback is still valid: in a real terminal authenticated to npmjs as
+`steipete`, `npm publish "$PWD/build/release/steipete-peekaboo-<version>.tgz" --registry https://registry.npmjs.org
+--access public --tag latest`, completing npm's browser authentication with the npmjs TOTP as soon as npm prints the URL.
+
+Either way, rerun `./scripts/release-binaries.sh --resume-publication` from the same checkout and credentialed shell
+afterwards. Resume finds the published version, verifies that
 the registry integrity equals the retained tarball's SHA-512, skips its own publish, and finishes the draft body;
 a different tarball fails closed. `--retry-npm-publish` is unnecessary once the version is visible. If the driver
 already attempted its own publish, its retained attempt marker makes resume refuse to publish again until the registry
