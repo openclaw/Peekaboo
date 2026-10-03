@@ -71,6 +71,16 @@ enum BackgroundWindowChromeReader {
         error == .noValue || (!advertised && error == .attributeUnsupported)
     }
 
+    private struct ControlExclusion: Equatable {
+        let control: RetainedFocusElement
+        let bounds: CGRect
+    }
+
+    private struct TraversalNode: Equatable {
+        let reference: RetainedFocusElement
+        let exclusion: ControlExclusion?
+    }
+
     private struct Reader {
         let target: UIAutomationTarget.ExactWindow
         let access: Access
@@ -108,6 +118,7 @@ enum BackgroundWindowChromeReader {
                 references.append(control)
                 try controls.append(self.frame(control))
             }
+            let controlReferences = references
             // AXFullScreenButton legitimately aliases AXZoomButton on standard AppKit windows.
             for name in [kAXTitleUIElementAttribute, "AXProxy", "AXFullScreenButton", "AXToolbarButton"] {
                 let result = try self.attribute(name, of: window)
@@ -136,25 +147,46 @@ enum BackgroundWindowChromeReader {
             }
 
             // Optional absence is accepted only alongside a complete, sheet-free hierarchy.
-            var queue = [window] + references
-            var visited: [AXUIElement] = []
+            var queue = ([window] + references).map {
+                TraversalNode(reference: RetainedFocusElement(element: $0), exclusion: nil)
+            }
+            var visited: [TraversalNode] = []
             var occupied: [CGRect] = []
             var index = 0
             while index < queue.count {
-                let element = queue[index]
+                let node = queue[index]
+                let element = node.reference.element
                 index += 1
-                guard !visited.contains(where: { CFEqual($0, element) }) else { continue }
+                // An alias reached outside an excluded control still needs strict ownership validation.
+                guard !visited.contains(node) else { continue }
                 guard visited.count < self.nodeLimit else { throw Self.refusal() }
-                visited.append(element)
-                try self.validateOwner(element)
+                visited.append(node)
+                let controlIndex = controlReferences.firstIndex { CFEqual($0, element) }
+                try self.validateOwner(
+                    element, allowsAuxiliaryWindow: node.exclusion != nil && controlIndex == nil)
                 let role = try self.string(kAXRoleAttribute, of: element)
-                guard role != kAXSheetRole, role != "AXDialog" else { throw Self.refusal() }
+                guard role != kAXSheetRole, role != "AXDialog",
+                      CFEqual(element, window) || role != kAXWindowRole
+                else { throw Self.refusal() }
                 if !CFEqual(element, window) {
-                    try occupied.append(self.frame(element))
+                    let frame = try self.frame(element)
+                    guard node.exclusion.map({ $0.bounds.contains(frame) }) ?? true,
+                          controlIndex.map({ controls[$0] == frame }) ?? true
+                    else { throw Self.refusal() }
+                    occupied.append(frame)
+                } else if node.exclusion != nil {
+                    throw Self.refusal()
                 }
                 let children = try self.children(element)
                 guard queue.count + children.count <= self.nodeLimit * 2 else { throw Self.refusal() }
-                queue.append(contentsOf: children)
+                // AppKit can host a fullscreen-button child in a separate native surface. It is only
+                // exclusion geometry: every descendant must remain inside the already-excluded control.
+                let exclusion = controlIndex.map {
+                    ControlExclusion(control: node.reference, bounds: controls[$0])
+                } ?? node.exclusion
+                queue.append(contentsOf: children.map {
+                    TraversalNode(reference: RetainedFocusElement(element: $0), exclusion: exclusion)
+                })
             }
             let geometry = BackgroundWindowChromeGeometry(
                 bounds: self.target.bounds, windowControls: controls, occupiedFrames: occupied)
@@ -194,13 +226,14 @@ enum BackgroundWindowChromeReader {
             }
         }
 
-        private func validateOwner(_ element: AXUIElement) throws {
+        private func validateOwner(_ element: AXUIElement, allowsAuxiliaryWindow: Bool = false) throws {
             let pid = try self.call(element) {
                 guard let pid = self.access.processID(element) else { throw Self.refusal() }
                 return pid
             }
-            guard pid == self.target.identity.ownerProcessIdentifier,
-                  try self.windowID(element) == self.target.identity.windowID
+            let windowID = try self.windowID(element)
+            guard pid == self.target.identity.ownerProcessIdentifier, windowID > 0,
+                  allowsAuxiliaryWindow || windowID == self.target.identity.windowID
             else { throw Self.refusal() }
         }
 

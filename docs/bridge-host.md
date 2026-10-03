@@ -226,6 +226,9 @@ process lane. It retains the exact editor, UTF-16 text, and selection across pre
 key-window validation before keys. Complete preparation and delivery report eight composite/background units; native-only
 and mixed failure prefixes remain separately accounted, unverified, and retry-unsafe. It does not invoke foreground
 activation, restore prior focus/selection, retry uncertain input, or create a second pointer owner.
+Some macOS titlebar widgets use auxiliary native surfaces. Their complete descendants may contribute exclusion geometry
+only while every frame stays inside the originating canonical close/minimize/zoom control; they gain no input authority.
+Root and control ownership remain exact, and aliases reached outside that restricted subtree are validated independently.
 
 Protocol `1.36` adds `compositeTypeDelivery` for background type requests that may use AXValue delivery: non-empty text,
 clear, and editable focused-text keys. Each direct AX mutation counts as one dispatch and zero key presses; event fallback
