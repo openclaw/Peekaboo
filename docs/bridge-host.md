@@ -271,6 +271,11 @@ service contracts and allowed observation operation. Caller-supplied capability 
 proof. The older `screenCaptureKitProcessOwnership` capability remains conservative and is removed if registration or
 preparation fails, preserving old-client wire safety.
 
+The Bridge bounds startup publication to eight seconds without cancelling the shared safety scan. A timeout keeps
+SCK unavailable while that scan is pending. If it later succeeds, subsequent handshakes publish fresh ready status
+and restore the ownership capability; a late concrete failure remains unavailable. Registration failures are not
+retried, and every actual SCK leaf still validates ownership before dispatch. This does not shorten or skip the scan.
+
 Optional `screenCaptureKitReadiness` records the preparation observation and typed failure, including all original
 blocker identities that were available. A ready observation is permission to attempt SCK, not actual ownership.
 Unknown or missing readiness supplies no new SCK authority. A current blocked host can still accept explicit classic

@@ -65,10 +65,9 @@ struct PeekabooBridgeReceiptlessNegotiation {
 @MainActor
 // swiftlint:disable:next type_body_length
 public final class PeekabooBridgeServer {
-    /// The Bridge owns the outer publication wait. Its one-second reserve prevents the bounded
-    /// process scan and publication wait from racing at the same deadline.
+    /// The Bridge owns one bounded publication wait while the shared safety scan may finish later.
     public static let defaultScreenCaptureKitOwnershipPreparationTimeoutSeconds =
-        ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds + 1
+        ScreenCaptureKitOwnerLease.defaultProcessCapabilityPreparationTimeoutSeconds
 
     private typealias ScreenCaptureKitOwnershipPreparationOutcome = ScreenCaptureKitReadiness
 
@@ -137,6 +136,7 @@ public final class PeekabooBridgeServer {
     private let screenCaptureKitOwnershipPreparationTimeoutSeconds: TimeInterval
     private var screenCaptureKitOwnershipPreparationTask:
         Task<ScreenCaptureKitOwnershipPreparationOutcome, Never>?
+    private var completedScreenCaptureKitOwnershipPreparation: ScreenCaptureKitOwnershipPreparationOutcome?
     let automationActivityObserver: (@Sendable (pid_t) -> Void)?
     let encoder: JSONEncoder
     let decoder: JSONDecoder
@@ -167,7 +167,7 @@ public final class PeekabooBridgeServer {
             try ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
         },
         screenCaptureKitOwnershipPreparer: @escaping @Sendable () async throws -> Void = {
-            try await ScreenCaptureKitOwnerLease.prepareCurrentProcessCapability()
+            try await ScreenCaptureKitOwnerLease.awaitCurrentProcessCapabilityPreparation()
         },
         screenCaptureKitOwnerClaimProvider: @escaping @Sendable () throws
             -> ScreenCaptureKitOwnerLease.OwnerReceipt = {
@@ -353,13 +353,17 @@ public final class PeekabooBridgeServer {
             task = existing
         } else {
             let prepare = self.screenCaptureKitOwnershipPreparer
-            let created = Task<ScreenCaptureKitOwnershipPreparationOutcome, Never> {
+            let created = Task<ScreenCaptureKitOwnershipPreparationOutcome, Never> { [weak self] in
+                let outcome: ScreenCaptureKitOwnershipPreparationOutcome
                 do {
                     try await prepare()
-                    return .init(state: .ready)
+                    outcome = .init(state: .ready)
                 } catch {
-                    return .failed(error, stage: .preparation)
+                    outcome = .failed(error, stage: .preparation)
                 }
+                self?.completedScreenCaptureKitOwnershipPreparation = outcome
+                self?.publishScreenCaptureKitOwnershipPreparation(outcome)
+                return outcome
             }
             self.screenCaptureKitOwnershipPreparationTask = created
             task = created
@@ -375,8 +379,17 @@ public final class PeekabooBridgeServer {
             outcome = .failed(error, stage: .preparation)
         }
         try Task.checkCancellation()
+        // A timeout continuation must not overwrite completion already published on this actor.
+        self.publishScreenCaptureKitOwnershipPreparation(self.completedScreenCaptureKitOwnershipPreparation ?? outcome)
+    }
+
+    private func publishScreenCaptureKitOwnershipPreparation(_ outcome: ScreenCaptureKitOwnershipPreparationOutcome) {
+        guard self.screenCaptureKitReadiness != outcome else { return }
         self.screenCaptureKitReadiness = outcome
-        if !outcome.permitsAttempt {
+        if outcome.permitsAttempt {
+            // Only a successfully registered host creates the shared preparation task.
+            self.hostCapabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
+        } else {
             self.hostCapabilities.remove(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
             self.logger.warning(
                 """
