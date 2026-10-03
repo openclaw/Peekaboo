@@ -3,6 +3,12 @@ import Foundation
 public enum PeekabooBridgeConstants {
     public static let socketName = "bridge.sock"
     public static let cliBundleIdentifier = "boo.peekaboo.peekaboo"
+    public static let certificationControllerBundleIdentifier = "boo.peekaboo.peekaboo-certification-controller"
+    public static let guiClientBundleIdentifiers: Set<String> = [
+        PeekabooBridgeConstants.cliBundleIdentifier,
+        "boo.peekaboo.mac",
+        PeekabooBridgeConstants.certificationControllerBundleIdentifier,
+    ]
 
     /// Release identities accepted during the OpenClaw Foundation signing migration.
     /// Keep the legacy team while standalone CLIs must interoperate with pre-3.8 GUI hosts.

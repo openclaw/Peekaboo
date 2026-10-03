@@ -115,7 +115,7 @@ extension PeekabooBridgeCertificationMonitorSealPayload {
               plan.target == evidence.foregroundTarget,
               !Self.sameGeneration(plan.observer, evidence.foregroundController),
               !Self.sameGeneration(plan.observer, evidence.monitorProcess),
-              build.signingIdentifier == "boo.peekaboo.peekaboo-certification-controller",
+              build.signingIdentifier == PeekabooBridgeConstants.certificationControllerBundleIdentifier,
               build.teamIdentifier == PeekabooBridgeCertificationValidation.foundationTeamIdentifier,
               PeekabooBridgeCertificationValidation.isLowerHex(build.sourceCommit, count: 40),
               PeekabooBridgeCertificationValidation.isLowerHex(build.executableSHA256, count: 64),

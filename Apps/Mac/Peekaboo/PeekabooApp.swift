@@ -607,10 +607,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startBridgeHost(services: PeekabooServices) {
-        let allowlistedBundles: Set = [
-            PeekabooBridgeConstants.cliBundleIdentifier,
-            "boo.peekaboo.mac", // GUI
-        ]
         let allowlistedTeams = PeekabooBridgeConstants.trustedReleaseTeamIDs
         let automationActivityObserver = self.makeAutomationActivityObserver()
 
@@ -627,7 +623,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         hostKind: .gui,
                         socketPath: PeekabooBridgeConstants.peekabooSocketPath,
                         allowlistedTeams: allowlistedTeams,
-                        allowlistedBundles: allowlistedBundles,
+                        allowlistedBundles: PeekabooBridgeConstants.guiClientBundleIdentifiers,
                         automationActivityObserver: automationActivityObserver,
                         allowedOperations: PeekabooBridgeOperation.remoteDefaultAllowlist,
                         hostCapabilities: self.launchPolicy.isBackgroundBridgeHost

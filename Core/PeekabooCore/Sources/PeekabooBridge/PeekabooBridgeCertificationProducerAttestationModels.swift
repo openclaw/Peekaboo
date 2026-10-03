@@ -8,7 +8,7 @@ public enum PeekabooBridgeCertificationProducerAttestationKind: String, Codable,
     var expectedSigningIdentifier: String {
         switch self {
         case .crashInventoryPair, .observerSemantic:
-            "boo.peekaboo.peekaboo-certification-controller"
+            PeekabooBridgeConstants.certificationControllerBundleIdentifier
         case .monitorSeal:
             "boo.peekaboo.background-computer-use-probe"
         }
