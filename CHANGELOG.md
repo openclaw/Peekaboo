@@ -9,6 +9,7 @@
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
 - Preserve a native text field's coherently observed post-value selection for the dependent caret update, while refusing later state or focus drift without rebasing or replay and retaining nested typing failure diagnostics.
 - Clarify backward versus forward Delete key names and supported Command modifiers in `press` help and docs, without changing key mappings.
+- Refuse companion-app deployment when source or staged directory permissions prevent moving or cleaning up the bundle, before stopping the running GUI, while preserving read-only files and leaving artifact permissions unchanged.
 - Distinguish unreadable exact-window focus evidence from actual window mismatches, retaining the AX observation stage and native error without changing background input guards or retry safety.
 - Add opt-in `see --fresh` and MCP `see` / `inspect_ui` freshness with uncached AX evidence, truthful `used_cache` metadata, and fail-closed host compatibility while preserving default caching and partial-tree limits.
 - Preserve the underlying cause of failed background paste preparation reads, without changing input dispatch, deadlines, or retry safety.
