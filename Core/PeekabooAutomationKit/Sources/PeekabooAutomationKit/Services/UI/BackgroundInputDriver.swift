@@ -76,59 +76,6 @@ enum BackgroundInputDriver {
         case focus
     }
 
-    /// Picks the element that should receive a positional background click.
-    ///
-    /// `candidates` is ordered: the hit-tested element first, then its descendants, then its
-    /// ancestors (see `hitTestCandidates`). The hit-test element is authoritative — macOS returned
-    /// it for this exact point — so it is never rejected on frame grounds; every other candidate
-    /// must still contain the point. The first enabled candidate that supports the required action
-    /// wins. SwiftUI hit-tests can land on a non-pressable container whose pressable target is a
-    /// descendant, so descendants are searched before ancestors. Left clicks on text inputs (which
-    /// have no `AXPress`) fall back to focusing the element, mirroring `ActionInputDriver`.
-    @MainActor
-    static func positionalClickTarget(
-        inCandidates candidates: [any AutomationElementRepresenting],
-        at point: CGPoint,
-        button: MouseButton) -> (element: any AutomationElementRepresenting, action: PositionalClickAction)?
-    {
-        let spatiallyValid = self.spatiallyValidCandidates(candidates, at: point)
-
-        let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
-        if let actionable = spatiallyValid.first(where: {
-            $0.isEnabled &&
-                $0.supportsAction(requiredAction) &&
-                (button == .right || !self.nonPressableContainerRoles.contains($0.role ?? ""))
-        }) {
-            let role = actionable.role ?? "<none>"
-            let frame = String(describing: actionable.frame)
-            self.logger.debug(
-                """
-                Resolved background positional click to role=\(role, privacy: .public) \
-                action=\(requiredAction, privacy: .public) frame=\(frame, privacy: .public)
-                """)
-            return (actionable, button == .right ? .showMenu : .press)
-        }
-
-        guard button == .left else { return nil }
-        if let selectableRow = self.selectableRow(in: spatiallyValid) {
-            return (selectableRow, .select)
-        }
-
-        let focusable = spatiallyValid.first(where: self.canFocusForPositionalClick)
-        if let focusable {
-            let role = focusable.role ?? "<none>"
-            let frame = String(describing: focusable.frame)
-            self.logger.debug(
-                """
-                Resolved background positional click to role=\(role, privacy: .public) \
-                action=focus frame=\(frame, privacy: .public)
-                """)
-            return (focusable, .focus)
-        }
-        self.logger.debug("No actionable background positional click target resolved")
-        return nil
-    }
-
     /// Picks only a writable focus target at one hit-tested point.
     ///
     /// Composed pixel-focus typing must not reuse normal click resolution: that resolver deliberately
@@ -162,11 +109,15 @@ enum BackgroundInputDriver {
     @MainActor
     private static func canFocusForPositionalClick(_ element: any AutomationElementRepresenting) -> Bool {
         guard element.isFocusedSettable else { return false }
-        switch element.role {
+        return self.isPositionalFocusRole(element.role, subrole: nil) || element.subrole == "AXSearchField"
+    }
+
+    static func isPositionalFocusRole(_ role: String?, subrole: String?) -> Bool {
+        switch role {
         case "AXTextField", "AXTextArea", "AXComboBox":
-            return true
+            true
         default:
-            return element.subrole == "AXSearchField"
+            subrole == "AXSearchField"
         }
     }
 
@@ -1578,21 +1529,6 @@ extension BackgroundInputDriver {
             focusedElement: focusedElement)
     }
 
-    @MainActor
-    private static func selectableRow(
-        in elements: [any AutomationElementRepresenting]) -> (any AutomationElementRepresenting)?
-    {
-        guard let row = elements.first(where: {
-            $0.isEnabled && $0.role == AXRoleNames.kAXRowRole && $0.isSelectedSettable
-        }) else {
-            return nil
-        }
-        let frame = String(describing: row.frame)
-        self.logger.debug(
-            "Resolved background positional click to role=AXRow action=select frame=\(frame, privacy: .public)")
-        return row
-    }
-
     static let unprovenWindowRouteMessage = """
     Background pixel click refused because Peekaboo could not prove an exact target window for the \
     requested PID and point. Capture or select a specific window, or use --foreground explicitly.
@@ -1602,16 +1538,6 @@ extension BackgroundInputDriver {
     The accessibility press did not complete, so Peekaboo cannot verify that the click was delivered. \
     Re-run with --foreground --input-strategy synthOnly to focus the app and send a real mouse click.
     """
-
-    fileprivate static let nonPressableContainerRoles: Set<String> = [
-        "AXApplication",
-        "AXGroup",
-        "AXLayoutArea",
-        "AXRadioGroup",
-        "AXScrollArea",
-        "AXWebArea",
-        "AXWindow",
-    ]
 
     static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
         """
@@ -1692,9 +1618,9 @@ extension BackgroundInputDriver {
 
         return try await self.performSinglePositionalClick(
             resolveAccessibilityTarget: {
-                let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
-                guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button)
-                else { return nil }
+                let resolution = try PositionalClickAXReader().resolve(
+                    at: point, targetProcessIdentifier: targetProcessIdentifier)
+                guard case let .accessibility(element, _) = resolution else { return resolution }
                 if let targetWindowID {
                     guard let expectedWindowIdentity,
                           let expectedWindowBounds,
@@ -1705,9 +1631,9 @@ extension BackgroundInputDriver {
                         throw PeekabooError.snapshotStale(
                             "Exact-window background pointer receipt changed before AX dispatch")
                     }
-                    try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
+                    try self.assertBelongsToTargetWindow(element, targetWindowID: targetWindowID, at: point)
                 }
-                return resolved
+                return resolution
             },
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
             routedClick: routedClick)

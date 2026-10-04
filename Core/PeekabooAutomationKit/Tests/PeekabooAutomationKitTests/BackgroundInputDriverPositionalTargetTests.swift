@@ -19,10 +19,12 @@ struct BackgroundInputDriverPositionalTargetTests {
             unitCount: .init(3))
         let outcome = try await BackgroundInputDriver.performSinglePositionalClick(
             resolveAccessibilityTarget: {
-                BackgroundInputDriver.positionalClickTarget(
+                guard let target = BackgroundInputDriver.positionalClickTarget(
                     inCandidates: hasContainer ? [container] : [],
                     at: CGPoint(x: 322, y: 418),
                     button: .left)
+                else { return .unsupported }
+                return .accessibility(element: target.element, action: target.action)
             },
             allowsAccessibilityValueDelivery: false,
             routedClick: {
@@ -49,7 +51,7 @@ struct BackgroundInputDriverPositionalTargetTests {
         var nativeCalls = 0
         let dispatch = {
             try await BackgroundInputDriver.performSinglePositionalClick(
-                resolveAccessibilityTarget: { (element, action) },
+                resolveAccessibilityTarget: { .accessibility(element: element, action: action) },
                 allowsAccessibilityValueDelivery: allowsValue,
                 routedClick: {
                     nativeCalls += 1
@@ -93,7 +95,7 @@ struct BackgroundInputDriverPositionalTargetTests {
             try await BackgroundInputDriver.performSinglePositionalClick(
                 resolveAccessibilityTarget: {
                     guard afterAX else { throw expected }
-                    return (element, .press)
+                    return .accessibility(element: element, action: .press)
                 },
                 allowsAccessibilityValueDelivery: true,
                 routedClick: {
@@ -117,7 +119,7 @@ struct BackgroundInputDriverPositionalTargetTests {
         var nativeCalls = 0
         let failure = await #expect(throws: DesktopActionFailure.self) {
             try await BackgroundInputDriver.performSinglePositionalClick(
-                resolveAccessibilityTarget: { nil },
+                resolveAccessibilityTarget: { .unsupported },
                 allowsAccessibilityValueDelivery: true,
                 routedClick: {
                     nativeCalls += 1
@@ -589,6 +591,33 @@ struct BackgroundInputDriverPositionalTargetTests {
         #expect(message.contains("3279"))
         #expect(message.contains("(2396, 162)"))
         #expect(message.contains("--foreground"))
+    }
+}
+
+extension BackgroundInputDriver {
+    /// In-memory policy fixtures only; native admission must retain read errors through PositionalClickAXReader.
+    @MainActor
+    fileprivate static func positionalClickTarget(
+        inCandidates candidates: [any AutomationElementRepresenting],
+        at point: CGPoint,
+        button: MouseButton) -> (element: any AutomationElementRepresenting, action: PositionalClickAction)?
+    {
+        let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
+        return self.positionalClickTarget(
+            inObservations: candidates.enumerated().map { index, element in
+                PositionalClickObservation(
+                    element: element,
+                    authoritativeHit: index == 0,
+                    frame: element.frame,
+                    role: element.role,
+                    subrole: element.subrole,
+                    actions: element.supportsAction(requiredAction) ? [requiredAction] : [],
+                    isEnabled: element.isEnabled,
+                    isSelectedSettable: element.isSelectedSettable,
+                    isFocusedSettable: element.isFocusedSettable)
+            },
+            at: point,
+            button: button)
     }
 }
 
