@@ -53,6 +53,7 @@ public struct InputDeliveryIndeterminateError: LocalizedError, Sendable {
             delivery: self.delivery ?? delivery,
             evidence: .completionUnknown,
             unitCount: self.emittedUnitCount.flatMap { DesktopActionOutcome.DispatchUnitCount($0) },
-            message: self.localizedDescription)
+            message: self.localizedDescription,
+            causeDescription: self.causeDescription)
     }
 }

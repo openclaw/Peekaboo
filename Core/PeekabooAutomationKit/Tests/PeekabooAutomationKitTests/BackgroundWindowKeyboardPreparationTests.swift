@@ -127,6 +127,25 @@ struct BackgroundWindowKeyboardPreparationTests {
     }
 
     @Test
+    func `composed input failure retains the delivery cause after replacing its message`() {
+        let detail = "Exact receiver observation failed. Held keys were released to the original process generation."
+        let leaf = BackgroundWindowKeyboardPreparation.leafFailure(
+            InputDeliveryIndeterminateError(operation: .hotkey, emittedUnitCount: 2, causeDescription: detail),
+            delivery: .init(mechanism: .processTargetedEvents, mode: .background))
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.outcome(Self.activation))
+        sequence.record(.outcome(Self.pointer))
+        let failure = sequence.failure(combining: leaf, message: "Prepared background hotkey did not finish.")
+
+        #expect(failure.message == "Prepared background hotkey did not finish.")
+        #expect(failure.causeDescription == detail)
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.dispatchState.unitCount?.rawValue == 6)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.outcome.delivery == .init(mechanism: .composite, mode: .background))
+    }
+
+    @Test
     func `pointer interruption retains activation and actual pointer prefix`() async throws {
         do {
             _ = try await BackgroundWindowKeyboardPreparation.sequence(
