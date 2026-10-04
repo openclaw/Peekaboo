@@ -85,8 +85,9 @@ Peekaboo.app still respects user-facing toggles via `PeekabooSettings`; the coor
 
 ## Logging & Diagnostics
 
-- **CLI / services**: `VisualizationClient` logs to the `boo.peekaboo.core` subsystem. Tail with `./scripts/visualizer-logs.sh --stream` (run inside tmux per AGENTS.md) to watch dispatch attempts and cleanup activity.
-- **Mac app**: `VisualizerEventReceiver` and `VisualizerCoordinator` log under `boo.peekaboo.mac`. Look for “Visualizer event receiver registered…” followed by “Processing visualizer event …”.
+- **CLI / services**: `VisualizationClient` logs to the `boo.peekaboo.core` subsystem. Tail with `./scripts/visualizer-logs.sh --stream` (run inside tmux per AGENTS.md) to watch sender dispatch attempts and receiver/render diagnostics.
+- **Mac app**: `VisualizerEventReceiver`, `VisualizerCoordinator`, and `AnimationOverlayManager` log under `boo.peekaboo.visualizer`. Look for “Visualizer event receiver registered…” followed by “Processing visualizer event …”.
+- **Query scope**: The helper includes available info/debug messages in history and stream modes without changing system logging or persistence settings. `--predicate` replaces the default filter verbatim; it is not combined with the visualizer filter. History cannot recover messages that were never persisted, and neither mode can recover compiled-out diagnostics. Missing records do not establish receiver readiness, rejection, or rendering.
 - **File inspection**: `ls ~/Library/Application\\ Support/PeekabooShared/VisualizerEvents` shows outstanding events. A growing list means the mac app hasn’t consumed them (maybe it isn’t running or failed to decode the JSON).
 - **Manual cleanup**: When you need a clean slate, run `rm ~/Library/Application\\ Support/PeekabooShared/VisualizerEvents/*.json`; both sides recreate the folder automatically.
 - **Smoke harness**: The `VisualizerSmoke` helper (used in CI) forces `PEEKABOO_VISUALIZER_FORCE_APP=true`, emits known payloads, and asserts that the JSON lands in the shared directory—handy when debugging the transport without the full CLI.
@@ -105,7 +106,7 @@ Peekaboo.app still respects user-facing toggles via `PeekabooSettings`; the coor
 
 1. **Launch the UI** – Ensure Peekaboo.app is running (rebuild with `./scripts/build-mac-debug.sh` after changes). Confirm the log line `Visualizer event receiver registered`.
 2. **Trigger an event** – Run a CLI command that emits visuals, e.g. `peekaboo see --mode screen --annotate --path /tmp/peekaboo-see.png`.
-3. **Watch logs** – In tmux, run `./scripts/visualizer-logs.sh --last 30s --follow` to confirm both the client and receiver log the same event ID.
+3. **Watch logs** – In tmux, run `./scripts/visualizer-logs.sh --last 30s` for history or `./scripts/visualizer-logs.sh --stream` for ongoing collection. Correlate only the event identifiers and stages actually present; successful sender dispatch is not receiver or render acknowledgement.
 4. **Inspect storage** – Check the shared directory; files should appear momentarily and disappear after the mac app consumes them. A lingering file means the receiver failed to delete it (inspect logs for the error).
 5. **Negative test** – Quit Peekaboo.app and rerun the CLI command. With `--verbose` or higher logging, the client should emit a single “Peekaboo.app is not running” debug line and skip event creation until the UI returns.
 6. **Optional overrides** – Set `PEEKABOO_VISUALIZER_FORCE_APP=true` and re-run inside a headless harness to confirm the transport still works without the UI present (the files remain until you delete them).
@@ -256,8 +257,7 @@ PEEKABOO_VISUALIZER_FORCE_APP=true        # Pretend the CLI is running inside th
 - **Disable cleanup temporarily**: `PEEKABOO_VISUALIZER_DISABLE_CLEANUP=true` keeps envelopes on disk until you inspect or replay them. Handy when the UI isn’t consuming events yet.
 - **Listen to notifications**: A tiny Swift script that subscribes to `boo.peekaboo.visualizer.event` prints descriptors (`<uuid>|<kind>`) and proves the distributed notification is firing.
 - **Inspect payloads**: Every persisted file logs its path (`[VisualizerEventStore][process] persisted event …`). Use `cat`/`jq` to view the JSON and even re-post it via `DistributedNotificationCenter`.
-- **Mac-side breadcrumbs**: `VisualizerEventReceiver` logs when it registers, receives a descriptor, executes, and deletes the event. Tail with  
-  `log stream --style compact --predicate 'process == "Peekaboo" && (composedMessage CONTAINS "Visualizer" || subsystem == "boo.peekaboo.mac")'`.
+- **Mac-side breadcrumbs**: Registration, processing, and failure messages use the `boo.peekaboo.visualizer` subsystem. Detailed received-descriptor/execute/delete breadcrumbs additionally require a build with `VISUALIZER_VERBOSE_LOGS`. Tail available messages with `./scripts/visualizer-logs.sh --stream --predicate 'process == "Peekaboo" && subsystem == "boo.peekaboo.visualizer"'`.
 - **Replay events**: If a notification failed, re-trigger it with  
   `swift -e 'DistributedNotificationCenter.default().post(name: Notification.Name("boo.peekaboo.visualizer.event"), object: "UUID|screenshotFlash")'`.
 - **Watch cleanup**: `VisualizerEventStore.cleanup` deletes envelopes older than ~10 minutes. Disable it (env var above) or inspect files quickly before they disappear.

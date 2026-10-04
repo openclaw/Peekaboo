@@ -11,14 +11,15 @@ Options:
   --predicate <expr>     Override the default unified logging predicate.
   -h, --help             Display this help message.
 
-The default predicate captures all VisualizationClient/VisualizerEventReceiver traffic
-on the `boo.peekaboo.core` and `boo.peekaboo.mac` subsystems.
+The default predicate captures VisualizationClient and receiver/render diagnostics
+on the `boo.peekaboo.core` and `boo.peekaboo.visualizer` subsystems.
+Both modes include available info/debug messages without changing logging configuration.
 USAGE
 }
 
 MODE="show"
 LAST="10m"
-PREDICATE='(subsystem == "boo.peekaboo.core" && category CONTAINS "Visualization") || (subsystem == "boo.peekaboo.mac" && category CONTAINS "Visualizer")'
+PREDICATE='(subsystem == "boo.peekaboo.core" && category CONTAINS "Visualization") || subsystem == "boo.peekaboo.visualizer"'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,7 +50,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$MODE" == "stream" ]]; then
-  log stream --style compact --predicate "$PREDICATE"
+  log stream --style compact --level debug --predicate "$PREDICATE"
 else
-  log show --style compact --last "$LAST" --predicate "$PREDICATE"
+  log show --style compact --info --debug --last "$LAST" --predicate "$PREDICATE"
 fi

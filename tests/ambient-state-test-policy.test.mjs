@@ -108,6 +108,53 @@ test("live visualizer smoke requires ambient consent while disabled-feedback pro
   assert.match(disabledBody, /environment: \["PEEKABOO_VISUAL_FEEDBACK": "false"\]/);
 });
 
+test("visualizer log helper includes receiver diagnostics and preserves explicit filters", () => {
+  const directory = mkdtempSync(join(tmpdir(), "peekaboo-visualizer-log-policy-"));
+  const capture = join(directory, "arguments");
+  const script = `${repositoryRoot}/scripts/visualizer-logs.sh`;
+  // Capture argv through a PATH stub: this test never reads native system logs.
+  writeFileSync(join(directory, "log"), '#!/bin/sh\nprintf \'%s\\0\' "$@" > "$VISUALIZER_LOG_TEST_CAPTURE"\n', {mode: 0o755});
+  const run = (args) => {
+    rmSync(capture, {force: true});
+    const result = spawnSync("/bin/bash", [script, ...args], {
+      encoding: "utf8",
+      timeout: 5000,
+      env: {PATH: `${directory}:/usr/bin:/bin`, VISUALIZER_LOG_TEST_CAPTURE: capture},
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    return result;
+  };
+  const loggedArguments = () => readFileSync(capture, "utf8").split("\0").slice(0, -1);
+  const defaultPredicate = '(subsystem == "boo.peekaboo.core" && category CONTAINS "Visualization") || subsystem == "boo.peekaboo.visualizer"';
+  const customPredicate = 'processID == 42 && eventMessage CONTAINS "one two"';
+
+  try {
+    for (const [args, expected] of [
+      [[], ["show", "--style", "compact", "--info", "--debug", "--last", "10m", "--predicate", defaultPredicate]],
+      [["--last", "30s"], ["show", "--style", "compact", "--info", "--debug", "--last", "30s", "--predicate", defaultPredicate]],
+      [["--stream", "--last", "30s"], ["stream", "--style", "compact", "--level", "debug", "--predicate", defaultPredicate]],
+      [["--predicate", customPredicate], ["show", "--style", "compact", "--info", "--debug", "--last", "10m", "--predicate", customPredicate]],
+      [["--stream", "--predicate", customPredicate], ["stream", "--style", "compact", "--level", "debug", "--predicate", customPredicate]],
+      [["--predicate", ""], ["show", "--style", "compact", "--info", "--debug", "--last", "10m", "--predicate", ""]],
+    ]) {
+      const result = run(args);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(loggedArguments(), expected);
+    }
+    for (const args of [["--last"], ["--predicate"], ["--unknown"]]) {
+      assert.equal(run(args).status, 1);
+      assert.throws(loggedArguments, {code: "ENOENT"});
+    }
+    const help = run(["--help"]);
+    assert.equal(help.status, 0);
+    assert.ok(help.stdout.includes("boo.peekaboo.visualizer"));
+    assert.throws(loggedArguments, {code: "ENOENT"});
+  } finally {
+    rmSync(directory, {recursive: true, force: true});
+  }
+});
+
 test("real daemon smoke requires ambient consent and cannot run in skip-automation builds", () => {
   const daemonTests = readFileSync(
     `${repositoryRoot}/Apps/CLI/Tests/CLIRuntimeTests/DaemonLaunchRuntimeTests.swift`,
