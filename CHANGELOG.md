@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-- Stop inferring a captured window's main state from selection, list position, or visibility; retain the existing `false`/unavailable convention and preserve already-supplied main-state metadata without extra Accessibility reads.
 - Explain evaluated Bridge host requirements when `see --fresh` cannot obtain authenticated producer-bound snapshots, instead of incorrectly claiming fresh AX is unsupported or a binary update is sufficient; preserve host selection, trust, and error codes.
 - Add exact-window background coordinate scrolling via CLI `--at` / `--global` and MCP `coords`, preferring the nearest proven AX scroll owner and allowing pixel-authorized native-WebKit wheel delivery without an exposed owner, preserving the requested point and retry-unsafe receipts, and refusing older hosts through protocol 1.43.
 - Remove proven duplicate `see` / `inspect_ui` element listings from Agent provider requests while preserving observation evidence, raw MCP/CLI output, and saved history.
@@ -12,6 +11,7 @@
 - Add opt-in `see --fresh` and MCP `see` / `inspect_ui` freshness with uncached AX evidence, truthful `used_cache` metadata, and fail-closed host compatibility while preserving default caching and partial-tree limits.
 - Preserve the underlying cause of failed background paste preparation reads, without changing input dispatch, deadlines, or retry safety.
 - Add background `select-text` / MCP `select_text` for literal, context-disambiguated selections and caret placement, including unfocused native fields, with UTF-16 source-drift checks, unchanged-text verification, and protocol-1.42 receipts without keyboard or clipboard fallback.
+- Stop inferring a captured window's main state from selection, list position, or visibility; retain the existing `false`/unavailable convention and preserve already-supplied main-state metadata without extra Accessibility reads.
 
 ## 4.8.0 - 2026-10-03
 
