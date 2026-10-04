@@ -317,6 +317,49 @@ test("hosted typed element mutation proof includes exact selection suites and pa
   assert.ok(diagnostics.includes("AgentExecutionTraceTests"), "Keep trace coverage in its existing owner");
 });
 
+test("hosted Agent diagnostics runs observation projection and provider retention contracts", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const marker = "      - name: Run Agent execution diagnostics contracts\n";
+  assert.equal(workflow.split(marker).length, 2, "Extend the existing Agent diagnostics step exactly once");
+  const step = workflow.split(marker)[1].split("\n      - name:")[0];
+  assert.match(step, /working-directory: Core\/PeekabooCore/);
+  for (const name of [
+    "PEEKABOO_INCLUDE_AUTOMATION_TESTS", "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS",
+    "PEEKABOO_RUN_INPUT_AUTOMATION_TESTS", "RUN_AUTOMATION_READ", "RUN_AUTOMATION_TESTS",
+    "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS",
+  ]) {
+    assert.ok(step.includes(`${name}: "false"`), `${name} must be disabled`);
+  }
+  assert.match(step, /PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"/);
+  assert.ok(step.includes("set -euo pipefail"));
+  assert.ok(step.includes("swift test --disable-xctest --enable-swift-testing --no-parallel"));
+  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+  assert.equal(step.match(/--filter /g)?.length, 1);
+  const groups = [
+    ["PeekabooTests", ["PeekabooAgentStepLimitTests", "AgentObservationProviderContextTests"]],
+    ["PeekabooAgentRuntimeTests", [
+      "AgentExecutionTraceTests", "AgentRecordedOutcomeNoticeTests", "SnapshotInvalidationMetadataTests",
+      "AgentObservationProjectionTests",
+    ]],
+  ];
+  const filter = step.match(/--filter '([^']+)'/)?.[1];
+  assert.equal(filter, groups.map(([module, suites]) => `^${module}[.](${suites.join("|")})/`).join("|"));
+  const selection = new RegExp(filter);
+  for (const [module, suites] of groups) {
+    for (const suite of suites) {
+      assert.ok(selection.test(`${module}.${suite}/example()`), suite);
+      assert.ok(!selection.test(`${module}.${suite}Extra/example()`), `${suite} must stay exactly scoped`);
+      assert.ok(!selection.test(`OtherTests.${suite}/example()`), `${suite} must select its owning module`);
+      assert.ok(step.includes(`grep -Fq 'Suite ${suite} passed after ' "$test_log"`));
+      const source = readFileSync(`${repositoryRoot}/Core/PeekabooCore/Tests/${module}/${suite}.swift`, "utf8");
+      assert.match(source, new RegExp(`(?:class|struct) ${suite}\\b`), `${suite} must exist in this checkout`);
+    }
+  }
+  assert.ok(step.includes('2>&1 | tee "$test_log"'));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' \"$test_log\""));
+  assert.doesNotMatch(step, /continue-on-error|--skip-build|\bsecrets\./);
+});
+
 test("hosted CI runs exact hotkey receipt Core guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run exact hotkey receipt regressions\n")[1];

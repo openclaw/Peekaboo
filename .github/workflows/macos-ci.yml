@@ -388,17 +388,26 @@ jobs:
       - name: Run Agent execution diagnostics contracts
         working-directory: Core/PeekabooCore
         env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_READ: "false"
+          RUN_AUTOMATION_TESTS: "false"
+          RUN_AUTOMATION_ACTIONS: "false"
+          RUN_LOCAL_TESTS: "false"
           PEEKABOO_CONFIG_DISABLE_MIGRATION: "1"
         run: |
           set -euo pipefail
           test_log="$RUNNER_TEMP/agent-partial-failure-diagnostics.log"
           swift test --disable-xctest --enable-swift-testing --no-parallel \
-            --filter 'PeekabooAgentStepLimitTests|AgentExecutionTraceTests|AgentRecordedOutcomeNoticeTests|SnapshotInvalidationMetadataTests' \
+            --filter '^PeekabooTests[.](PeekabooAgentStepLimitTests|AgentObservationProviderContextTests)/|^PeekabooAgentRuntimeTests[.](AgentExecutionTraceTests|AgentRecordedOutcomeNoticeTests|SnapshotInvalidationMetadataTests|AgentObservationProjectionTests)/' \
             2>&1 | tee "$test_log"
           grep -Fq 'Suite PeekabooAgentStepLimitTests passed after ' "$test_log"
           grep -Fq 'Suite AgentExecutionTraceTests passed after ' "$test_log"
           grep -Fq 'Suite AgentRecordedOutcomeNoticeTests passed after ' "$test_log"
           grep -Fq 'Suite SnapshotInvalidationMetadataTests passed after ' "$test_log"
+          grep -Fq 'Suite AgentObservationProjectionTests passed after ' "$test_log"
+          grep -Fq 'Suite AgentObservationProviderContextTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run targeted dialog metadata and deadline contracts

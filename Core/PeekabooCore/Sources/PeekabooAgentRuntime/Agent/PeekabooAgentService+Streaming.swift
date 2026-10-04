@@ -244,7 +244,7 @@ extension PeekabooAgentService {
                     let streamResult = try await streamText(
                         model: configuration.model,
                         provider: configuration.provider,
-                        messages: state.messages,
+                        messages: AgentToolMCPBridge.providerContextMessages(state.messages),
                         tools: configuration.tools.isEmpty ? nil : configuration.tools,
                         settings: self.generationSettings(for: configuration.model))
                     return try await self.collectStreamOutput(
