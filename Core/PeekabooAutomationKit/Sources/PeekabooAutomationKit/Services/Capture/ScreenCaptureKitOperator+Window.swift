@@ -46,7 +46,7 @@ extension ScreenCaptureKitOperator {
         let metadataContext: WindowMetadataContext
     }
 
-    private struct WindowMetadataIdentity {
+    struct WindowMetadataIdentity {
         let windowID: CGWindowID
         let title: String
         let bounds: CGRect
@@ -76,7 +76,7 @@ extension ScreenCaptureKitOperator {
         }
     }
 
-    private struct DisplayMetadataIdentity {
+    struct DisplayMetadataIdentity {
         let displayID: CGDirectDisplayID
         let bounds: CGRect
 
@@ -97,7 +97,7 @@ extension ScreenCaptureKitOperator {
         let expectedPixelSize: (width: Int, height: Int)
     }
 
-    private struct WindowMetadataContext {
+    struct WindowMetadataContext {
         let mode: CaptureMode
         let applicationInfo: ServiceApplicationInfo?
         let window: WindowMetadataIdentity
@@ -221,7 +221,7 @@ extension ScreenCaptureKitOperator {
 
         await self.emitVisualizer(mode: visualizerMode, rect: targetWindow.frame)
 
-        let metadata = self.windowMetadata(
+        let metadata = Self.windowMetadata(
             image: image,
             context: WindowMetadataContext(
                 mode: .window,
@@ -269,7 +269,7 @@ extension ScreenCaptureKitOperator {
 
         await self.emitVisualizer(mode: visualizerMode, rect: output.metadataContext.window.bounds)
 
-        let metadata = self.windowMetadata(
+        let metadata = Self.windowMetadata(
             image: output.image,
             context: output.metadataContext)
 
@@ -664,7 +664,7 @@ extension ScreenCaptureKitOperator {
 
         return CaptureResult(
             imageData: imageData,
-            metadata: self.windowMetadata(
+            metadata: Self.windowMetadata(
                 image: image,
                 context: WindowMetadataContext(
                     mode: .window,
@@ -682,7 +682,7 @@ extension ScreenCaptureKitOperator {
                     mutationIdentity: mutationIdentity)))
     }
 
-    private func windowMetadata(
+    static func windowMetadata(
         image: CGImage,
         context: WindowMetadataContext) -> CaptureMetadata
     {
@@ -695,7 +695,8 @@ extension ScreenCaptureKitOperator {
                 title: context.window.title,
                 bounds: context.window.bounds,
                 isMinimized: false,
-                isMainWindow: context.window.isOnScreen,
+                // ScreenCaptureKit visibility is not evidence that this is the app's main window.
+                isMainWindow: false,
                 windowLevel: 0,
                 alpha: context.window.alpha,
                 index: context.windowIndex,
@@ -824,7 +825,7 @@ extension ScreenCaptureKitOperator {
             title: window.title ?? "",
             bounds: window.frame,
             isMinimized: false,
-            isMainWindow: window.isOnScreen,
+            isMainWindow: false,
             windowLevel: 0,
             alpha: 1.0,
             index: index,

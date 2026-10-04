@@ -54,6 +54,13 @@ Frontmost screenshots retain the application identity observed at the start of t
 `frontmost` capture mode, even when the capture engine uses that application's exact window. The captured process
 generation, window ID, and bounds must still match before the result can be accepted by the Bridge.
 
+Capture window metadata's `isMainWindow` is affirmative only when the captured window information already carries
+main-state evidence for that exact window. Classic or ScreenCaptureKit visibility, capture selection, and window-list
+position do not establish main state. Without that evidence, the existing `false` value means main state is not
+established, not that the native window is definitively not main. Normalization preserves an already supplied value;
+target resolution does not propagate missing inventory/AX main-state evidence into capture. This adds no Accessibility
+polling or public metadata fields.
+
 Every reusable snapshot is identified by a producer-generated reference with the exact form `ps1_` followed by 32
 lowercase ASCII hexadecimal digits, for example `ps1_0123456789abcdef0123456789abcdef`. The 32-digit suffix contains
 128 random bits. The selected local or Bridge producer reserves that reference before storing detection results or
