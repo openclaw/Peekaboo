@@ -11,6 +11,12 @@ read_when:
 
 Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows.
 
+Pixels and Accessibility metadata are collected at different times, not as one atomic application-state snapshot.
+During asynchronous UI updates, an image can still show the old value while AX already reports the new value.
+Atomic snapshot publication binds the returned artifacts; it does not make their acquisition simultaneous. After
+an unverified or indeterminate action, use [`verify`](verify.md) (or MCP `verify_state`) to check fresh target state,
+then capture again if visual confirmation is needed. Do not replay the action to resolve conflicting observations.
+
 Native Accessibility date values are exposed as ISO-8601 UTC timestamps with milliseconds, alongside existing string,
 number and boolean control values. Nonfinite dates remain unavailable; titles and labels remain string-only.
 

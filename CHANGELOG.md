@@ -5,6 +5,7 @@
 - Add explicit `--allow-temporary-clipboard` authority for Agent and public MCP to paste bounded base64 payloads through fresh exact-window snapshots while keeping UI background-only, requiring fresh resume opt-in, preserving ownership-aware cleanup and retry-unsafe receipts, and retaining nested/managed Agent attenuation.
 - Preserve input-delivery and message-only refusal causes across composed background preparation outcomes, including content-free native chrome observation diagnostics, without changing dispatch or retry safety.
 - Reuse normalized Agent tool-result claims when building execution traces, eliminating duplicate canonical validation while preserving failure, dispatch, and redaction semantics.
+- Clarify that `see` pixels and Accessibility metadata are not acquired atomically, and explain how to verify an asynchronous action without replaying it.
 
 ## 4.8.0 - 2026-10-03
 
