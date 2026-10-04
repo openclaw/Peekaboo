@@ -57,11 +57,13 @@ struct ScrollCoordinateCommandTests {
             )
             #expect(result.exitStatus != 0)
         }
-        let missing = try await InProcessCommandRunner.run(
-            ["scroll", "--direction", "down", "--at", "20,30", "--json", "--no-remote"],
-            services: fixture.services
-        )
-        #expect(missing.exitStatus != 0 && missing.stdout.contains("explicit exact-window"))
+        for snapshotArguments in [[], ["--snapshot", "latest"]] {
+            let missing = try await InProcessCommandRunner.run(
+                ["scroll", "--direction", "down", "--at", "20,30", "--json", "--no-remote"] + snapshotArguments,
+                services: fixture.services
+            )
+            #expect(missing.exitStatus != 0 && missing.stdout.contains("explicit exact-window"))
+        }
         #expect(fixture.automation.scrollCalls.isEmpty && fixture.automation.currentMouseLocationCalls == 0)
         #expect(fixture.applications.activateCalls.isEmpty && fixture.windows.focusCalls.isEmpty)
     }

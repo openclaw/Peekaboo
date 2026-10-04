@@ -21,7 +21,7 @@ extension ScrollCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
+                    help: "Explicit fresh screenshot snapshot required with --at; --on may use 'latest' or omit it",
                     long: "snapshot"
                 ),
                 .commandOption(

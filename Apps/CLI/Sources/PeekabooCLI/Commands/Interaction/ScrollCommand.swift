@@ -25,7 +25,7 @@ RuntimeBackedCommand {
     @Flag(help: "Interpret --at as global display points instead of window-relative points")
     var global = false
 
-    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
+    @Option(help: "Explicit fresh screenshot snapshot required with --at; --on may use 'latest' or omit it")
     var snapshot: String?
 
     @Option(help: "Delay between scroll ticks (bare values are milliseconds)")
