@@ -124,8 +124,9 @@ enum CommanderCLIBinder {
             options.requiresProcessGenerationPinnedClicks = true
             options.requiresTargetedClickAccessibilityValueDelivery = true
         }
-        options.requiresTargetedScroll = commandType == ScrollCommand.self &&
-            !commandValues.flag("foreground")
+        options.requiresTargetedScroll = commandType == ScrollCommand.self && usesBackgroundInput
+        options.requiresBackgroundCoordinateScroll = commandType == ScrollCommand.self &&
+            commandValues.singleOption("at") != nil
         options.requiresPostEventPermission = Self.requiresPostEventPermission(
             commandType,
             parsedValues: parsedValues

@@ -270,9 +270,7 @@ extension BridgeCapabilityPolicy {
            !self.supportsExactWindowPixelFocusTyping(for: handshake) {
             return false
         }
-        if options.requiresTargetedScroll,
-           !self.supportsTargetedScroll(for: handshake) ||
-           !self.supportsRequestPinnedExactWindowScrollReceipt(for: handshake) {
+        if !self.supportsScrollRequirements(for: handshake, options: options) {
             return false
         }
         if options.requiresPostEventPermission, handshake.permissions?.postEvent != true {
@@ -307,6 +305,18 @@ extension BridgeCapabilityPolicy {
             return false
         }
         return true
+    }
+
+    private static func supportsScrollRequirements(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        if options.requiresTargetedScroll,
+           !handshake.supportsTargetedScroll ||
+           !handshake.supportsRequestPinnedExactWindowScrollReceipt {
+            return false
+        }
+        return !options.requiresBackgroundCoordinateScroll || handshake.supportsBackgroundCoordinateScroll
     }
 
     /// TCC permissions the current command needs from a remote host, derived from the operations
@@ -833,26 +843,6 @@ extension BridgeCapabilityPolicy {
             ) == true &&
             requiredOperations.isSubset(of: Set(handshake.supportedOperations)) &&
             requiredOperations.isSubset(of: Set(handshake.enabledOperations ?? handshake.supportedOperations))
-    }
-
-    static func supportsTargetedScroll(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
-        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 11),
-              handshake.supportedOperations.contains(.targetedScroll)
-        else {
-            return false
-        }
-        return (handshake.enabledOperations ?? handshake.supportedOperations).contains(.targetedScroll)
-    }
-
-    static func supportsRequestPinnedExactWindowScrollReceipt(
-        for handshake: PeekabooBridgeHandshakeResponse
-    ) -> Bool {
-        handshake.negotiatedVersion >= PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion &&
-            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
-            handshake.hostCapabilities?.contains(
-                PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt
-            ) == true &&
-            self.supportsTargetedScroll(for: handshake)
     }
 
     static func targetedTypeAvailability(for handshake: PeekabooBridgeHandshakeResponse)

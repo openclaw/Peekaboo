@@ -19,7 +19,13 @@ RuntimeBackedCommand {
     @Option(help: "Element ID to scroll on (from 'see' command)")
     var on: String?
 
-    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
+    @Option(help: "Background coordinates x,y relative to the captured window; mutually exclusive with --on")
+    var at: String?
+
+    @Flag(help: "Interpret --at as global display points instead of window-relative points")
+    var global = false
+
+    @Option(help: "Explicit fresh screenshot snapshot required with --at; --on may use 'latest' or omit it")
     var snapshot: String?
 
     @Option(help: "Delay between scroll ticks (bare values are milliseconds)")
@@ -69,6 +75,9 @@ RuntimeBackedCommand {
             }
 
             let expectedWindow = try await self.expectedBackgroundWindow(observation: observation)
+            let coordinateResolution = try await self.resolveCoordinateScroll(
+                self.coordinatePoint(), expectedWindow: expectedWindow, observation: observation
+            )
 
             self.resolvedRuntime.beginInteractionMutation()
             try await self.recordSetupFocus(
@@ -81,6 +90,7 @@ RuntimeBackedCommand {
                 direction: scrollDirection,
                 amount: self.amount,
                 target: self.on,
+                point: coordinateResolution?.screenPoint,
                 smooth: self.smooth,
                 delay: self.delay.roundedMilliseconds,
                 snapshotId: observation.snapshotId,
@@ -105,14 +115,14 @@ RuntimeBackedCommand {
                 logger: self.logger,
                 reason: "scroll"
             )
+            let logTarget = coordinateResolution != nil ? "coordinates" : (self.on ?? "pointer")
             AutomationEventLogger.log(
                 .scroll,
                 "direction=\(self.direction) amount=\(self.amount) smooth=\(self.smooth) "
-                    + "target=\(self.on ?? "pointer") snapshot=\(observation.snapshotId ?? "latest")"
+                    + "target=\(logTarget) snapshot=\(observation.snapshotId ?? "latest")"
             )
 
             // Keep result reporting aligned with ScrollService.tickConfiguration.
-            let totalTicks = self.smooth ? self.amount * 10 : self.amount
 
             // Determine scroll location for output
             let resultDetection: ElementDetectionResult? = if let snapshotId = observation.snapshotId {
@@ -120,7 +130,9 @@ RuntimeBackedCommand {
             } else {
                 nil
             }
-            let scrollResolution: InteractionTargetPointResolution = if let elementId = on {
+            let scrollResolution: InteractionTargetPointResolution = if let coordinateResolution {
+                InteractionTargetPointResolver.coordinate(coordinateResolution.screenPoint, source: .coordinates)
+            } else if let elementId = on {
                 if let snapshotId = observation.snapshotId,
                    let detectionResult = resultDetection,
                    let element = detectionResult.elements.findById(elementId) {
@@ -139,14 +151,12 @@ RuntimeBackedCommand {
                     source: .pointer
                 )
             }
-            let scrollLocation = scrollResolution.point
-
             // Output results
             let outputPayload = ScrollResult(
                 direction: direction,
                 amount: amount,
-                location: ["x": scrollLocation.x, "y": scrollLocation.y],
-                totalTicks: totalTicks,
+                location: ["x": scrollResolution.point.x, "y": scrollResolution.point.y],
+                totalTicks: self.smooth ? self.amount * 10 : self.amount,
                 targetPoint: scrollResolution.diagnostics,
                 targetReceipt: ScrollTargetReceipt(
                     snapshotId: observation.snapshotId,
@@ -167,8 +177,8 @@ RuntimeBackedCommand {
                 }
                 print("🎯 Direction: \(self.direction)")
                 print("📊 Amount: \(self.amount) ticks")
-                if self.on != nil {
-                    print("📍 Location: (\(Int(scrollLocation.x)), \(Int(scrollLocation.y)))")
+                if self.on != nil || self.at != nil {
+                    print("📍 Location: (\(Int(scrollResolution.point.x)), \(Int(scrollResolution.point.y)))")
                 }
                 print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
             }
@@ -196,6 +206,58 @@ RuntimeBackedCommand {
             )
             self.handleError(preservedError)
             throw ExitCode.failure
+        }
+    }
+
+    private func resolveCoordinateScroll(
+        _ inputPoint: CGPoint?,
+        expectedWindow: UIAutomationTarget.ExactWindow?,
+        observation: InteractionObservationContext
+    ) async throws -> InteractionCoordinateResolution? {
+        guard let inputPoint, let expectedWindow else { return nil }
+        guard (self.services.automation as? any UIAutomationActionOutcomeProviding)?
+            .supportsBackgroundCoordinateScroll == true
+        else {
+            throw PreDispatchActionError(
+                message: "This execution host does not support background coordinate scroll.",
+                code: .INTERACTION_FAILED,
+                hint: "Update the execution host before retrying coordinate scroll.",
+                reason: .runtimeIncompatible
+            )
+        }
+        let globalPoint = self.global ? inputPoint : CGPoint(
+            x: expectedWindow.bounds.minX + inputPoint.x,
+            y: expectedWindow.bounds.minY + inputPoint.y
+        )
+        guard expectedWindow.bounds.contains(globalPoint) else {
+            throw PreDispatchActionError(
+                message: "Scroll coordinates are outside the captured target window.",
+                code: .INVALID_INPUT,
+                hint: "Use an in-window --at point; --global changes the coordinate basis, not the target.",
+                reason: .invalidRequest
+            )
+        }
+        do {
+            return try await InteractionCoordinateResolver.resolveBackgroundSnapshotCoordinates(
+                inputPoint,
+                snapshotId: observation.requireSnapshot(),
+                target: self.target,
+                services: self.services,
+                options: .init(
+                    forceGlobal: self.global,
+                    referenceMessage: "Coordinate scroll requires a fresh pixel-backed exact-window snapshot.",
+                    operation: "scroll"
+                )
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw PreDispatchActionError(
+                message: error.localizedDescription,
+                code: .SNAPSHOT_STALE,
+                hint: "Run see for the exact window and use its fresh snapshot.",
+                reason: .targetUnavailable
+            )
         }
     }
 
@@ -249,7 +311,7 @@ RuntimeBackedCommand {
     private func expectedBackgroundWindow(
         observation: InteractionObservationContext
     ) async throws -> UIAutomationTarget.ExactWindow? {
-        guard !self.focusOptions.foreground, self.on != nil else { return nil }
+        guard !self.focusOptions.foreground, self.on != nil || self.at != nil else { return nil }
         let snapshotID = try observation.requireSnapshot()
         do {
             guard let exactWindow = try await SnapshotTargetReceiptPlanner(snapshots: self.services.snapshots)
@@ -274,10 +336,30 @@ RuntimeBackedCommand {
     }
 
     private func validateDeliveryMode() throws {
-        guard self.focusOptions.foreground else {
-            if self.on == nil {
+        if self.at != nil {
+            guard self.on == nil else { throw ValidationError("--at and --on are mutually exclusive.") }
+            guard !self.focusOptions.foreground else {
+                throw ValidationError("Coordinate scroll does not support --foreground; use background --at.")
+            }
+            guard !self.smooth, self.delay.milliseconds == 0 else {
+                throw ValidationError("Coordinate scroll supports neither --smooth nor a nonzero --delay.")
+            }
+            guard InteractionSnapshotReference.isConcrete(self.snapshot) else {
                 throw PreDispatchActionError(
-                    message: "Background scroll requires --on with an Accessibility-scrollable element.",
+                    message: "Background coordinate scroll requires an explicit exact-window --snapshot from see.",
+                    code: .SNAPSHOT_STALE,
+                    hint: "Capture the exact window with see, then use --at with its returned snapshot.",
+                    reason: .targetUnavailable
+                )
+            }
+            _ = try self.coordinatePoint()
+        } else if self.global {
+            throw ValidationError("--global requires --at.")
+        }
+        guard self.focusOptions.foreground else {
+            if self.on == nil, self.at == nil {
+                throw PreDispatchActionError(
+                    message: "Background scroll requires --on or --at with a fresh exact-window snapshot.",
                     code: .VALIDATION_ERROR,
                     hint: "Add --foreground to scroll at the physical pointer.",
                     reason: .invalidRequest
@@ -293,6 +375,17 @@ RuntimeBackedCommand {
             }
             return
         }
+    }
+
+    private func coordinatePoint() throws -> CGPoint? {
+        guard let at else { return nil }
+        let parts = at.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let x = Double(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+              let y = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+              x.isFinite, y.isFinite
+        else { throw ValidationError("Invalid --at coordinates; use two finite numbers: x,y.") }
+        return CGPoint(x: x, y: y)
     }
 
     func validateBeforeRuntime() throws {
@@ -388,6 +481,7 @@ extension ScrollCommand: ParsableCommand {
 
                     EXAMPLES:
                       peekaboo scroll --direction up --amount 10 --on element_42
+                      peekaboo scroll --direction down --at 200,150 --snapshot "$SNAPSHOT_ID"
                       peekaboo scroll --direction down --amount 5 --foreground
                       peekaboo scroll --direction right --amount 3 --smooth --foreground
 
@@ -420,6 +514,8 @@ extension ScrollCommand: CommanderBindableCommand {
             self.amount = amount
         }
         self.on = values.singleOption("on")
+        self.at = values.singleOption("at")
+        self.global = values.flag("global")
         self.snapshot = values.singleOption("snapshot")
         if let delay: CLIDuration = try values.decodeOption("delay", as: CLIDuration.self) {
             self.delay = delay

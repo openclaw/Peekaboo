@@ -7,6 +7,126 @@ import PeekabooFoundation
 public enum BridgeTestFixtures {
     public static let authenticatedHostTeamIdentifier = "PEEKABOO-TEST-HOST"
 
+    public struct ScrollHandshakeCase: Sendable, CustomStringConvertible {
+        public let name: String
+        public let handshake: PeekabooBridgeHandshakeResponse
+        public let targetedScroll: Bool
+        public let requestPinnedScroll: Bool
+        public let coordinateScroll: Bool
+
+        public var description: String {
+            self.name
+        }
+    }
+
+    /// Shared expectations for negotiated scroll support, independent of live host admission.
+    public static var scrollHandshakeCases: [ScrollHandshakeCase] {
+        let attested = PeekabooBridgeHostCapability.attestedOperationReceipts
+        let pinned = PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt
+        let coordinates = PeekabooBridgeHostCapability.backgroundCoordinateScroll
+        let complete = [attested, pinned, coordinates]
+        func fixture(
+            _ name: String,
+            minor: Int,
+            capabilities: [String]?,
+            supported: [PeekabooBridgeOperation] = [.targetedScroll],
+            enabled: [PeekabooBridgeOperation]? = [.targetedScroll],
+            expected: (targeted: Bool, receipt: Bool, coordinate: Bool)) -> ScrollHandshakeCase
+        {
+            ScrollHandshakeCase(
+                name: name,
+                handshake: Self.handshake(
+                    negotiatedVersion: .init(major: 1, minor: minor),
+                    supportedOperations: supported,
+                    enabledOperations: enabled,
+                    hostCapabilities: capabilities),
+                targetedScroll: expected.targeted,
+                requestPinnedScroll: expected.receipt,
+                coordinateScroll: expected.coordinate)
+        }
+        return [
+            fixture(
+                "before targeted scroll",
+                minor: 10,
+                capabilities: complete,
+                expected: (false, false, false)),
+            fixture(
+                "targeted scroll boundary",
+                minor: 11,
+                capabilities: complete,
+                expected: (true, false, false)),
+            fixture(
+                "before pinned receipts",
+                minor: 34,
+                capabilities: complete,
+                expected: (true, false, false)),
+            fixture(
+                "pinned receipt boundary",
+                minor: 35,
+                capabilities: complete,
+                expected: (true, true, false)),
+            fixture(
+                "before coordinate scroll",
+                minor: 42,
+                capabilities: complete,
+                expected: (true, true, false)),
+            fixture(
+                "coordinate scroll boundary",
+                minor: 43,
+                capabilities: complete,
+                expected: (true, true, true)),
+            fixture(
+                "newer protocol",
+                minor: 44,
+                capabilities: complete,
+                expected: (true, true, true)),
+            fixture(
+                "missing attested receipts",
+                minor: 43,
+                capabilities: [pinned, coordinates],
+                expected: (true, false, false)),
+            fixture(
+                "missing pinned receipts",
+                minor: 43,
+                capabilities: [attested, coordinates],
+                expected: (true, false, false)),
+            fixture(
+                "missing coordinate capability",
+                minor: 43,
+                capabilities: [attested, pinned],
+                expected: (true, true, false)),
+            fixture(
+                "omitted capabilities",
+                minor: 43,
+                capabilities: nil,
+                expected: (true, false, false)),
+            fixture(
+                "empty capabilities",
+                minor: 43,
+                capabilities: [],
+                expected: (true, false, false)),
+            fixture(
+                "unsupported operation",
+                minor: 43,
+                capabilities: complete,
+                supported: [],
+                enabled: nil,
+                expected: (false, false, false)),
+            fixture(
+                "explicitly disabled operation",
+                minor: 43,
+                capabilities: complete,
+                enabled: [],
+                expected: (false, false, false)),
+            fixture(
+                "legacy enabled list omitted",
+                minor: 43,
+                capabilities: complete,
+                enabled: nil,
+                expected: (true, true, true)),
+        ]
+    }
+
     #if DEBUG
     /// Creates a client that authenticates a real test listener by its audit-token-bound live CDHash.
     ///

@@ -607,8 +607,11 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
         )
     }
 
+    var currentMouseLocationCalls = 0
+
     func currentMouseLocation() -> CGPoint? {
-        self.stubCurrentMouseLocation
+        self.currentMouseLocationCalls += 1
+        return self.stubCurrentMouseLocation
     }
 
     func getFocusedElement() -> UIFocusInfo? {

@@ -34,7 +34,7 @@ This source-tree reference covers all 34 root commands in the upcoming v4 regist
 | [`move`](commands/move.md) | Move the physical pointer to `--on` or `--at`. |
 | [`paste`](commands/paste.md) | Paste current clipboard content or atomically set, paste, and restore. |
 | [`press`](commands/press.md) | Press xdotool-style chords or chord sequences. |
-| [`scroll`](commands/scroll.md) | Scroll by direction, optionally on an element. |
+| [`scroll`](commands/scroll.md) | Scroll by direction on an element or an exact-window `--at` point. |
 | [`select-text`](commands/select-text.md) | Select literal text or place a caret before/after it without focusing or typing. |
 | [`set-value`](commands/set-value.md) | Set an accessibility element value directly. |
 | [`type`](commands/type.md) | Type text; standalone keys and chords belong to `press`. |

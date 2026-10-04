@@ -20,7 +20,11 @@ struct TypingFinalReceiverBindingTests {
         }
 
         var nativeLookupCount: Int {
-            self == .editingKey ? 3 : 5
+            switch self {
+            case .text: 5
+            case .clear: 4
+            case .editingKey: 3
+            }
         }
     }
 
@@ -139,6 +143,7 @@ struct TypingFinalReceiverBindingTests {
         #expect(fixture.nativePhases.map { $0 == .initial } == [true])
         #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 1)
         #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
+        #expect(fixture.selectionWrites == (payload == .clear ? [] : [.a]))
         #expect(fixture.events.isEmpty)
     }
 
@@ -425,11 +430,18 @@ private final class TypingReceiverFixture {
                 try beforeMutation()
                 self.textWrites.append(receiver)
                 self.values[receiver] = text
+                // AXValue completion includes the selection clamped to the new UTF-16 bounds.
+                if let selection = self.selections[receiver] {
+                    let location = min(selection.location, text.utf16.count)
+                    self.selections[receiver] = CFRange(
+                        location: location,
+                        length: min(selection.length, text.utf16.count - location))
+                }
                 self.applyRouteTransition(afterDispatchTo: receiver)
                 if self.textWrites.count == self.reflowAfterTextWrite {
                     self.frames[.a] = Self.reflowedFrame
                 }
-                return .accessibilityValue
+                return .accessibilityValue(.init(text: text, selection: self.selections[receiver]))
             },
             selectRange: { range, receiver, beforeMutation in
                 if try beforeMutation() {

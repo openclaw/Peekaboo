@@ -922,7 +922,9 @@ extension MCPToolContext {
         let requestedSnapshotID = snapshotID ?? coordinateReference
         // ClickTool intentionally accepts either selector as the same capture-owned coordinate receipt. Its leaf
         // revalidates the exact PID/window/generation/bounds and rejects points outside that captured window.
-        if toolName == "click", arguments.getValue(for: "coords") != nil, requestedSnapshotID == nil {
+        if ["click", "scroll"].contains(toolName), arguments.getValue(for: "coords") != nil,
+           requestedSnapshotID == nil
+        {
             return refused(self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
                 detail: "background coordinates require an explicit exact snapshot or coordinate_reference"))

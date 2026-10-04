@@ -23,9 +23,13 @@ confirmed using the earlier receiver metadata.
 Text edits and cursor changes also recheck their source text and selection immediately before mutation. If either
 changes during asynchronous preflight, the unit stops without recomputing or replaying it. These checks do not make
 macOS Accessibility reads and writes an atomic transaction.
-The original selection stays bound while a value write settles. A changed selection stops the follow-up cursor
-write unless the requested range is already present, including when it settles during selection preflight;
-in that case no selection write is sent, and subsequent input continues from the verified range.
+The original text and selection stay bound until the value write. An accepted value writer then freezes its
+actual coherent, focused text-and-selection completion state after confirming the exact requested UTF-16 value.
+This accommodates native controls that move their caret while applying AXValue; it cannot attribute a caret change
+during settlement to the app rather than a user. The follow-up cursor write must still match that frozen state:
+later text, selection, receiver, window or process-generation drift stops the unit without resampling or rebasing.
+If the requested range is already present with the expected text, no selection write is sent. A value no-op retains the original
+state's authority, and missing or incoherent post-write evidence remains indeterminate and unsafe to retry.
 Focused-text edits preserve exact Unicode storage; canonically equivalent text is not an automatic no-op.
 Cancellation prevents starting keyboard fallback or another stroke; an already-started stroke still finishes its
 key-up cleanup, and any accepted prefix remains unsafe to replay.

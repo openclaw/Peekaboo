@@ -65,6 +65,35 @@ enum DetachedAXMutationReader {
         attribute: AXMutationObservationAttribute,
         timeout: Duration) async throws -> AXMutationObservationSnapshot?
     {
+        try await self.read(
+            element: element,
+            target: target,
+            attribute: attribute,
+            timeout: timeout,
+            requiresFocusedReceiver: false)
+    }
+
+    static func readFocused(
+        element: RetainedFocusElement,
+        target: AXMutationObservationTarget,
+        attribute: AXMutationObservationAttribute,
+        timeout: Duration) async throws -> AXMutationObservationSnapshot?
+    {
+        try await self.read(
+            element: element,
+            target: target,
+            attribute: attribute,
+            timeout: timeout,
+            requiresFocusedReceiver: true)
+    }
+
+    private static func read(
+        element: RetainedFocusElement,
+        target: AXMutationObservationTarget,
+        attribute: AXMutationObservationAttribute,
+        timeout: Duration,
+        requiresFocusedReceiver: Bool) async throws -> AXMutationObservationSnapshot?
+    {
         guard timeout > .zero else { return nil }
         let deadline = ContinuousClock.now.advanced(by: timeout)
         let components = timeout.components
@@ -76,7 +105,12 @@ enum DetachedAXMutationReader {
             seconds: seconds,
             maximumPendingOperationCount: 1)
         {
-            self.readSynchronously(element: element, target: target, attribute: attribute, deadline: deadline)
+            self.readSynchronously(
+                element: element,
+                target: target,
+                attribute: attribute,
+                deadline: deadline,
+                requiresFocusedReceiver: requiresFocusedReceiver)
         }
     }
 

@@ -356,6 +356,21 @@ actor UISnapshot {
             targetReceiptInvalidated: cached.invalidated,
             applicationName: cached.applicationName).receipt
     }
+
+    func coordinateAuthority() throws -> SnapshotTargetReceipt.CoordinateAuthority {
+        guard let context = self.screenshotCoordinateContext, context.referenceID == self.id else {
+            throw DesktopTargetIdentityError.coordinateReferenceMismatch
+        }
+        let target = try self.targetReceipt().requireIdentity()
+        let authority = try SnapshotTargetReceipt(
+            snapshotID: self.id,
+            evidence: [.init(target: target)],
+            coordinateContext: context).requireCoordinateAuthority()
+        guard let logicalBounds = context.logicalBounds,
+              authority.target.bounds.insetBy(dx: -0.000_001, dy: -0.000_001).contains(logicalBounds)
+        else { throw DesktopTargetIdentityError.coordinateBoundsMismatch }
+        return authority
+    }
 }
 
 /// Logical owner of one MCP/Agent snapshot history inside this process.

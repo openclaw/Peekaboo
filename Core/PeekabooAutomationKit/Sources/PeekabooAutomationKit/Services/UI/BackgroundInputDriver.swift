@@ -691,24 +691,18 @@ enum BackgroundInputDriver {
     private static func setText(
         _ text: String,
         on element: AXUIElement,
-        beforeMutation: @MainActor () throws -> Void) async throws -> FocusedTextKeyDispatch
+        beforeMutation: @MainActor () throws -> Void) async throws -> FocusedTextValueResult
     {
-        try await ActionInputDriver().performObservedMutation(
+        try await self.performFocusedTextValueMutation(
+            text,
             on: AutomationElement(Element(element)),
-            attribute: .value,
+            observer: ActionInputDriver(nativeReader: DetachedAXMutationReader.readFocused),
             beforeMutation: beforeMutation,
             mutation: {
                 try self.textMutationAccepted(AXUIElementSetAttributeValue(
                     element,
                     kAXValueAttribute as CFString,
                     text as CFTypeRef)) ? .accessibilityValue : .unsupported
-            },
-            matches: { sample in
-                if let sample {
-                    guard case let .string(value)? = sample.value else { return false }
-                    return self.exactTextMatches(value, text)
-                }
-                return self.exactTextMatches(try? self.textValue(from: element), text)
             })
     }
 
@@ -955,26 +949,6 @@ extension BackgroundInputDriver {
             })
     }
 
-    static func exactTextMatches(_ left: String?, _ right: String?) -> Bool {
-        // AX ranges use UTF-16 offsets; canonical String equality is insufficient for focused text edits.
-        switch (left, right) {
-        case (nil, nil): true
-        case let (.some(left), .some(right)): left.utf16.elementsEqual(right.utf16)
-        default: false
-        }
-    }
-
-    struct FocusedTextEditState: Equatable {
-        let text: String?
-        let selection: CFRange?
-
-        static func == (lhs: Self, rhs: Self) -> Bool {
-            BackgroundInputDriver.exactTextMatches(lhs.text, rhs.text) &&
-                lhs.selection?.location == rhs.selection?.location &&
-                lhs.selection?.length == rhs.selection?.length
-        }
-    }
-
     @MainActor
     struct FocusedTextEditAccess<Receiver> {
         let focusedElement: () throws -> Receiver?
@@ -982,7 +956,7 @@ extension BackgroundInputDriver {
         let textValue: (Receiver) throws -> String?
         let selectedRange: (Receiver) -> CFRange?
         let focusSnapshot: (Receiver) -> ExactWindowFocusSnapshot?
-        let setText: (String, Receiver, FocusedTextEditState) async throws -> FocusedTextKeyDispatch
+        let setText: (String, Receiver, FocusedTextEditState) async throws -> FocusedTextValueResult
         let selectRange: (CFRange, Receiver, FocusedTextEditState) async throws -> FocusedTextKeyDispatch
 
         func state(of receiver: Receiver) throws -> FocusedTextEditState {
@@ -1015,7 +989,7 @@ extension BackgroundInputDriver {
             selectedRange: @escaping (Receiver) -> CFRange?,
             focusSnapshot: @escaping (Receiver) -> ExactWindowFocusSnapshot?,
             validateReceiver: @escaping (Receiver) throws -> Void,
-            setText: @escaping (String, Receiver, @MainActor () throws -> Void) async throws -> FocusedTextKeyDispatch,
+            setText: @escaping (String, Receiver, @MainActor () throws -> Void) async throws -> FocusedTextValueResult,
             selectRange: @escaping (CFRange, Receiver, @MainActor () throws -> Bool) async throws
                 -> FocusedTextKeyDispatch)
         {
@@ -1176,13 +1150,11 @@ extension BackgroundInputDriver {
         else { return .unsupported }
         let state = try access.state(of: element)
         let valueDispatch = try await access.setText(text, element, state)
-        guard valueDispatch != .unsupported else { return .unsupported }
         return try await self.completeTextEdit(
             CFRange(location: text.utf16.count, length: 0),
             element: element,
             valueDispatch: valueDispatch,
-            expectedText: text,
-            sourceSelection: state.selection,
+            sourceState: state,
             access: access)
     }
 
@@ -1202,47 +1174,12 @@ extension BackgroundInputDriver {
         let edit = self.textByReplacingSelection(
             in: currentText, selection: state.selection, replacement: text)
         let valueDispatch = try await access.setText(edit.text, element, state)
-        guard valueDispatch != .unsupported else { return .unsupported }
         return try await self.completeTextEdit(
             CFRange(location: edit.cursorLocation, length: 0),
             element: element,
             valueDispatch: valueDispatch,
-            expectedText: edit.text,
-            sourceSelection: state.selection,
+            sourceState: state,
             access: access)
-    }
-
-    @MainActor
-    private static func completeTextEdit<Receiver>(
-        _ range: CFRange,
-        element: Receiver,
-        valueDispatch: FocusedTextKeyDispatch,
-        expectedText: String,
-        sourceSelection: CFRange?,
-        access: FocusedTextEditAccess<Receiver>) async throws -> FocusedTextKeyDispatch
-    {
-        do {
-            try Task.checkCancellation()
-            let state = FocusedTextEditState(text: expectedText, selection: sourceSelection)
-            switch try await access.selectRange(range, element, state) {
-            case .accessibilityValue:
-                return .accessibilityValue
-            case .noChange:
-                return valueDispatch
-            case .unsupported:
-                guard valueDispatch == .accessibilityValue else { return .unsupported }
-                throw ActionInputError.unsupported(.attributeUnsupported)
-            }
-        } catch {
-            guard valueDispatch == .accessibilityValue else { throw error }
-            throw DesktopActionFailure.indeterminate(
-                delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                evidence: .completionUnknown,
-                unitCount: .one,
-                message: "The text value was written, but its selection could not be confirmed.",
-                hint: "Observe the exact target before deciding whether to retry typing.",
-                causeDescription: error.localizedDescription)
-        }
     }
 
     struct FocusedTextHotkeyAccess<Receiver> {
@@ -1423,13 +1360,11 @@ extension BackgroundInputDriver {
             }
             let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
             let valueDispatch = try await access.setText(edit.text, element, state)
-            guard valueDispatch != .unsupported else { return .unsupported }
             return try await self.completeTextEdit(
                 CFRange(location: edit.cursorLocation, length: 0),
                 element: element,
                 valueDispatch: valueDispatch,
-                expectedText: edit.text,
-                sourceSelection: state.selection,
+                sourceState: state,
                 access: access)
 
         case .forwardDelete:
@@ -1438,25 +1373,21 @@ extension BackgroundInputDriver {
             }
             let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
             let valueDispatch = try await access.setText(edit.text, element, state)
-            guard valueDispatch != .unsupported else { return .unsupported }
             return try await self.completeTextEdit(
                 CFRange(location: edit.cursorLocation, length: 0),
                 element: element,
                 valueDispatch: valueDispatch,
-                expectedText: edit.text,
-                sourceSelection: state.selection,
+                sourceState: state,
                 access: access)
 
         case .space:
             let edit = self.textByReplacingSelection(in: currentText, selection: selection, replacement: " ")
             let valueDispatch = try await access.setText(edit.text, element, state)
-            guard valueDispatch != .unsupported else { return .unsupported }
             return try await self.completeTextEdit(
                 CFRange(location: edit.cursorLocation, length: 0),
                 element: element,
                 valueDispatch: valueDispatch,
-                expectedText: edit.text,
-                sourceSelection: state.selection,
+                sourceState: state,
                 access: access)
 
         default:

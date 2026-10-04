@@ -298,6 +298,10 @@ public final class PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)
         }
+        Self.updateBackgroundCoordinateScrollCapability(
+            capabilities: &resolvedHostCapabilities,
+            version: supportedVersions.upperBound,
+            automation: services.automation)
         Self.updateInputAndLifecycleCapabilities(
             to: &resolvedHostCapabilities,
             services: services,
@@ -1147,15 +1151,12 @@ public final class PeekabooBridgeServer {
                     message: "Certification operations require a signed Bridge operation receipt")
             }
         }
-        if request.requiresRequestPinnedExactWindowScrollReceipt {
-            let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
-            let negotiatedVersion = session?.protocolVersion ?? self.receiptlessProtocolVersion(for: peer)
-            guard negotiatedVersion ?? .init(major: 0, minor: 0) >=
-                PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion,
-                session?.requestPinnedExactWindowScrollReceipt == true
-            else {
-                throw Self.requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope()
-            }
+        if request.requiresRequestPinnedExactWindowScrollReceipt,
+           !Self.isBackgroundScrollRuntimeCompatible(
+               request, capabilities: PeekabooBridgeRequestContext.negotiatedSessionCapabilities)
+        {
+            throw Self.requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope(
+                requiresCoordinates: request.requiresBackgroundCoordinateScroll)
         }
         if let minimumVersion = request.minimumNegotiatedProtocolVersion {
             let session = PeekabooBridgeRequestContext.negotiatedSessionCapabilities
@@ -1213,23 +1214,7 @@ public final class PeekabooBridgeServer {
         if case let .targetedClick(payload) = request {
             try Self.validateTargetedClickAccess(payload, permissions: permissions)
         }
-        switch request {
-        case let .scroll(payload):
-            guard payload.request.foreground else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .invalidRequest,
-                    message: "The scroll operation requires foreground=true; " +
-                        "use targetedScroll for background AX input")
-            }
-        case let .targetedScroll(payload):
-            guard !payload.request.foreground else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .invalidRequest,
-                    message: "The targetedScroll operation requires foreground=false")
-            }
-        default:
-            break
-        }
+        try request.validateScrollDeliveryMode()
 
         try self.validateOperationPermissions(for: request, permissions: permissions, effectiveOps: effectiveOps)
     }

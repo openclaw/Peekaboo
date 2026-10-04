@@ -1,4 +1,5 @@
 import Commander
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -28,6 +29,21 @@ struct CommandHelpRendererTests {
             #expect(help.contains("Opaque element ID"))
             #expect(help.range(of: #"\b[BTMS]\d+\b"#, options: .regularExpression) == nil)
         }
+    }
+
+    @Test
+    func `press help explains macOS key names without promising xdotool compatibility`() {
+        let expected = KeyboardChord.syntaxHelp
+        let explicit = PressCommand.commanderSignature()
+        let reflected = CommandSignature.describe(PressCommand()).flattened()
+        let help = PressCommand.helpMessage().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+
+        #expect(explicit.arguments.first?.help == expected)
+        #expect(reflected.arguments.first?.help == expected)
+        #expect(help.contains("delete (also Delete, backspace or del) erases backward"))
+        #expect(help.contains("forwarddelete/forward_delete erase forward"))
+        #expect(help.contains("Use cmd/command for Command, not super"))
+        #expect(!help.contains("matches xdotool"))
     }
 
     @Test

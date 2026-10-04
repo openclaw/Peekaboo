@@ -20,6 +20,7 @@ final class OutcomeStubAutomationService: StubAutomationService, ScriptedUIAutom
     }
 
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
+    var supportsBackgroundCoordinateScroll = false
     var setValueResultTargetBindingSupported = true
     override var supportsSetValueResultTargetBinding: Bool {
         self.setValueResultTargetBindingSupported

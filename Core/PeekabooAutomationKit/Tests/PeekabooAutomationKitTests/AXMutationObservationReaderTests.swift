@@ -11,8 +11,11 @@ struct AXMutationObservationReaderTests {
         case window, role, identifier, receiver, generationBefore, generationAfter, missingRange
     }
 
-    @Test(arguments: Change.allCases)
-    func `focused selection requires stable readable receiver evidence`(change: Change) {
+    @Test(arguments: Change.allCases, [AXMutationObservationAttribute.selectedTextRange, .textSelection])
+    func `focused selection requires stable readable receiver evidence`(
+        change: Change,
+        attribute: AXMutationObservationAttribute)
+    {
         let reference = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
         let replacement = RetainedFocusElement(element: AXUIElementCreateApplication(4243))
         var snapshots = 0
@@ -20,7 +23,7 @@ struct AXMutationObservationReaderTests {
         var rangeReads = 0
         var generations = 0
         let observed = DetachedAXMutationReader.readSynchronously(
-            request: (target: Self.target, attribute: .selectedTextRange, deadline: .now.advanced(by: .seconds(1))),
+            request: (target: Self.target, attribute: attribute, deadline: .now.advanced(by: .seconds(1))),
             requiresFocusedReceiver: true,
             processStartIdentity: {
                 generations += 1
@@ -48,6 +51,9 @@ struct AXMutationObservationReaderTests {
                     return NSNumber(value: !((focusReads == 1 && change == .focusBefore) ||
                             (focusReads == 2 && change == .focusAfter)))
                 }
+                if name == kAXValueAttribute {
+                    return "value" as CFString
+                }
                 #expect(name == kAXSelectedTextRangeAttribute)
                 rangeReads += 1
                 return change == .missingRange ? nil : Self.rangeValue()
@@ -56,8 +62,10 @@ struct AXMutationObservationReaderTests {
             #expect(observed?.selectedTextRange == TextSelectionRange(location: 1, length: 2))
             #expect(observed?.focused == true)
             #expect(snapshots == 2 && focusReads == 2 && rangeReads == 1 && generations == 2)
+            #expect(observed?.value == (attribute == .textSelection ? .string("value") : nil))
         } else {
             #expect(observed?.selectedTextRange == nil)
+            #expect(observed?.value == nil)
         }
         if [.secureBefore, .unreadableSubroleBefore, .focusBefore, .unreadableFocusBefore, .generationBefore]
             .contains(change)
@@ -65,8 +73,48 @@ struct AXMutationObservationReaderTests {
             #expect(rangeReads == 0)
         }
         #expect(rangeReads <= 1)
-        if change == .missingRange {
+        if change == .missingRange, attribute == .selectedTextRange {
             #expect(snapshots == 1)
+        }
+    }
+
+    @Test(arguments: ["stable", "changed", "canonical", "missingBefore", "missingAfter", "missingRange", "outOfBounds"])
+    func `focused value completion requires one coherent UTF16 text and selection sample`(change: String) {
+        let reference = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
+        var textReads = 0
+        let observed = DetachedAXMutationReader.readSynchronously(
+            request: (target: Self.target, attribute: .textSelection, deadline: .now.advanced(by: .seconds(1))),
+            requiresFocusedReceiver: true,
+            processStartIdentity: { 99 },
+            readSnapshot: { _ in Self.snapshot(reference: reference) },
+            readAttribute: { name, _ in
+                switch name {
+                case kAXFocusedAttribute:
+                    return kCFBooleanTrue
+                case kAXValueAttribute:
+                    textReads += 1
+                    if (change == "missingBefore" && textReads == 1) || (change == "missingAfter" && textReads == 2) {
+                        return nil
+                    }
+                    if change == "changed", textReads == 2 {
+                        return "different" as CFString
+                    }
+                    return (change == "canonical" && textReads == 2 ? "e\u{0301}" : "\u{00E9}") as CFString
+                default:
+                    #expect(name == kAXSelectedTextRangeAttribute)
+                    guard change != "missingRange" else { return nil }
+                    var range = CFRange(location: change == "outOfBounds" ? 2 : 1, length: 0)
+                    return AXValueCreate(.cfRange, &range)
+                }
+            })
+
+        #expect(observed?.focused == true)
+        if change == "stable" {
+            #expect(observed?.value == .string("\u{00E9}"))
+            #expect(observed?.selectedTextRange == TextSelectionRange(location: 1, length: 0))
+        } else {
+            #expect(observed?.value == nil)
+            #expect(observed?.selectedTextRange == nil)
         }
     }
 

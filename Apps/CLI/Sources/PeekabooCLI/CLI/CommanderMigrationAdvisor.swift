@@ -63,7 +63,7 @@ enum CommanderMigrationAdvisor {
         "--id": "--on",
         "--idle-timeout-seconds": "--idle-timeout",
         "--image-path": "--file-path",
-        "--keys": "positional xdotool chord syntax (for example, peekaboo press cmd+c --foreground)",
+        "--keys": "positional Peekaboo chords (for example, peekaboo press cmd+c --foreground)",
         "--label": "positional query text or --on",
         "--max-depth": "--depth",
         "--poll-interval-ms": "--poll-interval",

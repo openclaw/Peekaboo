@@ -1,7 +1,12 @@
 import Foundation
 
-/// A single xdotool-style keyboard chord such as `cmd+shift+t` or `Return`.
+/// A case-insensitive macOS chord using Peekaboo key names, such as `cmd+shift+t` or `Return`.
 public struct KeyboardChord: Sendable, Equatable {
+    public static let syntaxHelp =
+        "Use case-insensitive macOS key names joined with '+' (cmd+shift+t). " +
+        "delete (also Delete, backspace or del) erases backward; forwarddelete/forward_delete erase forward. " +
+        "Use cmd/command for Command, not super."
+
     public let keys: [String]
 
     public var serviceKeys: String {
@@ -100,7 +105,7 @@ public enum KeyboardChordError: LocalizedError, Sendable, Equatable {
     public var errorDescription: String? {
         switch self {
         case let .invalid(value):
-            "Invalid chord '\(value)'. Use xdotool key syntax such as cmd+shift+t or Return."
+            "Invalid chord '\(value)'. \(KeyboardChord.syntaxHelp) See 'peekaboo press --help'."
         }
     }
 }
