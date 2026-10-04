@@ -246,6 +246,36 @@ struct DesktopActionSequenceAccumulatorTests {
     }
 
     @Test
+    func `aggregate wrappers retain message-only leaf causes and explicit precedence`() {
+        let messageOnly = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable, message: "Blank chrome observation failed")
+        #expect(DesktopActionSequenceAccumulator().failure(
+            combining: messageOnly, message: "Unused wrapper", causeDescription: "Unused cause") == messageOnly)
+
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.outcome(.confirmedChange(delivery: self.localBackground, unitCount: .one)))
+        let composed = sequence.failure(combining: messageOnly, message: "Preparation failed")
+        let nested = sequence.failure(combining: composed, message: "Hotkey failed")
+        #expect(composed.causeDescription == messageOnly.message)
+        #expect(nested.causeDescription == messageOnly.message)
+        #expect(composed.outcome.state == .indeterminate)
+        #expect(composed.outcome.retrySafety == .unsafe)
+
+        for cause in [nil, "Specific leaf cause"] as [String?] {
+            let partial = DesktopActionFailure.partial(
+                delivery: self.localBackground, unitCount: .one,
+                message: "Cleanup failed", causeDescription: cause)
+            let retained = sequence.failure(combining: partial, message: "Composite failed")
+            #expect(retained.outcome.state == .partial)
+            #expect(retained.causeDescription == (cause ?? partial.message))
+            #expect(sequence.failure(
+                combining: partial,
+                message: "Composite failed",
+                causeDescription: "Explicit cause").causeDescription == "Explicit cause")
+        }
+    }
+
+    @Test
     func `foreground setup cannot be erased by a no-dispatch leaf`() throws {
         var sequence = DesktopActionSequenceAccumulator()
         try sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: self.units(1)))

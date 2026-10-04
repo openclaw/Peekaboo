@@ -149,6 +149,36 @@ struct BackgroundWindowChromeReaderTests {
     }
 
     @Test
+    func `native read refusal retains content-free diagnostic cause`() throws {
+        let fixture = Fixture()
+        var access = fixture.access()
+        access.hit = { _, _ in nil }
+        let failure = #expect(throws: DesktopActionFailure.self) {
+            try BackgroundWindowChromeReader.read(target: fixture.target(), access: access)
+        }
+        #expect(failure?.causeDescription == "The blank chrome hit did not resolve to the retained window.")
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+    }
+
+    @Test
+    func `unavailable native attribute reports only its name and error code`() throws {
+        let fixture = Fixture()
+        var access = fixture.access()
+        let read = access.attribute
+        access.attribute = { element, name in
+            name == kAXRoleAttribute ? (.cannotComplete, "private attribute contents" as CFString) : read(element, name)
+        }
+        let failure = #expect(throws: DesktopActionFailure.self) {
+            try BackgroundWindowChromeReader.read(target: fixture.target(), access: access)
+        }
+        #expect(failure?.causeDescription ==
+            "Expected string attribute is unavailable: AXRole (AX error \(AXError.cannotComplete.rawValue)).")
+        #expect(failure?.causeDescription?.contains("private attribute contents") == false)
+    }
+
+    @Test
     func `deadline crossed during final window validation refuses a late result`() throws {
         let fixture = Fixture()
         var access = fixture.access()
@@ -161,10 +191,11 @@ struct BackgroundWindowChromeReaderTests {
             }
             return true
         }
-        #expect(throws: DesktopActionFailure.self) {
+        let failure = #expect(throws: DesktopActionFailure.self) {
             try BackgroundWindowChromeReader.read(target: fixture.target(), access: access, now: { now })
         }
         #expect(validations == 2)
+        #expect(failure?.causeDescription == "Chrome observation deadline exceeded.")
     }
 
     @Test

@@ -92,7 +92,8 @@ enum BackgroundWindowChromeReader {
             try self.validateWindowServer()
             let application = AXUIElementCreateApplication(self.target.identity.ownerProcessIdentifier)
             let windows = try self.elements(kAXWindowsAttribute, of: application)
-            guard windows.count <= self.nodeLimit else { throw Self.refusal() }
+            guard windows.count <= self.nodeLimit
+            else { throw Self.refusal("The native window count exceeds the bound.") }
             var matches: [AXUIElement] = []
             for window in windows {
                 if try self.windowID(window) == self.target.identity.windowID {
@@ -101,10 +102,12 @@ enum BackgroundWindowChromeReader {
             }
             guard matches.count == 1, let window = matches.first,
                   retained.map({ CFEqual($0.window.element, window) }) ?? true
-            else { throw Self.refusal() }
+            else { throw Self.refusal("There is no unique matching retained native window.") }
             try self.validateWindow(window)
             let names: [String] = try self.call(window) {
-                guard let result = self.access.names(window) else { throw Self.refusal() }
+                guard let result = self.access.names(window) else {
+                    throw Self.refusal("Window attribute names could not be read.")
+                }
                 return result
             }
 
@@ -114,7 +117,7 @@ enum BackgroundWindowChromeReader {
                 let control = try self.element(name, of: window)
                 guard !references.contains(where: { CFEqual($0, control) }),
                       try self.string(kAXRoleAttribute, of: control) == kAXButtonRole
-                else { throw Self.refusal() }
+                else { throw Self.refusal("The standard window controls are not distinct native buttons.") }
                 references.append(control)
                 try controls.append(self.frame(control))
             }
@@ -129,13 +132,16 @@ enum BackgroundWindowChromeReader {
                     if name == kAXTitleUIElementAttribute,
                        try !self.string(kAXTitleAttribute, of: window).isEmpty
                     {
-                        throw Self.refusal()
+                        throw Self.refusal("A nonempty window title has no native title geometry.")
                     }
                     continue
                 }
                 guard result.error == .success, let value = result.value,
                       CFGetTypeID(value) == AXUIElementGetTypeID()
-                else { throw Self.refusal() }
+                else {
+                    throw Self
+                        .refusal("Optional window element is unavailable: \(name) (AX error \(result.error.rawValue)).")
+                }
                 references.append(unsafeDowncast(value, to: AXUIElement.self))
             }
             let sheets = try self.attribute("AXSheets", of: window)
@@ -143,7 +149,7 @@ enum BackgroundWindowChromeReader {
                 advertised: names.contains("AXSheets"), error: sheets.error)
             {
                 guard sheets.error == .success, let elements = sheets.value as? [AXUIElement], elements.isEmpty
-                else { throw Self.refusal() }
+                else { throw Self.refusal("The attached-sheet list is unavailable or not empty.") }
             }
 
             // Optional absence is accepted only alongside a complete, sheet-free hierarchy.
@@ -159,7 +165,8 @@ enum BackgroundWindowChromeReader {
                 index += 1
                 // An alias reached outside an excluded control still needs strict ownership validation.
                 guard !visited.contains(node) else { continue }
-                guard visited.count < self.nodeLimit else { throw Self.refusal() }
+                guard visited.count < self.nodeLimit
+                else { throw Self.refusal("The native hierarchy exceeds its node bound.") }
                 visited.append(node)
                 let controlIndex = controlReferences.firstIndex { CFEqual($0, element) }
                 try self.validateOwner(
@@ -167,18 +174,20 @@ enum BackgroundWindowChromeReader {
                 let role = try self.string(kAXRoleAttribute, of: element)
                 guard role != kAXSheetRole, role != "AXDialog",
                       CFEqual(element, window) || role != kAXWindowRole
-                else { throw Self.refusal() }
+                else { throw Self.refusal("The hierarchy contains a sheet, dialog, or another window.") }
                 if !CFEqual(element, window) {
                     let frame = try self.frame(element)
                     guard node.exclusion.map({ $0.bounds.contains(frame) }) ?? true,
                           controlIndex.map({ controls[$0] == frame }) ?? true
-                    else { throw Self.refusal() }
+                    else { throw Self.refusal("A control changed geometry or a descendant escaped its exclusion.") }
                     occupied.append(frame)
                 } else if node.exclusion != nil {
-                    throw Self.refusal()
+                    throw Self.refusal("The window appeared inside an excluded control subtree.")
                 }
                 let children = try self.children(element)
-                guard queue.count + children.count <= self.nodeLimit * 2 else { throw Self.refusal() }
+                guard queue.count + children.count <= self.nodeLimit * 2 else {
+                    throw Self.refusal("The native hierarchy exceeds its edge bound.")
+                }
                 // AppKit can host a fullscreen-button child in a separate native surface. It is only
                 // exclusion geometry: every descendant must remain inside the already-excluded control.
                 let exclusion = controlIndex.map {
@@ -191,11 +200,11 @@ enum BackgroundWindowChromeReader {
             let geometry = BackgroundWindowChromeGeometry(
                 bounds: self.target.bounds, windowControls: controls, occupiedFrames: occupied)
             guard let point = retained?.point ?? geometry.candidatePoint(), geometry.admits(point) else {
-                throw Self.refusal()
+                throw Self.refusal("The retained blank chrome point is no longer admitted by current geometry.")
             }
             let hit: AXUIElement = try self.call(application) {
                 guard let hit = self.access.hit(application, point), CFEqual(hit, window)
-                else { throw Self.refusal() }
+                else { throw Self.refusal("The blank chrome hit did not resolve to the retained window.") }
                 return hit
             }
             try self.validateOwner(hit)
@@ -206,9 +215,11 @@ enum BackgroundWindowChromeReader {
 
         private func validateWindowServer() throws {
             try Task.checkCancellation()
-            guard self.now() < self.deadline, self.access.windowIsCurrent(self.target)
-            else { throw Self.refusal() }
-            guard self.now() < self.deadline else { throw Self.refusal() }
+            guard self.now() < self.deadline else { throw Self.refusal("Chrome observation deadline exceeded.") }
+            guard self.access.windowIsCurrent(self.target) else {
+                throw Self.refusal("WindowServer identity, bounds, or visibility could not be confirmed.")
+            }
+            guard self.now() < self.deadline else { throw Self.refusal("Chrome observation deadline exceeded.") }
             try Task.checkCancellation()
         }
 
@@ -217,51 +228,59 @@ enum BackgroundWindowChromeReader {
             guard try self.string(kAXRoleAttribute, of: window) == kAXWindowRole,
                   try self.string(kAXSubroleAttribute, of: window) == kAXStandardWindowSubrole,
                   try self.frame(window) == self.target.bounds
-            else { throw Self.refusal() }
+            else { throw Self.refusal("The standard-window role, subrole, or bounds no longer matches.") }
             for name in [kAXMinimizedAttribute, "AXFullScreen", kAXModalAttribute] {
                 let result = try self.attribute(name, of: window)
                 guard result.error == .success, AXDescriptorReader.boolValue(result.value) == false else {
-                    throw Self.refusal()
+                    throw Self
+                        .refusal("The expected non-minimized, non-fullscreen, non-modal state is unavailable: \(name).")
                 }
             }
         }
 
         private func validateOwner(_ element: AXUIElement, allowsAuxiliaryWindow: Bool = false) throws {
             let pid = try self.call(element) {
-                guard let pid = self.access.processID(element) else { throw Self.refusal() }
+                guard let pid = self.access.processID(element) else {
+                    throw Self.refusal("The native element process ID could not be read.")
+                }
                 return pid
             }
             let windowID = try self.windowID(element)
             guard pid == self.target.identity.ownerProcessIdentifier, windowID > 0,
                   allowsAuxiliaryWindow || windowID == self.target.identity.windowID
-            else { throw Self.refusal() }
+            else { throw Self.refusal("The native element process or window owner does not match.") }
         }
 
         private func windowID(_ element: AXUIElement) throws -> Int {
             try self.call(element) {
-                guard let result = self.access.windowID(element) else { throw Self.refusal() }
+                guard let result = self.access.windowID(element) else {
+                    throw Self.refusal("The native window ID could not be read.")
+                }
                 return result
             }
         }
 
         private func children(_ element: AXUIElement) throws -> [AXUIElement] {
             let count = try self.childCount(element)
-            guard (0...self.nodeLimit).contains(count) else { throw Self.refusal() }
+            guard (0...self.nodeLimit).contains(count)
+            else { throw Self.refusal("The native child count is outside its bound.") }
             if count == 0 {
                 return []
             }
             let children: [AXUIElement] = try self.call(element) {
                 guard let children = self.access.children(element, count), children.count == count
-                else { throw Self.refusal() }
+                else { throw Self.refusal("The complete native child array could not be read.") }
                 return children
             }
-            guard try self.childCount(element) == count else { throw Self.refusal() }
+            guard try self.childCount(element) == count else { throw Self.refusal("The native child count changed.") }
             return children
         }
 
         private func childCount(_ element: AXUIElement) throws -> Int {
             try self.call(element) {
-                guard let count = self.access.childCount(element) else { throw Self.refusal() }
+                guard let count = self.access.childCount(element) else {
+                    throw Self.refusal("The native child count could not be read.")
+                }
                 return count
             }
         }
@@ -274,19 +293,28 @@ enum BackgroundWindowChromeReader {
             let result = try self.attribute(name, of: element)
             guard result.error == .success, let value = result.value,
                   CFGetTypeID(value) == AXUIElementGetTypeID()
-            else { throw Self.refusal() }
+            else {
+                throw Self
+                    .refusal("Expected element attribute is unavailable: \(name) (AX error \(result.error.rawValue)).")
+            }
             return unsafeDowncast(value, to: AXUIElement.self)
         }
 
         private func elements(_ name: String, of element: AXUIElement) throws -> [AXUIElement] {
             let result = try self.attribute(name, of: element)
-            guard result.error == .success, let values = result.value as? [AXUIElement] else { throw Self.refusal() }
+            guard result.error == .success, let values = result.value as? [AXUIElement] else {
+                throw Self
+                    .refusal("Expected element array is unavailable: \(name) (AX error \(result.error.rawValue)).")
+            }
             return values
         }
 
         private func string(_ name: String, of element: AXUIElement) throws -> String {
             let result = try self.attribute(name, of: element)
-            guard result.error == .success, let value = result.value as? String else { throw Self.refusal() }
+            guard result.error == .success, let value = result.value as? String else {
+                throw Self
+                    .refusal("Expected string attribute is unavailable: \(name) (AX error \(result.error.rawValue)).")
+            }
             return value
         }
 
@@ -296,14 +324,17 @@ enum BackgroundWindowChromeReader {
             guard position.error == .success, size.error == .success,
                   let pointValue = position.value, CFGetTypeID(pointValue) == AXValueGetTypeID(),
                   let sizeValue = size.value, CFGetTypeID(sizeValue) == AXValueGetTypeID()
-            else { throw Self.refusal() }
+            else {
+                throw Self.refusal("Native frame is unavailable (AX position error \(position.error.rawValue), " +
+                    "size error \(size.error.rawValue)).")
+            }
             let pointAX = unsafeDowncast(pointValue, to: AXValue.self)
             let sizeAX = unsafeDowncast(sizeValue, to: AXValue.self)
             var point = CGPoint.zero
             var dimensions = CGSize.zero
             guard AXValueGetType(pointAX) == .cgPoint, AXValueGetType(sizeAX) == .cgSize,
                   AXValueGetValue(pointAX, .cgPoint, &point), AXValueGetValue(sizeAX, .cgSize, &dimensions)
-            else { throw Self.refusal() }
+            else { throw Self.refusal("The native frame contains malformed position or size values.") }
             return CGRect(origin: point, size: dimensions)
         }
 
@@ -311,21 +342,23 @@ enum BackgroundWindowChromeReader {
             try Task.checkCancellation()
             let remaining = self.now().duration(to: self.deadline).components
             let seconds = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
-            guard seconds > 0,
-                  self.access.setTimeout(element, Float(min(seconds, 0.05))) == .success
-            else { throw Self.refusal() }
+            guard seconds > 0 else { throw Self.refusal("Chrome observation deadline exceeded.") }
+            guard self.access.setTimeout(element, Float(min(seconds, 0.05))) == .success else {
+                throw Self.refusal("The bounded Accessibility messaging timeout could not be established.")
+            }
             defer { _ = self.access.setTimeout(element, 0) }
             let result = try operation()
-            guard self.now() < self.deadline else { throw Self.refusal() }
+            guard self.now() < self.deadline else { throw Self.refusal("Chrome observation deadline exceeded.") }
             try Task.checkCancellation()
             return result
         }
 
-        private static func refusal() -> DesktopActionFailure {
+        private static func refusal(_ causeDescription: String) -> DesktopActionFailure {
             .preDispatchRefusal(
                 reason: .targetUnavailable,
                 message: "Cannot prove a blank, unchanged standard-window chrome point for background keyboard preparation.",
-                hint: "Observe the exact window again; no foreground fallback or guessed click is permitted.")
+                hint: "Observe the exact window again; no foreground fallback or guessed click is permitted.",
+                causeDescription: causeDescription)
         }
     }
 

@@ -413,7 +413,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                     unitCount: unitCount,
                     message: message,
                     hint: hint ?? leafFailure.hint,
-                    causeDescription: causeDescription ?? leafFailure.causeDescription)
+                    causeDescription: causeDescription ?? leafFailure.causeDescription ?? leafFailure.message)
                     .selectingLeaves(leafFailure.selectedLeafEvidence)
             }
 
@@ -426,7 +426,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 unitCount: unitCount,
                 message: message,
                 hint: hint ?? leafFailure.hint,
-                causeDescription: causeDescription ?? leafFailure.causeDescription)
+                causeDescription: causeDescription ?? leafFailure.causeDescription ?? leafFailure.message)
                 .selectingLeaves(leafFailure.selectedLeafEvidence)
         }
         return leafFailure
