@@ -1110,7 +1110,7 @@ extension TypeService {
             return InputDeliveryIndeterminateError(
                 operation: .type,
                 emittedUnitCount: totalUnits,
-                causeDescription: failure.localizedDescription,
+                causeDescription: failure.causeDescription.map { "\(failure.message) \($0)" } ?? failure.message,
                 delivery: self.combinedDelivery(
                     delivery,
                     failedDelivery,

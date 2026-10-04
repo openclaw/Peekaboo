@@ -420,6 +420,7 @@ public enum PeekabooBridgeHostCapability {
     public static let textSelection = "textSelection"
     public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
     public static let requestPinnedExactWindowScrollReceipt = "requestPinnedExactWindowScrollReceipt"
+    public static let backgroundCoordinateScroll = "backgroundCoordinateScroll"
     public static let compositeTypeDelivery = "compositeTypeDelivery"
     public static let clipboardGuardedExactWindowHotkeys = "clipboardGuardedExactWindowHotkeys"
     public static let preparedClipboardGuardedExactWindowHotkeys = "preparedClipboardGuardedExactWindowHotkeys"
@@ -462,6 +463,27 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.hostCapabilities?
             .contains(PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree) == true &&
             self.supportedOperations.contains(.desktopObservation)
+    }
+
+    public var supportsTargetedScroll: Bool {
+        self.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 11) &&
+            self.supportedOperations.contains(.targetedScroll) &&
+            (self.enabledOperations ?? self.supportedOperations).contains(.targetedScroll)
+    }
+
+    public var supportsRequestPinnedExactWindowScrollReceipt: Bool {
+        self.negotiatedVersion >= PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            self.hostCapabilities?
+            .contains(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt) == true &&
+            self.supportsTargetedScroll
+    }
+
+    /// Negotiated feature support; authentication and live request admission remain transport/server-owned.
+    public var supportsBackgroundCoordinateScroll: Bool {
+        self.supportsRequestPinnedExactWindowScrollReceipt &&
+            self.negotiatedVersion >= PeekabooBridgeConstants.backgroundCoordinateScrollVersion &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.backgroundCoordinateScroll) == true
     }
 
     /// Negotiated drag support; authentication and live request admission remain transport/server-owned.

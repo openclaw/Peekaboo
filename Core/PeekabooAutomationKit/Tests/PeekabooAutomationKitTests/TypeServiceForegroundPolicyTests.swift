@@ -637,10 +637,15 @@ private final class ForegroundTypeActionDriver: ActionInputDriving {
         try await self.unexpected.tryRightClick(element: element)
     }
 
-    func tryScroll(element: AutomationElement, direction: PeekabooFoundation.ScrollDirection, pages: Int) throws
+    func tryScroll(
+        element: AutomationElement,
+        direction: PeekabooFoundation.ScrollDirection,
+        pages: Int,
+        scrollBarScope: ScrollBarSearchScope) throws
         -> UIInputExecutionResult.Action
     {
-        try self.unexpected.tryScroll(element: element, direction: direction, pages: pages)
+        try self.unexpected.tryScroll(
+            element: element, direction: direction, pages: pages, scrollBarScope: scrollBarScope)
     }
 
     func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> UIInputExecutionResult.Action {

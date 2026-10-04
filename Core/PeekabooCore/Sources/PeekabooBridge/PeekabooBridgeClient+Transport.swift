@@ -228,6 +228,14 @@ extension PeekabooBridgeClient {
                 hint: "Update and relaunch Peekaboo before retrying the snapshot-backed click.")
         }
         if case let .targetedScroll(payload) = request.unwrappedOperationRequest {
+            try payload.request.validatePointSelector()
+            if payload.request.point != nil, !self.backgroundCoordinateScrollEnabled {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    route: .bridge,
+                    reason: .runtimeIncompatible,
+                    message: "This Bridge host does not support background coordinate scroll.",
+                    hint: "Update and relaunch Peekaboo before retrying coordinate scroll.")
+            }
             guard payload.request.expectedWindow != nil else {
                 throw DesktopActionFailure.preDispatchRefusal(
                     route: .bridge,

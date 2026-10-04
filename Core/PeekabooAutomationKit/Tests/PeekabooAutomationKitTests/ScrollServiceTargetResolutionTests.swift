@@ -22,6 +22,88 @@ struct ScrollServiceTargetResolutionTests {
         #expect(!request.foreground)
         #expect(request.delay == 0)
         #expect(request.expectedWindow == nil)
+        #expect(request.point == nil)
+    }
+
+    @Test
+    func `coordinate scroll payload round trip preserves its global point`() throws {
+        let request = ScrollRequest(
+            direction: .left,
+            amount: 2,
+            point: CGPoint(x: 45, y: 67),
+            snapshotId: Self.snapshotID)
+        let decoded = try JSONDecoder().decode(ScrollRequest.self, from: JSONEncoder().encode(request))
+        #expect(decoded.point == request.point)
+        #expect(decoded.target == nil && !decoded.foreground)
+    }
+
+    @Test
+    @MainActor
+    func `invalid coordinate scroll shapes refuse before preparation or input`() async throws {
+        let action = ScrollRecordingActionInputDriver()
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        var preparations = 0
+        let service = ScrollService(actionInputDriver: action, syntheticInputDriver: synthetic)
+        let point = CGPoint(x: 45, y: 67)
+        for request in [
+            ScrollRequest(direction: .down, amount: 1, target: "S1", point: point),
+            ScrollRequest(direction: .down, amount: 1, point: CGPoint(x: CGFloat.nan, y: 1)),
+            ScrollRequest(direction: .down, amount: 1, point: point, foreground: true),
+            ScrollRequest(direction: .down, amount: 1, point: point, smooth: true),
+            ScrollRequest(direction: .down, amount: 1, point: point, delay: 1),
+        ] {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await service.scrollWithLanePreparation(request, lanePreparation: { preparations += 1 })
+            }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.outcome.retrySafety == .safe)
+        }
+        #expect(preparations == 0 && action.scrollCalls.isEmpty && synthetic.events.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `coordinate scroll refuses AX-only or empty-pixel references`(hasCoordinateContext: Bool) async throws {
+        let detection = Self.exactDetectionResult(
+            element: Self.scrollElement(),
+            screenshotPath: hasCoordinateContext ? "" : "/tmp/shot.png",
+            coordinateContext: hasCoordinateContext)
+        let action = ScrollRecordingActionInputDriver()
+        let resolver = ScrollFixedAutomationElementResolver()
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(detection),
+            actionInputDriver: action,
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 })
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await service.scroll(.init(
+                direction: .down, amount: 1, point: CGPoint(x: 45, y: 67), snapshotId: Self.snapshotID))
+        }
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(action.scrollCalls.isEmpty && resolver.coordinatePoints.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `coordinate scroll refuses out-of-window points without clamping`() async throws {
+        let action = ScrollRecordingActionInputDriver()
+        let resolver = ScrollFixedAutomationElementResolver()
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
+                element: Self.scrollElement(), coordinateContext: true)),
+            actionInputDriver: action,
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 })
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await service.scroll(.init(
+                direction: .down, amount: 1, point: CGPoint(x: -1, y: 67), snapshotId: Self.snapshotID))
+        }
+        #expect(failure?.standardErrorCode == .invalidInput)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(action.scrollCalls.isEmpty && resolver.coordinatePoints.isEmpty)
     }
 
     @Test
@@ -145,9 +227,11 @@ struct ScrollServiceTargetResolutionTests {
         #expect(synthetic.events.isEmpty)
     }
 
-    @Test(arguments: ["AXGroup", "AXWebArea", "AXScrollArea"])
+    @Test(arguments: ["AXGroup", "AXWebArea", "AXScrollArea"], [false, true])
     @MainActor
-    func `unsupported AX container uses exact WebKit wheel route without global synthesis`(role: String) async throws {
+    func `unsupported AX container uses exact WebKit wheel route without global synthesis`(
+        role: String, coordinates: Bool) async throws
+    {
         let laneRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("web-scroll-lane-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: laneRoot) }
@@ -157,14 +241,17 @@ struct ScrollServiceTargetResolutionTests {
             label: "Web content",
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
             attributes: ["role": role])
-        let detectionResult = Self.exactDetectionResult(element: element)
+        let detectionResult = Self.exactDetectionResult(element: element, coordinateContext: coordinates)
         let identity = try #require(detectionResult.metadata.windowContext?.windowMutationIdentity)
         let bounds = try #require(detectionResult.metadata.windowContext?.windowBounds)
-        let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
+        let point = coordinates ? CGPoint(x: 45, y: 67) : CGPoint(x: element.bounds.midX, y: element.bounds.midY)
         var posted = 0
         let routedDriver = WindowRoutedPointerDriver(
             hasPostEventAccess: { true },
-            resolveRoute: { _, _, _ in .init(identity: identity, bounds: bounds, screenPoint: point) },
+            resolveRoute: { _, _, actualPoint in
+                #expect(actualPoint == point)
+                return .init(identity: identity, bounds: bounds, screenPoint: point)
+            },
             routeIsCurrent: { _ in true },
             makeScrollEvent: { _, _ in
                 CGEvent(
@@ -200,7 +287,8 @@ struct ScrollServiceTargetResolutionTests {
         let result = try await service.scroll(ScrollRequest(
             direction: .down,
             amount: 2,
-            target: "S1",
+            target: coordinates ? nil : "S1",
+            point: coordinates ? point : nil,
             snapshotId: Self.snapshotID))
 
         #expect(result.path == .action)
@@ -210,19 +298,20 @@ struct ScrollServiceTargetResolutionTests {
         #expect(result.outcome.dispatchState.unitCount?.rawValue == 2)
         #expect(result.outcome.retrySafety == .unsafe)
         #expect(posted == 2)
+        #expect(action.scrollBarScopes == [coordinates ? .explicitOwner : .targetDescendants])
         #expect(synthetic.events.isEmpty)
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `typed AX prefix failure never falls through to exact window wheel`() async throws {
+    func `typed AX prefix failure never falls through to exact window wheel`(coordinates: Bool) async throws {
         let element = DetectedElement(
             id: "S1",
             type: .group,
             label: "Web content",
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400),
             attributes: ["role": "AXGroup"])
-        let detectionResult = Self.exactDetectionResult(element: element)
+        let detectionResult = Self.exactDetectionResult(element: element, coordinateContext: coordinates)
         let identity = try #require(detectionResult.metadata.windowContext?.windowMutationIdentity)
         let bounds = try #require(detectionResult.metadata.windowContext?.windowBounds)
         let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
@@ -264,7 +353,8 @@ struct ScrollServiceTargetResolutionTests {
             _ = try await service.scroll(ScrollRequest(
                 direction: .down,
                 amount: 3,
-                target: "S1",
+                target: coordinates ? nil : "S1",
+                point: coordinates ? point : nil,
                 snapshotId: Self.snapshotID))
             Issue.record("Expected the AX prefix failure to remain authoritative")
         } catch let failure as DesktopActionFailure {
@@ -624,15 +714,17 @@ struct ScrollServiceTargetResolutionTests {
         #expect(action.scrollCalls.isEmpty)
         #expect(synthetic.events.isEmpty)
     }
+}
 
-    @Test
+extension ScrollServiceTargetResolutionTests {
+    @Test(arguments: [false, true])
     @MainActor
-    func `background scroll revalidates generation after element resolution`() async throws {
+    func `background scroll revalidates generation after element resolution`(coordinates: Bool) async throws {
         let generation = ScrollLockedValue<UInt64>(11)
         let action = ScrollRecordingActionInputDriver()
         let service = try await ScrollService(
             snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
-                element: Self.scrollElement())),
+                element: Self.scrollElement(), coordinateContext: coordinates)),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver {
                 generation.value = 12
@@ -641,21 +733,21 @@ struct ScrollServiceTargetResolutionTests {
             processStartIdentityProvider: { _ in generation.value })
 
         let failure = await #expect(throws: DesktopActionFailure.self) {
-            _ = try await service.scroll(Self.backgroundRequest())
+            _ = try await service.scroll(Self.backgroundRequest(coordinates: coordinates))
         }
         #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(failure?.standardErrorCode == .snapshotStale)
         #expect(action.scrollCalls.isEmpty)
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `background scroll refuses window drift after element resolution`() async throws {
+    func `background scroll refuses window drift after element resolution`(coordinates: Bool) async throws {
         let windowIsCurrent = ScrollLockedValue(true)
         let action = ScrollRecordingActionInputDriver()
         let service = try await ScrollService(
             snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
-                element: Self.scrollElement())),
+                element: Self.scrollElement(), coordinateContext: coordinates)),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver {
                 windowIsCurrent.value = false
@@ -664,30 +756,30 @@ struct ScrollServiceTargetResolutionTests {
             processStartIdentityProvider: { _ in 11 })
 
         let failure = await #expect(throws: DesktopActionFailure.self) {
-            _ = try await service.scroll(Self.backgroundRequest())
+            _ = try await service.scroll(Self.backgroundRequest(coordinates: coordinates))
         }
         #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(failure?.standardErrorCode == .snapshotStale)
         #expect(action.scrollCalls.isEmpty)
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `background scroll reports post-dispatch generation drift as retry unsafe`() async throws {
+    func `background scroll reports post-dispatch generation drift as retry unsafe`(coordinates: Bool) async throws {
         let generation = ScrollLockedValue<UInt64>(11)
         let action = ScrollRecordingActionInputDriver {
             generation.value = 12
         }
         let service = try await ScrollService(
             snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
-                element: Self.scrollElement())),
+                element: Self.scrollElement(), coordinateContext: coordinates)),
             actionInputDriver: action,
             automationElementResolver: ScrollFixedAutomationElementResolver(),
             exactWindowIdentityValidator: { _, _ in true },
             processStartIdentityProvider: { _ in generation.value })
 
         do {
-            _ = try await service.scroll(Self.backgroundRequest())
+            _ = try await service.scroll(Self.backgroundRequest(coordinates: coordinates))
             Issue.record("Expected post-dispatch process-generation drift")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.retrySafety == .unsafe)
@@ -698,9 +790,189 @@ struct ScrollServiceTargetResolutionTests {
         #expect(action.scrollCalls == [.init(direction: .down, pages: 1)])
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `background scroll owns its exact process lane`() async throws {
+    func `coordinate scroll refuses owning scroller drift before delivery`(duringResolution: Bool) async throws {
+        let resolver = ScrollFixedAutomationElementResolver()
+        if duringResolution {
+            resolver.coordinateError = .snapshotStale("Coordinate owner changed")
+        }
+        resolver.coordinateBounds = { reads, bounds in
+            reads == 1 ? bounds : bounds.insetBy(dx: 1, dy: 1)
+        }
+        let action = ScrollRecordingActionInputDriver()
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
+                element: Self.scrollElement(), coordinateContext: true)),
+            actionInputDriver: action,
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 })
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await service.scroll(Self.backgroundRequest(coordinates: true))
+        }
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.targetReceipt?.windowID == 42)
+        #expect(resolver.coordinatePoints.count == (duringResolution ? 1 : 2) && action.scrollCalls.isEmpty)
+    }
+
+    @Test(arguments: ScrollPixelOnlyCase.allCases)
+    @MainActor
+    private func `pixel-authorized coordinate scroll does not require a semantic AX owner`(
+        unavailable: ScrollPixelOnlyCase) async throws
+    {
+        let resolver = ScrollFixedAutomationElementResolver()
+        resolver.coordinateTargets = [.pixelOnly(unavailable.reason)]
+        let probe = try ScrollCoordinateWheelProbe(
+            detection: Self.exactDetectionResult(element: Self.scrollElement(), coordinateContext: true),
+            resolver: resolver)
+        defer { probe.cleanup() }
+
+        let result = try await probe.scroll()
+
+        #expect(result.path == .action && result.strategy == .actionOnly)
+        #expect(result.actionName == "WindowRoutedWheel")
+        #expect(result.anchorPoint == probe.point)
+        #expect(result.elementRole == nil)
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(result.outcome.retrySafety == .unsafe)
+        #expect(probe.routePoints == [probe.point])
+        #expect(probe.wheelPoints == Array(repeating: probe.point, count: 3))
+        #expect(probe.posts == 3)
+        #expect(resolver.coordinatePoints == [probe.point, probe.point])
+        #expect(resolver.elementCreationCount == 0)
+        probe.assertNoOtherInput()
+    }
+
+    @Test(arguments: ScrollPixelOnlyCase.allCases)
+    @MainActor
+    private func `pixel-only coordinate scroll retains the native wheel capability gate`(
+        unavailable: ScrollPixelOnlyCase) async throws
+    {
+        let resolver = ScrollFixedAutomationElementResolver()
+        resolver.coordinateTargets = [.pixelOnly(unavailable.reason)]
+        let probe = try ScrollCoordinateWheelProbe(
+            detection: Self.exactDetectionResult(element: Self.scrollElement(), coordinateContext: true),
+            resolver: resolver)
+        probe.wheelEligible = false
+        defer { probe.cleanup() }
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await probe.scroll()
+        }
+
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.refusalReason == .operationUnsupported)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(failure?.targetReceipt?.windowID == 42)
+        #expect(probe.posts == 0 && probe.routePoints.isEmpty && probe.wheelPoints.isEmpty)
+        #expect(resolver.elementCreationCount == 0)
+        probe.assertNoOtherInput()
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `coordinate scroll refuses pixel and semantic owner transitions before input`(
+        preparedPixelOnly: Bool) async throws
+    {
+        let detection = Self.exactDetectionResult(element: Self.scrollElement(), coordinateContext: true)
+        let bounds = try #require(detection.metadata.windowContext?.windowBounds)
+        let resolver = ScrollFixedAutomationElementResolver()
+        let semanticOwner = resolver.semanticCoordinateTarget(bounds: bounds)
+        let pixelOnly = ScrollCoordinateTarget.pixelOnly(.noSemanticOwner)
+        resolver.coordinateTargets = preparedPixelOnly ? [pixelOnly, semanticOwner] : [semanticOwner, pixelOnly]
+        let probe = try ScrollCoordinateWheelProbe(detection: detection, resolver: resolver)
+        defer { probe.cleanup() }
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await probe.scroll()
+        }
+
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(failure?.targetReceipt?.windowID == 42)
+        #expect(resolver.coordinatePoints == [probe.point, probe.point])
+        #expect(probe.posts == 0 && probe.routePoints.isEmpty && probe.wheelPoints.isEmpty)
+        probe.assertNoOtherInput()
+    }
+
+    @Test(arguments: [
+        "The hit-tested element belongs to a different process generation",
+        "The hit-tested element belongs to a different exact window",
+    ])
+    @MainActor
+    func `positive coordinate ownership failures never become pixel-only wheel authority`(
+        conflict: String) async throws
+    {
+        let resolver = ScrollFixedAutomationElementResolver()
+        resolver.coordinateError = .snapshotStale(conflict)
+        let probe = try ScrollCoordinateWheelProbe(
+            detection: Self.exactDetectionResult(element: Self.scrollElement(), coordinateContext: true),
+            resolver: resolver)
+        defer { probe.cleanup() }
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await probe.scroll()
+        }
+
+        #expect(failure?.standardErrorCode == .snapshotStale)
+        #expect(failure?.message.contains(conflict) == true)
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(failure?.targetReceipt?.windowID == 42)
+        #expect(resolver.coordinatePoints == [probe.point])
+        #expect(resolver.elementCreationCount == 0)
+        #expect(probe.posts == 0 && probe.routePoints.isEmpty && probe.wheelPoints.isEmpty)
+        probe.assertNoOtherInput()
+    }
+
+    @Test(arguments: [0, 1])
+    @MainActor
+    func `pixel-only wheel driver failures preserve zero or accepted-prefix dispatch evidence`(
+        acceptedPrefix: Int) async throws
+    {
+        let resolver = ScrollFixedAutomationElementResolver()
+        resolver.coordinateTargets = [.pixelOnly(.hitTestUnavailable(.notImplemented))]
+        let probe = try ScrollCoordinateWheelProbe(
+            detection: Self.exactDetectionResult(element: Self.scrollElement(), coordinateContext: true),
+            resolver: resolver)
+        probe.eventFailureAfterPosts = acceptedPrefix
+        defer { probe.cleanup() }
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await probe.scroll()
+        }
+
+        if acceptedPrefix == 0 {
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.outcome.retrySafety == .safe)
+        } else {
+            #expect(failure?.outcome.state == .partial)
+            #expect(failure?.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+            #expect(failure?.outcome.dispatchState.unitCount?.rawValue == acceptedPrefix)
+            #expect(failure?.outcome.retrySafety == .unsafe)
+        }
+        #expect(failure?.targetReceipt?.windowID == 42)
+        #expect(probe.posts == acceptedPrefix)
+        #expect(probe.routePoints == [probe.point])
+        #expect(probe.wheelPoints == Array(repeating: probe.point, count: acceptedPrefix + 1))
+        #expect(resolver.elementCreationCount == 0)
+        probe.assertNoOtherInput()
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `background scroll owns its exact process lane`(coordinates: Bool) async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("scroll-process-lane-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -708,14 +980,14 @@ struct ScrollServiceTargetResolutionTests {
         let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 11)
         let service = try await ScrollService(
             snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(
-                element: Self.scrollElement())),
+                element: Self.scrollElement(), coordinateContext: coordinates)),
             actionInputDriver: ScrollRecordingActionInputDriver(),
             automationElementResolver: ScrollFixedAutomationElementResolver(),
             exactWindowIdentityValidator: { _, _ in true },
             processStartIdentityProvider: { _ in 11 },
             desktopOperationExecutor: DesktopOperationExecutor(laneCoordinator: coordinator))
 
-        _ = try await service.scrollWithLanePreparation(Self.backgroundRequest()) {
+        _ = try await service.scrollWithLanePreparation(Self.backgroundRequest(coordinates: coordinates)) {
             await #expect(throws: DesktopOperationLaneError.self) {
                 try await coordinator.run(scope: .process(identity), access: .write) { true }
             }
@@ -724,8 +996,13 @@ struct ScrollServiceTargetResolutionTests {
 
     private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
 
-    private static func backgroundRequest() -> ScrollRequest {
-        ScrollRequest(direction: .down, amount: 1, target: "S1", snapshotId: self.snapshotID)
+    private static func backgroundRequest(coordinates: Bool = false) -> ScrollRequest {
+        ScrollRequest(
+            direction: .down,
+            amount: 1,
+            target: coordinates ? nil : "S1",
+            point: coordinates ? CGPoint(x: 45, y: 67) : nil,
+            snapshotId: self.snapshotID)
     }
 
     private static func scrollElement() -> DetectedElement {
@@ -741,12 +1018,14 @@ struct ScrollServiceTargetResolutionTests {
         processIdentifier: pid_t = getpid(),
         processStartIdentity: UInt64 = 11,
         bounds: CGRect = CGRect(x: 0, y: 0, width: 800, height: 600),
-        identityBounds: CGRect? = nil) -> ElementDetectionResult
+        identityBounds: CGRect? = nil,
+        screenshotPath: String = "/tmp/shot.png",
+        coordinateContext: Bool = false) -> ElementDetectionResult
     {
         let capturedBounds = identityBounds ?? bounds
         return ElementDetectionResult(
             snapshotId: Self.snapshotID,
-            screenshotPath: "/tmp/shot.png",
+            screenshotPath: screenshotPath,
             elements: DetectedElements(other: [element]),
             metadata: DetectionMetadata(
                 detectionTime: 0.01,
@@ -761,17 +1040,170 @@ struct ScrollServiceTargetResolutionTests {
                         windowID: 42,
                         ownerProcessIdentifier: processIdentifier,
                         ownerProcessStartIdentity: processStartIdentity,
-                        capturedBounds: capturedBounds))))
+                        capturedBounds: capturedBounds)),
+                truncationInfo: nil,
+                captureCoordinateContext: coordinateContext ? AutomationTestFixtures.linkedSnapshotTarget(
+                    snapshotID: Self.snapshotID,
+                    processIdentity: .init(
+                        processIdentifier: processIdentifier,
+                        processStartIdentity: processStartIdentity),
+                    windowID: 42,
+                    bounds: bounds).coordinateContext : nil))
+    }
+}
+
+private enum ScrollPixelOnlyCase: CaseIterable, Sendable {
+    case notImplemented
+    case noValue
+    case noSemanticOwner
+
+    var reason: ScrollCoordinateUnavailability {
+        switch self {
+        case .notImplemented: .hitTestUnavailable(.notImplemented)
+        case .noValue: .hitTestUnavailable(.noValue)
+        case .noSemanticOwner: .noSemanticOwner
+        }
+    }
+}
+
+@MainActor
+private final class ScrollCoordinateWheelProbe {
+    let point = CGPoint(x: 45, y: 67)
+    let action = ScrollRecordingActionInputDriver()
+    let synthetic = ScrollRecordingSyntheticInputDriver()
+    let resolver: ScrollFixedAutomationElementResolver
+    var wheelEligible = true
+    var eventFailureAfterPosts: Int?
+    private(set) var posts = 0
+    private(set) var mouseEventAttempts = 0
+    private(set) var routePoints: [CGPoint] = []
+    private(set) var wheelPoints: [CGPoint] = []
+    private let detection: ElementDetectionResult
+    private let identity: WindowMutationIdentity
+    private let bounds: CGRect
+    private let laneRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("pixel-scroll-lane-\(UUID().uuidString)", isDirectory: true)
+
+    init(detection: ElementDetectionResult, resolver: ScrollFixedAutomationElementResolver) throws {
+        self.detection = detection
+        self.resolver = resolver
+        self.identity = try #require(detection.metadata.windowContext?.windowMutationIdentity)
+        self.bounds = try #require(detection.metadata.windowContext?.windowBounds)
+    }
+
+    func cleanup() {
+        try? FileManager.default.removeItem(at: self.laneRoot)
+    }
+
+    func assertNoOtherInput() {
+        #expect(self.action.scrollCalls.isEmpty && self.action.otherCalls.isEmpty)
+        #expect(self.synthetic.events.isEmpty)
+        #expect(self.mouseEventAttempts == 0)
+    }
+
+    func scroll() async throws -> UIInputExecutionResult {
+        let routedDriver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { pid, windowID, point in
+                #expect(pid == self.identity.ownerProcessIdentifier)
+                #expect(windowID == CGWindowID(self.identity.windowID))
+                self.routePoints.append(point)
+                return .init(identity: self.identity, bounds: self.bounds, screenPoint: point)
+            },
+            routeIsCurrent: { _ in true },
+            processGenerationIsCurrent: { _ in true },
+            makeEvent: { _, _ in
+                self.mouseEventAttempts += 1
+                return nil
+            },
+            makeScrollEvent: { direction, point in
+                #expect(direction == .down)
+                self.wheelPoints.append(point)
+                if let limit = self.eventFailureAfterPosts, self.posts >= limit {
+                    return nil
+                }
+                return CGEvent(
+                    scrollWheelEvent2Source: nil,
+                    units: .line,
+                    wheelCount: 1,
+                    wheel1: -1,
+                    wheel2: 0,
+                    wheel3: 0)
+            },
+            stampWindowLocation: { _, point in
+                #expect(point == CGPoint(x: self.point.x - self.bounds.minX, y: self.point.y - self.bounds.minY))
+                return true
+            },
+            postSkyLight: { _, _ in
+                Issue.record("The injected public wheel transport must not use SkyLight")
+                return false
+            },
+            postPublic: { event, pid in
+                #expect(event.type == .scrollWheel)
+                #expect(pid == self.identity.ownerProcessIdentifier)
+                self.posts += 1
+            },
+            resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in true },
+            windowIsVisible: { _ in true },
+            sleep: { _ in },
+            clickGroupIdentifier: { 1 })
+        let processGeneration = self.identity.ownerProcessStartIdentity
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(self.detection),
+            actionInputDriver: self.action,
+            syntheticInputDriver: self.synthetic,
+            automationElementResolver: self.resolver,
+            windowRoutedPointerDriver: routedDriver,
+            backgroundWheelCapability: { _ in self.wheelEligible },
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in processGeneration },
+            desktopOperationExecutor: DesktopOperationExecutor(
+                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: self.laneRoot)))
+        return try await service.scroll(.init(
+            direction: .down, amount: 3, point: self.point, snapshotId: self.detection.snapshotId))
     }
 }
 
 @MainActor
 private final class ScrollFixedAutomationElementResolver: AutomationElementResolving {
-    private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
+    private lazy var element: AutomationElement = {
+        self.elementCreationCount += 1
+        return AutomationElement(Element(AXUIElementCreateApplication(getpid())))
+    }()
+
     private let afterResolve: @MainActor () -> Void
+    private(set) var elementCreationCount = 0
+    private(set) var coordinatePoints: [CGPoint] = []
+    var coordinateTargets: [ScrollCoordinateTarget] = []
+    var coordinateBounds: @MainActor (Int, CGRect) -> CGRect = { _, bounds in bounds }
+    var coordinateError: PeekabooError?
 
     init(afterResolve: @escaping @MainActor () -> Void = {}) {
         self.afterResolve = afterResolve
+    }
+
+    func resolveScrollTarget(
+        at point: CGPoint,
+        target: UIAutomationTarget.ExactWindow) throws -> ScrollCoordinateTarget
+    {
+        self.coordinatePoints.append(point)
+        if let coordinateError {
+            throw coordinateError
+        }
+        self.afterResolve()
+        if !self.coordinateTargets.isEmpty {
+            return self.coordinateTargets[min(self.coordinatePoints.count - 1, self.coordinateTargets.count - 1)]
+        }
+        return self.semanticCoordinateTarget(
+            bounds: self.coordinateBounds(self.coordinatePoints.count, target.bounds))
+    }
+
+    func semanticCoordinateTarget(bounds: CGRect) -> ScrollCoordinateTarget {
+        .semanticOwner(
+            element: self.element,
+            role: "AXScrollArea",
+            bounds: bounds)
     }
 
     func resolve(
@@ -801,6 +1233,8 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
     }
 
     private(set) var scrollCalls: [ScrollCall] = []
+    private(set) var scrollBarScopes: [ScrollBarSearchScope] = []
+    private(set) var otherCalls: [String] = []
     private let afterScroll: @MainActor () -> Void
     private let scrollError: (any Error)?
 
@@ -816,21 +1250,25 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
         element _: AutomationElement,
         beforeMutation _: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
     {
-        AutomationTestFixtures.uiActionReceipt()
+        self.otherCalls.append("click")
+        return AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryRightClick(element _: any AutomationElementRepresenting) async throws
         -> UIInputExecutionResult.Action
     {
-        AutomationTestFixtures.uiActionReceipt()
+        self.otherCalls.append("rightClick")
+        return AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryScroll(
         element _: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> UIInputExecutionResult.Action
+        pages: Int,
+        scrollBarScope: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
     {
         self.scrollCalls.append(.init(direction: direction, pages: pages))
+        self.scrollBarScopes.append(scrollBarScope)
         self.afterScroll()
         if let scrollError {
             throw scrollError
@@ -845,13 +1283,15 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
         beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
-        AutomationTestFixtures.uiActionReceipt()
+        self.otherCalls.append("setText")
+        return AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws
         -> UIInputExecutionResult.Action
     {
-        AutomationTestFixtures.uiActionReceipt()
+        self.otherCalls.append("hotkey")
+        return AutomationTestFixtures.uiActionReceipt()
     }
 
     func trySetValue(
@@ -860,13 +1300,15 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
         beforeMutation _: @MainActor () throws -> Void) throws
         -> UIInputExecutionResult.Action
     {
-        AutomationTestFixtures.uiActionReceipt()
+        self.otherCalls.append("setValue")
+        return AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryPerformAction(element _: AutomationElement, actionName _: String) throws
         -> UIInputExecutionResult.Action
     {
-        AutomationTestFixtures.uiActionReceipt()
+        self.otherCalls.append("performAction")
+        return AutomationTestFixtures.uiActionReceipt()
     }
 }
 
@@ -891,6 +1333,7 @@ private final class ScrollRecordingSyntheticInputDriver: SyntheticInputDriving {
         case move(CGPoint)
         case currentLocation
         case scroll(deltaX: Double, deltaY: Double, at: CGPoint?)
+        case other(String)
     }
 
     private(set) var events: [Event] = []
@@ -919,15 +1362,23 @@ private final class ScrollRecordingSyntheticInputDriver: SyntheticInputDriving {
         return nil
     }
 
-    func pressHold(at _: CGPoint, button _: MouseButton, duration _: TimeInterval) async throws {}
+    func pressHold(at _: CGPoint, button _: MouseButton, duration _: TimeInterval) async throws {
+        self.events.append(.other("pressHold"))
+    }
 
     func scroll(deltaX: Double, deltaY: Double, at point: CGPoint?) throws {
         self.events.append(.scroll(deltaX: deltaX, deltaY: deltaY, at: point))
     }
 
-    func type(_: String, delayPerCharacter _: TimeInterval) throws {}
+    func type(_: String, delayPerCharacter _: TimeInterval) throws {
+        self.events.append(.other("type"))
+    }
 
-    func tapKey(_: SpecialKey, modifiers _: CGEventFlags) throws {}
+    func tapKey(_: SpecialKey, modifiers _: CGEventFlags) throws {
+        self.events.append(.other("tapKey"))
+    }
 
-    func hotkey(keys _: [String], holdDuration _: TimeInterval) throws {}
+    func hotkey(keys _: [String], holdDuration _: TimeInterval) throws {
+        self.events.append(.other("hotkey"))
+    }
 }

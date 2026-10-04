@@ -1070,6 +1070,9 @@ extension PeekabooBridgeOperationResultSemantics {
         globalForeground: DesktopActionOutcome.Delivery,
         windowBackground: DesktopActionOutcome.Delivery) -> [DeliveryRule]
     {
+        if request.point != nil, request.foreground || request.target != nil {
+            return []
+        }
         if request.foreground {
             return [.init(delivery: globalForeground, units: .variable)]
         }

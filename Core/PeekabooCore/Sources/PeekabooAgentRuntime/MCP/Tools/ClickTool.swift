@@ -680,33 +680,25 @@ public struct ClickTool: MCPTool {
                 identity: snapshot.windowMutationIdentity,
                 bounds: coordinateContext.logicalBounds)
         }
-        guard
-            let contextWindow = coordinateContext.window,
-            let contextBounds = coordinateContext.logicalBounds,
-            let sourceBounds = coordinateContext.viewport?.sourceLogicalBounds ?? coordinateContext.logicalBounds,
-            let processIdentifier = snapshot.applicationProcessId,
-            let windowID = snapshot.windowID,
-            let bounds = snapshot.windowBounds,
-            let identity = snapshot.windowMutationIdentity,
-            contextWindow.windowID == windowID,
-            identity.windowID == windowID,
-            identity.ownerProcessIdentifier == processIdentifier,
-            sourceBounds == bounds,
-            bounds.insetBy(dx: -0.000_001, dy: -0.000_001).contains(contextBounds),
-            explicitPID.map({ $0 == processIdentifier }) ?? true
-        else {
-            let requirement = requiresExactWindow ? "exact PID/window generation and bounds" : "window capture data"
+        let authority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            authority = try await snapshot.coordinateAuthority()
+            if let explicitPID, explicitPID != authority.target.identity.ownerProcessIdentifier {
+                throw DesktopTargetIdentityError.contradictoryProcessIdentifier
+            }
+        } catch {
             throw ClickToolError(
-                "Snapshot '\(id)' is not a capture-owned coordinate reference with \(requirement). " +
+                "Snapshot '\(id)' is not a capture-owned coordinate reference with exact PID/window generation " +
+                    "and bounds. " +
                     "Run see for the exact target window and retry with its reference_id.",
                 refusalReason: .targetUnavailable)
         }
         return CapturedCoordinateSnapshot(
             snapshot: snapshot,
             coordinateContext: coordinateContext,
-            processIdentifier: processIdentifier,
-            identity: identity,
-            bounds: bounds)
+            processIdentifier: authority.target.identity.ownerProcessIdentifier,
+            identity: authority.target.identity,
+            bounds: authority.target.bounds)
     }
 
     private func validateForegroundCoordinateContext(_ captured: CapturedCoordinateSnapshot) async throws {

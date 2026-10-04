@@ -77,7 +77,9 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 42)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 43)
+
+    public static let backgroundCoordinateScrollVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 43)
 
     public static let textSelectionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 42)
 

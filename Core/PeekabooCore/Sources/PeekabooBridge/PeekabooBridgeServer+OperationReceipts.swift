@@ -231,7 +231,7 @@ extension PeekabooBridgeServer {
         _ context: OperationReceiptEncodingContext) async throws -> Data?
     {
         guard request.requiresRequestPinnedExactWindowScrollReceipt,
-              !claim.negotiatedCapabilities.requestPinnedExactWindowScrollReceipt
+              !Self.isBackgroundScrollRuntimeCompatible(request, capabilities: claim.negotiatedCapabilities)
         else { return nil }
         return try await self.encodeAttestedResponse(
             Self.requestPinnedExactWindowScrollRuntimeRefusal(plan: context.plan),
@@ -427,7 +427,8 @@ extension PeekabooBridgeServer {
     private static func requestPinnedExactWindowScrollRuntimeRefusal(
         plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan) -> PeekabooBridgeResponse
     {
-        let envelope = self.requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope()
+        let envelope = self.requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope(
+            requiresCoordinates: plan.request.requiresBackgroundCoordinateScroll)
         guard let failure = envelope.desktopActionFailure else {
             preconditionFailure("Exact-window scroll runtime refusal must carry a canonical action failure")
         }
@@ -440,11 +441,27 @@ extension PeekabooBridgeServer {
         return .error(envelope)
     }
 
-    static func requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope() -> PeekabooBridgeErrorEnvelope {
+    static func isBackgroundScrollRuntimeCompatible(
+        _ request: PeekabooBridgeRequest,
+        capabilities: PeekabooBridgeNegotiatedSessionCapabilities?) -> Bool
+    {
+        guard let capabilities, capabilities.requestPinnedExactWindowScrollReceipt,
+              capabilities.protocolVersion >= PeekabooBridgeConstants.requestPinnedExactWindowScrollReceiptVersion
+        else { return false }
+        return !request.requiresBackgroundCoordinateScroll ||
+            (capabilities.backgroundCoordinateScroll &&
+                capabilities.protocolVersion >= PeekabooBridgeConstants.backgroundCoordinateScrollVersion)
+    }
+
+    static func requestPinnedExactWindowScrollRuntimeIncompatibleEnvelope(
+        requiresCoordinates: Bool = false) -> PeekabooBridgeErrorEnvelope
+    {
         let failure = DesktopActionFailure.preDispatchRefusal(
             route: .bridge,
             reason: .runtimeIncompatible,
-            message: "This Bridge session cannot preserve an exact-window scroll receipt.",
+            message: requiresCoordinates
+                ? "This Bridge session does not support background coordinate scroll."
+                : "This Bridge session cannot preserve an exact-window scroll receipt.",
             hint: "Update and relaunch Peekaboo before retrying background scroll.")
         return PeekabooBridgeErrorEnvelope(
             code: .versionMismatch,

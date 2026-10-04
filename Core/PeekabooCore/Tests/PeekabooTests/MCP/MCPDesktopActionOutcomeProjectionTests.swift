@@ -1586,49 +1586,6 @@ extension MCPDesktopActionOutcomeProjectionTests {
     }
 
     @MainActor
-    static func makeExactScrollSnapshot(context: MCPToolContext) async throws -> String {
-        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
-        let snapshotID = await snapshot.id
-        let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
-        await snapshot.setScreenshot(
-            path: "/tmp/scroll-outcome.png",
-            metadata: CaptureMetadata(
-                size: bounds.size,
-                mode: .window,
-                applicationInfo: ServiceApplicationInfo(
-                    processIdentifier: 778,
-                    processStartIdentity: 78,
-                    bundleIdentifier: "com.example.editor",
-                    name: "Editor"),
-                windowInfo: ServiceWindowInfo(
-                    windowID: 42,
-                    title: "Editor",
-                    bounds: bounds,
-                    mutationIdentity: WindowMutationIdentity(
-                        windowID: 42,
-                        ownerProcessIdentifier: 778,
-                        ownerProcessStartIdentity: 78,
-                        capturedBounds: bounds))))
-        await snapshot.setUIElements([
-            UIElement(
-                id: "T1",
-                elementId: "T1",
-                role: "scrollArea",
-                title: nil,
-                label: "Editor",
-                value: nil,
-                description: nil,
-                help: nil,
-                roleDescription: "scroll area",
-                identifier: nil,
-                frame: CGRect(x: 10, y: 10, width: 100, height: 30),
-                isActionable: true),
-        ])
-        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
-        return snapshotID
-    }
-
-    @MainActor
     private static func makeTextFieldSnapshot(context: MCPToolContext) async throws -> String {
         let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
         let snapshotID = await snapshot.id

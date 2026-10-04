@@ -16,7 +16,7 @@ RuntimeOptionsConfigurable {
     )
 
     @Argument(
-        help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).",
+        help: KeyboardChord.syntaxHelp,
         parsing: .remaining
     )
     var chords: [String]
@@ -436,7 +436,7 @@ extension PressCommand: ParsableCommand {
                 abstract: "Press keyboard chords or chord sequences",
                 discussion: """
                     The 'press' command sends keyboard chords in sequence.
-                    Chord syntax matches xdotool key (cmd+shift+t).
+                    \(KeyboardChord.syntaxHelp)
 
                     Raw chords require either explicit --foreground consent or a fresh exact-window
                     receipt whose focused element remains pinned through native background dispatch.
@@ -452,7 +452,7 @@ extension PressCommand: ParsableCommand {
                       cmd/command, shift, option/alt, ctrl/control, fn
 
                     KEYS:
-                      return, tab, escape, delete, arrows, f1-f12, letters, digits, space
+                      return, tab, escape, delete, forwarddelete, arrows, f1-f12, letters, digits, space
 
                     SEQUENCES:
                       Separate chords with spaces: peekaboo press ctrl+a Delete --foreground

@@ -192,15 +192,19 @@ struct HotkeyServiceTargetingTests {
         let service = HotkeyService()
 
         let returnPlan = try service.targetedHotkeyPlanForTesting(["enter"])
-        let deletePlan = try service.targetedHotkeyPlanForTesting(["backspace"])
-        let delPlan = try service.targetedHotkeyPlanForTesting(["del"])
-
         #expect(returnPlan.primaryKey == "return")
         #expect(returnPlan.keyCode == 0x24)
-        #expect(deletePlan.primaryKey == "delete")
-        #expect(deletePlan.keyCode == 0x33)
-        #expect(delPlan.primaryKey == "delete")
-        #expect(delPlan.keyCode == 0x33)
+
+        for name in ["delete", "Delete", "backspace", "del"] {
+            let plan = try service.targetedHotkeyPlanForTesting([name])
+            #expect(plan.primaryKey == "delete")
+            #expect(plan.keyCode == 0x33)
+        }
+        for name in ["forwarddelete", "forward_delete"] {
+            let plan = try service.targetedHotkeyPlanForTesting([name])
+            #expect(plan.primaryKey == "forwarddelete")
+            #expect(plan.keyCode == 0x75)
+        }
     }
 
     @Test func `background text insertion replaces selected UTF16 range`() {
@@ -1254,7 +1258,8 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
     func tryScroll(
         element _: AutomationElement,
         direction _: ScrollDirection,
-        pages _: Int) throws -> UIInputExecutionResult.Action
+        pages _: Int,
+        scrollBarScope _: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.actionUnsupported)
     }

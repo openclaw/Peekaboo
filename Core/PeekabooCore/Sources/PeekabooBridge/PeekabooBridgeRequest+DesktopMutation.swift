@@ -29,6 +29,9 @@ extension PeekabooBridgeRequest {
     }
 
     var minimumNegotiatedProtocolVersion: PeekabooBridgeProtocolVersion? {
+        if self.requiresBackgroundCoordinateScroll {
+            return PeekabooBridgeConstants.backgroundCoordinateScrollVersion
+        }
         if self.requiresPreparedClipboardGuardedExactWindowHotkey {
             return PeekabooBridgeConstants.preparedClipboardGuardedExactWindowHotkeyVersion
         }
@@ -154,6 +157,33 @@ extension PeekabooBridgeRequest {
 
     var requiresRequestPinnedExactWindowScrollReceipt: Bool {
         self.unwrappedOperationRequest.operation == .targetedScroll
+    }
+
+    var requiresBackgroundCoordinateScroll: Bool {
+        guard case let .targetedScroll(payload) = self.unwrappedOperationRequest else { return false }
+        return payload.request.point != nil
+    }
+
+    func validateScrollDeliveryMode() throws {
+        switch self.unwrappedOperationRequest {
+        case let .scroll(payload):
+            try payload.request.validatePointSelector()
+            guard payload.request.foreground else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "The scroll operation requires foreground=true; " +
+                        "use targetedScroll for background AX input")
+            }
+        case let .targetedScroll(payload):
+            try payload.request.validatePointSelector()
+            guard !payload.request.foreground else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "The targetedScroll operation requires foreground=false")
+            }
+        default:
+            break
+        }
     }
 
     var requiresCompositeTypeDeliverySupport: Bool {

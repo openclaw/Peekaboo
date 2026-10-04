@@ -1,5 +1,5 @@
 ---
-summary: 'Send xdotool-style keyboard chords via peekaboo press'
+summary: 'Send macOS keyboard chords using Peekaboo key names'
 read_when:
   - 'navigating dialogs with arrow/tab/return patterns'
   - 'sending a receipt-pinned background or explicitly foreground raw key sequence'
@@ -7,12 +7,12 @@ read_when:
 
 # `peekaboo press`
 
-`press` sends raw xdotool `key`-style chords such as `cmd+c`, `cmd+shift+t`, and `Return`. Multiple positional chords form a sequence. Raw keys require either `--foreground` or an exact window/snapshot receipt that proves the focused destination before native background delivery.
+`press` sends raw macOS keyboard chords such as `cmd+c`, `cmd+shift+t`, and `Return`, using Peekaboo's case-insensitive key names. Multiple positional chords form a sequence. Raw keys require either `--foreground` or an exact window/snapshot receipt that proves the focused destination before native background delivery.
 
 ## Key options
 | Flag | Description |
 | --- | --- |
-| `[chords…]` | Chords in xdotool syntax. Modifiers are `cmd`/`command`, `shift`, `option`/`alt`, `ctrl`/`control`, and `fn`; the non-modifier key comes last. |
+| `[chords…]` | Join key names with `+`. Modifiers are `cmd`/`command`, `shift`, `option`/`alt`, `ctrl`/`control`, and `fn`; the non-modifier key comes last. |
 | `--count <n>` | Repeat the entire key sequence `n` times (default `1`). |
 | `--delay <duration>` | Delay between key presses (default `100ms`; bare values are milliseconds). |
 | `--hold <duration>` | Hold duration for synthesized keys (default `50ms`; bare values are milliseconds). Semantic AX/menu actions do not hold keys. |
@@ -20,6 +20,18 @@ read_when:
 | Target flags | An exact window selector enables receipt-pinned background press; app/PID-only targeting still requires `--foreground`. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global key presses. |
 | Focus flags | Foreground focus controls; same `FocusCommandOptions` bundle as `click`/`type`. |
+
+## Key names
+
+Peekaboo does not use the full xdotool/X11 key vocabulary. Names are case-insensitive, so capitalizing `Delete` does not change its meaning.
+
+| Names | Meaning |
+| --- | --- |
+| `delete`, `Delete`, `backspace`, `del` | The macOS backward-delete key. |
+| `forwarddelete`, `forward_delete` | The forward-delete key. |
+| `cmd`, `command` | The Command modifier; `super` is not supported. |
+
+Using a fresh exact-window snapshot from `see` for each invocation, `peekaboo press delete --snapshot SNAPSHOT_ID` sends backward delete, while `peekaboo press forwarddelete --snapshot SNAPSHOT_ID` sends forward delete. Chords use `+`; separate complete chords with spaces.
 
 ## Delivery mode
 - **Exact background** accepts only a fresh exact-window selector or snapshot. Peekaboo pins process generation, window ID/bounds, and focused-element identity; missing, ambiguous, or stale receipts refuse before dispatch. App/PID-only and targetless forms retain the canonical retry-safe refusal.
@@ -29,7 +41,7 @@ read_when:
 - Prefer named Accessibility actions and dedicated menu/window/app/dialog operations in background workflows. Exact-window `press` exposes the receipt-pinned transport but still reports its semantic effect honestly.
 
 ## Implementation notes
-- Bare keys include Return, Tab, Escape, Delete/Forward Delete, arrows, navigation keys, F1-F12, letters/digits, Space, and standard punctuation. Comma- and space-delimited chord syntax is rejected.
+- Bare keys include `return`, `tab`, `escape`, `delete`, `forwarddelete`, arrows, navigation keys, F1-F12, letters/digits, `space`, and standard punctuation. Comma- and space-delimited chord syntax is rejected.
 - Background raw chords never collapse an exact selector to process delivery and never silently foreground. Exact-window remote delivery requires Bridge protocol 1.24.
 - A delivered background chord may change focus, open a window, or dismiss its receiver. It returns
   `dispatched_unverified` without requiring unchanged focus afterward. Destination drift before key-down still

@@ -357,6 +357,8 @@ extension PeekabooBridgeServer {
                             PeekabooBridgeHostCapability.targetedClickAccessibilityValueDelivery),
                         requestPinnedExactWindowScrollReceipt: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt),
+                        backgroundCoordinateScroll: advertisedCapabilities.contains(
+                            PeekabooBridgeHostCapability.backgroundCoordinateScroll),
                         compositeTypeDelivery: advertisedCapabilities.contains(
                             PeekabooBridgeHostCapability.compositeTypeDelivery),
                         clipboardGuardedExactWindowHotkeys: advertisedCapabilities.contains(
@@ -447,7 +449,25 @@ extension PeekabooBridgeServer {
                   enabledOperations.contains(.targetedScroll)
         else {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt)
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.backgroundCoordinateScroll)
             return
+        }
+        Self.updateBackgroundCoordinateScrollCapability(
+            capabilities: &advertisedCapabilities, version: negotiated, automation: self.services.automation)
+    }
+
+    static func updateBackgroundCoordinateScrollCapability(
+        capabilities: inout Set<String>,
+        version: PeekabooBridgeProtocolVersion,
+        automation: any UIAutomationServiceProtocol)
+    {
+        if version >= PeekabooBridgeConstants.backgroundCoordinateScrollVersion,
+           capabilities.contains(PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt),
+           (automation as? any UIAutomationActionOutcomeProviding)?.supportsBackgroundCoordinateScroll == true
+        {
+            capabilities.insert(PeekabooBridgeHostCapability.backgroundCoordinateScroll)
+        } else {
+            capabilities.remove(PeekabooBridgeHostCapability.backgroundCoordinateScroll)
         }
     }
 

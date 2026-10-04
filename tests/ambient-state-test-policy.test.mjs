@@ -163,7 +163,117 @@ test("hosted text route proof runs isolated SDK and background contracts with no
   assert.ok(step.includes("Suite BackgroundTextInputReceiverTests passed after "));
   assert.ok(step.includes("Suite TypeServiceTargetResolutionTests passed after "));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
-  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+  assert.equal(step.match(/\bswift test\b/g)?.length, 2);
+});
+
+test("hosted coordinate scroll AX proof excludes only the audited live declarations", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const step = workflow.split("      - name: Run SDK and background text route regressions\n")[1]
+    .split("\n      - name:")[0];
+  const filterText = "^PeekabooAutomationKitTests[.](AutomationElementResolverTests|ScrollServiceTargetResolutionTests|ActionInputDriverTests)/";
+  assert.ok(step.includes(`--filter '${filterText}'`));
+  const skipParts = [...step.matchAll(/scroll_skip(?:\+)?='([^']+)'/g)].map((match) => match[1]);
+  assert.equal(skipParts.length, 4, "Keep the audited exclusions literal and grouped by exact declaration signatures");
+  const skipText = skipParts.join("");
+  assert.ok(!skipText.includes(".*") && !skipText.includes(".+"), "No broad declaration skips");
+  const filter = new RegExp(filterText);
+  const skip = new RegExp(skipText);
+  const excluded = {
+    AutomationElementResolverTests: [
+      "exact snapshot match disambiguates duplicate identifiers and frames without scanning the tail",
+      "exact snapshot match rejects a candidate from another process",
+      "foreign fuzzy candidate cannot shadow a valid target process candidate",
+    ],
+    ActionInputDriverTests: [
+      "element action facade normalizes stale action driver failures",
+      "process scoped element mutations revalidate generation at the driver boundary",
+      "process scoped element action returns canonical outcome and target metadata",
+      "exact snapshot element mutations wait only for their process observation frame",
+      "text field action click focuses when press is unavailable",
+      "exact semantic focus reports retry unsafe when accepted setter cannot be confirmed",
+    ],
+    ScrollServiceTargetResolutionTests: [
+      "foreground synthetic scroll reports exact emitted tick count",
+      "synthetic scroll treats explicit missing snapshot as authoritative",
+      "foreground OCR target refuses before pointer motion or scroll dispatch",
+      "background unresolved snapshot target refuses without synthetic fallback",
+      "unsupported AX container uses exact WebKit wheel route without global synthesis",
+    ],
+  };
+  for (const [suite, names] of Object.entries(excluded)) {
+    const source = readFileSync(
+      `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/${suite}.swift`, "utf8",
+    );
+    for (const name of names) {
+      assert.ok(source.includes("func `" + name + "`"), `Audit stale: ${name}`);
+      const signature = name.startsWith("unsupported AX container") ? "(role:coordinates:)" : "()";
+      const id = `PeekabooAutomationKitTests.${suite}/\`${name}\`${signature}`;
+      assert.ok(filter.test(id) && skip.test(id), id);
+      assert.ok(skip.test(`${id}/Fixture.swift:1:1`), "Source suffix must not bypass the exclusion");
+      assert.ok(!skip.test(id.replace(`\`${name}\``, `\`${name} extra\``)), "Do not skip similarly named tests");
+      assert.ok(!skip.test(id.replace(signature, "(unrelated:)")), "Keep argument labels exact");
+      assert.ok(!filter.test(id.replace(suite, `${suite}Extra`)), "Keep suite names exact");
+    }
+    assert.ok(step.includes(`grep -Fq 'Suite ${suite} passed after ' "$scroll_log"`));
+  }
+  for (const id of [
+    "AutomationElementResolverTests/`coordinate scroll selects the nearest ancestor without borrowing siblings or descendants`()",
+    "AutomationElementResolverTests/`coordinate scroll refuses missing foreign window or foreign process ownership`(kind:)",
+    "AutomationElementResolverTests/`coordinate scroll ancestor walk refuses cycles and stops at its fixed budget`()",
+    "ActionInputDriverTests/`coordinate owner scope never borrows descendant or sibling bars`(role:route:)",
+    "ActionInputDriverTests/`coordinate owner scope preserves a directly selected bar`()",
+    "ActionInputDriverTests/`disabled coordinate owner refuses before its enabled bar or page action`()",
+    "ScrollServiceTargetResolutionTests/`coordinate scroll refuses owning scroller drift before delivery`(duringResolution:)",
+    "ScrollServiceTargetResolutionTests/`typed AX prefix failure never falls through to exact window wheel`(coordinates:)",
+  ]) {
+    assert.ok(filter.test(`PeekabooAutomationKitTests.${id}`) && !skip.test(`PeekabooAutomationKitTests.${id}`), id);
+    assert.ok(!filter.test(`OtherTests.${id}`));
+    const suite = id.split("/")[0];
+    const name = id.split("`")[1];
+    const sources = [suite, ...(suite === "ActionInputDriverTests" ? ["ActionInputDriverScrollTests"] : [])]
+      .map((file) => readFileSync(`${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/${file}.swift`, "utf8"))
+      .join("\n");
+    assert.ok(sources.includes("func `" + name + "`"), `Missing safe regression: ${id}`);
+  }
+  for (const name of [
+    "coordinate scroll selects the nearest ancestor without borrowing siblings or descendants",
+    "coordinate scroll refuses missing foreign window or foreign process ownership",
+    "coordinate scroll ancestor walk refuses cycles and stops at its fixed budget",
+  ]) {
+    assert.ok(step.includes(`Test "${name}"`), "The partially excluded resolver suite needs declaration pass guards");
+  }
+  for (const variable of ["PEEKABOO_INCLUDE_AUTOMATION_TESTS", "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS",
+    "PEEKABOO_RUN_INPUT_AUTOMATION_TESTS", "RUN_AUTOMATION_READ", "RUN_AUTOMATION_TESTS",
+    "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS"]) {
+    assert.ok(step.includes(`${variable}: "false"`));
+  }
+  assert.ok(step.includes('--skip "$scroll_skip" 2>&1 | tee "$scroll_log"'));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' \"$scroll_log\""));
+  assert.doesNotMatch(step, /--skip-build|continue-on-error/);
+});
+
+test("hosted coordinate scroll Bridge proof uses the existing graph and injected providers", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const step = workflow.split("      - name: Run Bridge negotiation and cancellation contracts\n")[1]
+    .split("\n      - name:")[0];
+  assert.match(step, /working-directory: Core\/PeekabooCore/);
+  assert.match(step, /set -euo pipefail/);
+  assert.ok(step.includes("--filter '^PeekabooTests[.]PeekabooBridgeScrollReceiptTests/'"));
+  assert.ok(step.includes("grep -Fq 'Suite PeekabooBridgeScrollReceiptTests passed after ' \"$scroll_log\""));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' \"$scroll_log\""));
+  for (const variable of ["PEEKABOO_INCLUDE_AUTOMATION_TESTS", "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS",
+    "PEEKABOO_RUN_INPUT_AUTOMATION_TESTS", "RUN_AUTOMATION_READ", "RUN_AUTOMATION_TESTS",
+    "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS"]) {
+    assert.ok(step.includes(`${variable}: "false"`));
+  }
+  const source = readFileSync(
+    `${repositoryRoot}/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeScrollReceiptTests.swift`, "utf8",
+  );
+  assert.match(source, /SystemIdentityResolver\.processStartIdentity\(getpid\(\)\)/);
+  assert.match(source, /let services = StubServices\(\)/);
+  assert.match(source, /permissionStatusEvaluator: \{/);
+  assert.doesNotMatch(source, /NSWorkspace|NSApplication|NSPasteboard|AXUIElement|CGEvent/);
+  assert.doesNotMatch(step, /--skip-build|continue-on-error/);
 });
 
 test("hosted typed element mutation proof includes exact selection suites and pass guards", () => {
@@ -387,7 +497,7 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   const suites = ["PressCommandTests", "ClickCommandTests", "ClickCommandActionResultTests", "ClickSnapshotWindowSelectionTests", "SelectTextCommandTests"];
   const filter = `^CLIAutomationTests[.](${suites.join("|")})/`;
   assert.ok(step.includes(`--filter '${filter}'`));
-  assert.equal(step.match(/--filter/g)?.length, 1);
+  assert.equal(step.match(/--filter/g)?.length, 2);
   const selection = new RegExp(filter);
   for (const suite of suites) {
     assert.ok(selection.test(`CLIAutomationTests.${suite}/Fixture`));
@@ -398,8 +508,8 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   assert.ok(!selection.test("OtherTests.ClickCommandTests/Fixture"));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
-  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
-  assert.doesNotMatch(step, /-DPEEKABOO_SKIP_AUTOMATION/);
+  assert.equal(step.match(/\bswift test\b/g)?.length, 2);
+  assert.doesNotMatch(step.split('scroll_log=')[0], /-DPEEKABOO_SKIP_AUTOMATION/);
 
   const source = readFileSync(`${repositoryRoot}/Apps/CLI/Tests/CLIAutomationTests/PressCommandTests.swift`, "utf8");
   assert.match(source, /automation: StubAutomationService = StubAutomationService\(\)/);
@@ -409,6 +519,32 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   assert.match(selectionSource, /SelectionAutomation: StubAutomationService/);
   assert.match(selectionSource, /TestServicesFactory\.makePeekabooServices\(snapshots: snapshots, automation: automation\)/);
   assert.doesNotMatch(selectionSource, /executePeekabooCLI|NSWorkspace|NSApplication|BackgroundInputDriver|AXUIElement|NSPasteboard/);
+});
+
+test("hosted coordinate scroll CLI proof enters skip-automation mode without ambient input opt-ins", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const step = workflow.split("      - name: Run mocked interaction receipt regressions\n")[1]
+    .split("\n      - name:")[0];
+  const scroll = step.split('scroll_log=')[1];
+  assert.ok(scroll, "Keep coordinate scroll in the existing mocked interaction step");
+  assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"/);
+  for (const variable of ["PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS", "PEEKABOO_RUN_INPUT_AUTOMATION_TESTS",
+    "RUN_AUTOMATION_TESTS", "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS"]) {
+    assert.ok(step.includes(`${variable}: "false"`));
+  }
+  assert.match(scroll, /RUN_AUTOMATION_READ=false swift test --disable-xctest --enable-swift-testing --no-parallel --jobs 2/);
+  assert.match(scroll, /-Xswiftc -DPEEKABOO_SKIP_AUTOMATION/);
+  assert.ok(scroll.includes("--filter '^CLIAutomationTests[.]ScrollCoordinateCommandTests/'"));
+  assert.ok(scroll.includes("grep -Fq 'Suite ScrollCoordinateCommandTests passed after ' \"$scroll_log\""));
+  assert.ok(scroll.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' \"$scroll_log\""));
+  assert.doesNotMatch(scroll, /--skip-build|continue-on-error/);
+  const source = readFileSync(
+    `${repositoryRoot}/Apps/CLI/Tests/CLIAutomationTests/ScrollCoordinateCommandTests.swift`, "utf8",
+  );
+  for (const stub of ["StubSnapshotManager", "StubApplicationService", "StubWindowService", "OutcomeStubAutomationService"]) {
+    assert.ok(source.includes(`${stub}(`), stub);
+  }
+  assert.doesNotMatch(source, /executePeekabooCLI|NSWorkspace|NSApplication|NSPasteboard|AXUIElement|CGEvent/);
 });
 
 test("hosted See proof retains target inclusion without opting into ambient tests", () => {

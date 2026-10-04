@@ -3,7 +3,10 @@
 ## Unreleased
 
 - Add exact-window native single-left fallback only after complete positional Accessibility resolution proves no actionable target, refusing failed or incomplete AX reads while preserving AX preference, action-only policy, retry-unsafe prefixes, and owner-proven no-dispatch refusals.
+- Add exact-window background coordinate scrolling via CLI `--at` / `--global` and MCP `coords`, preferring the nearest proven AX scroll owner and allowing pixel-authorized native-WebKit wheel delivery without an exposed owner, preserving the requested point and retry-unsafe receipts, and refusing older hosts through protocol 1.43.
 - Remove proven duplicate `see` / `inspect_ui` element listings from Agent provider requests while preserving observation evidence, raw MCP/CLI output, and saved history.
+- Preserve a native text field's coherently observed post-value selection for the dependent caret update, while refusing later state or focus drift without rebasing or replay and retaining nested typing failure diagnostics.
+- Clarify backward versus forward Delete key names and supported Command modifiers in `press` help and docs, without changing key mappings.
 - Distinguish unreadable exact-window focus evidence from actual window mismatches, retaining the AX observation stage and native error without changing background input guards or retry safety.
 - Add opt-in `see --fresh` and MCP `see` / `inspect_ui` freshness with uncached AX evidence, truthful `used_cache` metadata, and fail-closed host compatibility while preserving default caching and partial-tree limits.
 - Preserve the underlying cause of failed background paste preparation reads, without changing input dispatch, deadlines, or retry safety.

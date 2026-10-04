@@ -1,4 +1,5 @@
 import Commander
+import PeekabooFoundation
 
 extension PressCommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
@@ -6,7 +7,7 @@ extension PressCommand: CommanderSignatureProviding {
             arguments: [
                 .make(
                     label: "chord...",
-                    help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).",
+                    help: KeyboardChord.syntaxHelp,
                     isOptional: true,
                     parsing: .remaining
                 ),

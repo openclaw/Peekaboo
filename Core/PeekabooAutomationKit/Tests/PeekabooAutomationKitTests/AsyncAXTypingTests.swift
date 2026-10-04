@@ -14,12 +14,12 @@ struct AsyncAXTypingTests {
     }
 
     enum SuspensionPoint: CaseIterable {
-        case valuePreflight, valueSettlement, selectionPreflight, selectionSettlement
+        case valuePreflight, valueSettlement, valueCompletion, selectionPreflight, selectionSettlement
     }
 
     enum FocusChange: CaseIterable {
         case stable, reflow, sibling, missing, unfocused, wrongWindow, cancelled
-        case lookupFailure, lookupCancellation
+        case lookupFailure, lookupCancellation, generation
     }
 
     enum TypingMutation: CaseIterable {
@@ -52,9 +52,143 @@ struct AsyncAXTypingTests {
         case focus, text
     }
 
+    @Test
+    func `native value setter caret relocation is retained before Unicode typing continues`() async throws {
+        let fixture = Fixture(settlement: .completes)
+        fixture.element.value = "PB_PRIMARY_BASELINE\n"
+        fixture.selection = CFRange(location: 3, length: 7)
+        fixture.valueMovesSelectionToEnd = true
+
+        let result = try await fixture.run(actions: [.text("A😀e\u{0301}漢")])
+
+        #expect(fixture.textWrites.first == "PB_A_BASELINE\n")
+        #expect(fixture.textWrites.count == 4)
+        #expect(fixture.selectionWrites.map(\.location) == [4, 6, 8, 9])
+        #expect(fixture.element.stringValue == "PB_A😀e\u{0301}漢_BASELINE\n")
+        #expect(fixture.selection.location == 9 && fixture.selection.length == 0)
+        #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 4)
+        #expect(result.executionResult.outcome.state == .dispatchedUnverified)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test(arguments: [SourceStateMutation.clear, .text, .delete, .forwardDelete, .space])
+    func `every value-edit caller uses its writer completion state`(mutation: SourceStateMutation) async throws {
+        let fixture = Fixture(settlement: .completes)
+        fixture.element.value = "abcdef"
+        fixture.selection = CFRange(location: 2, length: 2)
+        fixture.valueMovesSelectionToEnd = true
+
+        _ = try await fixture.run(actions: [mutation.action])
+
+        let expected: (String, Int) = switch mutation {
+        case .clear: ("", 0)
+        case .text: ("abxef", 3)
+        case .delete, .forwardDelete: ("abef", 2)
+        case .space: ("ab ef", 3)
+        default: ("unexpected", -1)
+        }
+        #expect(fixture.element.stringValue == expected.0)
+        #expect(fixture.selection.location == expected.1 && fixture.selection.length == 0)
+        #expect(fixture.textWrites.count == 1)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test(arguments: SourceStateInterference.allCases)
+    func `post-checkpoint source drift never rebases a cursor write`(
+        interference: SourceStateInterference) async throws
+    {
+        let fixture = Fixture(settlement: .completes, suspension: .valueCompletion)
+        fixture.selection = CFRange(location: 1, length: 0)
+        fixture.valueMovesSelectionToEnd = true
+        let operation = Task { @MainActor in try await fixture.run(actions: [.text("xy")]) }
+        guard await fixture.entered.opensWithin(.seconds(2)) else {
+            operation.cancel()
+            await fixture.release.open()
+            _ = try? await operation.value
+            Issue.record("Value completion checkpoint was not reached")
+            return
+        }
+        fixture.apply(interference)
+        await fixture.release.open()
+
+        let failure = await #expect(throws: InputDeliveryIndeterminateError.self) { try await operation.value }
+        #expect(failure?.emittedUnitCount == 1 && failure?.retrySafe == false)
+        #expect(failure?.causeDescription?.contains("focused text or selection changed before mutation") == true)
+        #expect(fixture.textWrites == ["oxld"])
+        #expect(fixture.selectionWrites.isEmpty)
+        fixture.expectPreservedSourceState(interference, textBefore: "oxld", selectionBefore: 4)
+    }
+
+    @Test(arguments: SourceStateInterference.allCases)
+    func `unchanged value retains original authority before a cursor write`(
+        interference: SourceStateInterference) async throws
+    {
+        let fixture = Fixture(settlement: .completes, preflightToSuspend: 1)
+        fixture.selection = CFRange(location: 1, length: 0)
+        let operation = Task { @MainActor in try await fixture.replace("old") }
+        guard await fixture.entered.opensWithin(.seconds(2)) else {
+            operation.cancel()
+            await fixture.release.open()
+            _ = try? await operation.value
+            Issue.record("The unchanged value did not reach its selection preflight")
+            return
+        }
+        fixture.apply(interference)
+        await fixture.release.open()
+
+        let failure = await #expect(throws: DesktopActionFailure.self) { try await operation.value }
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(fixture.textWrites.isEmpty)
+        #expect(fixture.selectionWrites.isEmpty)
+        fixture.expectPreservedSourceState(interference, textBefore: "old", selectionBefore: 1)
+    }
+
+    @Test(arguments: ["selection", "value", "range"])
+    func `unreadable or incoherent writer completion stops without a cursor write`(missing: String) async throws {
+        let fixture = Fixture(settlement: .completes)
+        fixture.selection = CFRange(location: 1, length: 0)
+        fixture.completionSelectionUnreadable = missing == "selection"
+        fixture.completionValueUnreadable = missing == "value"
+        fixture.completionRangeOutOfBounds = missing == "range"
+
+        let failure = await #expect(throws: InputDeliveryIndeterminateError.self) {
+            try await fixture.run(actions: [.text("xy")])
+        }
+
+        #expect(failure?.emittedUnitCount == 1 && failure?.retrySafe == false)
+        #expect(fixture.textWrites == ["oxld"])
+        #expect(fixture.selectionWrites.isEmpty)
+        #expect(fixture.events.isEmpty)
+    }
+
+    @Test
+    func `selection setter uncertainty preserves the value prefix and nested cause`() async throws {
+        let fixture = Fixture(settlement: .completes)
+        fixture.selection = CFRange(location: 1, length: 0)
+        fixture.selectionSetterError = InputDeliveryIndeterminateError(
+            operation: .type,
+            causeDescription: "Injected selection setter uncertainty",
+            delivery: .init(mechanism: .accessibilityValue, mode: .background))
+
+        let failure = await #expect(throws: InputDeliveryIndeterminateError.self) {
+            try await fixture.run(actions: [.text("xy")])
+        }
+
+        #expect(failure?.emittedUnitCount == 1 && failure?.retrySafe == false)
+        #expect(failure?.causeDescription?.contains("Injected selection setter uncertainty") == true)
+        #expect(failure?.causeDescription?.contains("oxld") == false)
+        #expect(fixture.textWrites == ["oxld"])
+        #expect(fixture.selectionWrites.map(\.location) == [2])
+        #expect(fixture.events.isEmpty)
+    }
+
     @Test(arguments: [false, true])
-    func `value settlement never adopts a changed selection for another write`(alreadyDesired: Bool) async throws {
-        let fixture = Fixture(settlement: .completes, suspension: .valueSettlement)
+    func `captured value completion never adopts a later selection for another write`(
+        alreadyDesired: Bool) async throws
+    {
+        let fixture = Fixture(settlement: .completes, suspension: .valueCompletion)
         fixture.selection = CFRange(location: 1, length: 0)
         let operation = Task { @MainActor in try await fixture.run(actions: [.text("x")]) }
         guard await fixture.entered.opensWithin(.seconds(2)) else {
@@ -369,7 +503,8 @@ struct AsyncAXTypingTests {
         focusChange: FocusChange) async throws
     {
         let fixture = Fixture(settlement: .completes, suspension: suspension)
-        let operation = Task { @MainActor in try await fixture.run(actions: [.clear, .text("x")]) }
+        fixture.selection = CFRange(location: 1, length: 0)
+        let operation = Task { @MainActor in try await fixture.run(actions: [.text("x"), .text("y")]) }
         guard await fixture.entered.opensWithin(.seconds(2)) else {
             operation.cancel()
             await fixture.release.open()
@@ -403,15 +538,17 @@ struct AsyncAXTypingTests {
             fixture.focusLookupError = PeekabooError.permissionDeniedAccessibility
         case .lookupCancellation:
             fixture.focusLookupError = CancellationError()
+        case .generation:
+            fixture.generationIsCurrent = false
         }
         await fixture.release.open()
 
         if focusChange == .stable || focusChange == .reflow {
             let result = try await operation.value
             #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 2)
-            #expect(fixture.textWrites == ["", "x"])
-            #expect(fixture.selectionWrites.map(\.location) == [0, 1])
-            #expect(fixture.element.stringValue == "x")
+            #expect(fixture.textWrites == ["oxld", "oxyld"])
+            #expect(fixture.selectionWrites.map(\.location) == [2, 3])
+            #expect(fixture.element.stringValue == "oxyld")
         } else if suspension == .valuePreflight {
             if focusChange == .cancelled || focusChange == .lookupCancellation {
                 await #expect(throws: CancellationError.self) { try await operation.value }
@@ -429,9 +566,9 @@ struct AsyncAXTypingTests {
             #expect(failure?.emittedUnitCount == 1)
             #expect(failure?.retrySafe == false)
             #expect(failure?.delivery?.mechanism == .accessibilityValue)
-            #expect(fixture.textWrites == [""])
-            #expect(fixture.selectionWrites.map(\.location) == (suspension == .selectionSettlement ? [0] : []))
-            #expect(fixture.element.stringValue?.isEmpty == true)
+            #expect(fixture.textWrites == ["oxld"])
+            #expect(fixture.selectionWrites.map(\.location) == (suspension == .selectionSettlement ? [2] : []))
+            #expect(fixture.element.stringValue == "oxld")
         }
         #expect(fixture.events.isEmpty)
         #expect(fixture.observedSuspension)
@@ -442,6 +579,10 @@ struct AsyncAXTypingTests {
         settlement: Settlement) async throws
     {
         let fixture = Fixture(settlement: settlement)
+        let selectionFails = settlement == .selectionStalls || settlement == .selectionUnsupported
+        if selectionFails {
+            fixture.selection = CFRange(location: 1, length: 0)
+        }
         if settlement == .empty || settlement == .emptyUnsupported {
             let result = try await fixture.run()
             #expect(result.executionResult.outcome.state == .confirmedNoChange)
@@ -452,30 +593,32 @@ struct AsyncAXTypingTests {
             let result = try await fixture.run()
             #expect(fixture.element.stringValue == "abZc")
             #expect(fixture.textWrites == ["", "a", "ab", "abc", "abZc"])
-            #expect(fixture.selectionWrites.map(\.location) == [0, 1, 2, 3, 2, 3])
+            #expect(fixture.selectionWrites.map(\.location) == [1, 2, 3, 2, 3])
             #expect(fixture.selectionWrites.allSatisfy { $0.length == 0 })
             #expect(result.executionResult.outcome.dispatchState.unitCount?.rawValue == 6)
             #expect(result.executionResult.outcome.delivery?.mechanism == .accessibilityValue)
         } else {
             let failure = await #expect(throws: InputDeliveryIndeterminateError.self) {
-                _ = try await fixture.run()
+                _ = try await fixture.run(actions: selectionFails ? [.text("x")] : nil)
             }
             #expect(failure?.retrySafe == false)
             #expect(failure?.delivery?.mechanism == .accessibilityValue)
             #expect(failure?.emittedUnitCount == (settlement == .secondTextStalls ? 2 : 1))
-            #expect(fixture.textWrites == (settlement == .secondTextStalls ? ["", "a"] : [""]))
-            #expect(fixture.selectionWrites
-                .count == ([.textStalls, .selectionUnsupported].contains(settlement) ? 0 : 1))
-            #expect(fixture.element.stringValue == (settlement == .textStalls ? "old" : ""))
+            #expect(fixture
+                .textWrites == (selectionFails ? ["oxld"] : settlement == .secondTextStalls ? ["", "a"] : [""]))
+            #expect(fixture.selectionWrites.count == (settlement == .selectionStalls ? 1 : 0))
+            #expect(fixture.element.stringValue == (selectionFails ? "oxld" : settlement == .textStalls ? "old" : ""))
         }
         #expect(fixture.events.isEmpty)
         if settlement == .empty || settlement == .emptyUnsupported {
             #expect(fixture.observations == 0)
         } else {
-            #expect(fixture.observations > 0 && fixture.observations < 30)
+            #expect(fixture.observations > 0 && fixture.observations <= 30)
         }
     }
+}
 
+extension AsyncAXTypingTests {
     @MainActor
     private final class Fixture {
         let settlement: Settlement
@@ -494,6 +637,12 @@ struct AsyncAXTypingTests {
         var failGetterAfterSelection: (FailingGetter, any Error)?
         var currentFrame = CGRect(x: 20, y: 20, width: 200, height: 30)
         var windowIsCurrent = true
+        var generationIsCurrent = true
+        var valueMovesSelectionToEnd = false
+        var completionSelectionUnreadable = false
+        var completionValueUnreadable = false
+        var completionRangeOutOfBounds = false
+        var selectionSetterError: (any Error)?
         var selection = CFRange(location: 3, length: 0)
         var pendingText: String?
         var pendingSelection: CFRange?
@@ -542,8 +691,7 @@ struct AsyncAXTypingTests {
             self.suspension = suspension
             self.preflightToSuspend = preflightToSuspend
             self.element = ActionInputMockAutomationElement(
-                underlyingAXElement: suspension == nil && preflightToSuspend == nil
-                    ? nil : self.native.underlyingElement,
+                underlyingAXElement: self.native.underlyingElement,
                 identifier: "editor",
                 role: "AXTextField",
                 frame: self.currentFrame,
@@ -558,65 +706,88 @@ struct AsyncAXTypingTests {
         }
 
         private var observer: ActionInputDriver {
-            ActionInputDriver(observationDelay: {
-                self.observations += 1
-                let textStalled = self.settlement == .textStalls ||
-                    (self.settlement == .secondTextStalls && self.textWrites.count == 2)
-                if !textStalled, let text = self.pendingText {
-                    self.element.value = text
-                    self.pendingText = nil
-                }
-                if self.settlement != .selectionStalls, let range = self.pendingSelection {
-                    self.selection = range
-                    self.pendingSelection = nil
-                }
-            }, processStartIdentity: { _ in 1 }, nativeReader: { _, _, attribute, _ in
-                let shouldSuspend = await MainActor.run {
-                    guard !self.observedSuspension else { return false }
-                    if attribute == .identity {
-                        self.nativePreflights += 1
-                    }
-                    let matches: Bool = if let preflightToSuspend = self.preflightToSuspend {
-                        attribute == .identity && self.nativePreflights == preflightToSuspend
-                    } else {
-                        switch self.suspension {
-                        case .valuePreflight: attribute == .identity && self.textWrites.isEmpty
-                        case .valueSettlement: attribute == .value && self.textWrites.count == 1
-                        case .selectionPreflight: attribute == .identity && self.textWrites.count == 1
-                        case .selectionSettlement: attribute == .selectedTextRange && self.selectionWrites.count == 1
-                        case nil: false
-                        }
-                    }
-                    self.observedSuspension = matches
-                    return matches
-                }
-                if shouldSuspend {
-                    await self.entered.open()
-                    await self.release.wait()
-                }
-                return await MainActor.run {
+            ActionInputDriver(
+                observationDelay: {
                     self.observations += 1
-                    if attribute == .value, let text = self.pendingText {
-                        self.element.value = text
-                        self.pendingText = nil
+                    let textStalled = self.settlement == .textStalls ||
+                        (self.settlement == .secondTextStalls && self.textWrites.count == 2)
+                    if !textStalled, let text = self.pendingText {
+                        self.settleText(text)
                     }
-                    if attribute == .selectedTextRange, let range = self.pendingSelection {
+                    if self.settlement != .selectionStalls, let range = self.pendingSelection {
                         self.selection = range
                         self.pendingSelection = nil
                     }
-                    return AXMutationObservationSnapshot(
-                        identity: FocusedElementIdentity(
-                            processIdentifier: 777,
-                            windowID: 42,
-                            role: "AXTextField",
-                            identifier: "editor",
-                            frame: self.currentFrame),
-                        value: .string(self.element.stringValue ?? ""),
-                        selectedTextRange: TextSelectionRange(
-                            location: self.selection.location,
-                            length: self.selection.length))
-                }
-            })
+                },
+                processStartIdentity: { _ in 1 },
+                nativeReader: { _, _, attribute, _ in
+                    let shouldSuspend = await MainActor.run {
+                        guard !self.observedSuspension else { return false }
+                        if attribute == .identity {
+                            self.nativePreflights += 1
+                        }
+                        let matches: Bool = if let preflightToSuspend = self.preflightToSuspend {
+                            attribute == .identity && self.nativePreflights == preflightToSuspend
+                        } else {
+                            switch self.suspension {
+                            case .valuePreflight: attribute == .identity && self.textWrites.isEmpty
+                            case .valueSettlement: attribute == .textSelection && self.textWrites.count == 1
+                            case .valueCompletion: false
+                            case .selectionPreflight: attribute == .identity && self.textWrites.count == 1
+                            case .selectionSettlement: attribute == .selectedTextRange && self.selectionWrites
+                                .count == 1
+                            case nil: false
+                            }
+                        }
+                        self.observedSuspension = matches
+                        return matches
+                    }
+                    if shouldSuspend {
+                        await self.entered.open()
+                        await self.release.wait()
+                    }
+                    return await MainActor.run {
+                        self.observations += 1
+                        let textStalled = self.settlement == .textStalls ||
+                            (self.settlement == .secondTextStalls && self.textWrites.count == 2)
+                        if attribute == .textSelection, !textStalled, let text = self.pendingText {
+                            self.settleText(text)
+                        }
+                        if attribute == .selectedTextRange, self.settlement != .selectionStalls,
+                           let range = self.pendingSelection
+                        {
+                            self.selection = range
+                            self.pendingSelection = nil
+                        }
+                        guard self.generationIsCurrent else { return nil }
+                        return AXMutationObservationSnapshot(
+                            identity: FocusedElementIdentity(
+                                processIdentifier: 777,
+                                windowID: 42,
+                                role: "AXTextField",
+                                identifier: "editor",
+                                frame: self.currentFrame),
+                            focused: self.windowIsCurrent && self.element.isFocused && self.focusedReceiver === self
+                                .element,
+                            value: self.completionValueUnreadable && attribute == .textSelection
+                                ? nil : .string(self.element.stringValue ?? ""),
+                            selectedTextRange: self.completionSelectionUnreadable && attribute == .textSelection
+                                ? nil : TextSelectionRange(
+                                    location: self.completionRangeOutOfBounds && attribute == .textSelection
+                                        ? (self.element.stringValue?.utf16.count ?? 0) + 1 : self.selection.location,
+                                    length: self.selection.length))
+                    }
+                })
+        }
+
+        private func settleText(_ text: String) {
+            self.element.value = text
+            self.pendingText = nil
+            let location = self.valueMovesSelectionToEnd
+                ? text.utf16.count : min(self.selection.location, text.utf16.count)
+            self.selection = CFRange(
+                location: location,
+                length: self.valueMovesSelectionToEnd ? 0 : min(self.selection.length, text.utf16.count - location))
         }
 
         private var access: BackgroundInputDriver.FocusedTextEditAccess<ActionInputMockAutomationElement> {
@@ -647,23 +818,29 @@ struct AsyncAXTypingTests {
                             element: (element === self.element ? self.native : self.siblingNative).underlyingElement))
                 },
                 validateReceiver: { receiver in
-                    guard self.windowIsCurrent, receiver.isFocused else {
+                    guard self.windowIsCurrent, self.generationIsCurrent, receiver.isFocused else {
                         throw DesktopActionFailure.preDispatchRefusal(
                             reason: .targetUnavailable,
                             message: "The fixture's exact window lost keyboard authority.")
                     }
                 },
                 setText: { text, element, beforeMutation in
-                    try await self.observer.performObservedMutation(
+                    let result = try await BackgroundInputDriver.performFocusedTextValueMutation(
+                        text,
                         on: element,
-                        attribute: .value,
+                        observer: self.observer,
                         beforeMutation: beforeMutation,
                         mutation: {
                             self.textWrites.append(text)
                             self.pendingText = text
                             return .accessibilityValue
-                        },
-                        matches: { _ in BackgroundInputDriver.exactTextMatches(element.stringValue, text) })
+                        })
+                    if self.suspension == .valueCompletion, !self.observedSuspension {
+                        self.observedSuspension = true
+                        await self.entered.open()
+                        await self.release.wait()
+                    }
+                    return result
                 },
                 selectRange: { range, element, beforeMutation in
                     if self.settlement == .selectionUnsupported || self.settlement == .emptyUnsupported {
@@ -677,6 +854,9 @@ struct AsyncAXTypingTests {
                                 return .noChange
                             }
                             self.selectionWrites.append(range)
+                            if let error = self.selectionSetterError {
+                                throw error
+                            }
                             self.pendingSelection = range
                             if let (getter, error) = self.failGetterAfterSelection {
                                 self.fail(getter, with: error)
@@ -688,6 +868,10 @@ struct AsyncAXTypingTests {
                             self.selection.location == range.location && self.selection.length == range.length
                         })
                 })
+        }
+
+        func replace(_ text: String) async throws -> FocusedTextKeyDispatch {
+            try await BackgroundInputDriver.replaceFocusedText(with: text, exactWindow: nil, access: self.access)
         }
 
         func run(actions: [TypeAction]? = nil) async throws -> TypeService.TypeActionExecutionSummary {

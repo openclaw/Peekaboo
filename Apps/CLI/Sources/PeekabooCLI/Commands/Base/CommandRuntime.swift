@@ -109,6 +109,7 @@ struct CommandRuntimeOptions {
     /// Pixel-focus typing is host-atomic and must not fall back to ordinary targeted typing.
     var requiresExactWindowPixelFocusTyping = false
     var requiresTargetedScroll = false
+    var requiresBackgroundCoordinateScroll = false
     var requiresPostEventPermission = false
     var requiresAccessibilityPermission = false
     var requiresLongPressClick = false
