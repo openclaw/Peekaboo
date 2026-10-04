@@ -311,9 +311,7 @@ enum RuntimeHostResolver {
         let candidatePlan = context.candidatePlan
         let explicitSocket = candidatePlan.explicitSocket
         let daemonSocketPath = candidatePlan.daemonSocketPath
-        let runtimeBuildIdentity = candidatePlan.runtimeBuildIdentity
         let buildScopedDaemonSocketPath = candidatePlan.buildScopedDaemonSocketPath
-        let snapshotInvalidationRemoteSocketPaths = context.snapshotInvalidationRemoteSocketPaths
 
         // Stateful implicit commands share in-memory snapshots across invocations. Establish
         // the exact daemon generation for this executable before considering compatible older
@@ -324,6 +322,8 @@ enum RuntimeHostResolver {
             buildScopedDaemonSocketPath: buildScopedDaemonSocketPath
         )
         var permissionRejections: [String] = []
+        var candidateRejections: [RemoteCandidateEvaluation] = []
+        let recordRejection: (RemoteCandidateEvaluation) -> Void = { candidateRejections.append($0) }
         let ownerAwareCandidates = explicitSocket == nil
             ? self.screenCaptureKitOwnerCandidates(from: candidatePlan.candidates)
             : candidatePlan.candidates
@@ -390,7 +390,8 @@ enum RuntimeHostResolver {
             if let resolved = try await context.resolveRemoteServices(
                 candidates: [exactCandidate],
                 requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
-                permissionRejections: &permissionRejections
+                permissionRejections: &permissionRejections,
+                recordRejection: recordRejection
             ) {
                 return resolved
             }
@@ -411,7 +412,8 @@ enum RuntimeHostResolver {
                        requiresValidatedHistoricalDaemon: false
                    )],
                    requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
-                   permissionRejections: &permissionRejections
+                   permissionRejections: &permissionRejections,
+                   recordRejection: recordRejection
                ) {
                 return resolved
             }
@@ -419,7 +421,8 @@ enum RuntimeHostResolver {
 
         if let resolved = try await context.resolveRemoteServices(
             candidates: candidatePlan.candidates,
-            permissionRejections: &permissionRejections
+            permissionRejections: &permissionRejections,
+            recordRejection: recordRejection
         ) {
             return resolved
         }
@@ -442,7 +445,7 @@ enum RuntimeHostResolver {
             let autoStartSocketPath = DaemonLaunchPolicy.autoStartSocketPath(
                 daemonSocketPath: daemonSocketPath,
                 defaultSocketWasOccupiedAndRejected: rejectedDefaultSocketOccupant,
-                runtimeBuildIdentity: runtimeBuildIdentity
+                runtimeBuildIdentity: candidatePlan.runtimeBuildIdentity
             )
             if let resolvedDaemonSocket = try await DaemonLaunchPolicy.startOnDemandDaemon(
                 socketPath: autoStartSocketPath,
@@ -455,7 +458,8 @@ enum RuntimeHostResolver {
                         requiredHostKind: nil,
                         requiresValidatedHistoricalDaemon: false
                     )],
-                    permissionRejections: &permissionRejections
+                    permissionRejections: &permissionRejections,
+                    recordRejection: recordRejection
                 ) {
                 return resolved
             }
@@ -463,36 +467,34 @@ enum RuntimeHostResolver {
 
         try Task.checkCancellation()
         return self.localFallbackResolution(
-            options: options,
-            explicitSocket: explicitSocket,
-            snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+            context: context,
             permissionRejections: permissionRejections,
-            makeLocalServices: context.makeLocalServices
+            candidateRejections: candidateRejections
         )
     }
 
     private static func localFallbackResolution(
-        options: CommandRuntimeOptions,
-        explicitSocket: String?,
-        snapshotInvalidationRemoteSocketPaths: [String],
+        context: RemoteResolutionContext,
         permissionRejections: [String],
-        makeLocalServices: LocalServiceFactory
+        candidateRejections: [RemoteCandidateEvaluation]
     ) -> Resolution {
+        let options = context.options
         // Name the hosts skipped for missing TCC permissions so a fallback is explainable
         // instead of silently selecting a permission-less bridge host.
         let rejectionSummary = permissionRejections.isEmpty
             ? ""
             : "; rejected " + permissionRejections.joined(separator: "; ")
         return Resolution(
-            services: makeLocalServices(options),
+            services: context.makeLocalServices(options),
             hostDescription: "local (in-process fallback\(rejectionSummary))",
             selectedRemoteSocketPath: nil,
             selectedRemoteHostProcessIdentifier: nil,
-            snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+            snapshotInvalidationRemoteSocketPaths: context.snapshotInvalidationRemoteSocketPaths,
             applicationRelaunchAllowed: !options.requiresApplicationRelaunch,
             requiredHostFailure: self.requiredHostFailure(
-                explicitSocket: explicitSocket,
-                options: options
+                explicitSocket: context.candidatePlan.explicitSocket,
+                options: options,
+                rejections: candidateRejections
             )
         )
     }
@@ -501,7 +503,22 @@ enum RuntimeHostResolver {
 // MARK: - Routing policy and remote service construction
 
 extension RuntimeHostResolver {
-    static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
+    static func requiredHostFailure(
+        explicitSocket: String?,
+        options: CommandRuntimeOptions,
+        rejections: [RemoteCandidateEvaluation] = []
+    ) -> String? {
+        // This nil/non-nil boundary also selects the existing error envelope and local fallback policy.
+        guard let fallback = self.unresolvedRequiredHostFailure(explicitSocket: explicitSocket, options: options) else {
+            return nil
+        }
+        return self.observedRequiredHostFailure(explicitSocket: explicitSocket, rejections: rejections) ?? fallback
+    }
+
+    private static func unresolvedRequiredHostFailure(
+        explicitSocket: String?,
+        options: CommandRuntimeOptions
+    ) -> String? {
         if options.requiresExactWindowPixelFocusTyping {
             return "No compatible Bridge host advertises atomic exact-window pixel-focus typing. " +
                 "Update and relaunch Peekaboo, then observe the exact target again before retrying."
@@ -810,7 +827,8 @@ extension RuntimeHostResolver {
             RuntimeHostResolver.remoteServices(client: $0, handshake: $1, options: $2)
         },
         handshake: ScreenCaptureKitHandshake? = nil,
-        handshakeCache: RemoteHandshakeCache? = nil
+        handshakeCache: RemoteHandshakeCache? = nil,
+        recordRejection: (RemoteCandidateEvaluation) -> Void = { _ in }
     )
         async throws -> Resolution? {
         for candidate in candidates {
@@ -843,14 +861,15 @@ extension RuntimeHostResolver {
                    let diagnostic = BridgeCapabilityPolicy.screenCaptureKitReadinessRefusal(for: handshakeResponse) {
                     throw self.readinessRefusal(diagnostic, handshake: handshakeResponse, socketPath: socketPath)
                 }
-                let validation = await self.validateRemoteCandidate(
+                let evaluation = await self.evaluateRemoteCandidate(
                     candidate,
                     handshake: handshakeResponse,
                     options: options,
                     requiredProtocolVersion: requiredProtocolVersion
                 )
                 try Task.checkCancellation()
-                guard let validation else {
+                guard let validation = evaluation.validation else {
+                    recordRejection(evaluation)
                     let missingPermissions = BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
                         for: handshakeResponse,
                         options: options
@@ -1048,11 +1067,7 @@ private func explicitSnapshotPublicationFailure(
 ) -> String? {
     guard explicitSocket != nil, options.requiresExplicitSnapshotPublication else { return nil }
     if options.requiresProducerBoundSnapshotReferences {
-        let version = PeekabooBridgeConstants.producerBoundSnapshotReferencesVersion
-        return "This command requires authenticated, producer-bound snapshots " +
-            "(Bridge protocol \(version.major).\(version.minor) or newer). Use a current signed Peekaboo host " +
-            "on its standard socket, or remove --bridge-socket for automatic host selection. " +
-            "Custom sockets without a host-signing policy cannot negotiate authenticated snapshots."
+        return producerBoundSnapshotFailure(explicitSocket: explicitSocket)
     }
     return "The explicitly selected Bridge host cannot publish an explicit-reference-only coordinate " +
         "receipt; protocol 1.26 is required. Update and relaunch Peekaboo on that host, or remove " +
