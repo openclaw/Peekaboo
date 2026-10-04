@@ -47,9 +47,18 @@ enum MCPDesktopActionSnapshotInvalidator {
 }
 
 enum MCPElementActionSnapshotAuthority {
-    static func expectedTargetIdentity(_ snapshot: UISnapshot) throws -> DesktopTargetIdentity {
+    static func expectedTargetIdentity(
+        _ snapshot: UISnapshot,
+        requireExactWindow: Bool = false) throws -> DesktopTargetIdentity
+    {
         do {
             let identity = try snapshot.targetReceipt().requireIdentity()
+            if requireExactWindow {
+                guard let exactWindow = identity.target.exactWindow else {
+                    throw PeekabooError.invalidInput("Text selection requires an exact-window snapshot")
+                }
+                return DesktopTargetIdentity(exactWindow: exactWindow)
+            }
             return try DesktopTargetIdentity(processIdentity: identity.processIdentity)
         } catch {
             throw DesktopActionFailure.preDispatchRefusal(

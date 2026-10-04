@@ -875,14 +875,33 @@ extension TargetedClickServiceProtocol {
 /// Optional capability for automation services that can invoke accessibility actions directly.
 @MainActor
 public protocol ElementActionAutomationServiceProtocol: UIAutomationServiceProtocol {
+    var supportsTextSelection: Bool { get }
     var supportsSetValueResultTargetBinding: Bool { get }
     var supportsProcessGenerationBoundElementMutations: Bool { get }
 
     func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws -> ElementActionResult
     func performAction(target: String, actionName: String, snapshotId: String?) async throws -> ElementActionResult
+    func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
 }
 
 extension ElementActionAutomationServiceProtocol {
+    public var supportsTextSelection: Bool {
+        false
+    }
+
+    public func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .runtimeIncompatible,
+            message: "This automation host does not support receipted text selection.")
+    }
+
     public var supportsSetValueResultTargetBinding: Bool {
         false
     }

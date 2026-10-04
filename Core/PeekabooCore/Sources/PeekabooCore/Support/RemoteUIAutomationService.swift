@@ -49,6 +49,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsExactWindowHeldPointerLifecycle: Bool
     public let supportsExactWindowDrag: Bool
     public let supportsSetValueResultTargetBinding: Bool
+    public let supportsTextSelection: Bool
 
     public required init(
         client: PeekabooBridgeClient,
@@ -83,7 +84,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         foregroundModifierClickUnavailableReason: String? = nil,
         supportsExactWindowHeldPointerLifecycle: Bool = false,
         supportsExactWindowDrag: Bool = false,
-        supportsSetValueResultTargetBinding: Bool = false)
+        supportsSetValueResultTargetBinding: Bool = false,
+        supportsTextSelection: Bool = false)
     {
         self.client = client
         self.supportsTargetedHotkeys = supportsTargetedHotkeys
@@ -120,6 +122,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsExactWindowHeldPointerLifecycle = supportsExactWindowHeldPointerLifecycle
         self.supportsExactWindowDrag = supportsExactWindowDrag
         self.supportsSetValueResultTargetBinding = supportsSetValueResultTargetBinding
+        self.supportsTextSelection = supportsTextSelection
     }
 
     public func detectElements(
@@ -721,6 +724,18 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
 @MainActor
 public final class RemoteElementActionUIAutomationService: RemoteUIAutomationService,
 ElementActionAutomationServiceProtocol {
+    public func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        do {
+            return try await self.client.selectText(target: target, request: request, snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
+    }
+
     public var supportsProcessGenerationBoundElementMutations: Bool {
         true
     }

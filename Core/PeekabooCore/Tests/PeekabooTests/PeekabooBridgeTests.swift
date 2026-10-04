@@ -2493,6 +2493,31 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
     ElementActionAutomationServiceProtocol, TargetedFocusedElementServiceProtocol,
     ExactWindowTargetedKeyboardServiceProtocol
 {
+    var supportsTextSelection = false
+    var textSelectionCalls = 0
+    var textSelectionOverride: TextSelectionResult?
+
+    func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        self.textSelectionCalls += 1
+        if let elementActionError {
+            throw elementActionError
+        }
+        return try UIAutomationActionResult(
+            payload: .init(
+                target: target,
+                actionName: "AXSelectedTextRange",
+                anchorPoint: nil,
+                textSelection: self.textSelectionOverride ?? request.resolve(in: request.text)),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                unitCount: .one),
+            targetIdentity: self.uiAutomationOutcomeTargetIdentity)
+    }
+
     var supportsSetValueResultTargetBinding = true
     var supportsProcessGenerationBoundElementMutations = true
     var dragError: (any Error)?

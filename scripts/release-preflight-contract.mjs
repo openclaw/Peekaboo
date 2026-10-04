@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
-export const EXPECTED_ROOT_COMMAND_COUNT = 33;
+export const EXPECTED_ROOT_COMMAND_COUNT = 34;
 
 export const MIGRATION_ADVISOR_PATH =
   'Apps/CLI/Sources/PeekabooCLI/CLI/CommanderMigrationAdvisor.swift';

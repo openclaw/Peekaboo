@@ -978,6 +978,7 @@ extension RuntimeHostResolver {
             supportsElementActions: BridgeCapabilityPolicy.supportsElementActions(for: handshake),
             supportsSetValueResultTargetBinding:
             BridgeCapabilityPolicy.supportsElementAction(.setValue, for: handshake),
+            supportsTextSelection: BridgeCapabilityPolicy.supportsElementAction(.selectText, for: handshake),
             supportsDesktopObservation: observationCapabilities.desktopObservation,
             supportsDesktopObservationOCR: observationCapabilities.desktopObservationOCR,
             supportsDesktopObservationCaptureEngine: observationCapabilities.desktopObservationCaptureEngine,

@@ -264,7 +264,13 @@ extension PeekabooBridgeServer {
         {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.setValueResultTargetBinding)
         }
-        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .performAction]
+        if !supportsAttestedOperationReceipts || negotiated < PeekabooBridgeConstants.textSelectionVersion ||
+            (self.services.automation as? any ElementActionAutomationServiceProtocol)?.supportsTextSelection != true ||
+            !advertisedOps.contains(.selectText)
+        {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.textSelection)
+        }
+        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .selectText, .performAction]
         if !supportsAttestedOperationReceipts ||
             negotiated < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
             !(self.services.automation is any UIAutomationActionOutcomeProviding) ||
@@ -474,6 +480,7 @@ extension PeekabooBridgeServer {
             negotiated < PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion
         {
             compatible.remove(.setValue)
+            compatible.remove(.selectText)
             compatible.remove(.performAction)
         }
         if !usesAttestedOperationReceipts {
@@ -520,14 +527,18 @@ extension PeekabooBridgeServer {
                 !Self.supportsProcessGenerationBoundElementMutationProvider(self.services.automation))
         {
             operations.remove(.setValue)
+            operations.remove(.selectText)
             operations.remove(.performAction)
         }
         operations = Set(operations.filter {
-            $0 != .setValue ||
-                self.supportedVersions.upperBound <
-                PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
+            ($0 != .selectText ||
                 (self.services.automation as? any ElementActionAutomationServiceProtocol)?
-                .supportsSetValueResultTargetBinding == true
+                .supportsTextSelection == true) &&
+                ($0 != .setValue ||
+                    self.supportedVersions.upperBound <
+                    PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion ||
+                    (self.services.automation as? any ElementActionAutomationServiceProtocol)?
+                    .supportsSetValueResultTargetBinding == true)
         })
         if self.services.automation as? any TargetedFocusedElementServiceProtocol == nil {
             operations.remove(.getFocusedElement)

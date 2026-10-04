@@ -40,6 +40,8 @@ public struct AppUIInputPolicy: Codable, Equatable, Sendable {
             self.hotkey ?? self.defaultStrategy
         case .setValue:
             self.setValue ?? self.defaultStrategy
+        case .selectText:
+            .actionOnly
         case .performAction:
             self.performAction ?? self.defaultStrategy
         }
@@ -159,6 +161,8 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
             return self.hotkey ?? self.defaultStrategy
         case .setValue:
             return self.setValue ?? self.defaultStrategy
+        case .selectText:
+            return .actionOnly
         case .performAction:
             return self.performAction ?? self.defaultStrategy
         }

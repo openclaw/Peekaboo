@@ -113,6 +113,7 @@ public enum VerifiableActionType: String, Sendable, Hashable, CaseIterable {
     case action
     case scroll
     case setValue = "set_value"
+    case selectText = "select_text"
     case space
     case type
     case window

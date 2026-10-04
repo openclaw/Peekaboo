@@ -69,7 +69,7 @@ public enum ToolRegistry {
             .vision
         case "inspect_ui", "verify_state":
             .element
-        case "click", "type", "press", "scroll", "drag", "move", "action", "set_value", "paste":
+        case "click", "type", "press", "scroll", "drag", "move", "action", "set_value", "select_text", "paste":
             .automation
         case "window", "space":
             .window

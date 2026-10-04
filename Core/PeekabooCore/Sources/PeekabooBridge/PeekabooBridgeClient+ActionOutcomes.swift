@@ -411,6 +411,33 @@ extension PeekabooBridgeClient {
         }
     }
 
+    public func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        let result: UIAutomationActionResult<ElementActionResult> = try await self.actionResult(
+            for: .selectText(.init(target: target, request: request, snapshotId: snapshotId)),
+            expectedResponse: "selectText",
+            requiresTargetIdentity: true,
+            operationReceiptRequirement: .required)
+        { response in
+            guard case let .elementActionResult(result) = response else { return nil }
+            return result
+        }
+        guard result.targetIdentity?.exactWindow != nil else {
+            throw DesktopActionFailure.indeterminate(
+                route: .bridge,
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount ?? .one,
+                message: "The selection host returned no exact-window target receipt.",
+                hint: "Observe the target before retrying.")
+                .attributed(to: result.targetIdentity?.actionTargetReceipt)
+        }
+        return result
+    }
+
     public func performActionWithOutcome(
         target: String,
         actionName: String,

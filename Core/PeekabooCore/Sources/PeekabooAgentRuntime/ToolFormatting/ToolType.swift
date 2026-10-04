@@ -24,6 +24,7 @@ public enum ToolType: String, CaseIterable, Sendable {
     case click
     case type
     case setValue = "set_value"
+    case selectText = "select_text"
     case action
     case press
     case drag
@@ -125,7 +126,7 @@ public enum ToolType: String, CaseIterable, Sendable {
         switch self {
         case .see, .image, .capture, .screenshot, .windowCapture, .analyze:
             .vision
-        case .click, .type, .setValue, .action, .press, .drag, .move, .scroll, .paste,
+        case .click, .type, .setValue, .selectText, .action, .press, .drag, .move, .scroll, .paste,
              .performAction, .hotkey, .swipe:
             .ui
         case .app, .launchApp, .listApps, .quitApp, .focusApp, .hideApp, .unhideApp, .switchApp:
@@ -182,6 +183,7 @@ public enum ToolType: String, CaseIterable, Sendable {
         case .image: "Capture Image"
         case .capture: "Capture Activity"
         case .setValue: "Set Value"
+        case .selectText: "Select Text"
         case .action: "Action"
         case .performAction: "Perform Action"
         case .paste: "Paste"

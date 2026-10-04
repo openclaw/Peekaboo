@@ -106,6 +106,7 @@ public enum MCPToolCatalog {
             ClickTool(context: context),
             TypeTool(context: context),
             SetValueTool(context: context),
+            SelectTextTool(context: context),
             ActionTool(context: context),
             ScrollTool(context: context),
             PressTool(context: context),

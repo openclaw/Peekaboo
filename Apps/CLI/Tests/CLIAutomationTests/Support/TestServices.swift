@@ -113,6 +113,18 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 @MainActor
 class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
 ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol {
+    var supportsTextSelection: Bool {
+        false
+    }
+
+    func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?
+    ) async throws -> UIAutomationActionResult<ElementActionResult> {
+        throw DesktopActionFailure.preDispatchRefusal(reason: .runtimeIncompatible, message: "Selection unsupported")
+    }
+
     var supportsSetValueResultTargetBinding: Bool {
         false
     }

@@ -541,6 +541,7 @@ enum BridgeCapabilityPolicy {
 
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         self.supportsElementAction(.setValue, for: handshake) ||
+            self.supportsElementAction(.selectText, for: handshake) ||
             self.supportsElementAction(.performAction, for: handshake)
     }
 
@@ -548,7 +549,12 @@ enum BridgeCapabilityPolicy {
         _ operation: PeekabooBridgeOperation,
         for handshake: PeekabooBridgeHandshakeResponse
     ) -> Bool {
-        guard operation == .setValue || operation == .performAction else { return false }
+        guard operation == .setValue || operation == .selectText || operation == .performAction else { return false }
+        if operation == .selectText,
+           handshake.negotiatedVersion < PeekabooBridgeConstants.textSelectionVersion ||
+           handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.textSelection) != true {
+            return false
+        }
         return handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
             handshake.hostCapabilities?.contains(

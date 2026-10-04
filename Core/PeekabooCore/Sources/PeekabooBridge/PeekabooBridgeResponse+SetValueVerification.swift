@@ -5,6 +5,9 @@ extension PeekabooBridgeResponse {
     func projectingSetValueVerification(offered: Bool, request: PeekabooBridgeRequest) throws -> Self {
         switch self {
         case let .elementActionResult(result):
+            if case .selectText = request.unwrappedOperationRequest {
+                return self
+            }
             var newValue = result.newValue
             if case .setValue = request.unwrappedOperationRequest, let witness = result.valueVerification {
                 // Validate before stripping: otherwise a forged legacy spelling could bypass typed request binding.

@@ -187,6 +187,7 @@ struct MCPToolRegistryIntegrationTests {
         #expect(names.contains("clipboard"))
         #expect(names.contains("paste"))
         #expect(names.contains("set_value"))
+        #expect(names.contains("select_text"))
         #expect(names.contains("action"))
         #expect(names.contains("press"))
         #expect(!names.contains("hotkey"))

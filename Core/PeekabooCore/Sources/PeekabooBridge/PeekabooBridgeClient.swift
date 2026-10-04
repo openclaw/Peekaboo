@@ -91,6 +91,10 @@ public actor PeekabooBridgeClient {
         self.inputCapabilities.setValueResultTargetBindingEnabled
     }
 
+    var textSelectionEnabled: Bool {
+        self.inputCapabilities.textSelectionEnabled
+    }
+
     var processGenerationBoundElementMutationsEnabled: Bool {
         self.inputCapabilities.processGenerationBoundElementMutationsEnabled
     }
@@ -916,6 +920,10 @@ public actor PeekabooBridgeClient {
                 processGenerationObservationEnabled: Self.supportsProcessGenerationObservation(handshake),
                 certificationProducerAttestationEnabled: Self.supportsCertificationProducerAttestation(handshake),
                 setValueResultTargetBindingEnabled: Self.supportsSetValueResultTargetBinding(handshake),
+                textSelectionEnabled: handshake.negotiatedVersion >= PeekabooBridgeConstants.textSelectionVersion &&
+                    handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.textSelection) == true &&
+                    handshake.supportedOperations.contains(.selectText) &&
+                    (handshake.enabledOperations?.contains(.selectText) ?? true),
                 processGenerationBoundElementMutationsEnabled:
                 Self.supportsProcessGenerationBoundElementMutations(handshake),
                 foregroundModifierClickSnapshotLeaseEnabled:
@@ -1527,6 +1535,7 @@ private struct PeekabooBridgeClientInputCapabilities: Sendable {
     var processGenerationObservationEnabled = false
     var certificationProducerAttestationEnabled = false
     var setValueResultTargetBindingEnabled = false
+    var textSelectionEnabled = false
     var processGenerationBoundElementMutationsEnabled = false
     var foregroundModifierClickSnapshotLeaseEnabled = false
     var nativeBrowserConnectionBindingEnabled = false

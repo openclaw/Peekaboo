@@ -610,6 +610,10 @@ extension PeekabooAgentService {
         self.makeAgentTool(from: SetValueTool(context: self.makeToolContext()))
     }
 
+    public func createSelectTextTool() -> AgentTool {
+        self.makeAgentTool(from: SelectTextTool(context: self.makeToolContext()))
+    }
+
     public func createActionTool() -> AgentTool {
         self.makeAgentTool(from: ActionTool(context: self.makeToolContext()))
     }

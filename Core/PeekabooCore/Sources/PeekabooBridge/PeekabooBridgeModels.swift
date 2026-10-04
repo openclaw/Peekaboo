@@ -68,6 +68,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case exactWindowPixelFocusType
     case foregroundModifierClick
     case setValue
+    case selectText
     case performAction
     case scroll
     case targetedScroll
@@ -171,6 +172,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         with version: PeekabooBridgeProtocolVersion) -> Set<Self>
     {
         var compatible = operations
+        if version < PeekabooBridgeConstants.textSelectionVersion {
+            compatible.remove(.selectText)
+        }
         if version < PeekabooBridgeProtocolVersion(major: 1, minor: 1) {
             compatible.remove(.targetedHotkey)
         }
@@ -412,6 +416,7 @@ public enum PeekabooBridgeHostCapability {
     public static let processGenerationObservation = "processGenerationObservation"
     public static let certificationProducerAttestation = "certificationProducerAttestation"
     public static let setValueResultTargetBinding = "setValueResultTargetBinding"
+    public static let textSelection = "textSelection"
     public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
     public static let requestPinnedExactWindowScrollReceipt = "requestPinnedExactWindowScrollReceipt"
     public static let compositeTypeDelivery = "compositeTypeDelivery"

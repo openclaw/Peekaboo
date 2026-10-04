@@ -54,6 +54,7 @@ extension PeekabooBridgeOperation {
         .type,
         .typeActions,
         .setValue,
+        .selectText,
         .performAction,
         .scroll,
         .targetedScroll,

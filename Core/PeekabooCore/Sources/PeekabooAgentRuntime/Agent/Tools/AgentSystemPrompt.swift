@@ -206,6 +206,8 @@ public struct AgentSystemPrompt {
         - Prefer element-targeted interactions over coordinate clicks when an element ID is available.
         - Prefer `set_value` for form fields when replacing the whole value; use `type` when observable keystrokes,
           autocomplete, IME behavior, or key actions matter.
+        - Use `select_text` to select literal text or place a caret before/after it without typing, focusing, or
+          clipboard changes. Disambiguate repeated text with adjacent prefix/suffix context and use a fresh snapshot.
         - Verify each action succeeds before moving on.
         - Distinguish effects verified by later observations from the original recorded action outcomes. A later
           observation does not change a `dispatched_unverified` receipt; never claim all outcomes became confirmed.

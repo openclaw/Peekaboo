@@ -119,7 +119,7 @@ extension PeekabooBridgeRequest {
 
     var requiresProcessGenerationBoundElementMutations: Bool {
         switch self.unwrappedOperationRequest.operation {
-        case .setValue, .performAction:
+        case .setValue, .selectText, .performAction:
             true
         default:
             false

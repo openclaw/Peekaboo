@@ -15,13 +15,15 @@ public enum UIInputStrategy: String, Codable, CaseIterable, Equatable, Sendable 
     case synthOnly
 }
 
-/// UI input verbs that can choose an action/synthesis delivery strategy.
+/// Semantic UI input verbs recorded by the desktop operation planner.
 public enum UIInputVerb: String, Codable, CaseIterable, Equatable, Sendable {
     case click
     case scroll
     case type
     case hotkey
     case setValue
+    /// Native range selection has no synthesis route, regardless of delivery preferences.
+    case selectText
     case performAction
 }
 

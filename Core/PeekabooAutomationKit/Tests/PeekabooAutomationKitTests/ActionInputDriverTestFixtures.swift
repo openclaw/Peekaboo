@@ -307,6 +307,19 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
     var setValues: [UIElementValue] = []
     var setFocusedValues: [Bool] = []
     var setSelectedValues: [Bool] = []
+    var isTextSelectionSettable = false
+    var textSelectionRange: TextSelectionRange?
+    var selectionWrites: [TextSelectionRange] = []
+    var selectionWrite: ((TextSelectionRange) throws -> Bool)?
+
+    func setAutomationTextSelection(_ range: TextSelectionRange) throws -> Bool {
+        self.selectionWrites.append(range)
+        if let selectionWrite {
+            return try selectionWrite(range)
+        }
+        self.textSelectionRange = range
+        return true
+    }
 
     var automationChildren: [any AutomationElementRepresenting] {
         self.children

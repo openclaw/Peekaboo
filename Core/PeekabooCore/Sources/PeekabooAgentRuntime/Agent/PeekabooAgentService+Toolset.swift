@@ -151,6 +151,7 @@ extension PeekabooAgentService {
         agentTools.append(createClickTool())
         agentTools.append(createTypeTool())
         agentTools.append(createSetValueTool())
+        agentTools.append(createSelectTextTool())
         agentTools.append(createActionTool())
         agentTools.append(createScrollTool())
         agentTools.append(createPressTool())

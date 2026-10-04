@@ -550,6 +550,7 @@ public struct ElementActionResult: Sendable, Codable, Equatable {
     public let oldValue: String?
     public let newValue: String?
     public let valueVerification: ElementValueVerification?
+    public let textSelection: TextSelectionResult?
 
     public init(
         target: String,
@@ -557,7 +558,8 @@ public struct ElementActionResult: Sendable, Codable, Equatable {
         anchorPoint: CGPoint?,
         oldValue: String? = nil,
         newValue: String? = nil,
-        valueVerification: ElementValueVerification? = nil)
+        valueVerification: ElementValueVerification? = nil,
+        textSelection: TextSelectionResult? = nil)
     {
         self.target = target
         self.actionName = actionName
@@ -565,6 +567,7 @@ public struct ElementActionResult: Sendable, Codable, Equatable {
         self.oldValue = oldValue
         self.newValue = newValue
         self.valueVerification = valueVerification
+        self.textSelection = textSelection
     }
 }
 

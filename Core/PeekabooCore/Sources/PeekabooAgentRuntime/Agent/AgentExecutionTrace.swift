@@ -294,7 +294,7 @@ private enum AgentExecutionTraceBuilder {
             .lowercased()
         let mutatingTools: Set = [
             "action", "app", "click", "dialog", "dock", "drag", "menu", "move", "paste", "press",
-            "scroll", "set_value", "space", "type", "window",
+            "scroll", "set_value", "select_text", "space", "type", "window",
         ]
         if name == "capture" || name == "image" {
             let focus = call.arguments["capture_focus"]?.stringValue?

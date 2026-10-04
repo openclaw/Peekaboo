@@ -9,6 +9,27 @@ import Testing
 
 @MainActor
 struct AgentExecutionTraceTests {
+    @Test
+    func `selection without dispatch evidence is a possible mutation in traces`() throws {
+        let call = AgentToolCall(id: "selection", name: "select_text", arguments: [:])
+        let result = AgentExecutionResult(
+            content: "",
+            messages: [
+                ModelMessage(role: .assistant, content: [.toolCall(call)]),
+                ModelMessage(role: .tool, content: [.toolResult(AgentToolResult(
+                    toolCallId: call.id,
+                    result: AnyAgentToolValue(object: ["success": AnyAgentToolValue(bool: true)]),
+                    isError: false))]),
+            ],
+            metadata: AgentMetadata(
+                executionTime: 0,
+                toolCallCount: 1,
+                modelName: "test",
+                startTime: Date(),
+                endTime: Date()))
+        #expect(try #require(result.executionTrace().entries.first).mutationDispatch == .possiblyDispatched)
+    }
+
     init() throws {
         try AuthorityTestSupport.prepare()
     }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add background `select-text` / MCP `select_text` for literal, context-disambiguated selections and caret placement, including unfocused native fields, with UTF-16 source-drift checks, unchanged-text verification, and protocol-1.42 receipts without keyboard or clipboard fallback.
 - Refresh Playground testing guidance for v4 inventories, signed fixtures, fresh exact-window snapshots, and background outcome verification without input replay.
 
 ## 4.8.0 - 2026-10-03

@@ -9,6 +9,10 @@ import Foundation
 public class ElementToolFormatter: BaseToolFormatter {
     override public func formatCompactSummary(arguments: [String: Any]) -> String {
         switch toolType {
+        case .selectText:
+            let mode = arguments["selection_type"] as? String ?? "text"
+            let target = arguments["on"] as? String ?? "element"
+            return "\(mode) on \(target)"
         case .setValue:
             let target = arguments["on"] as? String ?? "element"
             if let value = arguments["value"] {

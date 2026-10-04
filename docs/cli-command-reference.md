@@ -7,7 +7,7 @@ read_when:
 
 # CLI Command Reference
 
-This source-tree reference covers all 33 root commands in the upcoming v4 registry and is checked against the built binary's `--help` output. Use `peekaboo <command> --help` for every option and `peekaboo tools` for the separate MCP/agent tool catalog.
+This source-tree reference covers all 34 root commands in the upcoming v4 registry and is checked against the built binary's `--help` output. Use `peekaboo <command> --help` for every option and `peekaboo tools` for the separate MCP/agent tool catalog.
 
 ## Core commands
 
@@ -35,6 +35,7 @@ This source-tree reference covers all 33 root commands in the upcoming v4 regist
 | [`paste`](commands/paste.md) | Paste current clipboard content or atomically set, paste, and restore. |
 | [`press`](commands/press.md) | Press xdotool-style chords or chord sequences. |
 | [`scroll`](commands/scroll.md) | Scroll by direction, optionally on an element. |
+| [`select-text`](commands/select-text.md) | Select literal text or place a caret before/after it without focusing or typing. |
 | [`set-value`](commands/set-value.md) | Set an accessibility element value directly. |
 | [`type`](commands/type.md) | Type text; standalone keys and chords belong to `press`. |
 
@@ -74,4 +75,4 @@ Pass `--json` (or the Commander-provided `--json-output` alias) for one stable r
 
 Once the command path identifies an action request, its result also includes a top-level `effect`: `confirmed` when existing AX/readback verification proves the result, `partial` for a partly completed multi-step action, `unverifiable` when input was dispatched without an application-level signal, `suspected_noop` when a post-check found no change, or `refused` when a safety gate prevented dispatch. Commander parse/bind failures for recognized action commands report `effect: refused`; read-only commands omit `effect`. MCP action tools expose the same canonical fields in result metadata.
 
-When an interaction, window mutation, or application lifecycle command returns a native action receipt, JSON also includes a top-level `outcome` object. This includes click, type, scroll, `press`, `action`, `set-value`, background window geometry/lifecycle operations, and application launch, relaunch, quit, hide, unhide, focus, and switch. The object is the validated canonical projection: state, route, delivery, evidence, dispatch state/count, retry safety, escalation, refusal reason, and the derived `mutation_dispatched`, `retry_safe`, and `requires_fresh_observation` compatibility fields. The legacy top-level `effect` and failure safety fields derive from that same object. Read-only commands, older hosts, and actions without native receipts omit `outcome` rather than fabricating a receipt.
+When an interaction, window mutation, or application lifecycle command returns a native action receipt, JSON also includes a top-level `outcome` object. This includes click, type, scroll, `press`, `action`, `set-value`, `select-text`, background window geometry/lifecycle operations, and application launch, relaunch, quit, hide, unhide, focus, and switch. The object is the validated canonical projection: state, route, delivery, evidence, dispatch state/count, retry safety, escalation, refusal reason, and the derived `mutation_dispatched`, `retry_safe`, and `requires_fresh_observation` compatibility fields. The legacy top-level `effect` and failure safety fields derive from that same object. Read-only commands, older hosts, and actions without native receipts omit `outcome` rather than fabricating a receipt.

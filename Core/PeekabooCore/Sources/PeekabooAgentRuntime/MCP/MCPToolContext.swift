@@ -869,7 +869,7 @@ extension MCPToolContext {
         }
 
         guard self.executionPolicy == .backgroundOnly else { return permitted(arguments) }
-        let usesSnapshotTarget = ["action", "click", "scroll", "set_value"].contains(toolName) ||
+        let usesSnapshotTarget = ["action", "click", "scroll", "set_value", "select_text"].contains(toolName) ||
             (["type", "press", "paste"].contains(toolName) &&
                 (arguments.getValue(for: "on") != nil || arguments.getValue(for: "snapshot") != nil))
         guard usesSnapshotTarget else {
@@ -1323,7 +1323,7 @@ extension MCPToolContext {
         else { return nil }
 
         let supported: Bool? = switch toolName {
-        case "click", "type", "set_value", "action", "scroll", "press", "paste":
+        case "click", "type", "set_value", "select_text", "action", "scroll", "press", "paste":
             self.automation is any UIAutomationActionOutcomeProviding
         case "see", "inspect_ui":
             self.automation is any UIAutomationObservationActionResultProviding

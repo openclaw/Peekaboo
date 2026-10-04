@@ -186,6 +186,9 @@ public final class ActionVerifier {
             let value = action.arguments["value"] ?? "the requested value"
             return "The target element should now have the value '\(value)'"
 
+        case "select_text":
+            return "The target's UTF-16 selection or caret should match the requested literal text, with unchanged text"
+
         case "action":
             let actionName = action.arguments["action"] ?? "requested accessibility action"
             return "The accessibility action '\(actionName)' should have completed with the expected UI change"

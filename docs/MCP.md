@@ -33,6 +33,7 @@ Action-oriented UI tools include:
 
 - `click`, `scroll`, `type`, and `press` for the background-safe interaction surface.
 - `set_value` for direct accessibility value mutation on settable fields and controls.
+- `select_text` for literal text selection or caret placement without changing the text value.
 - `action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
 
 Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and `window` with
@@ -47,7 +48,7 @@ duplicate `server_status` view are not exposed. `menu` supports only application
 status items use the dedicated menubar surface. MCP retains `sleep` because an MCP client may not have shell access.
 
 Call `see` first and pass actionable element IDs through these tools when possible. Element-targeted calls preserve action-first routing; coordinate calls always use the synthetic path. OCR-only text is semantic evidence, not an element-action target.
-The same action tools are available to CLI users as `peekaboo set-value` and `peekaboo action`.
+The same action tools are available to CLI users as `peekaboo set-value`, `peekaboo select-text`, and `peekaboo action`.
 `set_value` and `action` are exposed only when their resolved input strategy enables action invocation
 (`actionFirst` or `actionOnly`). They are hidden under `synthFirst` or `synthOnly`, because these operations do not
 have a synthetic-input equivalent.
@@ -252,6 +253,12 @@ means a caret and absence means unknown. This is independent of `is_selected`/`A
 verification predicate. Both `see` and `inspect_ui` also include a short `Text selection <id>: UTF-16 location …,
 length …` line in their normal text output when available, including native Agent calls without `include_elements`.
 
+Use `select_text` with `on`, nonempty literal `text`, optional adjacent `prefix`/`suffix`, and
+`selection_type: text|cursor_before|cursor_after` to mutate a selection. It requires a fresh exact-window snapshot
+and a settable native selection, not a writable value or prior field focus. It never focuses, types, or uses the
+clipboard. Missing/ambiguous text refuses; accepted but unverified writes require a new observation before retry.
+See [select-text](commands/select-text.md) for native capability limits and UTF-16 result fields.
+
 This optional probe reads no selected-text content, performs no focus change, and grants no input authority. The
 same native receiver must retain identity, focus, and readable nonsecure metadata across the range read. Cached,
 partial, truncated, ambiguous, secure, or unreadable observations omit it. The probe shares at most 50 ms and one
@@ -308,7 +315,7 @@ The `click` and `paste` tools publish flat object schemas without root-level `on
 can forward them to providers such as Anthropic without schema rewriting. Peekaboo enforces cross-field constraints
 at runtime before dispatch; the flat catalog does not relax target, receipt, or foreground-consent requirements.
 
-Snapshot-backed `click`, `action`, `set_value`, `scroll`, `type`, and `press` reserve mutation authority in the snapshot's
+Snapshot-backed `click`, `action`, `set_value`, `select_text`, `scroll`, `type`, and `press` reserve mutation authority in the snapshot's
 producer store before focus or input. Pending or consumed snapshots are refused before dispatch. Outcomes requiring
 fresh observation, missing canonical outcomes, and unknown completion prevent replay; explicit historical reads remain
 available. Confirmed outcomes that do not require fresh observation release the reservation. Modifier-click and

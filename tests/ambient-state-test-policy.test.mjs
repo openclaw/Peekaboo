@@ -166,6 +166,47 @@ test("hosted text route proof runs isolated SDK and background contracts with no
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
 });
 
+test("hosted typed element mutation proof includes exact selection suites and pass guards", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const marker = "      - name: Run typed set-value and text-selection verification contracts\n";
+  assert.equal(workflow.split(marker).length, 2, "Extend the existing typed mutation step exactly once");
+  const step = workflow.split(marker)[1].split("\n      - name:")[0];
+  assert.match(step, /working-directory: Core\/PeekabooCore/);
+  assert.match(step, /set -euo pipefail/);
+  for (const variable of ["PEEKABOO_INCLUDE_AUTOMATION_TESTS", "PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS",
+    "PEEKABOO_RUN_INPUT_AUTOMATION_TESTS", "RUN_AUTOMATION_ACTIONS"]) {
+    assert.ok(step.includes(`${variable}: "false"`));
+  }
+  assert.equal((step.match(/swift test /g) ?? []).length, 2);
+  assert.equal((step.match(/--disable-xctest --enable-swift-testing --no-parallel --jobs 2/g) ?? []).length, 2);
+  assert.doesNotMatch(step, /--skip-build|AgentExecutionTraceTests|\bsecrets\./);
+  const filters = [...step.matchAll(/--filter '([^']+)'/g)].map((match) => new RegExp(match[1]));
+  assert.equal(filters.length, 2);
+  for (const [index, module, suite, log] of [
+    [0, "PeekabooAutomationKitTests", "SetValueVerificationTests", "native_log"],
+    [0, "PeekabooAutomationKitTests", "TextSelectionRequestTests", "native_log"],
+    [0, "PeekabooAutomationKitTests", "TextSelectionMutationTests", "native_log"],
+    [0, "PeekabooAutomationKitTests", "AXMutationObservationReaderTests", "native_log"],
+    [1, "PeekabooBridgeTests", "PeekabooBridgeSetValueVerificationTests", "bridge_log"],
+    [1, "PeekabooBridgeTests", "PeekabooBridgeSetValueVerificationWireTests", "bridge_log"],
+    [1, "PeekabooBridgeTests", "PeekabooBridgeTextSelectionTests", "bridge_log"],
+    [1, "PeekabooTests", "PeekabooBridgeSetValueHostClientTests", "bridge_log"],
+    [1, "PeekabooTests", "PeekabooBridgeTextSelectionHostTests", "bridge_log"],
+    [1, "PeekabooTests", "MCPTextSelectionTests", "bridge_log"],
+  ]) {
+    assert.ok(filters[index].test(`${module}.${suite}/example()`), suite);
+    assert.ok(!filters[index].test(`${module}.${suite}Extra/example()`), `${suite} must stay exactly scoped`);
+    assert.ok(step.includes(`grep -Fq 'Suite ${suite} passed after ' "$${log}"`));
+  }
+  for (const log of ["native_log", "bridge_log"]) {
+    assert.ok(step.includes(`2>&1 | tee "$${log}"`));
+    assert.ok(step.includes(`grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$${log}"`));
+  }
+  const diagnostics = workflow.split("      - name: Run Agent execution diagnostics contracts\n")[1]
+    .split("\n      - name:")[0];
+  assert.ok(diagnostics.includes("AgentExecutionTraceTests"), "Keep trace coverage in its existing owner");
+});
+
 test("hosted CI runs exact hotkey receipt Core guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run exact hotkey receipt regressions\n")[1];
@@ -299,7 +340,7 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   for (const name of ["RUN_AUTOMATION_TESTS", "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS"]) {
     assert.ok(step.includes(`${name}: "false"`));
   }
-  const suites = ["PressCommandTests", "ClickCommandTests", "ClickCommandActionResultTests", "ClickSnapshotWindowSelectionTests"];
+  const suites = ["PressCommandTests", "ClickCommandTests", "ClickCommandActionResultTests", "ClickSnapshotWindowSelectionTests", "SelectTextCommandTests"];
   const filter = `^CLIAutomationTests[.](${suites.join("|")})/`;
   assert.ok(step.includes(`--filter '${filter}'`));
   assert.equal(step.match(/--filter/g)?.length, 1);
@@ -320,6 +361,10 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   assert.match(source, /automation: StubAutomationService = StubAutomationService\(\)/);
   assert.match(source, /windows: any WindowManagementServiceProtocol = StubWindowService/);
   assert.doesNotMatch(source, /executePeekabooCLI|NSWorkspace|NSApplication|BackgroundInputDriver/);
+  const selectionSource = readFileSync(`${repositoryRoot}/Apps/CLI/Tests/CLIAutomationTests/SelectTextCommandTests.swift`, "utf8");
+  assert.match(selectionSource, /SelectionAutomation: StubAutomationService/);
+  assert.match(selectionSource, /TestServicesFactory\.makePeekabooServices\(snapshots: snapshots, automation: automation\)/);
+  assert.doesNotMatch(selectionSource, /executePeekabooCLI|NSWorkspace|NSApplication|BackgroundInputDriver|AXUIElement|NSPasteboard/);
 });
 
 test("hosted See proof retains target inclusion without opting into ambient tests", () => {

@@ -429,6 +429,7 @@ enum PeekabooBridgeOperationResultSemantics {
         case certificationProducerAttestation(PeekabooBridgeCertificationProducerAttestationRequest)
         case typeActions(TypeActionResultRule)
         case setValue(target: String, value: UIElementValue)
+        case selectText(target: String, request: TextSelectionRequest)
         case performAction(target: String, actionName: String)
 
         var typeActionDispatchUnits: UnitPolicy? {
@@ -469,6 +470,12 @@ enum PeekabooBridgeOperationResultSemantics {
                 }
             case .setValue:
                 if case .setValue = self {
+                    true
+                } else {
+                    false
+                }
+            case .selectText:
+                if case .selectText = self {
                     true
                 } else {
                     false
@@ -541,6 +548,7 @@ enum PeekabooBridgeOperationResultSemantics {
         case noSuccessResponse
         case typeActions
         case setValue
+        case selectText
         case performAction
         case focusedElement
         case applicationIdentifier
@@ -742,7 +750,7 @@ enum PeekabooBridgeOperationResultSemantics {
                 return
             case let (.certificationProducerAttestation(request), .certificationProducerAttestation(result)):
                 try result.validateEnvelope(request: request)
-            case (.typeActions, .error), (.setValue, .error), (.performAction, .error):
+            case (.typeActions, .error), (.setValue, .error), (.selectText, .error), (.performAction, .error):
                 // A canonical failure has no success payload to bind. Its outcome, target receipt,
                 // and dispatch count are validated by the failure and receipt contracts instead.
                 return
@@ -776,6 +784,11 @@ enum PeekabooBridgeOperationResultSemantics {
                     throw PeekabooBridgeOperationReceiptError.receiptMismatch(
                         "set-value response request semantics")
                 }
+            case let (.selectText(expectedTarget, request), .elementActionResult(result)):
+                guard result.matchesTextSelection(target: expectedTarget, request: request)
+                else {
+                    throw PeekabooBridgeOperationReceiptError.receiptMismatch("select-text response request semantics")
+                }
             case let (.performAction(expectedTarget, expectedAction), .elementActionResult(result)):
                 guard result.target == expectedTarget,
                       result.actionName == expectedAction,
@@ -788,7 +801,7 @@ enum PeekabooBridgeOperationResultSemantics {
                 }
             case (.agentExecutionTrace, _), (.processGenerationObservation, _),
                  (.certificationProducerAttestation, _),
-                 (.typeActions, _), (.setValue, _), (.performAction, _):
+                 (.typeActions, _), (.setValue, _), (.selectText, _), (.performAction, _):
                 throw PeekabooBridgeOperationReceiptError.receiptMismatch("bound typed response family")
             }
         }

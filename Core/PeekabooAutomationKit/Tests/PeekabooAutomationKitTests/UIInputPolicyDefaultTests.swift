@@ -12,9 +12,32 @@ struct UIInputPolicyDefaultTests {
         #expect(policy.backgroundSelectAllDefault == nil)
         #expect(policy.backgroundSelectAllStrategy() == .synthFirst)
         #expect(policy.backgroundTypingStrategy() == .synthFirst)
-        for verb in UIInputVerb.allCases {
+        for verb in UIInputVerb.allCases where verb != .selectText {
             #expect(policy.strategy(for: verb) == .synthFirst)
         }
+        #expect(policy.strategy(for: .selectText) == .actionOnly)
+    }
+
+    @Test(arguments: UIInputStrategy.allCases, UIInputStrategy.allCases)
+    func `semantic text selection remains native only across global and per app preferences`(
+        globalStrategy: UIInputStrategy,
+        appStrategy: UIInputStrategy)
+    {
+        let bundle = "com.example.editor"
+        let appPolicy = AppUIInputPolicy(defaultStrategy: appStrategy, setValue: appStrategy)
+        let concrete = UIInputPolicy(
+            defaultStrategy: globalStrategy,
+            setValue: globalStrategy,
+            perApp: [bundle: appPolicy])
+        let resolved = UIInputPolicy.applicationDefaults(
+            resolving: AppUIInputPolicy(defaultStrategy: globalStrategy, setValue: globalStrategy),
+            perApp: [bundle: appPolicy])
+
+        for policy in [concrete, resolved, .currentBehavior] {
+            #expect(policy.strategy(for: .selectText) == .actionOnly)
+            #expect(policy.strategy(for: .selectText, bundleIdentifier: bundle) == .actionOnly)
+        }
+        #expect(appPolicy.strategy(for: .selectText) == .actionOnly)
     }
 
     @Test

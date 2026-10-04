@@ -25,6 +25,8 @@ protocol AutomationElementRepresenting: Sendable {
     var isFocusedSettable: Bool { get }
     var isSelectedSettable: Bool { get }
     var selectedValue: Bool? { get }
+    var isTextSelectionSettable: Bool { get }
+    var textSelectionRange: TextSelectionRange? { get }
     var isEnabled: Bool { get }
     var isFocused: Bool { get }
     var focusedState: Bool? { get }
@@ -49,12 +51,25 @@ protocol AutomationElementRepresenting: Sendable {
     func setAutomationValue(_ value: UIElementValue) throws
     func setAutomationFocused(_ focused: Bool) throws
     func setAutomationSelected(_ selected: Bool) throws
+    func setAutomationTextSelection(_ range: TextSelectionRange) throws -> Bool
     func stringAttribute(_ name: String) -> String?
     func intAttribute(_ name: String) -> Int?
     func doubleAttribute(_ name: String) -> Double?
 }
 
 extension AutomationElementRepresenting {
+    var isTextSelectionSettable: Bool {
+        false
+    }
+
+    var textSelectionRange: TextSelectionRange? {
+        nil
+    }
+
+    func setAutomationTextSelection(_: TextSelectionRange) throws -> Bool {
+        false
+    }
+
     @MainActor
     var focusedElementIdentity: FocusedElementIdentity? {
         nil
@@ -98,6 +113,22 @@ struct AutomationElement: AutomationElementRepresenting {
 
     init(_ element: Element) {
         self.element = element
+    }
+
+    @MainActor
+    var isTextSelectionSettable: Bool {
+        self.element.isAttributeSettable(named: kAXSelectedTextRangeAttribute)
+    }
+
+    @MainActor
+    var textSelectionRange: TextSelectionRange? {
+        guard let range = self.element.selectedTextRange() else { return nil }
+        return TextSelectionRange(location: range.location, length: range.length)
+    }
+
+    @MainActor
+    func setAutomationTextSelection(_ range: TextSelectionRange) throws -> Bool {
+        try BackgroundInputDriver.textMutationAccepted(self.element.setSelectedTextRange(range.nativeRange))
     }
 
     @MainActor

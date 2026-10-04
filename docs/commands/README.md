@@ -10,7 +10,7 @@ read_when:
 All 33 current root commands have one page here:
 
 - Core: [`bridge`](bridge.md), [`capture`](capture.md), [`clean`](clean.md), [`completions`](completions.md), [`config`](config.md), [`daemon`](daemon.md), [`learn`](learn.md), [`permissions`](permissions.md), [`screen`](screen.md), [`tools`](tools.md).
-- Interaction: [`action`](action.md), [`click`](click.md), [`drag`](drag.md), [`move`](move.md), [`paste`](paste.md), [`press`](press.md), [`scroll`](scroll.md), [`set-value`](set-value.md), [`type`](type.md).
+- Interaction: [`action`](action.md), [`click`](click.md), [`drag`](drag.md), [`move`](move.md), [`paste`](paste.md), [`press`](press.md), [`scroll`](scroll.md), [`select-text`](select-text.md), [`set-value`](set-value.md), [`type`](type.md).
 - System: [`app`](app.md), [`clipboard`](clipboard.md), [`dialog`](dialog.md), [`dock`](dock.md), [`menu`](menu.md), [`menubar`](menubar.md), [`space`](space.md), [`visualizer`](visualizer.md), [`window`](window.md).
 - Vision, AI, and MCP: [`see`](see.md), [`verify`](verify.md), [`agent`](agent.md), [`browser`](browser.md), [`mcp`](mcp.md).
 

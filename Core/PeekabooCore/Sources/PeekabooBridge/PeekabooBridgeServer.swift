@@ -1315,6 +1315,14 @@ public final class PeekabooBridgeServer {
         peer _: PeekabooBridgePeer?) throws
     {
         guard request.requiresProcessGenerationBoundElementMutations else { return }
+        if request.operation == .selectText,
+           (self.services.automation as? any ElementActionAutomationServiceProtocol)?.supportsTextSelection != true ||
+           (PeekabooBridgeRequestContext.negotiatedSessionCapabilities?.protocolVersion ??
+               PeekabooBridgeProtocolVersion(major: 0, minor: 0)) < PeekabooBridgeConstants.textSelectionVersion
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported, message: "Text selection requires a capable protocol 1.42 host")
+        }
         guard self.supportedVersions.upperBound >=
             PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion
         else { return }
@@ -1473,7 +1481,15 @@ extension PeekabooBridgeServer {
         } else {
             resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.setValueResultTargetBinding)
         }
-        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .performAction]
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.textSelectionVersion,
+           (services.automation as? any ElementActionAutomationServiceProtocol)?.supportsTextSelection == true,
+           allowedOperations.contains(.selectText)
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.textSelection)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.textSelection)
+        }
+        let elementMutationOperations: Set<PeekabooBridgeOperation> = [.setValue, .selectText, .performAction]
         if supportedVersions.upperBound >=
             PeekabooBridgeConstants.processGenerationBoundElementMutationsVersion,
             Self.supportsProcessGenerationBoundElementMutationProvider(services.automation),

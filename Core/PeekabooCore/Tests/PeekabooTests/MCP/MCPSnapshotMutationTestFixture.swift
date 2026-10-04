@@ -91,6 +91,8 @@ final class MCPSnapshotLeaseAutomationService: MockAutomationService,
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let supportsExactWindowFocusedElementFocus = true
     let supportsSetValueResultTargetBinding = true
+    let supportsTextSelection = true
+    private(set) var selectTextCalls = 0
     let supportsProcessGenerationBoundElementMutations = true
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
     let uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
@@ -109,7 +111,7 @@ final class MCPSnapshotLeaseAutomationService: MockAutomationService,
     var mutationCalls: Int {
         self.clickCalls.count + self.targetedClickCalls.count + self.scrollRequests.count +
             self.typeCalls + self.pixelCalls + self.modifierCalls + self.actionCalls +
-            self.setValueCalls + self.exactHotkeyCalls
+            self.setValueCalls + self.selectTextCalls + self.exactHotkeyCalls
     }
 
     init(
@@ -188,6 +190,25 @@ final class MCPSnapshotLeaseAutomationService: MockAutomationService,
             actionName: "AXSetValue",
             anchorPoint: nil,
             newValue: value.displayString)
+    }
+
+    func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        self.selectTextCalls += 1
+        try self.throwMutationErrorIfNeeded()
+        return try UIAutomationActionResult(
+            payload: .init(
+                target: target,
+                actionName: "AXSelectedTextRange",
+                anchorPoint: nil,
+                textSelection: request.resolve(in: request.text)),
+            outcome: .confirmedChange(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                unitCount: .one),
+            targetIdentity: self.uiAutomationOutcomeTargetIdentity)
     }
 
     func performAction(target: String, actionName: String, snapshotId _: String?) async throws -> ElementActionResult {

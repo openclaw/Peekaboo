@@ -69,7 +69,7 @@ enum MCPToolCaptureRequirement: Sendable, Equatable {
             .liveCaptureSource
         case "verify_state":
             .requestedFinalScreenshot
-        case "analyze", "browser", "permissions", "sleep", "inspect_ui", "click", "type", "set_value",
+        case "analyze", "browser", "permissions", "sleep", "inspect_ui", "click", "type", "set_value", "select_text",
              "action", "scroll", "press", "drag", "move", "app", "window", "menu", "clipboard", "paste",
              "agent", "dock", "dialog", "space":
             .never
@@ -399,7 +399,7 @@ enum MCPToolSnapshotMutationPolicy {
 
     static func explicitEffect(toolName: String, arguments: ToolArguments) -> MCPToolSnapshotEffect? {
         switch toolName {
-        case "click", "type", "set_value", "action", "scroll", "press", "drag", "move",
+        case "click", "type", "set_value", "select_text", "action", "scroll", "press", "drag", "move",
              "paste", "shell":
             .mutation
         case "see":

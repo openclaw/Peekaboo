@@ -1000,6 +1000,7 @@ extension PeekabooBridgeOperationReceiptSemantics {
                  .certificationProducerAttestation),
              (.typeActions, _, _),
              (.setValue, _, _),
+             (.selectText, _, _),
              (.performAction, _, _),
              (.elementDetection, _, _),
              (.postMutationWindow, _, _),

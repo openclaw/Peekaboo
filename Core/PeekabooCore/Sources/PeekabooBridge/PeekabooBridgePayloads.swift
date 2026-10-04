@@ -160,6 +160,18 @@ public struct PeekabooBridgeForegroundModifierClickRequest: Codable, Sendable {
     }
 }
 
+public struct PeekabooBridgeSelectTextRequest: Codable, Sendable {
+    public let target: String
+    public let request: TextSelectionRequest
+    public let snapshotId: String?
+
+    public init(target: String, request: TextSelectionRequest, snapshotId: String?) {
+        self.target = target
+        self.request = request
+        self.snapshotId = snapshotId
+    }
+}
+
 public struct PeekabooBridgeSetValueRequest: Codable, Sendable {
     public let target: String
     public let value: UIElementValue

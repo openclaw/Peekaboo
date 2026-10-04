@@ -11,6 +11,75 @@ private struct ResolvedElementMutationTarget {
 }
 
 extension UIAutomationService: ElementActionAutomationServiceProtocol {
+    public var supportsTextSelection: Bool {
+        true
+    }
+
+    public func selectText(
+        target: String,
+        request: TextSelectionRequest,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        guard !request.text.isEmpty else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest, message: "Selection text must not be empty")
+        }
+        let snapshotId = try Self.requireElementActionSnapshotID(snapshotId)
+        let receipt = try await self.elementMutationCaptureReceipt(snapshotId: snapshotId)
+        guard receipt.exactWindow != nil else {
+            throw Self.elementMutationRefusal(
+                "Text selection requires a fresh exact-window snapshot.", standardErrorCode: .snapshotStale)
+        }
+        var resolved: ResolvedElementMutationTarget?
+        var selection: TextSelectionResult?
+        let plan = try DesktopOperationPlan(
+            verb: .selectText,
+            selector: .element(target),
+            captureReceipt: receipt,
+            strategy: .actionOnly,
+            prepare: {
+                let element = try await self.resolveActionTarget(
+                    target,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: receipt.processIdentifier,
+                    requireUniqueMatch: true)
+                try self.validateElementMutationTarget(element, receipt: receipt)
+                guard let identity = element.elementIdentity,
+                      identity.windowID == receipt.exactWindow?.identity.windowID
+                else {
+                    throw Self.elementMutationRefusal(
+                        "The selection target does not belong to the observed window.",
+                        standardErrorCode: .snapshotStale)
+                }
+                resolved = element
+            },
+            action: DesktopOperationPlan.ActionRoute {
+                guard let resolved else { throw PeekabooError.invalidInput("Selection target was not prepared") }
+                let (action, result) = try await self.actionInputDriver.trySelectText(
+                    element: resolved.element,
+                    request: request,
+                    beforeMutation: { try self.validateElementMutationTarget(resolved, receipt: receipt) })
+                selection = result
+                return action
+            },
+            synthesis: DesktopOperationPlan.SynthesisRoute {
+                throw ActionInputError.unsupported(.attributeUnsupported)
+            },
+            finalize: { self.elementDetectionService.invalidateCache() })
+        let execution = try await self.normalizingElementMutationErrors {
+            try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
+        }
+        guard let selection else { throw PeekabooError.invalidInput("Selection result was not captured") }
+        return UIAutomationActionResult(
+            payload: ElementActionResult(
+                target: target,
+                actionName: "AXSelectedTextRange",
+                anchorPoint: nil,
+                textSelection: selection),
+            outcome: execution.outcome,
+            targetIdentity: execution.targetIdentity)
+    }
+
     public var supportsSetValueResultTargetBinding: Bool {
         true
     }
@@ -224,7 +293,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
     private func resolveActionTarget(
         _ target: String,
         snapshotId: String,
-        targetProcessIdentifier: pid_t?) async throws
+        targetProcessIdentifier: pid_t?,
+        requireUniqueMatch: Bool = false) async throws
         -> ResolvedElementMutationTarget
     {
         let normalized = target.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -247,9 +317,14 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 cause: error)
         }
 
-        if let detected = detectionResult.elements.findById(normalized) ??
-            Self.findDetectedElement(matching: normalized, in: detectionResult)
-        {
+        let exact = detectionResult.elements.findById(normalized)
+        let matches = exact.map { [$0] } ?? Self.findDetectedElements(
+            matching: normalized, in: detectionResult, limit: requireUniqueMatch ? 2 : 1)
+        if requireUniqueMatch, matches.count > 1 {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest, message: "The element query is ambiguous; use its exact observed element ID.")
+        }
+        if let detected = matches.first {
             guard !detected.isOCRSemanticEvidence else {
                 throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
             }
@@ -294,13 +369,16 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         return snapshotId
     }
 
-    private static func findDetectedElement(matching query: String, in detectionResult: ElementDetectionResult)
-        -> DetectedElement?
+    private static func findDetectedElements(
+        matching query: String,
+        in detectionResult: ElementDetectionResult,
+        limit: Int)
+        -> [DetectedElement]
     {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return nil }
+        guard !query.isEmpty else { return [] }
 
-        return detectionResult.elements.all.first { element in
+        return Array(detectionResult.elements.all.lazy.filter { element in
             guard !element.isOCRSemanticEvidence else { return false }
             return [
                 element.label,
@@ -311,7 +389,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 element.attributes["placeholder"],
             ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                 .contains { $0 == query || $0.contains(query) }
-        }
+        }.prefix(limit))
     }
 
     private static func describe(_ element: DetectedElement) -> String {

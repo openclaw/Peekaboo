@@ -130,6 +130,7 @@ struct AXMutationObservationReaderTests {
         .selected,
         .value,
         .selectedTextRange,
+        .textSelection,
     ])
     func `mutation readback does not acquire the observation only focus requirement`(
         attribute: AXMutationObservationAttribute) throws
@@ -149,7 +150,7 @@ struct AXMutationObservationReaderTests {
                 default: return Self.rangeValue()
                 }
             }))
-        #expect(reads.count == (attribute == .identity ? 0 : 1))
+        #expect(reads.count == (attribute == .identity ? 0 : attribute == .textSelection ? 3 : 1))
         #expect(reads.contains(kAXFocusedAttribute) == (attribute == .focused))
         if attribute == .focused {
             #expect(observed.focused == false)
@@ -157,7 +158,7 @@ struct AXMutationObservationReaderTests {
         if attribute == .selected {
             #expect(observed.selected == true)
         }
-        if attribute == .selectedTextRange {
+        if attribute == .selectedTextRange || attribute == .textSelection {
             #expect(observed.selectedTextRange == TextSelectionRange(location: 1, length: 2))
         }
     }

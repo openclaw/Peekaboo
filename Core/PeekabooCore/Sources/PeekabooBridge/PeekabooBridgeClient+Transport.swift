@@ -267,24 +267,7 @@ extension PeekabooBridgeClient {
                 message: "This Bridge host cannot lease modifier-click snapshots at the execution leaf.",
                 hint: "Update and relaunch Peekaboo before retrying modifier-click.")
         }
-        if request.unwrappedOperationRequest.operation == .setValue,
-           !self.setValueResultTargetBindingEnabled
-        {
-            throw DesktopActionFailure.preDispatchRefusal(
-                route: .bridge,
-                reason: .runtimeIncompatible,
-                message: "This Bridge host cannot return a verifiable set-value result.",
-                hint: "Update and relaunch Peekaboo before retrying set-value.")
-        }
-        if [.setValue, .performAction].contains(request.unwrappedOperationRequest.operation),
-           !self.processGenerationBoundElementMutationsEnabled
-        {
-            throw DesktopActionFailure.preDispatchRefusal(
-                route: .bridge,
-                reason: .runtimeIncompatible,
-                message: "This Bridge host cannot bind element mutations to one process generation.",
-                hint: "Update and relaunch Peekaboo before retrying action or set-value.")
-        }
+        try self.requireElementMutationCapabilities(for: request.unwrappedOperationRequest.operation)
         if request.unwrappedOperationRequest.operation == .observeProcessGeneration,
            !self.processGenerationObservationEnabled
         {
@@ -349,6 +332,32 @@ extension PeekabooBridgeClient {
                 reason: .runtimeIncompatible,
                 message: "Bridge protocol 1.30 exact-window held-pointer cleanup is unavailable.",
                 hint: "Reconnect to the Bridge host that owns the active hold before retrying.")
+        }
+    }
+
+    private func requireElementMutationCapabilities(for operation: PeekabooBridgeOperation) throws {
+        if operation == .setValue, !self.setValueResultTargetBindingEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot return a verifiable set-value result.",
+                hint: "Update and relaunch Peekaboo before retrying set-value.")
+        }
+        if operation == .selectText, !self.textSelectionEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host does not support receipted text selection.",
+                hint: "Update and relaunch Peekaboo before retrying select-text.")
+        }
+        if [.setValue, .selectText, .performAction].contains(operation),
+           !self.processGenerationBoundElementMutationsEnabled
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "This Bridge host cannot bind element mutations to one process generation.",
+                hint: "Update and relaunch Peekaboo before retrying this element mutation.")
         }
     }
 

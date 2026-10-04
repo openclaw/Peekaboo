@@ -51,6 +51,7 @@ final class AgentTurnBoundary {
         "action",
         "scroll",
         "set_value",
+        "select_text",
         "space",
         "type",
         "window",

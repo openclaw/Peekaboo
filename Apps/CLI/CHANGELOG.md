@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Add background `select-text` and MCP `select_text` for literal selections or caret placement with adjacent prefix/suffix context, UTF-16 range verification, and retry-safe refusals for ambiguous or stale targets.
 - Refresh Playground testing guidance for v4 inventories, signed fixtures, fresh exact-window snapshots, and background outcome verification without input replay.
 
 ## 4.8.0 - 2026-10-03

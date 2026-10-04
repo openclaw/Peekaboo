@@ -8,6 +8,7 @@ enum AXMutationObservationAttribute: Sendable {
     case value
     case selected
     case selectedTextRange
+    case textSelection
 }
 
 struct AXMutationObservationTarget: Sendable {
@@ -152,6 +153,17 @@ enum DetachedAXMutationReader {
                 selectedTextRange = TextSelectionRange(nativeValue: readAttribute(
                     kAXSelectedTextRangeAttribute,
                     deadline))
+            }
+        case .textSelection:
+            if DetachedExactWindowFocusReader.allowsValueRead(before),
+               let text = readAttribute(kAXValueAttribute, deadline) as? String,
+               let range = TextSelectionRange(nativeValue: readAttribute(kAXSelectedTextRangeAttribute, deadline)),
+               let afterText = readAttribute(kAXValueAttribute, deadline) as? String,
+               text.utf16.elementsEqual(afterText.utf16),
+               range.location + range.length <= text.utf16.count
+            {
+                value = .string(text)
+                selectedTextRange = range
             }
         }
 
