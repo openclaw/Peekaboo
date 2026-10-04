@@ -81,8 +81,15 @@ enum AgentToolResultSemantics {
         result.failure != nil || result.isError || self.valueEncodesFailure(result.result)
     }
 
+    static func isFailure(_ result: AgentToolResult, claims: NormalizedClaims) -> Bool {
+        result.failure != nil || result.isError || self.valueEncodesFailure(result.result, claims: claims)
+    }
+
     static func valueEncodesFailure(_ value: AnyAgentToolValue) -> Bool {
-        let claims = self.normalizedClaims(from: value)
+        self.valueEncodesFailure(value, claims: self.normalizedClaims(from: value))
+    }
+
+    private static func valueEncodesFailure(_ value: AnyAgentToolValue, claims: NormalizedClaims) -> Bool {
         if claims.hasInvalidClaim {
             return true
         }

@@ -192,10 +192,11 @@ private enum AgentExecutionTraceBuilder {
         let semanticClaims = result.map {
             AgentToolResultSemantics.normalizedClaims(from: $0.result)
         } ?? .empty
+        let isError = result.map { AgentToolResultSemantics.isFailure($0, claims: semanticClaims) }
         let disposition: AgentToolExecutionDisposition = if let result {
             if self.isConsistentPreDispatchSkip(result, claims: semanticClaims) {
                 .skippedBeforeDispatch
-            } else if AgentToolResultSemantics.isFailure(result) {
+            } else if isError == true {
                 .executedFailed
             } else {
                 .executedSucceeded
@@ -219,7 +220,7 @@ private enum AgentExecutionTraceBuilder {
                     claims: semanticClaims,
                     skippedBeforeDispatch: disposition == .skippedBeforeDispatch)
             },
-            isError: result.map(AgentToolResultSemantics.isFailure),
+            isError: isError,
             disposition: disposition,
             mutationDispatch: mutationDispatch,
             actionOutcome: semanticClaims.hasInvalidActionSafetyClaim
