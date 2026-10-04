@@ -763,6 +763,28 @@ verify_existing_identity() {
   fi
 }
 
+verify_installable_directories() {
+  local bundle="$1"
+  local inaccessible_directory
+
+  [[ -d "${bundle}" && ! -L "${bundle}" ]] || {
+    printf 'Installable app must be a physical bundle directory: %s\n' "${bundle}" >&2
+    return 1
+  }
+  # macOS reparenting needs write access to the moved directory; cleanup needs it on descendants too.
+  if ! inaccessible_directory="$("${FIND_BIN}" -P "${bundle}" -type d \
+    \( ! -exec /bin/test -w {} \; -o ! -exec /bin/test -x {} \; \) -print -quit)"; then
+    printf 'Could not inspect physical app directory permissions: %s\n' "${bundle}" >&2
+    return 1
+  fi
+  if [[ -n "${inaccessible_directory}" ]]; then
+    printf 'App directory is not writable and searchable by the installer: %s\n' \
+      "${inaccessible_directory}" >&2
+    printf '%s\n' 'Use a separate installable copy with accessible directories; source permissions were not changed.' >&2
+    return 1
+  fi
+}
+
 prepare_install_candidate() {
   local target_parent candidate_digest
 
@@ -778,6 +800,7 @@ prepare_install_candidate() {
     printf 'Could not stage the built app beside %s\n' "${APP_BUNDLE}" >&2
     return 1
   fi
+  verify_installable_directories "${CANDIDATE_APP_BUNDLE}" || return 1
   if ! verify_expected_signer "${CANDIDATE_APP_BUNDLE}"; then
     return 1
   fi
@@ -1381,6 +1404,11 @@ if [[ -d "${BUILT_APP_BUNDLE}" ]]; then
 fi
 [[ "${APP_BUNDLE}" != "${BUILT_APP_BUNDLE}" ]] || fail 'Install target must not be the build/source app'
 
+if ((NO_BUILD == 1)); then
+  verify_installable_directories "${BUILT_APP_BUNDLE}" || \
+    fail 'Source app directories are not installable; no application lifecycle action was attempted'
+fi
+
 acquire_install_lock
 trap rollback_install EXIT
 trap 'exit 130' INT
@@ -1402,6 +1430,8 @@ fi
 
 log '==> Verify signed build output'
 verify_build_output || fail "Built app verification failed; the running app was not stopped"
+verify_installable_directories "${BUILT_APP_BUNDLE}" || \
+  fail 'Built app directories are not installable; the running app was not stopped'
 "${NATIVE_ONLY_VERIFY_SCRIPT}" --app "${BUILT_APP_BUNDLE}" || \
   fail "Built app violates the native-only policy; the running app was not stopped"
 ARTIFACT_DIGEST="$(bundle_digest "${BUILT_APP_BUNDLE}")" || \

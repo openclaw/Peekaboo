@@ -651,6 +651,9 @@ if [[ -f "${state_dir}/mutate-staged-native" ]]; then
   printf '%s\n' 'tell application "System Events" to keystroke "x"' \
     >"${candidate}/Contents/Resources/Injected.txt"
 fi
+if [[ -f "${state_dir}/mutate-staged-directory" ]]; then
+  chmod 0500 "${candidate}/Contents"
+fi
 EOF
 
 cat >"${TEMPLATE_BIN}/nm" <<'EOF'
@@ -1630,6 +1633,90 @@ grep -Eq '^Artifact SHA-256: [0-9a-f]{64}$' "${artifact_dir}/stdout" || \
   fail 'exact-source artifact mode did not report its digest'
 grep -Eq '^OK: .*\(SHA-256 [0-9a-f]{64}\)\.$' "${artifact_dir}/stdout" || \
   fail 'exact-source artifact mode did not report the installed digest'
+
+# Reject physical directory access failures before staging or interrupted-install recovery.
+for directory_case in root nested unsearchable unreadable; do
+  directory_dir="$(new_case "source-directory-${directory_case}-refusal")"
+  directory_source="${directory_dir}/Source/Peekaboo.app"
+  directory_target="${directory_dir}/Applications/Peekaboo.app"
+  make_bundle "${directory_source}" artifact
+  make_bundle "${directory_target}" old
+  mkdir -p "${directory_source}/Contents/Resources"
+  printf '%s\n' "${directory_target}" >"${directory_dir}/running-path"
+  inaccessible_directory="${directory_source}/Contents/Resources"
+  directory_mode=0500
+  case "${directory_case}" in
+    root)
+      inaccessible_directory="${directory_source}"
+      directory_recovery="${directory_dir}/Applications/.Peekaboo.install.permission-existing"
+      make_bundle "${directory_recovery}/previous.app" previous
+      write_journal "${directory_dir}/Applications" "${directory_target}" "${directory_recovery}" installed 1 1
+      directory_journal="$(<"${directory_dir}/Applications/.Peekaboo.install.journal")"
+      ;;
+    unsearchable) directory_mode=0600 ;;
+    unreadable) directory_mode=0300 ;;
+  esac
+  chmod "${directory_mode}" "${inaccessible_directory}"
+  directory_exit=0
+  run_restart "${directory_dir}" -- --source-app "${directory_source}" \
+    2>"${directory_dir}/stderr" || directory_exit=$?
+  observed_directory_mode="$(stat -f %Lp "${inaccessible_directory}")"
+  # Restore only this synthetic fixture directory so the harness can clean up even after a failed assertion.
+  chmod u+rwx "${inaccessible_directory}"
+  ((directory_exit != 0)) || fail "${directory_case} directory permissions were accepted"
+  [[ "${observed_directory_mode}" == "${directory_mode#0}" ]] || fail 'source directory permissions were rewritten'
+  grep -Eq 'App directory is not writable and searchable|Could not inspect physical app directory permissions' \
+    "${directory_dir}/stderr" || fail 'directory refusal lacked a permissions diagnosis'
+  assert_text "${directory_target}/build-id" old
+  assert_text "${directory_dir}/running-path" "${directory_target}"
+  [[ ! -f "${directory_dir}/events" ]] || fail 'source directory refusal reached lifecycle, build, signing or moves'
+  [[ ! -f "${directory_dir}/move-count" ]] || fail 'source directory refusal moved an app'
+  if [[ "${directory_case}" == root ]]; then
+    assert_text "${directory_dir}/Applications/.Peekaboo.install.journal" "${directory_journal}"
+    assert_text "${directory_recovery}/previous.app/build-id" previous
+  fi
+done
+
+# Directory access is required; regular resources and executable files do not need write permission.
+readonly_files_dir="$(new_case install-readonly-files)"
+readonly_files_source="${readonly_files_dir}/Source/Peekaboo.app"
+readonly_files_target="${readonly_files_dir}/Applications/Peekaboo.app"
+make_bundle "${readonly_files_source}" readonly-files
+make_bundle "${readonly_files_target}" old
+mkdir -p "${readonly_files_source}/Contents/Resources/Physical"
+printf '%s\n' 'read-only resource' >"${readonly_files_source}/Contents/Resources/Physical/ReadOnly.dat"
+ln -s Physical "${readonly_files_source}/Contents/Resources/Alias"
+chmod 0400 "${readonly_files_source}/Contents/Resources/Physical/ReadOnly.dat"
+chmod 0500 "${readonly_files_source}/Contents/MacOS/Peekaboo"
+printf '%s\n' "${readonly_files_target}" >"${readonly_files_dir}/running-path"
+run_restart "${readonly_files_dir}" -- --source-app "${readonly_files_source}"
+[[ "$(stat -f %Lp "${readonly_files_target}/Contents/Resources/Physical/ReadOnly.dat")" == 400 ]] || \
+  fail 'installer changed read-only resource permissions'
+[[ "$(stat -f %Lp "${readonly_files_target}/Contents/MacOS/Peekaboo")" == 500 ]] || \
+  fail 'installer changed read-only executable permissions'
+[[ "$(readlink "${readonly_files_target}/Contents/Resources/Alias")" == Physical ]] || fail 'directory symlink changed'
+assert_text "${readonly_files_target}/build-id" readonly-files
+
+# Recheck the exact staged copy before stopping the old app, even if copying changes directory modes.
+staged_permissions_dir="$(new_case staged-directory-refusal)"
+staged_permissions_source="${staged_permissions_dir}/Source/Peekaboo.app"
+staged_permissions_target="${staged_permissions_dir}/Applications/Peekaboo.app"
+make_bundle "${staged_permissions_source}" artifact
+make_bundle "${staged_permissions_target}" old
+printf '%s\n' "${staged_permissions_target}" >"${staged_permissions_dir}/running-path"
+touch "${staged_permissions_dir}/mutate-staged-directory"
+staged_permissions_exit=0
+run_restart "${staged_permissions_dir}" -- --source-app "${staged_permissions_source}" \
+  2>"${staged_permissions_dir}/stderr" || staged_permissions_exit=$?
+while IFS= read -r -d '' staged_permissions_copy; do
+  chmod u+w "${staged_permissions_copy}/Contents"
+done < <(find "${staged_permissions_dir}/Applications" -mindepth 2 -maxdepth 2 -type d -name candidate.app -print0)
+((staged_permissions_exit != 0)) || fail 'staged directory access failure was accepted'
+grep -Fq 'App directory is not writable and searchable' "${staged_permissions_dir}/stderr" || \
+  fail 'staged directory refusal lacked a permissions diagnosis'
+assert_text "${staged_permissions_target}/build-id" old
+assert_text "${staged_permissions_dir}/running-path" "${staged_permissions_target}"
+[[ ! -f "${staged_permissions_dir}/events" ]] || fail 'staged directory refusal stopped or moved the old app'
 
 # --no-build can reuse an explicit already-signed build output without touching it.
 no_build_dir="$(new_case no-build-artifact)"

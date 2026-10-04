@@ -66,6 +66,15 @@ The `--` separates pnpm's script invocation from the installer options. You can 
 signed CLI, then retains the transactional signer/native-only/readiness/rollback gates described
 below.
 
+The source bundle's physical directories must be writable and searchable by the installer so macOS
+can move the staged bundle between parents and clean up its transaction. Read-only regular files are
+supported, and directory symlinks are not followed by this permission check. Explicit `--source-app`
+and `--no-build` inputs are checked before interrupted-transaction recovery; newly built output and
+the exact staged copy are also checked before replacement stops the running GUI. An inaccessible
+directory or an incomplete directory scan fails closed without rewriting permissions. Keep a sealed
+read-only evidence artifact unchanged and prepare a separate installable copy with accessible
+directories; record any directory-mode changes in that copy's full-tree manifest.
+
 Before replacement or rollback stops a process, the installer verifies its exact bundle path with
 the CLI's read-only `app launch` no-op and retains that process-generation receipt for a non-forced
 `app quit`. It refuses ambiguous targets, failed process inspection, and changed generations instead
