@@ -365,19 +365,20 @@ enum ElementActionCommandExecutor {
         snapshots: any SnapshotManagerProtocol,
         requireExactWindow: Bool
     ) async throws -> DesktopTargetIdentity {
+        let receipt: SnapshotTargetReceipt
         do {
             if requireExactWindow {
-                let identity = try await SnapshotTargetReceiptPlanner(snapshots: snapshots)
-                    .planForMutation(snapshotID: snapshotID).receipt.requireIdentity()
-                guard identity.exactWindow != nil else {
-                    throw PeekabooError.invalidInput("Text selection requires a fresh exact-window snapshot")
+                receipt = try await SnapshotTargetReceiptPlanner(snapshots: snapshots)
+                    .plan(snapshotID: snapshotID).receipt
+                if case .invalidated = receipt.targetEvidence {
+                    _ = try receipt.requireIdentity()
                 }
-                return identity
+            } else {
+                return try await SnapshotTargetReceiptPlanner(snapshots: snapshots)
+                    .planProcessIdentity(snapshotID: snapshotID)
+                    .receipt
+                    .requireIdentity()
             }
-            return try await SnapshotTargetReceiptPlanner(snapshots: snapshots)
-                .planProcessIdentity(snapshotID: snapshotID)
-                .receipt
-                .requireIdentity()
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -388,5 +389,14 @@ enum ElementActionCommandExecutor {
                 reason: .targetUnavailable
             )
         }
+        guard let identity = receipt.identity, identity.exactWindow != nil else {
+            throw PreDispatchActionError(
+                message: "Text selection requires a fresh exact-window snapshot.",
+                code: .INVALID_INPUT,
+                hint: "Run 'peekaboo see --window-id <id>' and retry with its fresh snapshot.",
+                reason: .invalidRequest
+            )
+        }
+        return identity
     }
 }

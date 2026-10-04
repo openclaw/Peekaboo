@@ -38,6 +38,66 @@ struct MCPTextSelectionTests {
     }
 
     @Test(arguments: [false, true])
+    func `process and screen observations request an exact window before selection`(screen: Bool) async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let snapshotID = try await fixture.storage.createSnapshot()
+        let snapshot = await fixture.context.uiSnapshots.createSnapshot(id: snapshotID)
+        if screen {
+            await snapshot.setScreenshot(
+                path: "/tmp/selection-screen.png",
+                metadata: CaptureMetadata(size: CGSize(width: 1200, height: 800), mode: .screen))
+        } else {
+            await snapshot.setTargetMetadata(from: WindowContext(
+                applicationProcessId: 333,
+                applicationProcessStartIdentity: 33))
+        }
+
+        let response = try await SelectTextTool(context: fixture.context).execute(
+            arguments: ToolArguments(raw: ["on": "T1", "text": "needle", "snapshot": snapshotID]))
+        let fields = try #require(response.meta?.objectValue)
+        let message = Self.text(response)
+        #expect(response.isError)
+        #expect(message.contains("Text selection requires a fresh exact-window snapshot."))
+        #expect(message.contains("window_id"))
+        #expect(!message.contains("no consistent process-generation receipt"))
+        #expect(fields["error_code"]?.stringValue == "INVALID_INPUT")
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .invalidRequest, in: response)
+        #expect(fields["retry_safe"]?.boolValue == true)
+        #expect(fields["mutation_dispatched"]?.boolValue == false)
+        #expect(fields["requires_fresh_observation"]?.boolValue == false)
+        #expect(fixture.automation.mutationCalls == 0 && fixture.automation.focusCalls == 0)
+        #expect(fixture.windows.focusRequests.isEmpty)
+        #expect(fixture.snapshots.beginCalls.isEmpty)
+        #expect(await fixture.context.uiSnapshots.getSnapshot(id: snapshotID) != nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `malformed or invalidated selection receipts still report snapshot stale`(invalidated: Bool) async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let snapshotID = try await fixture.storage.createSnapshot()
+        let snapshot = await fixture.context.uiSnapshots.createSnapshot(id: snapshotID)
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationProcessId: 333,
+            applicationProcessStartIdentity: invalidated ? 33 : nil))
+        if invalidated {
+            await snapshot.setTargetMetadata(from: WindowContext(
+                applicationProcessId: 333,
+                applicationProcessStartIdentity: 34))
+        }
+
+        let response = try await SelectTextTool(context: fixture.context).execute(
+            arguments: ToolArguments(raw: ["on": "T1", "text": "needle", "snapshot": snapshotID]))
+        let fields = try #require(response.meta?.objectValue)
+        #expect(response.isError)
+        #expect(Self.text(response).contains("no consistent process-generation receipt"))
+        #expect(fields["error_code"]?.stringValue == "SNAPSHOT_STALE")
+        try MCPToolTestHelpers.expectCanonicalRefusalMetadata(reason: .targetUnavailable, in: response)
+        #expect(fixture.automation.mutationCalls == 0 && fixture.automation.focusCalls == 0)
+        #expect(fixture.windows.focusRequests.isEmpty)
+        #expect(fixture.snapshots.beginCalls.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
     func `pending or consumed selection snapshots refuse before dispatch`(consumed: Bool) async throws {
         let fixture = try await MCPSnapshotMutationTestFixture.make()
         let lease = try await fixture.storage.beginSnapshotMutation(snapshotId: fixture.snapshotID)
@@ -69,5 +129,12 @@ struct MCPTextSelectionTests {
         let second = try await fixture.context.execute(tool: tool, arguments: arguments)
         #expect(second.isError)
         #expect(fixture.automation.selectTextCalls == 1)
+    }
+
+    private static func text(_ response: ToolResponse) -> String {
+        response.content.compactMap { content in
+            guard case let .text(text, _, _) = content else { return nil }
+            return text
+        }.joined(separator: "\n")
     }
 }

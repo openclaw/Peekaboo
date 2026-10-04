@@ -51,15 +51,15 @@ enum MCPElementActionSnapshotAuthority {
         _ snapshot: UISnapshot,
         requireExactWindow: Bool = false) throws -> DesktopTargetIdentity
     {
+        let receipt: SnapshotTargetReceipt
         do {
-            let identity = try snapshot.targetReceipt().requireIdentity()
-            if requireExactWindow {
-                guard let exactWindow = identity.target.exactWindow else {
-                    throw PeekabooError.invalidInput("Text selection requires an exact-window snapshot")
-                }
-                return DesktopTargetIdentity(exactWindow: exactWindow)
+            receipt = try snapshot.targetReceipt()
+            if !requireExactWindow {
+                return try DesktopTargetIdentity(processIdentity: receipt.requireIdentity().processIdentity)
             }
-            return try DesktopTargetIdentity(processIdentity: identity.processIdentity)
+            if case .invalidated = receipt.targetEvidence {
+                _ = try receipt.requireIdentity()
+            }
         } catch {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -68,5 +68,13 @@ enum MCPElementActionSnapshotAuthority {
                 causeDescription: error.localizedDescription,
                 standardErrorCode: .snapshotStale)
         }
+        guard let exactWindow = receipt.identity?.exactWindow else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Text selection requires a fresh exact-window snapshot.",
+                hint: "Run 'see' or 'inspect_ui' with window_id, then retry with that fresh exact-window snapshot.",
+                standardErrorCode: .invalidInput)
+        }
+        return DesktopTargetIdentity(exactWindow: exactWindow)
     }
 }
