@@ -189,7 +189,8 @@ extension RuntimeHostResolver {
             candidates: [ImplicitRemoteCandidate],
             requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
             requiredOwner: ScreenCaptureKitOwnerLease.OwnerReceipt? = nil,
-            permissionRejections: inout [String]
+            permissionRejections: inout [String],
+            recordRejection: (RemoteCandidateEvaluation) -> Void = { _ in }
         ) async throws -> Resolution? {
             try await RuntimeHostResolver.resolveRemoteServices(
                 candidates: candidates,
@@ -200,7 +201,8 @@ extension RuntimeHostResolver {
                 snapshotInvalidationRemoteSocketPaths: self.snapshotInvalidationRemoteSocketPaths,
                 permissionRejections: &permissionRejections,
                 makeRemoteServices: self.makeRemoteServices,
-                handshakeCache: self.handshakeCache
+                handshakeCache: self.handshakeCache,
+                recordRejection: recordRejection
             )
         }
     }

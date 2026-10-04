@@ -105,6 +105,7 @@ extension DesktopObservationService {
             title: resolvedWindow.title.isEmpty ? capturedWindow.title : resolvedWindow.title,
             bounds: capturedWindow.bounds,
             isMinimized: capturedWindow.isMinimized,
+            // Preserve supplied state; the selected target and its index add no main-window evidence.
             isMainWindow: capturedWindow.isMainWindow,
             isKeyWindow: capturedWindow.isKeyWindow,
             isFrontmost: capturedWindow.isFrontmost,

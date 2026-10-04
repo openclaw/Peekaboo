@@ -121,13 +121,17 @@ extension RuntimeHostResolver {
     struct RemoteCandidateEvaluation {
         let validation: RemoteCandidateValidation?
         let rejection: RemoteCandidateRejection?
+        let requirementFailure: BridgeCapabilityPolicy.RemoteRequirementFailure?
 
         static func accepted(_ validation: RemoteCandidateValidation) -> Self {
-            Self(validation: validation, rejection: nil)
+            Self(validation: validation, rejection: nil, requirementFailure: nil)
         }
 
-        static func rejected(_ rejection: RemoteCandidateRejection) -> Self {
-            Self(validation: nil, rejection: rejection)
+        static func rejected(
+            _ rejection: RemoteCandidateRejection,
+            requirementFailure: BridgeCapabilityPolicy.RemoteRequirementFailure? = nil
+        ) -> Self {
+            Self(validation: nil, rejection: rejection, requirementFailure: requirementFailure)
         }
     }
 
@@ -177,8 +181,8 @@ extension RuntimeHostResolver {
         guard missingPermissions.isEmpty else {
             return .rejected(.missingPermissions(missingPermissions))
         }
-        guard BridgeCapabilityPolicy.supportsRemoteRequirements(for: handshake, options: options) else {
-            return .rejected(.requirementsNotMet)
+        if let failure = BridgeCapabilityPolicy.firstUnmetRemoteRequirement(for: handshake, options: options) {
+            return .rejected(.requirementsNotMet, requirementFailure: failure)
         }
 
         let requiresReusableHost = candidate.requireReusableDaemon ||

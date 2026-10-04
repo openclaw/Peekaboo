@@ -103,7 +103,7 @@ extension LegacyScreenCaptureOperator {
             title: (window[kCGWindowName as String] as? String) ?? "",
             bounds: bounds,
             isMinimized: false,
-            isMainWindow: index == 0,
+            isMainWindow: false,
             windowLevel: layer,
             alpha: alpha,
             index: index,
