@@ -2,6 +2,21 @@ import Foundation
 import PeekabooAutomation
 
 struct SeeElementTextFormatter {
+    static let interactionHint =
+        "Use opaque element IDs for interaction only when the element is marked actionable."
+
+    static func section(_ elements: [UIElement]) -> [String] {
+        let elementsByRole = Dictionary(grouping: elements, by: { $0.role })
+        var lines = ["UI Elements:"]
+        for (role, roleElements) in elementsByRole.sorted(by: { $0.key < $1.key }) {
+            let actionableCount = roleElements.count(where: { $0.isActionable })
+            lines.append("")
+            lines.append("\(role) (\(roleElements.count) found, \(actionableCount) actionable):")
+            lines.append(contentsOf: roleElements.map(Self.describe))
+        }
+        return lines
+    }
+
     static func describe(_ element: UIElement) -> String {
         var parts = ["  \(element.id)"]
         if let label = self.primaryLabel(for: element) {

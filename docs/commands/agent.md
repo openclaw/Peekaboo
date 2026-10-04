@@ -151,6 +151,10 @@ read_when:
   [Ollama guide](../providers/ollama.md).
 - Native tool observations appear once in Agent context, with action safety metadata and verification receipts
   preserved separately. Existing saved sessions remain readable; this does not compact or discard observation history.
+- For `see` and `inspect_ui`, provider requests use `meta.ui_elements` as the canonical element listing only when
+  re-rendering that table exactly reproduces the complete human listing. Headers, warnings, interaction guidance, and
+  all other metadata remain intact. Ambiguous, incomplete, mismatched, and error results pass through unchanged.
+  This request-only projection does not alter raw MCP/CLI output, execution traces, saved history, or observation frequency.
 
 ### JSON execution trace
 

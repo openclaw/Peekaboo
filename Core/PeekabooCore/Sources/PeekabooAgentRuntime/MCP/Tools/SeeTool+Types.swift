@@ -161,9 +161,9 @@ struct SeeSummaryBuilder {
         lines.append(contentsOf: self.selectionSummaries)
         lines.append(contentsOf: self.truncationWarningLines())
         lines.append("")
-        lines.append(contentsOf: self.elementSection())
+        lines.append(contentsOf: SeeElementTextFormatter.section(self.elements))
         lines.append("")
-        lines.append("Use opaque element IDs for interaction only when the element is marked actionable.")
+        lines.append(SeeElementTextFormatter.interactionHint)
         return lines.joined(separator: "\n")
     }
 
@@ -186,28 +186,8 @@ struct SeeSummaryBuilder {
         return lines
     }
 
-    private func elementSection() -> [String] {
-        let elementsByRole = Dictionary(grouping: self.elements, by: { $0.role })
-        var lines = ["UI Elements:"]
-        for (role, roleElements) in elementsByRole.sorted(by: { $0.key < $1.key }) {
-            lines.append("")
-            lines.append(self.roleHeader(role: role, elements: roleElements))
-            lines.append(contentsOf: roleElements.map(self.describeElement))
-        }
-        return lines
-    }
-
-    private func roleHeader(role: String, elements: [UIElement]) -> String {
-        let actionableCount = elements.count(where: { $0.isActionable })
-        return "\(role) (\(elements.count) found, \(actionableCount) actionable):"
-    }
-
     private func truncationWarningLines() -> [String] {
         guard let truncationInfo, truncationInfo.isTruncated else { return [] }
         return ["", truncationInfo.automationToolRemediationMessage(budget: self.traversalBudget)]
-    }
-
-    private func describeElement(_ element: UIElement) -> String {
-        SeeElementTextFormatter.describe(element)
     }
 }

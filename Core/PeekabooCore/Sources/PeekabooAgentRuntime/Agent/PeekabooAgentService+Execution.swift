@@ -568,7 +568,7 @@ extension PeekabooAgentService {
             try Task.checkCancellation()
 
             let request = ProviderRequest(
-                messages: state.messages.sanitizedForProviderContext(
+                messages: AgentToolMCPBridge.providerContextMessages(state.messages).sanitizedForProviderContext(
                     model: configuration.model,
                     configuration: resolvedConfiguration,
                     peekabooConfiguration: self.services.configuration,

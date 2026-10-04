@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Remove proven duplicate `see` / `inspect_ui` element listings from Agent provider requests while preserving observation evidence, raw MCP/CLI output, and saved history.
 - Add opt-in `see --fresh` and MCP `see` / `inspect_ui` freshness with uncached AX evidence, truthful `used_cache` metadata, and fail-closed host compatibility while preserving default caching and partial-tree limits.
 - Add background `select-text` and MCP `select_text` for literal selections or caret placement with adjacent prefix/suffix context, UTF-16 range verification, and retry-safe refusals for ambiguous or stale targets.
 
