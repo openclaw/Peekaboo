@@ -33,7 +33,7 @@ struct Phase3CommandParsingTests {
     }
 
     @Test
-    func `Press parses xdotool chords and sequences`() throws {
+    func `Press parses Peekaboo chords and sequences`() throws {
         var command = try PressCommand.parse(["--foreground", "cmd+shift+t", "Return"])
         let chords = try command.parsedChords()
 
@@ -44,6 +44,32 @@ struct Phase3CommandParsingTests {
         var extended = try PressCommand.parse(["--foreground", "forward_delete", "cmd+,", "Home"])
         #expect(try extended.parsedChords().map(\.serviceKeys) == ["forwarddelete", "cmd,comma", "home"])
         try extended.validate()
+    }
+
+    @Test
+    func `Press keeps backward and forward delete names distinct`() throws {
+        let cases = [
+            ("delete", "delete"), ("Delete", "delete"), ("backspace", "delete"), ("del", "delete"),
+            ("forwarddelete", "forwarddelete"), ("forward_delete", "forwarddelete"),
+        ]
+        for (name, expected) in cases {
+            let command = try PressCommand.parse(["--foreground", name])
+            #expect(try command.parsedChords().map(\.serviceKeys) == [expected])
+            try command.validateBeforeRuntime()
+        }
+    }
+
+    @Test
+    func `Press accepts Command names but rejects super`() throws {
+        for name in ["cmd+c", "command+c", "Command+C"] {
+            let command = try PressCommand.parse(["--foreground", name])
+            #expect(try command.parsedChords().map(\.serviceKeys) == ["cmd,c"])
+            try command.validateBeforeRuntime()
+        }
+        let unsupported = try PressCommand.parse(["--foreground", "super+c"])
+        #expect(throws: ValidationError.self) {
+            try unsupported.validateBeforeRuntime()
+        }
     }
 
     @Test

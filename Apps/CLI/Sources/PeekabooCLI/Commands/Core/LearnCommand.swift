@@ -57,7 +57,7 @@ struct LearnCommand {
 
         - Observe with `see`: add `--tree` for an AX text tree, `--no-screenshot` for AX-only output,
           or `--no-elements` for a fast screenshot-only capture.
-        - Send standalone keys and xdotool-style chords with `press`: use
+        - Send standalone keys and case-insensitive macOS chords with `press`: use
           `peekaboo press cmd+shift+t --snapshot <fresh-exact-snapshot>` in background, or
           `peekaboo press cmd+shift+t --app Safari --foreground` with explicit foreground consent.
           Background-only Agent/MCP policy accepts only the fresh exact non-dialog snapshot form.
