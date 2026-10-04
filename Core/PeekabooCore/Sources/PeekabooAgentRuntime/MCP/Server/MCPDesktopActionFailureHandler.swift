@@ -47,6 +47,37 @@ enum MCPDesktopActionSnapshotInvalidator {
 }
 
 enum MCPElementActionSnapshotAuthority {
+    @MainActor
+    static func withConfirmedMutation(
+        snapshot: UISnapshot,
+        expectedTarget: DesktopTargetIdentity,
+        context: MCPToolContext,
+        operation: String,
+        mutate: () async throws -> UIAutomationActionResult<ElementActionResult>,
+        validateResult: (UIAutomationActionResult<ElementActionResult>) throws -> Void = { _ in }) async throws
+        -> (result: UIAutomationActionResult<ElementActionResult>, invalidatedSnapshotID: String?)
+    {
+        let result = try await context.snapshots.withSnapshotMutation(
+            snapshotId: snapshot.id,
+            targetIdentity: expectedTarget,
+            operation: {
+                let result = try await mutate()
+                _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                    result,
+                    policy: .confirmed(requiring: .background),
+                    targetRequirement: .compatible(expectedTarget),
+                    operation: operation)
+                try validateResult(result)
+                return result
+            },
+            outcome: { $0.outcome })
+        let invalidatedSnapshotID = await MCPDesktopActionSnapshotInvalidator.invalidate(
+            uiSnapshots: context.uiSnapshots,
+            snapshotID: snapshot.id,
+            outcome: result.outcome)
+        return (result, invalidatedSnapshotID)
+    }
+
     static func expectedTargetIdentity(
         _ snapshot: UISnapshot,
         requireExactWindow: Bool = false) throws -> DesktopTargetIdentity

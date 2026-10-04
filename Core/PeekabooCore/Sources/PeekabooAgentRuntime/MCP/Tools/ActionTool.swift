@@ -67,26 +67,18 @@ public struct ActionTool: MCPTool {
             let snapshot = try await self.effectiveSnapshot(request.snapshotId)
             effectiveSnapshotId = snapshot.id
             let expectedTarget = try MCPElementActionSnapshotAuthority.expectedTargetIdentity(snapshot)
-            let actionResult = try await self.context.snapshots.withSnapshotMutation(
-                snapshotId: effectiveSnapshotId,
-                targetIdentity: expectedTarget,
-                operation: {
-                    let result = try await outcomeAutomation.performActionWithOutcome(
-                        target: request.target,
-                        actionName: request.actionName,
-                        snapshotId: snapshot.id)
-                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-                        result,
-                        policy: .confirmed(requiring: .background),
-                        targetRequirement: .compatible(expectedTarget),
-                        operation: "Action")
-                    return result
-                },
-                outcome: { $0.outcome })
-            let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
-                uiSnapshots: self.context.uiSnapshots,
-                snapshotID: effectiveSnapshotId,
-                outcome: actionResult.outcome)
+            let (actionResult, invalidatedSnapshotId) = try await MCPElementActionSnapshotAuthority
+                .withConfirmedMutation(
+                    snapshot: snapshot,
+                    expectedTarget: expectedTarget,
+                    context: self.context,
+                    operation: "Action",
+                    mutate: {
+                        try await outcomeAutomation.performActionWithOutcome(
+                            target: request.target,
+                            actionName: request.actionName,
+                            snapshotId: snapshot.id)
+                    })
             return try self.buildResponse(
                 actionResult: actionResult,
                 requestedAction: request.actionName,

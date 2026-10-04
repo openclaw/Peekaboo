@@ -69,19 +69,18 @@ public struct SelectTextTool: MCPTool {
                 prefix: arguments.getString("prefix"),
                 suffix: arguments.getString("suffix"),
                 selectionType: mode)
-            let result = try await self.context.snapshots.withSnapshotMutation(
-                snapshotId: snapshot.id,
-                targetIdentity: expected,
-                operation: {
-                    let result = try await automation.selectText(
+            let (result, invalidated) = try await MCPElementActionSnapshotAuthority.withConfirmedMutation(
+                snapshot: snapshot,
+                expectedTarget: expected,
+                context: self.context,
+                operation: "Select text",
+                mutate: {
+                    try await automation.selectText(
                         target: target,
                         request: request,
                         snapshotId: snapshot.id)
-                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
-                        result,
-                        policy: .confirmed(requiring: .background),
-                        targetRequirement: .compatible(expected),
-                        operation: "Select text")
+                },
+                validateResult: { result in
                     guard result.payload.matchesTextSelection(target: target, request: request) else {
                         throw DesktopActionFailure.indeterminate(
                             delivery: result.outcome?.delivery,
@@ -90,10 +89,7 @@ public struct SelectTextTool: MCPTool {
                             message: "The text selection result did not match the request.",
                             hint: "Observe the exact target before retrying.")
                     }
-                    return result
-                }, outcome: { $0.outcome })
-            let invalidated = await MCPDesktopActionSnapshotInvalidator.invalidate(
-                uiSnapshots: self.context.uiSnapshots, snapshotID: snapshot.id, outcome: result.outcome)
+                })
             guard let selection = result.payload.textSelection
             else { throw PeekabooError.invalidInput("Missing selection") }
             let range = selection.selectedRange
