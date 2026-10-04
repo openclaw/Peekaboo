@@ -115,10 +115,11 @@ RuntimeBackedCommand {
                 logger: self.logger,
                 reason: "scroll"
             )
+            let logTarget = coordinateResolution != nil ? "coordinates" : (self.on ?? "pointer")
             AutomationEventLogger.log(
                 .scroll,
                 "direction=\(self.direction) amount=\(self.amount) smooth=\(self.smooth) "
-                    + "target=\(self.on ?? "pointer") snapshot=\(observation.snapshotId ?? "latest")"
+                    + "target=\(logTarget) snapshot=\(observation.snapshotId ?? "latest")"
             )
 
             // Keep result reporting aligned with ScrollService.tickConfiguration.
@@ -150,13 +151,11 @@ RuntimeBackedCommand {
                     source: .pointer
                 )
             }
-            let scrollLocation = scrollResolution.point
-
             // Output results
             let outputPayload = ScrollResult(
                 direction: direction,
                 amount: amount,
-                location: ["x": scrollLocation.x, "y": scrollLocation.y],
+                location: ["x": scrollResolution.point.x, "y": scrollResolution.point.y],
                 totalTicks: self.smooth ? self.amount * 10 : self.amount,
                 targetPoint: scrollResolution.diagnostics,
                 targetReceipt: ScrollTargetReceipt(
@@ -179,7 +178,7 @@ RuntimeBackedCommand {
                 print("🎯 Direction: \(self.direction)")
                 print("📊 Amount: \(self.amount) ticks")
                 if self.on != nil || self.at != nil {
-                    print("📍 Location: (\(Int(scrollLocation.x)), \(Int(scrollLocation.y)))")
+                    print("📍 Location: (\(Int(scrollResolution.point.x)), \(Int(scrollResolution.point.y)))")
                 }
                 print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
             }

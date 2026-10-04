@@ -548,15 +548,17 @@ struct MCPBackgroundPolicyExecutionTests {
     func `Click tool pins background coordinates to snapshot window`() async throws {
         await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let bounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
         let window = ServiceWindowInfo(
             windowID: 42,
             title: "Snapshot Window",
-            bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+            bounds: bounds,
             index: 0,
             mutationIdentity: WindowMutationIdentity(
                 windowID: 42,
                 ownerProcessIdentifier: 111,
-                ownerProcessStartIdentity: 1))
+                ownerProcessStartIdentity: 1,
+                capturedBounds: bounds))
         let windows = PointerPolicyWindowService(window: window)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
@@ -568,7 +570,7 @@ struct MCPBackgroundPolicyExecutionTests {
         await snapshot.setScreenshot(
             path: "/tmp/exact-window-coordinate-snapshot.png",
             metadata: CaptureMetadata(
-                size: CGSize(width: 1000, height: 500),
+                size: bounds.size,
                 mode: .window,
                 applicationInfo: ServiceApplicationInfo(
                     processIdentifier: 111,
@@ -596,6 +598,72 @@ struct MCPBackgroundPolicyExecutionTests {
         }
         #expect(meta["mutation_dispatched"] == nil)
         #expect(meta["invalidated_snapshot"] == .string(snapshotId))
+    }
+
+    @Test(arguments: [false, true])
+    func `Click tool refuses missing or contradictory captured bounds before dispatch`(
+        contradictory: Bool) async throws
+    {
+        await Self.uiSnapshots.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let bounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
+        let liveWindow = ServiceWindowInfo(
+            windowID: 42,
+            title: "Current Window",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 111,
+                ownerProcessStartIdentity: 1,
+                capturedBounds: bounds))
+        let capturedWindow = ServiceWindowInfo(
+            windowID: 42,
+            title: "Captured Window",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 111,
+                ownerProcessStartIdentity: 1,
+                capturedBounds: contradictory ? bounds.offsetBy(dx: 1, dy: 0) : nil))
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: liveWindow),
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
+        let snapshotID = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/malformed-captured-bounds.png",
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    processStartIdentity: 1,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp"),
+                windowInfo: capturedWindow))
+        let expectedError: DesktopTargetIdentityError = contradictory
+            ? .contradictoryWindowBounds : .incompleteExactWindow
+        await #expect(throws: expectedError) { try await snapshot.coordinateAuthority() }
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "300,200",
+            "snapshot": snapshotID,
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(text, _, _)? = response.content.first,
+              case let .object(meta)? = response.meta
+        else {
+            Issue.record("Expected captured-coordinate authority refusal")
+            return
+        }
+        #expect(text.contains("not a capture-owned coordinate reference"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["invalidated_snapshot"] == nil)
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty && automation.clickCalls.isEmpty })
+        #expect(await snapshot.screenshotMetadata?.windowInfo?.mutationIdentity == capturedWindow.mutationIdentity)
     }
 
     @Test
@@ -633,15 +701,17 @@ struct MCPBackgroundPolicyExecutionTests {
     func `Click tool rejects same ID replacement generation before automation`() async throws {
         await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let bounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
         let capturedIdentity = WindowMutationIdentity(
             windowID: 42,
             ownerProcessIdentifier: 111,
-            ownerProcessStartIdentity: 1)
+            ownerProcessStartIdentity: 1,
+            capturedBounds: bounds)
         let replacementIdentity = WindowMutationIdentity(
             windowID: 42,
             ownerProcessIdentifier: 111,
-            ownerProcessStartIdentity: 2)
-        let bounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
+            ownerProcessStartIdentity: 2,
+            capturedBounds: bounds)
         let capturedWindow = ServiceWindowInfo(
             windowID: 42,
             title: "Captured",
@@ -658,7 +728,7 @@ struct MCPBackgroundPolicyExecutionTests {
             automation: automation,
             windows: PointerPolicyWindowService(window: replacementWindow),
             snapshotOwner: Self.uiSnapshots.owner)
-        let snapshot = await Self.uiSnapshots.createSnapshot()
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
         let snapshotID = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/replaced-coordinate-window.png",
@@ -670,21 +740,31 @@ struct MCPBackgroundPolicyExecutionTests {
                     bundleIdentifier: "com.example.snapshot",
                     name: "SnapshotApp"),
                 windowInfo: capturedWindow))
+        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
+        #expect(try await snapshot.coordinateAuthority().target.identity == capturedIdentity)
 
-        let response = try await context.execute(
-            tool: ClickTool(context: context),
-            arguments: ToolArguments(raw: [
-                "coords": "300,200",
-                "snapshot": snapshotID,
-            ]))
+        let arguments = ToolArguments(raw: [
+            "coords": "300,200",
+            "snapshot": snapshotID,
+        ])
+        let tool = ClickTool(context: context)
+        let response = try await context.execute(tool: tool, arguments: arguments)
 
         #expect(response.isError)
-        guard case let .object(meta) = response.meta else {
+        guard case let .object(meta)? = response.meta else {
             Issue.record("Expected refusal metadata")
             return
         }
         #expect(meta["mutation_dispatched"] == .bool(false))
         #expect(meta["retry_safe"] == .bool(true))
+
+        let directResponse = try await tool.execute(arguments: arguments)
+        #expect(directResponse.isError)
+        guard case let .text(text, _, _)? = directResponse.content.first else {
+            Issue.record("Expected generation-specific click refusal")
+            return
+        }
+        #expect(text.contains("changed process generation"))
         #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
         #expect(await Self.uiSnapshots.getSnapshot(id: nil)?.id == snapshotID)
     }
