@@ -7,6 +7,103 @@ import PeekabooFoundation
 
 @MainActor
 enum InteractionCoordinateResolver {
+    struct BackgroundSnapshotOptions {
+        let forceGlobal: Bool
+        let referenceMessage: String
+        let operation: String
+    }
+
+    static func resolveBackgroundSnapshotCoordinates(
+        _ point: CGPoint,
+        snapshotId: String,
+        target: InteractionTargetOptions,
+        services: any PeekabooServiceProviding,
+        options: BackgroundSnapshotOptions
+    ) async throws -> InteractionCoordinateResolution {
+        guard let detection = try await services.snapshots.getDetectionResult(snapshotId: snapshotId),
+              !detection.screenshotPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              detection.metadata.windowContext != nil
+        else {
+            throw ValidationError(options.referenceMessage)
+        }
+        let coordinateAuthority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            coordinateAuthority = try SnapshotTargetReceiptPlanner.assemble(
+                snapshotID: snapshotId,
+                detectionResult: detection
+            ).receipt.requireCoordinateAuthority()
+        } catch {
+            throw ValidationError(options.referenceMessage)
+        }
+        let capturedIdentity = coordinateAuthority.target.identity
+        let processIdentifier = capturedIdentity.ownerProcessIdentifier
+        let windowID = capturedIdentity.windowID
+        let capturedBounds = coordinateAuthority.target.bounds
+
+        if let requestedPID = target.pid, requestedPID != processIdentifier {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' belongs to PID \(processIdentifier), not requested PID \(requestedPID). " +
+                    "Run see for the requested process and use that snapshot."
+            )
+        }
+        if let app = target.app?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
+            let requestedIdentity = try await DesktopTargetPlanning
+                .ApplicationMutationPlanner(applications: services.applications)
+                .plan(identifier: app).processIdentity
+            guard requestedIdentity.processIdentifier == processIdentifier else {
+                throw ValidationError(
+                    "Snapshot '\(snapshotId)' belongs to PID \(processIdentifier), not \(app) " +
+                        "(PID \(requestedIdentity.processIdentifier))."
+                )
+            }
+        }
+        if let requestedWindowID = target.windowId, requestedWindowID != windowID {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' belongs to window \(windowID), not requested window \(requestedWindowID)."
+            )
+        }
+        if target.windowTitle != nil || target.windowIndex != nil {
+            let selected = try await InteractionCoordinateResolver.resolveTargetWindow(
+                target: target,
+                services: services
+            )
+            guard selected.windowInfo.windowID == windowID else {
+                throw ValidationError(
+                    "Snapshot '\(snapshotId)' belongs to window \(windowID), but the selector resolved " +
+                        "window \(selected.windowInfo.windowID)."
+                )
+            }
+        }
+
+        let currentWindows = try await services.windows.listWindows(target: .windowId(windowID))
+        let exactMatches = currentWindows.filter { $0.windowID == windowID }
+        guard let currentWindow = exactMatches.first,
+              exactMatches.allSatisfy({
+                  $0.bounds == capturedBounds && $0.mutationIdentity == capturedIdentity
+              })
+        else {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' is stale: its exact window moved, disappeared, changed owner, or " +
+                    "changed process generation. Run see again before \(options.operation)ing."
+            )
+        }
+
+        let application = try await services.applications.findApplication(identifier: "PID:\(processIdentifier)")
+        let resolution = try InteractionCoordinateResolver.resolveTargetWindowCoordinates(
+            point,
+            windowInfo: currentWindow,
+            targetApplication: application,
+            forceGlobal: options.forceGlobal
+        )
+        guard capturedBounds.contains(resolution.screenPoint) else {
+            throw ValidationError(
+                "Coordinates are outside captured window \(windowID). " +
+                    "Run see again and \(options.operation) inside its bounds."
+            )
+        }
+        return resolution
+    }
+
     static func resolveClickCoordinates(
         _ inputPoint: CGPoint,
         target: InteractionTargetOptions,

@@ -270,9 +270,7 @@ extension BridgeCapabilityPolicy {
            !self.supportsExactWindowPixelFocusTyping(for: handshake) {
             return false
         }
-        if options.requiresTargetedScroll,
-           !self.supportsTargetedScroll(for: handshake) ||
-           !self.supportsRequestPinnedExactWindowScrollReceipt(for: handshake) {
+        if !self.supportsScrollRequirements(for: handshake, options: options) {
             return false
         }
         if options.requiresPostEventPermission, handshake.permissions?.postEvent != true {
@@ -307,6 +305,18 @@ extension BridgeCapabilityPolicy {
             return false
         }
         return true
+    }
+
+    private static func supportsScrollRequirements(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        if options.requiresTargetedScroll,
+           !self.supportsTargetedScroll(for: handshake) ||
+           !self.supportsRequestPinnedExactWindowScrollReceipt(for: handshake) {
+            return false
+        }
+        return !options.requiresBackgroundCoordinateScroll || self.supportsBackgroundCoordinateScroll(for: handshake)
     }
 
     /// TCC permissions the current command needs from a remote host, derived from the operations
@@ -853,6 +863,12 @@ extension BridgeCapabilityPolicy {
                 PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt
             ) == true &&
             self.supportsTargetedScroll(for: handshake)
+    }
+
+    static func supportsBackgroundCoordinateScroll(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        self.supportsRequestPinnedExactWindowScrollReceipt(for: handshake) &&
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.backgroundCoordinateScrollVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.backgroundCoordinateScroll) == true
     }
 
     static func targetedTypeAvailability(for handshake: PeekabooBridgeHandshakeResponse)

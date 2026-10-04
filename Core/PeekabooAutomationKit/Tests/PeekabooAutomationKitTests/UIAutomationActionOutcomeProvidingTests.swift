@@ -686,7 +686,8 @@ private final class OutcomeActionInputDriver: ActionInputDriving {
     func tryScroll(
         element _: AutomationElement,
         direction _: ScrollDirection,
-        pages _: Int) throws -> UIInputExecutionResult.Action
+        pages _: Int,
+        scrollBarScope _: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
     {
         UIInputExecutionResult.Action(outcome: self.outcome)
     }

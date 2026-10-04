@@ -33,6 +33,7 @@ protocol AutomationElementRepresenting: Sendable {
     var isOffscreen: Bool { get }
     var anchorPoint: CGPoint? { get }
     var automationChildren: [any AutomationElementRepresenting] { get }
+    var automationOwnedScrollBars: [any AutomationElementRepresenting] { get }
 
     /// Raw accessibility element for callers that must issue AX calls off the main actor
     /// (e.g. non-blocking `AXShowMenu`). In-memory test elements return `nil`.
@@ -58,6 +59,10 @@ protocol AutomationElementRepresenting: Sendable {
 }
 
 extension AutomationElementRepresenting {
+    var automationOwnedScrollBars: [any AutomationElementRepresenting] {
+        []
+    }
+
     var isTextSelectionSettable: Bool {
         false
     }
@@ -264,6 +269,12 @@ struct AutomationElement: AutomationElementRepresenting {
     @MainActor
     var automationChildren: [any AutomationElementRepresenting] {
         self.children
+    }
+
+    @MainActor
+    var automationOwnedScrollBars: [any AutomationElementRepresenting] {
+        [self.element.horizontalScrollBar(), self.element.verticalScrollBar()]
+            .compactMap { $0.map(AutomationElement.init) }
     }
 
     @MainActor

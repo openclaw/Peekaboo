@@ -11,6 +11,65 @@ import Testing
 struct PeekabooBridgeScrollReceiptTests {
     private static let previousProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 34)
 
+    @Test(arguments: [false, true])
+    func `coordinate scroll refuses old or capability-missing hosts before transport`(oldHost: Bool) async throws {
+        let version = oldHost ? PeekabooBridgeProtocolVersion(major: 1, minor: 42) : PeekabooBridgeConstants
+            .protocolVersion
+        let fixture = try await Self.makeFixture(
+            serviceSupportsCoordinates: oldHost,
+            supportedVersions: version...version,
+            requestedVersion: version)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        #expect(fixture.handshake.hostCapabilities?
+            .contains(PeekabooBridgeHostCapability.backgroundCoordinateScroll) != true)
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await fixture.client.scrollWithOutcome(.init(
+                direction: .down,
+                amount: 1,
+                point: CGPoint(x: 45, y: 67),
+                snapshotId: "snapshot",
+                expectedWindow: fixture.exactWindow))
+        }
+        #expect(failure?.outcome.refusalReason == .runtimeIncompatible)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(await MainActor.run { fixture.services.automationStub.scrollRequests.isEmpty })
+        #expect(await fixture.client.lastOperationReceipt() == nil)
+        await fixture.host.stop()
+    }
+
+    @Test
+    func `coordinate scroll retains the requested point and signed exact-window outcome`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        await MainActor.run {
+            fixture.services.automationStub.uiAutomationOutcomeTargetIdentity = DesktopTargetIdentity(
+                exactWindow: fixture.exactWindow)
+            fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: .one)
+        }
+        #expect(fixture.handshake.hostCapabilities?
+            .contains(PeekabooBridgeHostCapability.backgroundCoordinateScroll) == true)
+        let result = try await fixture.client.scrollWithOutcome(.init(
+            direction: .right,
+            amount: 1,
+            point: CGPoint(x: 45, y: 67),
+            snapshotId: "snapshot",
+            expectedWindow: fixture.exactWindow))
+        #expect(result.outcome?.state == .dispatchedUnverified)
+        #expect(result.outcome?.retrySafety == .unsafe)
+        #expect(result.targetIdentity?.exactWindow == fixture.exactWindow)
+        let request = try #require(await MainActor.run { fixture.services.automationStub.scrollRequests.last })
+        #expect(request.point == CGPoint(x: 45, y: 67) && request.target == nil)
+        let receipt = try #require(await fixture.client.lastOperationReceipt())
+        #expect(receipt.payload.operation == .targetedScroll)
+        #expect(receipt.payload.target == .window(fixture.identity))
+        #expect(receipt.payload.targetAttributionFailure == nil)
+        await fixture.host.stop()
+    }
+
     @Test
     func `targeted scroll plan is pinned to complete request window evidence`() throws {
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
@@ -168,9 +227,9 @@ struct PeekabooBridgeScrollReceiptTests {
         await fixture.host.stop()
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `previous client receives signed runtime refusal from current host`() async throws {
+    func `previous client receives signed runtime refusal from current host`(coordinates: Bool) async throws {
         let root = URL(fileURLWithPath: "/tmp/pbsr-old-client-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let authority = try PeekabooBridgeOperationReceiptAuthority(
@@ -180,13 +239,15 @@ struct PeekabooBridgeScrollReceiptTests {
         let session = try await OperationReceiptSessionFixture.make(
             authority: authority,
             negotiatedCapabilities: .init(
-                protocolVersion: Self.previousProtocolVersion,
+                protocolVersion: coordinates ? .init(major: 1, minor: 42) : Self.previousProtocolVersion,
                 statelessClickVariants: true,
-                exactWindowHeldPointerLifecycle: true))
+                exactWindowHeldPointerLifecycle: true,
+                requestPinnedExactWindowScrollReceipt: coordinates))
         let request = PeekabooBridgeRequest.projectedAction(.init(request: .targetedScroll(.init(request: .init(
             direction: .down,
             amount: 1,
-            target: "S1",
+            target: coordinates ? nil : "S1",
+            point: coordinates ? CGPoint(x: 45, y: 67) : nil,
             snapshotId: "snapshot")))))
         let payload = session.request(authority: authority, sequence: 0, request: request)
         let data = try await PeekabooBridgeRequestContext.$operationReceiptAuthority.withValue(authority) {
@@ -203,6 +264,9 @@ struct PeekabooBridgeScrollReceiptTests {
         }
 
         #expect(envelope.code == .versionMismatch)
+        if coordinates {
+            #expect(envelope.message.contains("coordinate scroll"))
+        }
         #expect(envelope.desktopActionFailure?.outcome.refusalReason == .runtimeIncompatible)
         #expect(envelope.desktopActionFailure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(attested.receipt.payload.target == nil)
@@ -247,6 +311,7 @@ struct PeekabooBridgeScrollReceiptTests {
     private static func makeFixture(
         failure: DesktopActionFailure? = nil,
         serviceSupportsReceipt: Bool = true,
+        serviceSupportsCoordinates: Bool = true,
         supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion> = PeekabooBridgeConstants.supportedProtocolRange,
         requestedVersion: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants
             .protocolVersion) async throws -> Fixture
@@ -264,6 +329,7 @@ struct PeekabooBridgeScrollReceiptTests {
         let services = await MainActor.run {
             let services = StubServices()
             services.automationStub.supportsRequestPinnedExactWindowScrollReceipt = serviceSupportsReceipt
+            services.automationStub.supportsBackgroundCoordinateScroll = serviceSupportsCoordinates
             if let failure {
                 services.automationStub.uiAutomationOutcomeScript.appendFailure(failure, for: .scroll)
             }

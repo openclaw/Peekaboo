@@ -285,6 +285,8 @@ public protocol UIAutomationActionOutcomeProviding: UIAutomationServiceProtocol 
     /// The service binds an exact-window scroll request to the same complete snapshot receipt in
     /// both successful and retry-unsafe results.
     var supportsRequestPinnedExactWindowScrollReceipt: Bool { get }
+    /// The service resolves a pixel-backed point to its nearest owning scroller without global input.
+    var supportsBackgroundCoordinateScroll: Bool { get }
 
     func clickWithOutcome(
         target: ClickTarget,
@@ -469,6 +471,10 @@ extension UIAutomationActionOutcomeProviding {
     }
 
     public var supportsRequestPinnedExactWindowScrollReceipt: Bool {
+        false
+    }
+
+    public var supportsBackgroundCoordinateScroll: Bool {
         false
     }
 }

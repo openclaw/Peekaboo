@@ -25,12 +25,22 @@ extension ScrollCommand: CommanderSignatureProviding {
                     long: "snapshot"
                 ),
                 .commandOption(
+                    "at",
+                    help: "Background x,y coordinates relative to the captured window; mutually exclusive with --on",
+                    long: "at"
+                ),
+                .commandOption(
                     "delay",
                     help: "Scroll delay; bare values are milliseconds, or use ms/s suffixes",
                     long: "delay"
                 ),
             ],
             flags: [
+                .commandFlag(
+                    "global",
+                    help: "Interpret --at as global display points (still exact-window background delivery)",
+                    long: "global"
+                ),
                 .commandFlag(
                     "smooth",
                     help: "Use smooth scrolling with smaller increments",

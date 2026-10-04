@@ -123,6 +123,10 @@ public actor PeekabooBridgeClient {
         self.inputCapabilities.requestPinnedExactWindowScrollReceiptEnabled
     }
 
+    var backgroundCoordinateScrollEnabled: Bool {
+        self.inputCapabilities.backgroundCoordinateScrollEnabled
+    }
+
     var compositeTypeDeliveryEnabled: Bool {
         self.inputCapabilities.compositeTypeDeliveryEnabled
     }
@@ -942,6 +946,7 @@ public actor PeekabooBridgeClient {
                 Self.supportsTargetedClickAccessibilityValueDelivery(handshake),
                 requestPinnedExactWindowScrollReceiptEnabled:
                 Self.supportsRequestPinnedExactWindowScrollReceipt(handshake),
+                backgroundCoordinateScrollEnabled: Self.supportsBackgroundCoordinateScroll(handshake),
                 compositeTypeDeliveryEnabled: Self.supportsCompositeTypeDelivery(handshake),
                 clipboardGuardedExactWindowHotkeysEnabled: handshake.supportsClipboardGuardedExactWindowHotkeys,
                 preparedClipboardGuardedExactWindowHotkeysEnabled: handshake
@@ -1208,6 +1213,12 @@ public actor PeekabooBridgeClient {
                 PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt) == true &&
             handshake.supportedOperations.contains(.targetedScroll) &&
             (handshake.enabledOperations?.contains(.targetedScroll) ?? true)
+    }
+
+    private static func supportsBackgroundCoordinateScroll(_ handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        self.supportsRequestPinnedExactWindowScrollReceipt(handshake) &&
+            handshake.negotiatedVersion >= PeekabooBridgeConstants.backgroundCoordinateScrollVersion &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.backgroundCoordinateScroll) == true
     }
 
     private func installHandshakeCandidate(
@@ -1549,6 +1560,7 @@ private struct PeekabooBridgeClientInputCapabilities: Sendable {
     var producerBoundSnapshotReferencesEnabled = false
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
+    var backgroundCoordinateScrollEnabled = false
     var compositeTypeDeliveryEnabled = false
     var clipboardGuardedExactWindowHotkeysEnabled = false
     var preparedClipboardGuardedExactWindowHotkeysEnabled = false

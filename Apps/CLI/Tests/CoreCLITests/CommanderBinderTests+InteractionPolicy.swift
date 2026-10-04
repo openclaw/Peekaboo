@@ -8,6 +8,36 @@ import Testing
 
 extension CommanderBinderTests {
     @Test
+    func `Coordinate scroll binds and requires its negotiated capability without changing element scroll`() throws {
+        let coordinate = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: ["direction": ["down"], "at": ["20,30"]], flags: []),
+            commandType: ScrollCommand.self
+        )
+        let element = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: ["direction": ["down"], "on": ["S1"]], flags: []),
+            commandType: ScrollCommand.self
+        )
+        #expect(coordinate.requiresBackgroundCoordinateScroll && coordinate.requiresTargetedScroll)
+        #expect(!element.requiresBackgroundCoordinateScroll && element.requiresTargetedScroll)
+
+        for (minor, hasCapability) in [(42, true), (43, false), (43, true)] {
+            var capabilities = [PeekabooBridgeHostCapability.requestPinnedExactWindowScrollReceipt]
+            if hasCapability {
+                capabilities.append(PeekabooBridgeHostCapability.backgroundCoordinateScroll)
+            }
+            let handshake = BridgeTestFixtures.handshake(
+                negotiatedVersion: .init(major: 1, minor: minor),
+                supportedOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
+                permissions: PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true),
+                hostCapabilities: capabilities
+            ).withProducerBoundSnapshotFixture()
+            #expect(CommandRuntime.supportsRemoteRequirements(for: handshake, options: coordinate) ==
+                (minor == 43 && hasCapability))
+            #expect(CommandRuntime.supportsRemoteRequirements(for: handshake, options: element))
+        }
+    }
+
+    @Test
     func `Background press requires process-generation-pinned Bridge hotkeys`() throws {
         let background = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: ["a"], options: ["pid": ["42"]], flags: []),

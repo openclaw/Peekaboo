@@ -11,6 +11,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
     let producerBoundSnapshotReferences: Bool
     let targetedClickAccessibilityValueDelivery: Bool
     let requestPinnedExactWindowScrollReceipt: Bool
+    let backgroundCoordinateScroll: Bool
     let compositeTypeDelivery: Bool
     let clipboardGuardedExactWindowHotkeys: Bool
     let preparedClipboardGuardedExactWindowHotkeys: Bool
@@ -35,6 +36,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         producerBoundSnapshotReferences: true,
         targetedClickAccessibilityValueDelivery: true,
         requestPinnedExactWindowScrollReceipt: true,
+        backgroundCoordinateScroll: true,
         compositeTypeDelivery: true,
         clipboardGuardedExactWindowHotkeys: true,
         preparedClipboardGuardedExactWindowHotkeys: true,
@@ -52,6 +54,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         producerBoundSnapshotReferences: Bool = false,
         targetedClickAccessibilityValueDelivery: Bool = false,
         requestPinnedExactWindowScrollReceipt: Bool = false,
+        backgroundCoordinateScroll: Bool = false,
         compositeTypeDelivery: Bool = false,
         clipboardGuardedExactWindowHotkeys: Bool = false,
         preparedClipboardGuardedExactWindowHotkeys: Bool = false,
@@ -69,6 +72,7 @@ struct PeekabooBridgeNegotiatedSessionCapabilities: Hashable, Sendable {
         self.producerBoundSnapshotReferences = producerBoundSnapshotReferences
         self.targetedClickAccessibilityValueDelivery = targetedClickAccessibilityValueDelivery
         self.requestPinnedExactWindowScrollReceipt = requestPinnedExactWindowScrollReceipt
+        self.backgroundCoordinateScroll = backgroundCoordinateScroll
         self.compositeTypeDelivery = compositeTypeDelivery
         self.clipboardGuardedExactWindowHotkeys = clipboardGuardedExactWindowHotkeys
         self.preparedClipboardGuardedExactWindowHotkeys = preparedClipboardGuardedExactWindowHotkeys

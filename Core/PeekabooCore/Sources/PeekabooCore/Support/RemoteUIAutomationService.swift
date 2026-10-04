@@ -33,6 +33,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsExactWindowTargetedClicks: Bool
     public let supportsTargetedScroll: Bool
     public let supportsRequestPinnedExactWindowScrollReceipt: Bool
+    public let supportsBackgroundCoordinateScroll: Bool
     public let supportsInspectAccessibilityTree: Bool
     public let inspectAccessibilityTreeUnavailableReason: String?
     public let supportsExactWindowTargetedKeyboard: Bool
@@ -70,6 +71,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         supportsExactWindowTargetedClicks: Bool = false,
         supportsTargetedScroll: Bool = false,
         supportsRequestPinnedExactWindowScrollReceipt: Bool = false,
+        supportsBackgroundCoordinateScroll: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsExactWindowTargetedKeyboard: Bool = false,
@@ -105,6 +107,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsExactWindowTargetedClicks = supportsExactWindowTargetedClicks
         self.supportsTargetedScroll = supportsTargetedScroll
         self.supportsRequestPinnedExactWindowScrollReceipt = supportsRequestPinnedExactWindowScrollReceipt
+        self.supportsBackgroundCoordinateScroll = supportsBackgroundCoordinateScroll
         self.supportsInspectAccessibilityTree = supportsInspectAccessibilityTree
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
         self.supportsExactWindowTargetedKeyboard = supportsExactWindowTargetedKeyboard
@@ -420,17 +423,29 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     }
 
     public func scroll(_ request: ScrollRequest) async throws {
+        try self.validateScrollCapabilities(request)
+        do {
+            try await self.client.scroll(request)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: request.snapshotId)
+        }
+    }
+
+    func validateScrollCapabilities(_ request: ScrollRequest) throws {
+        try request.validatePointSelector()
+        if request.point != nil, !self.supportsBackgroundCoordinateScroll {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Remote bridge host does not support background coordinate scroll.",
+                hint: "Update and relaunch Peekaboo before retrying coordinate scroll.")
+        }
         if !request.foreground,
            !self.supportsTargetedScroll || !self.supportsRequestPinnedExactWindowScrollReceipt
         {
             throw PeekabooError.serviceUnavailable(
                 "Remote bridge host cannot preserve exact-window background scroll receipts; relaunch or update " +
                     "Peekaboo.")
-        }
-        do {
-            try await self.client.scroll(request)
-        } catch let envelope as PeekabooBridgeErrorEnvelope {
-            throw Self.automationError(for: envelope, snapshotId: request.snapshotId)
         }
     }
 

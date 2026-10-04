@@ -105,11 +105,13 @@ public final class ScrollService {
         laneCompletion: @escaping @MainActor (UIInputExecutionResult) async -> Void = { _ in }) async throws
         -> UIAutomationActionResult<UIInputExecutionResult>
     {
+        try request.validatePointSelector()
         try ScrollRequest.validateAmount(request.amount, smooth: request.smooth)
         self.logRequest(request)
         var bundleIdentifier: String?
         var preparedElement: AutomationElement?
         var preparedDetectedElement: DetectedElement?
+        var preparedCoordinateTarget: ScrollCoordinateTarget?
         let strategy: UIInputStrategy = request.foreground ? .synthOnly : .actionOnly
         let captureReceipt: DesktopOperationPlan.CaptureReceipt
         if request.foreground {
@@ -118,7 +120,8 @@ public final class ScrollService {
                 target: .foreground)
         } else {
             guard let snapshotID = request.snapshotId,
-                  request.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                  request.point != nil || request.target?.trimmingCharacters(in: .whitespacesAndNewlines)
+                      .isEmpty == false
             else {
                 throw PeekabooError.snapshotStale(
                     "background scroll requires a target from a fresh exact-window snapshot")
@@ -131,12 +134,18 @@ public final class ScrollService {
                 processStartIdentityProvider: self.processStartIdentityProvider,
                 exactWindowIdentityValidator: self.exactWindowIdentityValidator)
             try Self.validateExpectedWindow(request.expectedWindow, captureReceipt: captureReceipt)
+            if let point = request.point {
+                try Self.validateCoordinateAuthority(
+                    point: point,
+                    snapshotID: snapshotID,
+                    detectionResult: detectionResult)
+            }
         }
 
         do {
             let plan = try DesktopOperationPlan(
                 verb: .scroll,
-                selector: .element(request.target),
+                selector: request.point.map { .coordinates($0) } ?? .element(request.target),
                 captureReceipt: captureReceipt,
                 strategy: strategy,
                 prepare: {
@@ -146,19 +155,21 @@ public final class ScrollService {
                         guard let snapshotID = captureReceipt.snapshotID else {
                             throw PeekabooError.snapshotStale("background scroll snapshot receipt was lost")
                         }
-                        guard let detectionResult = try await self.snapshotManager.getDetectionResult(
-                            snapshotId: snapshotID)
-                        else {
-                            throw PeekabooError.snapshotStale("background scroll snapshot is no longer available")
+                        let detectionResult = try await self.validatedDetectionResult(
+                            snapshotID: snapshotID, receipt: captureReceipt)
+                        if let point = request.point, let exactWindow = captureReceipt.exactWindow {
+                            let coordinateTarget = try self.resolveCoordinateTarget(
+                                at: point,
+                                target: exactWindow)
+                            preparedCoordinateTarget = coordinateTarget
+                            if case let .semanticOwner(element, _, _) = coordinateTarget {
+                                preparedElement = element
+                            }
+                        } else {
+                            let preparedTarget = try self.resolveActionScrollTarget(request, in: detectionResult)
+                            preparedElement = preparedTarget.element
+                            preparedDetectedElement = preparedTarget.detected
                         }
-                        try DesktopOperationSnapshotReceiptValidator.validate(
-                            detectionResult: detectionResult,
-                            receipt: captureReceipt,
-                            processStartIdentityProvider: self.processStartIdentityProvider,
-                            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
-                        let preparedTarget = try self.resolveActionScrollTarget(request, in: detectionResult)
-                        preparedElement = preparedTarget.element
-                        preparedDetectedElement = preparedTarget.detected
                         bundleIdentifier = captureReceipt.bundleIdentifier
                     }
                     await lanePreparation()
@@ -169,54 +180,50 @@ public final class ScrollService {
                         bundleIdentifier: bundleIdentifier)
                 },
                 action: DesktopOperationPlan.ActionRoute {
-                    guard let preparedElement,
-                          let snapshotID = captureReceipt.snapshotID
+                    guard let snapshotID = captureReceipt.snapshotID
                     else {
                         throw ActionInputError.unsupported(.missingElement)
                     }
-                    guard let detectionResult = try await self.snapshotManager.getDetectionResult(
-                        snapshotId: snapshotID)
-                    else {
-                        throw PeekabooError.snapshotStale("background scroll snapshot is no longer available")
+                    let detectionResult = try await self.validatedDetectionResult(
+                        snapshotID: snapshotID, receipt: captureReceipt)
+                    if let point = request.point, let exactWindow = captureReceipt.exactWindow {
+                        let current = try self.resolveCoordinateTarget(
+                            at: point,
+                            target: exactWindow)
+                        try Self.validateCoordinateTarget(
+                            current, prepared: preparedCoordinateTarget, target: exactWindow)
+                        if case .pixelOnly = current {
+                            // Pixel authority names a window and point, never an invented AX receiver.
+                            try Self.validateCoordinateAuthority(
+                                point: point,
+                                snapshotID: snapshotID,
+                                detectionResult: detectionResult)
+                            return try await self.performWindowRoutedScroll(
+                                request, at: point, target: exactWindow, element: nil)
+                        }
                     }
-                    try DesktopOperationSnapshotReceiptValidator.validate(
-                        detectionResult: detectionResult,
-                        receipt: captureReceipt,
-                        processStartIdentityProvider: self.processStartIdentityProvider,
-                        exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+                    guard let preparedElement else {
+                        throw ActionInputError.unsupported(.missingElement)
+                    }
                     do {
                         return try self.actionInputDriver.tryScroll(
                             element: preparedElement,
                             direction: request.direction,
-                            pages: Self.actionScrollPages(amount: request.amount, strategy: strategy))
+                            pages: Self.actionScrollPages(amount: request.amount, strategy: strategy),
+                            scrollBarScope: request.point == nil ? .targetDescendants : .explicitOwner)
                     } catch let error as ActionInputError {
                         guard case .unsupported = error,
-                              let preparedDetectedElement,
                               let exactWindow = captureReceipt.exactWindow,
-                              Self.supportsWindowRoutedWheelTarget(
-                                  preparedDetectedElement,
-                                  screenshotPath: detectionResult.screenshotPath),
-                              self.backgroundWheelCapability(exactWindow.identity.ownerProcessIdentifier),
-                              let targetWindowID = CGWindowID(exactly: exactWindow.identity.windowID)
+                              let point = Self.windowRoutedWheelPoint(
+                                  request: request,
+                                  detectedElement: preparedDetectedElement,
+                                  coordinateTarget: preparedCoordinateTarget,
+                                  screenshotPath: detectionResult.screenshotPath)
                         else {
                             throw error
                         }
-                        let point = CGPoint(
-                            x: preparedDetectedElement.bounds.midX,
-                            y: preparedDetectedElement.bounds.midY)
-                        let outcome = try await self.windowRoutedPointerDriver.scroll(
-                            at: point,
-                            direction: request.direction,
-                            ticks: Self.actionScrollPages(amount: request.amount, strategy: strategy),
-                            targetProcessIdentifier: exactWindow.identity.ownerProcessIdentifier,
-                            targetWindowID: targetWindowID,
-                            expectedWindowIdentity: exactWindow.identity,
-                            expectedWindowBounds: exactWindow.bounds)
-                        return UIInputExecutionResult.Action(
-                            outcome: outcome,
-                            actionName: "WindowRoutedWheel",
-                            anchorPoint: point,
-                            elementRole: preparedElement.role)
+                        return try await self.performWindowRoutedScroll(
+                            request, at: point, target: exactWindow, element: preparedElement, unavailableError: error)
                     }
                 },
                 synthesis: DesktopOperationPlan.SynthesisRoute {
@@ -226,16 +233,7 @@ public final class ScrollService {
                 postvalidate: { result in
                     guard !request.foreground, let snapshotID = captureReceipt.snapshotID else { return }
                     do {
-                        guard let detectionResult = try await self.snapshotManager.getDetectionResult(
-                            snapshotId: snapshotID)
-                        else {
-                            throw PeekabooError.snapshotStale("background scroll snapshot is no longer available")
-                        }
-                        try DesktopOperationSnapshotReceiptValidator.validate(
-                            detectionResult: detectionResult,
-                            receipt: captureReceipt,
-                            processStartIdentityProvider: self.processStartIdentityProvider,
-                            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+                        _ = try await self.validatedDetectionResult(snapshotID: snapshotID, receipt: captureReceipt)
                     } catch {
                         throw scrollPostDispatchFailure(outcome: result.outcome, cause: error)
                     }
@@ -250,6 +248,142 @@ public final class ScrollService {
         {
             throw Self.unsupportedBackgroundFailure(for: error, target: captureReceipt.exactWindow)
         }
+    }
+
+    private func resolveCoordinateTarget(
+        at point: CGPoint,
+        target: UIAutomationTarget.ExactWindow) throws -> ScrollCoordinateTarget
+    {
+        do {
+            return try self.automationElementResolver.resolveScrollTarget(at: point, target: target)
+        } catch let error as PeekabooError {
+            guard case .snapshotStale = error else { throw error }
+            throw Self.staleCoordinateTargetFailure(error.localizedDescription, target: target)
+        }
+    }
+
+    private static func validateCoordinateTarget(
+        _ current: ScrollCoordinateTarget,
+        prepared: ScrollCoordinateTarget?,
+        target: UIAutomationTarget.ExactWindow) throws
+    {
+        switch (prepared, current) {
+        case let (.semanticOwner(previous, previousRole, previousBounds)?, .semanticOwner(element, role, bounds))
+            where previous.element == element.element && previousRole == role && previousBounds == bounds:
+            return
+        case (.pixelOnly?, .pixelOnly):
+            return
+        default:
+            throw self.staleCoordinateTargetFailure(
+                "The owning scroller changed before coordinate scroll", target: target)
+        }
+    }
+
+    private func performWindowRoutedScroll(
+        _ request: ScrollRequest,
+        at point: CGPoint,
+        target: UIAutomationTarget.ExactWindow,
+        element: AutomationElement?,
+        unavailableError: ActionInputError = .unsupported(.actionUnsupported)) async throws
+        -> UIInputExecutionResult.Action
+    {
+        guard self.backgroundWheelCapability(target.identity.ownerProcessIdentifier),
+              let targetWindowID = CGWindowID(exactly: target.identity.windowID)
+        else {
+            throw unavailableError
+        }
+        let outcome = try await self.windowRoutedPointerDriver.scroll(
+            at: point,
+            direction: request.direction,
+            ticks: Self.actionScrollPages(amount: request.amount, strategy: .actionOnly),
+            targetProcessIdentifier: target.identity.ownerProcessIdentifier,
+            targetWindowID: targetWindowID,
+            expectedWindowIdentity: target.identity,
+            expectedWindowBounds: target.bounds)
+        return UIInputExecutionResult.Action(
+            outcome: outcome,
+            actionName: "WindowRoutedWheel",
+            anchorPoint: point,
+            elementRole: element?.role)
+    }
+
+    private static func staleCoordinateTargetFailure(
+        _ message: String,
+        target: UIAutomationTarget.ExactWindow) -> DesktopActionFailure
+    {
+        DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: message,
+            hint: "Capture the exact window again before retrying coordinate scroll.",
+            standardErrorCode: .snapshotStale)
+            .attributed(to: DesktopTargetIdentity(exactWindow: target).actionTargetReceipt)
+    }
+
+    private func validatedDetectionResult(
+        snapshotID: String,
+        receipt: DesktopOperationPlan.CaptureReceipt) async throws -> ElementDetectionResult
+    {
+        guard let detection = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotID) else {
+            throw PeekabooError.snapshotStale("background scroll snapshot is no longer available")
+        }
+        try DesktopOperationSnapshotReceiptValidator.validate(
+            detectionResult: detection,
+            receipt: receipt,
+            processStartIdentityProvider: self.processStartIdentityProvider,
+            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+        return detection
+    }
+
+    private nonisolated static func validateCoordinateAuthority(
+        point: CGPoint,
+        snapshotID: String,
+        detectionResult: ElementDetectionResult?) throws
+    {
+        let authority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            guard let detectionResult,
+                  !detectionResult.screenshotPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                throw DesktopTargetIdentityError.coordinateReferenceMismatch
+            }
+            authority = try SnapshotTargetReceiptPlanner.assemble(
+                snapshotID: snapshotID,
+                detectionResult: detectionResult).receipt.requireCoordinateAuthority()
+            let imageSize = authority.context.deliveredImageSize
+            guard imageSize.width.isFinite, imageSize.height.isFinite, imageSize.width > 0, imageSize.height > 0 else {
+                throw DesktopTargetIdentityError.coordinateReferenceMismatch
+            }
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Coordinate scroll requires a fresh pixel-backed exact-window snapshot.",
+                hint: "Capture the exact window with see and use its coordinate reference.",
+                standardErrorCode: .snapshotStale)
+        }
+        guard authority.target.bounds.contains(point) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Scroll coordinates are outside the captured target window.",
+                standardErrorCode: .invalidInput)
+        }
+    }
+
+    private nonisolated static func windowRoutedWheelPoint(
+        request: ScrollRequest,
+        detectedElement: DetectedElement?,
+        coordinateTarget: ScrollCoordinateTarget?,
+        screenshotPath: String) -> CGPoint?
+    {
+        if let point = request.point, case let .semanticOwner(_, role, _)? = coordinateTarget {
+            guard !screenshotPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  ["AXGroup", "AXWebArea", "AXScrollArea"].contains(role)
+            else { return nil }
+            return point
+        }
+        guard let detectedElement,
+              self.supportsWindowRoutedWheelTarget(detectedElement, screenshotPath: screenshotPath)
+        else { return nil }
+        return CGPoint(x: detectedElement.bounds.midX, y: detectedElement.bounds.midY)
     }
 
     private func logRequest(_ request: ScrollRequest) {

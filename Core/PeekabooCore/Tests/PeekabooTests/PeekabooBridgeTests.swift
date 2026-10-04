@@ -2594,6 +2594,8 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
         defaultResponse: .outcome(StubAutomationService.defaultActionOutcome))
     var uiAutomationOutcomeTargetIdentity: DesktopTargetIdentity?
     var supportsRequestPinnedExactWindowScrollReceipt = true
+    var supportsBackgroundCoordinateScroll = false
+    var scrollRequests: [ScrollRequest] = []
     var allowsContradictoryOutcomeTargetIdentityForTesting = false
     var actionOutcome = StubAutomationService.defaultActionOutcome {
         didSet {
@@ -2844,7 +2846,7 @@ class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceP
     }
 
     func scroll(_ request: ScrollRequest) async throws {
-        _ = request
+        self.scrollRequests.append(request)
     }
 
     func hotkey(keys _: String, holdDuration _: Int) async throws {}

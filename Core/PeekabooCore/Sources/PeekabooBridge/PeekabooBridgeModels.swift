@@ -420,6 +420,7 @@ public enum PeekabooBridgeHostCapability {
     public static let textSelection = "textSelection"
     public static let foregroundModifierClickSnapshotLease = "foregroundModifierClickSnapshotLease"
     public static let requestPinnedExactWindowScrollReceipt = "requestPinnedExactWindowScrollReceipt"
+    public static let backgroundCoordinateScroll = "backgroundCoordinateScroll"
     public static let compositeTypeDelivery = "compositeTypeDelivery"
     public static let clipboardGuardedExactWindowHotkeys = "clipboardGuardedExactWindowHotkeys"
     public static let preparedClipboardGuardedExactWindowHotkeys = "preparedClipboardGuardedExactWindowHotkeys"

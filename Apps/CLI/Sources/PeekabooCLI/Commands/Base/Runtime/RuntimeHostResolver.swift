@@ -964,6 +964,8 @@ extension RuntimeHostResolver {
             supportsTargetedScroll: BridgeCapabilityPolicy.supportsTargetedScroll(for: handshake),
             supportsRequestPinnedExactWindowScrollReceipt:
             BridgeCapabilityPolicy.supportsRequestPinnedExactWindowScrollReceipt(for: handshake),
+            supportsBackgroundCoordinateScroll: BridgeCapabilityPolicy
+                .supportsBackgroundCoordinateScroll(for: handshake),
             supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(for: handshake),
             supportsExactWindowTargetedKeyboard: supportsExactKeyboard,
             supportsClipboardGuardedExactWindowHotkeys:
