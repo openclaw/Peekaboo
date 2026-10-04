@@ -103,7 +103,8 @@ enum BackgroundWindowKeyboardPreparation {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: error is CancellationError ? .requestCancelled : .targetUnavailable,
                 message: "The exact background window and focused editor could not be observed unchanged.",
-                hint: "Observe the target again; this observation did not dispatch preparation input.")
+                hint: "Observe the target again; this observation did not dispatch preparation input.",
+                causeDescription: error.localizedDescription)
         }
     }
 }

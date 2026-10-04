@@ -12,7 +12,7 @@ struct BackgroundWindowKeyboardPreparationTests {
     }
 
     @Test(arguments: [0, 1, 2])
-    func `read-only focus loss preserves only the earlier preparation prefix`(phase: Int) async throws {
+    func `read-only focus loss preserves the cause and only the earlier preparation prefix`(phase: Int) async throws {
         let target = try Self.observationTarget()
         func read() async throws {
             let _: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) {
@@ -37,6 +37,8 @@ struct BackgroundWindowKeyboardPreparationTests {
             #expect(failure.outcome.state == (phase == 0 ? .refused : .indeterminate))
             #expect(failure.outcome.retrySafety == (phase == 0 ? .safe : .unsafe))
             #expect(failure.outcome.dispatchState.unitCount?.rawValue == (phase == 0 ? nil : (phase == 1 ? 1 : 4)))
+            #expect(failure.causeDescription == FocusedElementReceiptError.focusNotConfirmed.errorDescription)
+            #expect(failure.hint == "Observe the target again; this observation did not dispatch preparation input.")
             #expect(!failure.message.contains("native focus request"))
         }
     }
@@ -61,14 +63,14 @@ struct BackgroundWindowKeyboardPreparationTests {
     func `observation never weakens an existing canonical failure`() async throws {
         let target = try Self.observationTarget()
         let existing = BackgroundWindowKeyboardPreparation.leafFailure(
-            InputDeliveryIndeterminateError(operation: .click, emittedUnitCount: 1),
+            InputDeliveryIndeterminateError(
+                operation: .click, emittedUnitCount: 1, causeDescription: "Pointer delivery was interrupted."),
             delivery: .init(mechanism: .windowTargetedEvents, mode: .background))
         do {
             let _: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) { throw existing }
             Issue.record("Expected retained failure")
         } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome == existing.outcome)
-            #expect(failure.message == existing.message)
+            #expect(failure == existing)
         }
     }
 
