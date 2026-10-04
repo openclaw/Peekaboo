@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooAgentRuntimeTestSupport
 import PeekabooFoundation
 import PeekabooFoundationTestSupport
 import Tachikoma
@@ -10,6 +11,10 @@ import Testing
 
 @MainActor
 struct AgentToolMCPFailureSemanticsTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
     @Test
     func `Reusing normalized claims preserves failure classification`() throws {
         let confirmed = try Self.value(DesktopActionOutcome.confirmedChange(delivery: .init(
@@ -525,7 +530,7 @@ struct AgentToolMCPFailureSemanticsTests {
                     "reason": AnyAgentToolValue(string: oversizedWhitespace),
                 ]),
             ]))
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         #expect(AgentToolResultSemantics.normalizedClaims(from: boundaryResult.result).turnBoundary == .invalid)
         #expect(AgentToolResultSemantics.isFailure(boundaryResult))
         #expect(service.turnBoundarySignal(from: boundaryResult) == .stopAgent(
@@ -636,7 +641,7 @@ struct AgentToolMCPFailureSemanticsTests {
     func `Nonconfirmed MCP success cannot become a successful terminal observation`() async throws {
         let outcome = DesktopActionOutcome.refused(reason: .permissionDenied)
         let response = try ToolResponse.text("incorrect success", meta: Value(outcome.projection))
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let tool = PeekabooAgentService.$toolConstructionExecutionAuthority
             .withValue(.init(basePolicy: .unrestricted)) {
                 service.makeAgentTool(from: AgentFailureProbeTool(name: "see", response: response))
@@ -740,7 +745,7 @@ struct AgentToolMCPFailureSemanticsTests {
                 "blob": .data(mimeType: "application/octet-stream", Data([9, 8, 7])),
                 "details": .string(oversized),
             ]))
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let tool = PeekabooAgentService.$toolConstructionExecutionAuthority
             .withValue(.init(basePolicy: .unrestricted)) {
                 service.makeAgentTool(from: AgentFailureProbeTool(response: response))
@@ -832,7 +837,7 @@ struct AgentToolMCPFailureSemanticsTests {
 
     @Test
     func `Agent policy refusal is typed and traced as skipped before dispatch`() async throws {
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let call = AgentToolCall(
             id: "policy-refusal",
             name: "press",

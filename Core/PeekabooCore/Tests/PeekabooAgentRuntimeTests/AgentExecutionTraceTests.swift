@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooAgentRuntimeTestSupport
 import PeekabooCore
 import Tachikoma
 import TachikomaMCP
@@ -8,9 +9,13 @@ import Testing
 
 @MainActor
 struct AgentExecutionTraceTests {
+    init() throws {
+        try AuthorityTestSupport.prepare()
+    }
+
     @Test
     func `Trace distinguishes dispatched mutations from boundary skips until fresh see`() async throws {
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let service = try AuthorityTestSupport.agent(services: AuthorityTestSupport.services())
         let recorder = AgentExecutionTraceRecorder()
         let tools = ["see", "click", "type", "set_value"].map { name in
             AgentTool(
