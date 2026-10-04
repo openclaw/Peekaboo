@@ -4,6 +4,7 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
+import UniformTypeIdentifiers
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomation
 @testable import PeekabooCore
@@ -223,6 +224,66 @@ enum MCPToolTestHelpers {
         return try await MCPToolContext.withContext(context) {
             try await operation()
         }
+    }
+}
+
+@MainActor
+final class MCPAmbientServiceTripwire: ClipboardServiceProtocol, BrowserMCPClientProviding, PermissionsStatusProviding {
+    private(set) var calls = 0
+    private let message: String
+
+    init(message: String) {
+        self.message = message
+    }
+
+    private func unexpected() -> PeekabooError {
+        self.calls += 1
+        return .notImplemented(self.message)
+    }
+
+    func permissionsStatus() async throws -> PermissionsStatus {
+        throw self.unexpected()
+    }
+
+    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
+        throw self.unexpected()
+    }
+
+    func set(_: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        throw self.unexpected()
+    }
+
+    func clear() {
+        _ = self.unexpected()
+    }
+
+    func save(slot _: String) throws {
+        throw self.unexpected()
+    }
+
+    func restore(slot _: String) throws -> ClipboardReadResult {
+        throw self.unexpected()
+    }
+
+    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
+        _ = self.unexpected()
+        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
+    }
+
+    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
+        throw self.unexpected()
+    }
+
+    func disconnect() async {
+        _ = self.unexpected()
+    }
+
+    func execute(
+        toolName _: String,
+        arguments _: [String: Any],
+        channel _: BrowserMCPChannel?) async throws -> ToolResponse
+    {
+        throw self.unexpected()
     }
 }
 

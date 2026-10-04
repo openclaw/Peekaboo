@@ -6,7 +6,6 @@ import PeekabooBridgeTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
-import UniformTypeIdentifiers
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomationKit
 
@@ -130,7 +129,7 @@ private struct TypeMetadataFixture {
     let automation: TypeMetadataAutomation
     let targetIdentity: DesktopTargetIdentity
     let snapshotID: String
-    let unused: TypeMetadataUnusedServices
+    let unused: MCPAmbientServiceTripwire
 
     static func make(exactWindow: Bool) async throws -> Self {
         let linked = AutomationTestFixtures.linkedSnapshotTarget(
@@ -163,7 +162,7 @@ private struct TypeMetadataFixture {
             automation: automation,
             windows: ScriptedWindowInventoryService(graph: graph),
             snapshots: storage)
-        let unused = TypeMetadataUnusedServices()
+        let unused = MCPAmbientServiceTripwire(message: "Typing metadata must not access ambient services")
         let context = MCPToolContext(
             automation: automation,
             menu: services.menu,
@@ -218,62 +217,5 @@ private final class TypeMetadataAutomation: StubAutomationService, ExactWindowPi
             payload: BridgeTestFixtures.typeResult(for: request.actions),
             outcome: .confirmedChange(delivery: .init(mechanism: .composite, mode: .background)),
             targetIdentity: self.pixelTargetIdentity)
-    }
-}
-
-@MainActor
-private final class TypeMetadataUnusedServices: ClipboardServiceProtocol, BrowserMCPClientProviding,
-    PermissionsStatusProviding
-{
-    private(set) var calls = 0
-
-    private func unexpected() -> PeekabooError {
-        self.calls += 1
-        return .notImplemented("Typing metadata must not access ambient services")
-    }
-
-    func permissionsStatus() async throws -> PermissionsStatus {
-        throw self.unexpected()
-    }
-
-    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
-        throw self.unexpected()
-    }
-
-    func set(_: ClipboardWriteRequest) throws -> ClipboardReadResult {
-        throw self.unexpected()
-    }
-
-    func clear() {
-        _ = self.unexpected()
-    }
-
-    func save(slot _: String) throws {
-        throw self.unexpected()
-    }
-
-    func restore(slot _: String) throws -> ClipboardReadResult {
-        throw self.unexpected()
-    }
-
-    func status(channel _: BrowserMCPChannel?) async -> BrowserMCPStatus {
-        _ = self.unexpected()
-        return BrowserMCPStatus(isConnected: false, toolCount: 0, detectedBrowsers: [])
-    }
-
-    func connect(channel _: BrowserMCPChannel?) async throws -> BrowserMCPStatus {
-        throw self.unexpected()
-    }
-
-    func disconnect() async {
-        _ = self.unexpected()
-    }
-
-    func execute(
-        toolName _: String,
-        arguments _: [String: Any],
-        channel _: BrowserMCPChannel?) async throws -> ToolResponse
-    {
-        throw self.unexpected()
     }
 }
