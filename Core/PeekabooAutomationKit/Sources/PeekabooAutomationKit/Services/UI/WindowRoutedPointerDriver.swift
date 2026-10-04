@@ -159,14 +159,17 @@ struct WindowRoutedPointerDriver {
         -> DesktopActionOutcome
     {
         guard button == .left || button == .right || button == .middle else {
-            throw PeekabooError.serviceUnavailable(
-                "Window-routed background pointer delivery supports left, right, and middle buttons only")
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Window-routed background pointer delivery supports left, right, and middle buttons only")
         }
         guard (1...3).contains(count) else {
             throw PeekabooError.invalidInput("Window-routed click count must be between 1 and 3")
         }
         guard self.hasPostEventAccess() else {
-            throw PeekabooError.permissionDeniedEventSynthesizing
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .permissionDenied,
+                message: PeekabooError.permissionDeniedEventSynthesizing.localizedDescription)
         }
         try Task.checkCancellation()
 
@@ -190,12 +193,17 @@ struct WindowRoutedPointerDriver {
             button: .left,
             clickState: 0,
             buttonNumber: 0)
-        try self.post(
-            primer,
-            receipt: receipt,
-            clickGroup: clickGroup,
-            transport: transport,
-            postedEventCount: &postedEventCount)
+        do {
+            try self.post(
+                primer,
+                receipt: receipt,
+                clickGroup: clickGroup,
+                transport: transport,
+                postedEventCount: &postedEventCount)
+        } catch let PeekabooError.serviceUnavailable(message) where postedEventCount == 0 {
+            // This first-post boundary knows no pointer event was emitted; later failures retain their prefix.
+            throw DesktopActionFailure.preDispatchRefusal(reason: .operationUnsupported, message: message)
+        }
         await self.sleep(.milliseconds(12))
 
         for pairIndex in 0..<count {
@@ -751,7 +759,9 @@ struct WindowRoutedPointerDriver {
                 causeDescription: "Background pointer target changed during routed delivery")
         }
     }
+}
 
+extension WindowRoutedPointerDriver {
     private static func setIntegerField(_ rawField: UInt32, clickState value: Int64, on event: CGEvent) {
         guard let field = CGEventField(rawValue: rawField) else { return }
         event.setIntegerValueField(field, value: value)

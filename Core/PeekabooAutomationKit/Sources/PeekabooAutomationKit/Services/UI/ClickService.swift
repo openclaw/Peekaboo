@@ -1496,6 +1496,13 @@ extension ClickService {
             self.logger.debug("Click completed via \(result.path.rawValue, privacy: .public)")
             return result
         } catch let error as ActionInputError
+            where targetProcessIdentifier != nil && strategy == .actionOnly && error.allowsSynthesisFallback
+        {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The background click has no supported Accessibility action.",
+                hint: "Use actionFirst to permit exact-window pointer delivery when no AX target is available.")
+        } catch let error as ActionInputError
             where targetProcessIdentifier != nil && strategy == .actionOnly && error == .permissionDenied
         {
             self.logger.error("Click failed: \(error.localizedDescription)")

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add exact-window native single-left fallback when positional Accessibility resolution finds no actionable target, preserving AX preference, action-only policy, retry-unsafe prefixes, and owner-proven no-dispatch refusals.
 - Remove proven duplicate `see` / `inspect_ui` element listings from Agent provider requests while preserving observation evidence, raw MCP/CLI output, and saved history.
 - Distinguish unreadable exact-window focus evidence from actual window mismatches, retaining the AX observation stage and native error without changing background input guards or retry safety.
 - Add opt-in `see --fresh` and MCP `see` / `inspect_ui` freshness with uncached AX evidence, truthful `used_cache` metadata, and fail-closed host compatibility while preserving default caching and partial-tree limits.

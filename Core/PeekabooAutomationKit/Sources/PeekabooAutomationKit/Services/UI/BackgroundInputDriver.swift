@@ -15,8 +15,8 @@ enum FocusedTextKeyDispatch: Equatable {
 /// Background input that targets a process directly without focusing it or moving the cursor.
 ///
 /// Keyboard input is delivered as pid-routed CGEvents. Single left clicks prefer accessibility
-/// actions. Pixel right- and double-clicks use a PID/window-routed event sequence carrying an
-/// explicit window-local point; they never use the desktop-global event tap.
+/// actions, then exact-window events when no positional AX target exists. Native pointer events carry
+/// an explicit window-local point and never use the desktop-global event tap.
 enum BackgroundInputDriver {
     private static let logger = Logger(subsystem: "boo.peekaboo.core", category: "BackgroundInputDriver")
 
@@ -193,8 +193,9 @@ enum BackgroundInputDriver {
             return
         }
         guard AXWindowResolver().windowID(from: axElement) == targetWindowID else {
-            throw PeekabooError.serviceUnavailable(
-                Self.occludedWindowMessage(at: point, targetWindowID: targetWindowID))
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: Self.occludedWindowMessage(at: point, targetWindowID: targetWindowID))
         }
     }
 
@@ -1612,16 +1613,6 @@ extension BackgroundInputDriver {
         "AXWindow",
     ]
 
-    static func noActionableElementMessage(at point: CGPoint, targetProcessIdentifier: pid_t) -> String {
-        """
-        No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
-        PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
-        target point, and nothing pressable was found there — the point may be empty, a \
-        custom-drawn view, or an element that exposes no press action. Re-run with --foreground \
-        --input-strategy synthOnly to focus the app and send a real mouse click at these coordinates.
-        """
-    }
-
     static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
         """
         Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
@@ -1634,7 +1625,7 @@ extension BackgroundInputDriver {
 }
 
 extension BackgroundInputDriver {
-    /// Deliver a positional click to a background process via accessibility.
+    /// Prefer a positional AX target before dispatching exact-window pointer events.
     @MainActor
     @discardableResult
     static func click(
@@ -1674,9 +1665,11 @@ extension BackgroundInputDriver {
             }
         }
 
-        if count > 1 || button != .left {
+        let routedClick = { @MainActor in
             guard let resolvedWindowID else {
-                throw PeekabooError.serviceUnavailable(self.unprovenWindowRouteMessage)
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .operationUnsupported,
+                    message: self.unprovenWindowRouteMessage)
             }
             return try await WindowRoutedPointerDriver().click(
                 at: point,
@@ -1687,6 +1680,9 @@ extension BackgroundInputDriver {
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds)
         }
+        if count > 1 || button != .left {
+            return try await routedClick()
+        }
         guard count == 1 else {
             throw PeekabooError.invalidInput("Background click count must be between 1 and 3")
         }
@@ -1694,28 +1690,27 @@ extension BackgroundInputDriver {
             throw PeekabooError.permissionDeniedAccessibility
         }
 
-        let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
-        guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
-            throw PeekabooError.serviceUnavailable(
-                Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
-        }
-        if let targetWindowID {
-            guard let expectedWindowIdentity,
-                  let expectedWindowBounds,
-                  SystemIdentityResolver.validateWindowMutationIdentity(
-                      expectedWindowIdentity,
-                      expectedBounds: expectedWindowBounds)
-            else {
-                throw PeekabooError.snapshotStale(
-                    "Exact-window background pointer receipt changed before AX dispatch")
-            }
-            try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
-        }
-
-        return try await self.performPositionalClickAction(
-            resolved.action,
-            on: resolved.element,
-            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+        return try await self.performSinglePositionalClick(
+            resolveAccessibilityTarget: {
+                let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
+                guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button)
+                else { return nil }
+                if let targetWindowID {
+                    guard let expectedWindowIdentity,
+                          let expectedWindowBounds,
+                          SystemIdentityResolver.validateWindowMutationIdentity(
+                              expectedWindowIdentity,
+                              expectedBounds: expectedWindowBounds)
+                    else {
+                        throw PeekabooError.snapshotStale(
+                            "Exact-window background pointer receipt changed before AX dispatch")
+                    }
+                    try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
+                }
+                return resolved
+            },
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
+            routedClick: routedClick)
     }
 }
 

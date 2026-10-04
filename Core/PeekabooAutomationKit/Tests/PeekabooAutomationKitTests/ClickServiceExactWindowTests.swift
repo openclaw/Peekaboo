@@ -14,6 +14,53 @@ struct ClickServiceExactWindowTests {
     private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
     private static let incompleteSnapshotID = SnapshotReferenceFixtures.second.rawValue
 
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly])
+    @MainActor
+    func `single coordinate click respects action-only before the positional fallback`(
+        strategy: UIInputStrategy) async throws
+    {
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 12345,
+            ownerProcessStartIdentity: 1,
+            capturedBounds: bounds)
+        let nativeOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .init(3))
+        let synthetic = ClickRecordingSyntheticInputDriver(targetedClickOutcome: nativeOutcome)
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: strategy),
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in true })
+        let dispatch = {
+            try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .single,
+                snapshotId: nil,
+                automationTarget: .exactWindow(.init(identity: identity, bounds: bounds)))
+        }
+        if strategy == .actionOnly {
+            let failure = await #expect(throws: DesktopActionFailure.self) { try await dispatch() }
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.refusalReason == .operationUnsupported)
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.outcome.retrySafety == .safe)
+            #expect(synthetic.events.isEmpty)
+        } else {
+            let result = try await dispatch()
+            #expect(result.outcome == nativeOutcome)
+            #expect(synthetic.events == [.targetedClick(
+                point: CGPoint(x: 10, y: 20),
+                button: .left,
+                count: 1,
+                targetProcessIdentifier: 12345,
+                targetWindowID: 42)])
+        }
+    }
+
     @Test
     @MainActor
     func `value opt-out does not alter explicit foreground synthesis`() async throws {

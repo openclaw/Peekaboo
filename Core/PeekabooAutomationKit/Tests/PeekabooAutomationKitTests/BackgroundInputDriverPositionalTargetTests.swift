@@ -6,9 +6,128 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
-/// Single left positional clicks use accessibility actions. Pixel right- and double-clicks use
-/// exact-window routed events and are covered separately by `WindowRoutedPointerDriverTests`.
+/// Positional AX resolution and the no-dispatch boundary before exact-window native fallback.
 struct BackgroundInputDriverPositionalTargetTests {
+    @Test(arguments: [false, true])
+    @MainActor
+    func `unsupported positional AX target invokes the native route once`(hasContainer: Bool) async throws {
+        let container = PositionalMockElement(role: "AXGroup", supportedActions: [AXActionNames.kAXPressAction])
+        var nativeCalls = 0
+        let nativeOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .init(3))
+        let outcome = try await BackgroundInputDriver.performSinglePositionalClick(
+            resolveAccessibilityTarget: {
+                BackgroundInputDriver.positionalClickTarget(
+                    inCandidates: hasContainer ? [container] : [],
+                    at: CGPoint(x: 322, y: 418),
+                    button: .left)
+            },
+            allowsAccessibilityValueDelivery: false,
+            routedClick: {
+                nativeCalls += 1
+                return nativeOutcome
+            })
+
+        #expect(outcome == nativeOutcome)
+        #expect(nativeCalls == 1)
+        #expect(container.performedActions.isEmpty)
+        #expect(container.setFocusedValues.isEmpty && container.setSelectedValues.isEmpty)
+    }
+
+    @Test(arguments: [BackgroundInputDriver.PositionalClickAction.press, .focus, .select], [false, true])
+    @MainActor
+    func `resolved AX target keeps preference and value policy without native fallback`(
+        action: BackgroundInputDriver.PositionalClickAction,
+        allowsValue: Bool) async throws
+    {
+        let element = PositionalMockElement(
+            supportedActions: [AXActionNames.kAXPressAction],
+            isFocusedSettable: true,
+            isSelectedSettable: true)
+        var nativeCalls = 0
+        let dispatch = {
+            try await BackgroundInputDriver.performSinglePositionalClick(
+                resolveAccessibilityTarget: { (element, action) },
+                allowsAccessibilityValueDelivery: allowsValue,
+                routedClick: {
+                    nativeCalls += 1
+                    return .dispatchedUnverified(
+                        delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                        evidence: .deliveryAccepted,
+                        unitCount: .init(3))
+                })
+        }
+        if action == .press || allowsValue {
+            let outcome = try await dispatch()
+            #expect(outcome.delivery?.mechanism == (action == .press ? .accessibilityAction : .accessibilityValue))
+        } else {
+            let failure = await #expect(throws: DesktopActionFailure.self) { try await dispatch() }
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.outcome.retrySafety == .safe)
+        }
+        #expect(nativeCalls == 0)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `positional resolver refusal and accepted AX failure never invoke native fallback`(
+        afterAX: Bool) async throws
+    {
+        let element = PositionalMockElement(supportedActions: [AXActionNames.kAXPressAction])
+        let expected = afterAX
+            ? DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "The accepted AX press could not be confirmed.")
+            : DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The resolved AX element belongs to another window.")
+        element.performedActionError = afterAX ? expected : nil
+        var nativeCalls = 0
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            try await BackgroundInputDriver.performSinglePositionalClick(
+                resolveAccessibilityTarget: {
+                    guard afterAX else { throw expected }
+                    return (element, .press)
+                },
+                allowsAccessibilityValueDelivery: true,
+                routedClick: {
+                    nativeCalls += 1
+                    return .confirmedNoChange()
+                })
+        }
+        #expect(failure == expected)
+        #expect(nativeCalls == 0)
+        #expect(element.performedActions == (afterAX ? [AXActionNames.kAXPressAction] : []))
+    }
+
+    @Test
+    @MainActor
+    func `native fallback uncertainty retains its prefix without another route`() async throws {
+        let expected = DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "Only the pointer primer was dispatched.")
+        var nativeCalls = 0
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            try await BackgroundInputDriver.performSinglePositionalClick(
+                resolveAccessibilityTarget: { nil },
+                allowsAccessibilityValueDelivery: true,
+                routedClick: {
+                    nativeCalls += 1
+                    throw expected
+                })
+        }
+        #expect(failure == expected)
+        #expect(nativeCalls == 1)
+    }
+
     @Test(arguments: [BackgroundInputDriver.PositionalClickAction.focus, .select], [false, true])
     @MainActor
     func `positional value policy is checked before focus or selection setters`(
@@ -425,21 +544,6 @@ struct BackgroundInputDriverPositionalTargetTests {
     }
 
     @Test
-    func `unactionable point error names the foreground escape hatch and reads as point-specific`() {
-        let message = BackgroundInputDriver.noActionableElementMessage(
-            at: CGPoint(x: 2396, y: 162),
-            targetProcessIdentifier: 92941)
-        #expect(message.contains("--foreground"))
-        #expect(message.contains("--input-strategy synthOnly"))
-        #expect(message.contains("(2396, 162)"))
-        #expect(message.contains("92941"))
-        // The message must describe the genuine "nothing pressable here" case, not claim that
-        // positional background clicking is impossible.
-        #expect(message.contains("pressable"))
-        #expect(!message.lowercased().contains("cannot be routed"))
-    }
-
-    @Test
     func `unproven route message points to foreground`() {
         #expect(BackgroundInputDriver.unprovenWindowRouteMessage.contains("--foreground"))
     }
@@ -514,6 +618,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
     var setFocusedValues: [Bool] = []
     var setSelectedValues: [Bool] = []
     var performedActions: [String] = []
+    var performedActionError: (any Error)?
 
     /// Actions reported by the real `AXUIElementCopyActionNames` API in production. Kept separate
     /// from `actionNames` (the attribute read) so tests can model the SwiftUI case where the
@@ -553,6 +658,9 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
             throw AccessibilitySystemError(.actionUnsupported)
         }
         self.performedActions.append(actionName)
+        if let error = self.performedActionError {
+            throw error
+        }
     }
 
     func setAutomationValue(_ value: UIElementValue) throws {

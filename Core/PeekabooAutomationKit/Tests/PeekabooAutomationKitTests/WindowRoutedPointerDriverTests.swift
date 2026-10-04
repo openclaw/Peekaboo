@@ -222,9 +222,9 @@ struct WindowRoutedPointerDriverTests {
         #expect(visibilityChecks == 3)
     }
 
-    @Test
+    @Test(arguments: [MouseButton.left, .right])
     @MainActor
-    func `right click stamps exact window route and reports unverifiable dispatch`() async throws {
+    func `single click stamps exact window route and reports unverifiable dispatch`(button: MouseButton) async throws {
         var specifications: [WindowRoutedPointerDriver.EventSpecification] = []
         var windowPoints: [CGPoint] = []
         var publicEvents: [CGEvent] = []
@@ -261,7 +261,7 @@ struct WindowRoutedPointerDriverTests {
 
         let outcome = try await driver.click(
             at: receipt.screenPoint,
-            button: .right,
+            button: button,
             count: 1,
             targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
             targetWindowID: CGWindowID(receipt.identity.windowID))
@@ -271,20 +271,59 @@ struct WindowRoutedPointerDriverTests {
         #expect(outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
         #expect(outcome.dispatchState.unitCount?.rawValue == 3)
         #expect(!outcome.isConfirmed)
-        #expect(specifications.map(\.type) == [.mouseMoved, .rightMouseDown, .rightMouseUp])
+        #expect(specifications.map(\.type) == (button == .left
+                ? [.mouseMoved, .leftMouseDown, .leftMouseUp] : [.mouseMoved, .rightMouseDown, .rightMouseUp]))
         #expect(specifications.map(\.clickState) == [0, 1, 1])
-        #expect(specifications.map(\.buttonNumber) == [0, 1, 1])
+        #expect(specifications.map(\.buttonNumber) == (button == .left ? [0, 0, 0] : [0, 1, 1]))
         #expect(windowPoints == Array(repeating: CGPoint(x: 20, y: 30), count: 3))
         #expect(skyLightPosts == 0)
         #expect(publicEvents.count == 3)
         #expect(validations == 4)
         for event in publicEvents {
+            #expect(event.flags.isEmpty)
             #expect(event.getIntegerValueField(.eventTargetUnixProcessID) == 42)
             #expect(try event.getIntegerValueField(#require(CGEventField(rawValue: 51))) == 7)
             #expect(try event.getIntegerValueField(#require(CGEventField(rawValue: 58))) == 991)
             #expect(try event.getIntegerValueField(#require(CGEventField(rawValue: 91))) == 7)
             #expect(try event.getIntegerValueField(#require(CGEventField(rawValue: 92))) == 7)
         }
+    }
+
+    @Test(arguments: ["permission", "windowStamp", "transport"])
+    @MainActor
+    func `unsupported initial single-left route is a typed no-dispatch refusal`(stage: String) async throws {
+        let receipt = Self.receipt()
+        var posts = 0
+        let driver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { stage != "permission" },
+            resolveRoute: { _, _, _ in receipt },
+            routeIsCurrent: { _ in true },
+            makeEvent: { specification, point in
+                CGEvent(
+                    mouseEventSource: nil,
+                    mouseType: specification.type,
+                    mouseCursorPosition: point,
+                    mouseButton: specification.button)
+            },
+            stampWindowLocation: { _, _ in stage != "windowStamp" },
+            postSkyLight: { _, _ in false },
+            postPublic: { _, _ in posts += 1 },
+            resolveTransport: { _ in stage == "transport" ? .skyLight : .publicCGEvent },
+            sleep: { _ in })
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            try await driver.click(
+                at: receipt.screenPoint,
+                button: .left,
+                count: 1,
+                targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
+                targetWindowID: CGWindowID(receipt.identity.windowID))
+        }
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(failure?.outcome.refusalReason == (stage == "permission" ? .permissionDenied : .operationUnsupported))
+        #expect(posts == 0)
     }
 
     @Test
