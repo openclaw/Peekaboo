@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
 - Add background `scroll --at x,y` with explicit `--global` basis and MCP coordinate-reference mapping, requiring fresh exact-window pixels and protocol-1.43 support, with independent native-WebKit wheel delivery when no semantic AX receiver is exposed and no shared-pointer fallback.
 - Remove proven duplicate `see` / `inspect_ui` element listings from Agent provider requests while preserving observation evidence, raw MCP/CLI output, and saved history.
+- Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
 - Continue background AX typing when the value write itself relocates the caret, binding the cursor update to its confirmed completion state and preserving fail-closed later drift, unknown completion, and nested error causes.
 - Clarify backward versus forward Delete key names and supported Command modifiers in `press` help and docs, without changing key mappings.
 - Add opt-in `see --fresh` and MCP `see` / `inspect_ui` freshness with uncached AX evidence, truthful `used_cache` metadata, and fail-closed host compatibility while preserving default caching and partial-tree limits.
