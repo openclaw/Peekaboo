@@ -582,39 +582,18 @@ public struct PressTool: MCPTool {
     private static func responseMessage(_ input: PressResponseMessageInput) -> String {
         let sequence = input.display.joined(separator: " → ")
         let duration = String(format: "%.2f", input.elapsed)
-        guard let outcome = input.outcome else {
-            if input.confirmedNoChangeWithoutAggregate {
-                if input.targetFocusCompleted {
-                    return "\(AgentDisplayTokens.Status.warning) Completed \(sequence); " +
-                        "all chords confirmed no change. The setup-focus effect is unverifiable; " +
-                        "observe before continuing. Completed in \(duration)s"
-                }
-                return "\(AgentDisplayTokens.Status.success) Completed \(sequence); " +
-                    "all chords confirmed no change in \(duration)s"
+        if input.outcome == nil, input.confirmedNoChangeWithoutAggregate {
+            if input.targetFocusCompleted {
+                return "\(AgentDisplayTokens.Status.warning) Completed \(sequence); " +
+                    "all chords confirmed no change. The setup-focus effect is unverifiable; " +
+                    "observe before continuing. Completed in \(duration)s"
             }
-            return "\(AgentDisplayTokens.Status.success) Dispatched \(sequence) " +
-                "(\(input.completed) raw chord\(input.completed == 1 ? "" : "s")); effect is unverifiable. " +
-                "Observe before continuing. Completed in \(duration)s"
+            return "\(AgentDisplayTokens.Status.success) Completed \(sequence); " +
+                "all chords confirmed no change in \(duration)s"
         }
-        return switch outcome.state {
-        case .confirmedChange:
-            "\(AgentDisplayTokens.Status.success) Completed \(sequence); effect confirmed in \(duration)s"
-        case .confirmedNoChange:
-            "\(AgentDisplayTokens.Status.success) Completed \(sequence); confirmed no change in \(duration)s"
-        case .partial:
-            "\(AgentDisplayTokens.Status.warning) Completed \(sequence) with a partial effect in \(duration)s"
-        case .dispatchedUnverified:
-            "\(AgentDisplayTokens.Status.warning) Dispatched \(sequence); effect is unverifiable. " +
-                "Observe before continuing. Completed in \(duration)s"
-        case .suspectedNoop:
-            "\(AgentDisplayTokens.Status.warning) Dispatched \(sequence), but no change was observed. " +
-                "Refresh the target before retrying. Completed in \(duration)s"
-        case .refused:
-            "\(AgentDisplayTokens.Status.failure) \(sequence) was refused before dispatch in \(duration)s"
-        case .indeterminate:
-            "\(AgentDisplayTokens.Status.warning) \(sequence) has an indeterminate outcome. " +
-                "Observe before continuing. Completed in \(duration)s"
-        }
+        return ActionOutcomeHumanRenderer.statusLine(for: input.outcome, operation: "Press") +
+            "\nSequence: \(sequence) (\(input.completed) raw chord\(input.completed == 1 ? "" : "s")); " +
+            "elapsed \(duration)s"
     }
 
     private static func foregroundConsentRefusal() throws -> ToolResponse {

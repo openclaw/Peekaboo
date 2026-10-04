@@ -163,6 +163,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
         #expect(request.expectedWindow?.bounds == bounds)
         #expect(request.expectedWindow?.identity.windowID == 42)
         #expect(automation.uiAutomationOutcomeScript.callCount(for: .scroll) == 1)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected confirmed no-change scroll text")
+            return
+        }
+        #expect(text.hasPrefix("✅ Scroll confirmed; no change was needed\nScroll request:"))
     }
 
     @Test
@@ -280,6 +285,14 @@ extension MCPDesktopActionOutcomeProjectionTests {
             #expect(meta["target_identity"] == nil)
             #expect(meta["invalidated_snapshot"] == .string(snapshotID))
             #expect(automation.uiAutomationOutcomeScript.callCount(for: .scroll) == 1)
+            guard case let .text(text, _, _) = response.content.first else {
+                Issue.record("Expected legacy scroll outcome guidance")
+                return
+            }
+            let expectedStatus = "⚠️ Scroll request completed; receiver effect was not reported; " +
+                "observe the target before retrying"
+            #expect(text.hasPrefix(expectedStatus + "\nScroll request:"))
+            #expect(!text.contains("✅"))
         }
     }
 }

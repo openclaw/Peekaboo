@@ -283,17 +283,11 @@ public struct PasteTool: MCPTool {
         startedAt: Date) async throws -> ToolResponse
     {
         let executionTime = Date().timeIntervalSince(startedAt)
-        let message = if outcome.restoreErrorDescription != nil {
-            "\(AgentDisplayTokens.Status.warning) Pasted (Cmd+V), but clipboard restoration failed " +
-                "in \(String(format: "%.2f", executionTime))s. Do not retry the paste; " +
-                "the previous clipboard contents may be unavailable."
-        } else if outcome.cleanupStatus == .preservedNewerContents {
-            "Paste input sent; a newer clipboard update was preserved instead of restoring prior contents " +
-                "in \(String(format: "%.2f", executionTime))s."
-        } else {
-            "\(AgentDisplayTokens.Status.success) Pasted (Cmd+V) and restored clipboard " +
-                "in \(String(format: "%.2f", executionTime))s"
-        }
+        let message = Self.explicitClipboardMessage(
+            outcome: actionResult.outcome,
+            cleanupStatus: outcome.cleanupStatus,
+            restoreErrorDescription: outcome.restoreErrorDescription,
+            executionTime: executionTime)
 
         let pastedObject: [String: Value] = [
             "uti": .string(outcome.setResult.utiIdentifier),
@@ -1044,8 +1038,11 @@ public struct PasteTool: MCPTool {
             actionDescription: "Paste current clipboard")
         return ToolResponse(
             content: [.text(
-                text: "\(AgentDisplayTokens.Status.success) Pasted the current clipboard " +
-                    "in \(String(format: "%.2f", executionTime))s",
+                text: ActionOutcomeHumanRenderer.statusLine(
+                    for: actionResult.outcome,
+                    operation: "Paste current clipboard") +
+                    "\nThe current clipboard was used without replacing it. " +
+                    "Completed in \(String(format: "%.2f", executionTime))s",
                 annotations: nil,
                 _meta: nil)],
             meta: ToolEventSummary.merge(summary: summary, into: meta))
@@ -1310,6 +1307,23 @@ public struct PasteTool: MCPTool {
 extension PasteTool: MCPToolArgumentSemanticValidating {}
 
 extension PasteTool {
+    static func explicitClipboardMessage(
+        outcome: DesktopActionOutcome?,
+        cleanupStatus: ClipboardTemporaryCleanupStatus?,
+        restoreErrorDescription: String?,
+        executionTime: TimeInterval) -> String
+    {
+        var message = ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Paste") +
+            "\n" + ClipboardTemporaryCleanupStatus.humanDescription(for: cleanupStatus)
+        if let restoreErrorDescription {
+            message += "\n\(AgentDisplayTokens.Status.warning) Clipboard restoration failed: " +
+                "\(restoreErrorDescription). Do not retry the paste; " +
+                "the previous clipboard contents may be unavailable."
+        }
+        message += "\nCompleted in \(String(format: "%.2f", executionTime))s"
+        return message
+    }
+
     fileprivate static func readResult(for request: ClipboardWriteRequest) throws -> ClipboardReadResult {
         guard let primary = request.representations.first else {
             throw ClipboardServiceError.writeFailed("No representations provided.")

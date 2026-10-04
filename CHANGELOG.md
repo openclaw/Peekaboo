@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep CLI and MCP action summaries explicit about unverified or unreported receiver effects, and report paste clipboard cleanup separately without changing canonical outcomes, JSON, retry rules, or exit status.
 - Explain evaluated Bridge host requirements when `see --fresh` cannot obtain authenticated producer-bound snapshots, instead of incorrectly claiming fresh AX is unsupported or a binary update is sufficient; preserve host selection, trust, and error codes.
 - Add exact-window background coordinate scrolling via CLI `--at` / `--global` and MCP `coords`, preferring the nearest proven AX scroll owner and allowing pixel-authorized native-WebKit wheel delivery without an exposed owner, preserving the requested point and retry-unsafe receipts, and refusing older hosts through protocol 1.43.
 - Remove proven duplicate `see` / `inspect_ui` element listings from Agent provider requests while preserving observation evidence, raw MCP/CLI output, and saved history.

@@ -167,27 +167,21 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 outcome: outputOutcome,
                 targetIdentity: outputOutcome == nil ? nil : actionResult.targetIdentity
             ) {
+                print(ActionOutcomeHumanRenderer.statusLine(for: outputOutcome, operation: "Paste"))
+                print("📋 Payload: \(outcome.setResult.utiIdentifier) (\(outcome.setResult.data.count) bytes)")
+                print("♻️  \(ClipboardTemporaryCleanupStatus.humanDescription(for: outcome.cleanupStatus))")
                 if outcome.restoreErrorDescription != nil {
-                    print("⚠️  Pasted, but clipboard restoration failed. Do not retry the paste; " +
+                    print("⚠️  Clipboard restoration failed. Do not retry the paste; " +
                         "the previous clipboard contents may be unavailable.")
-                } else if outcome.cleanupStatus == .preservedNewerContents {
-                    print(
-                        "Paste input sent; a newer clipboard update was preserved instead of restoring prior contents."
-                    )
-                } else if let outputOutcome {
-                    print(ActionOutcomeHumanRenderer.statusLine(for: outputOutcome, operation: "Paste"))
-                } else {
-                    print("✅ Pasted and restored clipboard")
                 }
-                print("📋 Pasted: \(outcome.setResult.utiIdentifier) (\(outcome.setResult.data.count) bytes)")
                 if let restoreErrorDescription = outcome.restoreErrorDescription {
                     print("♻️  Restore error: \(restoreErrorDescription)")
-                } else if outcome.cleanupStatus == .preservedNewerContents {
-                    print("♻️  Restore skipped: newer clipboard contents preserved")
-                } else if outcome.previousClipboardPresent {
-                    print("♻️  Restored: \(outcome.restoreResult?.utiIdentifier ?? "unknown")")
-                } else {
-                    print("🧹 Restored: cleared (prior clipboard empty)")
+                } else if outcome.cleanupStatus == .restored {
+                    if outcome.previousClipboardPresent {
+                        print("♻️  Restored: \(outcome.restoreResult?.utiIdentifier ?? "unknown")")
+                    } else {
+                        print("🧹 Restored: cleared (prior clipboard empty)")
+                    }
                 }
                 if let targetPID = outcome.targetPID {
                     print("🎯 Mode: background to PID \(targetPID)")
@@ -607,11 +601,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             outcome: actionResult.outcome,
             targetIdentity: actionResult.targetIdentity
         ) {
-            if let actionOutcome = actionResult.outcome {
-                print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Paste"))
-            } else {
-                print("✅ Pasted current clipboard")
-            }
+            print(ActionOutcomeHumanRenderer.statusLine(for: actionResult.outcome, operation: "Paste"))
             if let targetPID = outcome.targetPID {
                 print("🎯 Mode: background to PID \(targetPID)")
             } else {

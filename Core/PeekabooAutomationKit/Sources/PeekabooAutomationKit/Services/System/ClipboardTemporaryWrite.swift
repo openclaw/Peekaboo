@@ -5,6 +5,16 @@ public enum ClipboardTemporaryCleanupStatus: String, Sendable {
     case restored
     case preservedNewerContents = "preserved_newer_contents"
     case notNeeded = "not_needed"
+
+    /// Cleanup evidence is independent of receiver consumption and may be unreported.
+    public static func humanDescription(for status: Self?) -> String {
+        switch status {
+        case .restored: "Clipboard restored."
+        case .preservedNewerContents: "Newer clipboard contents preserved."
+        case .notNeeded: "Clipboard cleanup was not needed."
+        case nil: "Clipboard cleanup status was not reported."
+        }
+    }
 }
 
 /// Automatic cleanup of a temporary clipboard payload, distinct from an explicit restore command.

@@ -170,11 +170,7 @@ RuntimeBackedCommand {
                 outcome: compositeResult.outcome,
                 targetIdentity: compositeResult.targetIdentity
             ) {
-                if let outcome = compositeResult.outcome {
-                    print(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Scroll"))
-                } else {
-                    print("✅ Scroll completed")
-                }
+                print(ActionOutcomeHumanRenderer.statusLine(for: compositeResult.outcome, operation: "Scroll"))
                 print("🎯 Direction: \(self.direction)")
                 print("📊 Amount: \(self.amount) ticks")
                 if self.on != nil || self.at != nil {

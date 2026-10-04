@@ -236,7 +236,8 @@ public struct ScrollTool: MCPTool {
         let executionTime = Date().timeIntervalSince(startTime)
         let scrollDescription = request.smooth ? "smooth scroll" : "scroll"
         let duration = String(format: "%.2f", executionTime) + "s"
-        let message = "\(AgentDisplayTokens.Status.success) Performed \(scrollDescription) \(request.direction) " +
+        let message = ActionOutcomeHumanRenderer.statusLine(for: responseOutcome, operation: "Scroll") +
+            "\nScroll request: \(scrollDescription) \(request.direction) " +
             "(\(request.amount) ticks) \(target.description) in \(duration)"
 
         let summary = ToolEventSummary(

@@ -834,9 +834,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
             return
         }
         let meta = try #require(response.meta?.objectValue)
+        #expect(text.hasPrefix("\(AgentDisplayTokens.Status.success) Completed "))
         #expect(text.contains("all chords confirmed no change"))
         #expect(!text.contains("Dispatched"))
         #expect(!text.contains("unverifiable"))
+        #expect(!text.contains("receiver effect was not reported"))
         #expect(meta["delivery_mode"] == nil)
         #expect(meta["mutation_dispatched"] == .bool(false))
         #expect(meta["retry_safe"] == .bool(true))
@@ -866,12 +868,44 @@ extension MCPDesktopActionOutcomeProjectionTests {
             return
         }
         let meta = try #require(response.meta?.objectValue)
-        #expect(text.contains("effect confirmed"))
+        #expect(text.hasPrefix("✅ Press confirmed\n"))
         #expect(meta["state"] == .string("confirmed_change"))
         #expect(meta["effect"] == .string("confirmed"))
         #expect(meta["dispatched_unit_count"] == .int(1))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["requires_fresh_observation"] == .bool(false))
+    }
+
+    @Test
+    @MainActor
+    func `mixed route press reports missing aggregate without inventing outcome evidence`() async throws {
+        let automation = StubAutomationService()
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground)
+        automation.uiAutomationOutcomeScript.append(
+            .confirmedChange(route: .local, delivery: delivery, unitCount: .one), for: .hotkey)
+        automation.uiAutomationOutcomeScript.append(
+            .confirmedChange(route: .bridge, delivery: delivery, unitCount: .one), for: .hotkey)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+a", "cmd+c"],
+            "foreground": true,
+        ]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == nil)
+        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected receiptless aggregate text")
+            return
+        }
+        #expect(text.hasPrefix(ActionOutcomeHumanRenderer.statusLine(for: nil, operation: "Press") + "\n"))
+        #expect(!text.contains("effect is unverifiable"))
+        #expect(!text.contains(AgentDisplayTokens.Status.success))
     }
 
     @Test
@@ -1321,7 +1355,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
             Issue.record("Expected press text response")
             return
         }
-        #expect(text.contains("effect confirmed"))
+        #expect(text.hasPrefix(ActionOutcomeHumanRenderer.statusLine(for: outcome, operation: "Press") + "\n"))
         #expect(!text.contains("unverifiable"))
         #expect(!text.contains("Observe before continuing"))
     }

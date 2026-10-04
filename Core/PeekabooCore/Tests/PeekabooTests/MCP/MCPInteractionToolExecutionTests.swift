@@ -584,6 +584,10 @@ extension MCPToolExecutionTests {
             Issue.record("Expected routed click text response")
             return
         }
+        let expectedStatus = "⚠️ Click request completed; receiver effect was not reported; " +
+            "observe the target before retrying"
+        #expect(text.hasPrefix(expectedStatus + "\nClick request:"))
+        #expect(!text.contains("✅"))
         #expect(!text.contains("effect is unverifiable"))
     }
 

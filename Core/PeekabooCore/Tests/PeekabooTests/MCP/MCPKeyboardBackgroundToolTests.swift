@@ -904,7 +904,9 @@ extension MCPKeyboardBackgroundToolTests {
             return
         }
         #expect(message.contains(AgentDisplayTokens.Status.warning))
-        #expect(message.contains("clipboard restoration failed"))
+        #expect(message.contains("Clipboard restoration failed"))
+        #expect(message.contains("Clipboard cleanup status was not reported."))
+        #expect(!message.contains("Clipboard restored."))
         #expect(message.contains("Do not retry the paste"))
         #expect(!message.contains(AgentDisplayTokens.Status.success))
 

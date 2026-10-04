@@ -1,5 +1,6 @@
 import Commander
 import PeekabooCore
+import PeekabooFoundation
 
 extension DockCommand {
     // MARK: - Hide Dock

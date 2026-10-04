@@ -519,16 +519,13 @@ public struct ClickTool: MCPTool {
         resolution: ClickResolution,
         execution: ClickResponseExecution) throws -> ToolResponse
     {
-        var message = "\(AgentDisplayTokens.Status.success) \(intent.displayVerb)"
+        var message = ActionOutcomeHumanRenderer.statusLine(for: execution.outcome, operation: "Click")
+        message += "\nClick request: \(intent.automationType.rawValue)"
         if let element = resolution.elementDescription {
             message += " on \(element)"
         }
         message += " at (\(Int(resolution.location.x)), \(Int(resolution.location.y)))"
         message += " in \(String(format: "%.2f", execution.executionTime))s"
-
-        if execution.outcome?.effect == .unverifiable {
-            message += "; routed events were dispatched, but the application effect is unverifiable"
-        }
 
         var metaDict: [String: Value] = [
             "click_location": .object([

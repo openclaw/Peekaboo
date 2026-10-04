@@ -780,6 +780,12 @@ struct PasteToolTransactionGateTests {
         ]))
 
         #expect(response.isError == false)
+        let text = self.responseText(response)
+        #expect(text
+            .hasPrefix(ActionOutcomeHumanRenderer.statusLine(for: nil, operation: "Paste current clipboard") + "\n"))
+        #expect(text.contains("The current clipboard was used without replacing it."))
+        #expect(!text.contains(AgentDisplayTokens.Status.success))
+        #expect(!text.contains("Clipboard restored."))
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
         #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
@@ -793,8 +799,10 @@ struct PasteToolTransactionGateTests {
 }
 
 extension PasteToolTransactionGateTests {
-    @Test
-    func `Foreground paste composes focus with a compatible legacy hotkey result`() async throws {
+    @Test(arguments: [false, true])
+    func `Foreground paste composes focus with a compatible legacy hotkey result`(
+        explicitPayload: Bool) async throws
+    {
         let leafTargetIdentity = try RecordingWindowService.targetIdentity()
         let automation = await MainActor.run {
             OutcomePasteAutomationService(
@@ -809,29 +817,41 @@ extension PasteToolTransactionGateTests {
             clipboard: clipboard,
             snapshotOwner: Self.uiSnapshots.owner)
 
-        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+        var arguments: [String: Any] = [
             "app": "Editor",
             "foreground": true,
-            "dataBase64": "cGF5bG9hZA==",
-            "uti": "public.data",
             "restore_delay_ms": 0,
-        ]))
+        ]
+        if explicitPayload {
+            arguments["dataBase64"] = "cGF5bG9hZA=="
+            arguments["uti"] = "public.data"
+        }
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: arguments))
 
         #expect(!response.isError)
         let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        let expectedOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .composite, mode: .foreground),
+            evidence: .deliveryAccepted,
+            unitCount: twoUnits)
         try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
-            .dispatchedUnverified(
-                delivery: .init(mechanism: .composite, mode: .foreground),
-                evidence: .deliveryAccepted,
-                unitCount: twoUnits),
+            expectedOutcome,
             in: response)
+        let text = self.responseText(response)
+        let operation = explicitPayload ? "Paste" : "Paste current clipboard"
+        #expect(text
+            .hasPrefix(ActionOutcomeHumanRenderer.statusLine(for: expectedOutcome, operation: operation) + "\n"))
+        #expect(text.contains("Clipboard restored.") == explicitPayload)
+        #expect(text.contains("The current clipboard was used without replacing it.") == !explicitPayload)
+        #expect(!text.contains(AgentDisplayTokens.Status.success))
+        #expect(!text.contains("Pasted (Cmd+V)"))
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["target_receipt"]?.objectValue?["pid"] == .int(89))
         #expect(meta["target_receipt"]?.objectValue?["window_id"] == .int(700))
         #expect(windows.focusCalls.count == 1)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
         #expect(await MainActor.run { clipboard.current?.textPreview } == "prior")
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == (explicitPayload ? 1 : 0))
     }
 
     @Test
