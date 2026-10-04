@@ -85,6 +85,11 @@ All actions are logged using Apple's OSLog framework with the subsystem `boo.pee
 
 ## Building and Running
 
+Follow the [building guide](../../docs/building.md) for Swift workspace setup before a direct Xcode build.
+For background qualification, use the [signed fixture workflow](../../docs/testing/background-computer-use.md), which
+records source identity and separates unsigned compilation from signing. Do not launch an unsigned/ad-hoc build against
+an existing trusted installation's permissions or Keychain state.
+
 ```bash
 # From the repository root, build the app with its Xcode project
 xcodebuild -project Apps/Playground/Playground.xcodeproj \
@@ -93,9 +98,13 @@ xcodebuild -project Apps/Playground/Playground.xcodeproj \
   -derivedDataPath Apps/Playground/.build \
   build
 
-# Run the app
-open Apps/Playground/.build/Build/Products/Release/Playground.app
+# After signing and verifying the intended artifact, request a background launch.
+open -g -n Apps/Playground/.build/Build/Products/Release/Playground.app
 ```
+
+Confirm the newly launched process generation before treating it as task-owned. A background launch request alone does
+not prove noninterference. See the [testing methodology](../../docs/playground-testing.md) for fresh exact-window
+observations, result readback, and cleanup; preserve existing user instances and earlier test artifacts.
 
 ## Using with Peekaboo
 
