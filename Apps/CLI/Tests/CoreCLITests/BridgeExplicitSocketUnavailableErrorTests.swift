@@ -84,4 +84,38 @@ struct BridgeExplicitSocketUnavailableErrorTests {
         #expect(response.error?.retry_safe == false)
         #expect(response.target_receipt == receipt)
     }
+
+    @Test(arguments: ["confirmed", "unchanged", "unverified"])
+    func `post-result diagnostics survive generic JSON and human rendering`(kind: String) async throws {
+        let delivery = DesktopActionOutcome.Delivery(mechanism: .accessibilityAction, mode: .background)
+        let outcome: DesktopActionOutcome = switch kind {
+        case "confirmed": .confirmedChange(route: .bridge, delivery: delivery, unitCount: .one)
+        case "unchanged": .confirmedNoChange(route: .bridge)
+        default: .dispatchedUnverified(route: .bridge, delivery: delivery, evidence: .deliveryAccepted, unitCount: .one)
+        }
+        let receipt = DesktopActionTargetReceipt(processIdentifier: 42, processStartIdentity: 73, windowID: 9)
+        let cause = "SYNTHETIC-POST-RESULT-CAUSE"
+        let error = postResultProcessingError(
+            NSError(domain: "fixture", code: 1, userInfo: [NSLocalizedDescriptionKey: cause]),
+            outcome: outcome,
+            targetReceipt: receipt,
+            operation: "Synthetic post-result processing"
+        )
+        let data = try await captureStandardOutputBytes {
+            defer { Logger.shared.setJsonOutputMode(false) }
+            handleGenericError(error, jsonOutput: true, logger: Logger.shared)
+        }
+        let response = try JSONDecoder().decode(JSONResponse.self, from: data)
+        #expect(response.error?.details == cause)
+        #expect(response.outcome == outcome.projection)
+        #expect(response.target_receipt == receipt)
+        #expect(response.error?.mutation_dispatched == outcome.projection.mutationDispatched)
+        // The post-result wrapper keeps its existing retry-safe no-change contract.
+        #expect(response.error?.retry_safe == (kind == "unchanged" || outcome.projection.retrySafe))
+        let human = try await captureStandardErrorBytes {
+            handleGenericError(error, jsonOutput: false, logger: Logger.shared)
+        }
+        let text = try #require(String(data: human, encoding: .utf8))
+        #expect(text.components(separatedBy: cause).count == 2)
+    }
 }

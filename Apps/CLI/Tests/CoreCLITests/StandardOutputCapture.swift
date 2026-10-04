@@ -6,24 +6,42 @@ func captureStandardOutputBytes(
     isolation: isolated (any Actor)? = #isolation,
     operation: () async throws -> Void
 ) async throws -> Data {
-    await StandardOutputCaptureGate.shared.acquire()
+    try await captureStandardStreamBytes(isolation: isolation, standardError: false, operation: operation)
+}
+
+func captureStandardErrorBytes(
+    isolation: isolated (any Actor)? = #isolation,
+    operation: () async throws -> Void
+) async throws -> Data {
+    try await captureStandardStreamBytes(isolation: isolation, standardError: true, operation: operation)
+}
+
+private func captureStandardStreamBytes(
+    isolation: isolated (any Actor)?,
+    standardError: Bool,
+    operation: () async throws -> Void
+) async throws -> Data {
+    await StandardStreamCaptureGate.shared.acquire()
     do {
         try Task.checkCancellation()
-        let data = try await captureStandardOutputUnlocked(isolation: isolation, operation: operation)
-        await StandardOutputCaptureGate.shared.release()
+        let data = try await captureStandardStreamUnlocked(
+            isolation: isolation, standardError: standardError, operation: operation
+        )
+        await StandardStreamCaptureGate.shared.release()
         return data
     } catch {
-        await StandardOutputCaptureGate.shared.release()
+        await StandardStreamCaptureGate.shared.release()
         throw error
     }
 }
 
-private func captureStandardOutputUnlocked(
-    isolation: isolated (any Actor)? = #isolation,
+private func captureStandardStreamUnlocked(
+    isolation: isolated (any Actor)?,
+    standardError: Bool,
     operation: () async throws -> Void
 ) async throws -> Data {
     let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("peekaboo-test-stdout-\(UUID().uuidString)")
+        .appendingPathComponent("peekaboo-test-stream-\(UUID().uuidString)")
     let descriptor = Darwin.open(url.path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
     guard descriptor >= 0 else { throw POSIXError(.EIO) }
     let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
@@ -33,13 +51,15 @@ private func captureStandardOutputUnlocked(
     }
 
     do {
-        let original = dup(STDOUT_FILENO)
+        let stream = standardError ? stderr : stdout
+        let targetDescriptor = standardError ? STDERR_FILENO : STDOUT_FILENO
+        let original = dup(targetDescriptor)
         guard original >= 0 else { throw POSIXError(.EIO) }
         defer { close(original) }
-        guard fflush(stdout) == 0, dup2(descriptor, STDOUT_FILENO) >= 0 else { throw POSIXError(.EIO) }
+        guard fflush(stream) == 0, dup2(descriptor, targetDescriptor) >= 0 else { throw POSIXError(.EIO) }
         defer {
-            fflush(stdout)
-            _ = dup2(original, STDOUT_FILENO)
+            fflush(stream)
+            _ = dup2(original, targetDescriptor)
         }
         try await operation()
     }
@@ -48,8 +68,8 @@ private func captureStandardOutputUnlocked(
     return try file.readToEnd() ?? Data()
 }
 
-private actor StandardOutputCaptureGate {
-    static let shared = StandardOutputCaptureGate()
+private actor StandardStreamCaptureGate {
+    static let shared = StandardStreamCaptureGate()
     private var held = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 

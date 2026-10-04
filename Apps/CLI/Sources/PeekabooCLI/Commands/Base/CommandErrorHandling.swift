@@ -105,7 +105,9 @@ extension ErrorHandlingCommand {
             }
             let hint = (error as? any ResultEnvelopeError)?.envelopeHint
                 .map { " Hint: \($0)" } ?? ""
-            fputs("Error: \(errorMessage)\(hint)\n", stderr)
+            let details = (error as? any ResultEnvelopeError)?.envelopeDetails
+                .map { " Details: \($0)" } ?? ""
+            fputs("Error: \(errorMessage)\(details)\(hint)\n", stderr)
         }
     }
 
@@ -442,6 +444,9 @@ func applicationLifecyclePreDispatchError(
 }
 
 func errorDetails(for error: any Error) -> String? {
+    if let details = (error as? any ResultEnvelopeError)?.envelopeDetails {
+        return details
+    }
     guard let bridgeError = error as? PeekabooBridgeErrorEnvelope else {
         return nil
     }

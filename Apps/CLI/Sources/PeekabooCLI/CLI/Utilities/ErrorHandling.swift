@@ -47,6 +47,7 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
                 message: error.localizedDescription,
                 code: envelopeError.envelopeCode ?? .INTERACTION_FAILED,
                 hint: envelopeError.envelopeHint,
+                details: errorDetails(for: error),
                 effect: metadata.effect,
                 retrySafe: metadata.retrySafe,
                 mutationDispatched: metadata.mutationDispatched,
@@ -62,6 +63,9 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
                 fputs("\(statusLine)\n", stderr)
             }
             fputs("Error: \(error.localizedDescription)\n", stderr)
+            if let details = envelopeError.envelopeDetails {
+                fputs("Cause: \(details)\n", stderr)
+            }
         }
         return
     }

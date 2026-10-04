@@ -16,38 +16,6 @@ struct AgentToolMCPFailureSemanticsTests {
     }
 
     @Test
-    func `Reusing normalized claims preserves failure classification`() throws {
-        let confirmed = try Self.value(DesktopActionOutcome.confirmedChange(delivery: .init(
-            mechanism: .accessibilityAction, mode: .background)).projection)
-        let refused = try Self.value(DesktopActionOutcome.refused(reason: .permissionDenied).projection)
-        var malformed = try #require(confirmed.objectValue)
-        malformed["effect"] = AnyAgentToolValue(string: "refused")
-        var conflicting = try #require(confirmed.objectValue)
-        conflicting["metadata"] = refused
-        var values = try DesktopActionOutcomeFixtures.canonicalOutcomes.map { try Self.value($0.projection) }
-        values += [
-            AnyAgentToolValue(string: "ordinary result"),
-            AnyAgentToolValue(string: "Error: legacy failure"),
-            AnyAgentToolValue(object: ["success": AnyAgentToolValue(bool: false)]),
-            AnyAgentToolValue(object: ["success": AnyAgentToolValue(string: "false")]),
-            AnyAgentToolValue(object: malformed),
-            AnyAgentToolValue(object: conflicting),
-        ]
-        for value in values {
-            let claims = AgentToolResultSemantics.normalizedClaims(from: value)
-            for isError in [false, true] {
-                let result = AgentToolResult(toolCallId: "claims", result: value, isError: isError)
-                #expect(AgentToolResultSemantics.isFailure(result, claims: claims) ==
-                    AgentToolResultSemantics.isFailure(result))
-            }
-        }
-        let typed = AgentToolResult(toolCallId: "typed", failure: AgentToolExecutionFailure(
-            message: "typed execution failure", metadata: confirmed))
-        #expect(AgentToolResultSemantics.isFailure(
-            typed, claims: AgentToolResultSemantics.normalizedClaims(from: typed.result)))
-    }
-
-    @Test
     func `Canonical outcomes drive custom tool trace classification without reconstruction`() throws {
         for (index, outcome) in DesktopActionOutcomeFixtures.canonicalOutcomes.enumerated() {
             let value = try Value(outcome.projection).toAnyAgentToolValue()
@@ -895,6 +863,40 @@ struct AgentToolMCPFailureSemanticsTests {
     private static func value(_ projection: DesktopActionOutcome.Projection) throws -> AnyAgentToolValue {
         let data = try JSONEncoder().encode(projection)
         return try AnyAgentToolValue.fromJSON(JSONSerialization.jsonObject(with: data))
+    }
+}
+
+extension AgentToolMCPFailureSemanticsTests {
+    @Test
+    func `Reusing normalized claims preserves failure classification`() throws {
+        let confirmed = try Self.value(DesktopActionOutcome.confirmedChange(delivery: .init(
+            mechanism: .accessibilityAction, mode: .background)).projection)
+        let refused = try Self.value(DesktopActionOutcome.refused(reason: .permissionDenied).projection)
+        var malformed = try #require(confirmed.objectValue)
+        malformed["effect"] = AnyAgentToolValue(string: "refused")
+        var conflicting = try #require(confirmed.objectValue)
+        conflicting["metadata"] = refused
+        var values = try DesktopActionOutcomeFixtures.canonicalOutcomes.map { try Self.value($0.projection) }
+        values += [
+            AnyAgentToolValue(string: "ordinary result"),
+            AnyAgentToolValue(string: "Error: legacy failure"),
+            AnyAgentToolValue(object: ["success": AnyAgentToolValue(bool: false)]),
+            AnyAgentToolValue(object: ["success": AnyAgentToolValue(string: "false")]),
+            AnyAgentToolValue(object: malformed),
+            AnyAgentToolValue(object: conflicting),
+        ]
+        for value in values {
+            let claims = AgentToolResultSemantics.normalizedClaims(from: value)
+            for isError in [false, true] {
+                let result = AgentToolResult(toolCallId: "claims", result: value, isError: isError)
+                #expect(AgentToolResultSemantics.isFailure(result, claims: claims) ==
+                    AgentToolResultSemantics.isFailure(result))
+            }
+        }
+        let typed = AgentToolResult(toolCallId: "typed", failure: AgentToolExecutionFailure(
+            message: "typed execution failure", metadata: confirmed))
+        #expect(AgentToolResultSemantics.isFailure(
+            typed, claims: AgentToolResultSemantics.normalizedClaims(from: typed.result)))
     }
 }
 

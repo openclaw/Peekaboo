@@ -23,6 +23,7 @@ nonisolated protocol ResultEnvelopeError: Error, Sendable {
     var envelopeCode: ErrorCode? { get }
     var envelopeEffect: ActionEffect? { get }
     var envelopeHint: String? { get }
+    var envelopeDetails: String? { get }
     var envelopeRetrySafe: Bool? { get }
     var envelopeMutationDispatched: Bool? { get }
     var envelopeActionFailure: DesktopActionFailure? { get }
@@ -32,6 +33,10 @@ nonisolated protocol ResultEnvelopeError: Error, Sendable {
 }
 
 extension ResultEnvelopeError {
+    nonisolated var envelopeDetails: String? {
+        nil
+    }
+
     nonisolated var envelopeCode: ErrorCode? {
         nil
     }
@@ -150,6 +155,10 @@ private struct PostDispatchActionResultEnvelopeFailure: LocalizedError, ResultEn
 
     nonisolated var errorDescription: String? {
         self.message
+    }
+
+    nonisolated var envelopeDetails: String? {
+        self.causeDescription
     }
 
     nonisolated var envelopeCode: ErrorCode? {

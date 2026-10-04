@@ -6,6 +6,7 @@
 - Preserve input-delivery and message-only refusal causes across composed background preparation outcomes, including content-free native chrome observation diagnostics, without changing dispatch or retry safety.
 - Reuse normalized Agent tool-result claims when building execution traces, eliminating duplicate canonical validation while preserving failure, dispatch, and redaction semantics.
 - Clarify that `see` pixels and Accessibility metadata are not acquired atomically, and explain how to verify an asynchronous action without replaying it.
+- Explain when listed windows are rejected by coordinate-target eligibility without exposing their titles or changing the filters, and preserve already-completed setup focus plus the later refusal diagnostic in cursor-move errors. #869.
 
 ## 4.8.0 - 2026-10-03
 

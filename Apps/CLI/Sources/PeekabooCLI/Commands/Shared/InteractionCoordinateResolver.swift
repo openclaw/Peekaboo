@@ -1,6 +1,7 @@
 import Commander
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKit
 import PeekabooCore
 import PeekabooFoundation
 
@@ -114,7 +115,21 @@ enum InteractionCoordinateResolver {
     ) async throws -> ServiceWindowInfo {
         let windows = try await services.windows.listWindows(target: windowTarget)
         guard let window = ObservationTargetResolver.bestWindow(from: windows) else {
-            throw PeekabooError.windowNotFound(criteria: self.targetDescription(target))
+            guard !windows.isEmpty else {
+                throw PeekabooError.windowNotFound(criteria: self.targetDescription(target))
+            }
+            let rejected = windows.prefix(5).map { window in
+                let reason = WindowFiltering.disqualificationReason(for: window, mode: .capture) ??
+                    "excluded by capture policy"
+                return "window \(window.windowID): \(reason)"
+            }.joined(separator: "; ")
+            throw PreDispatchActionError(
+                message: "Windows were found but rejected for coordinate targeting: \(rejected).",
+                code: .VALIDATION_ERROR,
+                hint: "Select a window eligible for capture; " +
+                    "listing a window does not establish interaction eligibility.",
+                reason: .targetUnavailable
+            )
         }
         return window
     }

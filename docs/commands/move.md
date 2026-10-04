@@ -45,4 +45,5 @@ peekaboo move --on menu_gear --smooth --foreground
 ## Troubleshooting
 - Verify Event Synthesizing permission (`peekaboo permissions status`).
 - Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
+- A listed window can still be rejected for coordinate targeting, for example if it is too small, minimized, off-screen, or non-shareable. The error reports the window ID and filter reason without its title; it does not relax the eligibility checks. If setup focus already changed the target, the JSON error preserves that action's outcome and retry safety even though no cursor move followed.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

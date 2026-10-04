@@ -185,12 +185,18 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             let x = Double(parts[0])!
             let y = Double(parts[1])!
             let inputPoint = CGPoint(x: x, y: y)
-            let resolution = try await InteractionCoordinateResolver.resolveClickCoordinates(
-                inputPoint,
-                target: self.target,
-                services: self.services,
-                forceGlobal: self.global
-            )
+            let resolution = try await withPreservedActionResultOnFailure(
+                focusResult,
+                targetIdentity: focusResult.targetIdentity,
+                operation: "Cursor move setup focus"
+            ) {
+                try await InteractionCoordinateResolver.resolveClickCoordinates(
+                    inputPoint,
+                    target: self.target,
+                    services: self.services,
+                    forceGlobal: self.global
+                )
+            }
             let location = resolution.screenPoint
             return MoveExecutionTargetResolution(
                 target: MoveTargetResolution(

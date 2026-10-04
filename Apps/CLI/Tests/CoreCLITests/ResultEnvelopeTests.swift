@@ -235,8 +235,9 @@ struct ResultEnvelopeTests {
         )
 
         for outcome in outcomes {
+            let cause = CocoaError(.fileWriteUnknown)
             let error = postResultProcessingError(
-                CocoaError(.fileWriteUnknown),
+                cause,
                 outcome: outcome,
                 targetReceipt: receipt,
                 operation: "Fixture publication"
@@ -246,6 +247,7 @@ struct ResultEnvelopeTests {
             let envelope = makeErrorEnvelope(
                 message: error.localizedDescription,
                 code: .INTERACTION_FAILED,
+                details: errorDetails(for: error),
                 retrySafe: metadata.retrySafe,
                 mutationDispatched: metadata.mutationDispatched,
                 actionOutcome: metadata.outcome,
@@ -256,6 +258,8 @@ struct ResultEnvelopeTests {
             #expect(metadata.outcome == outcome)
             #expect(metadata.targetReceipt == receipt)
             #expect(metadata.failure == (outcome.isConfirmed ? nil : envelopeError.envelopeActionFailure))
+            #expect(envelopeError.envelopeDetails == cause.localizedDescription)
+            #expect(envelope.error?.details == cause.localizedDescription)
             #expect(envelope.outcome == outcome.projection)
             #expect(envelope.target_receipt == receipt)
             #expect(envelope.error?.mutation_dispatched == outcome.dispatchState.mutationDispatched)
