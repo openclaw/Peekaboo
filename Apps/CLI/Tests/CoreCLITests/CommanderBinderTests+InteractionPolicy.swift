@@ -7,6 +7,21 @@ import Testing
 @testable import PeekabooCLI
 
 extension CommanderBinderTests {
+    @Test(arguments: BridgeTestFixtures.scrollHandshakeCases)
+    func `Scroll host selection preserves the shared handshake contract`(
+        fixture: BridgeTestFixtures.ScrollHandshakeCase
+    ) {
+        var element = CommandRuntimeOptions()
+        element.requiresTargetedScroll = true
+        var coordinate = element
+        coordinate.requiresBackgroundCoordinateScroll = true
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: fixture.handshake, options: element) ==
+            fixture.requestPinnedScroll)
+        #expect(CommandRuntime.supportsRemoteRequirements(for: fixture.handshake, options: coordinate) ==
+            fixture.coordinateScroll)
+    }
+
     @Test
     func `Coordinate scroll binds and requires its negotiated capability without changing element scroll`() throws {
         let coordinate = try CommanderCLIBinder.makeRuntimeOptions(

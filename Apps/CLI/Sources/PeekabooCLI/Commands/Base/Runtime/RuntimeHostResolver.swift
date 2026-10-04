@@ -961,11 +961,9 @@ extension RuntimeHostResolver {
             supportsPinnedWindowMutations: BridgeCapabilityPolicy.supportsPinnedWindowMutations(for: handshake),
             supportsWindowRestore: BridgeCapabilityPolicy.supportsOperation(.restoreWindow, for: handshake),
             dialogCapabilities: Self.remoteDialogCapabilities(for: handshake),
-            supportsTargetedScroll: BridgeCapabilityPolicy.supportsTargetedScroll(for: handshake),
-            supportsRequestPinnedExactWindowScrollReceipt:
-            BridgeCapabilityPolicy.supportsRequestPinnedExactWindowScrollReceipt(for: handshake),
-            supportsBackgroundCoordinateScroll: BridgeCapabilityPolicy
-                .supportsBackgroundCoordinateScroll(for: handshake),
+            supportsTargetedScroll: handshake.supportsTargetedScroll,
+            supportsRequestPinnedExactWindowScrollReceipt: handshake.supportsRequestPinnedExactWindowScrollReceipt,
+            supportsBackgroundCoordinateScroll: handshake.supportsBackgroundCoordinateScroll,
             supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(for: handshake),
             supportsExactWindowTargetedKeyboard: supportsExactKeyboard,
             supportsClipboardGuardedExactWindowHotkeys:

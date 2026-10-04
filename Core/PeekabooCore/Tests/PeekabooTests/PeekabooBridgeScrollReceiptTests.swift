@@ -11,6 +11,15 @@ import Testing
 struct PeekabooBridgeScrollReceiptTests {
     private static let previousProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 34)
 
+    @Test(arguments: BridgeTestFixtures.scrollHandshakeCases)
+    func `Scroll handshake eligibility preserves protocol and capability boundaries`(
+        fixture: BridgeTestFixtures.ScrollHandshakeCase)
+    {
+        #expect(fixture.handshake.supportsTargetedScroll == fixture.targetedScroll)
+        #expect(fixture.handshake.supportsRequestPinnedExactWindowScrollReceipt == fixture.requestPinnedScroll)
+        #expect(fixture.handshake.supportsBackgroundCoordinateScroll == fixture.coordinateScroll)
+    }
+
     @Test(arguments: [false, true])
     func `coordinate scroll refuses old or capability-missing hosts before transport`(oldHost: Bool) async throws {
         let version = oldHost ? PeekabooBridgeProtocolVersion(major: 1, minor: 42) : PeekabooBridgeConstants
