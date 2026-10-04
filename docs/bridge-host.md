@@ -487,6 +487,12 @@ retry-unsafe failures retain that same target in the signed receipt. Current cli
 older hosts, and current hosts negotiating protocol 1.34 or earlier return an explicit runtime-incompatible no-dispatch
 refusal instead of silently accepting the older receipt-less request shape.
 
+Protocol `1.43` adds service-derived `backgroundCoordinateScroll` support to the existing `targetedScroll` operation.
+An optional global display point is mutually exclusive with the element selector. Coordinate requests still pin the
+capture-owned exact window and producer lease; a nil element with a point never becomes global input. Both client and
+host require the negotiated capability before dispatch, while older element-scroll and explicit foreground contracts
+remain unchanged. Coordinates cannot request foreground, smooth, or delayed input.
+
 Browser execution is bound atomically to the connection receipt observed before dispatch. Protocol 1.29 carries the
 complete normalized browser URL, WebSocket debugger URL, DevTools browser ID, browser version, protocol version, and
 channel. Protocol 1.34 plus `nativeBrowserConnectionBinding` is required for native channel resolution, which carries

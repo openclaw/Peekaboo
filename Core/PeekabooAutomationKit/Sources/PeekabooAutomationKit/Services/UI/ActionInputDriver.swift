@@ -58,6 +58,11 @@ extension ActionInputError: LocalizedError {
     }
 }
 
+enum ScrollBarSearchScope: Sendable, Equatable {
+    case targetDescendants
+    case explicitOwner
+}
+
 @MainActor
 protocol ActionInputDriving: Sendable {
     func tryClick(element: AutomationElement, beforeMutation: @MainActor () throws -> Void) async throws
@@ -74,7 +79,8 @@ protocol ActionInputDriving: Sendable {
     func tryScroll(
         element: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> UIInputExecutionResult.Action
+        pages: Int,
+        scrollBarScope: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
     func trySetText(
         element: AutomationElement,
         text: String,
@@ -236,9 +242,11 @@ struct ActionInputDriver: ActionInputDriving {
     func tryScroll(
         element: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> UIInputExecutionResult.Action
+        pages: Int,
+        scrollBarScope: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
     {
-        try self.performScrollActions(element: element, direction: direction, pages: pages)
+        try self.performScrollActions(
+            element: element, direction: direction, pages: pages, scrollBarScope: scrollBarScope)
     }
 
     func trySetText(
@@ -949,9 +957,15 @@ extension ActionInputDriver {
     private func performScrollActions(
         element: any AutomationElementRepresenting,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> UIInputExecutionResult.Action
+        pages: Int,
+        scrollBarScope: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
     {
-        let scrollBar = self.findScrollBar(in: element, direction: direction)
+        if scrollBarScope == .explicitOwner, !element.isEnabled {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The selected scroll owner is disabled.")
+        }
+        let scrollBar = self.findScrollBar(in: element, direction: direction, scope: scrollBarScope)
         if let scrollBar,
            let change = Self.scrollBarValueChange(scrollBar, direction: direction, pages: pages)
         {
@@ -1190,8 +1204,17 @@ extension ActionInputDriver {
 
     private func findScrollBar(
         in element: any AutomationElementRepresenting,
-        direction: PeekabooFoundation.ScrollDirection) -> (any AutomationElementRepresenting)?
+        direction: PeekabooFoundation.ScrollDirection,
+        scope: ScrollBarSearchScope) -> (any AutomationElementRepresenting)?
     {
+        if scope == .explicitOwner {
+            // A coordinate has already selected its receiver; an arbitrary descendant bar may belong to another one.
+            let candidates = element.role == AXRoleNames.kAXScrollBarRole
+                ? [element] : element.automationOwnedScrollBars
+            return candidates.first {
+                $0.role == AXRoleNames.kAXScrollBarRole && Self.scrollBar($0, matches: direction)
+            }
+        }
         let budget = 200
         var queue: [any AutomationElementRepresenting] = [element]
         var nextIndex = 0
@@ -1485,9 +1508,11 @@ extension ActionInputDriver {
     func tryScrollForTesting(
         element: any AutomationElementRepresenting,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> UIInputExecutionResult.Action
+        pages: Int,
+        scrollBarScope: ScrollBarSearchScope = .targetDescendants) throws -> UIInputExecutionResult.Action
     {
-        try self.performScrollActions(element: element, direction: direction, pages: pages)
+        try self.performScrollActions(
+            element: element, direction: direction, pages: pages, scrollBarScope: scrollBarScope)
     }
 
     func tryPerformActionForTesting(

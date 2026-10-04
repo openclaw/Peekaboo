@@ -6,6 +6,80 @@ import Testing
 @testable import PeekabooAutomationKit
 
 extension ActionInputDriverTests {
+    @MainActor
+    @Test(arguments: ["AXWebArea", "AXGroup", "AXScrollArea"], ["owned_bar", "page", "unsupported"])
+    func `coordinate owner scope never borrows descendant or sibling bars`(role: String, route: String) throws {
+        let borrowedBar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 280, y: 20, width: 16, height: 120),
+            value: 0.3,
+            isValueSettable: true)
+        let nestedOwner = ActionInputMockAutomationElement(
+            role: "AXGroup",
+            actionNames: ["AXScrollDownByPage"],
+            children: [borrowedBar])
+        nestedOwner.automationOwnedScrollBars = [borrowedBar]
+        let ownedBar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.1,
+            isValueSettable: true)
+        let owner = ActionInputMockAutomationElement(
+            role: role,
+            actionNames: route == "unsupported" ? [] : ["AXScrollDownByPage"],
+            children: [nestedOwner, borrowedBar])
+        if route == "owned_bar" {
+            owner.automationOwnedScrollBars = [ownedBar]
+        }
+
+        if route == "unsupported" {
+            #expect(throws: ActionInputError.unsupported(.actionUnsupported)) {
+                try ActionInputDriver().tryScrollForTesting(
+                    element: owner, direction: .down, pages: 1, scrollBarScope: .explicitOwner)
+            }
+        } else {
+            let result = try ActionInputDriver().tryScrollForTesting(
+                element: owner, direction: .down, pages: 1, scrollBarScope: .explicitOwner)
+            #expect(result.actionName == (route == "owned_bar" ? "AXSetValue" : "AXScrollDownByPage"))
+            #expect(ownedBar.setValues == (route == "owned_bar" ? [.double(0.2)] : []))
+        }
+        #expect(borrowedBar.setValues.isEmpty && borrowedBar.attemptedActions.isEmpty)
+        #expect(nestedOwner.attemptedActions.isEmpty)
+        #expect(owner.childrenReadCount == 0 && nestedOwner.childrenReadCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func `coordinate owner scope preserves a directly selected bar`() throws {
+        let bar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 0, y: 0, width: 16, height: 100),
+            value: 0.1,
+            isValueSettable: true)
+        _ = try ActionInputDriver().tryScrollForTesting(
+            element: bar, direction: .down, pages: 1, scrollBarScope: .explicitOwner)
+        #expect(bar.setValues == [.double(0.2)] && bar.childrenReadCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func `disabled coordinate owner refuses before its enabled bar or page action`() {
+        let bar = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 0, y: 0, width: 16, height: 100),
+            value: 0.1,
+            isValueSettable: true)
+        let owner = ActionInputMockAutomationElement(
+            role: "AXGroup", actionNames: ["AXScrollDownByPage"], isEnabled: false)
+        owner.automationOwnedScrollBars = [bar]
+        let failure = #expect(throws: DesktopActionFailure.self) {
+            try ActionInputDriver().tryScrollForTesting(
+                element: owner, direction: .down, pages: 1, scrollBarScope: .explicitOwner)
+        }
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(bar.setValues.isEmpty && owner.attemptedActions.isEmpty && owner.childrenReadCount == 0)
+    }
+
     @Test
     func `ambiguous scroll action failure is not fallback eligible`() {
         #expect(!ActionInputDriver.shouldContinueTryingScrollActionForTesting(after: .targetUnavailable))

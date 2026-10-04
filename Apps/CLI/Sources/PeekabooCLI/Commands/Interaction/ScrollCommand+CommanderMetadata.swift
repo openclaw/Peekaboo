@@ -21,8 +21,13 @@ extension ScrollCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
+                    help: "Explicit fresh screenshot snapshot required with --at; --on may use 'latest' or omit it",
                     long: "snapshot"
+                ),
+                .commandOption(
+                    "at",
+                    help: "Background x,y coordinates relative to the captured window; mutually exclusive with --on",
+                    long: "at"
                 ),
                 .commandOption(
                     "delay",
@@ -31,6 +36,11 @@ extension ScrollCommand: CommanderSignatureProviding {
                 ),
             ],
             flags: [
+                .commandFlag(
+                    "global",
+                    help: "Interpret --at as global display points (still exact-window background delivery)",
+                    long: "global"
+                ),
                 .commandFlag(
                     "smooth",
                     help: "Use smooth scrolling with smaller increments",

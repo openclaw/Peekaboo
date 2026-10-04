@@ -32,6 +32,8 @@ enum DetectedElementRootPolicy {
 /// Re-resolves snapshot/query targets to live AX elements for action invocation.
 @MainActor
 protocol AutomationElementResolving: Sendable {
+    func resolveScrollTarget(at point: CGPoint, target: UIAutomationTarget.ExactWindow) throws
+        -> ScrollCoordinateTarget
     func resolve(detectedElement: DetectedElement, windowContext: WindowContext?) -> AutomationElement?
     func resolve(
         detectedElement: DetectedElement,
@@ -46,6 +48,10 @@ protocol AutomationElementResolving: Sendable {
 }
 
 extension AutomationElementResolving {
+    func resolveScrollTarget(at _: CGPoint, target _: UIAutomationTarget.ExactWindow) throws -> ScrollCoordinateTarget {
+        throw ActionInputError.unsupported(.missingElement)
+    }
+
     func resolve(detectedElement: DetectedElement, windowContext: WindowContext?) -> AutomationElement? {
         self.resolve(
             detectedElement: detectedElement,
@@ -62,6 +68,29 @@ extension AutomationElementResolving {
     }
 }
 
+enum ScrollCoordinateTarget {
+    case semanticOwner(element: AutomationElement, role: String, bounds: CGRect)
+    case pixelOnly(ScrollCoordinateUnavailability)
+}
+
+enum ScrollCoordinateUnavailability: Equatable {
+    case hitTestUnavailable(AXError)
+    case noSemanticOwner
+}
+
+enum AutomationElementHitTestResult {
+    case element(Element)
+    case unavailable(AXError)
+
+    init(error: AXError, element: Element?) {
+        guard error == .success else {
+            self = .unavailable(error)
+            return
+        }
+        self = element.map(Self.element) ?? .unavailable(.failure)
+    }
+}
+
 @MainActor
 protocol AutomationWindowRootResolving: Sendable {
     func root(for windowID: CGWindowID, in application: NSRunningApplication) -> Element?
@@ -72,6 +101,33 @@ protocol AutomationElementTreeReading: Sendable {
     func descriptor(for element: Element) -> AXDescriptorReader.Descriptor?
     func children(of element: Element) -> [Element]?
     func processIdentifier(of element: Element) -> pid_t?
+    func hitTest(at point: CGPoint, processIdentifier: pid_t) -> AutomationElementHitTestResult
+    func parent(of element: Element) -> Element?
+    func owningWindowID(of element: Element) -> CGWindowID?
+    func isScrollContainer(_ element: Element) -> Bool
+    func scrollDescriptor(for element: Element) -> AXDescriptorReader.Descriptor?
+}
+
+extension AutomationElementTreeReading {
+    func hitTest(at _: CGPoint, processIdentifier _: pid_t) -> AutomationElementHitTestResult {
+        .unavailable(.notImplemented)
+    }
+
+    func parent(of _: Element) -> Element? {
+        nil
+    }
+
+    func owningWindowID(of _: Element) -> CGWindowID? {
+        nil
+    }
+
+    func isScrollContainer(_: Element) -> Bool {
+        false
+    }
+
+    func scrollDescriptor(for element: Element) -> AXDescriptorReader.Descriptor? {
+        self.descriptor(for: element)
+    }
 }
 
 @MainActor
@@ -85,6 +141,44 @@ private struct SystemAutomationWindowRootResolver: AutomationWindowRootResolving
 
 @MainActor
 private struct SystemAutomationElementTreeReader: AutomationElementTreeReading {
+    func hitTest(at point: CGPoint, processIdentifier: pid_t) -> AutomationElementHitTestResult {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        return self.boundedRead(application) {
+            var hit: AXUIElement?
+            let error = AXUIElementCopyElementAtPosition(application, Float(point.x), Float(point.y), &hit)
+            return AutomationElementHitTestResult(error: error, element: hit.map(Element.init))
+        }
+    }
+
+    func parent(of element: Element) -> Element? {
+        self.boundedRead(element.underlyingElement) { element.parent() }
+    }
+
+    func owningWindowID(of element: Element) -> CGWindowID? {
+        self.boundedRead(element.underlyingElement) {
+            AXWindowIDResolver.owningWindowID(of: element.underlyingElement)
+        }
+    }
+
+    func isScrollContainer(_ element: Element) -> Bool {
+        self.boundedRead(element.underlyingElement) {
+            let wrapped = AutomationElement(element)
+            return element.isScrollable() || wrapped.role == "AXScrollBar" || wrapped.role == "AXWebArea" ||
+                ["AXScrollUpByPage", "AXScrollDownByPage", "AXScrollLeftByPage", "AXScrollRightByPage"]
+                .contains { wrapped.supportsAction($0) }
+        }
+    }
+
+    func scrollDescriptor(for element: Element) -> AXDescriptorReader.Descriptor? {
+        self.boundedRead(element.underlyingElement) { AXDescriptorReader.describe(element) }
+    }
+
+    private func boundedRead<T>(_ element: AXUIElement, _ operation: () -> T) -> T {
+        AXUIElementSetMessagingTimeout(element, 0.05)
+        defer { AXUIElementSetMessagingTimeout(element, 0) }
+        return operation()
+    }
+
     func descriptor(for element: Element) -> AXDescriptorReader.Descriptor? {
         AXDescriptorReader.describe(element)
     }
@@ -121,6 +215,66 @@ struct AutomationElementResolver: AutomationElementResolving {
             return nil
         }
         return processIdentifier
+    }
+
+    func resolveScrollTarget(
+        at point: CGPoint,
+        target: UIAutomationTarget.ExactWindow) throws -> ScrollCoordinateTarget
+    {
+        guard point.x.isFinite, point.y.isFinite, target.bounds.contains(point)
+        else { throw ActionInputError.unsupported(.missingElement) }
+        try Task.checkCancellation()
+        let hit = self.treeReader.hitTest(at: point, processIdentifier: target.identity.ownerProcessIdentifier)
+        try Task.checkCancellation()
+        var current: Element
+        switch hit {
+        case let .element(element):
+            current = element
+        case .unavailable(.notImplemented):
+            return .pixelOnly(.hitTestUnavailable(.notImplemented))
+        case .unavailable(.noValue):
+            return .pixelOnly(.hitTestUnavailable(.noValue))
+        case let .unavailable(error):
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: error == .apiDisabled ? .permissionDenied : .targetUnavailable,
+                message: "Coordinate scroll could not complete its Accessibility hit test.",
+                hint: "Observe the exact target window before retrying coordinate scroll.",
+                causeDescription: "AXUIElementCopyElementAtPosition at the application root failed with " +
+                    "AX error \(error.rawValue).",
+                standardErrorCode: error == .apiDisabled ? .accessibilityPermissionDenied : .unknownError)
+                .attributed(to: DesktopTargetIdentity(exactWindow: target).actionTargetReceipt)
+        }
+        var visited = Set<Element>()
+        for _ in 0..<32 {
+            try Task.checkCancellation()
+            guard visited.insert(current).inserted,
+                  self.treeReader.processIdentifier(of: current) == target.identity.ownerProcessIdentifier,
+                  self.treeReader.owningWindowID(of: current).map(Int.init) == target.identity.windowID,
+                  let descriptor = self.treeReader.scrollDescriptor(for: current)
+            else {
+                throw PeekabooError.snapshotStale("Coordinate scroll could not verify the hit's exact-window ancestry")
+            }
+            if self.treeReader.isScrollContainer(current) {
+                let frame = descriptor.frame
+                guard frame.origin.x.isFinite, frame.origin.y.isFinite, frame.width.isFinite, frame.height.isFinite,
+                      frame.width > 0, frame.height > 0, frame.contains(point)
+                else {
+                    throw PeekabooError.snapshotStale("The owning scroller no longer contains the requested point")
+                }
+                return .semanticOwner(element: AutomationElement(current), role: descriptor.role, bounds: frame)
+            }
+            if descriptor.role == "AXWindow" {
+                guard descriptor.frame == target.bounds else {
+                    throw PeekabooError.snapshotStale("The exact window changed during coordinate scroll resolution")
+                }
+                return .pixelOnly(.noSemanticOwner)
+            }
+            guard let parent = self.treeReader.parent(of: current) else {
+                throw PeekabooError.snapshotStale("Coordinate scroll ancestry ended before its exact window")
+            }
+            current = parent
+        }
+        throw PeekabooError.snapshotStale("Coordinate scroll ancestry exceeded its bounded traversal")
     }
 
     func resolve(

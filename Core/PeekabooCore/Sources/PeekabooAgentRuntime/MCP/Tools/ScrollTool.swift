@@ -32,11 +32,17 @@ public struct ScrollTool: MCPTool {
                     description: "Scroll direction: up (content moves up), down (content moves down), left, or right.",
                     enum: ["up", "down", "left", "right"]),
                 "on": SchemaBuilder.string(
-                    description: "Element ID from `see` or `inspect_ui`. Required in background mode; " +
-                        "omit only with foreground=true to scroll at the current physical pointer."),
+                    description: "Element ID from see or inspect_ui; mutually exclusive with coords."),
+                "coords": SchemaBuilder.string(
+                    description: "Background point x,y; global display points by default. Mutually exclusive with on."),
+                "coordinate_space": SchemaBuilder.string(
+                    description: "Coordinate basis, matching click. Image/normalized points need coordinate_reference.",
+                    enum: CaptureCoordinateSpace.allCases.map(\.rawValue)),
+                "coordinate_reference": SchemaBuilder.string(
+                    description: "Capture-owned reference from see; must match snapshot when both are supplied."),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
-                        "Uses latest snapshot if not specified."),
+                    description: "Snapshot ID from see or inspect_ui. Element scroll defaults to latest; " +
+                        "coords requires an explicit pixel-backed snapshot or coordinate_reference."),
                 "amount": SchemaBuilder.integer(
                     description: "Optional. Number of scroll ticks/lines. Default: 3.",
                     default: 3),
@@ -112,14 +118,69 @@ public struct ScrollTool: MCPTool {
 
         let foreground = arguments.getBool("foreground") ?? false
         let elementId = arguments.getString("on")
+        let point: CGPoint?
+        let coordinateSpace: CaptureCoordinateSpace
+        let snapshotID: String?
+        if let rawCoordinates = arguments.getValue(for: "coords") {
+            for key in ["coordinate_space", "coordinate_reference", "snapshot"] {
+                if arguments.getValue(for: key) != nil,
+                   arguments.getString(key)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+                {
+                    throw ScrollToolValidationError("\(key) must be a nonempty string when supplied with coords.")
+                }
+            }
+            guard let raw = rawCoordinates.stringValue,
+                  arguments.getValue(for: "on") == nil, !foreground
+            else {
+                throw ScrollToolValidationError(
+                    "coords must be a string and cannot be combined with on or foreground=true.")
+            }
+            let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
+            guard parts.count == 2,
+                  let x = Double(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let y = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+                  x.isFinite, y.isFinite
+            else { throw ScrollToolValidationError("Invalid coords; use two finite numbers: x,y.") }
+            point = CGPoint(x: x, y: y)
+            guard let space = CaptureCoordinateSpace(rawValue: arguments
+                .getString("coordinate_space") ?? "global_display_points")
+            else {
+                throw ScrollToolValidationError(
+                    "Invalid coordinate_space. Use global_display_points, image_pixels, or normalized.")
+            }
+            coordinateSpace = space
+            let reference = arguments.getString("coordinate_reference")
+            if space.requiresReference, reference?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                throw ScrollToolValidationError("\(space.rawValue) coordinates require coordinate_reference from see.")
+            }
+            if let reference, let snapshot = arguments.getString("snapshot"), reference != snapshot {
+                throw ScrollToolValidationError("snapshot and coordinate_reference must match when both are provided.")
+            }
+            snapshotID = reference ?? arguments.getString("snapshot")
+            guard let snapshotID, SnapshotReference(rawValue: snapshotID) != nil else {
+                throw ScrollToolValidationError(
+                    "Coordinate scroll requires an explicit capture-owned snapshot or coordinate_reference from see.",
+                    refusalReason: .targetUnavailable)
+            }
+        } else {
+            guard arguments.getValue(for: "coordinate_space") == nil,
+                  arguments.getValue(for: "coordinate_reference") == nil
+            else { throw ScrollToolValidationError("coordinate_space and coordinate_reference require coords.") }
+            point = nil
+            coordinateSpace = .globalDisplayPoints
+            snapshotID = arguments.getString("snapshot")
+        }
         let delay = try arguments.validatedInt("delay") ?? 0
         let smooth = arguments.getBool("smooth") ?? false
         guard delay >= 0 else {
             throw ScrollToolValidationError("Delay must be zero or greater")
         }
-        guard foreground || elementId != nil else {
+        if point != nil, smooth || delay != 0 {
+            throw ScrollToolValidationError("Coordinate scroll supports neither smooth input nor a nonzero delay.")
+        }
+        guard foreground || elementId != nil || point != nil else {
             throw ScrollToolValidationError(
-                "Background scroll requires 'on' from a fresh scrollable or exact-window WebKit snapshot; " +
+                "Background scroll requires 'on' or 'coords' from a fresh exact-window snapshot; " +
                     "set foreground=true to scroll at the physical pointer.")
         }
         guard foreground || (!smooth && delay == 0) else {
@@ -130,7 +191,9 @@ public struct ScrollTool: MCPTool {
         return ScrollToolRequest(
             direction: direction,
             elementId: elementId,
-            snapshotId: arguments.getString("snapshot"),
+            point: point,
+            coordinateSpace: coordinateSpace,
+            snapshotId: snapshotID,
             amount: amount,
             delay: delay,
             smooth: smooth,
@@ -140,6 +203,14 @@ public struct ScrollTool: MCPTool {
     @MainActor
     private func performScroll(request: ScrollToolRequest) async throws -> ToolResponse {
         let startTime = Date()
+        if request.point != nil,
+           (self.context.automation as? any UIAutomationActionOutcomeProviding)?
+               .supportsBackgroundCoordinateScroll != true
+        {
+            throw ScrollToolValidationError(
+                "This execution host does not support background coordinate scroll; update and relaunch Peekaboo.",
+                refusalReason: .runtimeIncompatible)
+        }
         let target = try await self.resolveTargetDescription(request: request)
         let execution: ScrollExecution
         do {
@@ -205,6 +276,7 @@ public struct ScrollTool: MCPTool {
             direction: request.direction,
             amount: request.amount,
             target: target.elementId,
+            point: target.point,
             smooth: request.smooth,
             delay: request.delay,
             snapshotId: target.snapshotId,
@@ -251,9 +323,45 @@ public struct ScrollTool: MCPTool {
 
     @MainActor
     private func resolveTargetDescription(request: ScrollToolRequest) async throws -> ScrollTargetDescription {
+        if let point = request.point {
+            guard let snapshot = await self.getSnapshot(id: request.snapshotId),
+                  let path = await snapshot.screenshotPath,
+                  !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                throw ScrollToolValidationError(
+                    "Coordinate scroll requires a fresh pixel-backed exact-window snapshot from see.",
+                    refusalReason: .targetUnavailable)
+            }
+            let authority: SnapshotTargetReceipt.CoordinateAuthority
+            do {
+                authority = try await snapshot.coordinateAuthority()
+            } catch {
+                throw ScrollToolValidationError(
+                    "Coordinate reference lacks a complete exact-window receipt; capture the exact window again.",
+                    refusalReason: .targetUnavailable)
+            }
+            let mapped: CGPoint
+            do {
+                mapped = try CaptureCoordinateMapper.globalPoint(
+                    for: point, in: request.coordinateSpace, context: authority.context)
+            } catch { throw ScrollToolValidationError(error.localizedDescription) }
+            guard authority.target.bounds.contains(mapped) else {
+                throw ScrollToolValidationError("Scroll coordinates are outside the captured target window.")
+            }
+            return ScrollTargetDescription(
+                elementId: nil,
+                point: mapped,
+                description: "at \(mapped.x),\(mapped.y) in captured window \(authority.target.identity.windowID)",
+                appName: snapshot.applicationName,
+                snapshotId: snapshot.id,
+                windowTitle: snapshot.windowTitle,
+                windowID: authority.target.identity.windowID,
+                expectedWindow: authority.target)
+        }
         guard let elementId = request.elementId else {
             return ScrollTargetDescription(
                 elementId: nil,
+                point: nil,
                 description: "at current mouse position",
                 appName: nil,
                 snapshotId: request.snapshotId,
@@ -285,6 +393,7 @@ public struct ScrollTool: MCPTool {
             foreground: request.foreground)
         return ScrollTargetDescription(
             elementId: elementId,
+            point: nil,
             description: description,
             appName: snapshot.applicationName,
             snapshotId: snapshot.id,
@@ -339,6 +448,8 @@ public struct ScrollTool: MCPTool {
 private struct ScrollToolRequest {
     let direction: ToolScrollDirection
     let elementId: String?
+    let point: CGPoint?
+    let coordinateSpace: CaptureCoordinateSpace
     let snapshotId: String?
     let amount: Int
     let delay: Int
@@ -348,6 +459,7 @@ private struct ScrollToolRequest {
 
 private struct ScrollTargetDescription {
     let elementId: String?
+    let point: CGPoint?
     let description: String
     let appName: String?
     let snapshotId: String?

@@ -56,6 +56,8 @@ public struct ScrollRequest: Sendable, Codable {
     public var direction: PeekabooFoundation.ScrollDirection
     public var amount: Int
     public var target: String?
+    /// Global display-point selector, mutually exclusive with an element target.
+    public var point: CGPoint?
     public var smooth: Bool
     public var delay: Int
     public var snapshotId: String?
@@ -76,6 +78,7 @@ public struct ScrollRequest: Sendable, Codable {
         direction: PeekabooFoundation.ScrollDirection,
         amount: Int,
         target: String? = nil,
+        point: CGPoint? = nil,
         smooth: Bool = false,
         delay: Int = 0,
         snapshotId: String? = nil,
@@ -85,6 +88,7 @@ public struct ScrollRequest: Sendable, Codable {
         self.direction = direction
         self.amount = amount
         self.target = target
+        self.point = point
         self.smooth = smooth
         self.delay = delay
         self.snapshotId = snapshotId
@@ -100,10 +104,27 @@ public struct ScrollRequest: Sendable, Codable {
         }
     }
 
+    public func validatePointSelector() throws {
+        guard let point else { return }
+        guard self.target == nil, point.x.isFinite, point.y.isFinite else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Scroll coordinates must be finite and cannot be combined with an element target.",
+                standardErrorCode: .invalidInput)
+        }
+        guard !self.foreground, !self.smooth, self.delay == 0 else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Coordinate scroll supports only background delivery without smooth or delayed input.",
+                standardErrorCode: .invalidInput)
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case direction
         case amount
         case target
+        case point
         case smooth
         case delay
         case snapshotId
@@ -116,6 +137,7 @@ public struct ScrollRequest: Sendable, Codable {
         self.direction = try container.decode(PeekabooFoundation.ScrollDirection.self, forKey: .direction)
         self.amount = try container.decode(Int.self, forKey: .amount)
         self.target = try container.decodeIfPresent(String.self, forKey: .target)
+        self.point = try container.decodeIfPresent(CGPoint.self, forKey: .point)
         self.smooth = try container.decodeIfPresent(Bool.self, forKey: .smooth) ?? false
         self.delay = try container.decodeIfPresent(Int.self, forKey: .delay) ?? 0
         self.snapshotId = try container.decodeIfPresent(String.self, forKey: .snapshotId)

@@ -4,10 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKitTestSupport
-import struct PeekabooFoundation.DesktopActionFailure
-import struct PeekabooFoundation.DesktopActionOutcome
-import enum PeekabooFoundation.PeekabooError
-import enum PeekabooFoundation.ScrollDirection
+import PeekabooFoundation
 import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
@@ -1531,8 +1528,12 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
             elementRole: "AXButton")
     }
 
-    func tryScroll(element _: AutomationElement, direction _: ScrollDirection, pages _: Int) throws
-    -> UIInputExecutionResult.Action {
+    func tryScroll(
+        element _: AutomationElement,
+        direction _: PeekabooFoundation.ScrollDirection,
+        pages _: Int,
+        scrollBarScope _: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
+    {
         AutomationTestFixtures.uiActionReceipt()
     }
 
@@ -1604,8 +1605,12 @@ private final class ClickFailingActionInputDriver: ActionInputDriving {
         throw self.error
     }
 
-    func tryScroll(element _: AutomationElement, direction _: ScrollDirection, pages _: Int) throws
-    -> UIInputExecutionResult.Action {
+    func tryScroll(
+        element _: AutomationElement,
+        direction _: PeekabooFoundation.ScrollDirection,
+        pages _: Int,
+        scrollBarScope _: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
+    {
         throw self.error
     }
 

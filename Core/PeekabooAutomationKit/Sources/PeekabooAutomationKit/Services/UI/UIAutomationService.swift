@@ -71,6 +71,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     public let supportsForegroundModifierClick = true
     public let supportsForegroundModifierClickSnapshotLease = true
     public let supportsRequestPinnedExactWindowScrollReceipt = true
+    public let supportsBackgroundCoordinateScroll = true
     public let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     public let exactWindowCompositeTypeDeliveryUnavailableReason: String? = nil
     public let exactWindowPixelFocusTypingUnavailableReason: String? = nil

@@ -1254,7 +1254,8 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
     func tryScroll(
         element _: AutomationElement,
         direction _: ScrollDirection,
-        pages _: Int) throws -> UIInputExecutionResult.Action
+        pages _: Int,
+        scrollBarScope _: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.actionUnsupported)
     }

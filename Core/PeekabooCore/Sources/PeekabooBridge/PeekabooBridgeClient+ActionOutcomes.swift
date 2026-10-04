@@ -274,6 +274,7 @@ extension PeekabooBridgeClient {
     public func scrollWithOutcome(
         _ request: ScrollRequest) async throws -> UIAutomationActionResult<Void>
     {
+        try request.validatePointSelector()
         let payload = PeekabooBridgeScrollRequest(request: request)
         let requiresAttestedTarget = !request.foreground
         return try await self.actionResult(

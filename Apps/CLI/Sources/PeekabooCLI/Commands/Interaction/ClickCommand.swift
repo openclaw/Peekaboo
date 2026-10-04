@@ -370,7 +370,10 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     private func cachedElementById(
         _ elementId: String,
         observation: InteractionObservationContext
-    ) async throws -> (element: DetectedElement, windowContext: WindowContext?) {
+    ) async throws -> (
+        element: DetectedElement,
+        windowContext: WindowContext?
+    ) {
         let detectionResult = try await observation.requireDetectionResult(using: self.services.snapshots)
         guard let element = detectionResult.elements.findById(elementId) else {
             throw PeekabooError.elementNotFound(Self.elementNotFoundMessage(elementId))
@@ -381,7 +384,10 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     private func cachedElementMatching(
         _ query: String,
         observation: InteractionObservationContext
-    ) async throws -> (element: DetectedElement, windowContext: WindowContext?) {
+    ) async throws -> (
+        element: DetectedElement,
+        windowContext: WindowContext?
+    ) {
         let detectionResult = try await observation.requireDetectionResult(using: self.services.snapshots)
         let queryLower = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !queryLower.isEmpty else {
@@ -849,8 +855,8 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             throw ValidationError("--foreground cannot be combined with --focus-background")
         }
 
-        if self.focusOptions.backgroundDeliveryExplicitlyRequested &&
-            self.focusOptions.hasForegroundFocusOverrides {
+        if self.focusOptions.backgroundDeliveryExplicitlyRequested,
+           self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("--focus-background cannot be combined with focus options")
         }
 
@@ -1217,85 +1223,17 @@ extension ClickCommand {
         _ point: CGPoint,
         snapshotId: String
     ) async throws -> InteractionCoordinateResolution {
-        guard let detection = try await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
-              !detection.screenshotPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              detection.metadata.windowContext != nil
-        else {
-            throw ValidationError(Self.backgroundCoordinateReferenceMessage)
-        }
-        let coordinateAuthority: SnapshotTargetReceipt.CoordinateAuthority
-        do {
-            coordinateAuthority = try SnapshotTargetReceiptPlanner.assemble(
-                snapshotID: snapshotId,
-                detectionResult: detection
-            ).receipt.requireCoordinateAuthority()
-        } catch {
-            throw ValidationError(Self.backgroundCoordinateReferenceMessage)
-        }
-        let capturedIdentity = coordinateAuthority.target.identity
-        let processIdentifier = capturedIdentity.ownerProcessIdentifier
-        let windowID = capturedIdentity.windowID
-        let capturedBounds = coordinateAuthority.target.bounds
-
-        if let requestedPID = self.target.pid, requestedPID != processIdentifier {
-            throw ValidationError(
-                "Snapshot '\(snapshotId)' belongs to PID \(processIdentifier), not requested PID \(requestedPID). " +
-                    "Run see for the requested process and use that snapshot."
-            )
-        }
-        if let app = self.target.app?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
-            let requestedIdentity = try await self.currentProcessIdentity(identifier: app)
-            guard requestedIdentity.processIdentifier == processIdentifier else {
-                throw ValidationError(
-                    "Snapshot '\(snapshotId)' belongs to PID \(processIdentifier), not \(app) " +
-                        "(PID \(requestedIdentity.processIdentifier))."
-                )
-            }
-        }
-        if let requestedWindowID = self.target.windowId, requestedWindowID != windowID {
-            throw ValidationError(
-                "Snapshot '\(snapshotId)' belongs to window \(windowID), not requested window \(requestedWindowID)."
-            )
-        }
-        if self.target.windowTitle != nil || self.target.windowIndex != nil {
-            let selected = try await InteractionCoordinateResolver.resolveTargetWindow(
-                target: self.target,
-                services: self.services
-            )
-            guard selected.windowInfo.windowID == windowID else {
-                throw ValidationError(
-                    "Snapshot '\(snapshotId)' belongs to window \(windowID), but the selector resolved " +
-                        "window \(selected.windowInfo.windowID)."
-                )
-            }
-        }
-
-        let currentWindows = try await self.services.windows.listWindows(target: .windowId(windowID))
-        let exactMatches = currentWindows.filter { $0.windowID == windowID }
-        guard let currentWindow = exactMatches.first,
-              exactMatches.allSatisfy({
-                  $0.bounds == capturedBounds && $0.mutationIdentity == capturedIdentity
-              })
-        else {
-            throw ValidationError(
-                "Snapshot '\(snapshotId)' is stale: its exact window moved, disappeared, changed owner, or " +
-                    "changed process generation. Run see again before clicking."
-            )
-        }
-
-        let application = try await self.services.applications.findApplication(identifier: "PID:\(processIdentifier)")
-        let resolution = try InteractionCoordinateResolver.resolveTargetWindowCoordinates(
+        try await InteractionCoordinateResolver.resolveBackgroundSnapshotCoordinates(
             point,
-            windowInfo: currentWindow,
-            targetApplication: application,
-            forceGlobal: self.global
-        )
-        guard capturedBounds.contains(resolution.screenPoint) else {
-            throw ValidationError(
-                "Coordinates are outside captured window \(windowID). Run see again and click inside its bounds."
+            snapshotId: snapshotId,
+            target: self.target,
+            services: self.services,
+            options: .init(
+                forceGlobal: self.global,
+                referenceMessage: Self.backgroundCoordinateReferenceMessage,
+                operation: "click"
             )
-        }
-        return resolution
+        )
     }
 
     private func validateBackgroundCoordinateResolution(
