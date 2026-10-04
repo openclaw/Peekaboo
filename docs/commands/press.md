@@ -76,3 +76,4 @@ peekaboo press cmd+l --snapshot "$FRESH_EXACT_NON_DIALOG_SNAPSHOT"
 - Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see`.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
+- Exact-window focus checks distinguish unreadable or malformed AX window evidence from a readable list without the target and a confirmed different owning window. Read failures include the observation stage and native AX error code when available; they do not prove that focus moved. These checks still stop new key-downs, preserve owed releases, and never authorize a blind retry after partial input.

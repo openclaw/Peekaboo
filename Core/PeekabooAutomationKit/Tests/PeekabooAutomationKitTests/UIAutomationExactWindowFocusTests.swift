@@ -423,6 +423,9 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
             frame: CGRect(x: 50, y: 100, width: 200, height: 30))
         let failures: [FocusedElementReceiptError] = [
             .frameMismatch, .multipleFocusedElements, .focusNotConfirmed, .focusedAttributeUnreadable, .processMismatch,
+            .windowNotFound,
+            .windowObservationFailed(stage: .inventory, errorCode: -25204),
+            .windowObservationFailed(stage: .owningWindowID, errorCode: nil),
         ]
         for failure in failures {
             let service = UIAutomationService(
@@ -445,6 +448,8 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
                 if failure == .frameMismatch {
                     XCTAssertTrue(message.contains("receiver moved or changed window"))
                     XCTAssertFalse(message.contains("frame changed"))
+                } else {
+                    XCTAssertTrue(message.contains(failure.localizedDescription))
                 }
             }
         }

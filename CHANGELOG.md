@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Distinguish unreadable exact-window focus evidence from actual window mismatches, retaining the AX observation stage and native error without changing background input guards or retry safety.
 - Add opt-in `see --fresh` and MCP `see` / `inspect_ui` freshness with uncached AX evidence, truthful `used_cache` metadata, and fail-closed host compatibility while preserving default caching and partial-tree limits.
 - Preserve the underlying cause of failed background paste preparation reads, without changing input dispatch, deadlines, or retry safety.
 - Add background `select-text` / MCP `select_text` for literal, context-disambiguated selections and caret placement, including unfocused native fields, with UTF-16 source-drift checks, unchanged-text verification, and protocol-1.42 receipts without keyboard or clipboard fallback.

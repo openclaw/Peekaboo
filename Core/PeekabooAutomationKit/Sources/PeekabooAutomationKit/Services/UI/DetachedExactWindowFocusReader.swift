@@ -319,12 +319,17 @@ enum DetachedExactWindowFocusReader {
 
         let application = AXUIElementCreateApplication(expected.processIdentifier)
         AXUIElementSetMessagingTimeout(application, self.messagingTimeout)
-        let windows = self.elementArrayAttribute(kAXWindowsAttribute, of: application)
-        guard let window = windows.first(where: {
-            AXUIElementSetMessagingTimeout($0, self.messagingTimeout)
-            return AXWindowIDResolver.windowID(of: $0).map(Int.init) == expected.windowID
-        }) else {
-            return .failure(.windowMismatch)
+        let window: AXUIElement
+        switch self.targetWindow(
+            expectedWindowID: expected.windowID,
+            inventory: self.attributeRead(kAXWindowsAttribute, of: application),
+            copyWindowID: { element, windowID in
+                AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
+                return AXWindowIDResolver.copyWindowID(element, into: &windowID)
+            })
+        {
+        case let .success(value): window = value
+        case let .failure(error): return .failure(error)
         }
 
         var queue = [window]
@@ -389,10 +394,16 @@ enum DetachedExactWindowFocusReader {
         guard AXUIElementGetPid(element, &processIdentifier) == .success,
               processIdentifier == expected.processIdentifier
         else { return .failure(.processMismatch) }
-        let owningWindow = CFEqual(element, window) ? window : self.elementAttribute(kAXWindowAttribute, of: element)
-        guard let owningWindow,
-              AXWindowIDResolver.windowID(of: owningWindow).map(Int.init) == expected.windowID
-        else { return .failure(.windowMismatch) }
+        let owningWindowRead = CFEqual(element, window)
+            ? AXDescriptorReader.SingleAttributeRead(error: .success, value: window)
+            : self.attributeRead(kAXWindowAttribute, of: element)
+        if case let .failure(error) = self.validateOwningWindow(
+            owningWindowRead,
+            expectedWindowID: expected.windowID,
+            copyWindowID: { AXWindowIDResolver.copyWindowID($0, into: &$1) })
+        {
+            return .failure(error)
+        }
         guard let frame = self.frame(of: element), !frame.isEmpty else {
             return .failure(.missingElementFrame)
         }
@@ -408,6 +419,73 @@ enum DetachedExactWindowFocusReader {
             title: self.stringAttribute(kAXTitleAttribute as String, of: element),
             identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
             nativeElement: RetainedFocusElement(element: element)))
+    }
+
+    static func targetWindow(
+        expectedWindowID: Int,
+        inventory: AXDescriptorReader.SingleAttributeRead?,
+        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError)
+        -> Result<AXUIElement, FocusedElementReceiptError>
+    {
+        guard let inventory else { return .failure(.windowObservationFailed(stage: .inventory, errorCode: nil)) }
+        guard inventory.error == .success else {
+            return .failure(.windowObservationFailed(stage: .inventory, errorCode: inventory.error.rawValue))
+        }
+        guard let values = inventory.value as? [Any],
+              values.allSatisfy({ CFGetTypeID($0 as CFTypeRef) == AXUIElementGetTypeID() })
+        else {
+            return .failure(.windowObservationFailed(stage: .inventory, errorCode: nil))
+        }
+        var firstUnreadable: FocusedElementReceiptError?
+        for value in values {
+            let window = unsafeDowncast(value as CFTypeRef, to: AXUIElement.self)
+            switch self.windowIdentifier(window, stage: .inventoryWindowID, copyWindowID: copyWindowID) {
+            case let .success(windowID):
+                if windowID == expectedWindowID {
+                    return .success(window)
+                }
+            case let .failure(error):
+                if firstUnreadable == nil {
+                    firstUnreadable = error
+                }
+            }
+        }
+        // An unreadable entry is not evidence that the requested window disappeared.
+        return .failure(firstUnreadable ?? .windowNotFound)
+    }
+
+    static func validateOwningWindow(
+        _ observation: AXDescriptorReader.SingleAttributeRead?,
+        expectedWindowID: Int,
+        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError) -> Result<Void, FocusedElementReceiptError>
+    {
+        guard let observation else {
+            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil))
+        }
+        guard observation.error == .success else {
+            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: observation.error.rawValue))
+        }
+        guard let value = observation.value, CFGetTypeID(value as CFTypeRef) == AXUIElementGetTypeID() else {
+            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil))
+        }
+        let window = unsafeDowncast(value as CFTypeRef, to: AXUIElement.self)
+        return self.windowIdentifier(window, stage: .owningWindowID, copyWindowID: copyWindowID).flatMap { actual in
+            actual == expectedWindowID ? .success(()) : .failure(.windowMismatch)
+        }
+    }
+
+    private static func windowIdentifier(
+        _ window: AXUIElement,
+        stage: FocusedElementReceiptError.WindowObservationStage,
+        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError) -> Result<Int, FocusedElementReceiptError>
+    {
+        var windowID: CGWindowID = 0
+        let error = copyWindowID(window, &windowID)
+        guard error == .success else {
+            return .failure(.windowObservationFailed(stage: stage, errorCode: error.rawValue))
+        }
+        guard windowID > 0 else { return .failure(.windowObservationFailed(stage: stage, errorCode: nil)) }
+        return .success(Int(windowID))
     }
 
     static func candidateIdentity(

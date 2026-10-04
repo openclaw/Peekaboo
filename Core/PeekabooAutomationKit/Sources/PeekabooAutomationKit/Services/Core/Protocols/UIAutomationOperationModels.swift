@@ -221,6 +221,13 @@ public struct FocusedElementIdentity: Sendable, Codable, Equatable {
 
 /// Typed reasons an exact-window focused-element receipt could not be established.
 public enum FocusedElementReceiptError: LocalizedError, Equatable, Sendable {
+    public enum WindowObservationStage: String, Sendable {
+        case inventory = "AXWindows"
+        case inventoryWindowID = "AXWindows window identifier"
+        case owningWindow = "focused element AXWindow"
+        case owningWindowID = "focused element owning window identifier"
+    }
+
     case missingProcessIdentifier
     case missingWindowIdentifier
     case missingWindowBounds
@@ -233,6 +240,8 @@ public enum FocusedElementReceiptError: LocalizedError, Equatable, Sendable {
     case elementOutsideWindow
     case processMismatch
     case windowMismatch
+    case windowNotFound
+    case windowObservationFailed(stage: WindowObservationStage, errorCode: Int32?)
     case roleMismatch
     case frameMismatch
     case identifierMismatch
@@ -264,6 +273,14 @@ public enum FocusedElementReceiptError: LocalizedError, Equatable, Sendable {
             "The focused element belongs to a different process."
         case .windowMismatch:
             "The focused element belongs to a different window."
+        case .windowNotFound:
+            "The exact target window was absent from the readable application window list."
+        case let .windowObservationFailed(stage, errorCode):
+            if let errorCode {
+                "The exact target window could not be verified: \(stage.rawValue) failed with AX error \(errorCode)."
+            } else {
+                "The exact target window could not be verified: \(stage.rawValue) did not provide a valid value."
+            }
         case .roleMismatch:
             "The focused element role changed."
         case .frameMismatch:
