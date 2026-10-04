@@ -291,11 +291,12 @@ test("hosted focus observation and accounting use exact non-native suites with n
   ]) {
     assert.ok(step.includes(`${name}: "false"`));
   }
-  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests|FocusedElementReceiptResolverTests|ObservedFocusCorroborationTests)/'"));
+  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests|FocusedElementReceiptResolverTests|ObservedFocusCorroborationTests|DetachedExactWindowFocusWindowTests|HotkeyServiceBackgroundPreparationTests)/'"));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
   for (const suite of [
     "FocusDispatchAccountingTests", "FocusRaiseDispatchAccountingTests",
     "FocusedElementReceiptResolverTests", "ObservedFocusCorroborationTests",
+    "DetachedExactWindowFocusWindowTests", "HotkeyServiceBackgroundPreparationTests",
   ]) {
     assert.ok(step.includes(`Suite ${suite} passed after `));
   }
