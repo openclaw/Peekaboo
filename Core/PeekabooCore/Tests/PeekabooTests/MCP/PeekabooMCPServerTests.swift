@@ -18,7 +18,7 @@ struct PeekabooMCPServerTests {
         let server = try await makeServer()
         let names = await server.registeredToolNamesForTesting()
 
-        #expect(names.count == 25)
+        #expect(names.count == 26)
         #expect(names == names.sorted())
         #expect(names.contains("capture"))
         #expect(names.contains("image"))
@@ -28,6 +28,7 @@ struct PeekabooMCPServerTests {
         #expect(names.contains("clipboard"))
         #expect(names.contains("paste"))
         #expect(names.contains("set_value"))
+        #expect(names.contains("select_text"))
         #expect(names.contains("action"))
         #expect(names.contains("press"))
         #expect(names.contains("drag"))
@@ -136,6 +137,57 @@ struct PeekabooMCPServerTests {
         #expect(coordinateContext["version"] as? Int == 1)
         #expect(coordinateContext["logical_space"] as? String == "global_display_points")
         #expect(metadata["internal_diagnostics"] == nil)
+    }
+
+    @Test(arguments: TextSelectionType.allCases)
+    @MainActor
+    func `select text wire preserves typed UTF16 selection metadata`(selectionType: TextSelectionType) async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let session = try await MCPWireSession.connect(context: fixture.context)
+
+        do {
+            let source = try #require(await fixture.context.uiSnapshots.getSnapshot(id: fixture.snapshotID))
+            let detection = try #require(try await fixture.storage.getDetectionResult(snapshotId: fixture.snapshotID))
+            let snapshots = await MCPToolUISnapshotStore(owner: session.server.snapshotOwnerForTesting())
+            let snapshot = await snapshots.createSnapshot(id: fixture.snapshotID)
+            try await snapshot.setScreenshot(
+                path: #require(await source.screenshotPath),
+                metadata: #require(await source.screenshotMetadata),
+                context: detection.metadata.windowContext)
+            await snapshot.setUIElements(source.uiElements)
+
+            let request: RequestContext<CallTool.Result> = try await session.client.callTool(
+                name: "select_text",
+                arguments: [
+                    "on": .string("T1"),
+                    "text": .string("🦞needle\n"),
+                    "selection_type": .string(selectionType.rawValue),
+                    "snapshot": .string(fixture.snapshotID),
+                ])
+            let result = try await request.value
+            #expect(result.isError != true)
+            let encoded = try JSONEncoder().encode(result)
+            let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            let metadata = try #require(json["_meta"] as? [String: Any])
+            #expect(metadata["target"] as? String == "T1")
+            #expect(metadata["selection_type"] as? String == selectionType.rawValue)
+            #expect(metadata["matched_text_range"] as? [String: Int] == ["location": 0, "length": 9])
+            let selectedLocation = selectionType == .cursorAfter ? 9 : 0
+            let selectedLength = selectionType == .text ? 9 : 0
+            #expect(metadata["selected_text_range"] as? [String: Int] == [
+                "location": selectedLocation,
+                "length": selectedLength,
+            ])
+            #expect(metadata["effect"] as? String == "confirmed")
+            #expect(metadata["target_identity"] != nil)
+            #expect(fixture.automation.selectTextCalls == 1)
+            #expect(fixture.automation.focusCalls == 0 && fixture.automation.setValueCalls == 0)
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
     }
 
     @Test
@@ -542,7 +594,7 @@ struct PeekabooMCPServerTests {
 
         do {
             let (tools, _) = try await session.client.listTools()
-            #expect(tools.count == 25)
+            #expect(tools.count == 26)
 
             for (index, tool) in tools.sorted(by: { $0.name < $1.name }).enumerated() {
                 guard case let .object(schema) = tool.inputSchema else {

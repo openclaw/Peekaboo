@@ -12,6 +12,29 @@ import Testing
 @Suite(.serialized)
 struct MCPDesktopActionOutcomeProjectionTests {
     @Test
+    func `selection metadata is public only for the selection tool`() {
+        let selectionFields: [String: Value] = [
+            "target": .string("T1"),
+            "selection_type": .string("cursor_before"),
+            "matched_text_range": .object(["location": .int(3), "length": .int(7)]),
+            "selected_text_range": .object(["location": .int(3), "length": .int(0)]),
+        ]
+        let metadata = Value.object(selectionFields.merging([
+            "text": .string("private literal"),
+            "prefix": .string("private prefix"),
+            "suffix": .string("private suffix"),
+            "internal_diagnostics": .string("private"),
+        ]) { current, _ in current })
+
+        #expect(MCPToolResponseMetadataProjector.externalFields(
+            from: metadata,
+            toolName: "select_text") == selectionFields)
+        for toolName in ["click", "set_value", "agent"] {
+            #expect(MCPToolResponseMetadataProjector.externalFields(from: metadata, toolName: toolName).isEmpty)
+        }
+    }
+
+    @Test
     func `canonical projection drives the complete seven state MCP matrix`() throws {
         for expectation in DesktopActionOutcomeFixtures.canonicalCases {
             let outcome = expectation.outcome

@@ -188,7 +188,7 @@ struct MCPToolArgumentValidationTests {
             .object(["nested": .bool(false)]),
         ]
 
-        #expect(tools.count == 26)
+        #expect(tools.count == 27)
         for (index, sourceTool) in tools.enumerated() {
             guard case let .object(schema) = sourceTool.inputSchema else {
                 Issue.record("Expected \(sourceTool.name) to advertise an object schema")

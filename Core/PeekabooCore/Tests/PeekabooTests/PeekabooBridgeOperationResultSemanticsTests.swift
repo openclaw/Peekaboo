@@ -281,6 +281,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
             .exactWindowPixelFocusType,
             .foregroundModifierClick,
             .setValue,
+            .selectText,
             .performAction,
             .scroll,
             .targetedScroll,

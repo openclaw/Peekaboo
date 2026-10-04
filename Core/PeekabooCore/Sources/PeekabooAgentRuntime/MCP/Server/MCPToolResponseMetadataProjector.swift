@@ -91,6 +91,13 @@ enum MCPToolResponseMetadataProjector {
         "snapshot_id",
     ]
 
+    private static let textSelectionKeys: Set<String> = [
+        "matched_text_range",
+        "selected_text_range",
+        "selection_type",
+        "target",
+    ]
+
     static func externalFields(from value: Value?, toolName: String?) -> [String: Value] {
         guard case let .object(fields)? = value else { return [:] }
         var allowed = Self.safetyKeys
@@ -104,6 +111,9 @@ enum MCPToolResponseMetadataProjector {
         }
         if toolName == "clipboard" {
             allowed.insert("clipboard_access")
+        }
+        if toolName == "select_text" {
+            allowed.formUnion(Self.textSelectionKeys)
         }
         if toolName == "see" || toolName == "inspect_ui" {
             allowed.insert("focused_element")
