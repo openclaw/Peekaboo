@@ -15,7 +15,10 @@ Pass `--fresh` to require an uncached Accessibility traversal for either a scree
 `--tree --no-screenshot`. It is opt-in: ordinary observations retain the existing cache and performance behavior.
 The request fails before publishing a usable snapshot if the host returns cached, unknown, or unacknowledged AX
 evidence. Screenshot-backed remote freshness requires the additive `desktopObservationFreshAccessibilityTree`
-host capability; update and relaunch an older host, or explicitly use `--no-remote`. There is no cached fallback.
+host capability, independently of authenticated producer-bound snapshot support and enabled operations. A host
+can advertise fresh AX yet fail another requirement; the refusal identifies the evaluated requirement, rather
+than assuming fresh AX is missing or the binary is outdated. Explicit `--no-remote` selects caller-local
+observation. There is no cached fallback.
 Pixel-only modes (`--no-elements`, raw image stdout, `area`, and `multi`) and menu-bar capture reject `--fresh`.
 
 JSON `used_cache` is `true` for a known AX cache hit and `false` for a known uncached AX traversal. An absent field
@@ -237,7 +240,7 @@ The shared reader also withholds post-mutation value evidence when security meta
 
 ## Troubleshooting tips
 
-- Actionable snapshots on an explicit Bridge host require authenticated, producer-bound snapshot support (protocol 1.34 or newer), not just the older explicit-publication capability. A custom socket without a configured host-signing policy intentionally negotiates protocol 1.28. Use a current signed host on its standard socket, or omit `--bridge-socket` for normal host selection; updating the binary alone does not establish custom-socket trust.
+- Actionable snapshots on an explicit Bridge host require authenticated, producer-bound snapshot support (protocol 1.34 or newer), not just the older explicit-publication or fresh-AX capability. Public CLI automation intentionally negotiates protocol 1.28 on arbitrary custom sockets, even with a current signed host that advertises `desktopObservationFreshAccessibilityTree`. Use the host's standard socket or its actual runtime-derived canonical build-scoped daemon socket, or omit `--bridge-socket` for normal host selection; updating the binary alone does not establish custom-socket trust. `--trusted-host-team-id` is only for receipt validation, not an automation trust override.
 - `--verbose` adds a content-free observed-focus summary to the existing capture log (`debug_logs` in JSON mode): raw true/false/unknown `AXFocused` counts, focused element types, `rawResolver`, and cache/partial/truncation/attached-receipt flags. Raw counts include menu-bar nodes; the resolver retains its existing menu-bar exclusion. `rawResolver` describes the boolean-only candidates, while `attached` reflects the final observation, which may additionally corroborate the native application receiver. ROI-filtered captures skip raw re-resolution because their cropped subset cannot explain the original observation's focus. Logging itself adds no Accessibility reads or input authority.
 - Some apps mark focused ancestor groups as well as their text field. A fresh, complete exact-window observation can resolve that ambiguity only when the application's native focused reference stays unchanged across traversal, uniquely matches a genuinely focused captured node, and proves the same process/window ownership. The optional initial focus read reserves most of the remaining deadline for ordinary traversal; it never restarts the observation timeout. Missing or unstable evidence stays unknown; cached, application-partial and truncated captures cannot use this additional corroboration. Input still performs its normal live receiver and key-window validation.
 
