@@ -411,6 +411,21 @@ public struct DetectionMetadata: Sendable, Codable {
         self.warnings.contains(Self.applicationScopedAccessibilityFallbackWarning)
     }
 
+    /// Whether native AX cache use is known; other detection sources do not imply a fresh AX traversal.
+    public var usedAccessibilityCache: Bool? {
+        if self.warnings.contains("ax_cache_hit") {
+            return true
+        }
+        switch self.method {
+        case "AXorcist", "AXorcist+OCR":
+            return false
+        case "AXorcist (cached)", "AXorcist (cached)+OCR":
+            return true
+        default:
+            return nil
+        }
+    }
+
     /// Time taken for detection
     public let detectionTime: TimeInterval
 

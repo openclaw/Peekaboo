@@ -139,6 +139,10 @@ public actor PeekabooBridgeClient {
         self.inputCapabilities.desktopObservationInlinePixelsEnabled
     }
 
+    var desktopObservationFreshAccessibilityTreeEnabled: Bool {
+        self.inputCapabilities.desktopObservationFreshAccessibilityTreeEnabled
+    }
+
     var operationAttestation: PeekabooBridgeListenerAttestation?
     var latestVerifiedOperationReceipt: PeekabooBridgeOperationReceipt?
     var latestVerifiedOperationReceiptBundle: PeekabooBridgeOperationReceiptBundle?
@@ -944,7 +948,9 @@ public actor PeekabooBridgeClient {
                     .supportsPreparedClipboardGuardedExactWindowHotkeys,
                 desktopObservationInlinePixelsEnabled: handshake.supportedOperations.contains(.desktopObservation) &&
                     handshake.hostCapabilities?
-                    .contains(PeekabooBridgeHostCapability.desktopObservationInlinePixels) == true),
+                    .contains(PeekabooBridgeHostCapability.desktopObservationInlinePixels) == true,
+                desktopObservationFreshAccessibilityTreeEnabled:
+                handshake.supportsDesktopObservationFreshAccessibilityTree),
             listenerAttestation: authentication.listenerAttestation,
             listenerLiveIdentity: authentication.listenerLiveIdentity,
             sessionAttestation: authentication.sessionAttestation,
@@ -1547,6 +1553,7 @@ private struct PeekabooBridgeClientInputCapabilities: Sendable {
     var clipboardGuardedExactWindowHotkeysEnabled = false
     var preparedClipboardGuardedExactWindowHotkeysEnabled = false
     var desktopObservationInlinePixelsEnabled = false
+    var desktopObservationFreshAccessibilityTreeEnabled = false
 }
 
 private struct PeekabooBridgeClientHandshakeCandidate: Sendable {

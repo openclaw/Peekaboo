@@ -121,6 +121,11 @@ extension SeeCommand: CommanderSignatureProviding {
                     long: "ocr"
                 ),
                 .commandFlag(
+                    "fresh",
+                    help: "Require a fresh, uncached Accessibility tree for this observation",
+                    long: "fresh"
+                ),
+                .commandFlag(
                     "tree",
                     help: "Print the accessibility text tree",
                     long: "tree"

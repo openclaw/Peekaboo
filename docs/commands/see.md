@@ -11,6 +11,18 @@ read_when:
 
 Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows.
 
+Pass `--fresh` to require an uncached Accessibility traversal for either a screenshot-backed observation or
+`--tree --no-screenshot`. It is opt-in: ordinary observations retain the existing cache and performance behavior.
+The request fails before publishing a usable snapshot if the host returns cached, unknown, or unacknowledged AX
+evidence. Screenshot-backed remote freshness requires the additive `desktopObservationFreshAccessibilityTree`
+host capability; update and relaunch an older host, or explicitly use `--no-remote`. There is no cached fallback.
+Pixel-only modes (`--no-elements`, raw image stdout, `area`, and `multi`) and menu-bar capture reject `--fresh`.
+
+JSON `used_cache` is `true` for a known AX cache hit and `false` for a known uncached AX traversal. An absent field
+means the evidence is unknown or not applicable. Freshness does not mean completeness: truncated or partial trees
+retain their existing warnings and targeting restrictions. Text-selection range readback remains limited to the
+focused field; `--fresh` does not make unfocused ranges available.
+
 Pixels and Accessibility metadata are collected at different times, not as one atomic application-state snapshot.
 During asynchronous UI updates, an image can still show the old value while AX already reports the new value.
 Atomic snapshot publication binds the returned artifacts; it does not make their acquisition simultaneous. After
@@ -65,6 +77,9 @@ peekaboo see --window-id 12345 --roi 100,80,500,300 --json --path /tmp/window-ro
 
 # Add host-local Vision text when an app exposes a sparse or incomplete AX tree
 peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.png
+
+# Require a new AX traversal without capturing pixels
+peekaboo see --app TextEdit --tree --no-screenshot --fresh --json
 ```
 
 ## When to use
@@ -87,6 +102,7 @@ peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.
 | `--capture-engine auto|modern|sckit|classic|cg` | Select the engine for this request on the chosen Bridge host. Explicit remote modern/classic selection requires `desktopObservationCaptureEngine`; every transported engine also requires the current `screenCaptureKitProcessOwnership` policy. Live pre-lease hosts/processes are refused during upgrades instead of creating an unrecorded second owner. `--no-remote --capture-engine modern` requests caller-local process-lifetime SCK ownership and refuses immediately if another Peekaboo process owns it; retry remotely, stop that exact owner generation, or explicitly choose classic. An explicit `--bridge-socket` never reroutes and must identify that exact owner for modern capture. |
 | `--no-elements` | Skip element detection for the cheapest pixel path. An exact `--window-id` capture still returns an explicit-reference-only `snapshot_id` with a coordinate receipt for background clicks; it never replaces an earlier element map in implicit latest lookup. Remote receipt publication requires Bridge protocol 1.26 and fails with host-upgrade guidance before capture on older hosts. Ordinary screen, area, frontmost, multi, and app/PID-only pixel captures stay backward-compatible and do not return a receipt. |
 | `--ocr` | Add Apple Vision text recognized on the selected runtime host to the AX element map. Requires screenshot-backed element detection and cannot be combined with `--no-elements`, `--no-screenshot`, `--path -`, `area`, or `multi`. |
+| `--fresh` | Require uncached Accessibility evidence for screenshot-backed or AX-only observations. Defaults to false; rejects pixel-only and menu-bar capture. |
 | `--tree` | Print the accessibility text tree. For an explicit WindowServer ID with no matching AX window, tree-only read-only observation may return application-scoped partial semantics instead of relabeling another window as the requested target. |
 | `--no-screenshot` | Skip pixel capture; requires `--tree` and rejects `--capture-engine` because no backend runs. Ambient engine configuration is ignored so it cannot reroute this AX-only form. Element IDs and a snapshot publish only after pinning the exact process generation, window, and bounds; target drift or a missing receipt fails before publication. |
 | `--annotate` | Overlay element bounds/IDs on the output image. |

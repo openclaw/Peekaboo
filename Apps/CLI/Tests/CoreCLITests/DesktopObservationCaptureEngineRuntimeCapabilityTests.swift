@@ -311,14 +311,16 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         #expect(!CommandRuntime.supportsRemoteRequirements(for: engineOnly, options: options))
     }
 
-    @Test
-    func `owner aware classic defers handshake status to host native evidence`() throws {
-        let options = try Self.options(engine: "classic")
+    @Test(arguments: [false, true])
+    func `owner aware classic defers handshake status to host native evidence`(fresh: Bool) throws {
+        var options = try Self.options(engine: "classic")
+        options.requiresDesktopObservationFreshAccessibilityTree = fresh
         let handshake = Self.handshake(
             enabledOperations: [],
             capabilities: [
                 PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
                 PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+                PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree,
             ],
             permissions: PermissionsStatus(
                 screenRecording: false,

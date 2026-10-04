@@ -163,6 +163,10 @@ struct PeekabooBridgeHostIdentityTests {
 
         #expect(observationServer.hostCapabilities.contains(PeekabooBridgeHostCapability.desktopObservationOCR))
         #expect(observationServer.hostCapabilities.contains(
+            PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree))
+        #expect(!captureOnlyServer.hostCapabilities.contains(
+            PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree))
+        #expect(observationServer.hostCapabilities.contains(
             PeekabooBridgeHostCapability.desktopObservationCaptureEngine))
         #expect(!captureOnlyServer.hostCapabilities.contains(PeekabooBridgeHostCapability.desktopObservationOCR))
         #expect(!captureOnlyServer.hostCapabilities.contains(

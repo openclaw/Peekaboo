@@ -200,6 +200,17 @@ For an explicit `window_id`, `inspect_ui` rejects an empty Accessibility result 
 metadata, returning `ACCESSIBILITY_INCOMPLETE` in that case. Existing timeout and truncation diagnostics take precedence.
 App and frontmost inspections may still return a successful empty list, even when the host reports the window it inspected.
 
+Both `see` and `inspect_ui` accept `fresh: true` to require a new, uncached Accessibility traversal. The default is
+`false`, preserving normal cache behavior. Cached, unknown, or unacknowledged fresh results are refused before a
+usable snapshot is published. Screenshot-backed `see` requires the additive `desktopObservationFreshAccessibilityTree`
+Bridge capability; update and relaunch older hosts rather than falling back to cached evidence. Freshness is not
+available for pixel-only tools or menu-bar capture, and it does not imply a complete tree or atomic screenshot/AX
+acquisition. Partial observations keep their existing authority restrictions; selection readback remains focused-field-only.
+
+Public `_meta.used_cache` reports `true` for a known AX cache hit and `false` for a known uncached traversal on both
+observation tools. Omission means unknown or not applicable, not a cache miss. For example, call `inspect_ui` with
+`{"app_target":"TextEdit","fresh":true}` for a fresh AX-only read, or add the same `fresh` flag to `see` for pixels too.
+
 `see` also accepts the closed `capture_engine` values `auto` (default), `modern`, and `classic`. The choice is carried
 in that observation request to the selected host; incapable hosts refuse it before capture. `classic` never enters
 ScreenCaptureKit, so it is the safe request-local recovery path when the selected host proves classic but blocks auto/modern

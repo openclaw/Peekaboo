@@ -193,7 +193,8 @@ extension PeekabooBridgeClient {
            !self.preparedClipboardGuardedExactWindowHotkeysEnabled
         {
             throw DesktopActionFailure.preDispatchRefusal(
-                route: .bridge, reason: .runtimeIncompatible,
+                route: .bridge,
+                reason: .runtimeIncompatible,
                 message: "The selected Bridge session cannot prepare a background window for clipboard-guarded paste.",
                 hint: "Update and relaunch the selected host before writing a temporary clipboard payload.")
         }
@@ -204,14 +205,7 @@ extension PeekabooBridgeClient {
                 message: "The selected Bridge session cannot fence exact-window paste with a retained clipboard claim.",
                 hint: "Update and relaunch Peekaboo on the selected host before writing a temporary clipboard payload.")
         }
-        if case let .desktopObservation(observation) = request.unwrappedOperationRequest,
-           observation.output.includeImageData, !self.desktopObservationInlinePixelsEnabled
-        {
-            throw PeekabooBridgeErrorEnvelope(
-                code: .operationNotSupported,
-                message: "Bridge host does not advertise desktopObservationInlinePixels. " +
-                    "Update and relaunch Peekaboo on the selected host before requesting inline capture pixels.")
-        }
+        try self.requireObservationCapabilities(for: request)
         if request.requiresBrowserConnectionHandoff, !self.browserConnectionHandoffEnabled {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
@@ -332,6 +326,22 @@ extension PeekabooBridgeClient {
                 reason: .runtimeIncompatible,
                 message: "Bridge protocol 1.30 exact-window held-pointer cleanup is unavailable.",
                 hint: "Reconnect to the Bridge host that owns the active hold before retrying.")
+        }
+    }
+
+    private func requireObservationCapabilities(for request: PeekabooBridgeRequest) throws {
+        guard case let .desktopObservation(observation) = request.unwrappedOperationRequest else { return }
+        if observation.detection.requiresFreshAccessibilityTree, !self.desktopObservationFreshAccessibilityTreeEnabled {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host does not advertise desktopObservationFreshAccessibilityTree. " +
+                    "Update and relaunch the host before requesting a fresh observation.")
+        }
+        if observation.output.includeImageData, !self.desktopObservationInlinePixelsEnabled {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host does not advertise desktopObservationInlinePixels. " +
+                    "Update and relaunch Peekaboo on the selected host before requesting inline capture pixels.")
         }
     }
 

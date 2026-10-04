@@ -407,12 +407,14 @@ public final class PeekabooBridgeServer {
     {
         capabilities.subtract([
             PeekabooBridgeHostCapability.desktopObservationInlinePixels,
+            PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree,
             PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
             PeekabooBridgeHostCapability.screenCaptureKitOwnershipEnforcement,
             PeekabooBridgeHostCapability.classicCaptureWithoutScreenCaptureKit,
         ])
         if allowedOperations.contains(.desktopObservation) {
             capabilities.insert(PeekabooBridgeHostCapability.desktopObservationInlinePixels)
+            capabilities.insert(PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree)
             if services.supportsScreenCaptureKitProcessOwnership {
                 capabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitOwnershipEnforcement)
             }
@@ -1229,6 +1231,15 @@ public final class PeekabooBridgeServer {
             break
         }
 
+        try self.validateOperationPermissions(for: request, permissions: permissions, effectiveOps: effectiveOps)
+    }
+
+    private func validateOperationPermissions(
+        for request: PeekabooBridgeRequest,
+        permissions: PermissionsStatus,
+        effectiveOps: Set<PeekabooBridgeOperation>) throws
+    {
+        let op = request.operation
         let defersClassicScreenRecordingPermission = Self.defersClassicScreenRecordingPermission(
             for: request,
             hostCapabilities: self.hostCapabilities,

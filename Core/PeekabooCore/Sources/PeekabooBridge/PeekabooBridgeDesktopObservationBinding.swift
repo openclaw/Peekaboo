@@ -358,6 +358,9 @@ enum PeekabooBridgeDesktopObservationBinding {
     {
         switch request.mode {
         case .none:
+            guard !request.requiresFreshAccessibilityTree else {
+                return "fresh accessibility request without detection"
+            }
             guard result.elements == nil, result.ocr == nil else {
                 return "unexpected detection result"
             }
@@ -365,6 +368,12 @@ enum PeekabooBridgeDesktopObservationBinding {
         case .accessibility, .accessibilityAndOCR:
             guard let elements = result.elements else {
                 return "accessibility detection result"
+            }
+            if DesktopObservationEvidencePolicy.freshAccessibilityEvidenceError(
+                elements.metadata,
+                requested: request.requiresFreshAccessibilityTree) != nil
+            {
+                return "fresh accessibility detection result"
             }
             if request.mode == .accessibilityAndOCR || request.preferOCR {
                 guard result.ocr != nil else { return "OCR detection result" }

@@ -7,6 +7,32 @@ import Testing
 @MainActor
 struct SeeCommandOCRTests {
     @Test
+    func `fresh flag is opt in and forwarded for screenshot observations`() throws {
+        let command = try SeeCommand.parse(["--app", "Calendar", "--fresh"])
+        try command.validateMergedOptions()
+        #expect(command.fresh)
+        #expect(try command.makeObservationRequest(target: .app(identifier: "Calendar", window: .automatic))
+            .detection.requiresFreshAccessibilityTree)
+        #expect(!SeeCommand().fresh)
+        #expect(SeeCommand.commanderSignature().flags.contains { $0.names.contains(.long("fresh")) })
+        let tree = try SeeCommand.parse(["--tree", "--no-screenshot", "--fresh"])
+        try tree.validateMergedOptions()
+    }
+
+    @Test(arguments: [
+        ["--fresh", "--no-elements"],
+        ["--fresh", "--path", "-"],
+        ["--fresh", "--mode", "area", "--region", "0,0,100,100"],
+        ["--fresh", "--mode", "multi"],
+        ["--fresh", "--menubar"],
+        ["--fresh", "--app", "menubar"],
+    ])
+    func `fresh refuses pixel only and menu captures before dispatch`(arguments: [String]) throws {
+        let command = try SeeCommand.parse(arguments)
+        #expect(throws: ValidationError.self) { try command.validateMergedOptions() }
+    }
+
+    @Test
     func `OCR flag binds and maps to a bounded additive detection request`() throws {
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: SeeCommand.self,

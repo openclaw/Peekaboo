@@ -50,6 +50,9 @@ public struct InspectUITool: MCPTool {
                 "web_focus": SchemaBuilder.boolean(
                     description: "Optional. Allow an AXPress retry on sparse Chromium/Tauri web content.",
                     default: false),
+                "fresh": SchemaBuilder.boolean(
+                    description: "Optional. Require a fresh, uncached Accessibility tree; refuse if unavailable.",
+                    default: false),
                 "max_depth": SchemaBuilder.integer(
                     description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH.",
                     minimum: 1),
@@ -96,6 +99,7 @@ public struct InspectUITool: MCPTool {
             let windowContext = try self.makeWindowContext(
                 for: target,
                 webFocus: request.webFocus,
+                fresh: request.fresh,
                 traversalBudget: request.traversalBudget)
 
             let validatedActionResult = try await self.inspectActionResult(
@@ -104,6 +108,9 @@ public struct InspectUITool: MCPTool {
                 requiresTarget: request.webFocus && target.requiresStableMutationTarget)
             observationActionResult = validatedActionResult
             let result = validatedActionResult.payload
+            try DesktopObservationEvidencePolicy.requireFreshAccessibilityEvidence(
+                result.metadata,
+                requested: request.fresh)
             try Self.requireUsableAXOnlyEvidence(result, requestedWindowID: windowContext.windowID)
             let snapshotResult = self.bindResult(result, to: snapshot.id)
 
@@ -122,9 +129,11 @@ public struct InspectUITool: MCPTool {
                 "snapshot_id": .string(snapshot.id),
                 "element_count": .double(Double(snapshotResult.elements.all.count)),
                 "actionable_count": .double(Double(snapshotResult.elements.all.count(where: \.isEnabled))),
-                "used_cache": .bool(snapshotResult.metadata.method.contains("cached")),
                 "truncated": .bool(snapshotResult.metadata.truncationInfo?.isTruncated == true),
             ]
+            if let usedCache = snapshotResult.metadata.usedAccessibilityCache {
+                metadataValues["used_cache"] = .bool(usedCache)
+            }
             if let focusedElement = snapshot.focusedElement {
                 metadataValues["focused_element"] = try Value(focusedElement)
             }
@@ -424,11 +433,15 @@ public struct InspectUITool: MCPTool {
     private func makeWindowContext(
         for target: ObservationTargetArgument,
         webFocus: Bool,
+        fresh: Bool,
         traversalBudget: AXTraversalBudget) throws -> WindowContext
     {
         switch target {
         case .frontmost:
-            return WindowContext(shouldFocusWebContent: webFocus, traversalBudget: traversalBudget)
+            return WindowContext(
+                shouldFocusWebContent: webFocus,
+                traversalBudget: traversalBudget,
+                requiresFreshAccessibilityTree: fresh)
         case let .application(identifier, window):
             let selection = try self.windowSelectionFields(window)
             return WindowContext(
@@ -436,7 +449,8 @@ public struct InspectUITool: MCPTool {
                 windowTitle: selection.title,
                 windowID: selection.id,
                 shouldFocusWebContent: webFocus,
-                traversalBudget: traversalBudget)
+                traversalBudget: traversalBudget,
+                requiresFreshAccessibilityTree: fresh)
         case let .pid(pid, window):
             let selection = try self.windowSelectionFields(window)
             return WindowContext(
@@ -444,7 +458,8 @@ public struct InspectUITool: MCPTool {
                 windowTitle: selection.title,
                 windowID: selection.id,
                 shouldFocusWebContent: webFocus,
-                traversalBudget: traversalBudget)
+                traversalBudget: traversalBudget,
+                requiresFreshAccessibilityTree: fresh)
         case .windowID:
             throw PeekabooError.invalidInput(
                 "inspect_ui window_id requires app_target to identify an application or PID")

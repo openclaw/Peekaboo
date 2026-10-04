@@ -469,6 +469,10 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
     private func observeWithinOverallDeadline(
         _ originalRequest: DesktopObservationRequest) async throws -> UIAutomationActionResult<DesktopObservationResult>
     {
+        guard !originalRequest.detection.requiresFreshAccessibilityTree || originalRequest.detection.mode != .none
+        else {
+            throw PeekabooError.invalidInput("Fresh Accessibility observation requires element detection.")
+        }
         try DesktopObservationROIProcessor.validateRequest(originalRequest.capture.roi, target: originalRequest.target)
         var request = originalRequest
         let reservation = try await self.outputWriter.reserveSnapshotIfNeeded(options: request.output)

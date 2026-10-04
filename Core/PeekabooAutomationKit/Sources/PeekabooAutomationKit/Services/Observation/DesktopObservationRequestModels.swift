@@ -310,19 +310,22 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
     public var includeMenuBarElements: Bool
     public var preferOCR: Bool
     public var traversalBudget: AXTraversalBudget
+    public var requiresFreshAccessibilityTree: Bool
 
     public init(
         mode: DetectionMode = .accessibility,
         allowWebFocusFallback: Bool = false,
         includeMenuBarElements: Bool = false,
         preferOCR: Bool = false,
-        traversalBudget: AXTraversalBudget = AXTraversalBudget.resolved())
+        traversalBudget: AXTraversalBudget = AXTraversalBudget.resolved(),
+        requiresFreshAccessibilityTree: Bool = false)
     {
         self.mode = mode
         self.allowWebFocusFallback = allowWebFocusFallback
         self.includeMenuBarElements = includeMenuBarElements
         self.preferOCR = preferOCR
         self.traversalBudget = traversalBudget
+        self.requiresFreshAccessibilityTree = requiresFreshAccessibilityTree
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -331,6 +334,7 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
         case includeMenuBarElements
         case preferOCR
         case traversalBudget
+        case requiresFreshAccessibilityTree
     }
 
     public init(from decoder: any Decoder) throws {
@@ -341,6 +345,22 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
         self.preferOCR = try container.decode(Bool.self, forKey: .preferOCR)
         self.traversalBudget = try container.decodeIfPresent(AXTraversalBudget.self, forKey: .traversalBudget)
             ?? AXTraversalBudget.resolved()
+        self.requiresFreshAccessibilityTree = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requiresFreshAccessibilityTree) ?? false
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.mode, forKey: .mode)
+        try container.encode(self.allowWebFocusFallback, forKey: .allowWebFocusFallback)
+        try container.encode(self.includeMenuBarElements, forKey: .includeMenuBarElements)
+        try container.encode(self.preferOCR, forKey: .preferOCR)
+        try container.encode(self.traversalBudget, forKey: .traversalBudget)
+        // Preserve the canonical request bytes of clients that do not opt into freshness.
+        if self.requiresFreshAccessibilityTree {
+            try container.encode(true, forKey: .requiresFreshAccessibilityTree)
+        }
     }
 }
 

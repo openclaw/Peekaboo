@@ -123,6 +123,7 @@ extension SeeCommand {
                 ? context.elements.all.count(where: \.isActionable)
                 : 0,
             capture_mode: self.determineMode().rawValue,
+            used_cache: context.metadata.usedAccessibilityCache,
             analysis: context.analysis,
             execution_time: context.executionTime,
             ui_elements: uiElements,

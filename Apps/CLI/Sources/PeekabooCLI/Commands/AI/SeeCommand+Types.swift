@@ -362,6 +362,7 @@ struct SeeResult: Codable {
     let element_count: Int
     let interactable_count: Int
     let capture_mode: String
+    let used_cache: Bool?
     let analysis: SeeAnalysisData?
     let execution_time: TimeInterval
     let ui_elements: [UIElementSummary]
@@ -385,6 +386,7 @@ struct SeeResult: Codable {
         case element_count
         case interactable_count
         case capture_mode
+        case used_cache
         case analysis
         case execution_time
         case ui_elements
@@ -409,6 +411,7 @@ struct SeeResult: Codable {
         element_count: Int,
         interactable_count: Int,
         capture_mode: String,
+        used_cache: Bool? = nil,
         analysis: SeeAnalysisData?,
         execution_time: TimeInterval,
         ui_elements: [UIElementSummary],
@@ -431,6 +434,7 @@ struct SeeResult: Codable {
         self.element_count = element_count
         self.interactable_count = interactable_count
         self.capture_mode = capture_mode
+        self.used_cache = used_cache
         self.analysis = analysis
         self.execution_time = execution_time
         self.ui_elements = ui_elements
@@ -460,6 +464,7 @@ struct SeeResult: Codable {
         try container.encode(self.element_count, forKey: .element_count)
         try container.encode(self.interactable_count, forKey: .interactable_count)
         try container.encode(self.capture_mode, forKey: .capture_mode)
+        try container.encodeIfPresent(self.used_cache, forKey: .used_cache)
         try container.encodeIfPresent(self.analysis, forKey: .analysis)
         try container.encode(self.execution_time, forKey: .execution_time)
         try container.encode(self.ui_elements, forKey: .ui_elements)

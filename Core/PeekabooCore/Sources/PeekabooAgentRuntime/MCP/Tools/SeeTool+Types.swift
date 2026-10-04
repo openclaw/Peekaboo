@@ -13,6 +13,7 @@ struct SeeRequest {
     let annotate: Bool
     let ocr: Bool
     let webFocus: Bool
+    let fresh: Bool
     let traversalBudget: AXTraversalBudget
     let roi: CaptureRegionOfInterest?
     let includeElements: Bool
@@ -26,6 +27,14 @@ struct SeeRequest {
         self.annotate = arguments.getBool("annotate") ?? false
         self.ocr = arguments.getBool("ocr") ?? false
         self.webFocus = arguments.getBool("web_focus") ?? false
+        switch arguments.getValue(for: "fresh") {
+        case nil:
+            self.fresh = false
+        case let .bool(value)?:
+            self.fresh = value
+        default:
+            throw PeekabooError.invalidInput("fresh must be a boolean")
+        }
         self.includeElements = arguments.getBool(ObservedElementTableMetadata.argumentName) ?? false
         if let rawROI = arguments.getString("roi")?.trimmingCharacters(in: .whitespacesAndNewlines),
            !rawROI.isEmpty

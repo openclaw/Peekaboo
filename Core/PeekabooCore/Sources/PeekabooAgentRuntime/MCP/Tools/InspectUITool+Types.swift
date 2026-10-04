@@ -8,6 +8,7 @@ struct InspectUIRequest {
     let windowIDValue: Value?
     let snapshotId: String?
     let webFocus: Bool
+    let fresh: Bool
     let includeElements: Bool
     let traversalBudget: AXTraversalBudget
 
@@ -16,6 +17,14 @@ struct InspectUIRequest {
         self.windowIDValue = arguments.getValue(for: "window_id")
         self.snapshotId = arguments.getString("snapshot")
         self.webFocus = arguments.getBool("web_focus") ?? false
+        switch arguments.getValue(for: "fresh") {
+        case nil:
+            self.fresh = false
+        case let .bool(value)?:
+            self.fresh = value
+        default:
+            throw PeekabooError.invalidInput("fresh must be a boolean")
+        }
         self.includeElements = arguments.getBool(ObservedElementTableMetadata.argumentName) ?? false
         self.traversalBudget = try AXTraversalBudget.resolved(
             maxDepth: Self.positiveInt("max_depth", in: arguments),

@@ -162,14 +162,16 @@ extension SeeCommand {
                 mode: .none,
                 allowWebFocusFallback: false,
                 preferOCR: true,
-                traversalBudget: self.axTraversalBudget()
+                traversalBudget: self.axTraversalBudget(),
+                requiresFreshAccessibilityTree: self.fresh
             )
         default:
             DesktopDetectionOptions(
                 mode: self.ocr ? .accessibilityAndOCR : .accessibility,
                 allowWebFocusFallback: self.webFocus,
                 preferOCR: false,
-                traversalBudget: self.axTraversalBudget()
+                traversalBudget: self.axTraversalBudget(),
+                requiresFreshAccessibilityTree: self.fresh
             )
         }
     }

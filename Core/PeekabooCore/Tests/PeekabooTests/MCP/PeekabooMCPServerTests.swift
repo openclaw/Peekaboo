@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -7,6 +8,141 @@ import Testing
 @testable import PeekabooAutomation
 @testable import PeekabooCore
 @testable import PeekabooVisualizer
+
+extension PeekabooMCPServerTests {
+    @Test(arguments: ["see", "inspect_ui"], ["AXorcist", "AXorcist (cached)", "unknown"])
+    @MainActor
+    func `observation cache evidence survives the real MCP wire`(toolName: String, method: String) async throws {
+        try await Self.checkObservationWire(toolName: toolName, method: method, fresh: false, acknowledged: true)
+    }
+
+    @Test(arguments: ["see", "inspect_ui"], ["AXorcist", "AXorcist (cached)", "ignored", "unknown"])
+    @MainActor
+    func `fresh MCP wire requires uncached acknowledged evidence before publication`(
+        toolName: String, method: String) async throws
+    {
+        try await Self.checkObservationWire(
+            toolName: toolName,
+            method: method == "ignored" ? "AXorcist" : method,
+            fresh: true,
+            acknowledged: method != "ignored")
+    }
+
+    @Test(arguments: ["see", "inspect_ui", "click"])
+    func `public cache projection admits only observation booleans`(toolName: String) throws {
+        for value in [Value.bool(true), .bool(false), .string("false"), .int(0), .null] {
+            let result = PeekabooMCPServer.callToolResult(
+                from: .text("fixture", meta: .object(["used_cache": value, "internal_diagnostics": .bool(true)])),
+                toolName: toolName)
+            let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
+            let metadata = json["_meta"] as? [String: Any]
+            if toolName != "click", case let .bool(expected) = value {
+                #expect(metadata?["used_cache"] as? Bool == expected)
+            } else {
+                #expect(metadata?["used_cache"] == nil)
+            }
+            #expect(metadata?["internal_diagnostics"] == nil)
+        }
+    }
+
+    @Test(arguments: ["see", "inspect_ui"])
+    @MainActor
+    func `invalid fresh values refuse on the wire before service dispatch`(toolName: String) async throws {
+        let snapshots = InMemorySnapshotManager()
+        let automation = InspectUITestAutomationService(accessibilityGranted: true)
+        let observation = CalendarOCRObservationService(snapshots: snapshots)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation, snapshots: snapshots, desktopObservation: observation)
+        let session = try await MCPWireSession.connect(context: context)
+        do {
+            for value in [Value.string("true"), .int(1), .null] {
+                let result = try await session.callRaw(params: .object([
+                    "name": .string(toolName), "arguments": .object(["fresh": value]),
+                ]))
+                #expect(result.isError == true)
+                #expect(result.content.contains { content in
+                    guard case let .text(text, _, _) = content else { return false }
+                    return text.contains("fresh must be a boolean")
+                })
+            }
+            #expect(automation.lastInspectWindowContext == nil)
+            #expect(observation.lastRequest == nil)
+        } catch {
+            await session.stop()
+            throw error
+        }
+        await session.stop()
+    }
+
+    @MainActor
+    private static func checkObservationWire(
+        toolName: String, method: String, fresh: Bool, acknowledged: Bool) async throws
+    {
+        let snapshots = InMemorySnapshotManager()
+        let automation = InspectUITestAutomationService(
+            accessibilityGranted: true,
+            detectionResult: ElementDetectionResult(
+                snapshotId: "wire-source",
+                screenshotPath: "",
+                elements: DetectedElements(buttons: [.init(id: "B1", type: .button, label: "Fixture", bounds: .zero)]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 1,
+                    method: method,
+                    windowContext: WindowContext(requiresFreshAccessibilityTree: fresh && acknowledged),
+                    truncationInfo: DetectionTruncationInfo(deadlineReached: true))))
+        let observation = CalendarOCRObservationService(
+            snapshots: snapshots, method: method, acknowledgesFreshRequest: acknowledged)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation, snapshots: snapshots, desktopObservation: observation)
+        let session = try await MCPWireSession.connect(context: context)
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-fresh-wire-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        do {
+            var arguments: [String: Value] = ["fresh": .bool(fresh), "include_elements": .bool(true)]
+            if toolName == "see" {
+                arguments["path"] = .string(outputURL.path)
+            }
+            let request: RequestContext<CallTool.Result> = try await session.client.callTool(
+                name: toolName, arguments: arguments)
+            let result = try await request.value
+            let refused = fresh && (method != "AXorcist" || !acknowledged)
+            #expect((result.isError == true) == refused)
+            let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
+            let metadata = try #require(json["_meta"] as? [String: Any])
+            let publicSnapshots = await MCPToolUISnapshotStore(owner: session.server.snapshotOwnerForTesting())
+            if refused {
+                #expect(metadata["error_code"] as? String == "ACCESSIBILITY_INCOMPLETE")
+                #expect(metadata["snapshot_id"] == nil)
+                #expect(await publicSnapshots.getSnapshot(id: nil) == nil)
+                #expect(try await snapshots.listSnapshots().isEmpty)
+            } else {
+                let expectedCache: Bool? = method == "unknown" ? nil : method.contains("cached")
+                #expect(metadata["used_cache"] as? Bool == expectedCache)
+                #expect(metadata["truncated"] == nil)
+                #expect(result.content.contains { content in
+                    guard case let .text(text, _, _) = content else { return false }
+                    return text.contains(toolName == "see" ? "AX tree incomplete" : "time deadline")
+                })
+                #expect(metadata["snapshot_id"] != nil)
+                #expect(await publicSnapshots.getSnapshot(id: nil) != nil)
+            }
+            if toolName == "see" {
+                #expect(observation.lastRequest?.detection.requiresFreshAccessibilityTree == fresh)
+            } else {
+                let context = try #require(automation.lastInspectWindowContext)
+                let contextJSON = try #require(JSONSerialization.jsonObject(
+                    with: JSONEncoder().encode(context)) as? [String: Any])
+                #expect(contextJSON["requiresFreshAccessibilityTree"] as? Bool == fresh)
+            }
+        } catch {
+            await session.stop()
+            throw error
+        }
+        await session.stop()
+    }
+}
 
 @Suite(.serialized)
 struct PeekabooMCPServerTests {

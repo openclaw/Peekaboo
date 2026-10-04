@@ -8,6 +8,33 @@ import Testing
 
 @Suite(.serialized)
 struct SeeCommandTimeoutTests {
+    @Test(arguments: ["AXorcist (cached)", "unknown", "ignored"])
+    @MainActor
+    func `fresh tree refuses unproven evidence before storing its map`(method: String) async throws {
+        let root = Self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let tracker = InteractionMutationTracker(desktopMutationWatermarkStore: store)
+        let snapshots = InMemorySnapshotManager(desktopMutationWatermarkStore: store)
+        let automation = ReadOnlySeeAutomation()
+        automation.returnedMethod = method == "ignored" ? "AXorcist" : method
+        automation.acknowledgesFreshRequest = method != "ignored"
+        var command = SeeCommand()
+        command.windowId = 77
+        command.tree = true
+        command.noScreenshot = true
+        command.fresh = true
+        command.runtime = Self.runtime(tracker: tracker, snapshots: snapshots, automation: automation)
+        let snapshotID = try await snapshots.createSnapshot()
+        await #expect(throws: PeekabooError.self) {
+            try await command.performCaptureWithDetection(snapshotID: snapshotID, observationTimeoutSeconds: 1)
+        }
+        #expect(automation.lastWindowContext?.requiresFreshAccessibilityTree == true)
+        #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) == nil)
+        #expect(!tracker.hasPendingDurableMutation)
+        #expect(store.effectiveWatermark() == nil)
+    }
+
     @Test(arguments: [false, true], [false, true])
     @MainActor
     func `see mutation intent includes web focus and menu opening`(webFocus: Bool, menubar: Bool) {
@@ -18,9 +45,11 @@ struct SeeCommandTimeoutTests {
         #expect(command.mayMutateDuringObservation == (webFocus || menubar))
     }
 
-    @Test(arguments: [false, true])
+    @Test(arguments: [false, true], [false, true])
     @MainActor
-    func `read-only tree and detection observations retain their fresh implicit snapshot`(treeOnly: Bool) async throws {
+    func `read-only tree and detection observations retain their fresh implicit snapshot`(
+        treeOnly: Bool, fresh: Bool
+    ) async throws {
         let root = Self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let store = DesktopMutationWatermarkStore(directoryURL: root)
@@ -30,6 +59,7 @@ struct SeeCommandTimeoutTests {
         let runtime = Self.runtime(tracker: tracker, snapshots: snapshots, automation: automation)
         var command = SeeCommand()
         command.windowId = 77
+        command.fresh = fresh
         command.runtime = runtime
 
         if treeOnly {
@@ -40,7 +70,7 @@ struct SeeCommandTimeoutTests {
             let snapshotID = try await snapshots.createSnapshot()
             let result = try await command.detectElements(
                 imageData: Data([0x01]),
-                windowContext: ReadOnlySeeAutomation.windowContext,
+                windowContext: ReadOnlySeeAutomation.windowContext(fresh: fresh),
                 snapshotID: snapshotID
             )
             try await snapshots.storeDetectionResult(snapshotId: snapshotID, result: result.payload)
@@ -49,6 +79,12 @@ struct SeeCommandTimeoutTests {
         #expect(automation.inspectionCount == (treeOnly ? 1 : 0))
         #expect(automation.detectionCount == (treeOnly ? 0 : 1))
         #expect(automation.lastWindowContext?.windowID == 77)
+        #expect((automation.lastWindowContext?.requiresFreshAccessibilityTree == true) == fresh)
+        if treeOnly {
+            let context = try #require(automation.lastWindowContext)
+            let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(context)) as? [String: Any])
+            #expect(json["requiresFreshAccessibilityTree"] as? Bool == fresh)
+        }
         #expect(automation.lastWindowContext?.shouldFocusWebContent != true)
         #expect(!tracker.hasPendingDurableMutation)
         #expect(store.effectiveWatermark() == nil)
@@ -73,9 +109,11 @@ struct SeeCommandTimeoutTests {
         #expect(!tracker.hasPendingDurableMutation)
     }
 
-    @Test(arguments: [false, true])
+    @Test(arguments: [false, true], [false, true])
     @MainActor
-    func `read-only timeout and cancellation create no mutation watermark`(cancelParent: Bool) async throws {
+    func `read-only timeout and cancellation create no mutation watermark`(
+        cancelParent: Bool, fresh: Bool
+    ) async throws {
         let root = Self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let store = DesktopMutationWatermarkStore(directoryURL: root)
@@ -84,11 +122,15 @@ struct SeeCommandTimeoutTests {
         let snapshotID = try await snapshots.createSnapshot()
         let runtime = Self.runtime(tracker: tracker, snapshots: snapshots)
         let gate = IgnoredCancellationWorkGate()
+        var command = SeeCommand()
+        command.fresh = fresh
+        let mayMutate = command.mayMutateDuringObservation
+        #expect(!mayMutate)
         defer { Task { await gate.release() } }
         let operation = Task { @MainActor in
             try await SeeCommand.withWallClockTimeout(
                 seconds: cancelParent ? 10 : 0.02,
-                interactionMutationTracker: runtime.observationTimeoutMutationTracker(mayMutateDesktop: false)
+                interactionMutationTracker: runtime.observationTimeoutMutationTracker(mayMutateDesktop: mayMutate)
             ) {
                 await gate.waitUntilReleased()
                 await gate.markFinished()
@@ -407,20 +449,23 @@ private final class ReadOnlySeeAutomation: MockAutomationService, UIAutomationOb
     static let identity = WindowMutationIdentity(
         windowID: 77, ownerProcessIdentifier: 42, ownerProcessStartIdentity: 9001, capturedBounds: bounds
     )
-    static var windowContext: WindowContext {
+    static func windowContext(fresh: Bool) -> WindowContext {
         WindowContext(
             applicationName: "Synthetic application",
             applicationProcessId: 42,
             windowTitle: "Synthetic window",
             windowID: 77,
             windowBounds: self.bounds,
-            windowMutationIdentity: self.identity
+            windowMutationIdentity: self.identity,
+            requiresFreshAccessibilityTree: fresh
         )
     }
 
     private(set) var inspectionCount = 0
     private(set) var detectionCount = 0
     private(set) var lastWindowContext: WindowContext?
+    var returnedMethod = "AXorcist"
+    var acknowledgesFreshRequest = true
 
     @MainActor
     func inspectAccessibilityTreeActionResult(
@@ -428,7 +473,11 @@ private final class ReadOnlySeeAutomation: MockAutomationService, UIAutomationOb
     ) async throws -> UIAutomationActionResult<ElementDetectionResult> {
         self.inspectionCount += 1
         self.lastWindowContext = windowContext
-        return try Self.result(snapshotID: "synthetic-source")
+        return try Self.result(
+            snapshotID: "synthetic-source",
+            fresh: self.acknowledgesFreshRequest && windowContext?.requiresFreshAccessibilityTree == true,
+            method: self.returnedMethod
+        )
     }
 
     @MainActor
@@ -441,10 +490,18 @@ private final class ReadOnlySeeAutomation: MockAutomationService, UIAutomationOb
         self.detectionCount += 1
         self.lastWindowContext = windowContext
         let snapshotID = try #require(snapshotId)
-        return try Self.result(snapshotID: snapshotID)
+        return try Self.result(
+            snapshotID: snapshotID,
+            fresh: self.acknowledgesFreshRequest && windowContext?.requiresFreshAccessibilityTree == true,
+            method: self.returnedMethod
+        )
     }
 
-    private static func result(snapshotID: String) throws -> UIAutomationActionResult<ElementDetectionResult> {
+    private static func result(
+        snapshotID: String,
+        fresh: Bool,
+        method: String
+    ) throws -> UIAutomationActionResult<ElementDetectionResult> {
         let field = DetectedElement(
             id: "synthetic-field",
             type: .textField,
@@ -460,8 +517,8 @@ private final class ReadOnlySeeAutomation: MockAutomationService, UIAutomationOb
                 metadata: DetectionMetadata(
                     detectionTime: 0,
                     elementCount: 1,
-                    method: "synthetic",
-                    windowContext: self.windowContext,
+                    method: method,
+                    windowContext: self.windowContext(fresh: fresh),
                     truncationInfo: nil
                 )
             ),

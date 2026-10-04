@@ -7,6 +7,38 @@ import Testing
 @Suite(.tags(.safe))
 @MainActor
 struct DesktopObservationOCRRuntimeCapabilityTests {
+    @Test
+    func `fresh screenshot capability is additive and retains operation permission gates`() throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: ["fresh"]),
+            commandType: SeeCommand.self
+        )
+        let ordinary = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: SeeCommand.self
+        )
+        let capabilities = [
+            PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree,
+            PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+        ]
+        let capable = Self.handshake(capabilities: capabilities)
+        let older = Self.handshake(capabilities: [PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership])
+        let missingOperation = Self.handshake(operations: [.captureScreen], capabilities: capabilities)
+        let disabled = Self.handshake(enabledOperations: [.captureScreen], capabilities: capabilities)
+        #expect(options.requiresDesktopObservationFreshAccessibilityTree)
+        #expect(!ordinary.requiresDesktopObservationFreshAccessibilityTree)
+        #expect(capable.supportsDesktopObservationFreshAccessibilityTree)
+        #expect(disabled.supportsDesktopObservationFreshAccessibilityTree)
+        #expect(!missingOperation.supportsDesktopObservationFreshAccessibilityTree)
+        #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: disabled, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: older, options: options))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: older, options: ordinary))
+        let failure = RuntimeHostResolver.requiredHostFailure(explicitSocket: nil, options: options)
+        #expect(failure?.contains(PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree) == true)
+        #expect(failure?.contains("--no-remote") == true)
+    }
+
     private static let observationOperations: [PeekabooBridgeOperation] = [
         .captureScreen,
         .desktopObservation,

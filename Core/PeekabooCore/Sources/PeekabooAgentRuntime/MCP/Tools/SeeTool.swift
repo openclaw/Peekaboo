@@ -83,6 +83,9 @@ public struct SeeTool: MCPTool {
                 "web_focus": SchemaBuilder.boolean(
                     description: "Optional. Allow an AXPress retry on sparse Chromium/Tauri web content.",
                     default: false),
+                "fresh": SchemaBuilder.boolean(
+                    description: "Optional. Require a fresh, uncached Accessibility tree; refuse if unavailable.",
+                    default: false),
                 "max_depth": SchemaBuilder.integer(
                     description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH.",
                     minimum: 1),
@@ -109,16 +112,19 @@ public struct SeeTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
-        let request = try SeeRequest(arguments: arguments)
         var newlyCreatedSnapshotID: String?
         var newlyCreatedSnapshotWasPending = false
         var activeSnapshotID: String?
         var observationActionResult: UIAutomationActionResult<DesktopObservationResult>?
 
         do {
+            let request = try SeeRequest(arguments: arguments)
             let target = try ObservationTargetArgument.parse(
                 request.appTarget,
                 windowIDValue: request.windowIDValue)
+            if request.fresh, target == .menubar {
+                throw PeekabooError.invalidInput("fresh requires an Accessibility observation, not menu-bar capture")
+            }
             let captureArtifact = try SeeCaptureArtifact(requestedPath: request.path)
             defer { captureArtifact.cleanup() }
 
@@ -150,6 +156,9 @@ public struct SeeTool: MCPTool {
                 outcome: actionResult.outcome,
                 targetIdentity: resolvedTarget)
             observationActionResult = validatedActionResult
+            try DesktopObservationEvidencePolicy.requireFreshAccessibilityEvidence(
+                observation.elements?.metadata,
+                requested: request.fresh)
             let (elements, detectedElements) = try await self.detectUIElements(
                 observation: observation,
                 snapshot: snapshot)
@@ -203,8 +212,10 @@ public struct SeeTool: MCPTool {
                     snapshotID: activeSnapshotID,
                     additionalFields: ObservationActionResultSupport.standardErrorFields(error))
             }
+            let errorFields = ObservationActionResultSupport.standardErrorFields(presentedError)
             return ToolResponse.error(
-                "Failed to capture UI state: \(presentedError.localizedDescription)")
+                "Failed to capture UI state: \(presentedError.localizedDescription)",
+                meta: errorFields.isEmpty ? nil : .object(errorFields))
         }
     }
 
@@ -256,7 +267,8 @@ public struct SeeTool: MCPTool {
                     mode: request.ocr ? .accessibilityAndOCR : .accessibility,
                     allowWebFocusFallback: request.webFocus,
                     preferOCR: false,
-                    traversalBudget: request.traversalBudget),
+                    traversalBudget: request.traversalBudget,
+                    requiresFreshAccessibilityTree: request.fresh),
                 output: DesktopObservationOutputOptions(
                     path: path,
                     saveRawScreenshot: true,
@@ -423,6 +435,9 @@ public struct SeeTool: MCPTool {
             }
         if let focusedElement = snapshot.focusedElement {
             fields["focused_element"] = try Value(focusedElement)
+        }
+        if let usedCache = observation.elements?.metadata.usedAccessibilityCache {
+            fields["used_cache"] = .bool(usedCache)
         }
         if includeElements, let detection = observation.elements {
             // Same presentation (ROI-local) bounds as the text summary and `peekaboo see --json`.

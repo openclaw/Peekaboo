@@ -74,6 +74,9 @@ RuntimeBackedCommand {
     @Flag(help: "Add host-local Vision OCR text to the accessibility element map")
     var ocr = false
 
+    @Flag(help: "Require a fresh, uncached Accessibility tree for this observation")
+    var fresh = false
+
     @Flag(
         help: "Print the AX tree; exact pixel-only windows can return labeled application-partial read-only semantics"
     )
@@ -396,6 +399,11 @@ RuntimeBackedCommand {
         resolvedMode: PeekabooCore.CaptureMode,
         forcesPixelOnlyMode: Bool
     ) throws {
+        if self.fresh, self.usesPixelOnlyCapture || self.menubar || self.app?.lowercased() == "menubar" {
+            throw ValidationError(
+                "--fresh requires Accessibility element detection, not pixel-only or menu-bar capture"
+            )
+        }
         if self.tree, self.noElements {
             throw ValidationError("--tree cannot be combined with --no-elements")
         }
@@ -848,6 +856,7 @@ extension SeeCommand: CommanderBindableCommand {
         self.retina = values.flag("retina")
         self.noElements = values.flag("noElements")
         self.ocr = values.flag("ocr")
+        self.fresh = values.flag("fresh")
         self.tree = values.flag("tree")
         self.noScreenshot = values.flag("noScreenshot")
     }

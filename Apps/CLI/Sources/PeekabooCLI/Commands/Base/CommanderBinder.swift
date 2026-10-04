@@ -279,6 +279,8 @@ enum CommanderCLIBinder {
         let seeSkipsPixels = commandType == SeeCommand.self && values.flag("noScreenshot")
         options.requiresDesktopObservation = commandType == SeeCommand.self && !seeSkipsPixels
         options.requiresDesktopObservationOCR = commandType == SeeCommand.self && values.flag("ocr")
+        options.requiresDesktopObservationFreshAccessibilityTree = commandType == SeeCommand.self &&
+            values.flag("fresh") && !seeSkipsPixels
         options.requiresExplicitSnapshotPublication = commandType == SeeCommand.self &&
             values.flag("noElements") &&
             values.singleOption("windowId") != nil &&

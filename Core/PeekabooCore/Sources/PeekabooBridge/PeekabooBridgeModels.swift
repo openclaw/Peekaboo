@@ -386,6 +386,7 @@ public enum PeekabooBridgeHostCapability {
     public static let backgroundBridgeHost = "backgroundBridgeHost"
     public static let desktopObservationOCR = "desktopObservationOCR"
     public static let desktopObservationCaptureEngine = "desktopObservationCaptureEngine"
+    public static let desktopObservationFreshAccessibilityTree = "desktopObservationFreshAccessibilityTree"
     public static let desktopObservationInlinePixels = "desktopObservationInlinePixels"
     // Old clients require successful preparation as well as implemented ownership support.
     public static let screenCaptureKitProcessOwnership = "screenCaptureKitProcessOwnership"
@@ -455,6 +456,13 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     public let operationAttestation: PeekabooBridgeListenerAttestation?
     /// Listener-signed, peer-bound replay session for protocol 1.29 requests.
     public let operationSessionAttestation: PeekabooBridgeOperationSessionAttestation?
+
+    /// Feature support only; existing request-scoped operation and permission gates still apply.
+    public var supportsDesktopObservationFreshAccessibilityTree: Bool {
+        self.hostCapabilities?
+            .contains(PeekabooBridgeHostCapability.desktopObservationFreshAccessibilityTree) == true &&
+            self.supportedOperations.contains(.desktopObservation)
+    }
 
     /// Negotiated drag support; authentication and live request admission remain transport/server-owned.
     public var supportsExactWindowDrag: Bool {

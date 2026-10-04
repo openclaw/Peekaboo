@@ -14,6 +14,33 @@ struct SeeToolOCRTests {
     private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
 
     @Test
+    func `fresh is a strict opt in boolean in both observation tools`() async throws {
+        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
+        for schema in [SeeTool(context: context).inputSchema, InspectUITool(context: context).inputSchema] {
+            guard case let .object(root) = schema,
+                  case let .object(properties)? = root["properties"],
+                  case let .object(fresh)? = properties["fresh"]
+            else {
+                Issue.record("Expected fresh schema")
+                continue
+            }
+            #expect(fresh["type"] == .string("boolean"))
+            #expect(fresh["default"] == .bool(false))
+        }
+        #expect(try !SeeRequest(arguments: ToolArguments(raw: [:])).fresh)
+        #expect(try !InspectUIRequest(arguments: ToolArguments(raw: [:])).fresh)
+        for value in [true, false] {
+            #expect(try SeeRequest(arguments: ToolArguments(raw: ["fresh": value])).fresh == value)
+            #expect(try InspectUIRequest(arguments: ToolArguments(raw: ["fresh": value])).fresh == value)
+        }
+        let invalidValues: [Any] = ["true", 1, NSNull()]
+        for value in invalidValues {
+            #expect(throws: (any Error).self) { try SeeRequest(arguments: ToolArguments(raw: ["fresh": value])) }
+            #expect(throws: (any Error).self) { try InspectUIRequest(arguments: ToolArguments(raw: ["fresh": value])) }
+        }
+    }
+
+    @Test
     func `See declares local additive OCR as an opt in boolean`() async {
         let context = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
         let tool = SeeTool(context: context)
@@ -36,7 +63,20 @@ struct SeeToolOCRTests {
     }
 
     @Test
-    func `Calendar shaped incomplete AX observation succeeds with exact OCR evidence`() async throws {
+    func `fresh menu bar capture refuses before observation dispatch`() async throws {
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let observation = await MainActor.run { CalendarOCRObservationService(snapshots: snapshots) }
+        let context = await self.makeContext(desktopObservation: observation, snapshots: snapshots)
+        let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app_target": "menubar", "fresh": true,
+        ]))
+        #expect(response.isError)
+        #expect(await MainActor.run { observation.lastRequest } == nil)
+        #expect(try await snapshots.listSnapshots().isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func `Calendar shaped incomplete AX observation succeeds with exact OCR evidence`(fresh: Bool) async throws {
         await Self.uiSnapshots.removeAllSnapshots()
         let snapshots = await MainActor.run { InMemorySnapshotManager() }
         let observation = await MainActor.run { CalendarOCRObservationService(snapshots: snapshots) }
@@ -49,6 +89,7 @@ struct SeeToolOCRTests {
             "app_target": "PID:858",
             "window_id": 119,
             "ocr": true,
+            "fresh": fresh,
         ]))
 
         #expect(!response.isError)
@@ -56,6 +97,7 @@ struct SeeToolOCRTests {
         let request = try #require(recordedRequest)
         #expect(request.target == .pid(858, window: .id(119)))
         #expect(request.detection.mode == .accessibilityAndOCR)
+        #expect(request.detection.requiresFreshAccessibilityTree == fresh)
         #expect(!request.detection.preferOCR)
         #expect(!request.detection.allowWebFocusFallback)
         #expect(request.capture.focus == .background)
@@ -185,7 +227,7 @@ struct SeeToolOCRTests {
 }
 
 @MainActor
-private final class CalendarOCRObservationService: DesktopObservationServiceProtocol {
+final class CalendarOCRObservationService: DesktopObservationServiceProtocol {
     static let bounds = CGRect(x: 200, y: 300, width: 800, height: 600)
     static let identity = WindowMutationIdentity(
         windowID: 119,
@@ -196,9 +238,17 @@ private final class CalendarOCRObservationService: DesktopObservationServiceProt
     private(set) var lastRequest: DesktopObservationRequest?
 
     private let snapshots: any SnapshotManagerProtocol
+    private let method: String
+    private let acknowledgesFreshRequest: Bool
 
-    init(snapshots: any SnapshotManagerProtocol) {
+    init(
+        snapshots: any SnapshotManagerProtocol,
+        method: String = "AXorcist+OCR",
+        acknowledgesFreshRequest: Bool = true)
+    {
         self.snapshots = snapshots
+        self.method = method
+        self.acknowledgesFreshRequest = acknowledgesFreshRequest
     }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
@@ -224,7 +274,9 @@ private final class CalendarOCRObservationService: DesktopObservationServiceProt
             windowTitle: "Calendar",
             windowID: 119,
             windowBounds: Self.bounds,
-            windowMutationIdentity: Self.identity)
+            windowMutationIdentity: Self.identity,
+            requiresFreshAccessibilityTree: self.acknowledgesFreshRequest &&
+                request.detection.requiresFreshAccessibilityTree)
         let ocrElement = DetectedElement(
             id: "ocr_1",
             type: .staticText,
@@ -257,7 +309,7 @@ private final class CalendarOCRObservationService: DesktopObservationServiceProt
             metadata: DetectionMetadata(
                 detectionTime: 0.1,
                 elementCount: 1,
-                method: "AXorcist+OCR",
+                method: self.method,
                 warnings: ["ax_incomplete_read"],
                 windowContext: context,
                 truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true)))

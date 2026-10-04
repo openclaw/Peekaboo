@@ -154,6 +154,10 @@ enum BridgeCapabilityPolicy {
         if options.requiresDesktopObservationOCR, !capabilities.desktopObservationOCR {
             return false
         }
+        if options.requiresDesktopObservationFreshAccessibilityTree,
+           !handshake.supportsDesktopObservationFreshAccessibilityTree {
+            return false
+        }
         if options.requiresCaptureEnginePreferenceCapability,
            !capabilities.desktopObservationCaptureEngine {
             return false
@@ -218,7 +222,9 @@ enum BridgeCapabilityPolicy {
                 self.supportsOperation(.storeObservationSnapshot, for: handshake)
         )
     }
+}
 
+extension BridgeCapabilityPolicy {
     private static func supportsInteractionRequirements(
         for handshake: PeekabooBridgeHandshakeResponse,
         options: CommandRuntimeOptions

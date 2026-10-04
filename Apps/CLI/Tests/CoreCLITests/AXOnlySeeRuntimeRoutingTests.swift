@@ -8,8 +8,8 @@ import Testing
 @Suite(.tags(.safe))
 @MainActor
 struct AXOnlySeeRuntimeRoutingTests {
-    @Test
-    func `AX-only see ignores capture grants but requires selected-host Accessibility`() async throws {
+    @Test(arguments: [false, true])
+    func `AX-only see ignores capture grants but requires selected-host Accessibility`(fresh: Bool) async throws {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/bridge.sock",
             requireReusableDaemon: false,
@@ -17,7 +17,12 @@ struct AXOnlySeeRuntimeRoutingTests {
             requiresValidatedHistoricalDaemon: false
         )
         let options = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: [:], flags: ["tree", "noScreenshot"]),
+            from: ParsedValues(
+                positional: [],
+                options: [:],
+                flags: fresh
+                    ? ["tree", "noScreenshot", "fresh"] : ["tree", "noScreenshot"]
+            ),
             commandType: SeeCommand.self
         )
         func handshake(accessibility: Bool) -> PeekabooBridgeHandshakeResponse {
@@ -40,6 +45,7 @@ struct AXOnlySeeRuntimeRoutingTests {
         }
 
         #expect(!options.requiresDesktopObservation)
+        #expect(!options.requiresDesktopObservationFreshAccessibilityTree)
         #expect(!options.requiresScreenCapturePermission)
         #expect(!options.requiresScreenCaptureKitOwnerCapability)
         #expect(!options.requiresSilentCapture)

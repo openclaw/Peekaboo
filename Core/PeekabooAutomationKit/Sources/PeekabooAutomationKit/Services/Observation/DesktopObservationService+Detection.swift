@@ -26,7 +26,8 @@ extension DesktopObservationService {
             shouldFocusWebContent: request.detection.allowWebFocusFallback,
             includeMenuBarElements: request.detection.includeMenuBarElements,
             traversalBudget: request.detection.traversalBudget,
-            requiresFreshAccessibilityTree: context?.requiresFreshAccessibilityTree ?? false,
+            requiresFreshAccessibilityTree: request.detection.requiresFreshAccessibilityTree ||
+                context?.requiresFreshAccessibilityTree == true,
             accessibilityTimeoutSeconds: request.timeout.detection)
 
         return try await tracer.span("detection.ax") {

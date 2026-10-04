@@ -38,7 +38,8 @@ extension SeeCommand {
             windowID: captureContext.windowIdOverride ?? captureResult.metadata.windowInfo?.windowID,
             windowBounds: captureContext.captureBounds ?? captureResult.metadata.windowInfo?.bounds,
             shouldFocusWebContent: self.webFocus,
-            traversalBudget: self.axTraversalBudget()
+            traversalBudget: self.axTraversalBudget(),
+            requiresFreshAccessibilityTree: self.fresh
         )
 
         let detectionActionResult = try await self.detectElements(
@@ -55,6 +56,10 @@ extension SeeCommand {
         )
 
         do {
+            try DesktopObservationEvidencePolicy.requireFreshAccessibilityEvidence(
+                detectionResult.metadata,
+                requested: self.fresh
+            )
             let resultWithPath = ElementDetectionResult(
                 snapshotId: snapshotID,
                 screenshotPath: outputPath,
@@ -128,6 +133,7 @@ extension SeeCommand {
                 windowID: windowID,
                 shouldFocusWebContent: self.webFocus,
                 traversalBudget: self.axTraversalBudget(),
+                requiresFreshAccessibilityTree: self.fresh,
                 accessibilityTimeoutSeconds: accessibilityTimeoutSeconds,
                 allowApplicationScopedAccessibilityFallback: windowID != nil && !self.webFocus
             )
@@ -140,6 +146,10 @@ extension SeeCommand {
             requiresTarget: self.webFocus && self.requiresExactObservationTarget
         )
         do {
+            try DesktopObservationEvidencePolicy.requireFreshAccessibilityEvidence(
+                result.metadata,
+                requested: self.fresh
+            )
             try self.requireUsableTreeOnlyEvidence(result)
             try self.requireBoundTreeOnlyEvidence(
                 result,
@@ -401,6 +411,10 @@ extension SeeCommand {
             guard let detectionResult = observation.elements else {
                 throw CaptureError.captureFailure("Observation completed without element detection")
             }
+            try DesktopObservationEvidencePolicy.requireFreshAccessibilityEvidence(
+                detectionResult.metadata,
+                requested: self.fresh
+            )
             let screenshotData = try observation.verifiedRawScreenshotData()
             let annotatedData = try observation.files.annotatedScreenshotPath.map { _ in
                 try observation.verifiedAnnotatedScreenshotData()

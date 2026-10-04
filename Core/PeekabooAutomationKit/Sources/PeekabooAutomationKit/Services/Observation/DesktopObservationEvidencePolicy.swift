@@ -2,6 +2,30 @@ import PeekabooFoundation
 
 /// Validates that a screenshot-backed accessibility observation contains usable semantic evidence.
 public enum DesktopObservationEvidencePolicy {
+    public static func requireFreshAccessibilityEvidence(
+        _ metadata: DetectionMetadata?,
+        requested: Bool) throws
+    {
+        if let error = self.freshAccessibilityEvidenceError(metadata, requested: requested) {
+            throw error
+        }
+    }
+
+    public static func freshAccessibilityEvidenceError(
+        _ metadata: DetectionMetadata?,
+        requested: Bool) -> PeekabooError?
+    {
+        guard requested else { return nil }
+        guard metadata?.usedAccessibilityCache == false,
+              metadata?.windowContext?.requiresFreshAccessibilityTree == true
+        else {
+            return .accessibilityIncomplete(
+                "Fresh Accessibility was requested, but the host did not prove an uncached AX traversal. " +
+                    "Update the runtime host or observe again; cached or unproven results cannot satisfy this request.")
+        }
+        return nil
+    }
+
     public static func requireUsableAccessibilityEvidence(
         _ elements: ElementDetectionResult?,
         target: ResolvedObservationTarget,
@@ -24,6 +48,12 @@ public enum DesktopObservationEvidencePolicy {
         capture: CaptureResult,
         request: DesktopObservationRequest) -> PeekabooError?
     {
+        if let freshnessError = self.freshAccessibilityEvidenceError(
+            elements?.metadata,
+            requested: request.detection.requiresFreshAccessibilityTree)
+        {
+            return freshnessError
+        }
         guard request.detection.mode != .none else { return nil }
 
         let exactWindowID = elements?.metadata.windowContext?.windowID ??

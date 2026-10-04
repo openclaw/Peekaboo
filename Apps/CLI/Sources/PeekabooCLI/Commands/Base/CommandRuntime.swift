@@ -45,6 +45,7 @@ struct CommandRuntimeOptions {
     /// `accessibilityAndOCR` is additive inside protocol 1.22. Require a raw host capability so
     /// an older 1.22 host cannot try to decode the enum case before the client can fail safely.
     var requiresDesktopObservationOCR = false
+    var requiresDesktopObservationFreshAccessibilityTree = false
     var inputStrategy: UIInputStrategy?
     var preferRemote = true
     var remoteIsolationRequested = false

@@ -71,24 +71,9 @@ enum RuntimeHostResolver {
             configurationInput: configurationInput
         )
         else {
-            let localServices = dependencies.makeLocalServices(options)
-            if let concreteSnapshotID {
-                let resolvedHandshakeCache = dependencies.makeRemoteHandshakeCache()
-                let owner = try await self.resolveSnapshotAffinityOwner(
-                    snapshotID: concreteSnapshotID,
-                    localServices: localServices,
-                    candidates: [],
-                    identity: resolvedHandshakeCache.identity,
-                    handshakeCache: resolvedHandshakeCache
-                )
-                guard owner == .local else {
-                    preconditionFailure("Local-only snapshot affinity selected a remote owner")
-                }
-            }
-            return self.localResolution(
-                services: localServices,
-                hostDescription: "local (in-process)",
-                snapshotInvalidationRemoteSocketPaths: [],
+            return try await self.resolveLocalOnlyServices(
+                options: options,
+                dependencies: dependencies,
                 captureSafety: captureSafety
             )
         }
@@ -199,6 +184,33 @@ enum RuntimeHostResolver {
         resolution.captureEngineSafetyOverride = captureSafety.engineOverride ?? resolution.captureEngineSafetyOverride
         resolution.toolCapturePreflightRefusal = captureSafety.toolPreflightRefusal
         return resolution
+    }
+
+    private static func resolveLocalOnlyServices(
+        options: CommandRuntimeOptions,
+        dependencies: Dependencies,
+        captureSafety: CaptureSafetyResolution
+    ) async throws -> Resolution {
+        let localServices = dependencies.makeLocalServices(options)
+        if let snapshotID = options.explicitSnapshotID {
+            let handshakeCache = dependencies.makeRemoteHandshakeCache()
+            let owner = try await self.resolveSnapshotAffinityOwner(
+                snapshotID: snapshotID,
+                localServices: localServices,
+                candidates: [],
+                identity: handshakeCache.identity,
+                handshakeCache: handshakeCache
+            )
+            guard owner == .local else {
+                preconditionFailure("Local-only snapshot affinity selected a remote owner")
+            }
+        }
+        return self.localResolution(
+            services: localServices,
+            hostDescription: "local (in-process)",
+            snapshotInvalidationRemoteSocketPaths: [],
+            captureSafety: captureSafety
+        )
     }
 
     private static func localResolution(
@@ -505,6 +517,10 @@ extension RuntimeHostResolver {
             }
             return "No compatible Bridge host advertises protocol 1.30 middle/triple-click support. " +
                 "Update and relaunch Peekaboo on the selected host, or pass --no-remote to run locally."
+        }
+        if options.requiresDesktopObservationFreshAccessibilityTree {
+            return "No compatible Bridge host advertises desktopObservationFreshAccessibilityTree. " +
+                "Update and relaunch the selected host, or pass --no-remote to explicitly observe locally."
         }
         if options.requiresDesktopObservationOCR {
             return "No compatible Bridge host advertises desktopObservationOCR. Update and relaunch Peekaboo " +

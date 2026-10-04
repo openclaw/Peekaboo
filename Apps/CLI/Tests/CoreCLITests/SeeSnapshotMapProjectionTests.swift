@@ -11,6 +11,21 @@ import Testing
 @MainActor
 @Suite(.tags(.safe))
 struct SeeSnapshotMapProjectionTests {
+    @Test(arguments: ["AXorcist", "AXorcist (cached)", "unknown"])
+    func `JSON cache evidence is truthful without upgrading partial authority`(method: String) throws {
+        let result = try Self.project(
+            Self.detection(snapshotId: "partial-fixture", partial: true, method: method),
+            snapshots: InMemorySnapshotManager()
+        )
+        let expected: Bool? = method == "unknown" ? nil : method.contains("cached")
+        #expect(result.used_cache == expected)
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
+        #expect(json["used_cache"] as? Bool == expected)
+        #expect(!result.snapshot_reusable)
+        #expect(!result.mutation_targeting_available)
+        #expect(result.snapshot_id == nil)
+    }
+
     @Test
     func `reusable memory snapshot keeps inline elements and authority without a map file`() async throws {
         let snapshots = InMemorySnapshotManager()
@@ -137,7 +152,9 @@ struct SeeSnapshotMapProjectionTests {
         return try JSONDecoder().decode(SeeResult.self, from: JSONEncoder().encode(result))
     }
 
-    private static func detection(snapshotId: String, partial: Bool = false) -> ElementDetectionResult {
+    private static func detection(
+        snapshotId: String, partial: Bool = false, method: String = "test"
+    ) -> ElementDetectionResult {
         ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "",
@@ -152,7 +169,7 @@ struct SeeSnapshotMapProjectionTests {
             metadata: DetectionMetadata(
                 detectionTime: 0,
                 elementCount: 1,
-                method: "test",
+                method: method,
                 warnings: partial ? [DetectionMetadata.applicationScopedAccessibilityFallbackWarning] : []
             )
         )

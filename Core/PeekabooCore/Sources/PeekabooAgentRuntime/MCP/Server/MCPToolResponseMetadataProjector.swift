@@ -129,6 +129,9 @@ enum MCPToolResponseMetadataProjector {
             allowed.insert("recordedOutcomeNotice")
         }
         var projected = fields.filter { allowed.contains($0.key) }
+        if toolName == "see" || toolName == "inspect_ui", case let .bool(usedCache)? = fields["used_cache"] {
+            projected["used_cache"] = .bool(usedCache)
+        }
         if toolName == "paste" {
             projected[Self.clipboardCleanupStatusKey] = self.clipboardCleanupStatus(from: fields)
         }
