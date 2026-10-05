@@ -7,7 +7,7 @@ struct ApplicationMenuExtraTests {
     @Test
     func `Menu discovery fails closed when its shared deadline expires`() {
         #expect(throws: (any Error).self) {
-            try MenuService.checkMenuExtraDeadline(ContinuousClock.now.advanced(by: .seconds(-1)))
+            try MenuExtraAXReader.check(ContinuousClock.now.advanced(by: .seconds(-1)))
         }
     }
 

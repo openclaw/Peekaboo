@@ -25,17 +25,7 @@ struct CommandActionSequenceAccumulatorTests {
                 operation: "Fixture action",
                 defaultDispatchedUnitCount: nil
             )
-            let expectedOutcome: DesktopActionOutcome = if fixture.state == .dispatchedUnverified {
-                try .dispatchedUnverified(
-                    route: fixture.route,
-                    delivery: #require(fixture.delivery),
-                    evidence: .deliveryAccepted,
-                    unitCount: fixture.unitCount
-                )
-            } else {
-                fixture.outcome
-            }
-            #expect(sequence.resolution.outcome == expectedOutcome)
+            #expect(sequence.resolution.outcome == fixture.outcome)
             #expect(sequence.targetIdentity == target)
         } else {
             do {

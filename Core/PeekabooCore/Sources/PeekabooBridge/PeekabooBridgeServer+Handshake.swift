@@ -4,6 +4,22 @@ import PeekabooFoundation
 
 @MainActor
 extension PeekabooBridgeServer {
+    static func updateNamedMenuBarPreparationCapability(
+        to resolvedHostCapabilities: inout Set<String>,
+        services: any PeekabooBridgeServiceProviding,
+        supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>,
+        allowedOperations: Set<PeekabooBridgeOperation>)
+    {
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.namedMenuBarPreparationVersion,
+           allowedOperations.contains(.prepareMenuBarItemNamed),
+           services.menu is any MenuServiceNamedMenuBarPreparationProviding
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.namedMenuBarPreparation)
+        } else {
+            resolvedHostCapabilities.remove(PeekabooBridgeHostCapability.namedMenuBarPreparation)
+        }
+    }
+
     static func invalidRequest(for request: PeekabooBridgeRequest) -> PeekabooBridgeErrorEnvelope {
         PeekabooBridgeErrorEnvelope(
             code: .invalidRequest,
@@ -86,6 +102,14 @@ extension PeekabooBridgeServer {
             enabledOps.remove(.exactWindowDrag)
         }
         let clientCapabilities = Set(payload.clientCapabilities ?? [])
+        let supportsNamedMenuBarPreparation = supportsAttestedOperationReceipts &&
+            negotiated >= PeekabooBridgeConstants.namedMenuBarPreparationVersion &&
+            clientCapabilities.contains(PeekabooBridgeClientCapability.namedMenuBarPreparation) &&
+            self.hostCapabilities.contains(PeekabooBridgeHostCapability.namedMenuBarPreparation)
+        if !supportsNamedMenuBarPreparation {
+            advertisedOps.removeAll { $0 == .prepareMenuBarItemNamed }
+            enabledOps.remove(.prepareMenuBarItemNamed)
+        }
         let browserHandoffOperations: Set<PeekabooBridgeOperation> = [
             .browserStatus,
             .browserConnect,
@@ -178,6 +202,9 @@ extension PeekabooBridgeServer {
             """)
 
         var advertisedCapabilities = self.hostCapabilities
+        if !supportsNamedMenuBarPreparation || !advertisedOps.contains(.prepareMenuBarItemNamed) {
+            advertisedCapabilities.remove(PeekabooBridgeHostCapability.namedMenuBarPreparation)
+        }
         if !supportsBrowserConnectionHandoff {
             advertisedCapabilities.remove(PeekabooBridgeHostCapability.browserConnectionHandoff)
         }

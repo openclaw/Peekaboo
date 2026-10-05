@@ -155,10 +155,23 @@ if (isMainModule()) {
 
 function isMainModule() {
   const entry = process.argv[1];
-  if (entry === undefined) return false;
+  if (entry === undefined || entry === '-') return false;
+
+  // Eval arguments can name this file without making it the entrypoint. Keep Node 22.0 compatibility.
+  if (process.execArgv.some(argument =>
+    argument === '-e' || argument === '--eval' || argument.startsWith('--eval=') ||
+    argument === '-p' || argument === '--print' || argument.startsWith('--print=') || argument === '-pe')) {
+    return false;
+  }
 
   const entryUrl = pathToFileURL(entry).href;
   if (import.meta.url === entryUrl) return true;
 
-  return pathToFileURL(realpathSync(modulePath)).href === pathToFileURL(realpathSync(entry)).href;
+  try {
+    return pathToFileURL(modulePath).href === pathToFileURL(realpathSync(entry)).href;
+  } catch (error) {
+    // Eval and stdin consumers can have a program argument here instead of a script.
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
+    throw error;
+  }
 }

@@ -88,6 +88,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case clickMenuExtra(PeekabooBridgeMenuBarClickByNameRequest)
     case menuExtraOpenMenuFrame(PeekabooBridgeMenuExtraOpenRequest)
     case listMenuBarItems(Bool)
+    case prepareMenuBarItemNamed(String)
     case clickMenuBarItemNamed(PeekabooBridgeMenuBarClickByNameRequest)
     case clickMenuBarItemIndex(PeekabooBridgeMenuBarClickByIndexRequest)
     case listDockItems(PeekabooBridgeDockListRequest)
@@ -215,6 +216,7 @@ extension PeekabooBridgeRequest {
         case .clickMenuExtra: .clickMenuExtra
         case .menuExtraOpenMenuFrame: .menuExtraOpenMenuFrame
         case .listMenuBarItems: .listMenuBarItems
+        case .prepareMenuBarItemNamed: .prepareMenuBarItemNamed
         case .clickMenuBarItemNamed: .clickMenuBarItemNamed
         case .clickMenuBarItemIndex: .clickMenuBarItemIndex
         case .listDockItems: .listDockItems

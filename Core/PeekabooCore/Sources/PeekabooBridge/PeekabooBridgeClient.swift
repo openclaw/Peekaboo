@@ -115,6 +115,10 @@ public actor PeekabooBridgeClient {
         self.inputCapabilities.producerBoundSnapshotReferencesEnabled
     }
 
+    var namedMenuBarPreparationEnabled: Bool {
+        self.inputCapabilities.namedMenuBarPreparationEnabled
+    }
+
     var targetedClickAccessibilityValueDeliveryEnabled: Bool {
         self.inputCapabilities.targetedClickAccessibilityValueDeliveryEnabled
     }
@@ -796,6 +800,9 @@ public actor PeekabooBridgeClient {
         if protocolVersion >= PeekabooBridgeConstants.browserConnectionHandoffVersion {
             capabilities.append(PeekabooBridgeClientCapability.browserConnectionHandoff)
         }
+        if protocolVersion >= PeekabooBridgeConstants.namedMenuBarPreparationVersion {
+            capabilities.append(PeekabooBridgeClientCapability.namedMenuBarPreparation)
+        }
         return capabilities
     }
 
@@ -942,6 +949,7 @@ public actor PeekabooBridgeClient {
                 Self.supportsBrowserConnectionHandoff(handshake),
                 producerBoundSnapshotReferencesEnabled:
                 Self.supportsProducerBoundSnapshotReferences(handshake),
+                namedMenuBarPreparationEnabled: handshake.supportsNamedMenuBarPreparation,
                 targetedClickAccessibilityValueDeliveryEnabled:
                 Self.supportsTargetedClickAccessibilityValueDelivery(handshake),
                 requestPinnedExactWindowScrollReceiptEnabled:
@@ -1541,6 +1549,7 @@ private struct PeekabooBridgeClientInputCapabilities: Sendable {
     var nativeBrowserConnectionBindingEnabled = false
     var browserConnectionHandoffEnabled = false
     var producerBoundSnapshotReferencesEnabled = false
+    var namedMenuBarPreparationEnabled = false
     var targetedClickAccessibilityValueDeliveryEnabled = false
     var requestPinnedExactWindowScrollReceiptEnabled = false
     var backgroundCoordinateScrollEnabled = false

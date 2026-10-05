@@ -523,7 +523,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.rect])
-        case .listMenuBarItems:
+        case .listMenuBarItems, .prepareMenuBarItemNamed:
             descriptor(
                 read: .globalExclusive,
                 requiredPermissions: [.accessibility],

@@ -1,10 +1,25 @@
 import Commander
 import CoreGraphics
 import Foundation
+import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
 
 private enum MenuBarClickPreflight {
+    static func prepare(named name: String, menu: any MenuServiceProtocol) async throws -> MenuBarItemInfo? {
+        do {
+            return try await MenuServiceBridge.prepareMenuBarItem(menu: menu, named: name)
+        } catch let error as PeekabooError {
+            guard case .menuItemNotFound = error else { throw error }
+        } catch let error as PeekabooBridgeErrorEnvelope {
+            guard error.kind == .menuItemNotFound else { throw error }
+        }
+        throw self.itemNotFound(
+            name,
+            hint: "Run 'peekaboo menubar list' and retry with an exact current name or index."
+        )
+    }
+
     static let foregroundConsentRequired = PreDispatchActionError(
         message: "Menu bar clicks require --foreground because status items open global UI.",
         code: .VALIDATION_ERROR,
@@ -235,6 +250,23 @@ InjectedRuntimeBackedCommand {
             requestedName = name
         } else {
             requestedName = nil
+        }
+
+        if let requestedName,
+           let item = try await MenuBarClickPreflight.prepare(named: requestedName, menu: self.services.menu) {
+            guard let evidence = item.selectionEvidence,
+                  evidence.isCanonical, evidence.kind == .menuBarItem, evidence.matchKind != .index,
+                  evidence.normalizedSelector == DeterministicDesktopLeafSelector.normalized(requestedName)
+            else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "Named menu bar preparation returned no matching selected-leaf evidence.",
+                    hint: "Update the selected Peekaboo runtime before retrying."
+                )
+            }
+            return ResolvedMenuBarClickTarget(
+                item: item, normalizedSelector: evidence.normalizedSelector, matchKind: evidence.matchKind
+            )
         }
 
         let items = try await MenuServiceBridge.listMenuBarItems(

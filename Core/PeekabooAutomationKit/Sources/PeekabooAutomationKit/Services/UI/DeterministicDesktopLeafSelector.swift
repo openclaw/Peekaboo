@@ -186,18 +186,7 @@ public enum MenuBarItemSelector {
         -> [DeterministicDesktopLeafSelector.Candidate<MenuBarItemInfo>]
     {
         items.map { item in
-            let fields = [
-                item.title,
-                item.rawTitle,
-                item.identifier,
-                item.axDescription,
-                item.ownerName,
-            ].compactMap { value -> String? in
-                guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !trimmed.isEmpty
-                else { return nil }
-                return trimmed
-            }
+            let fields = self.matchFields(for: item)
             let stableIdentity = if let evidence = item.selectionEvidence {
                 evidence.selectedLeafSHA256
             } else {
@@ -217,6 +206,15 @@ public enum MenuBarItemSelector {
                 displayName: item.title ?? item.rawTitle ?? "Menu Bar Item #\(item.index)",
                 matchFields: fields,
                 stableIdentity: stableIdentity)
+        }
+    }
+
+    static func matchFields(for item: MenuBarItemInfo) -> [String] {
+        [item.title, item.rawTitle, item.identifier, item.axDescription, item.ownerName].compactMap { value in
+            guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+                return nil
+            }
+            return trimmed
         }
     }
 }

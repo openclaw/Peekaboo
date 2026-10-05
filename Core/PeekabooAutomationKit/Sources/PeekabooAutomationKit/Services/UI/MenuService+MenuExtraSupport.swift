@@ -20,6 +20,10 @@ extension MenuService {
             if bothHavePosition,
                let index = merged.firstIndex(where: { existing in
                    guard existing.position.distance(to: extra.position) < 5 else { return false }
+                   // Distinct native leaves are candidates even when their frames coincide.
+                   if existing.source == "ax-extras", extra.source == "ax-extras" {
+                       return false
+                   }
                    if let firstPID = existing.ownerPID, let secondPID = extra.ownerPID, firstPID != secondPID {
                        return extra.source == "ax-extras" && existing.bundleIdentifier == "com.apple.controlcenter"
                    }

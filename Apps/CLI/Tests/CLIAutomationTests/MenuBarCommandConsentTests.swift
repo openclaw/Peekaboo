@@ -10,6 +10,54 @@ import Testing
 struct MenuBarCommandConsentTests {
     @Test
     @MainActor
+    func `missing explicitly prepared name retains typed pre-dispatch output`() async throws {
+        let menu = PreparingMenuBarService(prepared: Self.item, missing: true)
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click", "Missing", "--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        let payload = try self.decodeResponse(result)
+        #expect(result.exitStatus == 1)
+        #expect(payload.error?.code == ErrorCode.MENU_ITEM_NOT_FOUND.rawValue)
+        #expect(payload.error?.retry_safe == true)
+        #expect(payload.error?.mutation_dispatched == false)
+        #expect(menu.listCallCount == 0)
+        #expect(menu.exactRequests.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `named click prepares AX owner evidence without consulting the ordinary list`() async throws {
+        let evidence = try Self.evidence(index: 2, digest: "a").selecting(
+            normalizedSelector: "wi-fi", matchKind: .exact
+        )
+        let menu = PreparingMenuBarService(prepared: Self.item(selectionEvidence: evidence))
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click", "Wi-Fi", "--foreground", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        #expect(result.exitStatus == 0)
+        #expect(menu.prepareCalls == ["Wi-Fi"])
+        #expect(menu.listCallCount == 0)
+        #expect(menu.exactRequests.first?.expectedLeafEvidence == evidence)
+    }
+
+    @Test
+    @MainActor
+    func `foreground consent precedes explicit named preparation`() async throws {
+        let menu = PreparingMenuBarService(prepared: Self.item)
+        let result = try await InProcessCommandRunner.run(
+            ["menubar", "click", "Wi-Fi", "--json"],
+            services: TestServicesFactory.makePeekabooServices(menu: menu)
+        )
+        #expect(result.exitStatus == 1)
+        #expect(menu.prepareCalls.isEmpty)
+        #expect(menu.listCallCount == 0)
+        #expect(menu.exactRequests.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `named click without foreground refuses before lookup or dispatch`() async throws {
         let menu = RecordingMenuBarService()
         let result = try await InProcessCommandRunner.run(
@@ -266,7 +314,28 @@ struct MenuBarCommandConsentTests {
 }
 
 @MainActor
-private final class RecordingMenuBarService: MenuServiceExactLeafActionResultProviding {
+private final class PreparingMenuBarService: RecordingMenuBarService, MenuServiceNamedMenuBarPreparationProviding {
+    let prepared: MenuBarItemInfo
+    let missing: Bool
+    private(set) var prepareCalls: [String] = []
+
+    init(prepared: MenuBarItemInfo, missing: Bool = false) {
+        self.prepared = prepared
+        self.missing = missing
+        super.init()
+    }
+
+    func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo {
+        self.prepareCalls.append(name)
+        if self.missing {
+            throw PeekabooError.menuItemNotFound(name)
+        }
+        return self.prepared
+    }
+}
+
+@MainActor
+private class RecordingMenuBarService: MenuServiceExactLeafActionResultProviding {
     let items: [MenuBarItemInfo]
     let liveEvidence: DesktopSelectedLeafEvidence?
     private(set) var listCallCount = 0

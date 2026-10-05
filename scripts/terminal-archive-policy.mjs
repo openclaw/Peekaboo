@@ -62,6 +62,34 @@ function validateSymlink(record, expectedRoot, label, allowSymlinks) {
   }
 }
 
+function validateComposedSymlinks(records, expectedRoot, label) {
+  const symlinkRecords = records.filter((record) => record.type === 'symlink');
+  const links = new Map(symlinkRecords
+    .map((record) => [normalizedCollisionKey(record.path), record.target]));
+  for (const record of symlinkRecords) {
+    const pending = [...path.posix.dirname(record.path).split('/'), ...record.target.split('/')];
+    const resolved = [];
+    let expansions = 1; // Count this link too; Darwin permits 32 total traversals.
+    while (pending.length > 0) {
+      const component = pending.shift();
+      if (component === '' || component === '.') continue;
+      if (component === '..') {
+        if (resolved.length <= 1) fail(label, `contains an escaping symlink: ${record.path} -> ${record.target}`);
+        resolved.pop();
+        continue;
+      }
+      resolved.push(component);
+      const target = links.get(normalizedCollisionKey(resolved.join('/')));
+      if (target !== undefined) {
+        if (++expansions > 32) fail(label, `exceeds the symlink expansion limit: ${record.path}`);
+        resolved.pop();
+        pending.unshift(...target.split('/'));
+      }
+    }
+    if (resolved[0] !== expectedRoot) fail(label, `contains an escaping symlink: ${record.path}`);
+  }
+}
+
 export function validateArchiveEntries(entries, expectedRoot, label = 'archive', options = {}) {
   validateExpectedRoot(expectedRoot, label);
   if (!Array.isArray(entries) || entries.length === 0) fail(label, 'entry contract is empty');
@@ -128,6 +156,7 @@ export function validateArchiveEntries(entries, expectedRoot, label = 'archive',
   if (rootRecord.type !== null && rootRecord.type !== 'directory') {
     fail(label, `root is not a directory: ${expectedRoot}`);
   }
+  validateComposedSymlinks(records, expectedRoot, label);
   for (const record of records) {
     let ancestor = path.posix.dirname(record.path);
     while (ancestor !== '.' && ancestor !== '/') {
@@ -378,6 +407,9 @@ async function validateZipPayload(handle, dataOffset, record, budget, label) {
     if (error instanceof TypeError) throw error;
     fail(label, `has an invalid compressed payload: ${record.path}`);
   }
+  if (inflater && inflater.bytesWritten !== record.compressedSize) {
+    fail(label, `has unbound bytes after its DEFLATE stream: ${record.path}`);
+  }
   if (outputSize !== record.uncompressedSize || ((checksum ^ 0xffffffff) >>> 0) !== record.checksum) {
     fail(label, `has a payload size or CRC mismatch: ${record.path}`);
   }
@@ -469,6 +501,8 @@ async function validateZipLocalEntries(handle, fileSize, directoryOffset, record
     }
     const gap = nextOffset - current.end;
     if ((current.record.flags & 0x0008) !== 0) {
+      // ZIP32/ZIP64 descriptors, with an optional signature, occupy at most 24 bytes.
+      if (gap > 24) fail(label, `has an invalid ZIP data descriptor: ${current.path}`);
       const descriptor = await readExact(handle, current.end, gap, label);
       validateZipDescriptor(descriptor, current.record, label);
     } else if (gap !== 0) {

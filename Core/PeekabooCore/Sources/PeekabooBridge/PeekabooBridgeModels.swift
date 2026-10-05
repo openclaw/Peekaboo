@@ -123,6 +123,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case clickMenuExtra
     case menuExtraOpenMenuFrame
     case listMenuBarItems
+    case prepareMenuBarItemNamed
     case clickMenuBarItemNamed
     case clickMenuBarItemIndex
     // Dock
@@ -290,6 +291,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
             compatible.remove(.browserSessionBootstrap)
             compatible.remove(.browserSessionControl)
         }
+        if version < PeekabooBridgeConstants.namedMenuBarPreparationVersion {
+            compatible.remove(.prepareMenuBarItemNamed)
+        }
         return compatible
     }
     // swiftlint:enable cyclomatic_complexity
@@ -380,6 +384,7 @@ public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
 /// Stable raw capability names advertised by current hosts. The wire representation remains an
 /// array of strings so clients can safely ignore capabilities introduced by later builds.
 public enum PeekabooBridgeHostCapability {
+    public static let namedMenuBarPreparation = "namedMenuBarPreparation"
     public static let systemAlertDialogDiscovery = "systemAlertDialogDiscovery"
     public static let hostGenerationIdentity = "hostGenerationIdentity"
     public static let codeSignatureBuildIdentity = "codeSignatureBuildIdentity"
@@ -430,6 +435,7 @@ public enum PeekabooBridgeHostCapability {
 /// decodable by already-shipped hosts while the offer prevents new 1.34 operations or semantics
 /// from being advertised to already-shipped 1.34 clients.
 public enum PeekabooBridgeClientCapability {
+    public static let namedMenuBarPreparation = "namedMenuBarPreparation"
     public static let screenCaptureKitOwnershipDiagnostics = "screenCaptureKitOwnershipDiagnostics"
     public static let setValueVerification = "setValueVerification"
     public static let producerBoundSnapshotReferences = "producerBoundSnapshotReferences"
@@ -469,6 +475,14 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 11) &&
             self.supportedOperations.contains(.targetedScroll) &&
             (self.enabledOperations ?? self.supportedOperations).contains(.targetedScroll)
+    }
+
+    public var supportsNamedMenuBarPreparation: Bool {
+        self.negotiatedVersion >= PeekabooBridgeConstants.namedMenuBarPreparationVersion &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.attestedOperationReceipts) == true &&
+            self.hostCapabilities?.contains(PeekabooBridgeHostCapability.namedMenuBarPreparation) == true &&
+            self.supportedOperations.contains(.prepareMenuBarItemNamed) &&
+            (self.enabledOperations ?? self.supportedOperations).contains(.prepareMenuBarItemNamed)
     }
 
     public var supportsRequestPinnedExactWindowScrollReceipt: Bool {

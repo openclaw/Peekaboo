@@ -1079,6 +1079,13 @@ enum MenuServiceBridge {
         }.value
     }
 
+    static func prepareMenuBarItem(menu: any MenuServiceProtocol, named name: String) async throws -> MenuBarItemInfo? {
+        try await Task<MenuBarItemInfo?, any Error> { @MainActor in
+            guard let provider = menu as? any MenuServiceNamedMenuBarPreparationProviding else { return nil }
+            return try await provider.prepareMenuBarItem(named: name)
+        }.value
+    }
+
     static func clickMenuBarItem(
         named name: String,
         menu: any MenuServiceProtocol

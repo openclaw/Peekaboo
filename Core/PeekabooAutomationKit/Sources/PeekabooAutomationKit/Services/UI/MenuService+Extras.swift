@@ -10,23 +10,6 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
-private struct AXMenuExtraSnapshot {
-    let element: Element
-    let index: Int
-    let title: String
-    let identifier: String?
-    let role: String
-    let subrole: String?
-    let frame: CGRect
-    let processIdentity: ApplicationProcessIdentity
-}
-
-private struct AXMenuExtraTarget {
-    let snapshot: AXMenuExtraSnapshot
-    let evidence: DesktopSelectedLeafEvidence
-    let allPositions: [CGPoint]
-}
-
 @MainActor
 extension MenuService {
     private var menuBarAXTimeoutSec: Float {
@@ -47,147 +30,13 @@ extension MenuService {
 
     public func clickMenuExtraActionResult(title: String) async throws -> UIAutomationActionResult<Void> {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
-            let target = try await self.clickMenuExtraWithOwnedLane(title: title)
-            return try UIAutomationActionResult(
+            let result = try await self.clickMenuBarItemActionResultWithOwnedLane(named: title)
+            return UIAutomationActionResult(
                 payload: (),
-                outcome: .dispatchedUnverified(
-                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
-                    evidence: .deliveryAccepted,
-                    unitCount: .one),
-                targetIdentity: DesktopTargetIdentity(processIdentity: target.snapshot.processIdentity),
-                selectedLeafEvidence: [target.evidence])
+                outcome: result.outcome,
+                targetIdentity: result.targetIdentity,
+                selectedLeafEvidence: result.selectedLeafEvidence)
         }
-    }
-
-    private func resolveAXMenuExtra(title: String) throws -> AXMenuExtraTarget {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        let systemWide = Element.systemWide()
-
-        let menuBarItems = systemWide.menuBar()?.children(strict: true) ?? []
-        let menuExtrasGroups = menuBarItems.filter { $0.role() == "AXGroup" }
-        var extras = menuExtrasGroups.flatMap { $0.children(strict: true) ?? [] }
-        for element in try self.applicationMenuExtraElements(deadline: deadline) where !extras.contains(element) {
-            extras.append(element)
-        }
-        let snapshots = try extras.indexed().compactMap { index, element -> AXMenuExtraSnapshot? in
-            try Self.checkMenuExtraDeadline(deadline)
-            let fields = [element.title(), element.help(), element.descriptionText(), element.identifier()]
-                .compactMap { sanitizedMenuText($0) }
-            guard let displayTitle = fields.first,
-                  let frame = element.frame(),
-                  !frame.isEmpty,
-                  let ownerPID = element.pid(),
-                  ownerPID > 0,
-                  let processStartIdentity = SystemIdentityResolver.processStartIdentity(ownerPID)
-            else { return nil }
-            return AXMenuExtraSnapshot(
-                element: element,
-                index: index,
-                title: displayTitle,
-                identifier: element.identifier(),
-                role: element.role() ?? "AXStatusItem",
-                subrole: element.subrole(),
-                frame: frame,
-                processIdentity: .init(
-                    processIdentifier: ownerPID,
-                    processStartIdentity: processStartIdentity))
-        }
-        let candidates = snapshots.map { snapshot in
-            let stableTitle = snapshot.identifier == nil ? snapshot.title : nil
-            return DeterministicDesktopLeafSelector.Candidate(
-                value: snapshot,
-                index: snapshot.index,
-                displayName: snapshot.title,
-                matchFields: [
-                    snapshot.element.title(),
-                    snapshot.element.help(),
-                    snapshot.element.descriptionText(),
-                    snapshot.identifier,
-                ].compactMap { sanitizedMenuText($0) },
-                stableIdentity: DeterministicDesktopLeafSelector.stableIdentity([
-                    String(snapshot.processIdentity.processIdentifier),
-                    String(snapshot.processIdentity.processStartIdentity),
-                    stableTitle,
-                    snapshot.identifier,
-                    snapshot.role,
-                    snapshot.subrole,
-                    "\(snapshot.frame)",
-                ]))
-        }
-        let selection: DeterministicDesktopLeafSelector.Selection<AXMenuExtraSnapshot>
-        do {
-            selection = try DeterministicDesktopLeafSelector.select(
-                named: title,
-                from: candidates,
-                allowPartial: self.partialMatchEnabled)
-        } catch let error as DesktopLeafSelectionError {
-            if case let .ambiguous(_, matches) = error {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .invalidRequest,
-                    message: "Menu bar item selector '\(title)' is ambiguous: \(matches.joined(separator: ", ")).",
-                    hint: "Use the exact status-item title or a current list index.")
-            }
-            var context = ErrorContext()
-            context.add("menuExtra", title)
-            context.add("availableExtras", extras.count)
-            throw NotFoundError(
-                code: .menuNotFound,
-                userMessage: "Menu extra '\(title)' not found in system menu bar",
-                context: context.build())
-        }
-        let selected = selection.candidate.value
-        let evidence = try DesktopSelectedLeafEvidence(
-            kind: .menuBarItem,
-            normalizedSelector: selection.normalizedSelector,
-            matchKind: selection.matchKind,
-            selectedProcessIdentity: selected.processIdentity,
-            selectedIndex: selected.index,
-            selectedTitle: selected.title,
-            selectedIdentifier: selected.identifier,
-            selectedRole: selected.role,
-            selectedSubrole: selected.subrole,
-            selectedFrame: selected.frame,
-            candidateSetSHA256: selection.candidateSetSHA256,
-            candidateCount: selection.candidateCount)
-        return AXMenuExtraTarget(
-            snapshot: selected,
-            evidence: evidence,
-            allPositions: extras.compactMap { $0.position() })
-    }
-
-    private func clickMenuExtraWithOwnedLane(title: String) async throws -> AXMenuExtraTarget {
-        let target = try self.resolveAXMenuExtra(title: title)
-        if Self.isIndividuallyHiddenMenuExtra(
-            position: CGPoint(x: target.snapshot.frame.midX, y: target.snapshot.frame.midY),
-            allPositions: target.allPositions,
-            displayBounds: self.activeDisplayBounds())
-        {
-            throw PeekabooError.operationError(message: self.hiddenMenuExtraMessage(title: title))
-        }
-
-        let refreshed = try self.resolveAXMenuExtra(title: title)
-        guard target.snapshot.element == refreshed.snapshot.element,
-              target.evidence.hasSameResolvedLeaf(as: refreshed.evidence),
-              SystemIdentityResolver.processStartIdentity(refreshed.snapshot.processIdentity.processIdentifier) ==
-              refreshed.snapshot.processIdentity.processStartIdentity
-        else {
-            throw PeekabooError.serviceUnavailable(
-                "Menu extra '\(title)' changed identity, order, or owner before dispatch")
-        }
-
-        do {
-            try Self.dispatchMenuExtraAccessibilityAction(
-                title: title,
-                supportsShowMenu: refreshed.snapshot.element.isActionSupported(AXActionNames.kAXShowMenuAction),
-                supportsPress: refreshed.snapshot.element.isActionSupported(AXActionNames.kAXPressAction),
-                showMenu: { try refreshed.snapshot.element.performAction(.showMenu) },
-                press: { try refreshed.snapshot.element.performAction(.press) })
-        } catch let failure as DesktopActionFailure {
-            throw failure
-                .attributed(to: refreshed.snapshot.processIdentity.actionTargetReceipt)
-                .selectingLeaves([refreshed.evidence])
-        }
-        return refreshed
     }
 
     static func dispatchMenuExtraAccessibilityAction(
@@ -277,17 +126,14 @@ extension MenuService {
     public func listMenuExtras() async throws -> [MenuExtraInfo] {
         // Menu bar enumeration must never hang: agents depend on this returning quickly.
         // AX can block on misbehaving apps; keep the default path cheap and bounded.
-        let windowExtras = self.getMenuBarItemsViaWindows()
-        let applicationExtras = try self.applicationMenuExtras()
+        let windowExtras = self.menuExtraReaders.windowExtras?() ?? self.getMenuBarItemsViaWindows()
 
-        // Only direct, deadline-bounded AXExtrasMenuBar reads on the fast path.
-        // Full accessibility-tree sweeps remain opt-in or an empty-window fallback.
+        // Named mutation preparation owns AX discovery; displayed indices stay on the cheap CG path.
         if !windowExtras.isEmpty,
            !self.deepMenuBarAXSweepEnabled,
            !self.menuBarAXAugmentationEnabled
         {
-            return Self.sortedMenuExtras(Self.mergeMenuExtras(
-                accessibilityExtras: applicationExtras, fallbackExtras: windowExtras))
+            return Self.sortedMenuExtras(windowExtras)
         }
 
         let axExtras = self.getMenuBarItemsViaAccessibility(timeout: self.menuBarAXTimeoutSec)
@@ -311,7 +157,7 @@ extension MenuService {
         }
 
         let merged = Self.mergeMenuExtras(
-            accessibilityExtras: axExtras + controlCenterExtras + appAXExtras + applicationExtras,
+            accessibilityExtras: axExtras + controlCenterExtras + appAXExtras,
             fallbackExtras: fallbackExtras)
         return Self.sortedMenuExtras(self.hydrateMenuExtraOwners(merged))
     }
@@ -379,7 +225,7 @@ extension MenuService {
     {
         guard let ownerPID = extra.ownerPID,
               ownerPID > 0,
-              let startIdentity = SystemIdentityResolver.processStartIdentity(ownerPID)
+              let startIdentity = self.menuExtraReaders.processGeneration(ownerPID)
         else {
             throw DesktopSelectedLeafEvidenceError.invalidEvidence
         }
@@ -387,7 +233,7 @@ extension MenuService {
             processIdentifier: ownerPID,
             processStartIdentity: startIdentity)
         let windowIdentity = extra.windowID.flatMap {
-            SystemIdentityResolver.windowMutationIdentity(windowID: $0)
+            self.menuExtraReaders.windowIdentity($0)
         }
         if let windowIdentity, windowIdentity.processIdentity != processIdentity {
             throw DesktopSelectedLeafEvidenceError.invalidEvidence
@@ -462,11 +308,26 @@ extension MenuService {
         -> UIAutomationActionResult<ClickResult>
     {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            if let name = request.name {
+                if request.expectedLeafEvidence.selectedTargetReceipt.windowID != nil,
+                   let selection = try await self.displayedMenuBarSelection(
+                       named: name, expectedEvidence: request.expectedLeafEvidence)
+                {
+                    return try await self.clickMenuBarItemActionResultWithOwnedLane(
+                        at: selection.candidate.value.index,
+                        expectedEvidence: request.expectedLeafEvidence,
+                        normalizedSelector: selection.normalizedSelector,
+                        matchKind: selection.matchKind)
+                }
+                let target = try await self.resolveNamedMenuBarTarget(named: name)
+                guard request.expectedLeafEvidence.hasSameResolvedLeaf(as: target.evidence) else {
+                    throw Self.changedMenuExtraTarget()
+                }
+                return try await self.dispatchNamedMenuBarTarget(target, named: name)
+            }
             let items = try await self.listMenuBarItems(includeRaw: true)
             let selection: DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
-            if let name = request.name {
-                selection = try self.resolveMenuBarItem(named: name, items: items)
-            } else if let index = request.index {
+            if let index = request.index {
                 selection = try MenuBarItemSelector.select(index: index, from: items)
             } else {
                 throw PeekabooError.invalidInput("Menu bar action request has no selector")
@@ -494,88 +355,8 @@ extension MenuService {
     func clickMenuBarItemActionResultWithOwnedLane(
         named name: String) async throws -> UIAutomationActionResult<ClickResult>
     {
-        try await Self.withNamedMenuExtraLookupFallback {
-            let target = try await self.clickMenuExtraWithOwnedLane(title: name)
-            return try UIAutomationActionResult(
-                payload: ClickResult(
-                    elementDescription: "Menu bar item: \(name)",
-                    location: nil),
-                outcome: .dispatchedUnverified(
-                    delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
-                    evidence: .deliveryAccepted,
-                    unitCount: .one),
-                targetIdentity: DesktopTargetIdentity(processIdentity: target.snapshot.processIdentity),
-                selectedLeafEvidence: [target.evidence])
-        } fallback: {
-            let items = try await listMenuBarItems(includeRaw: true)
-            let selection = try self.resolveMenuBarItem(named: name, items: items)
-            guard let evidence = selection.candidate.value.selectionEvidence else {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .targetUnavailable,
-                    message: "Menu bar item '\(name)' has no exact selected-leaf evidence.",
-                    hint: "Refresh the menu bar inventory before retrying.")
-            }
-            return try await self.clickMenuBarItemActionResultWithOwnedLane(
-                at: selection.candidate.value.index,
-                expectedEvidence: evidence,
-                normalizedSelector: selection.normalizedSelector,
-                matchKind: selection.matchKind)
-        }
-    }
-
-    private func resolveMenuBarItem(
-        named name: String,
-        items: [MenuBarItemInfo]) throws
-        -> DeterministicDesktopLeafSelector.Selection<MenuBarItemInfo>
-    {
-        do {
-            return try MenuBarItemSelector.select(named: name, from: items)
-        } catch let error as DesktopLeafSelectionError {
-            switch error {
-            case let .ambiguous(_, matches):
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .invalidRequest,
-                    message: "Menu bar item selector '\(name)' is ambiguous: \(matches.joined(separator: ", ")).",
-                    hint: "Use an exact current item name or list index.")
-            case .notFound, .invalidIndex:
-                throw NotFoundError(
-                    code: .menuNotFound,
-                    userMessage: "Menu bar item '\(name)' not found",
-                    context: ["availableItems": items.compactMap(\.title).joined(separator: ", ")])
-            }
-        }
-    }
-
-    static func withNamedMenuExtraLookupFallback<Result>(
-        _ primary: @MainActor () async throws -> Result,
-        fallback: @MainActor () async throws -> Result) async throws -> Result
-    {
-        do {
-            return try await primary()
-        } catch let failure as DesktopActionFailure {
-            let outcome = failure.outcome
-            guard outcome.state == .refused,
-                  let refusalReason = outcome.refusalReason,
-                  [DesktopActionOutcome.RefusalReason.targetUnavailable, .operationUnsupported]
-                      .contains(refusalReason),
-                      outcome.dispatchState == .none,
-                      outcome.retrySafety == .safe
-            else {
-                throw failure
-            }
-        } catch is NotFoundError {
-            // The direct menu-extra path only raises this while resolving the AX target.
-        } catch let error as PeekabooError {
-            switch error {
-            case .serviceUnavailable, .operationError:
-                // These are emitted above only by owner/visibility checks before AX dispatch.
-                break
-            default:
-                throw error
-            }
-        }
-
-        return try await fallback()
+        let target = try await self.resolveNamedMenuBarTarget(named: name)
+        return try await self.dispatchNamedMenuBarTarget(target, named: name)
     }
 
     public func clickMenuBarItem(at index: Int) async throws -> ClickResult {
@@ -638,24 +419,39 @@ extension MenuService {
                 message: "Menu bar item [\(index)] changed identity or order before dispatch.",
                 hint: "Refresh menu bar items before retrying.")
         }
-        let processIdentity = refreshedEvidence.selectedProcessIdentity
-        let liveWindow = refreshedExtra.windowID.flatMap { SystemIdentityResolver.stableWindowIdentity($0) }
-        let mutationIdentity = refreshedExtra.windowID.flatMap {
+        return try await self.dispatchMenuBarWindow(
+            extra: refreshedExtra,
+            evidence: refreshedEvidence,
+            index: index,
+            normalizedSelector: normalizedSelector,
+            matchKind: matchKind)
+    }
+
+    func dispatchMenuBarWindow(
+        extra: MenuExtraInfo,
+        evidence: DesktopSelectedLeafEvidence,
+        index: Int,
+        normalizedSelector: String? = nil,
+        matchKind: DesktopSelectedLeafEvidence.MatchKind? = nil) async throws -> UIAutomationActionResult<ClickResult>
+    {
+        let processIdentity = evidence.selectedProcessIdentity
+        let liveWindow = extra.windowID.flatMap { SystemIdentityResolver.stableWindowIdentity($0) }
+        let mutationIdentity = extra.windowID.flatMap {
             SystemIdentityResolver.windowMutationIdentity(windowID: $0)
         }
         let route = try Self.menuBarWindowRoute(
-            extra: refreshedExtra,
+            extra: extra,
             expectedProcessIdentity: processIdentity,
             liveWindow: liveWindow,
             mutationIdentity: mutationIdentity)
         guard self.isMenuExtraPointVisible(route.point) else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
-                message: self.hiddenMenuExtraMessage(title: refreshedExtra.title),
+                message: self.hiddenMenuExtraMessage(title: extra.title),
                 hint: "Refresh menu bar items before retrying.")
         }
         try Self.checkMenuBarDispatchCancellation()
-        let resultEvidence = try refreshedEvidence.selecting(
+        let resultEvidence = try evidence.selecting(
             normalizedSelector: normalizedSelector ?? String(index),
             matchKind: matchKind ?? .index)
         let outcome: DesktopActionOutcome
@@ -708,7 +504,7 @@ extension MenuService {
             bounds: route.bounds)
         return UIAutomationActionResult(
             payload: ClickResult(
-                elementDescription: "Menu bar item [\(index)]: \(refreshedExtra.title)",
+                elementDescription: "Menu bar item [\(index)]: \(extra.title)",
                 location: route.point),
             outcome: outcome,
             targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow),
@@ -725,25 +521,6 @@ extension MenuService {
                 reason: .requestCancelled,
                 message: "Menu bar click was cancelled before event submission.",
                 hint: "Submit a new request only if the menu bar action is still wanted.")
-        }
-    }
-
-    func validateNamedFallbackTitle(_ candidate: String, requestedName: String) throws {
-        let normalizedName = normalizedMenuTitle(requestedName)
-        let matches = titlesMatch(
-            candidate: candidate,
-            target: requestedName,
-            normalizedTarget: normalizedName) ||
-            menuExtraTitlesMatch(candidate: candidate, target: requestedName) ||
-            (self.partialMatchEnabled && titlesMatchPartial(
-                candidate: candidate,
-                target: requestedName,
-                normalizedTarget: normalizedName))
-        guard matches else {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .targetUnavailable,
-                message: "Menu bar item '\(requestedName)' changed before dispatch.",
-                hint: "Refresh menu bar items and retry against the current target.")
         }
     }
 

@@ -319,8 +319,8 @@ struct RemoteMenuDockServiceActionResultTests {
 }
 
 @MainActor
-private final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProviding,
-    MenuServiceExactLeafActionResultProviding
+final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionResultProviding,
+    MenuServiceExactLeafActionResultProviding, MenuServiceNamedMenuBarPreparationProviding
 {
     let outcome = DesktopActionOutcome.dispatchedUnverified(
         delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
@@ -329,6 +329,11 @@ private final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionRe
     private let target: DesktopTargetIdentity
     private(set) var actionCount = 0
     private(set) var pinnedDeliveryModes: [DesktopActionOutcome.Delivery.Mode] = []
+    private(set) var menuBarListCount = 0
+    private(set) var preparedNames: [String] = []
+    private(set) var lastMenuBarRequest: MenuBarItemActionRequest?
+    var listedMenuBarItems: [MenuBarItemInfo]?
+    var failMenuBarAfterDispatch = false
 
     init(target: DesktopTargetIdentity) {
         self.target = target
@@ -366,11 +371,21 @@ private final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionRe
 
     func clickMenuBarItemActionResult(named name: String) async throws -> UIAutomationActionResult<ClickResult> {
         self.actionCount += 1
-        return try .init(
+        let evidence = try self.namedMenuLeaf(name)
+        if self.failMenuBarAfterDispatch {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Menu bar action completion is unknown")
+                .attributed(to: evidence.selectedTargetReceipt)
+                .selectingLeaves([evidence])
+        }
+        return .init(
             payload: .init(elementDescription: name, location: nil),
             outcome: self.outcome,
             targetIdentity: self.target,
-            selectedLeafEvidence: [self.menuLeaf(selector: name, matchKind: .exact)])
+            selectedLeafEvidence: [evidence])
     }
 
     func clickMenuBarItemActionResult(at index: Int) async throws -> UIAutomationActionResult<ClickResult> {
@@ -385,6 +400,7 @@ private final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionRe
     func clickMenuBarItemActionResult(request: MenuBarItemActionRequest) async throws
         -> UIAutomationActionResult<ClickResult>
     {
+        self.lastMenuBarRequest = request
         if let name = request.name {
             return try await self.clickMenuBarItemActionResult(named: name)
         }
@@ -445,11 +461,31 @@ private final class RemoteResultMenuFixture: MenuServiceGenerationPinnedActionRe
     }
 
     func listMenuBarItems(includeRaw _: Bool) async throws -> [MenuBarItemInfo] {
-        try [MenuBarItemInfo(
+        self.menuBarListCount += 1
+        return try self.listedMenuBarItems ?? [self.menuItem(
+            evidence: self.menuLeaf(selector: "3", matchKind: .index, index: 3))]
+    }
+
+    func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo {
+        self.preparedNames.append(name)
+        return try self.menuItem(evidence: self.namedMenuLeaf(name))
+    }
+
+    private func namedMenuLeaf(_ name: String) throws -> DesktopSelectedLeafEvidence {
+        let base = try self.menuLeaf(selector: "3", matchKind: .index, index: 3)
+        let selection = try MenuBarItemSelector.select(named: name, from: [self.menuItem(evidence: base)])
+        return try base.selecting(
+            normalizedSelector: selection.normalizedSelector,
+            matchKind: selection.matchKind)
+    }
+
+    private func menuItem(evidence: DesktopSelectedLeafEvidence) -> MenuBarItemInfo {
+        MenuBarItemInfo(
             title: "Clock",
             index: 3,
             frame: CGRect(x: 10, y: 10, width: 20, height: 20),
-            selectionEvidence: self.menuLeaf(selector: "3", matchKind: .index, index: 3))]
+            rawOwnerPID: self.target.processIdentity.processIdentifier,
+            selectionEvidence: evidence)
     }
 
     func clickMenuBarItem(named name: String) async throws -> ClickResult {
@@ -597,7 +633,7 @@ private final class RemoteResultDockFixture: DockServiceActionResultProviding {
 }
 
 @MainActor
-private final class RemoteMenuDockResultServices: PeekabooBridgeServiceProviding {
+final class RemoteMenuDockResultServices: PeekabooBridgeServiceProviding {
     private let base = StubServices()
     private let applicationService = RemoteMenuApplicationService()
     let menu: any MenuServiceProtocol

@@ -108,6 +108,7 @@ extension PeekabooBridgeOperation {
         .clickMenuExtra,
         .menuExtraOpenMenuFrame,
         .listMenuBarItems,
+        .prepareMenuBarItemNamed,
         .clickMenuBarItemNamed,
         .clickMenuBarItemIndex,
         .listDockItems,

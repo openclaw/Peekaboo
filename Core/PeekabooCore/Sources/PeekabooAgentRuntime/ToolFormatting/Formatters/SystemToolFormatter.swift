@@ -134,11 +134,13 @@ public class SystemToolFormatter: BaseToolFormatter {
         var parts: [String] = []
 
         // Exit code and status
-        let exitCode = ToolResultExtractor.int("exitCode", from: result) ?? 0
+        let exitCode = ToolResultExtractor.shellExitCode(from: result)
         if exitCode == 0 {
             parts.append("→ Success")
-        } else {
+        } else if let exitCode {
             parts.append("→ Failed (exit code: \(exitCode))")
+        } else {
+            parts.append("→ Exit status unavailable")
         }
 
         // Command info
@@ -159,8 +161,8 @@ public class SystemToolFormatter: BaseToolFormatter {
         // Output summary
         if let output = ToolResultExtractor.string("output", from: result), !output.isEmpty {
             let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
-            if exitCode == 0, !lines.isEmpty {
-                // Show first line for successful commands
+            if exitCode == 0 || exitCode == nil, !lines.isEmpty {
+                // Unknown exit status does not establish that captured output is an error.
                 let firstLine = lines.first!
                 let truncated = firstLine.count > 60 ? String(firstLine.prefix(60)) + "..." : firstLine
                 parts.append("• Output: \(truncated)")
@@ -168,7 +170,7 @@ public class SystemToolFormatter: BaseToolFormatter {
                 if lines.count > 1 {
                     parts.append("(\(lines.count) lines)")
                 }
-            } else if exitCode != 0 {
+            } else if let exitCode, exitCode != 0, !lines.isEmpty {
                 // Show error output for failed commands
                 let errorPreview = lines.prefix(2).joined(separator: " | ")
                 let truncated = errorPreview.count > 80 ? String(errorPreview.prefix(80)) + "..." : errorPreview
@@ -461,9 +463,13 @@ public class SystemToolFormatter: BaseToolFormatter {
     override public func formatCompleted(result: [String: Any], duration: TimeInterval) -> String {
         // Override for shell to show more detail on long-running commands
         if toolType == .shell {
-            let exitCode = ToolResultExtractor.int("exitCode", from: result) ?? 0
+            let exitCode = ToolResultExtractor.shellExitCode(from: result)
             if duration > 5.0 {
                 let durationText = FormattingUtilities.formatDetailedDuration(duration)
+                guard let exitCode else {
+                    return "\(AgentDisplayTokens.Status.warning) Command finished after \(durationText) " +
+                        "(exit status unavailable)"
+                }
                 if exitCode == 0 {
                     return "\(AgentDisplayTokens.Status.success) Command completed successfully after \(durationText)"
                 }

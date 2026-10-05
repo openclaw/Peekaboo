@@ -90,6 +90,11 @@ public protocol MenuServiceGenerationPinnedMenuBarActionResultProviding: MenuSer
         -> UIAutomationActionResult<ClickResult>
 }
 
+/// Explicit read-only discovery for a named mutation; ordinary listing retains its displayed index inventory.
+public protocol MenuServiceNamedMenuBarPreparationProviding: MenuServiceProtocol {
+    func prepareMenuBarItem(named name: String) async throws -> MenuBarItemInfo
+}
+
 /// A menu-bar mutation bound to the exact status item returned by a prior inventory read.
 public struct MenuBarItemActionRequest: Sendable, Codable, Equatable {
     public let name: String?

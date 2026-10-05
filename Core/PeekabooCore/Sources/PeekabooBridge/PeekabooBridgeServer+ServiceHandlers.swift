@@ -431,6 +431,14 @@ extension PeekabooBridgeServer {
         case let .listMenuBarItems(includeRaw):
             let items = try await self.services.menu.listMenuBarItems(includeRaw: includeRaw)
             return .init(response: .menuBarItems(items))
+        case let .prepareMenuBarItemNamed(name):
+            guard let preparation = self.services.menu as? any MenuServiceNamedMenuBarPreparationProviding else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "The menu service does not support named menu bar preparation")
+            }
+            let item = try await preparation.prepareMenuBarItem(named: name)
+            return .init(response: .menuBarItems([item]))
         case let .clickMenuBarItemNamed(payload):
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
                 let result = try await self.services.menu.clickMenuBarItem(named: payload.name)

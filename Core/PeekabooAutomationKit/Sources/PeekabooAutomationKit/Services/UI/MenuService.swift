@@ -13,12 +13,14 @@ import PeekabooFoundation
 
 @MainActor
 public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinnedActionResultProviding,
-    MenuServiceGenerationPinnedMenuBarActionResultProviding, MenuServiceExactLeafActionResultProviding
+    MenuServiceGenerationPinnedMenuBarActionResultProviding, MenuServiceExactLeafActionResultProviding,
+    MenuServiceNamedMenuBarPreparationProviding
 {
     let applicationService: any ApplicationServiceProtocol
     let logger: Logger
     let feedbackClient: any AutomationFeedbackClient
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
+    let menuExtraReaders: MenuExtraDiscoveryReaders
 
     // Traversal limits to avoid unbounded menu walks
     let traversalLimits: MenuTraversalLimits
@@ -51,7 +53,8 @@ public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinned
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         partialMatchEnabled: Bool = true,
         cacheTTL: TimeInterval = 2.0,
-        operationLaneCoordinator: DesktopOperationLaneCoordinator)
+        operationLaneCoordinator: DesktopOperationLaneCoordinator,
+        menuExtraReaders: MenuExtraDiscoveryReaders = .init())
     {
         self.applicationService = applicationService ?? ApplicationService()
         self.traversalLimits = MenuTraversalLimits.from(policy: traversalPolicy)
@@ -60,6 +63,7 @@ public final class MenuService: MenuServiceProtocol, MenuServiceGenerationPinned
         self.partialMatchEnabled = partialMatchEnabled
         self.cacheTTL = cacheTTL
         self.operationLaneCoordinator = operationLaneCoordinator
+        self.menuExtraReaders = menuExtraReaders
         self.connectFeedbackIfNeeded()
     }
 
