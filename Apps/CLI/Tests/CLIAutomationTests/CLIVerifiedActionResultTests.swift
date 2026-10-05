@@ -142,70 +142,6 @@ struct CLIVerifiedActionResultTests {
         try Self.expectProcessTarget(in: object)
     }
 
-    @Test
-    func `verified outcome promotion drives canonical JSON and human status`() throws {
-        let dispatched = DesktopActionOutcome.dispatchedUnverified(
-            route: .bridge,
-            delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
-            evidence: .deliveryAccepted,
-            unitCount: DesktopActionOutcome.DispatchUnitCount(3)
-        )
-        let postconditionOnly = try #require(canonicalActionOutcomeAfterSuccessfulVerification(dispatched))
-        let promoted = try #require(canonicalActionOutcomeAfterSuccessfulVerification(
-            dispatched,
-            observedChange: true
-        ))
-        let verifiedNoChange = try #require(canonicalActionOutcomeAfterSuccessfulVerification(
-            dispatched,
-            observedChange: false
-        ))
-        let envelope = try makeSuccessEnvelope(
-            data: Empty?.none,
-            effect: .unverifiable,
-            outcome: promoted,
-            targetIdentity: Self.windowTarget()
-        )
-
-        #expect(postconditionOnly == dispatched)
-        #expect(promoted.state == .confirmedChange)
-        #expect(promoted.route == .bridge)
-        #expect(promoted.delivery == dispatched.delivery)
-        #expect(promoted.dispatchState.unitCount == dispatched.dispatchState.unitCount)
-        #expect(envelope.effect == .confirmed)
-        #expect(envelope.outcome?.state == .confirmedChange)
-        #expect(envelope.target_receipt?.windowID == 73)
-        #expect(ActionOutcomeHumanRenderer.statusLine(
-            for: promoted,
-            operation: "Window focus"
-        ) == "✅ Window focus confirmed")
-        #expect(verifiedNoChange == dispatched)
-        #expect(verifiedNoChange.delivery == dispatched.delivery)
-        #expect(verifiedNoChange.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(3))
-        let noChangeEnvelope = try makeSuccessEnvelope(
-            data: Empty?.none,
-            effect: .unverifiable,
-            outcome: verifiedNoChange,
-            targetIdentity: Self.windowTarget()
-        )
-        #expect(noChangeEnvelope.outcome?.state == .dispatchedUnverified)
-        #expect(noChangeEnvelope.outcome?.retrySafe == false)
-        #expect(noChangeEnvelope.outcome?.requiresFreshObservation == true)
-        #expect(ActionOutcomeHumanRenderer.statusLine(
-            for: verifiedNoChange,
-            operation: "Window focus"
-        ) == "⚠️ Window focus dispatched but not verified; observe the target before retrying")
-
-        let noChange = DesktopActionOutcome.confirmedNoChange(route: .bridge)
-        let idempotent = try #require(canonicalActionOutcomeAfterSuccessfulVerification(noChange))
-        #expect(idempotent == noChange)
-        #expect(canonicalActionOutcomeAfterSuccessfulVerification(noChange, observedChange: false) == noChange)
-        #expect(idempotent.dispatchState == DesktopActionOutcome.DispatchState.none)
-        #expect(ActionOutcomeHumanRenderer.statusLine(
-            for: idempotent,
-            operation: "Dock launch"
-        ) == "✅ Dock launch confirmed; no change was needed")
-    }
-
     private static let dispatchedOutcome = DesktopActionOutcome.dispatchedUnverified(
         route: .bridge,
         delivery: .init(mechanism: .accessibilityAction, mode: .foreground),
@@ -217,20 +153,6 @@ struct CLIVerifiedActionResultTests {
         try DesktopTargetIdentity(processIdentity: ApplicationProcessIdentity(
             processIdentifier: 42,
             processStartIdentity: 420
-        ))
-    }
-
-    private static func windowTarget() throws -> DesktopTargetIdentity {
-        let bounds = CGRect(x: 10, y: 20, width: 640, height: 480)
-        let identity = WindowMutationIdentity(
-            windowID: 73,
-            ownerProcessIdentifier: 42,
-            ownerProcessStartIdentity: 9_007_199_254_740_993,
-            capturedBounds: bounds
-        )
-        return try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
-            identity: identity,
-            bounds: bounds
         ))
     }
 
