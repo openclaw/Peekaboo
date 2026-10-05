@@ -55,6 +55,23 @@ struct CommandHelpRendererTests {
     }
 
     @Test
+    func `type clear help distinguishes Accessibility and keyboard routes across help and learn`() throws {
+        let expected =
+            "Clear before typing (AXValue for eligible native background fields; Cmd+A/Delete for keyboard routes)"
+        let explicit = TypeCommand.commanderSignature()
+        let reflected = CommandSignature.describe(TypeCommand()).flattened()
+        let help = TypeCommand.helpMessage().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let summary = try #require(CommanderRegistryBuilder.buildCommandSummaries().first { $0.name == "type" })
+
+        #expect(explicit.flags.first { $0.label == "clear" }?.help == expected)
+        #expect(reflected.flags.first { $0.label == "clear" }?.help == expected)
+        #expect(summary.flags.first { $0.names.contains("--clear") }?.help == expected)
+        #expect(help.contains(expected))
+        #expect(help.contains("enters text using Accessibility or keyboard delivery"))
+        #expect(!help.contains("Clear the field before typing (Cmd+A, Delete)"))
+    }
+
+    @Test
     func `deprecated no focus help does not promise a background launch`() {
         let expected = "Deprecated no-op compatibility flag; default only verifies an already-running app"
         let help = AppCommand.LaunchSubcommand.helpMessage()
