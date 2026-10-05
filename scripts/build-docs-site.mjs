@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { css, faviconSvg, js } from "./docs-site-assets.mjs";
-import { renderedHeadingText } from "./docs-site-toc.mjs";
+import { decodeRenderedEntities, renderedHeadingText } from "./docs-site-toc.mjs";
 
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
@@ -456,7 +456,7 @@ function inline(text, currentRel) {
     .replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>")
     .replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_, label, href) => `<a href="${escapeAttr(rewriteHref(href, currentRel))}">${label}</a>`,
+      (_, label, href) => `<a href="${escapeAttr(rewriteHref(decodeRenderedEntities(href), currentRel))}">${label}</a>`,
     )
     .replace(/&lt;(https?:\/\/[^\s<>]+)&gt;/g, '<a href="$1">$1</a>');
   out = out.replace(/\\\|/g, "|");

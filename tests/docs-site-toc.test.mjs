@@ -37,6 +37,27 @@ test('docs TOC structurally extracts renderer-owned heading text', (t) => {
   const html = readFileSync(path.join(fixtureRoot, '_site', 'index.html'), 'utf8');
   assert.match(html, /<nav class="toc"/);
   assert.match(html, /<a class="toc-l2"[^>]*>Bold emphasis link code<\/a>/);
-  assert.match(html, /<a class="toc-l3"[^>]*>Literal &amp;lt;tag&amp;gt; &amp;amp; text<\/a>/);
+  assert.match(html, /<a class="toc-l3"[^>]*>Literal &lt;tag&gt; &amp; text<\/a>/);
   assert.doesNotMatch(html, /<a class="toc-l[23]"[^>]*>#/);
+});
+
+test('heading text decodes renderer escapes once after stripping tags', () => {
+  assert.equal(renderedHeadingText('<code>&lt;value&gt; &amp; &quot;quoted&quot; &#39;text&#39;</code>'),
+    '<value> & "quoted" \'text\'');
+  assert.equal(renderedHeadingText('<strong>&amp;lt;script&amp;gt;</strong>'), '&lt;script&gt;');
+});
+
+test('rendered markdown preserves ampersands in link query arguments', (t) => {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'peekaboo-docs-links-'));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  mkdirSync(path.join(fixtureRoot, 'docs'));
+  writeFileSync(path.join(fixtureRoot, 'docs', 'index.md'),
+    '# Links\n\n[query](https://example.test/search?q=one&format=json)\n');
+  const result = spawnSync(process.execPath, [path.join(projectRoot, 'scripts', 'build-docs-site.mjs')], {
+    cwd: fixtureRoot, encoding: 'utf8'
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const html = readFileSync(path.join(fixtureRoot, '_site', 'index.html'), 'utf8');
+  assert.match(html, /href="https:\/\/example.test\/search\?q=one&amp;format=json"/);
+  assert.doesNotMatch(html, /href="https:\/\/example.test\/search\?q=one&amp;amp;format=json"/);
 });
