@@ -62,3 +62,7 @@ Search, category, and subsystem values are literal text, not shell commands or p
 # Monitor Playground app logs
 ./scripts/pblog.sh --subsystem boo.peekaboo.playground -f
 ```
+
+`--lines` limits completed text queries. JSON output is returned as a complete
+JSON document, and `--follow` forwards events immediately rather than waiting
+for the stream to end. Both modes bypass the physical-line tail limit.

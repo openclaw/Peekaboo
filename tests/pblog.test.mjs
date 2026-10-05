@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -96,4 +96,35 @@ test('unpiped log exit status is preserved', (t) => {
   assert.equal(result.error, undefined);
   assert.equal(result.signal, null);
   assert.equal(result.status, 7);
+});
+
+for (const outputFile of [false, true]) {
+  test(`JSON output retains its complete frame in ${outputFile ? 'a file' : 'stdout'}`, (t) => {
+    const f = fixture(t);
+    const json = JSON.stringify(Array.from({ length: 60 }, (_, index) => ({ index })), null, 2) + '\n';
+    writeFileSync(path.join(f.directory, 'log'), `#!/bin/bash\ncat <<'JSON'\n${json}JSON\n`, { mode: 0o755 });
+    const output = path.join(f.directory, 'structured.json');
+    const result = f.run(['--json', ...(outputFile ? ['--output', output] : [])]);
+    success(result);
+    assert.deepEqual(JSON.parse(outputFile ? readFileSync(output, 'utf8') : result.stdout), JSON.parse(json));
+  });
+}
+
+test('follow emits an event before the long-lived log child exits', async (t) => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.directory, 'log'), '#!/bin/bash\nprintf "owned live event\\n"\nsleep 2\n', { mode: 0o755 });
+  const child = spawn('/bin/bash', [script, '--follow'], {
+    cwd: f.directory, env: { ...process.env, PATH: `${f.directory}:${process.env.PATH}` },
+    stdio: ['ignore', 'pipe', 'ignore']
+  });
+  const started = Date.now();
+  let output = '';
+  let firstEventMs;
+  child.stdout.on('data', (chunk) => {
+    output += chunk;
+    if (output.includes('owned live event') && firstEventMs === undefined) firstEventMs = Date.now() - started;
+  });
+  const status = await new Promise((resolve, reject) => { child.on('exit', resolve); child.on('error', reject); });
+  assert.equal(status, 0);
+  assert.ok(firstEventMs < 1500, `event was withheld until ${firstEventMs}ms`);
 });
