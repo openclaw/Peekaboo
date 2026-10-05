@@ -35,7 +35,7 @@ Targeted background input never emits cursor or input-HUD overlays, even when th
    - If Peekaboo.app isn’t running, the distributed notification goes nowhere and the JSON simply ages out (cleanup removes stale files after ~10 minutes).
 3. **Mac app reception**  
    - `VisualizerEventReceiver` runs inside Peekaboo.app. It logs registration at launch (`Visualizer event receiver registered …`), listens for the distributed notification, parses the `<uuid>|<kind>` descriptor, and loads the referenced JSON via `VisualizerEventStore.loadEvent(id:)`.  
-   - Its subscription requests immediate delivery while the app is inactive; it does not activate Peekaboo or globally resume distributed notifications. This only affects eligible events already emitted by the sender, so background-input and ordinary-observation suppression remain unchanged.
+   - Overlay windows do not inherit application hiding, so eligible feedback can appear even when deployment launched the companion with `open -gj`. The host stays hidden and inactive; overlays ignore mouse events and never become key/main windows. Sender gates, background-input suppression and ordinary-observation silence remain unchanged.
    - After successfully handing the payload off to `VisualizerCoordinator`, the receiver deletes the JSON (failed deletes are surfaced as `VisualizerEventReceiver: failed to delete event …` in the logs).  
    - Cleanup safeguards: the CLI schedules periodic `VisualizerEventStore.cleanup(olderThan:)` calls so abandoned files disappear. For debugging you can set `PEEKABOO_VISUALIZER_DISABLE_CLEANUP=true` to keep files on disk until the mac app consumes them.
 

@@ -58,20 +58,7 @@ final class AnimationOverlayManager {
 
         let windowRect = chromeMargin > 0 ? rect.insetBy(dx: -chromeMargin, dy: -chromeMargin) : rect
 
-        // Create overlay window
-        let window = NSWindow(
-            contentRect: windowRect,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false)
-
-        // Configure window
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .screenSaver
-        window.ignoresMouseEvents = true
-        window.hasShadow = false
-        window.isReleasedWhenClosed = false
+        let window = Self.makeOverlayWindow(at: windowRect)
 
         // Set content view. The root is wrapped in a flexible container so
         // fixed-size animation views center on the window instead of pinning
@@ -113,6 +100,23 @@ final class AnimationOverlayManager {
             self.fadeOutAndRemove(window, duration: 0.3)
         }
 
+        return window
+    }
+
+    static func makeOverlayWindow(at rect: CGRect) -> NSWindow {
+        let window = NSWindow(
+            contentRect: rect,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.level = .screenSaver
+        window.ignoresMouseEvents = true
+        window.hasShadow = false
+        window.isReleasedWhenClosed = false
+        // Deployment launches the host hidden; eligible overlays must not unhide the app to appear.
+        window.canHide = false
         return window
     }
 
