@@ -438,6 +438,10 @@ function markdownToHtml(markdown, currentRel) {
     }
     paragraph.push(line.trim());
   }
+  if (fence) {
+    const body = highlightCode(fence.lines.join("\n"), fence.lang);
+    html.push(`<pre><code class="language-${escapeAttr(fence.lang)}">${body}</code></pre>`);
+  }
   flushParagraph();
   closeList();
   flushBlockquote();
