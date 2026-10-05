@@ -275,7 +275,7 @@ public struct InteractionTargetSelector: Equatable, Sendable {
     }
 
     private static func looksLikePIDIdentifier(_ value: String) -> Bool {
-        normalized(value)?.uppercased().hasPrefix("PID:") == true
+        self.normalized(value)?.uppercased().hasPrefix("PID:") == true
     }
 
     private static func pid(fromApplicationIdentifier value: String) -> Int32? {
