@@ -13,7 +13,7 @@ struct TerminalTitleSanitizationTests {
 
     @Test
     func `ordinary unicode titles retain their readable content`() {
-        let title = "Agent: résumé 🦞 – owned fixture"
+        let title = "Agent: résumé 🦞 👩‍💻 – owned fixture"
         #expect(sanitizedTerminalTitle(title) == title)
     }
 }

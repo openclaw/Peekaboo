@@ -52,7 +52,9 @@ public func updateTerminalTitle(_ title: String) {
 
 /// OSC title text cannot contain control characters that terminate or escape the title sequence.
 func sanitizedTerminalTitle(_ title: String) -> String {
-    String(String.UnicodeScalarView(title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }))
+    String(String.UnicodeScalarView(title.unicodeScalars.filter {
+        !(0...0x1F).contains($0.value) && !(0x7F...0x9F).contains($0.value)
+    }))
 }
 
 enum TerminalTitleProcessWaitError: Error {
