@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
 - Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
 - Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
+- Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
 - Fix signed Bridge typing receipts after already-empty clears and already-satisfied caret moves, preserving zero-dispatch no-ops and strict key, delivery and dispatch-count validation.
 - Share literal-replacement eligibility between native typing and Bridge validation without changing confirmation policy, and clarify that typing counts represent keystrokes and accepted typing units rather than raw event or Accessibility setter calls.
 - Clarify `type --clear` help and generated learning guidance to distinguish eligible native Accessibility clearing from keyboard routes, without changing delivery, targeting, or success rules.
