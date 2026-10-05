@@ -172,6 +172,12 @@ assert.equal(validateArchiveEntries([
   { path: 'Fixture.app/current', type: 'symlink', target: 'alias/missing' }
 ], 'Fixture.app').length, 3);
 
+assert.equal(validateArchiveEntries([
+  ...safeRecords,
+  { path: 'Fixture.app/current', type: 'symlink', target: 'Versions/Current/../A/value' },
+  { path: 'Fixture.app/dangling', type: 'symlink', target: 'Versions/Current/missing' }
+], 'Fixture.app').length, 7);
+
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
   const composedEntries = [

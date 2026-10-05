@@ -48,6 +48,22 @@ ln -s bin/missing "$TEST_DIR/tree/current"
   "$(shasum -a 256 "$TEST_DIR/substituted.json" | awk '{print $1}')" ]] || \
   fail 'retargeted symlink did not change the manifest digest'
 
+mkdir -p "$TEST_DIR/framework/Versions/A"
+printf 'framework fixture\n' > "$TEST_DIR/framework/Versions/A/value"
+ln -s A "$TEST_DIR/framework/Versions/Current"
+ln -s Versions/Current/../A/value "$TEST_DIR/framework/current"
+ln -s Versions/Current/missing "$TEST_DIR/framework/dangling"
+[[ "$(cat "$TEST_DIR/framework/current")" == 'framework fixture' ]] || fail 'native framework link fixture failed'
+/usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/framework" >"$TEST_DIR/framework.json"
+jq -e '([.entries[] | select(.type == "symlink")] | length) == 3' "$TEST_DIR/framework.json" >/dev/null || fail 'safe composed/dangling links changed'
+mkdir -p "$TEST_DIR/cycle"
+ln -s second "$TEST_DIR/cycle/first"
+ln -s first "$TEST_DIR/cycle/second"
+if /usr/bin/ruby "$ROOT_DIR/scripts/artifact-tree-manifest.rb" "$TEST_DIR/cycle" >"$TEST_DIR/cycle.json" 2>"$TEST_DIR/cycle.err"; then
+  fail 'cyclic symlink was accepted'
+fi
+grep -q 'symlink expansion limit exceeded' "$TEST_DIR/cycle.err" || fail 'cycle diagnostic missing'
+
 mkdir -p "$TEST_DIR/composed"
 printf 'owned outside fixture\n' > "$TEST_DIR/outside"
 ln -s . "$TEST_DIR/composed/alias"
