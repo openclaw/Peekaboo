@@ -19,7 +19,7 @@
   "scripts": {
     "setup:swift": "python3 scripts/setup-swift-workspace.py setup",
     "test:swift-workspace": "python3 scripts/test-swift-workspace.py",
-    "test:log-scripts": "bash scripts/test-playground-log-wrapper.sh && node --test tests/pblog.test.mjs",
+    "test:log-scripts": "bash scripts/test-playground-log-wrapper.sh && node --test tests/pblog.test.mjs tests/playground-log.test.mjs",
     "build:cli": "python3 scripts/setup-swift-workspace.py run -- swift build --package-path Apps/CLI",
     "build:cli:release": "python3 scripts/setup-swift-workspace.py run -- swift build --configuration release --package-path Apps/CLI",
     "build:swift": "./scripts/build-swift-arm.sh",

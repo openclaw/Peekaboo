@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -o pipefail
+
 # Peekaboo Playground Log Viewer
 # A pblog-inspired utility for viewing Playground app logs
 
@@ -28,6 +30,14 @@ NC='\033[0m' # No Color
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
+    case $1 in
+        -n|--lines|-l|--last|-c|--category|-s|--search|-o|--output)
+            if [[ $# -lt 2 ]]; then
+                printf 'playground-log.sh: %s requires a value\n' "$1" >&2
+                exit 2
+            fi
+            ;;
+    esac
     case $1 in
         -n|--lines)
             LINES="$2"
@@ -146,39 +156,46 @@ if [[ "$SHOW_ALL_CATEGORIES" == true ]]; then
     exit 0
 fi
 
+predicate_literal() {
+    PREDICATE_LITERAL="${1//\\/\\\\}"
+    PREDICATE_LITERAL="${PREDICATE_LITERAL//\"/\\\"}"
+}
+
 # Build predicate - using PeekabooPlayground's subsystem
 PREDICATE="subsystem == \"boo.peekaboo.playground\""
 
 if [[ -n "$CATEGORY" ]]; then
-    PREDICATE="$PREDICATE AND category == \"$CATEGORY\""
+    predicate_literal "$CATEGORY"
+    PREDICATE="$PREDICATE AND category == \"$PREDICATE_LITERAL\""
 fi
 
 if [[ -n "$SEARCH" ]]; then
-    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$SEARCH\""
+    predicate_literal "$SEARCH"
+    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$PREDICATE_LITERAL\""
 fi
 
 # Build command
 if [[ "$FOLLOW" == true ]]; then
-    CMD="log stream --predicate '$PREDICATE' --level $LEVEL"
+    CMD=(log stream --predicate "$PREDICATE" --level "$LEVEL")
 else
     # log show uses different flags for log levels
     case $LEVEL in
         debug)
-            CMD="log show --predicate '$PREDICATE' --debug --last $TIME"
+            CMD=(log show --predicate "$PREDICATE" --debug --last "$TIME")
             ;;
         error)
             # For errors, we need to filter by eventType in the predicate
             PREDICATE="$PREDICATE AND eventType == \"error\""
-            CMD="log show --predicate '$PREDICATE' --info --debug --last $TIME"
+            CMD=(log show --predicate "$PREDICATE" --info --debug --last "$TIME")
             ;;
         *)
-            CMD="log show --predicate '$PREDICATE' --info --last $TIME"
+            CMD=(log show --predicate "$PREDICATE" --info --last "$TIME")
             ;;
     esac
 fi
 
 if [[ "$JSON" == true ]]; then
-    CMD="$CMD --style json"
+    CMD+=(--style json)
 fi
 
 # Add color formatting function for non-JSON output
@@ -239,16 +256,16 @@ fi
 # Execute command
 if [[ -n "$OUTPUT" ]]; then
     if [[ "$NO_TAIL" == true ]]; then
-        eval $CMD > "$OUTPUT"
+        "${CMD[@]}" > "$OUTPUT"
         echo "Logs saved to: $OUTPUT"
     else
-        eval $CMD | tail -n $LINES > "$OUTPUT"
+        "${CMD[@]}" | tail -n "$LINES" > "$OUTPUT"
         echo "Last $LINES lines saved to: $OUTPUT"
     fi
 else
     if [[ "$NO_TAIL" == true ]]; then
-        eval $CMD | format_output
+        "${CMD[@]}" | format_output
     else
-        eval $CMD | tail -n $LINES | format_output
+        "${CMD[@]}" | tail -n "$LINES" | format_output
     fi
 fi
