@@ -144,6 +144,23 @@ jobs:
           grep -Fq 'Suite ForegroundKeyboardEventPairTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
+      - name: Run capture PNG custody and transformation contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/capture-png-custody.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel --jobs 2 \
+            --filter '^PeekabooAutomationKitTests[.](WatchCapturePNGTests|LegacyCapturedRasterTests|CaptureArtifactImageProcessingTests|ScreenCaptureImageScalerTests|WatchCaptureCadenceSchedulingTests)/' \
+            2>&1 | tee "$test_log"
+          for suite in WatchCapturePNGTests LegacyCapturedRasterTests CaptureArtifactImageProcessingTests ScreenCaptureImageScalerTests WatchCaptureCadenceSchedulingTests; do
+            grep -Fq "Suite $suite passed after " "$test_log"
+          done
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
       - name: Run clipboard paste admission gate contracts
         working-directory: Core/PeekabooAutomationKit
         env:
