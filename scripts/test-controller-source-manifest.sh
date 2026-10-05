@@ -46,4 +46,31 @@ if node "$FIXTURE_ROOT/scripts/controller-source-manifest.mjs" \
   exit 1
 fi
 
+# A committed symlink's blob is the link target, not the controller source bytes.
+# Matching that blob's hash must not qualify a symlink as executable source.
+printf 'outside fixture\n' > "$TEST_DIR/outside"
+rm "$FIXTURE_ROOT/src/controller.swift"
+ln -s "$TEST_DIR/outside" "$FIXTURE_ROOT/src/controller.swift"
+link_sha="$(printf '%s' "$TEST_DIR/outside" | shasum -a 256 | awk '{print $1}')"
+cat > "$FIXTURE_ROOT/scripts/multi-target-certification-catalog.json" <<EOF
+{"current_build_source":{"controller_source_manifest":[{"path":"src/controller.swift","sha256":"$link_sha"}]}}
+EOF
+git -C "$FIXTURE_ROOT" add .
+git -C "$FIXTURE_ROOT" commit -qm symlink
+if node "$FIXTURE_ROOT/scripts/controller-source-manifest.mjs" --source-commit "$(git -C "$FIXTURE_ROOT" rev-parse HEAD)" >"$TEST_DIR/symlink.json" 2>"$TEST_DIR/symlink.err"; then
+  printf 'test-controller-source-manifest: committed symlink source was accepted\n' >&2
+  exit 1
+fi
+grep -q 'not a regular source blob' "$TEST_DIR/symlink.err"
+# Worktree mode must also reject a symlink even if target bytes have the expected digest.
+outside_sha="$(shasum -a 256 "$TEST_DIR/outside" | awk '{print $1}')"
+cat > "$FIXTURE_ROOT/scripts/multi-target-certification-catalog.json" <<EOF
+{"current_build_source":{"controller_source_manifest":[{"path":"src/controller.swift","sha256":"$outside_sha"}]}}
+EOF
+if node "$FIXTURE_ROOT/scripts/controller-source-manifest.mjs" >"$TEST_DIR/worktree-link.json" 2>"$TEST_DIR/worktree-link.err"; then
+  printf 'test-controller-source-manifest: worktree symlink source was accepted\n' >&2
+  exit 1
+fi
+grep -q 'symlinked or not a regular source file' "$TEST_DIR/worktree-link.err"
+
 printf 'test-controller-source-manifest: ok\n'
