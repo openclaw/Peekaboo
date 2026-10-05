@@ -102,28 +102,29 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Escape user text for a quoted NSPredicate string literal.
+# Keep the escaped literal in-shell: command substitution trims trailing newlines.
 predicate_literal() {
-    local value="$1"
-    value="${value//\\/\\\\}"
-    value="${value//\"/\\\"}"
-    printf '%s' "$value"
+    PREDICATE_LITERAL="${1//\\/\\\\}"
+    PREDICATE_LITERAL="${PREDICATE_LITERAL//\"/\\\"}"
 }
 
 # Build predicate - either specific subsystem or all Peekaboo subsystems
 if [[ -n "$SUBSYSTEM" ]]; then
-    PREDICATE="subsystem == \"$(predicate_literal "$SUBSYSTEM")\""
+    predicate_literal "$SUBSYSTEM"
+    PREDICATE="subsystem == \"$PREDICATE_LITERAL\""
 else
     # Match all Peekaboo-related subsystems
     PREDICATE="(subsystem == \"boo.peekaboo.core\" OR subsystem == \"boo.peekaboo.inspector\" OR subsystem == \"boo.peekaboo.playground\" OR subsystem == \"boo.peekaboo.app\" OR subsystem == \"boo.peekaboo\" OR subsystem == \"boo.peekaboo.axorcist\" OR subsystem == \"boo.peekaboo.cli\")"
 fi
 
 if [[ -n "$CATEGORY" ]]; then
-    PREDICATE="$PREDICATE AND category == \"$(predicate_literal "$CATEGORY")\""
+    predicate_literal "$CATEGORY"
+    PREDICATE="$PREDICATE AND category == \"$PREDICATE_LITERAL\""
 fi
 
 if [[ -n "$SEARCH" ]]; then
-    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$(predicate_literal "$SEARCH")\""
+    predicate_literal "$SEARCH"
+    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$PREDICATE_LITERAL\""
 fi
 
 # Keep arguments as data throughout command construction and execution.
