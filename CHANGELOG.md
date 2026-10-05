@@ -3,7 +3,10 @@
 ## Unreleased
 
 - Preserve literal log-helper search and filter text without shell re-parsing, including quotes, backslashes and trailing newlines; retain output, streaming and private-mode arguments. Thanks @rudycelekli! #934.
+- Reject missing log-helper option values promptly with a targeted usage error instead of looping indefinitely, before any log access; match native log severity for historical error-only queries. Thanks @rudycelekli! #938.
 - Preserve conventional shell exit statuses when a wrapped source-build command is terminated by a signal, while retaining mapping integrity checks and lock cleanup. Thanks @rudycelekli! #932.
+- Reject malformed or overflowing release versions before computing build numbers, preserving stable versions and supported alpha/beta/rc aliases instead of allowing extra identifiers to alias a different build. Thanks @rudycelekli! #936.
+- Require explicit npm error codes when detecting unpublished versions; server/authentication failures and contradictory responses no longer become absence merely because a diagnostic contains E404. Thanks @rudycelekli! #965.
 - Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
 - Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
 - Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
@@ -15,6 +18,7 @@
 - Distinguish missing blank title-bar space from changed retained geometry in background paste preparation diagnostics, without relaxing clearance or input guards.
 - Update AXorcist to 0.2.1 to unwrap live Accessibility values and clear inherited typing and final hotkey modifier flags. Thanks @jandubois! #797.
 - Keep CLI and MCP action summaries explicit about unverified or unreported receiver effects, and report paste clipboard cleanup separately without changing canonical outcomes, JSON, retry rules, or exit status.
+- Preserve apostrophes and escaped characters in JSON documentation reading hints, retaining the legacy single-quoted fallback and malformed-input diagnostics. Thanks @rudycelekli! #941.
 - Explain evaluated Bridge host requirements when `see --fresh` cannot obtain authenticated producer-bound snapshots, instead of incorrectly claiming fresh AX is unsupported or a binary update is sufficient; preserve host selection, trust, and error codes.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
 - Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
