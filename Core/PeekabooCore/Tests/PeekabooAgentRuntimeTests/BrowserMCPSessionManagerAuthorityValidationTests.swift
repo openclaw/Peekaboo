@@ -6,6 +6,7 @@ import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 
+@Suite(.serialized)
 @MainActor
 struct BrowserMCPSessionManagerAuthorityValidationTests {
     @Test
@@ -507,6 +508,203 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
         #expect(await (session.status(channel: nil)).connectionReceipt == connected.connectionReceipt)
     }
 
+    @Test
+    func `blocked discovery refuses at deadline before release and then reconnects`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let attempts = OrderedConnectionAttempts()
+            let reservations = AuthorityCounter()
+            let session = Self.metadataSession(
+                manager: manager,
+                detector: { _ in
+                    fixture.blockIfArmed()
+                    return [Self.browser(bundleIdentifier: "com.google.Chrome")]
+                },
+                attempts: { attempts.next() })
+            fixture.arm()
+            let task = Task {
+                try await session.connectWithOutcome(channel: .stable, reserveTarget: { _ in reservations.increment() })
+            }
+            try #require(await fixture.waitUntilEntered())
+            do {
+                _ = try await task.value
+                Issue.record("Expected discovery deadline refusal")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .refused)
+                #expect(failure.outcome.dispatchState == .none)
+            }
+            #expect(!fixture.didRelease)
+            #expect(manager.addServerCount == 0)
+            #expect(reservations.value == 0)
+            print(
+                "metadata discovery: beforeRelease=\(!fixture.didRelease), " +
+                    "startup=\(manager.addServerCount), " +
+                    "reservation=\(reservations.value)")
+            fixture.release()
+            try await fixture.drain()
+            let recovered = try await session.connect(channel: .stable)
+            #expect(recovered.isConnected)
+            #expect(manager.addServerCount == 1)
+            print(
+                "metadata integration: discovery recovered=\(recovered.isConnected); " +
+                    "startup=\(manager.addServerCount); " +
+                    "reservations=\(reservations.value)")
+        }
+    }
+
+    @Test
+    func `connected status cancellation preserves receipt epoch and ownership`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let releases = AuthorityCounter()
+            let session = Self.metadataSession(manager: manager, detector: { _ in
+                fixture.blockIfArmed()
+                return [Self.browser(bundleIdentifier: "com.google.Chrome")]
+            })
+            let connected = try await session.connect(channel: .stable)
+            fixture.arm()
+            let task = Task {
+                await session.status(channel: .stable, releaseTargetWhenDisconnected: { releases.increment() })
+            }
+            try #require(await fixture.waitUntilEntered())
+            task.cancel()
+            let canceled = await task.value
+            #expect(!fixture.didRelease)
+            #expect(canceled.observation == .indeterminate)
+            #expect(canceled.connectionReceipt == connected.connectionReceipt)
+            #expect(canceled.providerSessionEpoch == connected.providerSessionEpoch)
+            #expect(releases.value == 0)
+            print(
+                "metadata status: beforeRelease=\(!fixture.didRelease), " +
+                    "receiptRetained=\(canceled.connectionReceipt == connected.connectionReceipt)")
+            #expect(manager.removeServerCount == 0)
+            fixture.release()
+            try await fixture.drain()
+            let recovered = await session.status(channel: .stable)
+            #expect(recovered.isConnected)
+            #expect(recovered.connectionReceipt == connected.connectionReceipt)
+            #expect(recovered.providerSessionEpoch == connected.providerSessionEpoch)
+            print(
+                "metadata integration: status recovered=\(recovered.isConnected); " +
+                    "releases=\(releases.value); " +
+                    "removals=\(manager.removeServerCount)")
+        }
+    }
+
+    @Test
+    func `execution status cancellation during live bundle read retains usable connection`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let session = Self.metadataSession(manager: manager, liveBundle: { _ in
+                fixture.blockIfArmed()
+                return "com.google.Chrome"
+            })
+            let connected = try await session.connect(channel: .stable)
+            fixture.arm()
+            manager.executedTools.removeAll()
+            let task = Task { try await session.statusForExecution(channel: .stable) }
+            try #require(await fixture.waitUntilEntered())
+            task.cancel()
+            await #expect(throws: CancellationError.self) { _ = try await task.value }
+            #expect(!fixture.didRelease)
+            #expect(manager.executedTools.isEmpty)
+            print(
+                "metadata execution status: beforeRelease=\(!fixture.didRelease), " +
+                    "leafDispatch=\(manager.executedTools.count)")
+            #expect(manager.removeServerCount == 0)
+            fixture.release()
+            try await fixture.drain()
+            let recovered = try await session.statusForExecution(channel: .stable)
+            #expect(recovered.isConnected)
+            #expect(recovered.connectionReceipt == connected.connectionReceipt)
+            #expect(recovered.providerSessionEpoch == connected.providerSessionEpoch)
+            let receipt = try #require(connected.connectionReceipt)
+            _ = try await session.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable,
+                expectedConnectionReceipt: receipt)
+            #expect(manager.executedTools == ["take_snapshot"])
+            print(
+                "metadata integration: execution recovered=\(recovered.isConnected); " +
+                    "removals=\(manager.removeServerCount); " +
+                    "tools=\(manager.executedTools)")
+        }
+    }
+
+    @Test
+    func `canceled second request never runs its getter after occupied queue drains`() async throws {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let detectorCalls = AuthorityCounter()
+            let session = Self.metadataSession(manager: manager, detector: { _ in
+                detectorCalls.increment()
+                return [Self.browser(bundleIdentifier: "com.google.Chrome")]
+            })
+            let connected = try await session.connect(channel: .stable)
+            let callsBefore = detectorCalls.value
+            fixture.arm()
+            let occupant = Task { try await BrowserMCPApplicationMetadata.read { fixture.blockIfArmed() } }
+            try #require(await fixture.waitUntilEntered())
+            // The existing API has no enqueue-admission acknowledgment. Cancel a request while the
+            // queue is occupied, without claiming the task reached the enqueue boundary first.
+            let task = Task { await session.status(channel: .stable) }
+            task.cancel()
+            let canceled = await task.value
+            #expect(!fixture.didRelease)
+            #expect(canceled.connectionReceipt == connected.connectionReceipt)
+            #expect(canceled.providerSessionEpoch == connected.providerSessionEpoch)
+            fixture.release()
+            try await occupant.value
+            try await fixture.drain()
+            #expect(detectorCalls.value == callsBefore)
+            let canceledGetterCount = detectorCalls.value - callsBefore
+            #expect(manager.removeServerCount == 0)
+            #expect(await session.status(channel: .stable).isConnected)
+            print(
+                "metadata integration: occupied queue drained; " +
+                    "enqueue admission unknown; " +
+                    "canceled getter delta=\(canceledGetterCount)")
+        }
+    }
+
+    private static func withMetadataBlock(
+        _ operation: (AuthorityMetadataBlock) async throws -> Void) async throws
+    {
+        let fixture = AuthorityMetadataBlock()
+        do {
+            try await operation(fixture)
+            fixture.release()
+            try await fixture.drain()
+        } catch {
+            fixture.release()
+            try? await fixture.drain()
+            throw error
+        }
+    }
+
+    private static func metadataSession(
+        manager: AuthorityBrowserMCPManager,
+        detector: @escaping BrowserMCPSessionManager.BrowserDetector = { _ in
+            [Self.browser(bundleIdentifier: "com.google.Chrome")]
+        },
+        liveBundle: @escaping BrowserMCPSessionManager.ProcessBundleIdentifierProvider = { _ in "com.google.Chrome" },
+        attempts: @escaping BrowserMCPSessionManager.ConnectionAttemptProvider = { .standalone(timeout: .seconds(2)) })
+        -> BrowserMCPSessionManager
+    {
+        BrowserMCPSessionManager(
+            serverName: "test-browser",
+            manager: manager,
+            detectedBrowsers: detector,
+            processStartIdentity: { _ in 2050 },
+            processBundleIdentifier: liveBundle,
+            processCodeSignatureValidator: { _, _, channel in Self.signatureIdentity(channel) },
+            connectionAttempt: attempts,
+            endpointResolver: BrowserMCPDevToolsEndpointResolver { _ in Self.endpoint() },
+            channelEndpointResolver: BrowserMCPChannelEndpointResolver(
+                resolveInitial: { _, _ in Self.endpoint() }, revalidate: { _, _ in }),
+            environment: [:])
+    }
+
     private static func session(
         manager: AuthorityBrowserMCPManager,
         resolver: BrowserMCPChannelEndpointResolver,
@@ -816,5 +1014,53 @@ private final class OrderedConnectionAttempts: @unchecked Sendable {
             self.count += 1
             return .standalone(timeout: self.count == 1 ? .milliseconds(40) : .seconds(2))
         }
+    }
+}
+
+/// Test-only synchronization around the production metadata queue. Every wait has a hard fallback.
+private final class AuthorityMetadataBlock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let entered = DispatchSemaphore(value: 0)
+    private let unblocked = DispatchSemaphore(value: 0)
+    private var armed = false
+    private var released = false
+
+    var didRelease: Bool {
+        self.lock.withLock { self.released }
+    }
+
+    func arm() {
+        self.lock.withLock { self.armed = true }
+    }
+
+    func blockIfArmed() {
+        let shouldBlock = self.lock.withLock {
+            let armed = self.armed
+            self.armed = false
+            return armed
+        }
+        guard shouldBlock else { return }
+        self.entered.signal()
+        // This bounds both an implementation regression and an assertion failure in the caller.
+        if self.unblocked.wait(timeout: .now() + 3) == .timedOut {
+            self.lock.withLock { self.released = true }
+        }
+    }
+
+    func waitUntilEntered() async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: self.entered.wait(timeout: .now() + 2) == .success)
+            }
+        }
+    }
+
+    func release() {
+        self.lock.withLock { self.released = true }
+        self.unblocked.signal()
+    }
+
+    func drain() async throws {
+        _ = try await BrowserMCPApplicationMetadata.read { true }
     }
 }
