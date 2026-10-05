@@ -157,8 +157,27 @@ assert.throws(() => validateArchiveEntries([
   { path: 'Fixture.app', type: 'symlink', target: 'Fixture.app' }
 ], 'Fixture.app'), /root is not a directory/);
 
+assert.throws(() => validateArchiveEntries([
+  { path: 'Fixture.app/', type: 'directory' },
+  { path: 'Fixture.app/value', type: 'file' },
+  { path: 'Fixture.app/value/child', type: 'file' }
+], 'Fixture.app'), /descendant beneath a file/);
+
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
+  const parentFileEntries = [
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'Fixture.app/value', type: 'file', data: 'parent' },
+    { path: 'Fixture.app/value/child', type: 'file', data: 'child' }
+  ];
+  for (const [extension, bytes, validate] of [
+    ['zip', zipFixture(parentFileEntries), validateZipArchive],
+    ['tar.gz', tarFixture(parentFileEntries), validateTarGzArchive]
+  ]) {
+    const archive = path.join(testDirectory, `file-parent.${extension}`);
+    await writeFile(archive, bytes);
+    await assert.rejects(validate(archive, 'Fixture.app'), /descendant beneath a file/);
+  }
   const safeZip = path.join(testDirectory, 'safe.zip');
   await writeFile(safeZip, zipFixture([
     { path: 'Fixture.app/', type: 'directory' },
