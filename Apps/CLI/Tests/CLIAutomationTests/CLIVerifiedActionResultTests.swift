@@ -178,11 +178,30 @@ struct CLIVerifiedActionResultTests {
             for: promoted,
             operation: "Window focus"
         ) == "✅ Window focus confirmed")
-        #expect(verifiedNoChange == .confirmedNoChange(route: .bridge))
+        #expect(try verifiedNoChange == .suspectedNoop(
+            route: .bridge,
+            delivery: #require(dispatched.delivery),
+            unitCount: dispatched.dispatchState.unitCount
+        ))
+        #expect(verifiedNoChange.delivery == dispatched.delivery)
+        #expect(verifiedNoChange.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(3))
+        let noChangeEnvelope = try makeSuccessEnvelope(
+            data: Empty?.none,
+            effect: .unverifiable,
+            outcome: verifiedNoChange,
+            targetIdentity: Self.windowTarget()
+        )
+        #expect(noChangeEnvelope.outcome?.state == .suspectedNoop)
+        #expect(ActionOutcomeHumanRenderer.statusLine(
+            for: verifiedNoChange,
+            operation: "Window focus"
+        ) == "⚠️ Window focus may have had no effect; refresh the target before retrying")
 
         let noChange = DesktopActionOutcome.confirmedNoChange(route: .bridge)
         let idempotent = try #require(canonicalActionOutcomeAfterSuccessfulVerification(noChange))
         #expect(idempotent == noChange)
+        #expect(try canonicalActionOutcomeAfterSuccessfulVerification(noChange, observedChange: false) == noChange)
+        #expect(idempotent.dispatchState == DesktopActionOutcome.DispatchState.none)
         #expect(ActionOutcomeHumanRenderer.statusLine(
             for: idempotent,
             operation: "Dock launch"
