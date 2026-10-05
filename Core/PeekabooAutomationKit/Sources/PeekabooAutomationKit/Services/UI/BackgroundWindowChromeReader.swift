@@ -199,8 +199,17 @@ enum BackgroundWindowChromeReader {
             }
             let geometry = BackgroundWindowChromeGeometry(
                 bounds: self.target.bounds, windowControls: controls, occupiedFrames: occupied)
-            guard let point = retained?.point ?? geometry.candidatePoint(), geometry.admits(point) else {
-                throw Self.refusal("The retained blank chrome point is no longer admitted by current geometry.")
+            let point: CGPoint
+            if let retained {
+                guard geometry.admits(retained.point) else {
+                    throw Self.refusal("The retained blank chrome point is no longer admitted by current geometry.")
+                }
+                point = retained.point
+            } else {
+                guard let candidate = geometry.candidatePoint() else {
+                    throw Self.refusal("No blank standard-window chrome point meets the required clearance.")
+                }
+                point = candidate
             }
             let hit: AXUIElement = try self.call(application) {
                 guard let hit = self.access.hit(application, point), CFEqual(hit, window)

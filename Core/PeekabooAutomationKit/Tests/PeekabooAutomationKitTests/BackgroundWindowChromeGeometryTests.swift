@@ -38,6 +38,21 @@ struct BackgroundWindowChromeGeometryTests {
     }
 
     @Test
+    func `recorded long title leaves only gaps below the required clearance`() {
+        let geometry = BackgroundWindowChromeGeometry(
+            bounds: CGRect(x: 32, y: 70, width: 580, height: 392),
+            windowControls: [
+                CGRect(x: 40, y: 78, width: 16, height: 16),
+                CGRect(x: 63, y: 78, width: 16, height: 16),
+                CGRect(x: 86, y: 78, width: 16, height: 16),
+            ],
+            occupiedFrames: [CGRect(x: 114, y: 78, width: 488, height: 16)])
+        #expect(geometry.candidatePoint() == nil)
+        #expect(!geometry.admits(CGPoint(x: 108, y: 86)))
+        #expect(!geometry.admits(CGPoint(x: 607, y: 86)))
+    }
+
+    @Test
     func `opaque overlapping chrome leaves no admitted point`() {
         let geometry = Self.fixture(extra: [CGRect(x: 32, y: 70, width: 580, height: 40)])
         #expect(geometry.candidatePoint() == nil)

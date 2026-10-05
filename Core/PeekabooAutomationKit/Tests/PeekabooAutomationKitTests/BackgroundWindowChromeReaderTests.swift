@@ -148,6 +148,37 @@ struct BackgroundWindowChromeReaderTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func `no initial chrome gap is distinguished from invalidated retained geometry`(revalidation: Bool) throws {
+        let fixture = Fixture()
+        let retained = revalidation
+            ? try BackgroundWindowChromeReader.read(target: fixture.target(), access: fixture.access()) : nil
+        var access = fixture.access()
+        let attribute = access.attribute
+        access.attribute = { element, name in
+            if name == kAXSizeAttribute, CFEqual(element, fixture.nodes[4]) {
+                var size = CGSize(width: 488, height: 16)
+                return (.success, AXValueCreate(.cgSize, &size))
+            }
+            return attribute(element, name)
+        }
+        var hitCount = 0
+        access.hit = { _, _ in
+            hitCount += 1
+            return fixture.nodes[0]
+        }
+        let failure = #expect(throws: DesktopActionFailure.self) {
+            try BackgroundWindowChromeReader.read(target: fixture.target(), retained: retained, access: access)
+        }
+        #expect(failure?.causeDescription == (revalidation
+                ? "The retained blank chrome point is no longer admitted by current geometry."
+                : "No blank standard-window chrome point meets the required clearance."))
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.retrySafety == .safe)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(hitCount == 0)
+    }
+
     @Test
     func `native read refusal retains content-free diagnostic cause`() throws {
         let fixture = Fixture()
