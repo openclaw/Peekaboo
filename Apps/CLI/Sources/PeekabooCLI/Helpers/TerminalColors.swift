@@ -66,8 +66,8 @@ enum TerminalTitleProcessWaitError: Error {
 /// Foundation's `waitUntilExit()` can block forever if a wedged `vt` is first on PATH.
 nonisolated func waitForTerminalTitleProcessExit(
     _ process: Process,
-    timeoutSeconds: TimeInterval = 2
-) throws {
+    timeoutSeconds: TimeInterval = 2) throws
+{
     do {
         try waitForProcessExit(process, timeoutSeconds: timeoutSeconds)
     } catch ProcessWaitError.timedOut {
