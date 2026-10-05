@@ -102,63 +102,67 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Escape user text for a quoted NSPredicate string literal.
+predicate_literal() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s' "$value"
+}
+
 # Build predicate - either specific subsystem or all Peekaboo subsystems
 if [[ -n "$SUBSYSTEM" ]]; then
-    PREDICATE="subsystem == \"$SUBSYSTEM\""
+    PREDICATE="subsystem == \"$(predicate_literal "$SUBSYSTEM")\""
 else
     # Match all Peekaboo-related subsystems
     PREDICATE="(subsystem == \"boo.peekaboo.core\" OR subsystem == \"boo.peekaboo.inspector\" OR subsystem == \"boo.peekaboo.playground\" OR subsystem == \"boo.peekaboo.app\" OR subsystem == \"boo.peekaboo\" OR subsystem == \"boo.peekaboo.axorcist\" OR subsystem == \"boo.peekaboo.cli\")"
 fi
 
 if [[ -n "$CATEGORY" ]]; then
-    PREDICATE="$PREDICATE AND category == \"$CATEGORY\""
+    PREDICATE="$PREDICATE AND category == \"$(predicate_literal "$CATEGORY")\""
 fi
 
 if [[ -n "$SEARCH" ]]; then
-    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$SEARCH\""
+    PREDICATE="$PREDICATE AND eventMessage CONTAINS[c] \"$(predicate_literal "$SEARCH")\""
 fi
 
-# Build command
-# Add sudo prefix if private flag is set
-SUDO_PREFIX=""
+# Keep arguments as data throughout command construction and execution.
+CMD=(log)
 if [[ "$PRIVATE" == true ]]; then
-    SUDO_PREFIX="sudo -n "
+    CMD=(sudo -n log)
 fi
 
 if [[ "$FOLLOW" == true ]]; then
-    CMD="${SUDO_PREFIX}log stream --predicate '$PREDICATE' --level $LEVEL"
+    CMD+=(stream --predicate "$PREDICATE" --level "$LEVEL")
 else
-    # log show uses different flags for log levels
     case $LEVEL in
         debug)
-            CMD="${SUDO_PREFIX}log show --predicate '$PREDICATE' --debug --last $TIME"
+            CMD+=(show --predicate "$PREDICATE" --debug --last "$TIME")
             ;;
         error)
-            # For errors, we need to filter by eventType in the predicate
             PREDICATE="$PREDICATE AND eventType == \"error\""
-            CMD="${SUDO_PREFIX}log show --predicate '$PREDICATE' --info --debug --last $TIME"
+            CMD+=(show --predicate "$PREDICATE" --info --debug --last "$TIME")
             ;;
         *)
-            CMD="${SUDO_PREFIX}log show --predicate '$PREDICATE' --info --last $TIME"
+            CMD+=(show --predicate "$PREDICATE" --info --last "$TIME")
             ;;
     esac
 fi
 
 if [[ "$JSON" == true ]]; then
-    CMD="$CMD --style json"
+    CMD+=(--style json)
 fi
 
-# Execute command
 if [[ -n "$OUTPUT" ]]; then
     if [[ "$NO_TAIL" == true ]]; then
-        eval $CMD > "$OUTPUT"
+        "${CMD[@]}" > "$OUTPUT"
     else
-        eval $CMD | tail -n $LINES > "$OUTPUT"
+        "${CMD[@]}" | tail -n "$LINES" > "$OUTPUT"
     fi
 else
     if [[ "$NO_TAIL" == true ]]; then
-        eval $CMD
+        "${CMD[@]}"
     else
-        eval $CMD | tail -n $LINES
+        "${CMD[@]}" | tail -n "$LINES"
     fi
 fi
