@@ -29,6 +29,11 @@ Core/PeekabooCore/Sources/PeekabooAgentRuntime/ToolFormatting/
 
 Duration displays use `FormattingUtilities.formatDetailedDuration`; formatter subclasses share the base truncation helper.
 
+Double-to-integer display conversion is owned by `ToolResultExtractor`. Unrepresentable or non-finite optional numbers
+are omitted, with count/pointer truncation and element-frame nearest rounding preserved. Container lookup remains
+consumer-specific: pointer summaries do not gain string or wrapped-coordinate support. A supplied but unusable shell
+exit code is reported as unavailable, not as success; the legacy absent-exit-code fallback remains unchanged.
+
 The registry is available as `ToolFormatterRegistry.shared` or as a separately initialized registry in tests.
 
 ### Mac App Consumption

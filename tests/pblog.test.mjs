@@ -1,57 +1,14 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { logScriptFixture, streamBeforeRelease, success } from './fixtures/log-script.mjs';
 
 const script = process.env.PBLOG_SCRIPT || fileURLToPath(new URL('../scripts/pblog.sh', import.meta.url));
 
 function fixture(t) {
-  const directory = mkdtempSync(path.join(tmpdir(), 'peekaboo-pblog-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const argsPath = path.join(directory, 'log-args');
-  const sudoArgsPath = path.join(directory, 'sudo-args');
-  writeFileSync(path.join(directory, 'log'), `#!/bin/bash
-printf '%s\\0' "$@" > "$PBLOG_TEST_ARGS"
-printf 'first\\nsecond\\nthird\\n'
-exit "\${PBLOG_TEST_EXIT:-0}"
-`, { mode: 0o755 });
-  writeFileSync(path.join(directory, 'sudo'), `#!/bin/bash
-printf '%s\\0' "$@" > "$PBLOG_TEST_SUDO_ARGS"
-[[ "$1" == -n && "$2" == log ]] || exit 99
-[[ "$PBLOG_TEST_SUDO_EXIT" == 0 ]] || exit "$PBLOG_TEST_SUDO_EXIT"
-shift 2
-exec log "$@"
-`, { mode: 0o755 });
-  const readArgs = (file) => existsSync(file) ? readFileSync(file, 'utf8').split('\0').slice(0, -1) : [];
-  return {
-    directory,
-    args: () => readArgs(argsPath),
-    sudoArgs: () => readArgs(sudoArgsPath),
-    run: (args, environment = {}) => spawnSync('/bin/bash', [script, ...args], {
-      cwd: directory,
-      encoding: 'utf8',
-      timeout: 3000,
-      env: {
-        ...process.env,
-        PATH: `${directory}:${process.env.PATH}`,
-        PBLOG_TEST_ARGS: argsPath,
-        PBLOG_TEST_SUDO_ARGS: sudoArgsPath,
-        PBLOG_TEST_EXIT: '0',
-        PBLOG_TEST_SUDO_EXIT: '0',
-        ...environment,
-      },
-    }),
-  };
-}
-
-function success(result) {
-  assert.equal(result.error, undefined);
-  assert.equal(result.signal, null);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
+  return logScriptFixture(t, script);
 }
 
 test('literal predicates retain apostrophes, quotes, slashes, shell text and trailing newlines', (t) => {
@@ -185,56 +142,14 @@ for (const outputFile of [false, true]) {
 for (const outputFile of [false, true]) {
   for (const json of [false, true]) {
     test(`follow forwards ${json ? 'JSON' : 'text'} to ${outputFile ? 'a file' : 'stdout'} before releasing the producer`, async (t) => {
-      const f = fixture(t);
-      const outputPath = path.join(f.directory, 'live.log');
-      const event = json ? '{"event":"owned live event"}' : 'owned live event';
-      writeFileSync(path.join(f.directory, 'log'), `#!/bin/bash
-printf '%s\\n' '${event}'
-IFS= read -r release
-[[ "$release" == release ]] || exit 91
-`, { mode: 0o755 });
-      const child = spawn('/bin/bash', [script, '--follow', '--lines', '1', ...(json ? ['--json'] : []), ...(outputFile ? ['--output', outputPath] : [])], {
-        cwd: f.directory, env: { ...process.env, PATH: `${f.directory}:${process.env.PATH}` },
-        detached: true, stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      let output = '', stderr = '', closed = false, released = false, observedBeforeRelease = false;
-      const completion = new Promise((resolve) => {
-        child.once('error', (error) => resolve({ error }));
-        child.once('close', (code, signal) => { closed = true; resolve({ code, signal }); });
-      });
-      const killOwnedGroup = () => {
-        if (closed || !Number.isInteger(child.pid)) return;
-        try { process.kill(-child.pid, 'SIGKILL'); }
-        catch (error) { if (error.code !== 'ESRCH') throw error; }
-      };
-      const release = (observed) => {
-        if (released || closed) return;
-        released = true;
-        observedBeforeRelease = observed;
-        child.stdin.end('release\n');
-      };
-      const observe = () => {
-        const current = outputFile ? (existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : '') : output;
-        if (current.includes(`${event}\n`)) release(true);
-      };
-      child.stdin.on('error', () => {});
-      child.stdout.on('data', (chunk) => { output += chunk; observe(); });
-      child.stderr.on('data', (chunk) => { stderr += chunk; });
-      const poll = outputFile ? setInterval(observe, 10) : undefined;
-      // The fallback ends a broken, EOF-buffering pipeline; it is not a latency assertion.
-      const fallback = setTimeout(() => release(false), 3000);
-      const deadline = setTimeout(killOwnedGroup, 5000);
-      t.after(killOwnedGroup);
-      let result;
-      try { result = await completion; }
-      finally { clearInterval(poll); clearTimeout(fallback); clearTimeout(deadline); killOwnedGroup(); }
+      const result = await streamBeforeRelease(t, script, { outputFile, json });
       assert.equal(result.error, undefined);
       assert.equal(result.signal, null);
-      assert.equal(result.code, 0, stderr);
-      assert.equal(stderr, '');
-      assert.equal(observedBeforeRelease, true, 'Event was withheld until the test released its producer');
-      assert.equal(outputFile ? readFileSync(outputPath, 'utf8') : output, `${event}\n`);
-      if (outputFile) assert.equal(output, '');
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.stderr, '');
+      assert.equal(result.observedBeforeRelease, true, 'Event was withheld until the test released its producer');
+      assert.equal(outputFile ? result.file : result.stdout, `${result.event}\n`);
+      if (outputFile) assert.equal(result.stdout, '');
     });
   }
 }

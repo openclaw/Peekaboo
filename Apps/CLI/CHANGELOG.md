@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve fractional timeout durations in command and dialog diagnostics instead of truncating them to whole seconds, without changing deadlines or error codes. Thanks @rudycelekli! #946.
 - Strip terminal control scalars from agent/task titles before both VibeTunnel and ANSI output, preserving Unicode joiners and preventing embedded title text from injecting terminal commands. Thanks @rudycelekli! #964.
 - Preserve pending native-operation evidence when combining action receipts, without downgrading it to accepted delivery or weakening response-loss and retry-safety semantics. Thanks @rudycelekli! #944.
+- Avoid agent-summary crashes on unrepresentable numeric metadata, preserve each consumer's rounding and lookup rules, and report unusable shell exit codes as unavailable rather than success. Thanks @rudycelekli! #961.
 - Escape update-feed URLs and metadata as XML while preserving decoded values and literal replacement characters, including multi-parameter URLs. Thanks @rudycelekli! #935.
 - Validate Swift compatibility-library loader paths and required library architectures per executable slice, so another architecture cannot hide a missing path. Thanks @rudycelekli! #937.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve complete JSON log output and forward live events without waiting for stream completion; retain line limits for completed text queries. Thanks @rudycelekli! #958.
 - Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
 - Keep MCP wrapper imports free of server-start side effects for eval, print and stdin consumers, including arguments matching its own path or symlink; preserve real entrypoints and unrelated filesystem errors. Thanks @rudycelekli! #948.
+- Keep Playground log filters and message text literal, reject missing option values, preserve export failures and complete JSON/live output, and match native error severity. Thanks @rudycelekli! #968.
 
 ## 4.8.0 - 2026-10-03
 

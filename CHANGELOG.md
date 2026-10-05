@@ -9,6 +9,7 @@
 - Reject malformed or overflowing release versions before computing build numbers, preserving stable versions and supported alpha/beta/rc aliases instead of allowing extra identifiers to alias a different build. Thanks @rudycelekli! #936.
 - Require explicit npm error codes when detecting unpublished versions; server/authentication failures and contradictory responses no longer become absence merely because a diagnostic contains E404. Thanks @rudycelekli! #965.
 - Reject symlinked or nonregular controller sources and catalogs when producing source receipts, while preserving regular executable files and frozen-commit receipts. Thanks @rudycelekli! #957.
+- Bound ZIP data descriptors before allocating or reading their untrusted gap, preserving valid descriptor checks while avoiding malformed-archive memory amplification. Thanks @rudycelekli! #967.
 - Avoid redundant PNG encoding for unchanged live capture frames, preserving original bytes and metadata while retaining transformed-frame encoding, actual-byte caps, and artifact validation.
 - Show eligible visualizer overlays from a hidden companion app without unhiding or activating it, accepting input, or changing background-input suppression.
 - Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
@@ -26,6 +27,7 @@
 - Update AXorcist to 0.2.1 to unwrap live Accessibility values and clear inherited typing and final hotkey modifier flags. Thanks @jandubois! #797.
 - Keep CLI and MCP action summaries explicit about unverified or unreported receiver effects, and report paste clipboard cleanup separately without changing canonical outcomes, JSON, retry rules, or exit status.
 - Strip terminal control scalars from agent/task titles before both VibeTunnel and ANSI output, preserving Unicode joiners and preventing embedded title text from injecting terminal commands. Thanks @rudycelekli! #964.
+- Avoid agent-summary crashes on unrepresentable numeric metadata, preserve each consumer's rounding and lookup rules, and report unusable shell exit codes as unavailable rather than success. Thanks @rudycelekli! #961.
 - Preserve apostrophes and escaped characters in JSON documentation reading hints, retaining the legacy single-quoted fallback and malformed-input diagnostics. Thanks @rudycelekli! #941.
 - Explain evaluated Bridge host requirements when `see --fresh` cannot obtain authenticated producer-bound snapshots, instead of incorrectly claiming fresh AX is unsupported or a binary update is sufficient; preserve host selection, trust, and error codes.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
@@ -35,6 +37,7 @@
 - Keep MCP wrapper imports free of server-start side effects for eval, print and stdin consumers, including arguments matching its own path or symlink; preserve real entrypoints and unrelated filesystem errors. Thanks @rudycelekli! #948.
 - Refuse companion-app deployment when source or staged directory permissions prevent moving or cleaning up the bundle, before stopping the running GUI, while preserving read-only files and leaving artifact permissions unchanged.
 - Stop inferring a captured window's main state from selection, list position, or visibility; retain the existing `false`/unavailable convention and preserve already-supplied main-state metadata without extra Accessibility reads.
+- Keep Playground log filters and message text literal, reject missing option values, preserve export failures and complete JSON/live output, and match native error severity. Thanks @rudycelekli! #968.
 
 ## 4.8.0 - 2026-10-03
 
