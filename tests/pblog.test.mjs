@@ -66,7 +66,7 @@ test('historical debug and error queries preserve flags and mock-only sudo', (t)
   success(f.run(['--all', '--debug', '--subsystem', 'boo.test']));
   assert.deepEqual(f.args(), ['show', '--predicate', 'subsystem == "boo.test"', '--debug', '--last', '5m']);
   success(f.run(['--private', '--all', '--errors', '--subsystem', 'boo.test']));
-  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND eventType == "error"', '--info', '--debug', '--last', '5m'];
+  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND logType == "error"', '--info', '--debug', '--last', '5m'];
   assert.deepEqual(f.args(), expected);
   assert.deepEqual(f.sudoArgs(), ['-n', 'log', ...expected]);
 });
@@ -96,4 +96,42 @@ test('unpiped log exit status is preserved', (t) => {
   assert.equal(result.error, undefined);
   assert.equal(result.signal, null);
   assert.equal(result.status, 7);
+});
+
+const valueOptions = ['-n', '--lines', '-l', '--last', '-c', '--category', '-s', '--search', '-o', '--output', '--subsystem'];
+for (const option of valueOptions) {
+  test(`missing value for ${option}`, (t) => {
+    const f = fixture(t);
+    const result = f.run([option]);
+    assert.equal(result.error, undefined, 'The parser must terminate before the subprocess timeout');
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, `${option} requires a value\n`);
+    assert.deepEqual(f.args(), []);
+    assert.deepEqual(f.sudoArgs(), []);
+  });
+
+  test(`supplied values for ${option} preserve parsing before help`, (t) => {
+    const f = fixture(t);
+    for (const value of ['fixture', '', '-literal']) {
+      const result = f.run([option, value, '--help']);
+      success(result);
+      assert.match(result.stdout, /^Usage: pblog.sh/);
+      assert.deepEqual(f.args(), []);
+      assert.deepEqual(f.sudoArgs(), []);
+    }
+  });
+}
+
+test('a trailing missing value fails after preceding valid options, before private log access', (t) => {
+  const f = fixture(t);
+  const result = f.run(['--private', '--debug', '--last', '5m', '--search', 'literal text', '--output']);
+  assert.equal(result.error, undefined);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '--output requires a value\n');
+  assert.deepEqual(f.args(), []);
+  assert.deepEqual(f.sudoArgs(), []);
 });
