@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Retain failed browser connection attempts across ordinary provider tools and invalidate cached verification after socket loss, preventing implicit reconnects and stale success. Thanks @rudycelekli! #949.
 - Preserve literal log-helper search and filter text without shell re-parsing, including quotes, backslashes and trailing newlines; retain output, streaming and private-mode arguments. Thanks @rudycelekli! #934.
 - Reject missing log-helper option values promptly with a targeted usage error instead of looping indefinitely, before any log access; match native log severity for historical error-only queries. Thanks @rudycelekli! #938.
 - Preserve conventional shell exit statuses when a wrapped source-build command is terminated by a signal, while retaining mapping integrity checks and lock cleanup. Thanks @rudycelekli! #932.
@@ -15,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix the Playground log wrapper's moved script path and clarify repository-root examples, preserving arguments and exit status. Thanks @rudycelekli! #933.
 - Fix signed Bridge typing receipts after already-empty clears and already-satisfied caret moves, preserving zero-dispatch no-ops and strict key, delivery and dispatch-count validation.
 - Preserve accepted dispatch evidence and retry-unsafe status after unchanged readback instead of reporting a no-dispatch no-op or a safe retry; positively observed changes still confirm the action. Thanks @rudycelekli! #942.
+- Preserve recorded response-loss evidence when action sequences or quit batches are cancelled, retaining indeterminate outcomes and unsafe retry guidance. Thanks @rudycelekli! #943.
 - Share native and Bridge literal-replacement eligibility without changing confirmation policy, and clarify typing-unit versus native-event counts.
 - Accept equivalent PID aliases consistently in read-only window listing and target resolution, while retaining conflicting-PID errors and strict single-selector mutation gates. Thanks @rudycelekli! #945.
 - Clarify `type --clear` help and generated learning guidance to distinguish eligible native Accessibility clearing from keyboard routes, without changing delivery, targeting, or success rules.

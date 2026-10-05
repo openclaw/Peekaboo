@@ -259,7 +259,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 outcome: .indeterminate(
                     route: completedOutcome?.route ?? fallbackRoute,
                     delivery: nil,
-                    evidence: .completionUnknown,
+                    evidence: sequence.hasReportedResponseLoss ? .responseLost : .completionUnknown,
                     unitCount: sequence.mutationDisposition.unitCount),
                 fallbackEffect: .unverifiable)
         }
@@ -445,7 +445,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
         return .indeterminate(
             route: self.dispatchedRoute.value ?? fallbackRoute,
             delivery: self.dispatchedRoute.value == nil ? nil : self.dispatchedDelivery.value,
-            evidence: .completionUnknown,
+            evidence: self.hasReportedResponseLoss ? .responseLost : .completionUnknown,
             unitCount: self.mutationDisposition.unitCount,
             message: message,
             hint: hint,
