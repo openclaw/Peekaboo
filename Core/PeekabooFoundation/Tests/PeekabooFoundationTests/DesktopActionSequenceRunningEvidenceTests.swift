@@ -20,7 +20,8 @@ struct DesktopActionSequenceRunningEvidenceTests {
 
         let batch = try #require(DesktopActionSequenceAccumulator.completedBatch(
             outcomes: [running, .confirmedChange(route: .bridge, delivery: delivery, unitCount: .one)],
-            succeededCount: 1, attemptedCount: 2))
+            succeededCount: 1,
+            attemptedCount: 2))
         #expect(batch.evidence == .operationStillRunning)
         #expect(batch.dispatchState.unitCount?.rawValue == 2)
     }
@@ -30,7 +31,8 @@ struct DesktopActionSequenceRunningEvidenceTests {
         var sequence = DesktopActionSequenceAccumulator()
         sequence.record(.outcome(.dispatchedUnverified(
             delivery: .init(mechanism: .nativeFramework, mode: .background),
-            evidence: .deliveryAccepted, unitCount: .one)))
+            evidence: .deliveryAccepted,
+            unitCount: .one)))
         #expect(try #require(sequence.successResolution().outcome).evidence == .deliveryAccepted)
     }
 }
