@@ -273,6 +273,10 @@ enum PeekabooBridgeOperationResultSemantics {
             specialKeyPresses: Int?,
             outcome: DesktopActionOutcome) -> Bool
         {
+            guard keyPresses >= 0 else { return false }
+            if let specialKeyPresses, !(0...keyPresses).contains(specialKeyPresses) {
+                return false
+            }
             guard outcome.state != .confirmedChange || self.allowsConfirmedChange else { return false }
             let dispatchUnits: Int
             let expectedUsesAccessibility: Bool
@@ -295,85 +299,51 @@ enum PeekabooBridgeOperationResultSemantics {
             }
 
             let baseUnits = self.minimumDispatchUnits
-            for fallbackClearCount in 0...self.flexibleClearCount {
-                let activeNoChangeKeys = dispatchUnits - baseUnits - fallbackClearCount
-                guard (0...self.noChangeCapableAccessibilityKeys).contains(activeNoChangeKeys) else { continue }
+            guard dispatchUnits >= baseUnits else { return false }
+            let maximumKeyboardClears = min(self.flexibleClearCount, (dispatchUnits - baseUnits) / 2)
+            for fallbackClearCount in 0...maximumKeyboardClears {
+                let keyboardClearUnits = fallbackClearCount * 2
+                let remainingUnits = dispatchUnits - baseUnits - keyboardClearUnits
+                let remainingClears = self.flexibleClearCount - fallbackClearCount
+                let flexibleEvents: Int
+                let flexibleUnits: Int
+                let textUsesAccessibility: Bool
+                let textUsesKeyboard: Bool
 
                 if let specialKeyPresses {
-                    if self.acceptsExplicitSpecialKeyCount(
-                        keyPresses: keyPresses,
-                        specialKeyPresses: specialKeyPresses,
-                        activeNoChangeKeys: activeNoChangeKeys,
-                        fallbackClearCount: fallbackClearCount,
-                        expectedDeliveryShape: (
-                            usesAccessibility: expectedUsesAccessibility,
-                            usesKeyboard: expectedUsesKeyboard))
-                    {
-                        return true
-                    }
-                    continue
+                    let textKeyPresses = keyPresses - specialKeyPresses
+                    let requiredSpecialKeys = self.fixedSpecialEventKeyPresses + keyboardClearUnits
+                    guard textKeyPresses >= self.fixedTextEventKeyPresses,
+                          specialKeyPresses >= requiredSpecialKeys
+                    else { continue }
+                    let textEvents = textKeyPresses - self.fixedTextEventKeyPresses
+                    guard textEvents <= self.flexibleTextAccessibilityUnits else { continue }
+                    flexibleEvents = specialKeyPresses - requiredSpecialKeys
+                    flexibleUnits = self.flexibleSpecialAccessibilityUnits
+                    textUsesAccessibility = textEvents < self.flexibleTextAccessibilityUnits
+                    textUsesKeyboard = textEvents > 0
+                } else {
+                    let requiredKeys = self.fixedEventKeyPresses + keyboardClearUnits
+                    guard keyPresses >= requiredKeys else { continue }
+                    flexibleEvents = keyPresses - requiredKeys
+                    flexibleUnits = self.flexibleAccessibilityUnits
+                    textUsesAccessibility = false
+                    textUsesKeyboard = false
                 }
 
-                let flexibleEventKeyPresses = keyPresses - self.fixedEventKeyPresses - fallbackClearCount * 2
-                guard flexibleEventKeyPresses >= 0 else { continue }
-                let minimumFlexibleEvents = max(
+                // Remaining clears may do nothing or one AX write. Together with active optional keys,
+                // their unit sum is fixed, so a bounded interval replaces enumerating every allocation.
+                let minimumActiveKeys = max(
                     0,
-                    flexibleEventKeyPresses - activeNoChangeKeys)
-                let maximumFlexibleEvents = min(
-                    self.flexibleAccessibilityUnits,
-                    flexibleEventKeyPresses)
-                guard minimumFlexibleEvents <= maximumFlexibleEvents else { continue }
+                    max(remainingUnits - remainingClears, flexibleEvents - flexibleUnits))
+                let maximumActiveKeys = min(self.noChangeCapableAccessibilityKeys, remainingUnits)
+                guard minimumActiveKeys <= maximumActiveKeys else { continue }
 
                 let usesKeyboard = self.fixedEventDispatchUnits > 0 ||
-                    flexibleEventKeyPresses > 0 || fallbackClearCount > 0
-                guard usesKeyboard == expectedUsesKeyboard else { continue }
-
-                let accessibilityIsUnavoidable = self.additionalAccessibilityUnits > 0 ||
-                    fallbackClearCount < self.flexibleClearCount
-                let noAccessibilityCandidate = !accessibilityIsUnavoidable &&
-                    maximumFlexibleEvents == self.flexibleAccessibilityUnits &&
-                    activeNoChangeKeys - flexibleEventKeyPresses + maximumFlexibleEvents == 0
-                let candidateCount = maximumFlexibleEvents - minimumFlexibleEvents + 1
-                let hasAccessibilityCandidate = accessibilityIsUnavoidable ||
-                    !noAccessibilityCandidate || candidateCount > 1
-                if expectedUsesAccessibility ? hasAccessibilityCandidate : noAccessibilityCandidate {
-                    return true
-                }
-            }
-            return false
-        }
-
-        private func acceptsExplicitSpecialKeyCount(
-            keyPresses: Int,
-            specialKeyPresses: Int,
-            activeNoChangeKeys: Int,
-            fallbackClearCount: Int,
-            expectedDeliveryShape: (usesAccessibility: Bool, usesKeyboard: Bool)) -> Bool
-        {
-            guard specialKeyPresses >= 0, specialKeyPresses <= keyPresses else { return false }
-            let textEvents = keyPresses - specialKeyPresses - self.fixedTextEventKeyPresses
-            guard (0...self.flexibleTextAccessibilityUnits).contains(textEvents) else { return false }
-            let flexibleSpecialEvents = specialKeyPresses - self.fixedSpecialEventKeyPresses -
-                fallbackClearCount * 2
-            guard flexibleSpecialEvents >= 0 else { return false }
-            let minimumSpecialEvents = max(0, flexibleSpecialEvents - activeNoChangeKeys)
-            let maximumSpecialEvents = min(
-                self.flexibleSpecialAccessibilityUnits,
-                flexibleSpecialEvents)
-            guard minimumSpecialEvents <= maximumSpecialEvents else { return false }
-
-            for directCapableSpecialEvents in minimumSpecialEvents...maximumSpecialEvents {
-                let noChangeKeyEvents = flexibleSpecialEvents - directCapableSpecialEvents
-                let usesAccessibility = self.additionalAccessibilityUnits > 0 ||
-                    fallbackClearCount < self.flexibleClearCount ||
-                    textEvents < self.flexibleTextAccessibilityUnits ||
-                    directCapableSpecialEvents < self.flexibleSpecialAccessibilityUnits ||
-                    noChangeKeyEvents < activeNoChangeKeys
-                let usesKeyboard = self.fixedEventDispatchUnits > 0 || textEvents > 0 ||
-                    directCapableSpecialEvents > 0 || noChangeKeyEvents > 0 || fallbackClearCount > 0
-                if usesAccessibility == expectedDeliveryShape.usesAccessibility,
-                   usesKeyboard == expectedDeliveryShape.usesKeyboard
-                {
+                    textUsesKeyboard || flexibleEvents > 0 || fallbackClearCount > 0
+                let usesAccessibility = self.additionalAccessibilityUnits > 0 || textUsesAccessibility ||
+                    flexibleUnits + remainingUnits > flexibleEvents
+                if usesKeyboard == expectedUsesKeyboard, usesAccessibility == expectedUsesAccessibility {
                     return true
                 }
             }
@@ -389,12 +359,11 @@ enum PeekabooBridgeOperationResultSemantics {
         }
 
         private var minimumDispatchUnits: Int {
-            self.fixedEventDispatchUnits + self.flexibleAccessibilityUnits + self.flexibleClearCount +
-                self.additionalAccessibilityUnits
+            self.fixedEventDispatchUnits + self.flexibleAccessibilityUnits + self.additionalAccessibilityUnits
         }
 
         private var maximumDispatchUnits: Int {
-            self.minimumDispatchUnits + self.noChangeCapableAccessibilityKeys + self.flexibleClearCount
+            self.minimumDispatchUnits + self.noChangeCapableAccessibilityKeys + self.flexibleClearCount * 2
         }
 
         private static func deliveryShape(

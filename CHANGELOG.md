@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix signed Bridge typing receipts after already-empty clears and already-satisfied caret moves, preserving zero-dispatch no-ops and strict key, delivery and dispatch-count validation.
 - Distinguish missing blank title-bar space from changed retained geometry in background paste preparation diagnostics, without relaxing clearance or input guards.
 - Update AXorcist to 0.2.1 to unwrap live Accessibility values and clear inherited typing and final hotkey modifier flags. Thanks @jandubois! #797.
 - Keep CLI and MCP action summaries explicit about unverified or unreported receiver effects, and report paste clipboard cleanup separately without changing canonical outcomes, JSON, retry rules, or exit status.

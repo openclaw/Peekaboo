@@ -31,6 +31,9 @@ later text, selection, receiver, window or process-generation drift stops the un
 If the requested range is already present with the expected text, no selection write is sent. A value no-op retains the original
 state's authority, and missing or incoherent post-write evidence remains indeterminate and unsafe to retry.
 Focused-text edits preserve exact Unicode storage; canonically equivalent text is not an automatic no-op.
+An already-empty clear or already-satisfied caret move contributes no dispatch units. Signed Bridge receipts preserve
+those no-ops while separately accounting for subsequent text writes and keyboard fallback; they do not invent a write
+or reject a delivered text edit merely because its preceding clear needed no work.
 Cancellation prevents starting keyboard fallback or another stroke; an already-started stroke still finishes its
 key-up cleanup, and any accepted prefix remains unsafe to replay.
 

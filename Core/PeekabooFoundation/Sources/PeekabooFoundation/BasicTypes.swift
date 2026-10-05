@@ -137,10 +137,10 @@ public enum SpecialKey: String, Sendable, Codable {
         }
     }
 
-    /// Deletion at an empty boundary can be handled without issuing either an AX write or key event.
+    /// An already-satisfied deletion or caret move can finish without an AX write or key event.
     public var mayCompleteWithoutDispatch: Bool {
         switch self {
-        case .delete, .forwardDelete:
+        case .delete, .forwardDelete, .leftArrow, .rightArrow, .home, .end:
             true
         default:
             false

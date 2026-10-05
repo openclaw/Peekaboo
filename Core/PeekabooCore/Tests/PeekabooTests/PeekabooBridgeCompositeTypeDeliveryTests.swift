@@ -275,6 +275,58 @@ struct PeekabooBridgeCompositeTypeDeliveryTests {
     }
 
     @Test
+    func `signed exact typing preserves no-op clears and the literal text units`() async throws {
+        let automation = CompositeTypeAutomationService()
+        let services = StubServices(automation: automation)
+        let target = try BridgeInputCapabilityFixture.exactTarget()
+        let fixture = try await BridgeInputCapabilityFixture.startHost(
+            services: services,
+            supportedVersions: PeekabooBridgeConstants.minimumProtocolVersion...Self.featureVersion,
+            allowedOperations: [.exactWindowTargetedTypeActions])
+        defer { Task { await fixture.host.stop() } }
+        _ = try await fixture.client.handshake(client: Self.clientIdentity)
+        automation.uiAutomationOutcomeTargetIdentity = DesktopTargetIdentity(exactWindow: target.exactWindow)
+
+        for special: Int? in [nil, 0] {
+            automation.typeResultOverride = TypeResult(totalCharacters: 0, keyPresses: 0, specialKeyPresses: special)
+            automation.actionOutcome = .confirmedNoChange()
+            let clear = try await fixture.client.typeActionsWithOutcome(
+                [.clear, .clear],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: Self.snapshotID,
+                target: target.keyboardTarget)
+            #expect(clear.outcome?.state == .confirmedNoChange)
+            #expect(clear.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(clear.outcome?.delivery == nil)
+
+            for (text, confirmsChange) in [("x", true), ("PB ef7: Café e\u{301} 👩🏽‍💻", false)] {
+                automation.typeResultOverride = TypeResult(
+                    totalCharacters: text.count,
+                    keyPresses: 0,
+                    specialKeyPresses: special)
+                let delivery = DesktopActionOutcome.Delivery(mechanism: .accessibilityValue, mode: .background)
+                automation.actionOutcome = confirmsChange
+                    ? .confirmedChange(delivery: delivery, unitCount: .init(text.count))
+                    : .dispatchedUnverified(
+                        delivery: delivery,
+                        evidence: .deliveryAccepted,
+                        unitCount: .init(text.count))
+                let typed = try await fixture.client.typeActionsWithOutcome(
+                    [.clear, .text(text)],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotId: Self.snapshotID,
+                    target: target.keyboardTarget)
+                #expect(typed.payload.totalCharacters == text.count)
+                #expect(typed.payload.keyPresses == 0)
+                #expect(typed.outcome?.state == (confirmsChange ? .confirmedChange : .dispatchedUnverified))
+                #expect(typed.outcome?.dispatchState.unitCount?.rawValue == text.count)
+            }
+        }
+        #expect(automation.exactTypeCallCount == 6)
+        await fixture.host.stop()
+    }
+
+    @Test
     func `protocol 1 36 signs exact AX clear composite typing and keyboard fallback counts`() async throws {
         let automation = CompositeTypeAutomationService()
         let services = StubServices(automation: automation)

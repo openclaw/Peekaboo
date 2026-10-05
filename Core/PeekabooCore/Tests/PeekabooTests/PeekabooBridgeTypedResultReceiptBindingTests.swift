@@ -674,7 +674,7 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         let rule = PeekabooBridgeOperationResultSemantics.TypeActionResultRule(
             actions: Array(repeating: .clear, count: 10000),
             allowsAccessibilityValueDelivery: true)
-        #expect(rule.dispatchUnits == .range(10000...20000))
+        #expect(rule.dispatchUnits == .range(0...20000))
     }
 
     @Test
@@ -692,9 +692,15 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             expectedFocusedElement: nil))
         let request = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
         let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
-        #expect(plan.typedResponseRule.typeActionDispatchUnits == .range(3...5))
+        #expect(plan.typedResponseRule.typeActionDispatchUnits == .range(1...5))
 
         let valid: [(TypeResult, Int, DesktopActionOutcome.Delivery.Mechanism)] = [
+            (.init(totalCharacters: 1, keyPresses: 0, specialKeyPresses: 0), 1, .accessibilityValue),
+            (.init(totalCharacters: 1, keyPresses: 1, specialKeyPresses: 0), 1, .windowTargetedEvents),
+            (.init(totalCharacters: 1, keyPresses: 0, specialKeyPresses: 0), 2, .accessibilityValue),
+            (.init(totalCharacters: 1, keyPresses: 1, specialKeyPresses: 0), 2, .composite),
+            (.init(totalCharacters: 1, keyPresses: 3, specialKeyPresses: 2), 3, .windowTargetedEvents),
+            (.init(totalCharacters: 1, keyPresses: 2, specialKeyPresses: 2), 3, .composite),
             (.init(totalCharacters: 1, keyPresses: 5, specialKeyPresses: 4), 5, .windowTargetedEvents),
             (.init(totalCharacters: 1, keyPresses: 4, specialKeyPresses: 4), 5, .composite),
             (.init(totalCharacters: 1, keyPresses: 3, specialKeyPresses: 2), 4, .composite),
@@ -809,11 +815,13 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
         }
     }
 
-    @Test
-    func `signed exact deletion admits truthful zero dispatch`() async throws {
+    @Test(arguments: [
+        [TypeAction.key(.delete)], [.key(.forwardDelete)], [.key(.leftArrow)], [.key(.rightArrow)],
+        [.key(.home)], [.key(.end)], [.clear], [.clear, .clear],
+    ])
+    func `signed exact no-op edits admit truthful zero dispatch`(_ actions: [TypeAction]) async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let actions: [TypeAction] = [.key(.delete)]
         let bounds = try #require(fixture.windowIdentity.capturedBounds)
         let rawRequest = PeekabooBridgeRequest.exactWindowTargetedTypeActions(.init(
             actions: actions,
@@ -824,7 +832,13 @@ extension PeekabooBridgeTypedResultReceiptBindingTests {
             expectedFocusedElement: nil))
         let request = PeekabooBridgeRequest.projectedAction(.init(request: rawRequest))
         let plan = PeekabooBridgeOperationResultSemantics.semanticPlan(for: request)
-        #expect(plan.typedResponseRule.typeActionDispatchUnits == .range(0...1))
+        let maximumUnits = actions.reduce(0) { total, action in
+            if case .clear = action {
+                return total + 2
+            }
+            return total + 1
+        }
+        #expect(plan.typedResponseRule.typeActionDispatchUnits == .range(0...maximumUnits))
 
         let response = Self.typeResponse(
             result: .init(totalCharacters: 0, keyPresses: 0, specialKeyPresses: 0),
