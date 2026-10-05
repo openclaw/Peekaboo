@@ -60,25 +60,17 @@ extension MenuService {
     }
 
     private func resolveAXMenuExtra(title: String) throws -> AXMenuExtraTarget {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         let systemWide = Element.systemWide()
 
-        guard let menuBar = systemWide.menuBar() else {
-            throw PeekabooError.operationError(message: "System menu bar not found")
-        }
-
-        let menuBarItems = menuBar.children(strict: true) ?? []
+        let menuBarItems = systemWide.menuBar()?.children(strict: true) ?? []
         let menuExtrasGroups = menuBarItems.filter { $0.role() == "AXGroup" }
-        guard !menuExtrasGroups.isEmpty else {
-            var context = ErrorContext()
-            context.add("menuExtra", title)
-            throw NotFoundError(
-                code: .menuNotFound,
-                userMessage: "Menu extras group not found in system menu bar",
-                context: context.build())
+        var extras = menuExtrasGroups.flatMap { $0.children(strict: true) ?? [] }
+        for element in try self.applicationMenuExtraElements(deadline: deadline) where !extras.contains(element) {
+            extras.append(element)
         }
-
-        let extras = menuExtrasGroups.flatMap { $0.children(strict: true) ?? [] }
-        let snapshots = extras.indexed().compactMap { index, element -> AXMenuExtraSnapshot? in
+        let snapshots = try extras.indexed().compactMap { index, element -> AXMenuExtraSnapshot? in
+            try Self.checkMenuExtraDeadline(deadline)
             let fields = [element.title(), element.help(), element.descriptionText(), element.identifier()]
                 .compactMap { sanitizedMenuText($0) }
             guard let displayTitle = fields.first,
@@ -286,14 +278,16 @@ extension MenuService {
         // Menu bar enumeration must never hang: agents depend on this returning quickly.
         // AX can block on misbehaving apps; keep the default path cheap and bounded.
         let windowExtras = self.getMenuBarItemsViaWindows()
+        let applicationExtras = try self.applicationMenuExtras()
 
-        // Fast path: WindowServer enumeration is usually sufficient and avoids AX calls entirely.
-        // Only fall back to accessibility sweeps when explicitly enabled, or when WindowServer returns nothing.
+        // Only direct, deadline-bounded AXExtrasMenuBar reads on the fast path.
+        // Full accessibility-tree sweeps remain opt-in or an empty-window fallback.
         if !windowExtras.isEmpty,
            !self.deepMenuBarAXSweepEnabled,
            !self.menuBarAXAugmentationEnabled
         {
-            return Self.sortedMenuExtras(windowExtras)
+            return Self.sortedMenuExtras(Self.mergeMenuExtras(
+                accessibilityExtras: applicationExtras, fallbackExtras: windowExtras))
         }
 
         let axExtras = self.getMenuBarItemsViaAccessibility(timeout: self.menuBarAXTimeoutSec)
@@ -317,7 +311,7 @@ extension MenuService {
         }
 
         let merged = Self.mergeMenuExtras(
-            accessibilityExtras: axExtras + controlCenterExtras + appAXExtras,
+            accessibilityExtras: axExtras + controlCenterExtras + appAXExtras + applicationExtras,
             fallbackExtras: fallbackExtras)
         return Self.sortedMenuExtras(self.hydrateMenuExtraOwners(merged))
     }

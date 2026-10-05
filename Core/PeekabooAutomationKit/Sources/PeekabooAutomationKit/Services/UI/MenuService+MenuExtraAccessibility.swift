@@ -6,6 +6,7 @@
 import AppKit
 import AXorcist
 import Foundation
+import PeekabooFoundation
 
 @MainActor
 extension MenuService {
@@ -325,6 +326,69 @@ extension MenuService {
         }
 
         return results
+    }
+
+    /// Modern AppKit hosts status-item windows in Control Center, but exposes
+    /// the actual owner's items directly through AXExtrasMenuBar. Reading this
+    /// attribute avoids walking every application's document hierarchy.
+    static func checkMenuExtraDeadline(_ deadline: ContinuousClock.Instant) throws {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else {
+            // An incomplete inventory cannot prove an unambiguous target.
+            throw PeekabooError.timeout("Application menu-extra discovery exceeded its shared deadline")
+        }
+    }
+
+    func applicationMenuExtraElements(
+        deadline: ContinuousClock.Instant = ContinuousClock.now.advanced(by: .seconds(2))) throws -> [Element]
+    {
+        var elements: [Element] = []
+        for app in NSWorkspace.shared.runningApplications.sorted(by: { $0.processIdentifier < $1.processIdentifier }) {
+            try Self.checkMenuExtraDeadline(deadline)
+            guard app.activationPolicy != .prohibited else { continue }
+            let root = AXApp(app).element
+            root.setMessagingTimeout(0.1)
+            guard let value = root.rawAttributeValue(named: "AXExtrasMenuBar"),
+                  CFGetTypeID(value) == AXUIElementGetTypeID()
+            else { continue }
+            let bar = Element(unsafeBitCast(value, to: AXUIElement.self))
+            bar.setMessagingTimeout(0.1)
+            let children = bar.children(strict: true) ?? []
+            guard children.count <= 128 else {
+                throw PeekabooError.invalidInput("Application menu-extra inventory exceeds its item limit")
+            }
+            for element in children {
+                try Self.checkMenuExtraDeadline(deadline)
+                element.setMessagingTimeout(0.1)
+                if !elements.contains(element) {
+                    elements.append(element)
+                }
+            }
+        }
+        return elements
+    }
+
+    func applicationMenuExtras() throws -> [MenuExtraInfo] {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        return try self.applicationMenuExtraElements(deadline: deadline).compactMap { element in
+            try Self.checkMenuExtraDeadline(deadline)
+            guard let frame = element.frame(), !frame.isEmpty,
+                  let pid = element.pid(), let app = NSRunningApplication(processIdentifier: pid)
+            else { return nil }
+            let title = sanitizedMenuText(element.title()) ?? sanitizedMenuText(element.help())
+                ?? sanitizedMenuText(element.descriptionText()) ?? app.localizedName ?? "Unknown"
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            return MenuExtraInfo(
+                title: title,
+                rawTitle: title,
+                bundleIdentifier: app.bundleIdentifier,
+                ownerName: app.localizedName,
+                position: center,
+                isVisible: self.isMenuExtraAXPositionVisible(center),
+                identifier: element.identifier(),
+                ownerPID: pid,
+                source: "ax-extras")
+        }
     }
 
     /// Hit-test window extras to attach AX identifiers/titles when CGS gives only placeholders.

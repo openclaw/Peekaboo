@@ -18,9 +18,21 @@ extension MenuService {
         func upsert(_ extra: MenuExtraInfo) {
             let bothHavePosition = extra.position != .zero && merged.contains { $0.position != .zero }
             if bothHavePosition,
-               let index = merged.firstIndex(where: { $0.position.distance(to: extra.position) < 5 })
+               let index = merged.firstIndex(where: { existing in
+                   guard existing.position.distance(to: extra.position) < 5 else { return false }
+                   if let firstPID = existing.ownerPID, let secondPID = extra.ownerPID, firstPID != secondPID {
+                       return extra.source == "ax-extras" && existing.bundleIdentifier == "com.apple.controlcenter"
+                   }
+                   return true
+               })
             {
-                merged[index] = merged[index].merging(with: extra)
+                // Do not combine the host's CG window identity with the app's
+                // AX identity. AXExtrasMenuBar identifies the actionable owner.
+                if extra.source == "ax-extras", merged[index].ownerPID != extra.ownerPID {
+                    merged[index] = extra
+                } else if merged[index].source != "ax-extras" || merged[index].ownerPID == extra.ownerPID {
+                    merged[index] = merged[index].merging(with: extra)
+                }
             } else {
                 merged.append(extra)
             }
