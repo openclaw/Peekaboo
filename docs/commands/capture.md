@@ -28,6 +28,10 @@ Each retained frame and contact sheet carries the SHA-256 of the exact PNG bytes
 Before success, Peekaboo revalidates those digests, complete PNG decoding, contact-sheet dimensions, and an exact
 semantic round-trip of `metadata.json`. A child command cannot replace capture-owned files with merely nonempty data.
 
+Live frames that need no resizing or highlighting retain the original complete single-image PNG bytes, including
+their metadata, instead of encoding the same pixels again. Resized, highlighted, video, and non-PNG frames still use
+PNG encoding. Size caps and artifact digests account for the actual saved bytes on either path.
+
 For diff-filtered captures, each retained frame's `changePercent` and `motionBoxes` compare it with the previous
 retained frame, not with an internal sample that was dropped. This keeps heartbeat metadata truthful when a small
 visible edit stayed below the motion threshold; the edit remains a heartbeat, but reports its nonzero retained delta.

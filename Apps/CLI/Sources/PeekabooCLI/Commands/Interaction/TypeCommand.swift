@@ -7,6 +7,9 @@ import PeekabooFoundation
 @available(macOS 14.0, *)
 @MainActor
 struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+    static let clearHelp =
+        "Clear before typing (AXValue for eligible native background fields; Cmd+A/Delete for keyboard routes)"
+
     @Argument(help: "Text to type")
     var text: String?
 
@@ -34,7 +37,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     @Option(name: .customLong("profile"), help: "Typing profile: linear (default) or human")
     var profileOption: String?
 
-    @Flag(help: "Clear the field before typing (Cmd+A, Delete)")
+    @Flag(help: TypeCommand.clearHelp)
     var clear = false
 
     @Flag(help: "Accept dispatched but unverified typing as success; observe before retrying")
@@ -671,8 +674,9 @@ extension TypeCommand: ParsableCommand {
                 commandName: "type",
                 abstract: "Type text into a targeted app process or the foreground focus",
                 discussion: """
-                    The 'type' command sends keyboard input to a targeted app or snapshot
-                    process. Background delivery is the default and requires a process target.
+                    The 'type' command enters text using Accessibility or keyboard delivery
+                    into a targeted app or snapshot process. Background delivery is the default
+                    and requires a process target.
                     Use --foreground for intentional global input. By default, success requires a
                     confirmed receiver change. --accept-dispatched also accepts unverified dispatch;
                     it remains retry-unsafe and requires a fresh observation.
