@@ -17,3 +17,5 @@ read_when:
 - **Release & ops** — `platform-support.md`, `RELEASING.md`, `building.md`, `permissions.md`, `security.md`.
 
 Use `pnpm run docs:list` for a searchable summary of all docs.
+
+The listing reads JSON inline `read_when` arrays without rewriting apostrophes or escaped characters, and retains the existing simple single-quoted-array fallback. It is not a general YAML parser. Checked-in documentation should continue using block-list `read_when` entries as required by the separate docs linter; this listing compatibility does not change that lint contract.
