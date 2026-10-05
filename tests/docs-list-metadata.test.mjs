@@ -58,4 +58,7 @@ test('hosted and safe gates both execute the documentation-listing regressions',
   assert.match(packageJSON.scripts['test:safe'], /pnpm run test:docs &&/);
   assert.match(packageJSON.scripts['test:safe'], /pnpm run test:log-scripts &&/);
   assert.equal(packageJSON.scripts['test:docs'], 'node --test tests/docs-list-metadata.test.mjs');
+  for (const [, name] of packageJSON.scripts['test:safe'].matchAll(/\bpnpm run ([\w:-]+)/g)) {
+    assert.ok(packageJSON.scripts[name], `Safe gate references a missing package script: ${name}`);
+  }
 });

@@ -16,6 +16,7 @@
 - Keep CLI and MCP action summaries explicit about unverified or unreported receiver effects, and report paste clipboard cleanup separately without changing canonical outcomes, JSON, retry rules, or exit status.
 - Explain evaluated Bridge host requirements when `see --fresh` cannot obtain authenticated producer-bound snapshots, instead of incorrectly claiming fresh AX is unsupported or a binary update is sufficient; preserve host selection, trust, and error codes.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
+- Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
 - Refuse companion-app deployment when source or staged directory permissions prevent moving or cleaning up the bundle, before stopping the running GUI, while preserving read-only files and leaving artifact permissions unchanged.
 - Stop inferring a captured window's main state from selection, list position, or visibility; retain the existing `false`/unavailable convention and preserve already-supplied main-state metadata without extra Accessibility reads.
 
