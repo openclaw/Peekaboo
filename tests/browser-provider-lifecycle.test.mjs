@@ -22,27 +22,38 @@ async function provider(endpoint) {
   return {manager, server, verify: server.server._registeredTools.peekaboo_browser_connect.handler};
 }
 
-test('ordinary provider calls retain the initial approval refusal', async () => {
+test('ordinary provider calls retain the initial approval refusal', {timeout: 15_000}, async () => {
   const fixture = await devtoolsFixture({refuse: true});
-  const {manager, server, verify} = await provider(fixture.endpoint);
+  let server;
   try {
+    const owner = await provider(fixture.endpoint);
+    server = owner.server;
+    const {verify} = owner;
     const result = await verify({});
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /403/);
     assert.equal((await server.server._registeredTools.list_pages.handler({})).isError, true);
     assert.equal((await server.server._registeredTools.list_pages.handler({})).isError, true);
+    const concurrent = await Promise.all([
+      server.server._registeredTools.list_pages.handler({}),
+      server.server._registeredTools.list_pages.handler({}),
+    ]);
+    assert.ok(concurrent.every(result => result.isError));
     assert.equal(fixture.attaches, 1, 'ordinary calls must not reopen approval after the verifier failed');
     assert.deepEqual(await verify({}), result);
   } finally {
-    await server.close();
+    await server?.close();
     await fixture.close();
   }
 });
 
-test('connection verification stops reporting success after the socket disconnects', async () => {
+test('connection verification stops reporting success after the socket disconnects', {timeout: 15_000}, async () => {
   const fixture = await devtoolsFixture();
-  const {manager, server, verify} = await provider(fixture.endpoint);
+  let server;
   try {
+    const owner = await provider(fixture.endpoint);
+    server = owner.server;
+    const {manager, verify} = owner;
     const verified = await verify({});
     assert.equal(verified.isError, undefined);
     assert.deepEqual(await verify({}), verified);
@@ -56,7 +67,7 @@ test('connection verification stops reporting success after the socket disconnec
     assert.deepEqual(await verify({}), stale);
     assert.equal(fixture.attaches, 1, 'stale verification must not reconnect');
   } finally {
-    await server.close();
+    await server?.close();
     await fixture.close();
   }
 });
