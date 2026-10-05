@@ -140,21 +140,24 @@ This app is designed to work with Peekaboo's automation features. Each UI elemen
 - Export logs to file
 
 ### Using playground-log.sh (Recommended)
-```bash
-# From project root
-../scripts/playground-log.sh
 
-# Or directly
+Run these commands from the repository root:
+
+```bash
+# Use the forwarding wrapper
 ./scripts/playground-log.sh
 
+# Or directly
+./Apps/Playground/scripts/playground-log.sh
+
 # Stream logs in real-time
-../scripts/playground-log.sh -f
+./scripts/playground-log.sh -f
 
 # Show specific category
-../scripts/playground-log.sh -c Click
+./scripts/playground-log.sh -c Click
 
 # Search for specific actions
-../scripts/playground-log.sh -s "button"
+./scripts/playground-log.sh -s "button"
 ```
 
 ### Using pblog (if available)

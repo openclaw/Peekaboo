@@ -221,6 +221,7 @@ function copyTree(src, dest) {
 }
 
 function parseFrontmatter(raw) {
+  raw = raw.replace(/\r\n/g, "\n");
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!match) return { frontmatter: {}, body: raw };
   const fm = {};
@@ -466,8 +467,9 @@ function inline(text, currentRel) {
 
 function rewriteHref(href, currentRel) {
   if (/^(https?:|mailto:|tel:|#)/.test(href)) return href;
-  const [raw, hash = ""] = href.split("#");
-  if (!raw) return hash ? `#${hash}` : "";
+  const suffixStart = href.search(/[?#]/);
+  const raw = suffixStart < 0 ? href : href.slice(0, suffixStart);
+  const suffix = suffixStart < 0 ? "" : href.slice(suffixStart);
   if (raw.startsWith("/")) return href;
   if (!raw.endsWith(".md")) return href;
   const from = path.posix.dirname(currentRel);
@@ -475,7 +477,7 @@ function rewriteHref(href, currentRel) {
   let rewritten = pageMap.get(target)?.outRel || outPath(target);
   const currentOut = pageMap.get(currentRel)?.outRel || outPath(currentRel);
   rewritten = hrefToOutRel(rewritten, currentOut);
-  return `${rewritten}${hash ? `#${hash}` : ""}`;
+  return `${rewritten}${suffix}`;
 }
 
 function tocFromHtml(html) {
@@ -856,10 +858,12 @@ function validateLinks(outputDir) {
   for (const file of allHtml(outputDir)) {
     const html = fs.readFileSync(file, "utf8");
     for (const match of html.matchAll(/href="([^"]+)"/g)) {
-      const href = match[1];
+      const href = decodeRenderedEntities(match[1]);
       if (/^(#|https?:|mailto:|tel:|javascript:)/.test(href)) continue;
       if (placeholderHrefs.test(href)) continue;
-      const [rawPath, anchor = ""] = href.split("#");
+      const [rawPath] = href.split(/[?#]/, 1);
+      const hashStart = href.indexOf("#");
+      const anchor = hashStart < 0 ? "" : href.slice(hashStart + 1);
       const targetPath = rawPath
         ? rawPath.startsWith("/")
           ? path.join(outputDir, rawPath.slice(1))

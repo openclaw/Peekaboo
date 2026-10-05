@@ -79,6 +79,9 @@ themselves. Installing the published npm binary does not run source setup. The h
 and AXorcist submodule identities and HEADs against this checkout's gitlinks. Uncommitted local Commander edits remain
 visible to development builds; source-stamped release builds still require the existing clean-source gate.
 
+The `run` wrapper preserves ordinary command exit statuses and reports signal-terminated children using the shell
+convention (`128 + signal`, such as 143 for SIGTERM). Post-command mapping integrity checks and lock cleanup still run.
+
 AXorcist always declares remote Commander at exact `0.3.0`. Peekaboo's internal package graph already selects the live
 Commander submodule through explicit filesystem dependencies. The helper aligns the remote URL with that same canonical
 absolute directory using a `file://` URL; it neither changes a dependency requirement nor substitutes SwiftPM's version
@@ -215,6 +218,14 @@ Release builds do not run this startup check.
 Each Git probe has a five-second execution/output deadline. Standard output is drained while Git runs, so a
 large dirty worktree cannot fill the pipe and prevent staleness detection. Failed, timed-out, or over-8-MiB
 probes skip this optional diagnostic; cleanup may add up to two seconds for termination and reaping.
+
+## Documentation site
+
+`pnpm run docs:site` renders the documentation into `_site`. Front matter accepts LF, CRLF, or mixed line endings; metadata supplies the page title and description instead of appearing in the article. The renderer's deliberately small metadata syntax is unchanged.
+
+Table-of-contents labels preserve visible heading characters, and Markdown links preserve their original query parameters. Renderer-owned escapes are decoded once before final escaping; literal entity-looking text remains literal.
+
+Run `pnpm run test:docs-site` for the complete generated-site regressions. Normal macOS CI and `test:safe` share this command so new docs-site cases are included in both gates.
 
 ## Releases
 
