@@ -45,12 +45,16 @@ jobs:
       - name: Docs lint
         run: |
           node scripts/docs-lint.mjs
+          pnpm run test:docs
           node --test tests/docs-site-toc.test.mjs
           pnpm run test:guidance
           node --test tests/ambient-state-test-policy.test.mjs
 
       - name: Verify Homebrew release handoff
         run: node --test tests/homebrew-release-assets.test.mjs
+
+      - name: Verify log helper contracts
+        run: pnpm run test:log-scripts
 
       - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
@@ -139,6 +143,23 @@ jobs:
             2>&1 | tee "$test_log"
           grep -Fq 'Suite HotkeyServiceForegroundReleaseTests passed after ' "$test_log"
           grep -Fq 'Suite ForegroundKeyboardEventPairTests passed after ' "$test_log"
+          grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
+
+      - name: Run capture PNG custody and transformation contracts
+        working-directory: Core/PeekabooAutomationKit
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
+          PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: "false"
+          PEEKABOO_RUN_INPUT_AUTOMATION_TESTS: "false"
+        run: |
+          set -euo pipefail
+          test_log="$RUNNER_TEMP/capture-png-custody.log"
+          swift test --disable-xctest --enable-swift-testing --no-parallel --jobs 2 \
+            --filter '^PeekabooAutomationKitTests[.](WatchCapturePNGTests|LegacyCapturedRasterTests|CaptureArtifactImageProcessingTests|ScreenCaptureImageScalerTests|WatchCaptureCadenceSchedulingTests)/' \
+            2>&1 | tee "$test_log"
+          for suite in WatchCapturePNGTests LegacyCapturedRasterTests CaptureArtifactImageProcessingTests ScreenCaptureImageScalerTests WatchCaptureCadenceSchedulingTests; do
+            grep -Fq "Suite $suite passed after " "$test_log"
+          done
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run clipboard paste admission gate contracts
