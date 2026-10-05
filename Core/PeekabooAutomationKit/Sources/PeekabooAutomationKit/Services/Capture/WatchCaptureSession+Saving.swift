@@ -40,7 +40,8 @@ extension WatchCaptureSession {
         let sha256 = try WatchCaptureArtifactWriter.writePNG(
             image: cgImage,
             to: url,
-            highlight: self.options.highlightChanges ? context.motionBoxes : nil)
+            highlight: self.options.highlightChanges ? context.motionBoxes : nil,
+            sourceFrame: context.capture)
 
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)

@@ -4,7 +4,7 @@
 # This allows running playground-log.sh from the project root
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLAYGROUND_LOG="$SCRIPT_DIR/../Playground/scripts/playground-log.sh"
+PLAYGROUND_LOG="$SCRIPT_DIR/../Apps/Playground/scripts/playground-log.sh"
 
 if [[ ! -f "$PLAYGROUND_LOG" ]]; then
     echo "Error: Playground log script not found at $PLAYGROUND_LOG" >&2
