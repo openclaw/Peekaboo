@@ -42,6 +42,9 @@ jobs:
           node --no-warnings scripts/test-chrome-devtools-mcp-contract.mjs
           node --no-warnings scripts/test-browser-provider-connection.mjs
 
+      - name: Verify MCP wrapper
+        run: pnpm run test:mcp-wrapper
+
       - name: Docs lint
         run: |
           node scripts/docs-lint.mjs
@@ -389,7 +392,10 @@ jobs:
             --filter 'BrowserToolTests|BrowserToolCapabilityIntegrationTests|RemoteBrowserMCPSessionTests|PeekabooServicesBrowserSessionProviderTests|AgentSystemPromptTests'
           swift test --no-parallel \
             --filter 'BrowserMCPApprovalTransportTests|BrowserMCPConfigTests|BrowserMCPProviderConnectionTests|BrowserMCPSingleConnectionTests|BrowserMCPChannelEndpointResolverTests|BrowserMCPSessionManagerChannelRefusalTests|PeekabooBridgeBrowserRootEpochTests'
-          swift test --package-path ../PeekabooFoundation --no-parallel --filter BrowserLoopbackEndpointTests
+
+      - name: Run Foundation contracts
+        working-directory: Core/PeekabooFoundation
+        run: swift test --no-parallel
 
       - name: Run focused Swift tests
         working-directory: Core/PeekabooCore
