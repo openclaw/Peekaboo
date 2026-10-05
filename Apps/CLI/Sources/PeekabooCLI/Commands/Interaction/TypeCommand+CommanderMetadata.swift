@@ -55,7 +55,7 @@ extension TypeCommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "clear",
-                    help: "Clear the field before typing (Cmd+A, Delete)",
+                    help: clearHelp,
                     long: "clear"
                 ),
             ],

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { css, faviconSvg, js } from "./docs-site-assets.mjs";
-import { renderedHeadingText } from "./docs-site-toc.mjs";
+import { decodeRenderedEntities, renderedHeadingText } from "./docs-site-toc.mjs";
 
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
@@ -221,6 +221,7 @@ function copyTree(src, dest) {
 }
 
 function parseFrontmatter(raw) {
+  raw = raw.replace(/\r\n/g, "\n");
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!match) return { frontmatter: {}, body: raw };
   const fm = {};
@@ -450,14 +451,17 @@ function uniqueHeadingIDs(html) {
   // rendered inside blockquotes. Existing incoming anchors must keep their owner.
   const naturalIDs = new Set([...html.matchAll(/<h[1-4] id="([^"]*)">/g)].map((match) => match[1]));
   const used = new Set();
+  const nextSuffix = new Map();
   return html.replace(/<h([1-4]) id="([^"]*)">([\s\S]*?)<\/h\1>/g, (_, level, original, body) => {
     const base = original || "section";
     let id = base;
     if (used.has(id) || (!original && naturalIDs.has(id))) {
-      for (let suffix = 1; ; suffix += 1) {
+      let suffix = nextSuffix.get(base) || 1;
+      for (; ; suffix += 1) {
         id = `${base}-${suffix}`;
         if (!used.has(id) && !naturalIDs.has(id)) break;
       }
+      nextSuffix.set(base, suffix + 1);
     }
     used.add(id);
     const inner = body.replace(/^<a class="anchor" href="#[^"]*"/, () => `<a class="anchor" href="#${id}"`);
@@ -477,7 +481,7 @@ function inline(text, currentRel) {
     .replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>")
     .replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_, label, href) => `<a href="${escapeAttr(rewriteHref(href, currentRel))}">${label}</a>`,
+      (_, label, href) => `<a href="${escapeAttr(rewriteHref(decodeRenderedEntities(href), currentRel))}">${label}</a>`,
     )
     .replace(/&lt;(https?:\/\/[^\s<>]+)&gt;/g, '<a href="$1">$1</a>');
   out = out.replace(/\\\|/g, "|");
@@ -487,8 +491,9 @@ function inline(text, currentRel) {
 
 function rewriteHref(href, currentRel) {
   if (/^(https?:|mailto:|tel:|#)/.test(href)) return href;
-  const [raw, hash = ""] = href.split("#");
-  if (!raw) return hash ? `#${hash}` : "";
+  const suffixStart = href.search(/[?#]/);
+  const raw = suffixStart < 0 ? href : href.slice(0, suffixStart);
+  const suffix = suffixStart < 0 ? "" : href.slice(suffixStart);
   if (raw.startsWith("/")) return href;
   if (!raw.endsWith(".md")) return href;
   const from = path.posix.dirname(currentRel);
@@ -496,7 +501,7 @@ function rewriteHref(href, currentRel) {
   let rewritten = pageMap.get(target)?.outRel || outPath(target);
   const currentOut = pageMap.get(currentRel)?.outRel || outPath(currentRel);
   rewritten = hrefToOutRel(rewritten, currentOut);
-  return `${rewritten}${hash ? `#${hash}` : ""}`;
+  return `${rewritten}${suffix}`;
 }
 
 function tocFromHtml(html) {
@@ -877,10 +882,12 @@ function validateLinks(outputDir) {
   for (const file of allHtml(outputDir)) {
     const html = fs.readFileSync(file, "utf8");
     for (const match of html.matchAll(/href="([^"]+)"/g)) {
-      const href = match[1];
+      const href = decodeRenderedEntities(match[1]);
       if (/^(#|https?:|mailto:|tel:|javascript:)/.test(href)) continue;
       if (placeholderHrefs.test(href)) continue;
-      const [rawPath, anchor = ""] = href.split("#");
+      const [rawPath] = href.split(/[?#]/, 1);
+      const hashStart = href.indexOf("#");
+      const anchor = hashStart < 0 ? "" : href.slice(hashStart + 1);
       const targetPath = rawPath
         ? rawPath.startsWith("/")
           ? path.join(outputDir, rawPath.slice(1))
