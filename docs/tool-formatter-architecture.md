@@ -29,11 +29,6 @@ Core/PeekabooCore/Sources/PeekabooAgentRuntime/ToolFormatting/
 
 Duration displays use `FormattingUtilities.formatDetailedDuration`; formatter subclasses share the base truncation helper.
 
-Compatibility shortcut summaries tokenize whole key names case-insensitively, so names containing `enter` or `delete`
-are not rewritten as key symbols. Forward delete (`forwarddelete`/`forward_delete`, ⌦) stays distinct from backward
-delete (`delete`/`backspace`/`del`, ⌫), including the single-key fallback. These are display rules, not keyboard parsing
-or delivery changes; current structured tool summaries take precedence over compatibility formatter fallback.
-
 The registry is available as `ToolFormatterRegistry.shared` or as a separately initialized registry in tests.
 
 ### Mac App Consumption
@@ -44,6 +39,11 @@ The Mac app does not maintain its own formatter registry:
 - `Apps/Mac/Peekaboo/Features/Main/ToolFormatter.swift` is a compatibility facade for compact summaries and shared formatting utilities.
 
 Unknown tool names fall back to a title-cased name and raw/pretty-printed JSON rather than being added to a parallel Mac-only stack.
+
+Compatibility shortcut summaries tokenize whole key names case-insensitively, so names containing `enter` or `delete`
+are not rewritten as key symbols. Forward delete (`forwarddelete`/`forward_delete`, ⌦) stays distinct from backward
+delete (`delete`/`backspace`/`del`, ⌫), including the single-key fallback. These are display rules, not keyboard parsing
+or delivery changes; current structured tool summaries take precedence over compatibility formatter fallback.
 
 ## Adding a New Tool
 
