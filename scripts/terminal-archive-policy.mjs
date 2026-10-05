@@ -378,6 +378,9 @@ async function validateZipPayload(handle, dataOffset, record, budget, label) {
     if (error instanceof TypeError) throw error;
     fail(label, `has an invalid compressed payload: ${record.path}`);
   }
+  if (inflater && inflater.bytesWritten !== record.compressedSize) {
+    fail(label, `has unbound bytes after its DEFLATE stream: ${record.path}`);
+  }
   if (outputSize !== record.uncompressedSize || ((checksum ^ 0xffffffff) >>> 0) !== record.checksum) {
     fail(label, `has a payload size or CRC mismatch: ${record.path}`);
   }

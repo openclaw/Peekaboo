@@ -27,7 +27,7 @@ function zipFixture(entries) {
     const extra = entry.extra ?? Buffer.alloc(0);
     const data = Buffer.from(entry.type === 'symlink' ? entry.target : (entry.data ?? ''), 'utf8');
     const method = data.length === 0 ? 0 : 8;
-    const compressed = method === 0 ? data : deflateRawSync(data);
+    const compressed = Buffer.concat([method === 0 ? data : deflateRawSync(data), entry.trailingCompressedBytes ?? Buffer.alloc(0)]);
     const checksum = crc32(data);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -159,6 +159,13 @@ assert.throws(() => validateArchiveEntries([
 
 const testDirectory = await mkdtemp(path.join(os.tmpdir(), 'peekaboo-terminal-archive-policy.'));
 try {
+  const trailingZip = path.join(testDirectory, 'trailing-deflate.zip');
+  await writeFile(trailingZip, zipFixture([
+    { path: 'Fixture.app/', type: 'directory' },
+    { path: 'Fixture.app/value', type: 'file', data: 'payload', trailingCompressedBytes: Buffer.from('unbound') }
+  ]));
+  await assert.rejects(validateZipArchive(trailingZip, 'Fixture.app'), /unbound bytes after its DEFLATE stream/);
+
   const safeZip = path.join(testDirectory, 'safe.zip');
   await writeFile(safeZip, zipFixture([
     { path: 'Fixture.app/', type: 'directory' },
