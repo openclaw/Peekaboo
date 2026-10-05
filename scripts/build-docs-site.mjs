@@ -273,7 +273,7 @@ function titleize(input) {
   return input.replaceAll("-", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function markdownToHtml(markdown, currentRel, headingIDs = new Set()) {
+function markdownToHtml(markdown, currentRel, nested = false) {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const html = [];
   let paragraph = [];
@@ -293,7 +293,7 @@ function markdownToHtml(markdown, currentRel, headingIDs = new Set()) {
   };
   const flushBlockquote = () => {
     if (!blockquote.length) return;
-    const inner = markdownToHtml(blockquote.join("\n"), currentRel, headingIDs);
+    const inner = markdownToHtml(blockquote.join("\n"), currentRel, true);
     html.push(`<blockquote>${inner}</blockquote>`);
     blockquote = [];
   };
@@ -380,10 +380,7 @@ function markdownToHtml(markdown, currentRel, headingIDs = new Set()) {
       closeList();
       const level = heading[1].length;
       const text = heading[2].trim();
-      const baseID = slug(text) || "section";
-      let id = baseID;
-      for (let suffix = 1; headingIDs.has(id); suffix += 1) id = `${baseID}-${suffix}`;
-      headingIDs.add(id);
+      const id = slug(text);
       const inner = inline(text, currentRel);
       if (level === 1) {
         html.push(`<h1 id="${id}">${inner}</h1>`);
@@ -444,7 +441,28 @@ function markdownToHtml(markdown, currentRel, headingIDs = new Set()) {
   flushParagraph();
   closeList();
   flushBlockquote();
-  return html.join("\n");
+  const rendered = html.join("\n");
+  return nested ? rendered : uniqueHeadingIDs(rendered);
+}
+
+function uniqueHeadingIDs(html) {
+  // Reserve natural slugs before allocating duplicate suffixes, including headings
+  // rendered inside blockquotes. Existing incoming anchors must keep their owner.
+  const naturalIDs = new Set([...html.matchAll(/<h[1-4] id="([^"]*)">/g)].map((match) => match[1]));
+  const used = new Set();
+  return html.replace(/<h([1-4]) id="([^"]*)">([\s\S]*?)<\/h\1>/g, (_, level, original, body) => {
+    const base = original || "section";
+    let id = base;
+    if (used.has(id) || (!original && naturalIDs.has(id))) {
+      for (let suffix = 1; ; suffix += 1) {
+        id = `${base}-${suffix}`;
+        if (!used.has(id) && !naturalIDs.has(id)) break;
+      }
+    }
+    used.add(id);
+    const inner = body.replace(/^<a class="anchor" href="#[^"]*"/, () => `<a class="anchor" href="#${id}"`);
+    return `<h${level} id="${id}">${inner}</h${level}>`;
+  });
 }
 
 function inline(text, currentRel) {

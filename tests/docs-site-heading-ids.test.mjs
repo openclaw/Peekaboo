@@ -27,3 +27,17 @@ test('repeated headings retain distinct permalink and TOC targets across blockqu
   }
   assert.equal((html.match(/id="usage"/g) || []).length, 1);
 });
+
+test('duplicate suffixes do not steal a later natural heading anchor', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'peekaboo-natural-anchors-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(path.join(root, 'docs'));
+  writeFileSync(path.join(root, 'docs', 'index.md'),
+    '# Fixture\n## Usage\n> ## Usage\n## Usage-1\n## Other\n');
+  const result = spawnSync(process.execPath, [builder], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const html = readFileSync(path.join(root, '_site/index.html'), 'utf8');
+  const headings = [...html.matchAll(/<h[1-4] id="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(headings, ['fixture', 'usage', 'usage-2', 'usage-1', 'other']);
+  assert.match(html, /<h2 id="usage-1">[^\n]*Usage-1<\/h2>/);
+});
