@@ -6,6 +6,28 @@ import Testing
 
 struct WindowTargetCreationTests {
     @Test
+    @MainActor
+    func `window list preflight accepts matching normalized PID aliases`() throws {
+        for alias in ["PID:12345", "pid:12345", "  PiD:12345  "] {
+            var command = WindowCommand.WindowListSubcommand()
+            command.app = alias
+            command.pid = 12345
+            try command.validateBeforeRuntime()
+        }
+    }
+
+    @Test
+    @MainActor
+    func `window list preflight rejects mismatched and invalid PID aliases`() {
+        for alias in ["PID:54321", "PID:-1", "PID:0", "PID:abc", "Fixture"] {
+            var command = WindowCommand.WindowListSubcommand()
+            command.app = alias
+            command.pid = 12345
+            #expect(throws: (any Error).self) { try command.validateBeforeRuntime() }
+        }
+    }
+
+    @Test
     func `window CLI syntax preserves matching redundant PID channels`() throws {
         var options = WindowIdentificationOptions()
         options.app = "PID:12345"
