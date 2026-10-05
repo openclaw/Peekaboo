@@ -142,5 +142,11 @@ function isMainModule() {
   const entryUrl = pathToFileURL(entry).href;
   if (import.meta.url === entryUrl) return true;
 
-  return pathToFileURL(realpathSync(modulePath)).href === pathToFileURL(realpathSync(entry)).href;
+  try {
+    return pathToFileURL(modulePath).href === pathToFileURL(realpathSync(entry)).href;
+  } catch (error) {
+    // Eval and stdin consumers can have a program argument here instead of a script.
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
+    throw error;
+  }
 }
