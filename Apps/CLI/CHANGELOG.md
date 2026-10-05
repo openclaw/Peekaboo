@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarify `type --clear` help and generated learning guidance to distinguish eligible native Accessibility clearing from keyboard routes, without changing delivery, targeting, or success rules.
 - Escape update-feed URLs and metadata as XML while preserving decoded values and literal replacement characters, including multi-parameter URLs. Thanks @rudycelekli! #935.
 - Correct the visualizer log helper's receiver subsystem and include info/debug output while preserving explicit predicates, without changing logging settings or rendering behavior.
+- Preserve failed log-query exit statuses through tail-limited terminal and file output instead of reporting success from the downstream pipeline. Thanks @rudycelekli! #959.
 - Bound npm MCP wrapper shutdown: cancel pending restarts, allow five seconds for the owned server to exit after SIGTERM, then terminate that same child if necessary. Thanks @rudycelekli! #947.
 
 ## 4.8.0 - 2026-10-03
