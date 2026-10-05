@@ -66,7 +66,7 @@ test('historical debug and error queries preserve flags and mock-only sudo', (t)
   success(f.run(['--all', '--debug', '--subsystem', 'boo.test']));
   assert.deepEqual(f.args(), ['show', '--predicate', 'subsystem == "boo.test"', '--debug', '--last', '5m']);
   success(f.run(['--private', '--all', '--errors', '--subsystem', 'boo.test']));
-  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND eventType == "error"', '--info', '--debug', '--last', '5m'];
+  const expected = ['show', '--predicate', 'subsystem == "boo.test" AND logType == "error"', '--info', '--debug', '--last', '5m'];
   assert.deepEqual(f.args(), expected);
   assert.deepEqual(f.sudoArgs(), ['-n', 'log', ...expected]);
 });

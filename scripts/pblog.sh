@@ -149,7 +149,7 @@ else
             CMD+=(show --predicate "$PREDICATE" --debug --last "$TIME")
             ;;
         error)
-            PREDICATE="$PREDICATE AND eventType == \"error\""
+            PREDICATE="$PREDICATE AND logType == \"error\""
             CMD+=(show --predicate "$PREDICATE" --info --debug --last "$TIME")
             ;;
         *)

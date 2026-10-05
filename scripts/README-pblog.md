@@ -39,6 +39,7 @@ A unified log viewer for all Peekaboo applications and services.
 - `-d, --debug` - Show debug level logs
 - `-f, --follow` - Stream logs continuously
 - `-e, --errors` - Show only errors
+- Historical error queries match the native `logType` field; unrelated event types are not log severity.
 - `--subsystem NAME` - Filter by specific subsystem
 - `--json` - Output in JSON format
 
