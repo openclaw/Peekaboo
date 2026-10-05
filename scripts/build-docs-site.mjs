@@ -724,28 +724,35 @@ function highlightCode(code, lang) {
   return escapeHtml(code);
 }
 
-function stashToken(idx) {
-  return String.fromCharCode(0xe000 + idx);
-}
-
-function restoreStashTokens(value, stash) {
-  return value.replace(/[-]/g, (token) => {
-    const idx = token.charCodeAt(0) - 0xe000;
-    return stash[idx] ?? "";
+// Keep highlighted fragments separate from source text so code never doubles
+// as an internal placeholder, and the number of matches is unbounded.
+function highlightFragments(fragments, pattern, renderMatch) {
+  return fragments.flatMap((fragment) => {
+    if (typeof fragment !== "string") return [fragment];
+    const result = [];
+    let previous = 0;
+    fragment.replace(pattern, (...args) => {
+      const match = args[0];
+      const offset = args.at(-2);
+      result.push(fragment.slice(previous, offset), { html: renderMatch(...args) });
+      previous = offset + match.length;
+      return match;
+    });
+    result.push(fragment.slice(previous));
+    return result;
   });
 }
 
+function renderFragments(fragments) {
+  return fragments.map((fragment) => typeof fragment === "string" ? escapeHtml(fragment) : fragment.html).join("");
+}
+
 function withStash(code, patterns) {
-  const stash = [];
-  let working = code;
-  for (const [re, cls] of patterns) {
-    working = working.replace(re, (match) => {
-      const idx = stash.length;
-      stash.push(`<span class="${cls}">${escapeHtml(match)}</span>`);
-      return stashToken(idx);
-    });
+  let fragments = [code];
+  for (const [pattern, cls] of patterns) {
+    fragments = highlightFragments(fragments, pattern, (match) => `<span class="${cls}">${escapeHtml(match)}</span>`);
   }
-  return restoreStashTokens(escapeHtml(working), stash);
+  return renderFragments(fragments);
 }
 
 function highlightShell(code) {
@@ -764,22 +771,17 @@ function highlightShell(code) {
 }
 
 function highlightShellLine(line) {
-  const stash = [];
-  const stashAdd = (match, cls) => {
-    const idx = stash.length;
-    stash.push(`<span class="${cls}">${escapeHtml(match)}</span>`);
-    return stashToken(idx);
-  };
-  let working = line;
-  working = working.replace(/(?:'[^']*'|"[^"]*")/g, (m) => stashAdd(m, "hl-s"));
-  working = working.replace(/\s#.*$/g, (m) => stashAdd(m, "hl-c"));
-  working = working.replace(/(^|\s)(--?[A-Za-z][A-Za-z0-9-]*)/g, (_, lead, flag) => `${escapeHtml(lead)}${stashAdd(flag, "hl-f")}`);
-  working = working.replace(
+  const span = (match, cls) => `<span class="${cls}">${escapeHtml(match)}</span>`;
+  let fragments = [line];
+  fragments = highlightFragments(fragments, /(?:'[^']*'|"[^"]*")/g, (match) => span(match, "hl-s"));
+  fragments = highlightFragments(fragments, /\s#.*$/g, (match) => span(match, "hl-c"));
+  fragments = highlightFragments(fragments, /(^|\s)(--?[A-Za-z][A-Za-z0-9-]*)/g,
+    (_, lead, flag) => `${escapeHtml(lead)}${span(flag, "hl-f")}`);
+  fragments = highlightFragments(fragments,
     /\b(peekaboo|brew|npx|npm|pnpm|yarn|node|swift|git|gh|make|sudo|cd|export|cat|curl|jq|ls|mv|cp|rm|mkdir|docker|tail)\b/g,
-    (m) => stashAdd(m, "hl-cmd"),
-  );
-  working = working.replace(/\b(\d+(?:\.\d+)?)\b/g, (m) => stashAdd(m, "hl-n"));
-  return restoreStashTokens(escapeHtml(working), stash);
+    (match) => span(match, "hl-cmd"));
+  fragments = highlightFragments(fragments, /\b(\d+(?:\.\d+)?)\b/g, (match) => span(match, "hl-n"));
+  return renderFragments(fragments);
 }
 
 function highlightJson(code) {
