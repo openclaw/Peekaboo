@@ -104,6 +104,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         return BrowserMCPExecutionSessionBinding(connectionReceipt: receipt, providerSessionEpoch: epoch)
     }
 
+    private func shouldRetainPublishedConnection(after error: any Error) -> Bool {
+        self.publishedConnectionBinding != nil &&
+            (Self.isCancellation(error) || error as? BrowserMCPConnectionDeadlineError == .timedOut)
+    }
+
     init(
         serverName: String,
         manager: any BrowserMCPManaging = TachikomaMCPClientManager(),
@@ -347,8 +352,8 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                             browserURL: browserURL,
                             attempt: attempt,
                             reserveTarget: reserveTarget)
-                    } catch let error where Self.isCancellation(error) &&
-                        attempt.state.didStartAnyDispatch && self.publishedConnectionBinding != nil
+                    } catch let error where self.shouldRetainPublishedConnection(after: error) &&
+                        attempt.state.didStartAnyDispatch
                     {
                         throw Self.indeterminateConnectionFailure(error)
                     } catch let error where Self.isCancellation(error) && !attempt.state.didStartAnyDispatch {
@@ -437,7 +442,7 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     delivery: Self.connectionDelivery,
                     evidence: .deliveryAccepted,
                     unitCount: .one))
-        } catch let error where Self.isCancellation(error) && self.publishedConnectionBinding != nil {
+        } catch let error where self.shouldRetainPublishedConnection(after: error) {
             // Installation already verified and published this binding; cancelled observation does not revoke it.
             throw error
         } catch let error as BrowserMCPUploadStagingError {
@@ -941,7 +946,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
             } catch let failure as DesktopActionFailure {
                 throw failure
             } catch {
-                await self.clearConnection()
+                if !self.shouldRetainPublishedConnection(after: error) {
+                    await self.clearConnection()
+                }
                 if attempt.state.didStartAnyDispatch {
                     throw Self.indeterminateConnectionFailure(error)
                 }

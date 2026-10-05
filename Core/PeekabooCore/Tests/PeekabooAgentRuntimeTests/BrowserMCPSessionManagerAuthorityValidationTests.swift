@@ -783,9 +783,10 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
 }
 
 extension BrowserMCPSessionManagerAuthorityValidationTests {
-    @Test(arguments: [false, true])
+    @Test(arguments: [false, true], [false, true])
     func `public metadata interruption after provider publication retains its binding`(
-        callerCancels: Bool) async throws
+        callerCancels: Bool,
+        implicitlyConnects: Bool) async throws
     {
         let manager = AuthorityBrowserMCPManager()
         try await Self.withMetadataBlock { fixture in
@@ -808,7 +809,16 @@ extension BrowserMCPSessionManagerAuthorityValidationTests {
             defer { pool.unbind(peer) }
             let service = BrowserMCPService(sessionManager: session, authenticatedSessionPool: pool)
             fixture.arm()
-            let task = Task { try await service.connectWithOutcome(channel: .stable, browserURL: nil) }
+            let task = Task {
+                if implicitlyConnects {
+                    _ = try await service.executeSequenceWithOutcome(
+                        [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                        channel: .stable,
+                        connectionPolicy: .allowAutoConnect)
+                } else {
+                    _ = try await service.connectWithOutcome(channel: .stable, browserURL: nil)
+                }
+            }
             try #require(await fixture.waitUntilEntered())
             #expect(manager.addServerCount == 1)
             #expect(manager.versionVerificationCount == 1)
@@ -827,6 +837,7 @@ extension BrowserMCPSessionManagerAuthorityValidationTests {
                 #expect(failure.outcome.projection.requiresFreshObservation)
             }
             #expect(!fixture.didRelease)
+            #expect(manager.executedTools == ["list_pages"])
             #expect(manager.removeServerCount == 0)
             #expect(manager.connected)
             let releases = AuthorityCounter()
