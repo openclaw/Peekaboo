@@ -99,6 +99,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         self.environmentOptions.supportsNativeBrowserConnectionBinding
     }
 
+    private var publishedConnectionBinding: BrowserMCPExecutionSessionBinding? {
+        guard let receipt = self.connectionReceipt, let epoch = self.providerSessionEpoch else { return nil }
+        return BrowserMCPExecutionSessionBinding(connectionReceipt: receipt, providerSessionEpoch: epoch)
+    }
+
     init(
         serverName: String,
         manager: any BrowserMCPManaging = TachikomaMCPClientManager(),
@@ -206,14 +211,11 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
         do {
             return try await self.withExecutionGate {
                 if !self.connectionCleanupPending,
-                   let receipt = self.connectionReceipt,
-                   let epoch = self.providerSessionEpoch,
+                   let binding = self.publishedConnectionBinding,
                    self.manager.hasServer(name: self.serverName),
                    await self.manager.isServerConnected(name: self.serverName)
                 {
-                    return .retained(BrowserMCPExecutionSessionBinding(
-                        connectionReceipt: receipt,
-                        providerSessionEpoch: epoch))
+                    return .retained(binding)
                 }
                 guard await self.clearConnection() else { return .pending }
                 releaseTarget()
@@ -345,6 +347,10 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                             browserURL: browserURL,
                             attempt: attempt,
                             reserveTarget: reserveTarget)
+                    } catch let error where Self.isCancellation(error) &&
+                        attempt.state.didStartAnyDispatch && self.publishedConnectionBinding != nil
+                    {
+                        throw Self.indeterminateConnectionFailure(error)
                     } catch let error where Self.isCancellation(error) && !attempt.state.didStartAnyDispatch {
                         throw Self.preDispatchConnectionFailure(CancellationError())
                     } catch BrowserMCPConnectionError.targetLocked {
@@ -418,7 +424,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                 attempt.state.markConnectionDispatchStarted()
                 connectionAttemptDispatched = true
             }
-            let status = await self.inspectStatusUnlocked(channel: channel).status
+            let inspection = await self.inspectStatusUnlocked(channel: channel)
+            guard !inspection.wasCancelled else { throw CancellationError() }
+            let status = inspection.status
             guard status.isConnected else {
                 throw BrowserMCPConnectionError.connectionLost(
                     status.error ?? "the new browser connection could not be verified")
@@ -429,6 +437,9 @@ final class BrowserMCPSessionManager: @unchecked Sendable {
                     delivery: Self.connectionDelivery,
                     evidence: .deliveryAccepted,
                     unitCount: .one))
+        } catch let error where Self.isCancellation(error) && self.publishedConnectionBinding != nil {
+            // Installation already verified and published this binding; cancelled observation does not revoke it.
+            throw error
         } catch let error as BrowserMCPUploadStagingError {
             await self.clearConnection()
             if attempt.state.didStartPermissionDispatch || connectionAttemptDispatched {

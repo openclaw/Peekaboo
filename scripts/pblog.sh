@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: pblog.sh [options]"
             echo ""
             echo "Options:"
-            echo "  -n, --lines NUM      Number of lines to show (default: 50)"
+            echo "  -n, --lines NUM      Text query lines to show (default: 50; JSON/follow are complete)"
             echo "  -l, --last TIME      Time range to search (default: 5m)"
             echo "  -c, --category CAT   Filter by category"
             echo "  -s, --search TEXT    Search for specific text"
@@ -112,6 +112,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# JSON records span physical lines, and a live stream has no EOF for tail to flush.
+# Apply the historical line limit only to completed text queries.
+if [[ "$JSON" == true || "$FOLLOW" == true ]]; then
+    NO_TAIL=true
+fi
 
 # Keep the escaped literal in-shell: command substitution trims trailing newlines.
 predicate_literal() {

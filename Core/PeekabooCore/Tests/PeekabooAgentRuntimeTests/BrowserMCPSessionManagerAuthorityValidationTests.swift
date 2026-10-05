@@ -783,6 +783,83 @@ struct BrowserMCPSessionManagerAuthorityValidationTests {
 }
 
 extension BrowserMCPSessionManagerAuthorityValidationTests {
+    @Test(arguments: [false, true])
+    func `public metadata interruption after provider publication retains its binding`(
+        callerCancels: Bool) async throws
+    {
+        let manager = AuthorityBrowserMCPManager()
+        try await Self.withMetadataBlock { fixture in
+            let reads = AuthorityCounter()
+            let session = Self.metadataSession(
+                manager: manager,
+                detector: { _ in
+                    reads.increment()
+                    if reads.value == 2 {
+                        fixture.blockIfArmed()
+                    }
+                    return [Self.browser(bundleIdentifier: "com.google.Chrome")]
+                },
+                attempts: { .standalone(timeout: callerCancels ? .seconds(2) : .milliseconds(200)) })
+            let pool = BrowserMCPAuthenticatedSessionPool { _ in
+                Self.metadataSession(manager: AuthorityBrowserMCPManager())
+            }
+            let peer = BrowserMCPAuthenticatedSessionPool.SessionID()
+            _ = try #require(pool.manager(for: peer))
+            defer { pool.unbind(peer) }
+            let service = BrowserMCPService(sessionManager: session, authenticatedSessionPool: pool)
+            fixture.arm()
+            let task = Task { try await service.connectWithOutcome(channel: .stable, browserURL: nil) }
+            try #require(await fixture.waitUntilEntered())
+            #expect(manager.addServerCount == 1)
+            #expect(manager.versionVerificationCount == 1)
+            #expect(manager.executedTools == ["list_pages"])
+            if callerCancels {
+                task.cancel()
+            }
+            do {
+                _ = try await task.value
+                Issue.record("Expected interrupted post-install observation")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .indeterminate)
+                #expect(failure.outcome.evidence == .completionUnknown)
+                #expect(failure.outcome.dispatchState == .mayHaveDispatched(unitCount: .one))
+                #expect(failure.outcome.retrySafety == .unsafe)
+                #expect(failure.outcome.projection.requiresFreshObservation)
+            }
+            #expect(!fixture.didRelease)
+            #expect(manager.removeServerCount == 0)
+            #expect(manager.connected)
+            let releases = AuthorityCounter()
+            guard case let .retained(binding) = await session.reconcileTargetOwnership(
+                releaseTarget: { releases.increment() })
+            else {
+                Issue.record("A verified published provider must survive cancelled observation")
+                return
+            }
+            #expect(releases.value == 0)
+            #expect(throws: BrowserMCPConnectionError.targetLocked) {
+                try pool.bind(peer, to: binding.connectionReceipt)
+            }
+            fixture.release()
+            try await fixture.drain()
+            let status = await service.status(channel: .stable)
+            #expect(status.connectionReceipt == binding.connectionReceipt)
+            #expect(status.providerSessionEpoch == binding.providerSessionEpoch)
+            let reconnected = try await service.connect(channel: .stable)
+            #expect(reconnected.connectionReceipt == binding.connectionReceipt)
+            #expect(reconnected.providerSessionEpoch == binding.providerSessionEpoch)
+            #expect(manager.addServerCount == 1)
+            manager.executedTools.removeAll()
+            _ = try await service.executeSequence(
+                [BrowserMCPMappedCall(toolName: "take_snapshot", arguments: [:])],
+                channel: .stable,
+                expectedConnectionReceipt: binding.connectionReceipt)
+            #expect(manager.executedTools == ["take_snapshot"])
+            await service.disconnect()
+            try pool.bind(peer, to: binding.connectionReceipt)
+        }
+    }
+
     @Test
     func `public metadata deadline does not restart a blocked discovery read`() async throws {
         let manager = AuthorityBrowserMCPManager()

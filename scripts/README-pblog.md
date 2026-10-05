@@ -67,3 +67,8 @@ Value-taking options require a following argument. A final `--search`, `--lines`
 # Monitor Playground app logs
 ./scripts/pblog.sh --subsystem boo.peekaboo.playground -f
 ```
+
+`--lines` limits completed text queries. JSON output preserves the producer's
+framing, and `--follow` forwards events without waiting for the stream to end.
+Both modes bypass the physical-line tail limit; live JSON is not necessarily
+one standalone JSON document.

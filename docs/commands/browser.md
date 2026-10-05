@@ -52,6 +52,9 @@ Cancellation and connection deadlines stop waiting for native application metada
 synchronous getter to finish. Its late result is ignored. Failure cleanup reconciles the retained provider and target
 reservation without starting another metadata read; a connected provider or uncertain teardown retains ownership.
 This cleanup is not a fresh browser observation and cannot replace receipt validation on a later call.
+If a new connection has already verified and published its receipt and session epoch, cancellation of the following
+metadata observation retains that connection but reports an indeterminate, unsafe-to-retry result. Incomplete startup
+and actual authority loss still clean up; observe status before deciding whether to reconnect.
 
 `dom-click --page-id <id> --uid <uid> --foreground` invokes one synthetic `element.click()` through the pinned
 provider's `evaluate_script` route. It avoids CDP/Puppeteer pointer input, but evaluation still grants browser user
@@ -86,6 +89,8 @@ Chrome's approval-mode listener intentionally returns 404 for `/json/version`; u
 Explicit `--browser-url` requires HTTP discovery. Enable remote debugging at `chrome://inspect/#remote-debugging`
 and approve the connection prompt; a pipe-only launch does not expose a TCP endpoint. The provider never automatically
 reopens a failed connection or switches to another Chrome instance.
+A refused first connection remains a failed attempt for ordinary tools too. Cached connection verification stops
+reporting success after its retained socket disconnects; neither case silently opens another approval request.
 
 A Bridge host-authentication error names the socket, peer PID when available, and failed check (kernel CDHash,
 Apple-anchored signature, signature/hash binding, or allowed Team ID). Relaunch the released signed host at that socket;

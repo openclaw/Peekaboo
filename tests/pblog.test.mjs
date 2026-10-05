@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -168,3 +168,73 @@ test('a trailing missing value fails after preceding valid options, before priva
   assert.deepEqual(f.args(), []);
   assert.deepEqual(f.sudoArgs(), []);
 });
+
+for (const outputFile of [false, true]) {
+  test(`JSON output retains its complete frame in ${outputFile ? 'a file' : 'stdout'}`, (t) => {
+    const f = fixture(t);
+    const json = JSON.stringify(Array.from({ length: 60 }, (_, index) => ({ index })), null, 2) + '\n';
+    writeFileSync(path.join(f.directory, 'log'), `#!/bin/bash\ncat <<'JSON'\n${json}JSON\n`, { mode: 0o755 });
+    const output = path.join(f.directory, 'structured.json');
+    const result = f.run(['--json', ...(outputFile ? ['--output', output] : [])]);
+    success(result);
+    assert.equal(outputFile ? readFileSync(output, 'utf8') : result.stdout, json);
+    assert.deepEqual(JSON.parse(outputFile ? readFileSync(output, 'utf8') : result.stdout), JSON.parse(json));
+  });
+}
+
+for (const outputFile of [false, true]) {
+  for (const json of [false, true]) {
+    test(`follow forwards ${json ? 'JSON' : 'text'} to ${outputFile ? 'a file' : 'stdout'} before releasing the producer`, async (t) => {
+      const f = fixture(t);
+      const outputPath = path.join(f.directory, 'live.log');
+      const event = json ? '{"event":"owned live event"}' : 'owned live event';
+      writeFileSync(path.join(f.directory, 'log'), `#!/bin/bash
+printf '%s\\n' '${event}'
+IFS= read -r release
+[[ "$release" == release ]] || exit 91
+`, { mode: 0o755 });
+      const child = spawn('/bin/bash', [script, '--follow', '--lines', '1', ...(json ? ['--json'] : []), ...(outputFile ? ['--output', outputPath] : [])], {
+        cwd: f.directory, env: { ...process.env, PATH: `${f.directory}:${process.env.PATH}` },
+        detached: true, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let output = '', stderr = '', closed = false, released = false, observedBeforeRelease = false;
+      const completion = new Promise((resolve) => {
+        child.once('error', (error) => resolve({ error }));
+        child.once('close', (code, signal) => { closed = true; resolve({ code, signal }); });
+      });
+      const killOwnedGroup = () => {
+        if (closed || !Number.isInteger(child.pid)) return;
+        try { process.kill(-child.pid, 'SIGKILL'); }
+        catch (error) { if (error.code !== 'ESRCH') throw error; }
+      };
+      const release = (observed) => {
+        if (released || closed) return;
+        released = true;
+        observedBeforeRelease = observed;
+        child.stdin.end('release\n');
+      };
+      const observe = () => {
+        const current = outputFile ? (existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : '') : output;
+        if (current.includes(`${event}\n`)) release(true);
+      };
+      child.stdin.on('error', () => {});
+      child.stdout.on('data', (chunk) => { output += chunk; observe(); });
+      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      const poll = outputFile ? setInterval(observe, 10) : undefined;
+      // The fallback ends a broken, EOF-buffering pipeline; it is not a latency assertion.
+      const fallback = setTimeout(() => release(false), 3000);
+      const deadline = setTimeout(killOwnedGroup, 5000);
+      t.after(killOwnedGroup);
+      let result;
+      try { result = await completion; }
+      finally { clearInterval(poll); clearTimeout(fallback); clearTimeout(deadline); killOwnedGroup(); }
+      assert.equal(result.error, undefined);
+      assert.equal(result.signal, null);
+      assert.equal(result.code, 0, stderr);
+      assert.equal(stderr, '');
+      assert.equal(observedBeforeRelease, true, 'Event was withheld until the test released its producer');
+      assert.equal(outputFile ? readFileSync(outputPath, 'utf8') : output, `${event}\n`);
+      if (outputFile) assert.equal(output, '');
+    });
+  }
+}
