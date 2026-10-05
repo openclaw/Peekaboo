@@ -397,7 +397,15 @@ extension PeekabooError {
 
     /// Create a timeout error
     public static func timeout(operation: String, duration: TimeInterval) -> PeekabooError {
-        .timeout("Operation '\(operation)' timed out after \(Int(duration)) seconds")
+        let formattedDuration: String
+        if duration.isFinite, duration > 0, duration < 1 {
+            formattedDuration = "\(max(1, Int((duration * 1000).rounded()))) milliseconds"
+        } else if let wholeSeconds = Int(exactly: duration) {
+            formattedDuration = "\(wholeSeconds) seconds"
+        } else {
+            formattedDuration = "\(duration) seconds"
+        }
+        return .timeout("Operation '\(operation)' timed out after \(formattedDuration)")
     }
 
     /// Create an ambiguous app identifier error
